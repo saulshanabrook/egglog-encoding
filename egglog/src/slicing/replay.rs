@@ -10,20 +10,20 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::ast::{Action, Command, Expr, FunctionSubtype, RunRuleConfig, RustSpan, Schedule, Span};
-use crate::causal_slice::CausalSlice;
 use crate::core_relations::{
-    CausalReceiptView, ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTerm, ReplayTermId, SourceRef,
+    ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTerm, ReplayTermId, SourceRef, TraceView,
 };
+use crate::slicing::backward::Slice;
 use crate::util::{HashMap, HashSet};
-use crate::{CausalState, EGraph, Literal, ReplayOpKey};
+use crate::{CaptureCatalog, EGraph, Literal, ReplayOpKey};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct ReplayTermRef(u32);
 
 impl ReplayTermRef {
-    fn from_index(index: usize) -> Result<Self, CausalReplayError> {
+    fn from_index(index: usize) -> Result<Self, ReplayError> {
         Ok(Self(index.try_into().map_err(|_| {
-            CausalReplayError::Invalid("owned replay term arena exceeds u32".into())
+            ReplayError::Invalid("owned replay term arena exceeds u32".into())
         })?))
     }
 
@@ -126,7 +126,7 @@ pub(crate) struct ReplayBinding {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ReplayFiring {
-    pub(crate) receipt_match: u64,
+    pub(crate) firing_id: u64,
     pub(crate) rule_ordinal: u32,
     pub(crate) replay_name: String,
     pub(crate) bindings: Box<[ReplayBinding]>,
@@ -188,19 +188,19 @@ pub(crate) struct ReplayIrStats {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct CausalReplayIr {
+pub(crate) struct ReplayProgram {
     pub(crate) setup: Vec<ReplaySetup>,
     pub(crate) terms: ReplayTermArena,
     pub(crate) events: Vec<ReplayEvent>,
     pub(crate) stats: ReplayIrStats,
 }
 
-impl CausalReplayIr {
+impl ReplayProgram {
     /// Lower the graph-neutral slice into the ordinary command surface used by
     /// the fresh proof graph. Runtime values from the recording graph never
     /// cross this boundary: constructor values are re-established by
     /// `let-check`, and literals remain source literals.
-    pub(crate) fn to_commands(&self) -> Result<Vec<Command>, CausalReplayError> {
+    pub(crate) fn to_commands(&self) -> Result<Vec<Command>, ReplayError> {
         let mut commands = Vec::new();
         let mut setup = self.setup.iter().peekable();
 
@@ -239,14 +239,14 @@ impl CausalReplayIr {
                 ReplayEvent::Wave(wave) => {
                     for alias in &wave.aliases {
                         if aliases.contains_key(&alias.term) {
-                            return Err(CausalReplayError::Invalid(format!(
+                            return Err(ReplayError::Invalid(format!(
                                 "replay term {} receives more than one checked alias",
                                 alias.term.index()
                             )));
                         }
                         let node = self.term(alias.term)?;
                         let OwnedReplayTerm::Call { sort, op, children } = node else {
-                            return Err(CausalReplayError::Invalid(format!(
+                            return Err(ReplayError::Invalid(format!(
                                 "checked alias `{}` targets a literal",
                                 alias.name
                             )));
@@ -267,7 +267,7 @@ impl CausalReplayIr {
                     }
 
                     if wave.firings.is_empty() {
-                        return Err(CausalReplayError::Invalid(format!(
+                        return Err(ReplayError::Invalid(format!(
                             "replay wave {} contains no firings",
                             wave.wave
                         )));
@@ -286,13 +286,13 @@ impl CausalReplayIr {
                                         self.term_reference_expr(binding.term, &aliases, &span)?,
                                     ))
                                 })
-                                .collect::<Result<Vec<_>, CausalReplayError>>()?;
+                                .collect::<Result<Vec<_>, ReplayError>>()?;
                             Ok(RunRuleConfig {
                                 rule: firing.replay_name.clone(),
                                 bindings,
                             })
                         })
-                        .collect::<Result<Vec<_>, CausalReplayError>>()?;
+                        .collect::<Result<Vec<_>, ReplayError>>()?;
                     commands.push(Command::RunSchedule(Schedule::RunRule(span, configs)));
                 }
                 ReplayEvent::Check(check) => commands.push(check.command.clone()),
@@ -304,21 +304,21 @@ impl CausalReplayIr {
         Ok(hygienic_source_commands(commands))
     }
 
-    pub(crate) fn render_commands(commands: &[Command]) -> Result<String, CausalReplayError> {
+    pub(crate) fn render_commands(commands: &[Command]) -> Result<String, ReplayError> {
         use std::fmt::Write as _;
 
         let mut rendered = String::new();
         for command in commands {
             writeln!(&mut rendered, "{command}").map_err(|error| {
-                CausalReplayError::Invalid(format!("cannot render causal replay command: {error}"))
+                ReplayError::Invalid(format!("cannot render causal replay command: {error}"))
             })?;
         }
         Ok(rendered)
     }
 
-    fn term(&self, term: ReplayTermRef) -> Result<&OwnedReplayTerm, CausalReplayError> {
+    fn term(&self, term: ReplayTermRef) -> Result<&OwnedReplayTerm, ReplayError> {
         self.terms.nodes.get(term.index()).ok_or_else(|| {
-            CausalReplayError::Invalid(format!(
+            ReplayError::Invalid(format!(
                 "replay term reference {} is out of range",
                 term.index()
             ))
@@ -330,7 +330,7 @@ impl CausalReplayIr {
         term: ReplayTermRef,
         aliases: &HashMap<ReplayTermRef, String>,
         span: &Span,
-    ) -> Result<Expr, CausalReplayError> {
+    ) -> Result<Expr, ReplayError> {
         match self.term(term)? {
             OwnedReplayTerm::Literal { literal, .. } => {
                 Ok(Expr::Lit(span.clone(), literal.clone()))
@@ -340,7 +340,7 @@ impl CausalReplayIr {
                 .cloned()
                 .map(|name| Expr::Var(span.clone(), name))
                 .ok_or_else(|| {
-                    CausalReplayError::Invalid(format!(
+                    ReplayError::Invalid(format!(
                         "replay term {} is used before its checked alias",
                         term.index()
                     ))
@@ -428,13 +428,13 @@ fn replay_span(command: usize) -> Span {
 }
 
 #[derive(Debug, Error)]
-pub(crate) enum CausalReplayError {
-    #[error("causal replay is unavailable without exact receipt capture")]
+pub(crate) enum ReplayError {
+    #[error("causal replay is unavailable without exact trace capture")]
     Disabled,
     #[error("causal replay requires the main native backend")]
     UnsupportedBackend,
-    #[error("causal replay receipt error: {0}")]
-    Receipt(String),
+    #[error("causal replay trace error: {0}")]
+    Trace(String),
     #[error("causal replay input error: {0}")]
     Input(String),
     #[error("invalid causal replay: {0}")]
@@ -444,7 +444,7 @@ pub(crate) enum CausalReplayError {
 }
 
 struct OwnedTermBuilder<'a, 'view> {
-    view: &'a mut CausalReceiptView<'view>,
+    view: &'a mut TraceView<'view>,
     sorts: HashMap<ReplaySortId, String>,
     ops: HashMap<ReplayOpId, OwnedReplayOp>,
     literal_memo: HashMap<ReplayTermId, ReplayTermRef>,
@@ -454,21 +454,18 @@ struct OwnedTermBuilder<'a, 'view> {
 }
 
 impl<'a, 'view> OwnedTermBuilder<'a, 'view> {
-    fn new(
-        view: &'a mut CausalReceiptView<'view>,
-        causal: &CausalState,
-    ) -> Result<Self, CausalReplayError> {
+    fn new(view: &'a mut TraceView<'view>, catalog: &CaptureCatalog) -> Result<Self, ReplayError> {
         let mut sorts = HashMap::default();
-        for (name, id) in &causal.sort_ids {
+        for (name, id) in &catalog.sort_ids {
             if sorts.insert(*id, name.clone()).is_some() {
-                return Err(CausalReplayError::Invalid(format!(
+                return Err(ReplayError::Invalid(format!(
                     "replay sort id {} has multiple names",
                     id.get()
                 )));
             }
         }
         let mut ops = HashMap::default();
-        for (key, id) in &causal.op_ids {
+        for (key, id) in &catalog.op_ids {
             let ReplayOpKey {
                 name,
                 inputs,
@@ -480,7 +477,7 @@ impl<'a, 'view> OwnedTermBuilder<'a, 'view> {
                 output: output.clone(),
             };
             if ops.insert(*id, op).is_some() {
-                return Err(CausalReplayError::Invalid(format!(
+                return Err(ReplayError::Invalid(format!(
                     "replay operation id {} has multiple signatures",
                     id.get()
                 )));
@@ -497,14 +494,14 @@ impl<'a, 'view> OwnedTermBuilder<'a, 'view> {
         })
     }
 
-    fn intern(&mut self, source: ReplayTermId) -> Result<ReplayTermRef, CausalReplayError> {
+    fn intern(&mut self, source: ReplayTermId) -> Result<ReplayTermRef, ReplayError> {
         if source.is_missing() {
-            return Err(CausalReplayError::Invalid(
+            return Err(ReplayError::Invalid(
                 "selected binding owns a missing replay term".into(),
             ));
         }
         if !self.visiting.insert(source) {
-            return Err(CausalReplayError::Invalid(format!(
+            return Err(ReplayError::Invalid(format!(
                 "replay term {} is cyclic",
                 source.get()
             )));
@@ -512,7 +509,7 @@ impl<'a, 'view> OwnedTermBuilder<'a, 'view> {
         let node = self
             .view
             .replay_term(source)
-            .map_err(|error| CausalReplayError::Receipt(error.to_string()))?;
+            .map_err(|error| ReplayError::Trace(error.to_string()))?;
         if matches!(node, ReplayTerm::Literal { .. })
             && let Some(term) = self.literal_memo.get(&source)
         {
@@ -527,16 +524,16 @@ impl<'a, 'view> OwnedTermBuilder<'a, 'view> {
             ReplayTerm::Call { sort, op, children } => {
                 let sort_name = self.sort_name(sort)?.to_owned();
                 let op = self.ops.get(&op).cloned().ok_or_else(|| {
-                    CausalReplayError::Invalid("replay term uses an unknown operation id".into())
+                    ReplayError::Invalid("replay term uses an unknown operation id".into())
                 })?;
                 if op.output != sort_name {
-                    return Err(CausalReplayError::Invalid(format!(
+                    return Err(ReplayError::Invalid(format!(
                         "replay operation `{}` returns `{}` but term is typed `{sort_name}`",
                         op.name, op.output
                     )));
                 }
                 if op.inputs.len() != children.len() {
-                    return Err(CausalReplayError::Invalid(format!(
+                    return Err(ReplayError::Invalid(format!(
                         "replay operation `{}` expects {} children but term has {}",
                         op.name,
                         op.inputs.len(),
@@ -548,7 +545,7 @@ impl<'a, 'view> OwnedTermBuilder<'a, 'view> {
                     let child = self.intern(child)?;
                     let actual = self.nodes[child.index()].sort();
                     if actual != op.inputs[index] {
-                        return Err(CausalReplayError::Invalid(format!(
+                        return Err(ReplayError::Invalid(format!(
                             "replay operation `{}` child {index} expects `{}` but owns `{actual}`",
                             op.name, op.inputs[index]
                         )));
@@ -574,10 +571,11 @@ impl<'a, 'view> OwnedTermBuilder<'a, 'view> {
         Ok(term)
     }
 
-    fn sort_name(&self, sort: ReplaySortId) -> Result<&str, CausalReplayError> {
-        self.sorts.get(&sort).map(String::as_str).ok_or_else(|| {
-            CausalReplayError::Invalid(format!("unknown replay sort id {}", sort.get()))
-        })
+    fn sort_name(&self, sort: ReplaySortId) -> Result<&str, ReplayError> {
+        self.sorts
+            .get(&sort)
+            .map(String::as_str)
+            .ok_or_else(|| ReplayError::Invalid(format!("unknown replay sort id {}", sort.get())))
     }
 
     fn take_new_calls(&mut self) -> Vec<(ReplayTermId, ReplayTermRef)> {
@@ -585,7 +583,7 @@ impl<'a, 'view> OwnedTermBuilder<'a, 'view> {
     }
 }
 
-fn replay_literal(literal: ReplayLiteral) -> Result<Literal, CausalReplayError> {
+fn replay_literal(literal: ReplayLiteral) -> Result<Literal, ReplayError> {
     Ok(match literal {
         ReplayLiteral::Unit => Literal::Unit,
         ReplayLiteral::Bool(value) => Literal::Bool(value),
@@ -595,7 +593,7 @@ fn replay_literal(literal: ReplayLiteral) -> Result<Literal, CausalReplayError> 
         }
         ReplayLiteral::String(value) => Literal::String(value.to_string()),
         ReplayLiteral::Internal(value) => {
-            return Err(CausalReplayError::Unsupported(format!(
+            return Err(ReplayError::Unsupported(format!(
                 "internal replay literal {value} has no source representation"
             )));
         }
@@ -617,9 +615,9 @@ fn is_static_declaration(command: &Command) -> bool {
 }
 
 fn selected_source_closure(
-    causal: &CausalState,
+    catalog: &CaptureCatalog,
     roots: &HashSet<SourceRef>,
-) -> Result<HashSet<SourceRef>, CausalReplayError> {
+) -> Result<HashSet<SourceRef>, ReplayError> {
     let mut selected = HashSet::default();
     let mut pending = roots.iter().cloned().collect::<Vec<_>>();
     while let Some(source) = pending.pop() {
@@ -628,26 +626,24 @@ fn selected_source_closure(
         }
         match &source {
             SourceRef::Synthetic(_) => {
-                let entry = causal.source_commands.get(&source).ok_or_else(|| {
-                    CausalReplayError::Invalid(format!(
-                        "selected source {source:?} has no catalog entry"
-                    ))
+                let entry = catalog.source_commands.get(&source).ok_or_else(|| {
+                    ReplayError::Invalid(format!("selected source {source:?} has no catalog entry"))
                 })?;
                 if let Some(reason) = &entry.unsupported {
-                    return Err(CausalReplayError::Unsupported(format!(
+                    return Err(ReplayError::Unsupported(format!(
                         "selected source {source:?}: {reason}"
                     )));
                 }
                 pending.extend(entry.dependencies.iter().cloned());
             }
             SourceRef::InputRow { command, .. } => {
-                let entry = causal.input_commands.get(command).ok_or_else(|| {
-                    CausalReplayError::Invalid(format!(
+                let entry = catalog.input_commands.get(command).ok_or_else(|| {
+                    ReplayError::Invalid(format!(
                         "selected input source {source:?} has no catalog entry"
                     ))
                 })?;
                 if let Some(reason) = &entry.unsupported {
-                    return Err(CausalReplayError::Unsupported(format!(
+                    return Err(ReplayError::Unsupported(format!(
                         "selected input source {source:?}: {reason}"
                     )));
                 }
@@ -659,9 +655,9 @@ fn selected_source_closure(
 
 fn selected_input_rows(
     egraph: &EGraph,
-    causal: &CausalState,
+    catalog: &CaptureCatalog,
     sources: &HashSet<SourceRef>,
-) -> Result<Vec<ReplaySource>, CausalReplayError> {
+) -> Result<Vec<ReplaySource>, ReplayError> {
     let mut selected = BTreeMap::<u64, BTreeSet<u64>>::new();
     for source in sources {
         if let SourceRef::InputRow { command, line } = source {
@@ -670,39 +666,39 @@ fn selected_input_rows(
     }
     let mut rows = Vec::new();
     for (command, lines) in selected {
-        let entry = causal.input_commands.get(&command).ok_or_else(|| {
-            CausalReplayError::Invalid(format!("input command {command} is absent from catalog"))
+        let entry = catalog.input_commands.get(&command).ok_or_else(|| {
+            ReplayError::Invalid(format!("input command {command} is absent from catalog"))
         })?;
         let function_type = egraph
             .type_info
             .get_func_type(&entry.function)
             .ok_or_else(|| {
-                CausalReplayError::Invalid(format!(
+                ReplayError::Invalid(format!(
                     "input function `{}` is absent from type information",
                     entry.function
                 ))
             })?;
         if function_type.subtype == FunctionSubtype::Custom {
-            return Err(CausalReplayError::Unsupported(format!(
+            return Err(ReplayError::Unsupported(format!(
                 "selected input into value function `{}`",
                 entry.function
             )));
         }
         let bytes = std::fs::read(&entry.resolved_path).map_err(|error| {
-            CausalReplayError::Input(format!(
+            ReplayError::Input(format!(
                 "cannot reread `{}`: {error}",
                 entry.resolved_path.display()
             ))
         })?;
         let digest: [u8; 32] = Sha256::digest(&bytes).into();
         if digest != entry.digest {
-            return Err(CausalReplayError::Input(format!(
-                "input `{}` changed after receipt capture",
+            return Err(ReplayError::Input(format!(
+                "input `{}` changed after trace capture",
                 entry.resolved_path.display()
             )));
         }
         let contents = String::from_utf8(bytes).map_err(|error| {
-            CausalReplayError::Input(format!(
+            ReplayError::Input(format!(
                 "input `{}` is no longer UTF-8: {error}",
                 entry.resolved_path.display()
             ))
@@ -711,21 +707,21 @@ fn selected_input_rows(
         let mut remaining = lines.clone();
         for (index, text) in contents.lines().enumerate() {
             let line = u64::try_from(index + 1)
-                .map_err(|_| CausalReplayError::Input("input has too many lines".into()))?;
+                .map_err(|_| ReplayError::Input("input has too many lines".into()))?;
             if !lines.contains(&line) {
                 continue;
             }
             let parsed = EGraph::parse_input_line(&schema, &entry.file, line, text)
-                .map_err(|error| CausalReplayError::Input(error.to_string()))?
+                .map_err(|error| ReplayError::Input(error.to_string()))?
                 .ok_or_else(|| {
-                    CausalReplayError::Invalid(format!(
+                    ReplayError::Invalid(format!(
                         "selected input row {}:{} parsed as empty",
                         entry.file, line
                     ))
                 })?;
             remaining.remove(&line);
             rows.push(ReplaySource {
-                catalog_ordinal: causal.command_catalog[entry.command].surface_command,
+                catalog_ordinal: catalog.command_catalog[entry.command].surface_command,
                 source: OwnedSourceRef::InputRow { command, line },
                 kind: ReplaySourceKind::InputRow {
                     function: entry.function.clone(),
@@ -735,7 +731,7 @@ fn selected_input_rows(
             });
         }
         if let Some(line) = remaining.first() {
-            return Err(CausalReplayError::Invalid(format!(
+            return Err(ReplayError::Invalid(format!(
                 "selected input row {}:{line} no longer exists",
                 entry.file
             )));
@@ -750,14 +746,14 @@ fn canonical_symbol(name: &str) -> &str {
 
 fn restore_selected_rule_globals(
     command: Command,
-    causal: &CausalState,
+    catalog: &CaptureCatalog,
     sources: &HashSet<SourceRef>,
     rule: &str,
-) -> Result<Command, CausalReplayError> {
+) -> Result<Command, ReplayError> {
     let mut missing = None;
     let command = command.visit_exprs(&mut |expr| match expr {
         Expr::Call(span, name, children) if children.is_empty() => {
-            let Some(source) = causal.immutable_globals.get(&name) else {
+            let Some(source) = catalog.immutable_globals.get(&name) else {
                 return Expr::Call(span, name, children);
             };
             if sources.contains(source) {
@@ -774,7 +770,7 @@ fn restore_selected_rule_globals(
         other => other,
     });
     if let Some((name, source)) = missing {
-        return Err(CausalReplayError::Invalid(format!(
+        return Err(ReplayError::Invalid(format!(
             "retained rule `{rule}` reads immutable global `{name}` from unselected source {source:?}"
         )));
     }
@@ -783,17 +779,17 @@ fn restore_selected_rule_globals(
 
 fn validate_alias_namespace(
     egraph: &EGraph,
-    causal: &CausalState,
+    catalog: &CaptureCatalog,
     max_aliases: usize,
-) -> Result<(), CausalReplayError> {
+) -> Result<(), ReplayError> {
     let mut occupied = HashSet::default();
     occupied.extend(
-        causal
+        catalog
             .immutable_globals
             .keys()
             .map(|name| canonical_symbol(name).to_owned()),
     );
-    for entry in &causal.rule_catalog {
+    for entry in &catalog.rule_catalog {
         occupied.extend(
             entry
                 .variables
@@ -804,7 +800,7 @@ fn validate_alias_namespace(
     for index in 0..max_aliases {
         let canonical = format!("__causal_replay_{index}");
         if occupied.contains(&canonical) || egraph.names.contains_canonical(&canonical) {
-            return Err(CausalReplayError::Invalid(format!(
+            return Err(ReplayError::Invalid(format!(
                 "generated checked alias `${canonical}` collides with a user symbol"
             )));
         }
@@ -814,29 +810,29 @@ fn validate_alias_namespace(
 
 fn build_owned(
     egraph: &EGraph,
-    causal: &CausalState,
-    view: &mut CausalReceiptView<'_>,
-    slice: &CausalSlice,
-) -> Result<CausalReplayIr, CausalReplayError> {
-    causal
+    catalog: &CaptureCatalog,
+    view: &mut TraceView<'_>,
+    slice: &Slice,
+) -> Result<ReplayProgram, ReplayError> {
+    catalog
         .validate_replay_rule_names()
-        .map_err(CausalReplayError::Invalid)?;
+        .map_err(ReplayError::Invalid)?;
 
-    let sources = selected_source_closure(causal, &slice.sources)?;
+    let sources = selected_source_closure(catalog, &slice.sources)?;
     let mut retained_rules = BTreeSet::new();
-    let mut matches = Vec::with_capacity(slice.matches.len());
-    let mut match_ids = slice.matches.iter().copied().collect::<Vec<_>>();
-    match_ids.sort_unstable();
-    for id in match_ids {
-        let matched = view
-            .matched(id)
-            .map_err(|error| CausalReplayError::Receipt(error.to_string()))?;
-        retained_rules.insert(matched.rule);
-        matches.push((id, matched.rule, matched.wave.get(), matched.position.get()));
+    let mut firings = Vec::with_capacity(slice.firings.len());
+    let mut firing_ids = slice.firings.iter().copied().collect::<Vec<_>>();
+    firing_ids.sort_unstable();
+    for id in firing_ids {
+        let firing = view
+            .firing(id)
+            .map_err(|error| ReplayError::Trace(error.to_string()))?;
+        retained_rules.insert(firing.rule);
+        firings.push((id, firing.rule, firing.wave.get(), firing.position.get()));
     }
 
     let mut setup = Vec::new();
-    for (ordinal, command) in causal.surface_command_catalog.iter().enumerate() {
+    for (ordinal, command) in catalog.surface_command_catalog.iter().enumerate() {
         if command.as_ref().is_some_and(is_static_declaration) {
             setup.push(ReplaySetup {
                 catalog_ordinal: ordinal,
@@ -853,20 +849,20 @@ fn build_owned(
         let SourceRef::Synthetic(_) = source else {
             continue;
         };
-        let entry = &causal.source_commands[source];
-        let normalized = causal.command_catalog.get(entry.command).ok_or_else(|| {
-            CausalReplayError::Invalid(format!(
+        let entry = &catalog.source_commands[source];
+        let normalized = catalog.command_catalog.get(entry.command).ok_or_else(|| {
+            ReplayError::Invalid(format!(
                 "source {source:?} cites missing command {}",
                 entry.command
             ))
         })?;
         let surface_command = normalized.surface_command;
-        let surface = causal
+        let surface = catalog
             .surface_command_catalog
             .get(surface_command)
             .and_then(Option::as_ref)
             .ok_or_else(|| {
-                CausalReplayError::Invalid(format!(
+                ReplayError::Invalid(format!(
                     "source {source:?} cites missing surface command {surface_command}"
                 ))
             })?;
@@ -875,7 +871,7 @@ fn build_owned(
         // and can manufacture unbound tuple values on the fresh proof graph.
         let command = surface.clone();
         if !matches!(command, Command::Action(_)) {
-            return Err(CausalReplayError::Invalid(format!(
+            return Err(ReplayError::Invalid(format!(
                 "source {source:?} does not map to an action command"
             )));
         }
@@ -888,35 +884,36 @@ fn build_owned(
             });
     }
     let mut source_events = source_events.into_values().collect::<Vec<_>>();
-    source_events.extend(selected_input_rows(egraph, causal, &sources)?);
+    source_events.extend(selected_input_rows(egraph, catalog, &sources)?);
     for rule in &retained_rules {
-        let entry = causal.rule_catalog.get(*rule as usize).ok_or_else(|| {
-            CausalReplayError::Invalid(format!("selected rule ordinal {rule} is absent"))
+        let entry = catalog.rule_catalog.get(*rule as usize).ok_or_else(|| {
+            ReplayError::Invalid(format!("selected rule ordinal {rule} is absent"))
         })?;
-        let command = causal
+        let command = catalog
             .command_catalog
             .get(entry.command)
             .ok_or_else(|| {
-                CausalReplayError::Invalid(format!(
+                ReplayError::Invalid(format!(
                     "rule ordinal {rule} cites missing command {}",
                     entry.command
                 ))
             })?
             .command
             .clone();
-        let command = restore_selected_rule_globals(command, causal, &sources, &entry.replay_name)?;
+        let command =
+            restore_selected_rule_globals(command, catalog, &sources, &entry.replay_name)?;
         let Command::Rule { rule: command_rule } = &command else {
-            return Err(CausalReplayError::Invalid(format!(
+            return Err(ReplayError::Invalid(format!(
                 "rule ordinal {rule} does not map to a rule command"
             )));
         };
         if command_rule.name != entry.replay_name || command_rule.ruleset != entry.ruleset {
-            return Err(CausalReplayError::Invalid(format!(
+            return Err(ReplayError::Invalid(format!(
                 "rule ordinal {rule} catalog identity disagrees with its emitted command"
             )));
         }
         setup.push(ReplaySetup {
-            catalog_ordinal: causal.command_catalog[entry.command].surface_command,
+            catalog_ordinal: catalog.command_catalog[entry.command].surface_command,
             kind: ReplaySetupKind::Command(command),
         });
     }
@@ -935,13 +932,13 @@ fn build_owned(
         .map(|index| {
             view.removal(index)
                 .map(|removal| removal.position.get())
-                .map_err(|error| CausalReplayError::Receipt(error.to_string()))
+                .map_err(|error| ReplayError::Trace(error.to_string()))
         })
         .collect::<Result<Vec<_>, _>>()?;
     alias_reset_positions.sort_unstable();
     alias_reset_positions.dedup();
 
-    let mut terms = OwnedTermBuilder::new(view, causal)?;
+    let mut terms = OwnedTermBuilder::new(view, catalog)?;
     let mut waves = BTreeMap::<u64, (u64, Vec<ReplayFiring>)>::new();
     let mut aliases_by_wave = BTreeMap::<u64, Vec<ReplayAlias>>::new();
     let mut alias_wave_by_term = HashMap::<ReplayTermRef, u64>::default();
@@ -955,38 +952,38 @@ fn build_owned(
         HashMap::<(usize, Option<u64>, OwnedReplayTerm), ReplayTermRef>::default();
     let mut canonical_term = HashMap::<ReplayTermRef, ReplayTermRef>::default();
     let mut wave_positions = BTreeMap::<u64, u64>::new();
-    for (_, _, wave, position) in &matches {
+    for (_, _, wave, position) in &firings {
         wave_positions
             .entry(*wave)
             .and_modify(|current| *current = (*current).min(*position))
             .or_insert(*position);
     }
     let mut next_alias = 0usize;
-    for (id, rule, wave, position) in matches {
-        let catalog = &causal.rule_catalog[rule as usize];
-        let binding_terms = slice.match_terms.get(&id).ok_or_else(|| {
-            CausalReplayError::Invalid(format!(
-                "selected match {} has no projected bindings",
+    for (id, rule, wave, position) in firings {
+        let catalog = &catalog.rule_catalog[rule as usize];
+        let binding_terms = slice.firing_terms.get(&id).ok_or_else(|| {
+            ReplayError::Invalid(format!(
+                "selected firing {} has no projected bindings",
                 id.get()
             ))
         })?;
         if binding_terms.len() != catalog.variables.len() {
-            return Err(CausalReplayError::Invalid(format!(
-                "selected match {} has {} terms for {} rule variables",
+            return Err(ReplayError::Invalid(format!(
+                "selected firing {} has {} terms for {} rule variables",
                 id.get(),
                 binding_terms.len(),
                 catalog.variables.len()
             )));
         }
-        let binding_windows = slice.match_term_windows.get(&id).ok_or_else(|| {
-            CausalReplayError::Invalid(format!(
-                "selected match {} has no checked-alias availability plan",
+        let binding_windows = slice.firing_term_windows.get(&id).ok_or_else(|| {
+            ReplayError::Invalid(format!(
+                "selected firing {} has no checked-alias availability plan",
                 id.get()
             ))
         })?;
         if binding_windows.len() != binding_terms.len() {
-            return Err(CausalReplayError::Invalid(format!(
-                "selected match {} has {} alias windows for {} bindings",
+            return Err(ReplayError::Invalid(format!(
+                "selected firing {} has {} alias windows for {} bindings",
                 id.get(),
                 binding_windows.len(),
                 binding_terms.len()
@@ -1002,15 +999,15 @@ fn build_owned(
             let term = terms.intern(source_term)?;
             let actual_sort = terms.nodes[term.index()].sort();
             if actual_sort != expected_sort {
-                return Err(CausalReplayError::Invalid(format!(
-                    "match {} variable `{variable}` expects `{expected_sort}` but term owns `{actual_sort}`",
+                return Err(ReplayError::Invalid(format!(
+                    "firing {} variable `{variable}` expects `{expected_sort}` but term owns `{actual_sort}`",
                     id.get()
                 )));
             }
             let new_calls = terms.take_new_calls();
             if new_calls.len() != alias_windows.len() {
-                return Err(CausalReplayError::Invalid(format!(
-                    "match {} binding `{variable}` owns {} structural call occurrences but has {} availability windows",
+                return Err(ReplayError::Invalid(format!(
+                    "firing {} binding `{variable}` owns {} structural call occurrences but has {} availability windows",
                     id.get(),
                     new_calls.len(),
                     alias_windows.len()
@@ -1018,8 +1015,8 @@ fn build_owned(
             }
             for ((source_call, call), window) in new_calls.into_iter().zip(alias_windows.iter()) {
                 if source_call != window.term {
-                    return Err(CausalReplayError::Invalid(format!(
-                        "match {} binding `{variable}` availability order expected call {} but projected call {}",
+                    return Err(ReplayError::Invalid(format!(
+                        "firing {} binding `{variable}` availability order expected call {} but projected call {}",
                         id.get(),
                         source_call.get(),
                         window.term.get()
@@ -1051,8 +1048,8 @@ fn build_owned(
                         .then_some(*candidate_wave)
                     })
                     .ok_or_else(|| {
-                        CausalReplayError::Invalid(format!(
-                            "match {} binding `{variable}` call {} has no retained pre-wave point in its availability window",
+                        ReplayError::Invalid(format!(
+                            "firing {} binding `{variable}` call {} has no retained pre-wave point in its availability window",
                             id.get(),
                             source_call.get()
                         ))
@@ -1063,7 +1060,7 @@ fn build_owned(
                     .copied()
                 {
                     if terms.nodes[previous.index()] != terms.nodes[call.index()] {
-                        return Err(CausalReplayError::Invalid(format!(
+                        return Err(ReplayError::Invalid(format!(
                             "replay term {} has inconsistent structure at wave {alias_wave}",
                             source_call.get()
                         )));
@@ -1119,13 +1116,13 @@ fn build_owned(
         let wave_entry = waves.entry(wave).or_insert((position, Vec::new()));
         wave_entry.0 = wave_entry.0.min(position);
         wave_entry.1.push(ReplayFiring {
-            receipt_match: id.get(),
+            firing_id: id.get(),
             rule_ordinal: rule,
             replay_name: catalog.replay_name.clone(),
             bindings: bindings.into_boxed_slice(),
         });
     }
-    validate_alias_namespace(egraph, causal, next_alias)?;
+    validate_alias_namespace(egraph, catalog, next_alias)?;
     let term_nodes = std::mem::take(&mut terms.nodes);
     drop(terms);
     for aliases in aliases_by_wave.values_mut() {
@@ -1137,7 +1134,7 @@ fn build_owned(
         .map(ReplayEvent::Source)
         .collect::<Vec<_>>();
     for (wave, (position, mut firings)) in waves {
-        firings.sort_unstable_by_key(|firing| firing.receipt_match);
+        firings.sort_unstable_by_key(|firing| firing.firing_id);
         events.push(ReplayEvent::Wave(ReplayWave {
             wave,
             position,
@@ -1152,32 +1149,32 @@ fn build_owned(
     checks.sort_unstable();
     for check in checks {
         let position = slice.check_positions.get(&check).ok_or_else(|| {
-            CausalReplayError::Invalid(format!("selected check {check} has no history position"))
+            ReplayError::Invalid(format!("selected check {check} has no history position"))
         })?;
         let root = view
             .check_root(check)
-            .map_err(|error| CausalReplayError::Receipt(error.to_string()))?;
-        let command_index = causal.check_commands.get(&check).ok_or_else(|| {
-            CausalReplayError::Invalid(format!("selected check {check} has no catalog command"))
+            .map_err(|error| ReplayError::Trace(error.to_string()))?;
+        let command_index = catalog.check_commands.get(&check).ok_or_else(|| {
+            ReplayError::Invalid(format!("selected check {check} has no catalog command"))
         })?;
-        let normalized = causal.command_catalog.get(*command_index).ok_or_else(|| {
-            CausalReplayError::Invalid(format!(
+        let normalized = catalog.command_catalog.get(*command_index).ok_or_else(|| {
+            ReplayError::Invalid(format!(
                 "selected check {check} cites missing command {command_index}"
             ))
         })?;
         let surface_command = normalized.surface_command;
-        let command = causal
+        let command = catalog
             .surface_command_catalog
             .get(surface_command)
             .and_then(Option::as_ref)
             .ok_or_else(|| {
-                CausalReplayError::Invalid(format!(
+                ReplayError::Invalid(format!(
                     "selected check {check} cites missing surface command {surface_command}"
                 ))
             })?
             .clone();
         if !matches!(command, Command::Check(..)) {
-            return Err(CausalReplayError::Invalid(format!(
+            return Err(ReplayError::Invalid(format!(
                 "selected check {check} maps to a non-check command"
             )));
         }
@@ -1232,7 +1229,7 @@ fn build_owned(
             .filter(|event| matches!(event, ReplayEvent::Check(_)))
             .count() as u64,
     };
-    Ok(CausalReplayIr {
+    Ok(ReplayProgram {
         setup,
         terms: ReplayTermArena { nodes: term_nodes },
         events,
@@ -1240,25 +1237,25 @@ fn build_owned(
     })
 }
 
-pub(crate) fn build_causal_replay_ir(
+pub(crate) fn build_replay_program(
     egraph: &EGraph,
-    slice: &CausalSlice,
-) -> Result<CausalReplayIr, CausalReplayError> {
-    let causal = egraph
-        .causal_state
+    slice: &Slice,
+) -> Result<ReplayProgram, ReplayError> {
+    let catalog = egraph
+        .capture_catalog
         .as_ref()
-        .ok_or(CausalReplayError::Disabled)?;
-    causal
+        .ok_or(ReplayError::Disabled)?;
+    catalog
         .ensure_healthy()
-        .map_err(|error| CausalReplayError::Invalid(error.to_string()))?;
+        .map_err(|error| ReplayError::Invalid(error.to_string()))?;
     let bridge = egraph
         .backend
         .as_any()
         .downcast_ref::<egglog_bridge::EGraph>()
-        .ok_or(CausalReplayError::UnsupportedBackend)?;
+        .ok_or(ReplayError::UnsupportedBackend)?;
     bridge
-        .with_causal_receipt_view(|view| Ok(build_owned(egraph, causal, view, slice)))
-        .map_err(|error| CausalReplayError::Receipt(error.to_string()))?
+        .with_trace_view(|view| Ok(build_owned(egraph, catalog, view, slice)))
+        .map_err(|error| ReplayError::Trace(error.to_string()))?
 }
 
 #[cfg(test)]
@@ -1269,7 +1266,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
-    use crate::causal_slice::slice_all_checks;
+    use crate::slicing::backward::slice_all_checks;
 
     fn serial_pool() -> &'static rayon::ThreadPool {
         static SERIAL_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
@@ -1295,9 +1292,7 @@ mod tests {
     #[test]
     fn owned_ir_preserves_pre_run_check_and_source_order() {
         let mut egraph = EGraph::default();
-        serial_pool()
-            .install(|| egraph.enable_causal_receipts())
-            .unwrap();
+        serial_pool().install(|| egraph.enable_trace()).unwrap();
         egraph
             .parse_and_run_program(
                 None,
@@ -1309,7 +1304,7 @@ mod tests {
             )
             .unwrap();
         let slice = slice_all_checks(&egraph).unwrap();
-        let ir = build_causal_replay_ir(&egraph, &slice).unwrap();
+        let ir = build_replay_program(&egraph, &slice).unwrap();
         assert!(matches!(
             ir.events.as_slice(),
             [
@@ -1324,9 +1319,7 @@ mod tests {
     #[test]
     fn rendered_artifact_round_trips_globals_and_grounded_rules_with_proofs() {
         let mut recorder = EGraph::default();
-        serial_pool()
-            .install(|| recorder.enable_causal_receipts())
-            .unwrap();
+        serial_pool().install(|| recorder.enable_trace()).unwrap();
         recorder
             .parse_and_run_program(
                 None,
@@ -1343,7 +1336,7 @@ mod tests {
             )
             .unwrap();
         let slice = slice_all_checks(&recorder).unwrap();
-        let ir = build_causal_replay_ir(&recorder, &slice).unwrap();
+        let ir = build_replay_program(&recorder, &slice).unwrap();
         let commands = ir.to_commands().unwrap();
         assert!(commands.iter().any(|command| {
             matches!(command, Command::Action(Action::Let(_, name, _)) if name == "$seed")
@@ -1363,7 +1356,7 @@ mod tests {
                 }
             )
         }));
-        let rendered = CausalReplayIr::render_commands(&commands).unwrap();
+        let rendered = ReplayProgram::render_commands(&commands).unwrap();
         assert!(rendered.contains("(datatype E"));
         assert!(rendered.contains("(relation Seed"));
         assert!(rendered.contains("(let $seed (A 1))"));
@@ -1408,9 +1401,7 @@ mod tests {
             fact_directory: Some(relative_dir),
             ..EGraph::default()
         };
-        serial_pool()
-            .install(|| egraph.enable_causal_receipts())
-            .unwrap();
+        serial_pool().install(|| egraph.enable_trace()).unwrap();
         egraph
             .parse_and_run_program(
                 None,
@@ -1421,7 +1412,7 @@ mod tests {
             .unwrap();
         assert!(
             egraph
-                .causal_state
+                .capture_catalog
                 .as_ref()
                 .unwrap()
                 .input_commands
@@ -1430,7 +1421,7 @@ mod tests {
             "capture must freeze the effective input path independently of later cwd changes"
         );
         let slice = slice_all_checks(&egraph).unwrap();
-        let ir = build_causal_replay_ir(&egraph, &slice).unwrap();
+        let ir = build_replay_program(&egraph, &slice).unwrap();
         assert_eq!(ir.stats.input_rows, 1);
         let selected = ir.events.iter().find_map(|event| match event {
             ReplayEvent::Source(ReplaySource {
@@ -1442,9 +1433,9 @@ mod tests {
         assert_eq!(selected, Some((2, &[Literal::String("keep".into())][..])));
 
         fs::write(&file, "changed-but-unselected\nkeep\n").unwrap();
-        let error = build_causal_replay_ir(&egraph, &slice).unwrap_err();
+        let error = build_replay_program(&egraph, &slice).unwrap_err();
         assert!(
-            matches!(error, CausalReplayError::Input(message) if message.contains("changed after receipt capture"))
+            matches!(error, ReplayError::Input(message) if message.contains("changed after trace capture"))
         );
         fs::remove_dir_all(dir).unwrap();
     }
@@ -1458,9 +1449,7 @@ mod tests {
             fact_directory: Some(dir.clone()),
             ..EGraph::default()
         };
-        serial_pool()
-            .install(|| selected.enable_causal_receipts())
-            .unwrap();
+        serial_pool().install(|| selected.enable_trace()).unwrap();
         selected
             .parse_and_run_program(
                 None,
@@ -1473,9 +1462,9 @@ mod tests {
             )
             .unwrap();
         let slice = slice_all_checks(&selected).unwrap();
-        let error = build_causal_replay_ir(&selected, &slice).unwrap_err();
+        let error = build_replay_program(&selected, &slice).unwrap_err();
         assert!(
-            matches!(error, CausalReplayError::Unsupported(message) if message.contains("value function `f`"))
+            matches!(error, ReplayError::Unsupported(message) if message.contains("value function `f`"))
         );
 
         let mut unreachable = EGraph {
@@ -1483,7 +1472,7 @@ mod tests {
             ..EGraph::default()
         };
         serial_pool()
-            .install(|| unreachable.enable_causal_receipts())
+            .install(|| unreachable.enable_trace())
             .unwrap();
         unreachable
             .parse_and_run_program(
@@ -1496,7 +1485,7 @@ mod tests {
             )
             .unwrap();
         let slice = slice_all_checks(&unreachable).unwrap();
-        build_causal_replay_ir(&unreachable, &slice).unwrap();
+        build_replay_program(&unreachable, &slice).unwrap();
         fs::remove_dir_all(dir).unwrap();
     }
 }

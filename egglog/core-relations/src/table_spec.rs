@@ -18,8 +18,8 @@ use crate::numeric_id::{DenseIdMap, NumericId, define_id};
 use smallvec::SmallVec;
 
 use crate::{
-    CausalReceipts, CausalWave, CauseDraftId, EqualityEdgeCount, FactId, QueryEntry,
-    ReceiptCauseRef, TableId, TypedEqualityProposal, Variable,
+    CauseDraftId, CauseRef, EdgeHorizon, FactId, QueryEntry, TableId, Trace, TypedEqualityProposal,
+    Variable, Wave,
     action::{
         Bindings, ExecutionState,
         mask::{Mask, MaskIter, ValueSource},
@@ -28,7 +28,7 @@ use crate::{
     hash_index::{ColumnIndex, IndexBase, TupleIndex},
     offsets::{RowId, Subset, SubsetRef},
     pool::{PoolSet, Pooled, with_pool_set},
-    receipts::{DeferredEqualityCause, PendingNativeLease},
+    provenance::{DeferredEqualityCause, PendingNativeLease},
     row_buffer::{RowBuffer, RowSink, TaggedRowBuffer},
 };
 
@@ -78,11 +78,11 @@ impl MutationTransaction {
         }))
     }
 
-    pub(crate) fn pending_causal(receipts: &CausalReceipts, wave: CausalWave) -> Self {
+    pub(crate) fn pending_causal(trace: &Trace, wave: Wave) -> Self {
         Self(Arc::new(MutationTransactionState {
             decision: AtomicU8::new(MUTATION_PENDING),
             pending: Mutex::new(PendingMutationTransaction::default()),
-            native_lease: Some(receipts.pending_native_lease(wave)),
+            native_lease: Some(trace.pending_native_lease(wave)),
         }))
     }
 
@@ -90,12 +90,12 @@ impl MutationTransaction {
         self.0.native_lease.clone()
     }
 
-    pub(crate) fn validate_causal_scope(&self, receipts: &CausalReceipts, wave: CausalWave) {
+    pub(crate) fn validate_causal_scope(&self, trace: &Trace, wave: Wave) {
         assert!(
             self.0
                 .native_lease
                 .as_ref()
-                .is_some_and(|lease| lease.matches(receipts, wave)),
+                .is_some_and(|lease| lease.matches(trace, wave)),
             "causal mutation transaction belongs to a different arena or wave"
         );
     }
@@ -314,7 +314,7 @@ pub struct Row {
     pub vals: Pooled<Vec<Value>>,
 }
 
-/// Capability for receipt-neutral removals that are part of native table
+/// Capability for capture-neutral removals that are part of native table
 /// maintenance (rekey/rebuild), not user-visible delete actions.
 ///
 /// The private field prevents source and downstream callers from disguising
@@ -333,19 +333,19 @@ pub trait Table: Any + Send + Sync {
     /// must contain all of the data associated with the current table.
     fn dyn_clone(&self) -> Box<dyn Table>;
 
-    /// Install the database-local identity used by commit-time receipts.
+    /// Install the database-local identity used by commit-time trace.
     fn set_table_id(&mut self, _table: TableId) {}
 
-    /// Mark this table's staging buffers as receipt-enabled. Tables without a
-    /// specialized receipt contract may ignore this.
-    fn enable_causal_receipts(&mut self) {}
+    /// Mark this table's staging buffers as capture-enabled. Tables without a
+    /// specialized capture contract may ignore this.
+    fn enable_trace(&mut self) {}
 
-    /// Verify that receipt capture can be enabled without backfilling native
+    /// Verify that trace capture can be enabled without backfilling native
     /// history. Implementations with deferred mutation buffers must also
-    /// reject queued or outstanding receipt-disabled buffers here. This pass
+    /// reject queued or outstanding capture-disabled buffers here. This pass
     /// is side-effect free and runs for every table before any table changes
     /// mode.
-    fn preflight_causal_receipt_activation(&self) -> Result<(), &'static str> {
+    fn preflight_trace_activation(&self) -> Result<(), &'static str> {
         if self.len() == 0 {
             Ok(())
         } else {
@@ -372,7 +372,7 @@ pub trait Table: Any + Send + Sync {
         _table: &WrappedTable,
         _next_ts: Value,
         _exec_state: &mut ExecutionState,
-        _equality_cutoff: Option<EqualityEdgeCount>,
+        _equality_cutoff: Option<EdgeHorizon>,
         _transaction: Option<&MutationTransaction>,
     ) -> bool {
         // Default implementation does nothing.
@@ -380,7 +380,7 @@ pub trait Table: Any + Send + Sync {
     }
 
     /// Publish an incremental-rebuild cursor returned through the shared
-    /// receipt transaction after every target table validates.
+    /// capture transaction after every target table validates.
     fn commit_rebuild_cursor(&mut self, _table_id: TableId, _version: TableVersion) {}
 
     /// Refresh rows whose rebuildable columns mention one of `dirty_ids` by re-inserting the same
@@ -575,7 +575,7 @@ pub trait Table: Any + Send + Sync {
     }
 
     /// Point-read a live committed row by its current physical identifier.
-    /// Used only while exact receipt witnesses are enabled.
+    /// Used only while exact capture witnesses are enabled.
     fn row_at(&self, _row: RowId) -> Option<Row> {
         None
     }
@@ -596,7 +596,7 @@ pub trait Table: Any + Send + Sync {
 /// mutations to the table. Calling  [`Table::merge`] on that table would then
 /// apply those mutations, making them visible for future readers.
 pub trait MutationBuffer: Any + Send + Sync {
-    /// Attach this buffer to one explicit commit/abort decision. Receipt-mode
+    /// Attach this buffer to one explicit commit/abort decision. Capture-mode
     /// rebuilds share a token across every row and target table.
     fn defer_until(&mut self, _transaction: MutationTransaction) {
         panic!("this table buffer does not support transactional rebuild staging")
@@ -614,7 +614,7 @@ pub trait MutationBuffer: Any + Send + Sync {
     /// Stage an insertion whose rule/merge cause is promoted only if the
     /// table publishes an effective fact or another effective side effect.
     fn stage_insert_deferred(&mut self, _row: &[Value], _cause: DeferredEqualityCause) {
-        panic!("deferred receipt insertion staged into a table without receipt support")
+        panic!("deferred capture insertion staged into a table without capture support")
     }
 
     fn stage_insert_deferred_with_origin(
@@ -623,7 +623,7 @@ pub trait MutationBuffer: Any + Send + Sync {
         _cause: DeferredEqualityCause,
         _origin: crate::RowOriginSiteId,
     ) {
-        panic!("origin-attributed insertion staged into a table without receipt support")
+        panic!("origin-attributed insertion staged into a table without capture support")
     }
 
     /// Stage a new immutable fact version whose structural row is inherited
@@ -636,22 +636,22 @@ pub trait MutationBuffer: Any + Send + Sync {
         _cause: DeferredEqualityCause,
         _prior_fact: FactId,
     ) {
-        panic!("fact-attributed insertion staged into a table without receipt support")
+        panic!("fact-attributed insertion staged into a table without capture support")
     }
 
     /// Stage one validated logical-row rekey. The table decides at commit
     /// whether the source fact moved, was absorbed by a collision, or was
     /// replaced by an effective merge.
     fn stage_rekey(&mut self, _row: &[Value], _rekey: crate::PreparedRekey) {
-        panic!("prepared rekey staged into a table without receipt support")
+        panic!("prepared rekey staged into a table without capture support")
     }
 
     /// Stage a typed equality proposal. Only the native equality table
-    /// implements this receipt-only operation.
+    /// implements this capture-only operation.
     fn stage_typed_union(
         &mut self,
         _row: &[Value],
-        _cause: ReceiptCauseRef,
+        _cause: CauseRef,
         _proposal: TypedEqualityProposal,
     ) {
         panic!("typed union staged into a non-equality table")
@@ -673,7 +673,7 @@ pub trait MutationBuffer: Any + Send + Sync {
     /// table.
     fn stage_remove(&mut self, key: &[Value]);
 
-    /// Stage a receipt-neutral native maintenance removal. Only core rebuild
+    /// Stage a capture-neutral native maintenance removal. Only core rebuild
     /// code can obtain the capability.
     #[doc(hidden)]
     fn stage_remove_maintenance(&mut self, key: &[Value], _capability: MaintenanceRemoval) {
@@ -683,7 +683,7 @@ pub trait MutationBuffer: Any + Send + Sync {
     /// Stage a named-rule removal whose exact cause is validated only if the
     /// keyed row still exists at the native delete barrier.
     fn stage_remove_deferred(&mut self, _key: &[Value], _cause: DeferredEqualityCause) {
-        panic!("deferred receipt removal staged into a table without receipt support")
+        panic!("deferred capture removal staged into a table without capture support")
     }
 
     /// Get a fresh handle to the same table.

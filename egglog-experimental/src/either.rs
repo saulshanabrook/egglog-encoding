@@ -21,7 +21,7 @@ pub struct EitherContainer {
 }
 
 impl ContainerValue for EitherContainer {
-    fn causal_receipt_kind() -> Option<CausalContainerKind> {
+    fn capture_kind() -> Option<CausalContainerKind> {
         Some(CausalContainerKind::Either)
     }
 

@@ -18,11 +18,9 @@ fn main() {
             Some("--proofs" | "--proof-testing" | "--term-encoding")
         )
     });
-    let causal_slice = args
-        .iter()
-        .any(|arg| arg.to_str() == Some("--causal-slice"));
-    if causal_slice && !matches!(backend, Backend::Main) {
-        eprintln!("error: --causal-slice supports only --backend main");
+    let slice_requested = requests_slice(&args);
+    if slice_requested && !matches!(backend, Backend::Main) {
+        eprintln!("error: --slice supports only --backend main");
         std::process::exit(2);
     }
     #[cfg(feature = "dd-backend")]
@@ -32,7 +30,7 @@ fn main() {
         args
     };
     let egraph = match backend {
-        Backend::Main if causal_slice => egglog_experimental::new_experimental_egraph(),
+        Backend::Main if slice_requested => egglog_experimental::new_experimental_egraph(),
         Backend::Main if proof_mode => egglog_experimental::new_experimental_egraph_for_proofs(),
         Backend::Main => egglog_experimental::new_experimental_egraph(),
         #[cfg(feature = "dd-backend")]
@@ -45,6 +43,15 @@ fn main() {
         args,
         egglog_experimental::new_experimental_egraph_for_proofs,
     )
+}
+
+fn requests_slice(args: &[OsString]) -> bool {
+    args.iter().any(|arg| {
+        let Some(arg) = arg.to_str() else {
+            return false;
+        };
+        matches!(arg, "--slice" | "--slice-output") || arg.starts_with("--slice-output=")
+    })
 }
 
 fn extract_backend_arg<I>(args: I) -> Result<(Backend, Vec<OsString>), String>
@@ -113,6 +120,28 @@ mod tests {
     #[test]
     fn parses_main_backend() {
         assert_eq!(parse_backend(Some("main")), Ok(Backend::Main));
+    }
+
+    #[test]
+    fn recognizes_explicit_and_output_implied_slicing() {
+        for args in [
+            vec![OsString::from("egglog"), OsString::from("--slice")],
+            vec![
+                OsString::from("egglog"),
+                OsString::from("--slice-output"),
+                OsString::from("out.egg"),
+            ],
+            vec![
+                OsString::from("egglog"),
+                OsString::from("--slice-output=out.egg"),
+            ],
+        ] {
+            assert!(requests_slice(&args));
+        }
+        assert!(!requests_slice(&[
+            OsString::from("egglog"),
+            OsString::from("--proofs"),
+        ]));
     }
 
     #[cfg(not(feature = "dd-backend"))]

@@ -47,8 +47,8 @@ use crate::{
     offsets::{Offsets, RowId, SortedOffsetSlice, SortedOffsetVector, Subset},
     parallel_heuristics::parallelize_db_level_op,
     pool::Pooled,
+    provenance::{PendingPremiseResolver, PremiseSlot},
     query::RuleSet,
-    receipts::{PendingPremiseResolver, PremiseSlot},
     row_buffer::TaggedRowBuffer,
     table_spec::{ColumnId, Offset, WrappedTableRef},
 };
@@ -378,7 +378,7 @@ impl Database {
         // let mut rule_reports: HashMap<String, Vec<RuleReport>>;
         let mut rule_reports: HashMap<Arc<str>, Vec<RuleReport>>;
         let run_in_parallel =
-            self.causal_receipts.is_none() && parallelize_db_level_op(self.total_size_estimate);
+            self.trace.is_none() && parallelize_db_level_op(self.total_size_estimate);
         let mut split_time = None;
         let exec_state = ExecutionState::new(self.read_only_view(), Default::default());
         if run_in_parallel {
@@ -457,11 +457,11 @@ impl Database {
                                             .collect(),
                                     );
                                     let mut materializations = Arc::new(materializations);
-                                    let receipt = rule_set.actions[plan.actions].receipt.as_ref();
+                                    let capture = rule_set.actions[plan.actions].capture.as_ref();
                                     let capture_witness =
-                                        receipt.is_some_and(|receipt| receipt.captures_witness());
+                                        capture.is_some_and(|capture| capture.captures_witness());
                                     let premise_slots =
-                                        receipt.map(|receipt| receipt.premise_slots.clone());
+                                        capture.map(|capture| capture.premise_slots.clone());
 
                                     for (mat_id, stage_block) in
                                         plan.stages.blocks.iter().enumerate()
@@ -599,13 +599,13 @@ impl Database {
                                     .collect(),
                                 materializations,
                                 capture_witness: rule_set.actions[plan.actions]
-                                    .receipt
+                                    .capture
                                     .as_ref()
-                                    .is_some_and(|receipt| receipt.captures_witness()),
+                                    .is_some_and(|capture| capture.captures_witness()),
                                 premise_slots: rule_set.actions[plan.actions]
-                                    .receipt
+                                    .capture
                                     .as_ref()
-                                    .map(|receipt| receipt.premise_slots.clone()),
+                                    .map(|capture| capture.premise_slots.clone()),
                                 scratch_key: Default::default(),
                                 scratch_val: Default::default(),
                             };
@@ -699,7 +699,7 @@ struct ActionState {
     n_runs: usize,
     len: usize,
     bindings: Bindings,
-    receipt_witnesses: Option<Arc<PendingWitnessBatch>>,
+    capture_witnesses: Option<Arc<PendingWitnessBatch>>,
 }
 
 impl Default for ActionState {
@@ -708,7 +708,7 @@ impl Default for ActionState {
             n_runs: 0,
             len: 0,
             bindings: Bindings::new(VAR_BATCH_SIZE),
-            receipt_witnesses: None,
+            capture_witnesses: None,
         }
     }
 }
@@ -964,7 +964,7 @@ impl MaterializedGroup {
     fn add_row(&mut self, row: &[Value], capture_witness: bool, witness: Option<&MatchWitness>) {
         let row = self.rows.add_row(row);
         if capture_witness {
-            let witness = witness.expect("receipt materialization requires a native witness");
+            let witness = witness.expect("capture materialization requires a native witness");
             let witnesses = self.witnesses.get_or_insert_default();
             assert_eq!(
                 witnesses.rows.len(),
@@ -1026,7 +1026,7 @@ impl PendingWitnessBatch {
         let lane = witnesses
             .len()
             .try_into()
-            .expect("receipt witness batch exceeds u32");
+            .expect("capture witness batch exceeds u32");
         witnesses.push(witness.clone());
         lane
     }
@@ -1090,7 +1090,7 @@ fn visit_materialized_witness_facts(
         let stored = group
             .witnesses
             .as_ref()
-            .expect("receipt materialization is missing its witness sidecar");
+            .expect("capture materialization is missing its witness sidecar");
         let (facts, nested) = stored.get(ancestor.row());
         for &(slot, fact) in facts {
             visit(slot, fact);
@@ -1113,23 +1113,23 @@ impl PendingPremiseResolver for PendingWitnessBatch {
             .lock()
             .unwrap()
             .get(lane as usize)
-            .unwrap_or_else(|| panic!("missing pending receipt witness lane {lane}"))
+            .unwrap_or_else(|| panic!("missing pending capture witness lane {lane}"))
             .clone();
         self.resolve_witness(&witness)
     }
 }
 
-fn push_receipt_witness(
+fn push_capture_witness(
     action: &ActionInfo,
     witness: &MatchWitness,
     materializations: &DenseIdMap<MatId, Arc<Materialization>>,
     exec_state: &ExecutionState<'_>,
     action_state: &mut ActionState,
 ) {
-    let Some(layout) = &action.receipt else {
+    let Some(layout) = &action.capture else {
         return;
     };
-    let resolver = action_state.receipt_witnesses.get_or_insert_with(|| {
+    let resolver = action_state.capture_witnesses.get_or_insert_with(|| {
         Arc::new(PendingWitnessBatch::new(
             layout.premise_count,
             materializations,
@@ -1137,9 +1137,9 @@ fn push_receipt_witness(
     });
     let witness_lane = resolver.push(witness);
     let resolver: Arc<dyn PendingPremiseResolver> = resolver.clone();
-    action_state.bindings.push_lazy_receipt(
+    action_state.bindings.push_lazy_capture(
         &layout.kind,
-        exec_state.causal_wave(),
+        exec_state.trace_wave(),
         layout.premise_count,
         &layout.binding_sources,
         resolver,
@@ -1999,7 +1999,7 @@ impl<'a> JoinState<'a> {
                 let mut buf = TaggedRowBuffer::new_inline(bind.len());
                 let mut row_scratch: SmallVec<[Value; 8]> = SmallVec::new();
                 let mut materialized_witnesses = action_buf
-                    .needs_receipt_witness(action)
+                    .needs_capture_witness(action)
                     .then(Vec::<MaterializedWitnessRef>::new);
                 match mode {
                     MatScanMode::Full => {
@@ -2089,7 +2089,7 @@ impl<'a> JoinState<'a> {
                 to_intersect,
             } => {
                 let cover_mat = binding_info.materializations[*cover].clone();
-                let capture_witness = action_buf.needs_receipt_witness(action);
+                let capture_witness = action_buf.needs_capture_witness(action);
                 let mut updates = FrameUpdates::with_capacity(cmp::min(chunk_size, cur_size));
                 let probers = to_intersect
                     .iter()
@@ -2301,7 +2301,7 @@ trait ActionBuffer<'state, A: NumericId>: Send {
         materialized_witnesses: &[MaterializedWitnessRef],
         exec_state: &ExecutionState<'state>,
     ) {
-        let mut witness = self.needs_receipt_witness(action).then(|| MatchWitness {
+        let mut witness = self.needs_capture_witness(action).then(|| MatchWitness {
             facts: SmallVec::new(),
             ancestors: SmallVec::from_slice(materialized_witnesses),
         });
@@ -2320,11 +2320,11 @@ trait ActionBuffer<'state, A: NumericId>: Send {
         );
     }
 
-    fn needs_receipt_witness(&self, _action: A) -> bool {
+    fn needs_capture_witness(&self, _action: A) -> bool {
         false
     }
 
-    fn receipt_premise_slot(&self, _action: A, _atom: AtomId) -> Option<PremiseSlot> {
+    fn capture_premise_slot(&self, _action: A, _atom: AtomId) -> Option<PremiseSlot> {
         None
     }
 
@@ -2398,16 +2398,16 @@ impl<'a, 'outer: 'a> ActionBuffer<'a, ActionId> for InPlaceActionBuffer<'outer> 
     where
         'a: 'b;
 
-    fn needs_receipt_witness(&self, action: ActionId) -> bool {
+    fn needs_capture_witness(&self, action: ActionId) -> bool {
         self.rule_set.actions[action]
-            .receipt
+            .capture
             .as_ref()
-            .is_some_and(|receipt| receipt.captures_witness())
+            .is_some_and(|capture| capture.captures_witness())
     }
 
-    fn receipt_premise_slot(&self, action: ActionId, atom: AtomId) -> Option<PremiseSlot> {
+    fn capture_premise_slot(&self, action: ActionId, atom: AtomId) -> Option<PremiseSlot> {
         self.rule_set.actions[action]
-            .receipt
+            .capture
             .as_ref()?
             .premise_slots
             .get(atom)
@@ -2427,10 +2427,10 @@ impl<'a, 'outer: 'a> ActionBuffer<'a, ActionId> for InPlaceActionBuffer<'outer> 
         action_state.n_runs += 1;
         action_state.len += 1;
         let action_info = &self.rule_set.actions[action];
-        if let Some(layout) = &action_info.receipt {
+        if let Some(layout) = &action_info.capture {
             if layout.captures_witness() {
-                let witness = witness.expect("receipt action requires a native match witness");
-                push_receipt_witness(
+                let witness = witness.expect("capture action requires a native match witness");
+                push_capture_witness(
                     action_info,
                     witness,
                     materializations,
@@ -2439,9 +2439,9 @@ impl<'a, 'outer: 'a> ActionBuffer<'a, ActionId> for InPlaceActionBuffer<'outer> 
                 );
             } else {
                 debug_assert!(witness.is_none());
-                action_state.bindings.push_receipt(
+                action_state.bindings.push_capture(
                     &layout.kind,
-                    exec_state.causal_wave(),
+                    exec_state.trace_wave(),
                     &[],
                     &layout.binding_sources,
                 );
@@ -2458,7 +2458,7 @@ impl<'a, 'outer: 'a> ActionBuffer<'a, ActionId> for InPlaceActionBuffer<'outer> 
             let succeeded = state.run_instrs(&action_info.instrs, &mut action_state.bindings);
             self.apply_time += apply_timer.elapsed();
             action_state.bindings.clear();
-            action_state.receipt_witnesses = None;
+            action_state.capture_witnesses = None;
             self.match_counter.inc_matches(action, succeeded);
             action_state.len = 0;
         }
@@ -2519,16 +2519,16 @@ impl<'scope> ActionBuffer<'scope, ActionId> for ScopedActionBuffer<'_, 'scope> {
     where
         'scope: 'a;
 
-    fn needs_receipt_witness(&self, action: ActionId) -> bool {
+    fn needs_capture_witness(&self, action: ActionId) -> bool {
         self.rule_set.actions[action]
-            .receipt
+            .capture
             .as_ref()
-            .is_some_and(|receipt| receipt.captures_witness())
+            .is_some_and(|capture| capture.captures_witness())
     }
 
-    fn receipt_premise_slot(&self, action: ActionId, atom: AtomId) -> Option<PremiseSlot> {
+    fn capture_premise_slot(&self, action: ActionId, atom: AtomId) -> Option<PremiseSlot> {
         self.rule_set.actions[action]
-            .receipt
+            .capture
             .as_ref()?
             .premise_slots
             .get(atom)
@@ -2549,10 +2549,10 @@ impl<'scope> ActionBuffer<'scope, ActionId> for ScopedActionBuffer<'_, 'scope> {
         action_state.n_runs += 1;
         action_state.len += 1;
         let action_info = &self.rule_set.actions[action];
-        if let Some(layout) = &action_info.receipt {
+        if let Some(layout) = &action_info.capture {
             if layout.captures_witness() {
-                let witness = witness.expect("receipt action requires a native match witness");
-                push_receipt_witness(
+                let witness = witness.expect("capture action requires a native match witness");
+                push_capture_witness(
                     action_info,
                     witness,
                     materializations,
@@ -2561,9 +2561,9 @@ impl<'scope> ActionBuffer<'scope, ActionId> for ScopedActionBuffer<'_, 'scope> {
                 );
             } else {
                 debug_assert!(witness.is_none());
-                action_state.bindings.push_receipt(
+                action_state.bindings.push_capture(
                     &layout.kind,
-                    exec_state.causal_wave(),
+                    exec_state.trace_wave(),
                     &[],
                     &layout.binding_sources,
                 );
@@ -2578,7 +2578,7 @@ impl<'scope> ActionBuffer<'scope, ActionId> for ScopedActionBuffer<'_, 'scope> {
             let mut state = to_exec_state();
             let mut bindings =
                 mem::replace(&mut action_state.bindings, Bindings::new(VAR_BATCH_SIZE));
-            action_state.receipt_witnesses = None;
+            action_state.capture_witnesses = None;
             action_state.len = 0;
             let match_counter = self.match_counter.clone();
             self.scope.spawn(move |_| {
@@ -2661,7 +2661,7 @@ fn expand_binding_sets<'state, A: NumericId, BUF: ActionBuffer<'state, A> + ?Siz
         if let Some(witness) = witness {
             let mut ancestor_slots = None::<SmallVec<[PremiseSlot; 4]>>;
             for (atom, info) in atoms.iter() {
-                let Some(slot) = action_buf.receipt_premise_slot(action, atom) else {
+                let Some(slot) = action_buf.capture_premise_slot(action, atom) else {
                     continue;
                 };
                 if info.table.is_dummy() || witness.facts.iter().any(|(seen, _)| *seen == slot) {
@@ -2773,7 +2773,7 @@ fn expand_binding_sets<'state, A: NumericId, BUF: ActionBuffer<'state, A> + ?Siz
                 .as_ref()
                 .map_or(0, |witness| witness.ancestors.len());
             if let (Some(witness), Some(atom)) = (witness.as_mut(), entry.atom)
-                && let Some(slot) = action_buf.receipt_premise_slot(action, atom)
+                && let Some(slot) = action_buf.capture_premise_slot(action, atom)
             {
                 let fact = validated_atom_fact(
                     action,
@@ -2822,7 +2822,7 @@ fn expand_binding_sets<'state, A: NumericId, BUF: ActionBuffer<'state, A> + ?Siz
             .as_ref()
             .map_or(0, |witness| witness.ancestors.len());
         if let (Some(witness), Some(atom)) = (witness.as_mut(), entry.atom)
-            && let Some(slot) = action_buf.receipt_premise_slot(action, atom)
+            && let Some(slot) = action_buf.capture_premise_slot(action, atom)
         {
             let fact = validated_atom_fact(
                 action,
@@ -2875,7 +2875,7 @@ fn validated_atom_fact<A: NumericId>(
     let table = &exec_state.db.table_info[atom.table].table;
     let row = table
         .row_at(row_id)
-        .unwrap_or_else(|| panic!("receipt witness row {row_id:?} is not live"));
+        .unwrap_or_else(|| panic!("capture witness row {row_id:?} is not live"));
     let constraints_hold = atom_row_matches(
         atom,
         &row.vals,
@@ -2883,7 +2883,7 @@ fn validated_atom_fact<A: NumericId>(
         live_vars,
         |column, variable, actual, bound| {
             panic!(
-                "receipt {source} witness is inconsistent with the current binding: action={}, atom={atom_id:?}, table={:?} ({:?}), row={row_id:?}, column={column:?}, variable={variable:?}, actual={actual:?}, bound={bound:?}",
+                "capture {source} witness is inconsistent with the current binding: action={}, atom={atom_id:?}, table={:?} ({:?}), row={row_id:?}, column={column:?}, variable={variable:?}, actual={actual:?}, bound={bound:?}",
                 action.index(),
                 atom.table,
                 exec_state.table_name(atom.table)
@@ -2892,11 +2892,11 @@ fn validated_atom_fact<A: NumericId>(
     );
     assert!(
         constraints_hold,
-        "receipt {source} witness violates its atom constraints"
+        "capture {source} witness violates its atom constraints"
     );
     table
         .fact_id(row_id)
-        .unwrap_or_else(|| panic!("receipt witness row {row_id:?} has no immutable FactId"))
+        .unwrap_or_else(|| panic!("capture witness row {row_id:?} has no immutable FactId"))
 }
 
 fn atom_row_matches(
@@ -2943,7 +2943,7 @@ fn flush_action_states(
         ActionState {
             bindings,
             len,
-            receipt_witnesses,
+            capture_witnesses,
             ..
         },
     ) in actions.iter_mut()
@@ -2955,7 +2955,7 @@ fn flush_action_states(
                 *total += timer.elapsed();
             }
             bindings.clear();
-            *receipt_witnesses = None;
+            *capture_witnesses = None;
             match_counter.inc_matches(action, succeeded);
             *len = 0;
         }
@@ -2977,11 +2977,11 @@ impl<'a> ActionBuffer<'a, MatId> for InPlaceMaterializer<'a> {
     where
         'a: 'b;
 
-    fn needs_receipt_witness(&self, _mat_id: MatId) -> bool {
+    fn needs_capture_witness(&self, _mat_id: MatId) -> bool {
         self.capture_witness
     }
 
-    fn receipt_premise_slot(&self, mat_id: MatId, atom: AtomId) -> Option<PremiseSlot> {
+    fn capture_premise_slot(&self, mat_id: MatId, atom: AtomId) -> Option<PremiseSlot> {
         if !self.specs[mat_id].premise_atoms.contains(&atom) {
             return None;
         }
@@ -2998,7 +2998,7 @@ impl<'a> ActionBuffer<'a, MatId> for InPlaceMaterializer<'a> {
         _to_exec_state: impl FnMut() -> ExecutionState<'a>,
     ) {
         if self.capture_witness {
-            let witness = witness.expect("receipt materialization requires a native witness");
+            let witness = witness.expect("capture materialization requires a native witness");
             assert!(
                 witness
                     .ancestors
@@ -3065,11 +3065,11 @@ impl<'scope> ActionBuffer<'scope, MatId> for ScopedMaterializer<'_, 'scope> {
     where
         'scope: 'a;
 
-    fn needs_receipt_witness(&self, _mat_id: MatId) -> bool {
+    fn needs_capture_witness(&self, _mat_id: MatId) -> bool {
         self.capture_witness
     }
 
-    fn receipt_premise_slot(&self, mat_id: MatId, atom: AtomId) -> Option<PremiseSlot> {
+    fn capture_premise_slot(&self, mat_id: MatId, atom: AtomId) -> Option<PremiseSlot> {
         if !self.specs[mat_id].premise_atoms.contains(&atom) {
             return None;
         }
@@ -3086,7 +3086,7 @@ impl<'scope> ActionBuffer<'scope, MatId> for ScopedMaterializer<'_, 'scope> {
         _to_exec_state: impl FnMut() -> ExecutionState<'scope>,
     ) {
         if self.capture_witness {
-            let witness = witness.expect("receipt materialization requires a native witness");
+            let witness = witness.expect("capture materialization requires a native witness");
             assert!(
                 witness
                     .ancestors
@@ -3493,7 +3493,7 @@ mod tests {
         table::SortedWritesTable,
     };
 
-    fn receipt_test_atom(table: TableId, variable: Variable) -> Atom {
+    fn capture_test_atom(table: TableId, variable: Variable) -> Atom {
         let mut var_columns = VarColumnMap::default();
         var_columns.insert(variable, ColumnId::new(0));
         let mut fast = Pooled::<Vec<Constraint>>::default();
@@ -3513,7 +3513,7 @@ mod tests {
     }
 
     #[test]
-    fn receipt_witness_rejects_first_row_decoy_and_accepts_bound_row() {
+    fn capture_witness_rejects_first_row_decoy_and_accepts_bound_row() {
         let mut db = Database::default();
         let relation = || {
             SortedWritesTable::new(
@@ -3539,17 +3539,17 @@ mod tests {
             std::iter::empty(),
             std::iter::empty(),
         );
-        let receipts = db.enable_causal_receipts();
+        let trace = db.enable_trace();
         let test_sort = crate::ReplaySortId::new(0);
-        receipts
+        trace
             .register_table_layout(selected, &[Some(test_sort), Some(test_sort)])
             .unwrap();
-        receipts
+        trace
             .register_table_layout(candidates, &[Some(test_sort), Some(test_sort)])
             .unwrap();
-        let zero = receipts.intern_test_term("zero");
-        let one = receipts.intern_test_term("one");
-        let two = receipts.intern_test_term("two");
+        let zero = trace.intern_test_term("zero");
+        let one = trace.intern_test_term("one");
+        let two = trace.intern_test_term("two");
         db.stage_source_row(
             selected,
             &[Value::new(2), Value::new(0)],
@@ -3572,11 +3572,11 @@ mod tests {
         )
         .unwrap();
         assert!(db.merge_all());
-        db.finalize_causal_wave();
+        db.finalize_trace_wave();
 
         let variable = Variable::new(0);
-        let selected_atom = receipt_test_atom(selected, variable);
-        let candidate_atom = receipt_test_atom(candidates, variable);
+        let selected_atom = capture_test_atom(selected, variable);
+        let candidate_atom = capture_test_atom(candidates, variable);
         let mut bindings = DenseIdMap::default();
         bindings.insert(variable, Value::new(2));
         let exec_state = ExecutionState::new(db.read_only_view(), Default::default());

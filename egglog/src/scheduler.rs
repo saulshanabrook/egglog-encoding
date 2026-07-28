@@ -170,9 +170,9 @@ impl EGraph {
         scheduler_id: SchedulerId,
         ruleset: &str,
     ) -> Result<RunReport, Error> {
-        if self.causal_state.is_some() {
+        if self.capture_catalog.is_some() {
             return Err(Error::BackendError(
-                "causal receipt recording does not support run-with/custom schedulers".into(),
+                "trace capture does not support run-with/custom schedulers".into(),
             ));
         }
         fn collect_rules<'a>(
@@ -422,7 +422,7 @@ impl SchedulerRuleInfo {
             &mut *egraph.backend,
             &egraph.functions,
             &egraph.type_info,
-            egraph.causal_state.as_ref(),
+            egraph.capture_catalog.as_ref(),
             &mut egraph.unstable_fn_panic_ids,
             false, // seminaive query: Pure/Write contexts
         );
@@ -470,7 +470,7 @@ impl SchedulerRuleInfo {
             &mut *egraph.backend,
             &egraph.functions,
             &egraph.type_info,
-            egraph.causal_state.as_ref(),
+            egraph.capture_catalog.as_ref(),
             &mut egraph.unstable_fn_panic_ids,
             true, // action rule reads the DB: Read/Full contexts
         );
@@ -557,9 +557,9 @@ mod test {
                         body: Default::default(),
                         head: Default::default(),
                     },
-                    causal_receipt: None,
-                    check_receipt: None,
-                    source_receipt: None,
+                    firing_capture: None,
+                    criterion_capture: None,
+                    source_capture: None,
                     owned_external_funcs: Vec::new(),
                 })
                 .unwrap()
@@ -700,14 +700,14 @@ mod test {
     }
 
     #[test]
-    fn causal_receipts_reject_custom_scheduler_before_internal_table_creation() {
+    fn trace_reject_custom_scheduler_before_internal_table_creation() {
         rayon::ThreadPoolBuilder::new()
             .num_threads(1)
             .build()
             .unwrap()
             .install(|| {
                 let mut egraph = EGraph::default();
-                egraph.enable_causal_receipts().unwrap();
+                egraph.enable_trace().unwrap();
                 egraph
                     .parse_and_run_program(
                         None,

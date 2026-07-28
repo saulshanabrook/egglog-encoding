@@ -11,7 +11,7 @@ pub struct VecContainer {
 }
 
 impl ContainerValue for VecContainer {
-    fn causal_receipt_kind() -> Option<CausalContainerKind> {
+    fn capture_kind() -> Option<CausalContainerKind> {
         Some(CausalContainerKind::Vec)
     }
 

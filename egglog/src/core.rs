@@ -86,7 +86,7 @@ impl SpecializedPrimitive {
     }
 
     /// Whether this specialization is backed by a capability-free runtime
-    /// entrypoint. Receipt replay terms are admitted only for such primitives;
+    /// entrypoint. Trace replay terms are admitted only for such primitives;
     /// read/write/effectful calls remain unsupported rather than being modeled.
     pub(crate) fn is_pure(&self) -> bool {
         self.prim_with_id.context_ids[crate::Context::Pure].is_some()

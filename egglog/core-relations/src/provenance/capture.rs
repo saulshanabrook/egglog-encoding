@@ -9,29 +9,29 @@ mod view;
 
 pub use view::*;
 
-struct ActiveReceiptViewGuard<'a> {
+struct ActiveTraceViewGuard<'a> {
     active: &'a AtomicBool,
 }
 
-impl<'a> ActiveReceiptViewGuard<'a> {
-    fn enter(active: &'a AtomicBool) -> Result<Self, ReceiptViewError> {
+impl<'a> ActiveTraceViewGuard<'a> {
+    fn enter(active: &'a AtomicBool) -> Result<Self, TraceViewError> {
         active
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
             .map(|_| Self { active })
             .map_err(|_| {
-                ReceiptViewError::Invalid("causal receipt inspection is not reentrant".into())
+                TraceViewError::Invalid("causal capture inspection is not reentrant".into())
             })
     }
 }
 
-impl Drop for ActiveReceiptViewGuard<'_> {
+impl Drop for ActiveTraceViewGuard<'_> {
     fn drop(&mut self) {
         self.active.store(false, Ordering::Release);
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct AppliedEqualityProposal {
-    pub(crate) wave: CausalWave,
+    pub(crate) wave: Wave,
     pub(crate) left: PendingEqualityEndpoint,
     pub(crate) right: PendingEqualityEndpoint,
 }
@@ -45,8 +45,8 @@ struct FlatRange {
 impl FlatRange {
     fn new(start: usize, len: usize) -> Self {
         Self {
-            start: start.try_into().expect("receipt arena exceeds u32"),
-            len: len.try_into().expect("receipt range exceeds u32"),
+            start: start.try_into().expect("trace arena exceeds u32"),
+            len: len.try_into().expect("capture range exceeds u32"),
         }
     }
 
@@ -62,7 +62,7 @@ impl FlatRange {
 
 /// An action-batch-owned resolver for compact join witnesses. Implementations
 /// retain the immutable materialization DAGs needed by their lanes; the
-/// receipt arena resolves the complete batch exactly once when native head
+/// trace arena resolves the complete batch exactly once when native head
 /// execution begins.
 pub(crate) trait PendingPremiseResolver: Send + Sync {
     fn resolve(&self, lane: u32) -> SmallVec<[FactId; 4]>;
@@ -84,34 +84,34 @@ pub(crate) trait PendingPremiseResolver: Send + Sync {
 }
 
 /// A compact, cloneable cause handle carried by one staged equality proposal.
-/// The match was already published when native head execution began, so the
+/// the firing was already published when native head execution began, so the
 /// handle needs no batch lifetime or promotion allocation.
 #[derive(Clone)]
-pub(crate) struct ObservedMatchBatch {
-    receipts: CausalReceipts,
-    first: RuleMatchId,
+pub(crate) struct ObservedFiringBatch {
+    trace: Trace,
+    first: FiringId,
     lanes: u32,
-    wave: CausalWave,
+    wave: Wave,
 }
 
 #[derive(Clone)]
-pub(crate) struct PendingRuleCause {
-    receipts: CausalReceipts,
-    matched: RuleMatchId,
-    wave: CausalWave,
+pub(crate) struct PendingFiringCause {
+    trace: Trace,
+    firing: FiringId,
+    wave: Wave,
 }
 
 #[derive(Clone)]
 pub(crate) struct PendingNativeLease(Arc<PendingNativeLeaseInner>);
 
 struct PendingNativeLeaseInner {
-    receipts: CausalReceipts,
-    wave: CausalWave,
+    trace: Trace,
+    wave: Wave,
 }
 
 impl Drop for PendingNativeLeaseInner {
     fn drop(&mut self) {
-        self.receipts
+        self.trace
             .0
             .open_native_leases
             .fetch_sub(1, Ordering::Release);
@@ -119,44 +119,43 @@ impl Drop for PendingNativeLeaseInner {
 }
 
 impl PendingNativeLease {
-    pub(crate) fn matches(&self, receipts: &CausalReceipts, wave: CausalWave) -> bool {
-        Arc::ptr_eq(&self.0.receipts.0, &receipts.0) && self.0.wave == wave
+    pub(crate) fn matches(&self, trace: &Trace, wave: Wave) -> bool {
+        Arc::ptr_eq(&self.0.trace.0, &trace.0) && self.0.wave == wave
     }
 }
 
-impl PendingRuleCause {
-    pub(crate) fn promote(&self) -> CauseRef {
-        CauseRef::rule(self.matched)
+impl PendingFiringCause {
+    pub(crate) fn promote(&self) -> PackedCauseRef {
+        PackedCauseRef::rule(self.firing)
     }
 
-    fn prepare(&self, receipts: &CausalReceipts, current_wave: CausalWave) -> Result<(), String> {
-        if !Arc::ptr_eq(&self.receipts.0, &receipts.0) {
+    fn prepare(&self, trace: &Trace, current_wave: Wave) -> Result<(), String> {
+        if !Arc::ptr_eq(&self.trace.0, &trace.0) {
             return Err(format!(
-                "observed match {:?} belongs to another causal receipt arena",
-                self.matched
+                "observed firing {:?} belongs to another causal trace arena",
+                self.firing
             ));
         }
         if self.wave != current_wave {
             return Err(format!(
-                "observed match {:?} from wave {:?} was used in wave {:?}",
-                self.matched, self.wave, current_wave
+                "observed firing {:?} from wave {:?} was used in wave {:?}",
+                self.firing, self.wave, current_wave
             ));
         }
         if self
-            .receipts
+            .trace
             .0
             .poisoned_rule_executions
             .load(Ordering::Acquire)
             != 0
         {
-            return Err("rule observation belongs to a panicking execution".into());
+            return Err("firing belongs to a panicking execution".into());
         }
         Ok(())
     }
 
     fn record_merge_read(&self, prior_fact: FactId) {
-        self.receipts
-            .record_observed_match_merge_read(self.matched, prior_fact);
+        self.trace.record_firing_merge_read(self.firing, prior_fact);
     }
 }
 
@@ -164,9 +163,9 @@ impl PendingRuleCause {
 #[derive(Clone, Debug)]
 pub struct PreparedRekey {
     table: TableId,
-    wave: CausalWave,
+    wave: Wave,
     prior_fact: FactId,
-    as_of_edges: EqualityEdgeCount,
+    as_of_edges: EdgeHorizon,
     /// Inclusive global history high-water captured before the rekey mutates
     /// native state. Unlike the rekey event position, zero is valid here.
     position: HistoryPosition,
@@ -182,9 +181,9 @@ impl PreparedRekey {
         &self,
     ) -> (
         TableId,
-        CausalWave,
+        Wave,
         FactId,
-        EqualityEdgeCount,
+        EdgeHorizon,
         HistoryPosition,
         &[TypedCellEquality],
     ) {
@@ -200,9 +199,9 @@ impl PreparedRekey {
 
     pub(crate) fn from_staged(
         table: TableId,
-        wave: CausalWave,
+        wave: Wave,
         prior_fact: FactId,
-        as_of_edges: EqualityEdgeCount,
+        as_of_edges: EdgeHorizon,
         position: HistoryPosition,
         equalities: &[TypedCellEquality],
     ) -> Self {
@@ -223,19 +222,19 @@ impl PreparedRekey {
 #[derive(Clone)]
 enum DeferredEqualityCauseKind {
     Ready {
-        cause: CauseRef,
+        cause: PackedCauseRef,
         equality: Option<EqualityCauseSummary>,
     },
-    Pending(PendingRuleCause),
+    Pending(PendingFiringCause),
     Merge(Arc<PendingMergeCause>),
 }
 
 struct PendingMergeCause {
-    receipts: CausalReceipts,
+    trace: Trace,
     incoming: DeferredEqualityCause,
     prior_fact: FactId,
     equality: EqualityCauseSummary,
-    cause: OnceLock<CauseRef>,
+    cause: OnceLock<PackedCauseRef>,
 }
 
 #[doc(hidden)]
@@ -243,7 +242,7 @@ struct PendingMergeCause {
 pub struct DeferredEqualityCause(DeferredEqualityCauseKind);
 
 impl DeferredEqualityCause {
-    pub(crate) fn ready(cause: impl Into<CauseRef>) -> Self {
+    pub(crate) fn ready(cause: impl Into<PackedCauseRef>) -> Self {
         let cause = cause.into();
         assert!(
             !cause.is_unattributed(),
@@ -257,37 +256,37 @@ impl DeferredEqualityCause {
 
     pub(crate) fn capability(cause: CauseCapability) -> Self {
         Self(DeferredEqualityCauseKind::Ready {
-            cause: CauseRef::node(cause.id),
+            cause: PackedCauseRef::node(cause.id),
             equality: Some(cause.equality),
         })
     }
 
-    pub(crate) fn promote(&self) -> CauseRef {
+    pub(crate) fn promote(&self) -> PackedCauseRef {
         match &self.0 {
             DeferredEqualityCauseKind::Ready { cause, .. } => *cause,
             DeferredEqualityCauseKind::Pending(cause) => cause.promote(),
             DeferredEqualityCauseKind::Merge(cause) => *cause
                 .cause
-                .get_or_init(|| cause.receipts.promote_pending_merge_cause(cause)),
+                .get_or_init(|| cause.trace.promote_pending_merge_cause(cause)),
         }
     }
 
-    pub(crate) fn ready_id(&self) -> Option<CauseRef> {
+    pub(crate) fn ready_id(&self) -> Option<PackedCauseRef> {
         match &self.0 {
             DeferredEqualityCauseKind::Ready { cause, .. } => Some(*cause),
             DeferredEqualityCauseKind::Pending(_) | DeferredEqualityCauseKind::Merge(_) => None,
         }
     }
 
-    fn originating_rule(&self) -> Option<RuleMatchId> {
+    fn originating_rule(&self) -> Option<FiringId> {
         match &self.0 {
-            DeferredEqualityCauseKind::Ready { cause, .. } => cause.rule_match(),
-            DeferredEqualityCauseKind::Pending(cause) => Some(cause.matched),
+            DeferredEqualityCauseKind::Ready { cause, .. } => cause.firing(),
+            DeferredEqualityCauseKind::Pending(cause) => Some(cause.firing),
             DeferredEqualityCauseKind::Merge(cause) => cause.incoming.originating_rule(),
         }
     }
 
-    pub(crate) fn pending(cause: PendingRuleCause) -> Self {
+    pub(crate) fn pending(cause: PendingFiringCause) -> Self {
         Self(DeferredEqualityCauseKind::Pending(cause))
     }
 
@@ -302,7 +301,7 @@ impl DeferredEqualityCause {
         }
     }
 
-    fn equality_summary(&self, receipts: &CausalReceipts) -> EqualityCauseSummary {
+    fn equality_summary(&self, trace: &Trace) -> EqualityCauseSummary {
         match &self.0 {
             DeferredEqualityCauseKind::Ready {
                 cause: _,
@@ -312,10 +311,10 @@ impl DeferredEqualityCause {
                 cause,
                 equality: None,
             } => {
-                if cause.rule_match().is_some() {
+                if cause.firing().is_some() {
                     return EqualityCauseSummary::Rule;
                 }
-                let arena = receipts.0.arena.lock().unwrap();
+                let arena = trace.0.arena.lock().unwrap();
                 arena
                     .cause_summary(cause.cause_node().expect("ready cause has no node id"))
                     .unwrap_or_else(|error| panic!("cannot classify deferred cause: {error}"))
@@ -325,33 +324,25 @@ impl DeferredEqualityCause {
         }
     }
 
-    pub(crate) fn prepare(
-        &self,
-        receipts: &CausalReceipts,
-        current_wave: CausalWave,
-    ) -> Result<(), String> {
-        self.equality_summary(receipts)
+    pub(crate) fn prepare(&self, trace: &Trace, current_wave: Wave) -> Result<(), String> {
+        self.equality_summary(trace)
             .validate()
             .map_err(str::to_owned)?;
-        self.prepare_dependencies(receipts, current_wave)
+        self.prepare_dependencies(trace, current_wave)
     }
 
-    fn prepare_dependencies(
-        &self,
-        receipts: &CausalReceipts,
-        current_wave: CausalWave,
-    ) -> Result<(), String> {
+    fn prepare_dependencies(&self, trace: &Trace, current_wave: Wave) -> Result<(), String> {
         match &self.0 {
-            DeferredEqualityCauseKind::Ready { cause, .. } => match cause.rule_match() {
-                Some(matched) => receipts.prepare_observed_rule_match(matched, current_wave),
+            DeferredEqualityCauseKind::Ready { cause, .. } => match cause.firing() {
+                Some(firing) => trace.prepare_firing(firing, current_wave),
                 None => Ok(()),
             },
-            DeferredEqualityCauseKind::Pending(cause) => cause.prepare(receipts, current_wave),
+            DeferredEqualityCauseKind::Pending(cause) => cause.prepare(trace, current_wave),
             // A direct rebuild is invalid as a root equality cause but valid
             // beneath a merge that supplies its prior fact. Prepare its lazy
             // payload without re-validating the child as a standalone root.
             DeferredEqualityCauseKind::Merge(cause) => {
-                cause.incoming.prepare_dependencies(receipts, current_wave)
+                cause.incoming.prepare_dependencies(trace, current_wave)
             }
         }
     }
@@ -361,7 +352,7 @@ impl DeferredEqualityCause {
 pub(crate) enum PreparedRemoval {
     Tracked {
         removed_fact: FactId,
-        cause: RuleMatchId,
+        cause: FiringId,
     },
     PresenceRelation,
 }
@@ -369,7 +360,7 @@ pub(crate) enum PreparedRemoval {
 #[derive(Clone, Debug)]
 enum CauseDraft {
     Merge {
-        incoming: CauseRef,
+        incoming: PackedCauseRef,
         prior: PriorVersion,
     },
 }
@@ -386,7 +377,7 @@ impl EqualityCauseError {
     fn message(self) -> &'static str {
         match self {
             EqualityCauseError::Source => {
-                "unsupported equality cause: source receipts cannot justify a union"
+                "unsupported equality cause: source trace cannot justify a union"
             }
             EqualityCauseError::Mixed => {
                 "unsupported equality cause: merge DAG mixes rule and rebuild proposals"
@@ -406,13 +397,13 @@ pub(crate) enum EqualityCauseSummary {
     Source,
     Rule,
     Container {
-        wave: CausalWave,
-        as_of_edges: EqualityEdgeCount,
+        wave: Wave,
+        as_of_edges: EdgeHorizon,
         position: HistoryPosition,
     },
     Rebuild {
-        wave: CausalWave,
-        as_of_edges: EqualityEdgeCount,
+        wave: Wave,
+        as_of_edges: EdgeHorizon,
         position: HistoryPosition,
         complete: bool,
     },
@@ -507,42 +498,42 @@ impl CauseCapability {
         self.id
     }
 
-    pub(crate) fn cause_ref(self) -> CauseRef {
-        CauseRef::node(self.id)
+    pub(crate) fn cause_ref(self) -> PackedCauseRef {
+        PackedCauseRef::node(self.id)
     }
 }
 
 #[derive(Clone, Copy, Debug)]
 enum PriorVersion {
     Fact(FactId),
-    Cause(CauseRef),
+    Cause(PackedCauseRef),
 }
 
 #[derive(Clone, Debug)]
 enum DurableCause {
     Source(SourceRef),
     Rebuild {
-        wave: CausalWave,
+        wave: Wave,
         prior_fact: FactId,
-        as_of_edges: EqualityEdgeCount,
+        as_of_edges: EdgeHorizon,
         position: HistoryPosition,
         equalities: FlatRange,
     },
     ContainerCanonicalize {
-        wave: CausalWave,
-        as_of_edges: EqualityEdgeCount,
+        wave: Wave,
+        as_of_edges: EdgeHorizon,
         position: HistoryPosition,
         equalities: FlatRange,
     },
     ContainerRefresh {
-        wave: CausalWave,
+        wave: Wave,
         prior_fact: FactId,
-        as_of_edges: EqualityEdgeCount,
+        as_of_edges: EdgeHorizon,
         position: HistoryPosition,
         equalities: FlatRange,
     },
     Merge {
-        incoming: CauseRef,
+        incoming: PackedCauseRef,
         prior: DurablePrior,
     },
 }
@@ -550,7 +541,7 @@ enum DurableCause {
 #[derive(Clone, Copy, Debug)]
 enum DurablePrior {
     Fact(FactId),
-    Cause(CauseRef),
+    Cause(PackedCauseRef),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -593,7 +584,7 @@ pub(crate) enum PreparedFactOrigin {
 struct PendingFact {
     table: TableId,
     position: HistoryPosition,
-    cause: CauseRef,
+    cause: PackedCauseRef,
     values: FlatRange,
     origin: Option<FactOrigin>,
 }
@@ -602,7 +593,7 @@ struct PendingFact {
 struct DurableFact {
     table: TableId,
     position: HistoryPosition,
-    cause: CauseRef,
+    cause: PackedCauseRef,
     values: FlatRange,
     origin: Option<FactOrigin>,
 }
@@ -613,7 +604,7 @@ struct PendingEquality {
     proposal: AppliedEqualityProposal,
     native_parent: crate::Value,
     native_child: crate::Value,
-    cause: CauseRef,
+    cause: PackedCauseRef,
 }
 
 struct DurableEquality {
@@ -621,41 +612,41 @@ struct DurableEquality {
     proposal: AppliedEqualityProposal,
     native_parent: crate::Value,
     native_child: crate::Value,
-    cause: CauseRef,
+    cause: PackedCauseRef,
 }
 
 #[derive(Clone, Debug)]
-struct DurableMatch {
+struct DurableFiring {
     rule: u32,
-    wave: CausalWave,
+    wave: Wave,
     position: HistoryPosition,
-    as_of_edges: EqualityEdgeCount,
+    as_of_edges: EdgeHorizon,
     premises: FlatRange,
 }
 
 #[derive(Default)]
-struct ReceiptArena {
+struct TraceArena {
     facts: Vec<Option<DurableFact>>,
-    durable_matches: Vec<Option<DurableMatch>>,
+    durable_firings: Vec<Option<DurableFiring>>,
     durable_premises: Vec<FactId>,
-    /// Sparse because ordinary matches never invoke a merge callback.
-    merge_reads: HashMap<RuleMatchId, SmallVec<[FactId; 2]>>,
+    /// Sparse because ordinary firings never invoke a merge callback.
+    merge_reads: HashMap<FiringId, SmallVec<[FactId; 2]>>,
     durable_fact_values: Vec<Value>,
     durable_merge_cell_origins: Vec<MergeCellOrigin>,
     durable_rebuild_equalities: Vec<TypedCellEquality>,
     durable_causes: Vec<Option<(DurableCause, EqualityCauseSummary)>>,
     durable_equalities: Vec<Option<DurableEquality>>,
     rekeys: Vec<RekeyRecord>,
-    removals: Vec<RemovalRecord>,
-    check_roots: HashMap<u32, CheckRoot>,
+    removals: Vec<Tombstone>,
+    check_roots: HashMap<u32, Criterion>,
     published_facts: u64,
-    published_matches: u64,
+    published_firings: u64,
     published_causes: u64,
     published_equalities: u64,
-    counters: ReceiptCounters,
+    counters: CaptureCounters,
 }
 
-impl ReceiptArena {
+impl TraceArena {
     fn install_fact(&mut self, id: FactId, fact: DurableFact) {
         let index: usize = (id.get() - 1).try_into().expect("FactId overflow");
         if self.facts.len() <= index {
@@ -706,14 +697,14 @@ impl ReceiptArena {
         self.published_equalities += 1;
     }
 
-    fn record_match_term_storage(&mut self, logical: usize, stored: usize) {
+    fn record_firing_term_storage(&mut self, logical: usize, stored: usize) {
         let logical = logical as u64;
         let stored = stored as u64;
         let handle_bytes = mem::size_of::<ReplayTermId>() as u64;
-        self.counters.logical_match_term_handles += logical;
-        self.counters.stored_match_term_handles += stored;
-        self.counters.logical_match_term_bytes += logical * handle_bytes;
-        self.counters.stored_match_term_bytes += stored * handle_bytes;
+        self.counters.logical_firing_term_handles += logical;
+        self.counters.stored_firing_term_handles += stored;
+        self.counters.logical_firing_term_bytes += logical * handle_bytes;
+        self.counters.stored_firing_term_bytes += stored * handle_bytes;
     }
 
     fn has_fact(&self, id: FactId) -> bool {
@@ -743,9 +734,9 @@ impl ReceiptArena {
             .ok_or("cause node has not been published")
     }
 
-    fn originating_rule(&self, mut cause: CauseRef) -> Option<RuleMatchId> {
+    fn originating_rule(&self, mut cause: PackedCauseRef) -> Option<FiringId> {
         loop {
-            if let Some(rule) = cause.rule_match() {
+            if let Some(rule) = cause.firing() {
                 return Some(rule);
             }
             let node = cause.cause_node()?;
@@ -759,15 +750,15 @@ impl ReceiptArena {
         }
     }
 
-    fn equality_reason(&self, root: CauseRef) -> EqualityReason {
-        let summary = if root.rule_match().is_some() {
+    fn equality_reason(&self, root: PackedCauseRef) -> EqualityReason {
+        let summary = if root.firing().is_some() {
             EqualityCauseSummary::Rule
         } else {
             self.cause_summary(root.cause_node().expect("equality cause is unattributed"))
                 .expect("applied equality cause has no classification")
         };
         summary.validate().unwrap_or_else(|error| panic!("{error}"));
-        if let Some(rule) = root.rule_match() {
+        if let Some(rule) = root.firing() {
             return EqualityReason::RuleUnion(rule);
         }
         let node = root.cause_node().expect("equality cause is unattributed");
@@ -816,9 +807,9 @@ impl ReceiptArena {
     }
 }
 
-struct ReceiptShared {
+struct TraceShared {
     next_fact: AtomicU64,
-    next_rule_match: AtomicU64,
+    next_firing: AtomicU64,
     next_term: AtomicU32,
     next_equality: AtomicU64,
     next_history: AtomicU64,
@@ -828,9 +819,9 @@ struct ReceiptShared {
     abandoned_fragments: AtomicU64,
     poisoned_rule_executions: AtomicU64,
     view_active: AtomicBool,
-    replay_terms: ReplayTermStore,
+    replay_terms: TermInterner,
     equality_value_sorts: Mutex<HashMap<Value, ReplaySortId>>,
-    equality_wave_timestamp: Mutex<Option<(CausalWave, Value)>>,
+    equality_wave_timestamp: Mutex<Option<(Wave, Value)>>,
     /// One canonical source-order binding recipe per source-level rule.
     rule_binding_recipes: RwLock<HashMap<u32, Arc<[ReplayBindingSource]>>>,
     /// Every exact premise-cell/constant equality enforced by the lowered
@@ -839,14 +830,14 @@ struct ReceiptShared {
         RwLock<HashMap<u32, Arc<[(ReplayEqualitySource, ReplayEqualitySource)]>>>,
     /// Cold compile-time recipes shared by every seminaive/decomposed variant.
     static_term_recipes: Mutex<StaticTermRecipeStore>,
-    arena: Mutex<ReceiptArena>,
+    arena: Mutex<TraceArena>,
 }
 
-impl Default for ReceiptShared {
+impl Default for TraceShared {
     fn default() -> Self {
         Self {
             next_fact: AtomicU64::new(0),
-            next_rule_match: AtomicU64::new(0),
+            next_firing: AtomicU64::new(0),
             next_term: AtomicU32::new(0),
             next_equality: AtomicU64::new(0),
             next_history: AtomicU64::new(0),
@@ -856,28 +847,28 @@ impl Default for ReceiptShared {
             abandoned_fragments: AtomicU64::new(0),
             poisoned_rule_executions: AtomicU64::new(0),
             view_active: AtomicBool::new(false),
-            replay_terms: ReplayTermStore::default(),
+            replay_terms: TermInterner::default(),
             equality_value_sorts: Mutex::new(HashMap::default()),
             equality_wave_timestamp: Mutex::new(None),
             rule_binding_recipes: RwLock::new(HashMap::default()),
             rule_equality_recipes: RwLock::new(HashMap::default()),
             static_term_recipes: Mutex::new(StaticTermRecipeStore::default()),
-            arena: Mutex::new(ReceiptArena::default()),
+            arena: Mutex::new(TraceArena::default()),
         }
     }
 }
 
-impl ReceiptShared {
+impl TraceShared {
     fn alloc_u64(counter: &AtomicU64, count: usize) -> u64 {
         assert!(count > 0);
         counter.fetch_add(count as u64, Ordering::Relaxed) + 1
     }
 }
 
-/// A worker/shard-local receipt fragment. It performs no locking while native
+/// A worker/shard-local capture fragment. It performs no locking while native
 /// rows are merged and publishes once at the surrounding engine barrier.
-pub(crate) struct ReceiptBatch {
-    shared: Arc<ReceiptShared>,
+pub(crate) struct CaptureBatch {
+    shared: Arc<TraceShared>,
     drafts: Vec<(CauseDraftId, CauseDraft)>,
     draft_summaries: HashMap<CauseDraftId, EqualityCauseSummary>,
     facts: Vec<(FactId, PendingFact)>,
@@ -889,8 +880,8 @@ pub(crate) struct ReceiptBatch {
     published: bool,
 }
 
-impl ReceiptBatch {
-    fn new(shared: Arc<ReceiptShared>) -> Self {
+impl CaptureBatch {
+    fn new(shared: Arc<TraceShared>) -> Self {
         shared.open_fragments.fetch_add(1, Ordering::Relaxed);
         Self {
             shared,
@@ -908,16 +899,16 @@ impl ReceiptBatch {
 
     pub(crate) fn merge_draft_capability(
         &mut self,
-        incoming: CauseRef,
+        incoming: PackedCauseRef,
         prior_fact: FactId,
     ) -> CauseCapability {
         assert!(
             !incoming.is_unattributed(),
-            "merge receipt is missing its incoming cause"
+            "merge capture is missing its incoming cause"
         );
         assert!(
             !prior_fact.is_missing(),
-            "merge receipt is missing its prior FactId"
+            "merge capture is missing its prior FactId"
         );
         let equality = self.cause_summary(incoming).with_prior_fact(prior_fact);
         self.add_draft(
@@ -932,9 +923,9 @@ impl ReceiptBatch {
     #[cfg(test)]
     pub(crate) fn merge_drafts(
         &mut self,
-        incoming: impl Into<CauseRef>,
-        prior: impl Into<CauseRef>,
-    ) -> ReceiptCauseRef {
+        incoming: impl Into<PackedCauseRef>,
+        prior: impl Into<PackedCauseRef>,
+    ) -> CauseRef {
         self.merge_drafts_capability(incoming.into(), prior.into())
             .cause_ref()
             .into()
@@ -942,12 +933,12 @@ impl ReceiptBatch {
 
     pub(crate) fn merge_drafts_capability(
         &mut self,
-        incoming: CauseRef,
-        prior: CauseRef,
+        incoming: PackedCauseRef,
+        prior: PackedCauseRef,
     ) -> CauseCapability {
         assert!(
             !incoming.is_unattributed() && !prior.is_unattributed(),
-            "same-wave merge receipt is missing an exact proposal cause"
+            "same-wave merge capture is missing an exact proposal cause"
         );
         let equality = self
             .cause_summary(incoming)
@@ -961,8 +952,8 @@ impl ReceiptBatch {
         )
     }
 
-    fn cause_summary(&self, cause: CauseRef) -> EqualityCauseSummary {
-        if cause.rule_match().is_some() {
+    fn cause_summary(&self, cause: PackedCauseRef) -> EqualityCauseSummary {
+        if cause.firing().is_some() {
             return EqualityCauseSummary::Rule;
         }
         let cause = cause.cause_node().expect("merge cause is unattributed");
@@ -978,11 +969,11 @@ impl ReceiptBatch {
     /// Prime published cause classifications once for an entire native row
     /// batch. Merge callbacks then consult only this worker-local map, avoiding
     /// one global arena lock for every colliding row.
-    pub(crate) fn preload_cause_summaries(&mut self, causes: &[CauseRef]) {
+    pub(crate) fn preload_cause_summaries(&mut self, causes: &[PackedCauseRef]) {
         for cause in causes {
             assert!(
                 !cause.is_unattributed(),
-                "receipt-enabled table proposal has no exact cause"
+                "capture-enabled table proposal has no exact cause"
             );
         }
         let mut error = None;
@@ -990,7 +981,7 @@ impl ReceiptBatch {
             let shared = Arc::clone(&self.shared);
             let arena = shared.arena.lock().unwrap();
             for cause in causes {
-                if cause.rule_match().is_some() {
+                if cause.firing().is_some() {
                     continue;
                 }
                 let cause = cause.cause_node().expect("merge cause is unattributed");
@@ -1014,7 +1005,7 @@ impl ReceiptBatch {
     }
 
     fn add_draft(&mut self, draft: CauseDraft, equality: EqualityCauseSummary) -> CauseCapability {
-        let id = CauseDraftId::new(ReceiptShared::alloc_u64(&self.shared.next_cause_draft, 1));
+        let id = CauseDraftId::new(TraceShared::alloc_u64(&self.shared.next_cause_draft, 1));
         self.drafts.push((id, draft));
         assert!(self.draft_summaries.insert(id, equality).is_none());
         CauseCapability { id, equality }
@@ -1023,7 +1014,7 @@ impl ReceiptBatch {
     pub(crate) fn record_fact(
         &mut self,
         table: TableId,
-        cause: impl Into<CauseRef>,
+        cause: impl Into<PackedCauseRef>,
         row: &[Value],
     ) -> FactId {
         self.push_fact(table, cause.into(), row, None)
@@ -1036,7 +1027,7 @@ impl ReceiptBatch {
     pub(crate) fn record_fact_with_origin(
         &mut self,
         table: TableId,
-        cause: impl Into<CauseRef>,
+        cause: impl Into<PackedCauseRef>,
         row: &[Value],
         origin: RowOriginSiteId,
     ) -> FactId {
@@ -1056,7 +1047,7 @@ impl ReceiptBatch {
     pub(crate) fn record_fact_from_prior(
         &mut self,
         table: TableId,
-        cause: impl Into<CauseRef>,
+        cause: impl Into<PackedCauseRef>,
         row: &[Value],
         prior_fact: FactId,
     ) -> FactId {
@@ -1072,7 +1063,7 @@ impl ReceiptBatch {
     pub(crate) fn record_merged_fact(
         &mut self,
         table: TableId,
-        cause: impl Into<CauseRef>,
+        cause: impl Into<PackedCauseRef>,
         row: &[Value],
         prepared: PreparedFactOrigin,
     ) -> FactId {
@@ -1106,7 +1097,7 @@ impl ReceiptBatch {
     fn push_fact(
         &mut self,
         table: TableId,
-        cause: CauseRef,
+        cause: PackedCauseRef,
         row: &[Value],
         origin: Option<FactOrigin>,
     ) -> FactId {
@@ -1114,12 +1105,12 @@ impl ReceiptBatch {
             !cause.is_unattributed(),
             "effective commit is missing exact causal attribution"
         );
-        let id = FactId::new(ReceiptShared::alloc_u64(&self.shared.next_fact, 1));
-        let position = HistoryPosition::new(ReceiptShared::alloc_u64(&self.shared.next_history, 1));
+        let id = FactId::new(TraceShared::alloc_u64(&self.shared.next_fact, 1));
+        let position = HistoryPosition::new(TraceShared::alloc_u64(&self.shared.next_history, 1));
         if let Some((last, _)) = self.facts.last() {
             debug_assert!(
                 *last < id,
-                "ReceiptBatch FactIds must remain strictly increasing"
+                "CaptureBatch FactIds must remain strictly increasing"
             );
         }
         let values = FlatRange::new(self.fact_values.len(), row.len());
@@ -1146,14 +1137,14 @@ impl ReceiptBatch {
         proposal: AppliedEqualityProposal,
         native_parent: crate::Value,
         native_child: crate::Value,
-        cause: CauseRef,
+        cause: PackedCauseRef,
     ) -> AppliedEqualityId {
         assert!(
             !cause.is_unattributed(),
             "applied union is missing exact causal attribution"
         );
-        let id = AppliedEqualityId::new(ReceiptShared::alloc_u64(&self.shared.next_equality, 1));
-        let position = HistoryPosition::new(ReceiptShared::alloc_u64(&self.shared.next_history, 1));
+        let id = AppliedEqualityId::new(TraceShared::alloc_u64(&self.shared.next_equality, 1));
+        let position = HistoryPosition::new(TraceShared::alloc_u64(&self.shared.next_history, 1));
         self.equalities.push((
             id,
             PendingEquality {
@@ -1236,7 +1227,7 @@ impl ReceiptBatch {
     }
 }
 
-impl Drop for ReceiptBatch {
+impl Drop for CaptureBatch {
     fn drop(&mut self) {
         if self.published {
             return;
@@ -1257,11 +1248,11 @@ impl Drop for ReceiptBatch {
     }
 }
 
-/// Shared read/finalization handle to the database's causal receipt arena.
+/// Shared read/finalization handle to the database's causal trace arena.
 #[derive(Clone, Default)]
-pub struct CausalReceipts(Arc<ReceiptShared>);
+pub struct Trace(Arc<TraceShared>);
 
-impl CausalReceipts {
+impl Trace {
     pub(crate) fn poison_rule_execution(&self) {
         self.0
             .poisoned_rule_executions
@@ -1275,8 +1266,8 @@ impl CausalReceipts {
         HistoryPosition::new(self.0.next_history.load(Ordering::Acquire))
     }
 
-    fn equality_boundary(&self) -> EqualityEdgeCount {
-        EqualityEdgeCount::new(self.0.next_equality.load(Ordering::Acquire))
+    fn equality_boundary(&self) -> EdgeHorizon {
+        EdgeHorizon::new(self.0.next_equality.load(Ordering::Acquire))
     }
 
     pub(crate) fn register_row_origin(&self, spec: RowOriginSpec) -> RowOriginSiteId {
@@ -1317,7 +1308,7 @@ impl CausalReceipts {
 
     pub(crate) fn typed_equality_proposal_from_sites(
         &self,
-        wave: CausalWave,
+        wave: Wave,
         sort: ReplaySortId,
         left: Value,
         left_site: TermOriginSiteId,
@@ -1394,12 +1385,12 @@ impl CausalReceipts {
                 ReplayBindingSource::Current { residual, .. } => {
                     assert_eq!(
                         *residual, next_residual,
-                        "rule receipt Current slots must be dense in source order"
+                        "rule capture Current slots must be dense in source order"
                     );
                     next_residual += 1;
                 }
                 ReplayBindingSource::Constant { term } => {
-                    assert!(!term.is_missing(), "rule receipt constant term is missing");
+                    assert!(!term.is_missing(), "rule capture constant term is missing");
                 }
                 ReplayBindingSource::Premise {
                     representative,
@@ -1407,11 +1398,11 @@ impl CausalReceipts {
                 } => {
                     assert!(
                         !occurrences.is_empty(),
-                        "rule receipt premise binding has no occurrences"
+                        "rule capture premise binding has no occurrences"
                     );
                     assert!(
                         occurrences.contains(representative),
-                        "rule receipt representative is not one of its premise occurrences"
+                        "rule capture representative is not one of its premise occurrences"
                     );
                 }
             }
@@ -1466,10 +1457,10 @@ impl CausalReceipts {
         recipe
     }
 
-    pub(crate) fn pending_native_lease(&self, wave: CausalWave) -> PendingNativeLease {
+    pub(crate) fn pending_native_lease(&self, wave: Wave) -> PendingNativeLease {
         self.0.open_native_leases.fetch_add(1, Ordering::Relaxed);
         PendingNativeLease(Arc::new(PendingNativeLeaseInner {
-            receipts: self.clone(),
+            trace: self.clone(),
             wave,
         }))
     }
@@ -1695,7 +1686,7 @@ impl CausalReceipts {
     /// Whether an effective physical row replacement changes any
     /// replay-visible logical column. Timestamp and subsumption columns have
     /// no replay sort, so a mark-only subsume keeps the prior immutable
-    /// FactId and does not promote its rule match.
+    /// FactId and does not promote its firing.
     pub(crate) fn logical_row_changed(
         &self,
         table: TableId,
@@ -1870,22 +1861,22 @@ impl CausalReceipts {
     /// Capture one complete applied-edge prefix at the native rebuild
     /// barrier. A bare counter read is insufficient: every allocated edge up
     /// to the cutoff must already have been published without holes.
-    pub(crate) fn equality_edge_count(&self) -> Result<EqualityEdgeCount, &'static str> {
+    pub(crate) fn equality_edge_count(&self) -> Result<EdgeHorizon, &'static str> {
         if self.0.open_fragments.load(Ordering::Acquire) != 0 {
-            return Err("cannot start rebuild with open receipt fragments");
+            return Err("cannot start rebuild with open capture fragments");
         }
         if self.0.abandoned_fragments.load(Ordering::Acquire) != 0 {
-            return Err("cannot start rebuild after an abandoned receipt fragment");
+            return Err("cannot start rebuild after an abandoned capture fragment");
         }
         let count = self.0.next_equality.load(Ordering::Acquire);
         let arena = self.0.arena.lock().unwrap();
         if self.0.open_fragments.load(Ordering::Acquire) != 0 {
-            return Err("receipt fragment opened while capturing rebuild equality cutoff");
+            return Err("capture fragment opened while capturing rebuild equality cutoff");
         }
         if count != arena.published_equalities {
             return Err("rebuild equality cutoff is not one complete dense prefix");
         }
-        Ok(EqualityEdgeCount::new(count))
+        Ok(EdgeHorizon::new(count))
     }
 
     pub(crate) fn validate_deferred_equality_cause(
@@ -1901,7 +1892,7 @@ impl CausalReceipts {
     pub(crate) fn prepare_removal(
         &self,
         table: TableId,
-        wave: CausalWave,
+        wave: Wave,
         removed_fact: FactId,
         cause: &DeferredEqualityCause,
     ) -> Result<PreparedRemoval, String> {
@@ -1910,7 +1901,7 @@ impl CausalReceipts {
         }
         cause.prepare(self, wave)?;
         let cause = cause.originating_rule().ok_or_else(|| {
-            "causal receipts support named-rule removals only; source/top-level removal is unsupported"
+            "causal trace support named-rule removals only; source/top-level removal is unsupported"
                 .to_owned()
         })?;
         let arena = self.0.arena.lock().unwrap();
@@ -1941,7 +1932,7 @@ impl CausalReceipts {
     /// before the table's pending writes are merged.
     pub(crate) fn record_removals(
         &self,
-        wave: CausalWave,
+        wave: Wave,
         removals: impl IntoIterator<Item = PreparedRemoval>,
     ) {
         let as_of_edges = self.equality_boundary();
@@ -1952,12 +1943,9 @@ impl CausalReceipts {
                 PreparedRemoval::Tracked {
                     removed_fact,
                     cause,
-                } => tracked.push(RemovalRecord {
+                } => tracked.push(Tombstone {
                     wave,
-                    position: HistoryPosition::new(ReceiptShared::alloc_u64(
-                        &self.0.next_history,
-                        1,
-                    )),
+                    position: HistoryPosition::new(TraceShared::alloc_u64(&self.0.next_history, 1)),
                     as_of_edges,
                     removed_fact,
                     cause,
@@ -1981,12 +1969,12 @@ impl CausalReceipts {
     ) -> DeferredEqualityCause {
         assert!(
             !prior_fact.is_missing(),
-            "deferred merge receipt is missing its prior FactId"
+            "deferred merge capture is missing its prior FactId"
         );
         let equality = incoming.equality_summary(self).with_prior_fact(prior_fact);
         DeferredEqualityCause(DeferredEqualityCauseKind::Merge(Arc::new(
             PendingMergeCause {
-                receipts: self.clone(),
+                trace: self.clone(),
                 incoming,
                 prior_fact,
                 equality,
@@ -1995,10 +1983,10 @@ impl CausalReceipts {
         )))
     }
 
-    fn promote_pending_merge_cause(&self, cause: &PendingMergeCause) -> CauseRef {
-        assert!(Arc::ptr_eq(&self.0, &cause.receipts.0));
+    fn promote_pending_merge_cause(&self, cause: &PendingMergeCause) -> PackedCauseRef {
+        assert!(Arc::ptr_eq(&self.0, &cause.trace.0));
         let incoming = cause.incoming.promote();
-        let id = CauseDraftId::new(ReceiptShared::alloc_u64(&self.0.next_cause_draft, 1));
+        let id = CauseDraftId::new(TraceShared::alloc_u64(&self.0.next_cause_draft, 1));
         let mut arena = self.0.arena.lock().unwrap();
         arena.install_cause(
             id,
@@ -2008,7 +1996,7 @@ impl CausalReceipts {
             },
             cause.equality,
         );
-        CauseRef::node(id)
+        PackedCauseRef::node(id)
     }
 
     pub(crate) fn cause_capability(&self, cause: CauseDraftId) -> CauseCapability {
@@ -2024,7 +2012,7 @@ impl CausalReceipts {
 
     pub(crate) fn validate_equality_wave_timestamp(
         &self,
-        wave: CausalWave,
+        wave: Wave,
         timestamp: Value,
     ) -> Result<(), &'static str> {
         let mut current = self.0.equality_wave_timestamp.lock().unwrap();
@@ -2054,12 +2042,12 @@ impl CausalReceipts {
     pub(crate) fn prepare_rekey(
         &self,
         table: TableId,
-        wave: CausalWave,
+        wave: Wave,
         prior_fact: FactId,
         old_row: &[Value],
         new_row: &[Value],
         rebuild_columns: &[crate::ColumnId],
-        as_of_edges: EqualityEdgeCount,
+        as_of_edges: EdgeHorizon,
     ) -> Result<PreparedRekey, &'static str> {
         let position = self.history_boundary();
         if prior_fact.is_missing() {
@@ -2105,7 +2093,7 @@ impl CausalReceipts {
             });
         }
         if pairs.is_empty() {
-            return Err("rebuild receipt has no changed semantic column");
+            return Err("rebuild capture has no changed semantic column");
         }
 
         let arena = self.0.arena.lock().unwrap();
@@ -2142,7 +2130,7 @@ impl CausalReceipts {
         arena
             .durable_rebuild_equalities
             .extend_from_slice(&rekey.equalities);
-        let id = CauseDraftId::new(ReceiptShared::alloc_u64(&self.0.next_cause_draft, 1));
+        let id = CauseDraftId::new(TraceShared::alloc_u64(&self.0.next_cause_draft, 1));
         arena.install_cause(
             id,
             DurableCause::Rebuild {
@@ -2173,7 +2161,7 @@ impl CausalReceipts {
         {
             return;
         }
-        let position = HistoryPosition::new(ReceiptShared::alloc_u64(&self.0.next_history, 1));
+        let position = HistoryPosition::new(TraceShared::alloc_u64(&self.0.next_history, 1));
         let mut arena = self.0.arena.lock().unwrap();
         arena.rekeys.push(RekeyRecord {
             fact: rekey.prior_fact,
@@ -2203,10 +2191,10 @@ impl CausalReceipts {
         journal: &ContainerAnchorJournal,
         container_type: TypeId,
         outer_raw: Value,
-        wave: CausalWave,
+        wave: Wave,
         before: &[Value],
         after: &[Value],
-        as_of_edges: EqualityEdgeCount,
+        as_of_edges: EdgeHorizon,
     ) -> Result<SmallVec<[ContainerVersionDependency; 2]>, &'static str> {
         let position = self.history_boundary();
         if before.len() != after.len() {
@@ -2387,10 +2375,10 @@ impl CausalReceipts {
         &self,
         journal: &ContainerAnchorJournal,
         container_type: TypeId,
-        wave: CausalWave,
+        wave: Wave,
         left: Value,
         right: Value,
-        as_of_edges: EqualityEdgeCount,
+        as_of_edges: EdgeHorizon,
     ) -> Result<(CauseCapability, TypedEqualityProposal), &'static str> {
         let position = self.history_boundary();
         let anchor_pairs =
@@ -2508,7 +2496,7 @@ impl CausalReceipts {
         let mut arena = self.0.arena.lock().unwrap();
         let equalities = FlatRange::new(arena.durable_rebuild_equalities.len(), pairs.len());
         arena.durable_rebuild_equalities.extend_from_slice(&pairs);
-        let id = CauseDraftId::new(ReceiptShared::alloc_u64(&self.0.next_cause_draft, 1));
+        let id = CauseDraftId::new(TraceShared::alloc_u64(&self.0.next_cause_draft, 1));
         let summary = EqualityCauseSummary::Container {
             wave,
             as_of_edges,
@@ -2589,7 +2577,7 @@ impl CausalReceipts {
         arena
             .durable_rebuild_equalities
             .extend_from_slice(&dependency.equalities.pairs);
-        let id = CauseDraftId::new(ReceiptShared::alloc_u64(&self.0.next_cause_draft, 1));
+        let id = CauseDraftId::new(TraceShared::alloc_u64(&self.0.next_cause_draft, 1));
         arena.install_cause(
             id,
             DurableCause::ContainerRefresh {
@@ -2990,11 +2978,11 @@ impl CausalReceipts {
     pub(crate) fn record_check_root(
         &self,
         check: u32,
-        wave: CausalWave,
+        wave: Wave,
         premises: &[FactId],
         equalities: &[(EqualityEndpoint, EqualityEndpoint)],
-        equality_occurrences: &[(CheckEndpointOccurrence, CheckEndpointOccurrence)],
-        as_of_edges: EqualityEdgeCount,
+        equality_occurrences: &[(CriterionEndpointOccurrence, CriterionEndpointOccurrence)],
+        as_of_edges: EdgeHorizon,
     ) -> Result<(), &'static str> {
         if premises.iter().any(|fact| fact.is_missing()) {
             return Err("check root has a missing exact premise FactId");
@@ -3011,8 +2999,8 @@ impl CausalReceipts {
             let distinct_fact_cells = matches!(
                 (left_occurrence, right_occurrence),
                 (
-                    CheckEndpointOccurrence::FactCell(left),
-                    CheckEndpointOccurrence::FactCell(right),
+                    CriterionEndpointOccurrence::FactCell(left),
+                    CriterionEndpointOccurrence::FactCell(right),
                 ) if left != right
             );
             if left.term == right.term && left.raw == right.raw && !distinct_fact_cells {
@@ -3039,8 +3027,8 @@ impl CausalReceipts {
             .flat_map(|(left, right)| [left, right])
         {
             let fact = match occurrence {
-                CheckEndpointOccurrence::FactCell(cell) => Some(cell.fact),
-                CheckEndpointOccurrence::Current => None,
+                CriterionEndpointOccurrence::FactCell(cell) => Some(cell.fact),
+                CriterionEndpointOccurrence::Current => None,
             };
             if fact.is_some_and(FactId::is_missing) {
                 return Err("check equality occurrence has a missing premise FactId");
@@ -3069,17 +3057,17 @@ impl CausalReceipts {
                     .map(|(left, _)| left.sort)
                     .ne(equalities.iter().map(|(left, _)| left.sort))
             {
-                return Err("stable check id was reused with a different receipt layout");
+                return Err("stable check id was reused with a different capture layout");
             }
             // Causal capture is serial-only: the first successful native
             // witness is the check root. A repeated callback for the same
             // check is diagnostic duplication, not a later replacement.
             return Ok(());
         }
-        let position = HistoryPosition::new(ReceiptShared::alloc_u64(&self.0.next_history, 1));
+        let position = HistoryPosition::new(TraceShared::alloc_u64(&self.0.next_history, 1));
         arena.check_roots.insert(
             check,
-            CheckRoot {
+            Criterion {
                 check,
                 wave,
                 position,
@@ -3094,7 +3082,7 @@ impl CausalReceipts {
 
     pub(crate) fn typed_equality_proposal(
         &self,
-        wave: CausalWave,
+        wave: Wave,
         sort: ReplaySortId,
         left: Value,
         right: Value,
@@ -3119,7 +3107,7 @@ impl CausalReceipts {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn typed_merge_equality_proposal(
         &self,
-        wave: CausalWave,
+        wave: Wave,
         sort: ReplaySortId,
         left: Value,
         right: Value,
@@ -3157,7 +3145,7 @@ impl CausalReceipts {
 
     fn typed_equality_proposal_from_refs(
         &self,
-        wave: CausalWave,
+        wave: Wave,
         left: PendingEqualityEndpoint,
         right: PendingEqualityEndpoint,
     ) -> Result<TypedEqualityProposal, &'static str> {
@@ -3182,12 +3170,12 @@ impl CausalReceipts {
         self.0.replay_terms.node(id)
     }
 
-    pub fn replay_term_counters(&self) -> ReplayTermCounters {
+    pub fn replay_term_counters(&self) -> TermInternerCounters {
         self.0.replay_terms.counters()
     }
 
     /// A compact test-only structural node. Real producers install equivalent
-    /// handles; the receipt kernel never renders the label.
+    /// handles; the capture kernel never renders the label.
     #[cfg(test)]
     pub fn intern_test_term(&self, label: &str) -> ReplayTermId {
         self.0.replay_terms.intern(
@@ -3199,8 +3187,8 @@ impl CausalReceipts {
         )
     }
 
-    pub(crate) fn new_batch(&self) -> ReceiptBatch {
-        ReceiptBatch::new(self.0.clone())
+    pub(crate) fn new_batch(&self) -> CaptureBatch {
+        CaptureBatch::new(self.0.clone())
     }
 
     fn validate_pending_premises(&self, premises: &[FactId]) -> Result<(), String> {
@@ -3208,7 +3196,7 @@ impl CausalReceipts {
         for fact in premises.iter().copied() {
             if !arena.has_fact(fact) {
                 return Err(format!(
-                    "observed match references unavailable premise {fact:?}"
+                    "observed firing references unavailable premise {fact:?}"
                 ));
             }
         }
@@ -3216,13 +3204,13 @@ impl CausalReceipts {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn install_observed_matches(
+    fn install_observed_firings(
         &self,
         rule: u32,
-        wave: CausalWave,
+        wave: Wave,
         position: HistoryPosition,
-        as_of_edges: EqualityEdgeCount,
-        first_match: RuleMatchId,
+        as_of_edges: EdgeHorizon,
+        first_firing: FiringId,
         premise_arity: usize,
         premises: &[FactId],
         lanes: usize,
@@ -3232,16 +3220,16 @@ impl CausalReceipts {
         let premise_start = arena.durable_premises.len();
         arena.durable_premises.extend_from_slice(premises);
         for lane in 0..lanes {
-            let id = first_match.get() + lane as u64;
+            let id = first_firing.get() + lane as u64;
             let index = (id - 1) as usize;
-            if arena.durable_matches.len() <= index {
-                arena.durable_matches.resize_with(index + 1, || None);
+            if arena.durable_firings.len() <= index {
+                arena.durable_firings.resize_with(index + 1, || None);
             }
             assert!(
-                arena.durable_matches[index].is_none(),
-                "duplicate RuleMatchId publication"
+                arena.durable_firings[index].is_none(),
+                "duplicate FiringId publication"
             );
-            arena.durable_matches[index] = Some(DurableMatch {
+            arena.durable_firings[index] = Some(DurableFiring {
                 rule,
                 wave,
                 position,
@@ -3249,10 +3237,10 @@ impl CausalReceipts {
                 premises: FlatRange::new(premise_start + lane * premise_arity, premise_arity),
             });
         }
-        arena.published_matches += lanes as u64;
+        arena.published_firings += lanes as u64;
         arena.counters.premise_handles += premises.len() as u64;
-        arena.record_match_term_storage(lanes * binding_arity, 0);
-        arena.counters.observed_matches += lanes as u64;
+        arena.record_firing_term_storage(lanes * binding_arity, 0);
+        arena.counters.observed_firings += lanes as u64;
     }
 
     pub fn install_source_row(
@@ -3324,7 +3312,7 @@ impl CausalReceipts {
     }
 
     pub(crate) fn source_draft(&self, source: SourceRef) -> CauseDraftId {
-        let id = CauseDraftId::new(ReceiptShared::alloc_u64(&self.0.next_cause_draft, 1));
+        let id = CauseDraftId::new(TraceShared::alloc_u64(&self.0.next_cause_draft, 1));
         let mut arena = self.0.arena.lock().unwrap();
         arena.install_cause(
             id,
@@ -3342,7 +3330,7 @@ impl CausalReceipts {
         if lanes.is_empty() {
             return Vec::new();
         }
-        let first = ReceiptShared::alloc_u64(&self.0.next_cause_draft, lanes.len());
+        let first = TraceShared::alloc_u64(&self.0.next_cause_draft, lanes.len());
         let mut arena = self.0.arena.lock().unwrap();
         lanes
             .iter()
@@ -3365,7 +3353,7 @@ impl CausalReceipts {
         if sources.is_empty() {
             return Vec::new();
         }
-        let first = ReceiptShared::alloc_u64(&self.0.next_cause_draft, sources.len());
+        let first = TraceShared::alloc_u64(&self.0.next_cause_draft, sources.len());
         let mut arena = self.0.arena.lock().unwrap();
         sources
             .iter()
@@ -3383,29 +3371,29 @@ impl CausalReceipts {
     }
 
     /// Test helper that publishes one native observation batch eagerly and
-    /// returns its first stable match id.
+    /// returns its first stable firing id.
     #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn pending_rule_batch(
+    pub(crate) fn pending_firing_batch(
         &self,
         rule: u32,
-        wave: CausalWave,
+        wave: Wave,
         premise_arity: usize,
         binding_sources: &[ReplayBindingSource],
         flat_premises: &[FactId],
         lanes: usize,
-    ) -> ObservedMatchBatch {
-        assert!(lanes > 0, "observed match batch cannot be empty");
+    ) -> ObservedFiringBatch {
+        assert!(lanes > 0, "observed firing batch cannot be empty");
         assert_eq!(
             flat_premises.len(),
             lanes * premise_arity,
-            "pending match premises must be dense and lane-aligned"
+            "pending firing premises must be dense and lane-aligned"
         );
         self.validate_pending_premises(flat_premises)
             .unwrap_or_else(|error| panic!("cannot observe test rule batch: {error}"));
-        let first_native_ordinal = self.reserve_native_match_ordinals(lanes);
+        let first_native_ordinal = self.reserve_firing_ordinals(lanes);
         let binding_sources = self.register_rule_binding_recipe(rule, binding_sources);
-        self.observe_rule_batch_at(
+        self.observe_firing_batch_at(
             rule,
             wave,
             first_native_ordinal,
@@ -3417,47 +3405,47 @@ impl CausalReceipts {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn observe_rule_batch_at(
+    pub(crate) fn observe_firing_batch_at(
         &self,
         rule: u32,
-        wave: CausalWave,
+        wave: Wave,
         first_native_ordinal: u64,
         premise_arity: usize,
         binding_sources: Arc<[ReplayBindingSource]>,
         flat_premises: &[FactId],
         lanes: usize,
-    ) -> ObservedMatchBatch {
+    ) -> ObservedFiringBatch {
         assert!(first_native_ordinal > 0);
         assert_eq!(
             flat_premises.len(),
             lanes
                 .checked_mul(premise_arity)
-                .expect("pending match premise slab exceeds usize"),
-            "observed match premises must be dense and lane-aligned"
+                .expect("pending firing premise slab exceeds usize"),
+            "observed firing premises must be dense and lane-aligned"
         );
         let position = self.history_boundary();
         let as_of_edges = self.equality_boundary();
         let premises: Box<[FactId]> = flat_premises.into();
         self.validate_pending_premises(&premises)
-            .unwrap_or_else(|error| panic!("cannot observe rule batch: {error}"));
-        let first_match = RuleMatchId::new(first_native_ordinal);
-        self.install_observed_matches(
+            .unwrap_or_else(|error| panic!("cannot observe firing batch: {error}"));
+        let first_firing = FiringId::new(first_native_ordinal);
+        self.install_observed_firings(
             rule,
             wave,
             position,
             as_of_edges,
-            first_match,
+            first_firing,
             premise_arity,
             &premises,
             lanes,
             binding_sources.len(),
         );
-        ObservedMatchBatch {
-            receipts: self.clone(),
-            first: first_match,
+        ObservedFiringBatch {
+            trace: self.clone(),
+            first: first_firing,
             lanes: lanes
                 .try_into()
-                .expect("observed match batch exceeds u32 lanes"),
+                .expect("observed firing batch exceeds u32 lanes"),
             wave,
         }
     }
@@ -3465,144 +3453,140 @@ impl CausalReceipts {
     /// Resolve compact join witnesses once when head execution begins, then
     /// publish the complete native observation batch eagerly.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn observe_rule_batch_lazy(
+    pub(crate) fn observe_firing_batch_lazy(
         &self,
         rule: u32,
-        wave: CausalWave,
+        wave: Wave,
         first_native_ordinal: u64,
         premise_arity: usize,
         binding_sources: Arc<[ReplayBindingSource]>,
         resolver: Arc<dyn PendingPremiseResolver>,
         witness_lanes: &[u32],
-    ) -> ObservedMatchBatch {
+    ) -> ObservedFiringBatch {
         let lanes = witness_lanes.len();
-        assert!(lanes > 0, "observed match batch cannot be empty");
+        assert!(lanes > 0, "observed firing batch cannot be empty");
         assert!(first_native_ordinal > 0);
         let premises = resolver.resolve_batch(witness_lanes, premise_arity);
         self.validate_pending_premises(&premises)
-            .unwrap_or_else(|error| panic!("cannot observe rule batch: {error}"));
+            .unwrap_or_else(|error| panic!("cannot observe firing batch: {error}"));
         let position = self.history_boundary();
         let as_of_edges = self.equality_boundary();
-        let first_match = RuleMatchId::new(first_native_ordinal);
-        self.install_observed_matches(
+        let first_firing = FiringId::new(first_native_ordinal);
+        self.install_observed_firings(
             rule,
             wave,
             position,
             as_of_edges,
-            first_match,
+            first_firing,
             premise_arity,
             &premises,
             lanes,
             binding_sources.len(),
         );
-        ObservedMatchBatch {
-            receipts: self.clone(),
-            first: first_match,
+        ObservedFiringBatch {
+            trace: self.clone(),
+            first: first_firing,
             lanes: lanes
                 .try_into()
-                .expect("observed match batch exceeds u32 lanes"),
+                .expect("observed firing batch exceeds u32 lanes"),
             wave,
         }
     }
 
-    pub(crate) fn reserve_native_match_ordinals(&self, lanes: usize) -> u64 {
-        ReceiptShared::alloc_u64(&self.0.next_rule_match, lanes)
+    pub(crate) fn reserve_firing_ordinals(&self, lanes: usize) -> u64 {
+        TraceShared::alloc_u64(&self.0.next_firing, lanes)
     }
 
-    pub(crate) fn pending_rule_cause(
+    pub(crate) fn pending_firing_cause(
         &self,
-        observed: &ObservedMatchBatch,
+        observed: &ObservedFiringBatch,
         lane: usize,
-    ) -> PendingRuleCause {
+    ) -> PendingFiringCause {
         assert!(
-            Arc::ptr_eq(&self.0, &observed.receipts.0),
-            "observed match batch belongs to another causal receipt arena"
+            Arc::ptr_eq(&self.0, &observed.trace.0),
+            "observed firing batch belongs to another causal trace arena"
         );
         assert!(
             lane < observed.lanes as usize,
-            "observed match lane {lane} is outside a {}-lane batch",
+            "observed firing lane {lane} is outside a {}-lane batch",
             observed.lanes
         );
-        let matched = RuleMatchId::new(
+        let firing = FiringId::new(
             observed
                 .first
                 .get()
                 .checked_add(lane as u64)
-                .expect("observed match id overflow"),
+                .expect("observed firing id overflow"),
         );
         assert!(
-            matched.get() <= self.0.next_rule_match.load(Ordering::Acquire),
-            "observed match batch references unreserved match {matched:?}"
+            firing.get() <= self.0.next_firing.load(Ordering::Acquire),
+            "observed firing batch references unreserved firing {firing:?}"
         );
-        PendingRuleCause {
-            receipts: self.clone(),
-            matched,
+        PendingFiringCause {
+            trace: self.clone(),
+            firing,
             wave: observed.wave,
         }
     }
 
-    fn prepare_observed_rule_match(
-        &self,
-        matched: RuleMatchId,
-        expected_wave: CausalWave,
-    ) -> Result<(), String> {
+    fn prepare_firing(&self, firing: FiringId, expected_wave: Wave) -> Result<(), String> {
         if self.0.poisoned_rule_executions.load(Ordering::Acquire) != 0 {
-            return Err("rule observation belongs to a panicking execution".into());
+            return Err("firing belongs to a panicking execution".into());
         }
         let arena = self.0.arena.lock().unwrap();
-        let Some(record) = matched
+        let Some(record) = firing
             .get()
             .checked_sub(1)
-            .and_then(|index| arena.durable_matches.get(index as usize))
+            .and_then(|index| arena.durable_firings.get(index as usize))
             .and_then(Option::as_ref)
         else {
-            return Err(format!("unknown observed match {matched:?}"));
+            return Err(format!("unknown observed firing {firing:?}"));
         };
         if record.wave != expected_wave {
             return Err(format!(
-                "observed match {matched:?} from wave {:?} was used in wave {:?}",
+                "observed firing {firing:?} from wave {:?} was used in wave {:?}",
                 record.wave, expected_wave
             ));
         }
         Ok(())
     }
 
-    fn record_observed_match_merge_read(&self, matched: RuleMatchId, prior_fact: FactId) {
+    fn record_firing_merge_read(&self, firing: FiringId, prior_fact: FactId) {
         assert!(
             !prior_fact.is_missing(),
-            "receipt-enabled table merge read a row without an immutable FactId"
+            "capture-enabled table merge read a row without an immutable FactId"
         );
         if self.0.poisoned_rule_executions.load(Ordering::Acquire) != 0 {
-            panic!("cannot record merge read: rule observation belongs to a panicking execution");
+            panic!("cannot record merge read: firing belongs to a panicking execution");
         }
         self.0
             .arena
             .lock()
             .unwrap()
             .merge_reads
-            .entry(matched)
+            .entry(firing)
             .or_default()
             .push(prior_fact);
     }
 
-    /// Test-only eager registration helper for low-level receipt fixtures.
+    /// Test-only eager registration helper for low-level capture fixtures.
     /// Production rule execution always uses pending batches.
     #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn register_rule_matches(
+    pub(crate) fn register_firings(
         &self,
         rule: u32,
-        wave: CausalWave,
+        wave: Wave,
         premise_arity: usize,
         binding_sources: &[ReplayBindingSource],
         flat_premises: &[FactId],
         lanes: &[usize],
-    ) -> Vec<(usize, CauseRef)> {
+    ) -> Vec<(usize, PackedCauseRef)> {
         if lanes.is_empty() {
             return Vec::new();
         }
         let binding_sources = self.register_rule_binding_recipe(rule, binding_sources);
-        let first_match = RuleMatchId::new(self.reserve_native_match_ordinals(lanes.len()));
+        let first_firing = FiringId::new(self.reserve_firing_ordinals(lanes.len()));
         let position = self.history_boundary();
         let as_of_edges = self.equality_boundary();
         let mut selected_premises = Vec::with_capacity(lanes.len() * premise_arity);
@@ -3613,12 +3597,12 @@ impl CausalReceipts {
         }
         self.validate_pending_premises(&selected_premises)
             .unwrap_or_else(|error| panic!("cannot observe test rule batch: {error}"));
-        self.install_observed_matches(
+        self.install_observed_firings(
             rule,
             wave,
             position,
             as_of_edges,
-            first_match,
+            first_firing,
             premise_arity,
             &selected_premises,
             lanes.len(),
@@ -3631,7 +3615,7 @@ impl CausalReceipts {
             .map(|(offset, lane)| {
                 (
                     lane,
-                    CauseRef::rule(RuleMatchId::new(first_match.get() + offset as u64)),
+                    PackedCauseRef::rule(FiringId::new(first_firing.get() + offset as u64)),
                 )
             })
             .collect()
@@ -3641,7 +3625,7 @@ impl CausalReceipts {
         assert_eq!(
             self.0.poisoned_rule_executions.load(Ordering::Acquire),
             0,
-            "cannot finalize causal receipts after a panicking rule execution"
+            "cannot finalize causal trace after a panicking rule execution"
         );
         assert_eq!(
             self.0.open_fragments.load(Ordering::Acquire),
@@ -3665,9 +3649,9 @@ impl CausalReceipts {
             "direct fact publication left an ID hole"
         );
         assert_eq!(
-            arena.published_matches,
-            self.0.next_rule_match.load(Ordering::Acquire),
-            "observed match publication left an ID hole"
+            arena.published_firings,
+            self.0.next_firing.load(Ordering::Acquire),
+            "observed firing publication left an ID hole"
         );
         assert_eq!(
             arena.published_causes,
@@ -3681,59 +3665,59 @@ impl CausalReceipts {
         );
     }
 
-    /// Borrow a checked view of finalized raw receipts. The closure cannot
-    /// return references tied to the arena guards, so no receipt storage or
+    /// Borrow a checked view of finalized raw trace. The closure cannot
+    /// return references tied to the arena guards, so no capture storage or
     /// static recipe can escape its read boundary.
     pub fn with_view<R>(
         &self,
-        inspect: impl for<'view> FnOnce(&mut CausalReceiptView<'view>) -> Result<R, ReceiptViewError>,
-    ) -> Result<R, ReceiptViewError> {
-        let _active = ActiveReceiptViewGuard::enter(&self.0.view_active)?;
+        inspect: impl for<'view> FnOnce(&mut TraceView<'view>) -> Result<R, TraceViewError>,
+    ) -> Result<R, TraceViewError> {
+        let _active = ActiveTraceViewGuard::enter(&self.0.view_active)?;
         if self.0.poisoned_rule_executions.load(Ordering::Acquire) != 0 {
-            return Err(ReceiptViewError::NotFinalized("a rule execution panicked"));
+            return Err(TraceViewError::NotFinalized("a rule execution panicked"));
         }
         if self.0.open_fragments.load(Ordering::Acquire) != 0 {
-            return Err(ReceiptViewError::NotFinalized(
-                "worker receipt fragments remain open",
+            return Err(TraceViewError::NotFinalized(
+                "worker capture fragments remain open",
             ));
         }
         if self.0.open_native_leases.load(Ordering::Acquire) != 0 {
-            return Err(ReceiptViewError::NotFinalized(
+            return Err(TraceViewError::NotFinalized(
                 "transactional native mutations remain queued",
             ));
         }
         if self.0.abandoned_fragments.load(Ordering::Acquire) != 0 {
-            return Err(ReceiptViewError::NotFinalized(
-                "a worker receipt fragment was abandoned",
+            return Err(TraceViewError::NotFinalized(
+                "a worker capture fragment was abandoned",
             ));
         }
         let recipes = self
             .0
             .rule_binding_recipes
             .read()
-            .map_err(|_| ReceiptViewError::Poisoned("rule binding recipes"))?;
+            .map_err(|_| TraceViewError::Poisoned("rule binding recipes"))?;
         let equality_recipes = self
             .0
             .rule_equality_recipes
             .read()
-            .map_err(|_| ReceiptViewError::Poisoned("rule equality recipes"))?;
+            .map_err(|_| TraceViewError::Poisoned("rule equality recipes"))?;
         let term_recipes = self
             .0
             .static_term_recipes
             .lock()
-            .map_err(|_| ReceiptViewError::Poisoned("static term recipes"))?;
+            .map_err(|_| TraceViewError::Poisoned("static term recipes"))?;
         let arena = self
             .0
             .arena
             .lock()
-            .map_err(|_| ReceiptViewError::Poisoned("receipt arena"))?;
+            .map_err(|_| TraceViewError::Poisoned("trace arena"))?;
         if self.0.poisoned_rule_executions.load(Ordering::Acquire) != 0
             || self.0.open_fragments.load(Ordering::Acquire) != 0
             || self.0.open_native_leases.load(Ordering::Acquire) != 0
             || self.0.abandoned_fragments.load(Ordering::Acquire) != 0
         {
-            return Err(ReceiptViewError::NotFinalized(
-                "capture state changed while acquiring the receipt view",
+            return Err(TraceViewError::NotFinalized(
+                "capture state changed while acquiring the trace view",
             ));
         }
         let expected = [
@@ -3743,9 +3727,9 @@ impl CausalReceipts {
                 "fact",
             ),
             (
-                arena.published_matches,
-                self.0.next_rule_match.load(Ordering::Acquire),
-                "match",
+                arena.published_firings,
+                self.0.next_firing.load(Ordering::Acquire),
+                "firing",
             ),
             (
                 arena.published_causes,
@@ -3762,9 +3746,9 @@ impl CausalReceipts {
             .into_iter()
             .find(|(published, allocated, _)| published != allocated)
         {
-            return Err(ReceiptViewError::NotFinalized(match kind {
+            return Err(TraceViewError::NotFinalized(match kind {
                 "fact" => "fact publication has an ID hole",
-                "match" => "match publication has an ID hole",
+                "firing" => "firing publication has an ID hole",
                 "cause" => "cause publication has an ID hole",
                 _ => "applied-equality publication has an ID hole",
             }));
@@ -3776,9 +3760,9 @@ impl CausalReceipts {
             .and_then(|events| events.checked_add(arena.rekeys.len() as u64))
             .and_then(|events| events.checked_add(arena.removals.len() as u64))
             .and_then(|events| events.checked_add(arena.check_roots.len() as u64))
-            .ok_or_else(|| ReceiptViewError::Invalid("receipt history count overflow".into()))?;
+            .ok_or_else(|| TraceViewError::Invalid("trace history count overflow".into()))?;
         if history_boundary.get() != expected_history {
-            return Err(ReceiptViewError::NotFinalized(
+            return Err(TraceViewError::NotFinalized(
                 "global history publication has an ID hole",
             ));
         }
@@ -3789,7 +3773,7 @@ impl CausalReceipts {
             &self.0.replay_terms,
             &self.0.next_term,
         );
-        let mut view = CausalReceiptView {
+        let mut view = TraceView {
             arena: &arena,
             binding_recipes: &recipes,
             equality_recipes: &equality_recipes,
@@ -3802,7 +3786,7 @@ impl CausalReceipts {
             constructor_occurrence_index: None,
             occurrence_support_cache: HashMap::default(),
             exact_occurrence_support_cache: HashMap::default(),
-            counters: CausalReceiptViewCounters::default(),
+            counters: TraceViewCounters::default(),
         };
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| inspect(&mut view))) {
             Ok(result) => result,
@@ -3818,14 +3802,14 @@ impl CausalReceipts {
     }
 
     #[cfg(test)]
-    pub(crate) fn observed_match_batch_for_test(
+    pub(crate) fn observed_firing_batch_for_test(
         &self,
-        first: RuleMatchId,
+        first: FiringId,
         lanes: u32,
-        wave: CausalWave,
-    ) -> ObservedMatchBatch {
-        ObservedMatchBatch {
-            receipts: self.clone(),
+        wave: Wave,
+    ) -> ObservedFiringBatch {
+        ObservedFiringBatch {
+            trace: self.clone(),
             first,
             lanes,
             wave,
@@ -3838,48 +3822,45 @@ mod tests {
     use super::*;
 
     #[test]
-    fn receipt_view_rejects_reentrancy_without_poisoning_capture() {
-        let receipts = CausalReceipts::default();
-        let error = receipts
-            .with_view(|_| receipts.with_view(|_| Ok(())))
+    fn capture_view_rejects_reentrancy_without_poisoning_capture() {
+        let trace = Trace::default();
+        let error = trace
+            .with_view(|_| trace.with_view(|_| Ok(())))
             .unwrap_err();
         assert!(matches!(
             error,
-            ReceiptViewError::Invalid(ref message) if message.contains("not reentrant")
+            TraceViewError::Invalid(ref message) if message.contains("not reentrant")
         ));
-        receipts
+        trace
             .with_view(|_| {
                 std::thread::scope(|scope| {
-                    let nested = scope
-                        .spawn(|| receipts.with_view(|_| Ok(())))
-                        .join()
-                        .unwrap();
+                    let nested = scope.spawn(|| trace.with_view(|_| Ok(()))).join().unwrap();
                     assert!(matches!(
                         nested,
-                        Err(ReceiptViewError::Invalid(ref message))
+                        Err(TraceViewError::Invalid(ref message))
                             if message.contains("not reentrant")
                     ));
                 });
                 Ok(())
             })
             .unwrap();
-        assert!(receipts.with_view(|_| Ok(())).is_ok());
+        assert!(trace.with_view(|_| Ok(())).is_ok());
     }
 
     #[test]
-    fn panicking_receipt_view_callback_does_not_poison_capture_locks() {
-        let receipts = CausalReceipts::default();
+    fn panicking_capture_view_callback_does_not_poison_capture_locks() {
+        let trace = Trace::default();
         let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _ = receipts
-                .with_view(|_| -> Result<(), ReceiptViewError> { panic!("inspection panic") });
+            let _ =
+                trace.with_view(|_| -> Result<(), TraceViewError> { panic!("inspection panic") });
         }));
         assert!(failure.is_err());
-        assert!(receipts.with_view(|_| Ok(())).is_ok());
+        assert!(trace.with_view(|_| Ok(())).is_ok());
     }
 
     #[test]
     fn physical_rekey_collision_with_same_fact_records_no_logical_transition() {
-        let receipts = CausalReceipts::default();
+        let trace = Trace::default();
         let fact = FactId::new(17);
         let sort = ReplaySortId::new(3);
         let pair = TypedCellEquality {
@@ -3898,40 +3879,40 @@ mod tests {
         let prepared = || {
             PreparedRekey::from_staged(
                 TableId::new(4),
-                CausalWave::new(2),
+                Wave::new(2),
                 fact,
-                EqualityEdgeCount::new(1),
+                EdgeHorizon::new(1),
                 HistoryPosition::new(9),
                 &[pair],
             )
         };
 
-        receipts.commit_prepared_rekey(prepared(), RekeyOutcome::Absorbed(fact));
-        receipts.commit_prepared_rekey(prepared(), RekeyOutcome::Replaced(fact));
+        trace.commit_prepared_rekey(prepared(), RekeyOutcome::Absorbed(fact));
+        trace.commit_prepared_rekey(prepared(), RekeyOutcome::Replaced(fact));
 
-        assert!(receipts.0.arena.lock().unwrap().rekeys.is_empty());
-        assert_eq!(receipts.history_boundary(), HistoryPosition::new(0));
+        assert!(trace.0.arena.lock().unwrap().rekeys.is_empty());
+        assert_eq!(trace.history_boundary(), HistoryPosition::new(0));
 
-        receipts.commit_prepared_rekey(prepared(), RekeyOutcome::Absorbed(FactId::new(18)));
-        assert_eq!(receipts.0.arena.lock().unwrap().rekeys.len(), 1);
-        assert_eq!(receipts.history_boundary(), HistoryPosition::new(1));
+        trace.commit_prepared_rekey(prepared(), RekeyOutcome::Absorbed(FactId::new(18)));
+        assert_eq!(trace.0.arena.lock().unwrap().rekeys.len(), 1);
+        assert_eq!(trace.history_boundary(), HistoryPosition::new(1));
     }
 
     #[test]
     fn structural_occurrence_rejects_uncertified_non_table_calls() {
-        let receipts = CausalReceipts::default();
+        let trace = Trace::default();
         let sort = ReplaySortId::new(1);
         let certified_op = ReplayOpId::new(10);
         let unknown_op = ReplayOpId::new(11);
         let certified_raw = Value::new_const(10);
         let unknown_raw = Value::new_const(11);
-        let certified_term = receipts
+        let certified_term = trace
             .intern_call(sort, certified_op, &[], certified_raw)
             .unwrap();
-        let unknown_term = receipts
+        let unknown_term = trace
             .intern_call(sort, unknown_op, &[], unknown_raw)
             .unwrap();
-        receipts.register_rule_term_recipe(
+        trace.register_rule_term_recipe(
             7,
             TermRecipe {
                 current_roots: [Some(Arc::new(TermTemplate::Call {
@@ -3943,7 +3924,7 @@ mod tests {
             },
         );
 
-        receipts
+        trace
             .with_view(|view| {
                 let support = view.explain_term_occurrence_at(
                     certified_term,
@@ -3961,7 +3942,7 @@ mod tests {
             })
             .unwrap();
 
-        let error = receipts
+        let error = trace
             .with_view(|view| {
                 view.explain_term_occurrence_at(
                     unknown_term,
@@ -3974,32 +3955,32 @@ mod tests {
             })
             .unwrap_err();
         assert!(
-            matches!(error, ReceiptViewError::Invalid(ref message) if message.contains("no registered constructor or certified replay recipe")),
+            matches!(error, TraceViewError::Invalid(ref message) if message.contains("no registered constructor or certified replay recipe")),
             "unknown non-table calls must fail closed: {error:?}"
         );
     }
 
     #[test]
     fn derived_fact_owns_the_terms_for_its_committed_row() {
-        let receipts = CausalReceipts::default();
+        let trace = Trace::default();
         let table = TableId::new_const(0);
         let value_sort = ReplaySortId::new(1);
         let timestamp_sort = ReplaySortId::new(2);
-        receipts
+        trace
             .register_table_layout(table, &[Some(value_sort), Some(timestamp_sort)])
             .unwrap();
         let row = [Value::new_const(7), Value::new_const(0)];
         let terms = [
-            receipts.intern_literal(value_sort, ReplayLiteral::I64(7), row[0]),
-            receipts.intern_literal(timestamp_sort, ReplayLiteral::I64(0), row[1]),
+            trace.intern_literal(value_sort, ReplayLiteral::I64(7), row[0]),
+            trace.intern_literal(timestamp_sort, ReplayLiteral::I64(0), row[1]),
         ];
-        let origin = receipts.install_source_row(table, &row, &terms).unwrap();
-        let source_cause = receipts.source_draft(SourceRef::Synthetic(0));
-        let mut source_batch = receipts.new_batch();
+        let origin = trace.install_source_row(table, &row, &terms).unwrap();
+        let source_cause = trace.source_draft(SourceRef::Synthetic(0));
+        let mut source_batch = trace.new_batch();
         let source = source_batch.record_fact_with_origin(table, source_cause, &row, origin);
         source_batch.publish();
-        receipts.finalize_wave();
-        receipts
+        trace.finalize_wave();
+        trace
             .with_view(|view| {
                 assert_eq!(view.fact_terms(source)?.as_ref(), &terms);
                 Ok(())
@@ -4030,17 +4011,17 @@ mod tests {
                 .into(),
             },
         ];
-        let [(lane, rule_cause)] = receipts
-            .register_rule_matches(7, CausalWave::new(1), 1, &binding_sources, &[source], &[0])
+        let [(lane, rule_cause)] = trace
+            .register_firings(7, Wave::new(1), 1, &binding_sources, &[source], &[0])
             .try_into()
             .unwrap();
         assert_eq!(lane, 0);
-        let mut derived_batch = receipts.new_batch();
+        let mut derived_batch = trace.new_batch();
         let derived = derived_batch.record_fact_with_origin(table, rule_cause, &row, origin);
         derived_batch.publish();
-        receipts.finalize_wave();
+        trace.finalize_wave();
 
-        receipts
+        trace
             .with_view(|view| {
                 assert_eq!(
                     view.fact_terms(derived)?.as_ref(),
@@ -4051,23 +4032,23 @@ mod tests {
             })
             .unwrap();
 
-        let [(lane, next_cause)] = receipts
-            .register_rule_matches(8, CausalWave::new(2), 1, &binding_sources, &[derived], &[0])
+        let [(lane, next_cause)] = trace
+            .register_firings(8, Wave::new(2), 1, &binding_sources, &[derived], &[0])
             .try_into()
             .unwrap();
         assert_eq!(lane, 0);
-        let mut next_batch = receipts.new_batch();
+        let mut next_batch = trace.new_batch();
         next_batch.record_fact_with_origin(table, next_cause, &row, origin);
         next_batch.publish();
-        receipts.finalize_wave();
-        receipts
+        trace.finalize_wave();
+        trace
             .with_view(|view| {
-                let next_match = (1..=view.totals().matches)
-                    .map(RuleMatchId::new)
-                    .find(|id| view.matched(*id).is_ok_and(|matched| matched.rule == 8))
+                let next_firing = (1..=view.totals().firings)
+                    .map(FiringId::new)
+                    .find(|id| view.firing(*id).is_ok_and(|firing| firing.rule == 8))
                     .unwrap();
                 assert_eq!(
-                    view.match_terms(next_match)?.as_ref(),
+                    view.firing_terms(next_firing)?.as_ref(),
                     &terms,
                     "a later rule must resolve terms through a derived FactId"
                 );
@@ -4077,33 +4058,31 @@ mod tests {
     }
 
     #[test]
-    fn promoted_matches_reconstruct_current_terms_from_static_recipes() {
-        let receipts = CausalReceipts::default();
+    fn promoted_firings_reconstruct_current_terms_from_static_recipes() {
+        let trace = Trace::default();
         let table = TableId::new_const(0);
         let sort = ReplaySortId::new(1);
-        receipts
-            .register_table_layout(table, &[Some(sort)])
-            .unwrap();
+        trace.register_table_layout(table, &[Some(sort)]).unwrap();
 
         let source_row = [Value::new_const(7)];
-        let source_term = receipts.intern_literal(sort, ReplayLiteral::I64(7), source_row[0]);
-        let source_origin = receipts
+        let source_term = trace.intern_literal(sort, ReplayLiteral::I64(7), source_row[0]);
+        let source_origin = trace
             .install_source_row(table, &source_row, &[source_term])
             .unwrap();
-        let source_cause = receipts.source_draft(SourceRef::Synthetic(0));
-        let mut source_batch = receipts.new_batch();
+        let source_cause = trace.source_draft(SourceRef::Synthetic(0));
+        let mut source_batch = trace.new_batch();
         let source_fact =
             source_batch.record_fact_with_origin(table, source_cause, &source_row, source_origin);
         source_batch.publish();
-        receipts.finalize_wave();
+        trace.finalize_wave();
 
         let constant_value = Value::new_const(8);
-        let constant_term = receipts.intern_literal(sort, ReplayLiteral::I64(8), constant_value);
+        let constant_term = trace.intern_literal(sort, ReplayLiteral::I64(8), constant_value);
         let current_value = Value::new_const(9);
-        let current_term = receipts.intern_literal(sort, ReplayLiteral::I64(9), current_value);
+        let current_term = trace.intern_literal(sort, ReplayLiteral::I64(9), current_value);
         let derived_row = [Value::new_const(10)];
-        let derived_term = receipts.intern_literal(sort, ReplayLiteral::I64(10), derived_row[0]);
-        let derived_origin = receipts
+        let derived_term = trace.intern_literal(sort, ReplayLiteral::I64(10), derived_row[0]);
+        let derived_origin = trace
             .install_source_row(table, &derived_row, &[derived_term])
             .unwrap();
 
@@ -4128,49 +4107,42 @@ mod tests {
                 residual: 0,
             },
         ];
-        receipts.register_rule_term_recipe(
+        trace.register_rule_term_recipe(
             11,
             TermRecipe {
                 current_roots: [Some(Arc::new(TermTemplate::Static { term: current_term }))].into(),
             },
         );
-        let [(_, rule_cause)] = receipts
-            .register_rule_matches(
-                11,
-                CausalWave::new(1),
-                1,
-                &binding_sources,
-                &[source_fact],
-                &[0],
-            )
+        let [(_, rule_cause)] = trace
+            .register_firings(11, Wave::new(1), 1, &binding_sources, &[source_fact], &[0])
             .try_into()
             .unwrap();
-        let mut derived_batch = receipts.new_batch();
+        let mut derived_batch = trace.new_batch();
         derived_batch.record_fact_with_origin(table, rule_cause, &derived_row, derived_origin);
         derived_batch.publish();
-        receipts.finalize_wave();
+        trace.finalize_wave();
 
-        receipts
+        trace
             .with_view(|view| {
                 assert_eq!(
-                    view.match_terms(RuleMatchId::new(1))?.as_ref(),
+                    view.firing_terms(FiringId::new(1))?.as_ref(),
                     &[source_term, constant_term, current_term],
                     "lazy expansion must preserve the complete binding layout"
                 );
                 let counters = view.counters();
-                assert_eq!(counters.logical_match_term_handles, 3);
-                assert_eq!(counters.stored_match_term_handles, 0);
+                assert_eq!(counters.logical_firing_term_handles, 3);
+                assert_eq!(counters.stored_firing_term_handles, 0);
                 assert_eq!(
-                    counters.logical_match_term_bytes,
+                    counters.logical_firing_term_bytes,
                     3 * mem::size_of::<ReplayTermId>() as u64
                 );
-                assert_eq!(counters.stored_match_term_bytes, 0);
-                assert_eq!(counters.logical_match_term_handles, 3);
+                assert_eq!(counters.stored_firing_term_bytes, 0);
+                assert_eq!(counters.logical_firing_term_handles, 3);
                 Ok(())
             })
             .unwrap();
         assert_eq!(
-            receipts.replay_term(derived_term),
+            trace.replay_term(derived_term),
             Some(ReplayTerm::Literal {
                 sort,
                 literal: ReplayLiteral::I64(10),
@@ -4180,30 +4152,29 @@ mod tests {
 
     #[test]
     fn container_anchor_projects_only_referenced_bindings_and_memoizes_repeated_leaves() {
-        let receipts = CausalReceipts::default();
+        let trace = Trace::default();
         let table = TableId::new_const(0);
         let source_sort = ReplaySortId::new(10);
         let current_sort = ReplaySortId::new(11);
         let container_sort = ReplaySortId::new(12);
         let pure_op = ReplayOpId::new(10);
         let container_op = ReplayOpId::new(11);
-        receipts
+        trace
             .register_table_layout(table, &[Some(source_sort)])
             .unwrap();
 
         let used_value = Value::new_const(10);
         let unused_value = Value::new_const(11);
-        let used_term = receipts.intern_literal(source_sort, ReplayLiteral::I64(10), used_value);
-        let unused_term =
-            receipts.intern_literal(source_sort, ReplayLiteral::I64(11), unused_value);
-        let used_origin = receipts
+        let used_term = trace.intern_literal(source_sort, ReplayLiteral::I64(10), used_value);
+        let unused_term = trace.intern_literal(source_sort, ReplayLiteral::I64(11), unused_value);
+        let used_origin = trace
             .install_source_row(table, &[used_value], &[used_term])
             .unwrap();
-        let unused_origin = receipts
+        let unused_origin = trace
             .install_source_row(table, &[unused_value], &[unused_term])
             .unwrap();
-        let cause = receipts.source_draft(SourceRef::Synthetic(10));
-        let mut facts = receipts.new_batch();
+        let cause = trace.source_draft(SourceRef::Synthetic(10));
+        let mut facts = trace.new_batch();
         let used_fact = facts.record_fact_with_origin(table, cause, &[used_value], used_origin);
         let mut unused_fact =
             facts.record_fact_with_origin(table, cause, &[unused_value], unused_origin);
@@ -4249,7 +4220,7 @@ mod tests {
             op: pure_op,
             children: [Arc::new(TermTemplate::Binding { binding: 0 })].into(),
         });
-        let site = receipts.register_term_origin(TermOriginSpec {
+        let site = trace.register_term_origin(TermOriginSpec {
             sort: container_sort,
             term: Arc::new(TermTemplate::Call {
                 sort: container_sort,
@@ -4265,7 +4236,7 @@ mod tests {
         let container_value = Value::new_const(13);
 
         reset_term_projector_fact_expansions();
-        let installed = receipts
+        let installed = trace
             .with_container_anchor_installer(site, &replay, |install| {
                 install(
                     &binding_sources,
@@ -4282,7 +4253,7 @@ mod tests {
             1,
             "the used premise should expand once; the repeated leaf must hit the memo and the deep unused premise must remain cold"
         );
-        let ReplayTerm::Call { children, .. } = receipts.replay_term(installed).unwrap() else {
+        let ReplayTerm::Call { children, .. } = trace.replay_term(installed).unwrap() else {
             panic!("container anchor did not produce a structural call")
         };
         assert_eq!(children.len(), 2);
@@ -4291,7 +4262,7 @@ mod tests {
             "the repeated Current producer diverged"
         );
         assert_eq!(
-            receipts.lookup_term(current_sort, current_value),
+            trace.lookup_term(current_sort, current_value),
             Some(children[0]),
             "the exact nested Current producer was not installed for its runtime value"
         );
@@ -4299,16 +4270,15 @@ mod tests {
 
     #[test]
     fn replay_value_lookup_is_scoped_by_stable_sort() {
-        let receipts = CausalReceipts::default();
+        let trace = Trace::default();
         let value = Value::new_const(7);
         let left_sort = ReplaySortId::new(40);
         let right_sort = ReplaySortId::new(41);
-        let left = receipts.intern_literal(left_sort, ReplayLiteral::String("left".into()), value);
-        let right =
-            receipts.intern_literal(right_sort, ReplayLiteral::String("right".into()), value);
+        let left = trace.intern_literal(left_sort, ReplayLiteral::String("left".into()), value);
+        let right = trace.intern_literal(right_sort, ReplayLiteral::String("right".into()), value);
 
         assert_ne!(left, right);
-        assert_eq!(receipts.lookup_term(left_sort, value), Some(left));
-        assert_eq!(receipts.lookup_term(right_sort, value), Some(right));
+        assert_eq!(trace.lookup_term(left_sort, value), Some(left));
+        assert_eq!(trace.lookup_term(right_sort, value), Some(right));
     }
 }

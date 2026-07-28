@@ -1,9 +1,6 @@
 #![doc = include_str!("lib.md")]
 pub mod api;
 pub mod ast;
-mod slicing;
-pub(crate) use slicing::backward as causal_slice;
-pub(crate) use slicing::replay as causal_replay;
 #[cfg(feature = "bin")]
 mod cli;
 mod command_macro;
@@ -13,6 +10,7 @@ mod exec_state;
 pub mod extract;
 pub mod prelude;
 mod proofs;
+mod slicing;
 
 pub mod scheduler;
 mod serialize;
@@ -34,7 +32,9 @@ use core::{CoreActionContext, ResolvedAtomTerm};
 pub use core::{ResolvedCall, SpecializedPrimitive};
 #[cfg(test)]
 use core_relations::ReplayTerm;
-pub use core_relations::{BaseValue, CausalContainerKind, ContainerValue, Value};
+pub use core_relations::{
+    BaseValue, CausalContainerKind, ContainerValue, TraceView, TraceViewError, Value,
+};
 use core_relations::{ExecutionState, ExternalFunctionId, make_external_func};
 use csv::Writer;
 pub use egglog_add_primitive::add_literal_prim;
@@ -47,10 +47,10 @@ use egglog_ast::util::ListDisplay;
 /// implement their own backend (see [`EGraph::with_backend`]).
 pub use egglog_backend_trait::{Backend, BackendExt};
 use egglog_backend_trait::{
-    CausalCheckPremise, CausalCheckSpec, CausalRuleBinding, CausalRuleSpec, CausalSourceSpec,
+    CriterionCapturePremise, CriterionCaptureSpec, FiringCaptureBinding, FiringCaptureSpec,
     FunctionReplaySpec, ReadMode, ReplayConstructorSpec, ReplayLiteral, ReplayOpId, ReplaySortId,
     ReplayTableKind, ReplayTermId, RuleActionCall, RuleBodyCall, RuleSetRun, RuleSpec, RuleValue,
-    RuleVar, SourceRef,
+    RuleVar, SourceCaptureSpec, SourceRef,
 };
 use egglog_bridge::ColumnTy;
 use egglog_core_relations as core_relations;
@@ -107,7 +107,7 @@ use crate::proofs::proof_normal_form::proof_form;
 pub const GLOBAL_NAME_PREFIX: &str = "$";
 
 /// Whether a merge primitive is semantically guaranteed to return exactly one of its two
-/// arguments. Causal receipts use this narrow opt-in to attribute the selected input without
+/// arguments. Trace capture uses this narrow opt-in to attribute the selected input without
 /// recording or re-running an arbitrary primitive. Keep the default closed: a primitive belongs
 /// here only when its implementation has that exact contract.
 fn primitive_merge_returns_one_input(name: &str) -> bool {
@@ -338,7 +338,7 @@ impl<T> ExtensionStateValue for T where T: Any + Clone + Send + Sync {}
 dyn_clone::clone_trait_object!(ExtensionStateValue);
 
 /// A frontend-only replay alias. Unlike an ordinary global `let`, this owns no
-/// backend function row and contributes no proof or causal fact.
+/// backend function row and contributes no proof or trace fact.
 #[derive(Clone, Debug)]
 struct CheckedAlias {
     value: Value,
@@ -392,8 +392,8 @@ pub struct EGraph {
     /// In proof mode, this is the program before proof instrumentation and the version we use for proof checking.
     proof_check_program: Vec<ResolvedNCommand>,
     /// Frontend-owned stable names for the backend's compact replay DAG.
-    /// Present only while native causal receipt capture is enabled.
-    causal_state: Option<CausalState>,
+    /// Present only while native trace capture is enabled.
+    capture_catalog: Option<CaptureCatalog>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -404,7 +404,7 @@ struct ReplayOpKey {
 }
 
 #[derive(Clone)]
-struct CausalState {
+struct CaptureCatalog {
     sort_ids: IndexMap<String, ReplaySortId>,
     op_ids: IndexMap<ReplayOpKey, ReplayOpId>,
     next_source: u64,
@@ -413,27 +413,27 @@ struct CausalState {
     /// Graph-neutral normalized commands in their true expanded execution
     /// order. These commands never retain an `ArcSort`, backend id, or runtime
     /// value from the recording graph.
-    command_catalog: Vec<CausalCatalogCommand>,
+    command_catalog: Vec<CatalogCommand>,
     /// Macro-expanded source commands in source order. Replay emits static
     /// declarations from this catalog so the inspectable artifact never leaks
     /// normalized, parser-reserved implementation names such as `@RSort`.
     surface_command_catalog: Vec<Option<Command>>,
-    /// Stable replay catalog indexed by the causal rule ordinal carried by
-    /// native match receipts.
-    rule_catalog: Vec<CausalRuleCatalogEntry>,
+    /// Stable replay catalog indexed by the capture rule ordinal carried by
+    /// native firings.
+    rule_catalog: Vec<RuleCatalogEntry>,
     /// Exact command and direct immutable-global dependencies for source
     /// actions. Input rows use `input_commands` because their physical line is
     /// already part of `SourceRef`.
-    source_commands: HashMap<SourceRef, CausalSourceCatalogEntry>,
+    source_commands: HashMap<SourceRef, SourceCatalogEntry>,
     /// `(input ...)` source-command ordinal to immutable file identity and
     /// normalized command. Physical rows remain cold and are reread only for
     /// selected `SourceRef::InputRow`s.
-    input_commands: HashMap<u64, CausalInputCatalogEntry>,
+    input_commands: HashMap<u64, InputCatalogEntry>,
     /// Exact normalized command for each successful recorded check.
     check_commands: HashMap<u32, usize>,
     /// Command currently crossing the execution boundary. It is set only by
-    /// `process_program_internal` and consumed synchronously by receipt ids.
-    active_command: Option<ActiveCausalCommand>,
+    /// `process_program_internal` and consumed synchronously by capture ids.
+    active_command: Option<ActiveCatalogCommand>,
     /// Typechecking is stateful in the current frontend (sort declarations and
     /// primitive registration mutate the graph). This bit grants that mutation
     /// only to the normalized `run_program` resolution seam; public
@@ -451,19 +451,19 @@ struct CausalState {
 }
 
 #[derive(Clone, Debug)]
-struct CausalCatalogCommand {
+struct CatalogCommand {
     command: Command,
     surface_command: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
-struct ActiveCausalCommand {
+struct ActiveCatalogCommand {
     command: usize,
 }
 
 #[derive(Clone, Debug)]
 #[allow(dead_code)] // Consumed by the next, owned replay-IR checkpoint.
-struct CausalRuleCatalogEntry {
+struct RuleCatalogEntry {
     ruleset: String,
     native_name: String,
     replay_name: String,
@@ -473,7 +473,7 @@ struct CausalRuleCatalogEntry {
 
 #[allow(dead_code)] // consumed by the owned replay IR in the next checkpoint
 #[derive(Clone, Debug)]
-struct CausalInputCatalogEntry {
+struct InputCatalogEntry {
     command: usize,
     function: String,
     file: String,
@@ -484,13 +484,13 @@ struct CausalInputCatalogEntry {
 
 #[allow(dead_code)] // consumed by the owned replay IR in the next checkpoint
 #[derive(Clone, Debug)]
-struct CausalSourceCatalogEntry {
+struct SourceCatalogEntry {
     command: usize,
     dependencies: Box<[SourceRef]>,
     unsupported: Option<String>,
 }
 
-struct CausalSourceAnalysis {
+struct SourceCaptureAnalysis {
     dependencies: Box<[SourceRef]>,
     produced_global: Option<String>,
     unsupported: Option<String>,
@@ -507,7 +507,7 @@ struct ParsedInputFile {
     rows: Vec<ParsedInputRow>,
 }
 
-impl Default for CausalState {
+impl Default for CaptureCatalog {
     fn default() -> Self {
         let mut state = Self {
             sort_ids: IndexMap::default(),
@@ -535,7 +535,7 @@ impl Default for CausalState {
     }
 }
 
-impl CausalState {
+impl CaptureCatalog {
     fn op_id(&mut self, key: ReplayOpKey) -> ReplayOpId {
         if let Some(op) = self.op_ids.get(&key) {
             return *op;
@@ -754,7 +754,7 @@ impl CausalState {
         self.next_source = self
             .next_source
             .checked_add(1)
-            .expect("too many causal source commands");
+            .expect("too many source captures");
         ordinal
     }
 
@@ -762,14 +762,14 @@ impl CausalState {
         SourceRef::Synthetic(self.next_source_ordinal())
     }
 
-    fn register_source(&mut self, source: SourceRef, analysis: CausalSourceAnalysis) {
+    fn register_source(&mut self, source: SourceRef, analysis: SourceCaptureAnalysis) {
         let command = self
             .active_command
-            .expect("causal source receipt requires an active catalog command")
+            .expect("source capture requires an active catalog command")
             .command;
         self.source_commands.insert(
             source.clone(),
-            CausalSourceCatalogEntry {
+            SourceCatalogEntry {
                 command,
                 dependencies: analysis.dependencies,
                 unsupported: analysis.unsupported,
@@ -781,10 +781,10 @@ impl CausalState {
     }
 
     fn register_rule(&mut self, ruleset: &str, name: &str, inputs: &[ResolvedVar]) -> u32 {
-        let id = u32::try_from(self.rule_catalog.len()).expect("too many causal rules");
+        let id = u32::try_from(self.rule_catalog.len()).expect("too many captured rules");
         let command = self
             .active_command
-            .expect("causal rule receipt requires an active catalog command")
+            .expect("firing capture requires an active catalog command")
             .command;
         let replay_name = if self.active_rule_anonymous == Some(true) {
             format!("__causal_anon_rule_{id}")
@@ -794,12 +794,12 @@ impl CausalState {
         let cataloged = self
             .command_catalog
             .get_mut(command)
-            .expect("active causal rule command is not cataloged");
+            .expect("active captured rule command is not cataloged");
         let Command::Rule { rule } = &mut cataloged.command else {
-            panic!("causal rule ordinal points at a non-rule command")
+            panic!("capture rule ordinal points at a non-rule command")
         };
         rule.name.clone_from(&replay_name);
-        self.rule_catalog.push(CausalRuleCatalogEntry {
+        self.rule_catalog.push(RuleCatalogEntry {
             ruleset: ruleset.to_owned(),
             native_name: name.to_owned(),
             replay_name,
@@ -814,13 +814,10 @@ impl CausalState {
 
     fn next_check(&mut self) -> u32 {
         let check = self.next_check;
-        self.next_check = self
-            .next_check
-            .checked_add(1)
-            .expect("too many causal checks");
+        self.next_check = self.next_check.checked_add(1).expect("too many criteria");
         let command = self
             .active_command
-            .expect("causal check receipt requires an active catalog command")
+            .expect("criterion capture requires an active catalog command")
             .command;
         self.check_commands.insert(check, command);
         check
@@ -835,16 +832,16 @@ impl CausalState {
         self.ensure_healthy()?;
         if self.active_command.is_some() || self.resolving_command {
             return Err(Error::BackendError(
-                "causal replay does not support nested command execution".into(),
+                "trace capture does not support nested command execution".into(),
             ));
         }
         let command = command.clone().to_command().make_unresolved();
         let id = self.command_catalog.len();
-        self.command_catalog.push(CausalCatalogCommand {
+        self.command_catalog.push(CatalogCommand {
             command,
             surface_command,
         });
-        self.active_command = Some(ActiveCausalCommand { command: id });
+        self.active_command = Some(ActiveCatalogCommand { command: id });
         self.active_rule_anonymous = anonymous_rule;
         Ok(())
     }
@@ -859,7 +856,7 @@ impl CausalState {
         self.ensure_healthy()?;
         if self.resolving_command || self.active_command.is_some() {
             return Err(Error::BackendError(
-                "causal replay does not support nested command resolution".into(),
+                "trace capture does not support nested command resolution".into(),
             ));
         }
         self.resolving_command = true;
@@ -869,11 +866,11 @@ impl CausalState {
     fn finish_resolution(&mut self, succeeded: bool) {
         assert!(
             self.resolving_command,
-            "causal command resolution was not active"
+            "trace command resolution was not active"
         );
         self.resolving_command = false;
         if !succeeded {
-            self.poison("a command failed during resolution after causal capture began");
+            self.poison("a command failed during resolution after trace capture began");
         }
     }
 
@@ -881,10 +878,10 @@ impl CausalState {
         let active = self
             .active_command
             .take()
-            .expect("causal catalog command was not active");
+            .expect("trace catalog command was not active");
         if !succeeded {
             self.poison(format!(
-                "normalized command {} failed after entering causal capture; its native effects and reserved causal identities cannot be rolled back",
+                "normalized command {} failed after entering trace capture; its native effects and reserved trace identities cannot be rolled back",
                 active.command
             ));
         }
@@ -900,7 +897,7 @@ impl CausalState {
     fn ensure_healthy(&self) -> Result<(), Error> {
         match &self.poisoned {
             Some(reason) => Err(Error::BackendError(format!(
-                "causal receipt capture is poisoned: {reason}"
+                "trace capture is poisoned: {reason}"
             ))),
             None => Ok(()),
         }
@@ -925,7 +922,7 @@ impl CausalState {
         self.next_wave = self
             .next_wave
             .checked_add(1)
-            .expect("causal wave counter overflow");
+            .expect("trace wave counter overflow");
         wave
     }
 }
@@ -943,12 +940,12 @@ fn source_rule_inputs(rule: &ResolvedRule) -> Vec<ResolvedVar> {
     inputs
 }
 
-fn causal_anonymous_rules(command: &Command) -> Vec<bool> {
+fn catalog_anonymous_rules(command: &Command) -> Vec<bool> {
     match command {
         Command::Rule { rule } => vec![rule.name.is_empty()],
         Command::Rewrite(_, rewrite, _) => vec![rewrite.name.is_empty()],
         Command::BiRewrite(_, rewrite) => vec![rewrite.name.is_empty(); 2],
-        Command::Fail(_, command) => causal_anonymous_rules(command),
+        Command::Fail(_, command) => catalog_anonymous_rules(command),
         _ => Vec::new(),
     }
 }
@@ -962,31 +959,31 @@ pub trait UserDefinedCommand: Send + Sync {
     /// Run the command with the given arguments.
     fn update(&self, egraph: &mut EGraph, args: &[Expr]) -> Result<Vec<CommandOutput>, Error>;
 
-    /// Execute the command while causal capture is active, if this command has
+    /// Execute the command while trace capture is active, if this command has
     /// an implementation over the deliberately restricted schedule surface.
     /// The context exposes rule stepping only: it cannot evaluate expressions,
     /// forward commands, or mutate tables directly.
     #[doc(hidden)]
-    fn update_causal(
+    fn update_trace(
         &self,
-        _context: &mut CausalScheduleContext<'_>,
+        _context: &mut TraceScheduleContext<'_>,
         _args: &[Expr],
     ) -> Option<Result<Vec<CommandOutput>, Error>> {
         None
     }
 }
 
-/// Restricted execution authority for a user-defined schedule while causal
+/// Restricted execution authority for a user-defined schedule while trace
 /// capture is active. Extensions can compose native ruleset steps without
 /// receiving `&mut EGraph` and thereby bypassing the normalized command
 /// catalog.
 #[doc(hidden)]
-pub struct CausalScheduleContext<'a> {
+pub struct TraceScheduleContext<'a> {
     egraph: &'a mut EGraph,
 }
 
-impl CausalScheduleContext<'_> {
-    /// Run one native ruleset step and record its cumulative causal wave.
+impl TraceScheduleContext<'_> {
+    /// Run one native ruleset step and record its cumulative trace wave.
     pub fn step_rules(&mut self, ruleset: &str) -> Result<RunReport, Error> {
         self.egraph.step_rules(ruleset)
     }
@@ -1108,7 +1105,7 @@ impl EGraph {
             command_macros: Default::default(),
             proof_state,
             proof_check_program: vec![],
-            causal_state: None,
+            capture_catalog: None,
         };
         add_base_sort(&mut eg, UnitSort, span!()).unwrap();
         add_base_sort(&mut eg, StringSort, span!()).unwrap();
@@ -1237,8 +1234,8 @@ impl EGraph {
     #[doc(hidden)]
     pub fn with_term_encoding_enabled(mut self) -> Self {
         assert!(
-            self.causal_state.is_none(),
-            "causal replay recording graph cannot enable term encoding"
+            self.capture_catalog.is_none(),
+            "trace recording graph cannot enable term encoding"
         );
         self.proof_state.original_typechecking = Some(Box::new(self.clone()));
         self
@@ -1253,8 +1250,8 @@ impl EGraph {
     /// (bridge-backed) e-graph, so this backend need not implement typechecking.
     pub fn with_term_encoding(mut self) -> Self {
         assert!(
-            self.causal_state.is_none(),
-            "causal replay recording graph cannot enable term encoding"
+            self.capture_catalog.is_none(),
+            "trace recording graph cannot enable term encoding"
         );
         self.proof_state.original_typechecking = Some(Box::new(EGraph::default()));
         self
@@ -1265,8 +1262,8 @@ impl EGraph {
     #[doc(hidden)]
     pub fn with_term_encoding_typechecker(mut self, typechecker: EGraph) -> Self {
         assert!(
-            self.causal_state.is_none(),
-            "causal replay recording graph cannot enable term encoding"
+            self.capture_catalog.is_none(),
+            "trace recording graph cannot enable term encoding"
         );
         self.proof_state.original_typechecking = Some(Box::new(typechecker));
         self
@@ -1278,8 +1275,8 @@ impl EGraph {
     #[doc(hidden)]
     pub fn with_proofs_enabled(mut self) -> Self {
         assert!(
-            self.causal_state.is_none(),
-            "causal replay recording graph cannot enable proofs"
+            self.capture_catalog.is_none(),
+            "trace recording graph cannot enable proofs"
         );
         if self.proof_state.original_typechecking.is_none() {
             self = self.with_term_encoding_enabled();
@@ -1288,28 +1285,28 @@ impl EGraph {
         self
     }
 
-    /// Enable native causal receipt capture before loading facts or compiling
+    /// Enable native trace capture before loading facts or compiling
     /// rule plans.
     ///
     /// Structural replay identities are owned by this frontend and registered
     /// side-band with the backend. Ordinary execution has no catalog and keeps
     /// its existing instruction tape unchanged.
-    pub fn enable_causal_receipts(&mut self) -> Result<(), Error> {
-        if self.causal_state.is_some() {
+    pub fn enable_trace(&mut self) -> Result<(), Error> {
+        if self.capture_catalog.is_some() {
             return Ok(());
         }
         if self.proof_state.original_typechecking.is_some() {
             return Err(Error::BackendError(
-                "causal receipts must run on the ordinary, non-proof graph".into(),
+                "trace capture must run on the ordinary, non-proof graph".into(),
             ));
         }
         if self.pushed_egraph.is_some() {
             return Err(Error::BackendError(
-                "causal receipts cannot be enabled inside push/pop state".into(),
+                "trace capture cannot be enabled inside push/pop state".into(),
             ));
         }
         // `Rational` is installed by the standard experimental graph factory
-        // before causal capture is enabled, and the fresh proof factory
+        // before trace capture is enabled, and the fresh proof factory
         // installs the identical extension again for replay.
         let builtin_sorts = [
             "Unit", "String", "bool", "i64", "f64", "BigInt", "BigRat", "Rational",
@@ -1322,7 +1319,7 @@ impl EGraph {
                 .any(|name| !builtin_sorts.contains(&name.as_str()))
         {
             return Err(Error::BackendError(
-                "causal receipts must be enabled before user declarations so the replay catalog is complete"
+                "trace capture must be enabled before user declarations so the replay catalog is complete"
                     .into(),
             ));
         }
@@ -1332,14 +1329,14 @@ impl EGraph {
             .any(|ruleset| matches!(ruleset, Ruleset::Rules(rules) if !rules.is_empty()))
         {
             return Err(Error::BackendError(
-                "causal receipts must be enabled before registering rules".into(),
+                "trace capture must be enabled before registering rules".into(),
             ));
         }
         self.backend
-            .enable_causal_receipts()
+            .enable_trace()
             .map_err(|error| Error::BackendError(error.to_string()))?;
 
-        let mut causal = CausalState::default();
+        let mut catalog = CaptureCatalog::default();
         let container_sorts = self
             .type_info
             .sorts
@@ -1348,7 +1345,7 @@ impl EGraph {
             .cloned()
             .collect::<Vec<_>>();
         for sort in container_sorts {
-            let (logical_sort, container_type, child_sorts) = causal
+            let (logical_sort, container_type, child_sorts) = catalog
                 .container_sort_spec(&sort)
                 .expect("filtered container sort lost its metadata");
             self.backend
@@ -1361,7 +1358,7 @@ impl EGraph {
             .map(|function| {
                 (
                     function.backend_id,
-                    causal.function_spec(
+                    catalog.function_spec(
                         function.name(),
                         &function.schema,
                         function.subtype(),
@@ -1375,89 +1372,83 @@ impl EGraph {
                 .register_function_replay(function, spec)
                 .map_err(|error| Error::BackendError(error.to_string()))?;
         }
-        self.causal_state = Some(causal);
+        self.capture_catalog = Some(catalog);
         Ok(())
     }
 
-    /// Inspect finalized native causal receipts without copying their arena.
-    pub fn with_causal_receipt_view<R>(
+    /// Inspect a finalized native trace without copying its arena.
+    pub fn with_trace_view<R>(
         &self,
-        inspect: impl for<'view> FnOnce(
-            &mut core_relations::CausalReceiptView<'view>,
-        ) -> Result<R, core_relations::ReceiptViewError>,
+        inspect: impl for<'view> FnOnce(&mut TraceView<'view>) -> Result<R, TraceViewError>,
     ) -> Result<R, Error> {
-        self.causal_state
+        self.capture_catalog
             .as_ref()
-            .ok_or_else(|| Error::BackendError("causal receipts are not enabled".into()))?
+            .ok_or_else(|| Error::BackendError("trace capture is not enabled".into()))?
             .ensure_healthy()?;
         self.backend
             .as_any()
             .downcast_ref::<egglog_bridge::EGraph>()
-            .ok_or_else(|| Error::BackendError("causal receipts require the main backend".into()))?
-            .with_causal_receipt_view(inspect)
+            .ok_or_else(|| Error::BackendError("trace capture requires the main backend".into()))?
+            .with_trace_view(inspect)
             .map_err(|error| Error::BackendError(error.to_string()))
     }
 
     #[cfg(test)]
-    fn causal_replay_term_counters(&self) -> Result<core_relations::ReplayTermCounters, Error> {
+    fn replay_term_counters(&self) -> Result<core_relations::TermInternerCounters, Error> {
         self.backend
             .as_any()
             .downcast_ref::<egglog_bridge::EGraph>()
-            .ok_or_else(|| {
-                Error::BackendError("test backend has no native causal receipts".into())
-            })?
-            .causal_replay_term_counters()
+            .ok_or_else(|| Error::BackendError("test backend has no native trace capture".into()))?
+            .replay_term_counters()
             .map_err(|error| Error::BackendError(error.to_string()))
     }
 
     #[cfg(test)]
-    fn causal_replay_term(&self, id: ReplayTermId) -> Result<Option<ReplayTerm>, Error> {
-        self.causal_state
+    fn replay_term(&self, id: ReplayTermId) -> Result<Option<ReplayTerm>, Error> {
+        self.capture_catalog
             .as_ref()
-            .ok_or_else(|| Error::BackendError("causal receipts are not enabled".into()))?
+            .ok_or_else(|| Error::BackendError("trace capture is not enabled".into()))?
             .ensure_healthy()?;
         self.backend
             .as_any()
             .downcast_ref::<egglog_bridge::EGraph>()
-            .ok_or_else(|| {
-                Error::BackendError("test backend has no native causal receipts".into())
-            })?
-            .causal_replay_term(id)
+            .ok_or_else(|| Error::BackendError("test backend has no native trace capture".into()))?
+            .replay_term(id)
             .map_err(|error| Error::BackendError(error.to_string()))
     }
 
-    fn begin_causal_wave(&mut self) -> Result<(), Error> {
-        let Some(causal) = self.causal_state.as_mut() else {
+    fn begin_trace_wave(&mut self) -> Result<(), Error> {
+        let Some(catalog) = self.capture_catalog.as_mut() else {
             return Ok(());
         };
-        causal.ensure_healthy()?;
-        let wave = causal.begin_wave();
+        catalog.ensure_healthy()?;
+        let wave = catalog.begin_wave();
         self.backend
-            .set_causal_wave(wave)
+            .set_trace_wave(wave)
             .map_err(|error| Error::BackendError(error.to_string()))
     }
 
-    pub(crate) fn causal_registration_is_allowed(&self) -> bool {
-        self.causal_state
+    pub(crate) fn capture_registration_is_allowed(&self) -> bool {
+        self.capture_catalog
             .as_ref()
-            .is_none_or(|causal| causal.resolving_command || causal.active_command.is_some())
+            .is_none_or(|catalog| catalog.resolving_command || catalog.active_command.is_some())
     }
 
-    fn finalize_causal_wave(&mut self) -> Result<(), Error> {
-        let Some(causal) = self.causal_state.as_ref() else {
+    fn finalize_trace_wave(&mut self) -> Result<(), Error> {
+        let Some(catalog) = self.capture_catalog.as_ref() else {
             return Ok(());
         };
-        causal.ensure_healthy()?;
+        catalog.ensure_healthy()?;
         self.backend
-            .finalize_causal_wave()
+            .finalize_trace_wave()
             .map_err(|error| Error::BackendError(error.to_string()))
     }
 
     /// Enable testing of getting proofs for all `check` commands.
     pub fn with_proof_testing(mut self) -> Self {
         assert!(
-            self.causal_state.is_none(),
-            "causal replay recording graph cannot enable proof testing"
+            self.capture_catalog.is_none(),
+            "trace recording graph cannot enable proof testing"
         );
         self.proof_state.proof_testing = true;
         self
@@ -1517,8 +1508,8 @@ impl EGraph {
         T: Default + Clone + Send + Sync + 'static,
     {
         assert!(
-            self.causal_state.is_none(),
-            "causal replay does not support mutable extension state after capture starts"
+            self.capture_catalog.is_none(),
+            "trace capture does not support mutable extension state after capture starts"
         );
         let value = self
             .extension_state
@@ -1533,8 +1524,8 @@ impl EGraph {
     /// Get the type information for this e-graph
     pub fn type_info(&mut self) -> &mut TypeInfo {
         assert!(
-            self.causal_state.is_none(),
-            "causal replay does not support mutable type information after capture starts"
+            self.capture_catalog.is_none(),
+            "trace capture does not support mutable type information after capture starts"
         );
         &mut self.type_info
     }
@@ -1547,8 +1538,8 @@ impl EGraph {
     /// Get mutable access to the command macro registry
     pub fn command_macros_mut(&mut self) -> &mut CommandMacroRegistry {
         assert!(
-            self.causal_state.is_none(),
-            "causal replay does not support registering macros after capture starts"
+            self.capture_catalog.is_none(),
+            "trace capture does not support registering macros after capture starts"
         );
         &mut self.command_macros
     }
@@ -1558,9 +1549,9 @@ impl EGraph {
         name: String,
         command: Arc<dyn UserDefinedCommand>,
     ) -> Result<(), Error> {
-        if self.causal_state.is_some() {
+        if self.capture_catalog.is_some() {
             return Err(Error::BackendError(
-                "causal replay does not support registering commands after capture starts".into(),
+                "trace capture does not support registering commands after capture starts".into(),
             ));
         }
         if self.commands.contains_key(&name)
@@ -1577,8 +1568,8 @@ impl EGraph {
     /// Configure whether globals missing the required `$` prefix are treated as errors.
     pub fn set_strict_mode(&mut self, strict_mode: bool) {
         assert!(
-            self.causal_state.is_none(),
-            "causal replay does not support changing strict mode after capture starts"
+            self.capture_catalog.is_none(),
+            "trace capture does not support changing strict mode after capture starts"
         );
         self.strict_mode = strict_mode;
     }
@@ -1594,8 +1585,8 @@ impl EGraph {
     #[doc(hidden)]
     pub fn ensure_no_reserved_symbols(&mut self, should_ensure: bool) {
         assert!(
-            self.causal_state.is_none(),
-            "causal replay does not support changing parser symbol policy after capture starts"
+            self.capture_catalog.is_none(),
+            "trace capture does not support changing parser symbol policy after capture starts"
         );
         self.parser.ensure_no_reserved_symbols = should_ensure;
     }
@@ -1662,8 +1653,8 @@ impl EGraph {
     /// See [`EGraph::pop`].
     pub fn push(&mut self) {
         assert!(
-            self.causal_state.is_none(),
-            "causal replay does not support EGraph::push"
+            self.capture_catalog.is_none(),
+            "trace capture does not support EGraph::push"
         );
         let prev_prev: Option<Box<Self>> = self.pushed_egraph.take();
         let mut prev = self.clone();
@@ -1676,9 +1667,9 @@ impl EGraph {
     /// It preserves the run report and messages from the popped
     /// egraph.
     pub fn pop(&mut self) -> Result<(), Error> {
-        if self.causal_state.is_some() {
+        if self.capture_catalog.is_some() {
             return Err(Error::BackendError(
-                "causal replay does not support EGraph::pop".into(),
+                "trace capture does not support EGraph::pop".into(),
             ));
         }
         match self.pushed_egraph.take() {
@@ -1914,9 +1905,9 @@ impl EGraph {
         let schema = ResolvedSchema { input, outputs };
         let is_relation = self.relation_names.contains(&decl.name);
         let replay = self
-            .causal_state
+            .capture_catalog
             .as_mut()
-            .map(|causal| causal.function_spec(&decl.name, &schema, decl.subtype, is_relation));
+            .map(|catalog| catalog.function_spec(&decl.name, &schema, decl.subtype, is_relation));
 
         let can_subsume = match decl.subtype {
             FunctionSubtype::Constructor => true,
@@ -2036,9 +2027,9 @@ impl EGraph {
         prog: Vec<Command>,
         proof_testing: bool,
     ) -> Result<(), Error> {
-        if self.causal_state.is_some() {
+        if self.capture_catalog.is_some() {
             return Err(Error::BackendError(
-                "causal replay does not support installing a proof-check program on the recording graph"
+                "trace capture does not support installing a proof-check program on the recording graph"
                     .into(),
             ));
         }
@@ -2156,9 +2147,9 @@ impl EGraph {
         span: &Span,
         configs: &[ResolvedRunRuleConfig],
     ) -> Result<RunReport, Error> {
-        if self.causal_state.is_some() {
+        if self.capture_catalog.is_some() {
             return Err(Error::BackendError(
-                "causal receipt recording does not support source run-rule schedules".into(),
+                "trace capture does not support source run-rule schedules".into(),
             ));
         }
         let mut pending = Vec::with_capacity(configs.len());
@@ -2380,12 +2371,12 @@ impl EGraph {
     /// This will return an error if an egglog primitive returns None in an action.
     pub fn step_rules(&mut self, ruleset: &str) -> Result<RunReport, Error> {
         if self
-            .causal_state
+            .capture_catalog
             .as_ref()
-            .is_some_and(|causal| causal.active_command.is_none())
+            .is_some_and(|catalog| catalog.active_command.is_none())
         {
             return Err(Error::BackendError(
-                "causal replay requires ruleset steps to run inside a cataloged schedule command"
+                "trace capture requires ruleset steps to run inside a cataloged schedule command"
                     .into(),
             ));
         }
@@ -2411,31 +2402,31 @@ impl EGraph {
         let mut rule_ids = Vec::new();
         collect_rule_ids(ruleset, &self.rulesets, &mut rule_ids);
 
-        self.begin_causal_wave()?;
+        self.begin_trace_wave()?;
         let iteration_report = match self.backend.run_rules(RuleSetRun {
             name: Some(ruleset),
             rules: &rule_ids,
         }) {
             Ok(report) => report,
             Err(error) => {
-                if let Some(causal) = self.causal_state.as_mut() {
-                    causal.poison(format!(
-                        "ruleset `{ruleset}` failed after entering causal wave execution"
+                if let Some(catalog) = self.capture_catalog.as_mut() {
+                    catalog.poison(format!(
+                        "ruleset `{ruleset}` failed after entering trace wave execution"
                     ));
                 }
                 return Err(Error::BackendError(error.to_string()));
             }
         };
-        if let Err(error) = self.finalize_causal_wave() {
-            if let Some(causal) = self.causal_state.as_mut() {
-                causal.poison(format!(
-                    "ruleset `{ruleset}` failed while finalizing its causal wave"
+        if let Err(error) = self.finalize_trace_wave() {
+            if let Some(catalog) = self.capture_catalog.as_mut() {
+                catalog.poison(format!(
+                    "ruleset `{ruleset}` failed while finalizing its trace wave"
                 ));
             }
             return Err(error);
         }
-        if let Some(causal) = self.causal_state.as_mut() {
-            causal.has_run = true;
+        if let Some(catalog) = self.capture_catalog.as_mut() {
+            catalog.has_run = true;
         }
 
         Ok(RunReport::singleton(ruleset, iteration_report))
@@ -2479,8 +2470,8 @@ impl EGraph {
             }
         }
 
-        let causal_inputs = self
-            .causal_state
+        let capture_inputs = self
+            .capture_catalog
             .as_ref()
             .map(|_| source_rule_inputs(&rule));
 
@@ -2489,16 +2480,16 @@ impl EGraph {
             &mut self.parser.symbol_gen,
             union_to_set,
         )?;
-        let causal_rule = causal_inputs.map(|inputs| {
+        let rule_capture = capture_inputs.map(|inputs| {
             let id = self
-                .causal_state
+                .capture_catalog
                 .as_mut()
-                .expect("causal inputs require an active catalog")
+                .expect("capture inputs require an active catalog")
                 .register_rule(&rule.ruleset, &rule.name, &inputs);
             (id, inputs)
         });
-        if let Some(causal) = self.causal_state.as_mut() {
-            causal.register_rule_primitives(&canonicalized.core);
+        if let Some(catalog) = self.capture_catalog.as_mut() {
+            catalog.register_rule_primitives(&canonicalized.core);
         }
         let core_rule = canonicalized.core;
         let (query, actions) = (&core_rule.body, &core_rule.head);
@@ -2507,14 +2498,14 @@ impl EGraph {
                 &mut *self.backend,
                 &self.functions,
                 &self.type_info,
-                self.causal_state.as_ref(),
+                self.capture_catalog.as_ref(),
                 &mut self.unstable_fn_panic_ids,
                 requires_read_context,
             );
             translator.query(query, rule.include_subsumed)?;
             translator.actions(actions)?;
-            if let Some((rule, inputs)) = &causal_rule {
-                translator.set_causal_rule_receipt(*rule, inputs, &canonicalized.substitutions)?;
+            if let Some((rule, inputs)) = &rule_capture {
+                translator.set_firing_capture(*rule, inputs, &canonicalized.substitutions)?;
             }
             translator.try_build(&rule.name, seminaive, no_decomp, core_rule.span.clone())?
         };
@@ -2535,9 +2526,9 @@ impl EGraph {
         Ok(rule_name)
     }
 
-    fn visit_causal_source_expr(
+    fn visit_source_capture_expr(
         &self,
-        causal: &CausalState,
+        catalog: &CaptureCatalog,
         root: &ResolvedExpr,
         dependencies: &mut IndexSet<SourceRef>,
         unsupported: &mut Option<String>,
@@ -2556,12 +2547,12 @@ impl EGraph {
                             .get(&function.name)
                             .is_some_and(|entry| entry.decl.internal_let);
                     if immutable {
-                        if let Some(source) = causal.immutable_globals.get(&function.name) {
+                        if let Some(source) = catalog.immutable_globals.get(&function.name) {
                             dependencies.insert(source.clone());
                         } else {
                             unsupported.get_or_insert_with(|| {
                                 format!(
-                                    "immutable global `{}` has no source receipt",
+                                    "immutable global `{}` has no source capture",
                                     function.name
                                 )
                             });
@@ -2590,13 +2581,13 @@ impl EGraph {
         }
     }
 
-    fn analyze_causal_source(&self, actions: &ResolvedActions) -> CausalSourceAnalysis {
-        let causal = self
-            .causal_state
+    fn analyze_source_capture(&self, actions: &ResolvedActions) -> SourceCaptureAnalysis {
+        let catalog = self
+            .capture_catalog
             .as_ref()
-            .expect("causal source analysis requires active causal state");
+            .expect("source capture requires an active capture catalog");
         let mut dependencies = IndexSet::default();
-        let mut unsupported = causal
+        let mut unsupported = catalog
             .has_run
             .then(|| "source action executed after a run command".to_owned());
         let mut produced_global = None;
@@ -2610,15 +2601,15 @@ impl EGraph {
                 }
                 GenericAction::Set(_, function, keys, value) => {
                     for key in keys {
-                        self.visit_causal_source_expr(
-                            causal,
+                        self.visit_source_capture_expr(
+                            catalog,
                             key,
                             &mut dependencies,
                             &mut unsupported,
                         );
                     }
-                    self.visit_causal_source_expr(
-                        causal,
+                    self.visit_source_capture_expr(
+                        catalog,
                         value,
                         &mut dependencies,
                         &mut unsupported,
@@ -2635,8 +2626,8 @@ impl EGraph {
                 }
                 GenericAction::Change(_, change, _, keys) => {
                     for key in keys {
-                        self.visit_causal_source_expr(
-                            causal,
+                        self.visit_source_capture_expr(
+                            catalog,
                             key,
                             &mut dependencies,
                             &mut unsupported,
@@ -2662,28 +2653,31 @@ impl EGraph {
                     if let Some(global) = defined_global {
                         produced_global = Some(global);
                     } else {
-                        self.visit_causal_source_expr(
-                            causal,
+                        self.visit_source_capture_expr(
+                            catalog,
                             left,
                             &mut dependencies,
                             &mut unsupported,
                         );
                     }
-                    self.visit_causal_source_expr(
-                        causal,
+                    self.visit_source_capture_expr(
+                        catalog,
                         right,
                         &mut dependencies,
                         &mut unsupported,
                     );
                 }
                 GenericAction::Panic(_, _) => {}
-                GenericAction::Expr(_, expr) => {
-                    self.visit_causal_source_expr(causal, expr, &mut dependencies, &mut unsupported)
-                }
+                GenericAction::Expr(_, expr) => self.visit_source_capture_expr(
+                    catalog,
+                    expr,
+                    &mut dependencies,
+                    &mut unsupported,
+                ),
             }
         }
 
-        CausalSourceAnalysis {
+        SourceCaptureAnalysis {
             dependencies: dependencies.into_iter().collect(),
             produced_global,
             unsupported,
@@ -2692,9 +2686,9 @@ impl EGraph {
 
     fn eval_actions(&mut self, actions: &ResolvedActions) -> Result<(), Error> {
         let source_analysis = self
-            .causal_state
+            .capture_catalog
             .as_ref()
-            .map(|_| self.analyze_causal_source(actions));
+            .map(|_| self.analyze_source_capture(actions));
         let mut binding = IndexSet::default();
         let mut ctx = CoreActionContext::new(
             &self.type_info,
@@ -2703,38 +2697,41 @@ impl EGraph {
             self.proof_state.original_typechecking.is_none(),
         );
         let (actions, _) = actions.to_core_actions(&mut ctx)?;
-        if let Some(causal) = self.causal_state.as_mut() {
-            causal.register_action_primitives(&actions);
+        if let Some(catalog) = self.capture_catalog.as_mut() {
+            catalog.register_action_primitives(&actions);
         }
 
-        let source_receipt = self.causal_state.as_mut().map(CausalState::next_source);
+        let source_capture = self
+            .capture_catalog
+            .as_mut()
+            .map(CaptureCatalog::next_source);
         let mut translator = BackendRule::new(
             &mut *self.backend,
             &self.functions,
             &self.type_info,
-            self.causal_state.as_ref(),
+            self.capture_catalog.as_ref(),
             &mut self.unstable_fn_panic_ids,
             true, // global action: Read/Full contexts (may read the DB)
         );
-        translator.source_receipt = source_receipt.clone();
+        translator.source_capture = source_capture.clone();
         translator.actions(&actions)?;
         let id = translator.try_build("eval_actions", false, false, Span::Panic)?;
         let result = self.backend.run_rules(RuleSetRun {
             name: None,
             rules: &[id],
         });
-        let finalize = (result.is_ok() && self.causal_state.is_some())
-            .then(|| self.backend.finalize_causal_wave())
+        let finalize = (result.is_ok() && self.capture_catalog.is_some())
+            .then(|| self.backend.finalize_trace_wave())
             .transpose();
         self.backend.free_rule(id);
         finalize.map_err(|error| Error::BackendError(error.to_string()))?;
 
         match result {
             Ok(_) => {
-                if let (Some(source), Some(analysis)) = (source_receipt, source_analysis) {
-                    self.causal_state
+                if let (Some(source), Some(analysis)) = (source_capture, source_analysis) {
+                    self.capture_catalog
                         .as_mut()
-                        .expect("source receipt lost causal state")
+                        .expect("source capture lost the capture catalog")
                         .register_source(source, analysis);
                 }
                 Ok(())
@@ -2894,9 +2891,9 @@ impl EGraph {
     ///
     /// Raises an error if the function does not exist.
     pub fn clear_function(&mut self, func_name: &str) -> Result<(), Error> {
-        if self.causal_state.is_some() {
+        if self.capture_catalog.is_some() {
             return Err(Error::BackendError(
-                "causal replay does not support EGraph::clear_function".into(),
+                "trace capture does not support EGraph::clear_function".into(),
             ));
         }
         let backend_id = self
@@ -2910,9 +2907,9 @@ impl EGraph {
 
     /// Evaluates an expression, returns the sort of the expression and the evaluation result.
     pub fn eval_expr(&mut self, expr: &Expr) -> Result<(ArcSort, Value), Error> {
-        if self.causal_state.is_some() {
+        if self.capture_catalog.is_some() {
             return Err(Error::BackendError(
-                "causal replay does not support EGraph::eval_expr".into(),
+                "trace capture does not support EGraph::eval_expr".into(),
             ));
         }
         let span = expr.span();
@@ -3114,7 +3111,7 @@ impl EGraph {
             &mut *self.backend,
             &self.functions,
             &self.type_info,
-            self.causal_state.as_ref(),
+            self.capture_catalog.as_ref(),
             &mut self.unstable_fn_panic_ids,
             true, // global action: Read/Full contexts (may read the DB)
         );
@@ -3406,10 +3403,14 @@ impl EGraph {
         &mut self,
         span: &Span,
         facts: &[ResolvedFact],
-        record_causal_root: bool,
+        record_criterion: bool,
     ) -> Result<(), Error> {
-        let check_receipt = record_causal_root
-            .then(|| self.causal_state.as_mut().map(CausalState::next_check))
+        let criterion_capture = record_criterion
+            .then(|| {
+                self.capture_catalog
+                    .as_mut()
+                    .map(CaptureCatalog::next_check)
+            })
             .flatten();
         let mut checked_variables = IndexMap::<String, (Span, ResolvedVar)>::default();
         for fact in facts {
@@ -3452,7 +3453,7 @@ impl EGraph {
             no_decomp: false,
             include_subsumed: false,
         };
-        let canonicalized = if check_receipt.is_some() {
+        let canonicalized = if criterion_capture.is_some() {
             Some(rule.to_canonicalized_check_rule(&self.type_info, &mut self.parser.symbol_gen)?)
         } else {
             None
@@ -3472,38 +3473,38 @@ impl EGraph {
                 Vec::new().into_boxed_slice(),
             )
         };
-        let causal_check_equalities = if check_receipt.is_some() {
-            let causal = self
-                .causal_state
+        let criterion_equalities = if criterion_capture.is_some() {
+            let catalog = self
+                .capture_catalog
                 .as_ref()
-                .expect("a causal check id requires active causal state");
-            let premise = |source: &core::CheckPremise| -> Result<CausalCheckPremise, Error> {
+                .expect("a criterion requires an active capture catalog");
+            let premise = |source: &core::CheckPremise| -> Result<CriterionCapturePremise, Error> {
                 let atom = query.atoms.get(source.body_atom).ok_or_else(|| {
                     Error::BackendError(format!(
-                        "causal check endpoint cites missing body atom {}",
+                        "criterion endpoint cites missing body atom {}",
                         source.body_atom
                     ))
                 })?;
                 let ResolvedCall::Func(function) = &atom.head else {
                     return Err(Error::BackendError(format!(
-                        "{}: causal check endpoint producer is not a function",
+                        "{}: criterion endpoint producer is not a function",
                         atom.span
                     )));
                 };
-                let constructor = causal.constructor_term_spec(function);
+                let constructor = catalog.constructor_term_spec(function);
                 if function.subtype == FunctionSubtype::Constructor && constructor.is_none() {
                     return Err(Error::BackendError(format!(
-                        "{}: causal check endpoint constructor has no registered replay identity",
+                        "{}: criterion endpoint constructor has no registered replay identity",
                         atom.span
                     )));
                 }
                 if source.column + 1 != atom.args.len() {
                     return Err(Error::BackendError(format!(
-                        "{}: causal check endpoint does not cite the constructor output column",
+                        "{}: criterion endpoint does not cite the constructor output column",
                         atom.span
                     )));
                 }
-                Ok(CausalCheckPremise {
+                Ok(CriterionCapturePremise {
                     body_atom: source.body_atom,
                     column: source.column,
                     constructor,
@@ -3530,7 +3531,7 @@ impl EGraph {
             &mut *self.backend,
             &self.functions,
             &self.type_info,
-            self.causal_state.as_ref(),
+            self.capture_catalog.as_ref(),
             &mut self.unstable_fn_panic_ids,
             true, // global query: Read context (may read the DB)
         );
@@ -3546,10 +3547,10 @@ impl EGraph {
             Vec::new(),
             egglog_bridge::ColumnTy::Id,
         );
-        if let Some(check) = check_receipt {
-            translator.check_receipt = Some(CausalCheckSpec {
+        if let Some(check) = criterion_capture {
+            translator.criterion_capture = Some(CriterionCaptureSpec {
                 check,
-                equalities: causal_check_equalities.into_boxed_slice(),
+                equalities: criterion_equalities.into_boxed_slice(),
             });
         }
         let id = translator.try_build("check_facts", false, false, span.clone())?;
@@ -3559,7 +3560,7 @@ impl EGraph {
         });
         self.backend.free_rule(id);
         run_result.map_err(|e| Error::BackendError(e.to_string()))?;
-        self.finalize_causal_wave()?;
+        self.finalize_trace_wave()?;
 
         let ext_sc_val = ext_sc.lock().unwrap().take();
         let matched = matches!(ext_sc_val, Some(()));
@@ -3628,8 +3629,8 @@ impl EGraph {
             }
             ResolvedNCommand::RunSchedule(sched) => {
                 let report = self.run_schedule(&sched)?;
-                if let Some(causal) = self.causal_state.as_mut() {
-                    causal.has_run = true;
+                if let Some(catalog) = self.capture_catalog.as_mut() {
+                    catalog.has_run = true;
                 }
                 log::info!("Ran schedule {sched}.");
                 log::info!("Report: {report}");
@@ -3662,11 +3663,11 @@ impl EGraph {
                 expr,
                 expected_sort: _,
             } => {
-                if self.causal_state.is_some() {
+                if self.capture_catalog.is_some() {
                     return Err(Self::checked_alias_error(
                         &span,
                         &name.name,
-                        "checked aliases are replay-only and cannot be recorded as causal sources",
+                        "checked aliases are replay-only and cannot be recorded as trace sources",
                     ));
                 }
                 if self.checked_aliases.contains_key(&name.name) {
@@ -3754,18 +3755,18 @@ impl EGraph {
                 };
             }
             ResolvedNCommand::Push(n) => {
-                if self.causal_state.is_some() {
+                if self.capture_catalog.is_some() {
                     return Err(Error::BackendError(
-                        "causal replay does not support push/pop state".into(),
+                        "trace capture does not support push/pop state".into(),
                     ));
                 }
                 (0..n).for_each(|_| self.push());
                 log::info!("Pushed {n} levels.")
             }
             ResolvedNCommand::Pop(span, n) => {
-                if self.causal_state.is_some() {
+                if self.capture_catalog.is_some() {
                     return Err(Error::BackendError(
-                        "causal replay does not support push/pop state".into(),
+                        "trace capture does not support push/pop state".into(),
                     ));
                 }
                 for _ in 0..n {
@@ -3808,9 +3809,9 @@ impl EGraph {
                 return Ok(vec![res]);
             }
             ResolvedNCommand::Fail(span, c) => {
-                if self.causal_state.is_some() {
+                if self.capture_catalog.is_some() {
                     return Err(Error::BackendError(
-                        "causal replay does not support nested fail commands".into(),
+                        "trace capture does not support nested fail commands".into(),
                     ));
                 }
                 let result = self.run_command(*c);
@@ -3863,13 +3864,13 @@ impl EGraph {
                         NotFoundError(format!("Unrecognized user-defined command: {name}"))
                     })?
                     .clone();
-                if self.causal_state.is_some() {
-                    let mut context = CausalScheduleContext { egraph: self };
+                if self.capture_catalog.is_some() {
+                    let mut context = TraceScheduleContext { egraph: self };
                     return command
-                        .update_causal(&mut context, &exprs)
+                        .update_trace(&mut context, &exprs)
                         .unwrap_or_else(|| {
                             Err(Error::BackendError(format!(
-                                "causal replay does not support user-defined command `{name}`"
+                                "trace capture does not support user-defined command `{name}`"
                             )))
                         });
                 }
@@ -4021,21 +4022,21 @@ impl EGraph {
         };
         let backend_id = self.functions[func_name].backend_id;
         let unit_val = self.backend.base_values().get(());
-        let pending_input_catalog = self.causal_state.as_mut().map(|causal| {
-            let command = causal.next_source_ordinal();
-            let catalog = causal
+        let pending_input_catalog = self.capture_catalog.as_mut().map(|catalog| {
+            let source_ordinal = catalog.next_source_ordinal();
+            let command = catalog
                 .active_command
-                .expect("causal input receipt requires an active catalog command")
+                .expect("input capture requires an active catalog command")
                 .command;
             (
-                command,
-                CausalInputCatalogEntry {
-                    command: catalog,
+                source_ordinal,
+                InputCatalogEntry {
+                    command,
                     function: func_name.to_owned(),
                     file: file.clone(),
                     resolved_path: resolved_input_path,
                     digest: parsed_file.digest,
-                    unsupported: causal
+                    unsupported: catalog
                         .has_run
                         .then(|| "input command executed after a run command".to_owned())
                         .or_else(|| {
@@ -4050,8 +4051,8 @@ impl EGraph {
         });
         let source_command = pending_input_catalog.as_ref().map(|(command, _)| *command);
         let parsed_contents = parsed_file.rows;
-        let (values, causal_rows) = if let Some(command) = source_command {
-            let mut causal_rows = Vec::with_capacity(parsed_contents.len());
+        let (values, capture_rows) = if let Some(command) = source_command {
+            let mut capture_rows = Vec::with_capacity(parsed_contents.len());
             for parsed in parsed_contents {
                 let row_values = parsed
                     .literals
@@ -4060,18 +4061,18 @@ impl EGraph {
                     .collect::<Vec<_>>();
                 let mut terms = Vec::with_capacity(parsed.literals.len());
                 for (literal, value) in parsed.literals.iter().zip(row_values.iter().copied()) {
-                    let causal = self.causal_state.as_ref().unwrap();
+                    let catalog = self.capture_catalog.as_ref().unwrap();
                     let term = self
                         .backend
                         .intern_replay_literal(
-                            causal.literal_sort(literal),
-                            CausalState::replay_literal(literal),
+                            catalog.literal_sort(literal),
+                            CaptureCatalog::replay_literal(literal),
                             value,
                         )
                         .map_err(|error| Error::BackendError(error.to_string()))?;
                     terms.push(term);
                 }
-                causal_rows.push(egglog_bridge::SourceInputRow::new(
+                capture_rows.push(egglog_bridge::SourceInputRow::new(
                     SourceRef::InputRow {
                         command,
                         line: parsed.line,
@@ -4080,7 +4081,7 @@ impl EGraph {
                     terms,
                 ));
             }
-            (Vec::new(), Some(causal_rows))
+            (Vec::new(), Some(capture_rows))
         } else {
             let values = parsed_contents
                 .into_iter()
@@ -4107,7 +4108,7 @@ impl EGraph {
 
         log::debug!("Successfully loaded file.");
 
-        let num_facts = causal_rows.as_ref().map_or_else(|| values.len(), Vec::len);
+        let num_facts = capture_rows.as_ref().map_or_else(|| values.len(), Vec::len);
 
         let bridge = self
             .backend
@@ -4118,9 +4119,9 @@ impl EGraph {
                     "loading facts from a file requires the reference bridge backend".into(),
                 )
             })?;
-        if let Some(causal_rows) = causal_rows {
+        if let Some(capture_rows) = capture_rows {
             bridge
-                .stage_source_input_rows(backend_id, &causal_rows)
+                .stage_source_input_rows(backend_id, &capture_rows)
                 .map_err(|error| Error::BackendError(error.to_string()))?;
         } else {
             let table_action = egglog_bridge::TableAction::new(bridge, backend_id);
@@ -4144,15 +4145,15 @@ impl EGraph {
         }
 
         self.backend.flush_updates();
-        if self.causal_state.is_some() {
+        if self.capture_catalog.is_some() {
             self.backend
-                .finalize_causal_wave()
+                .finalize_trace_wave()
                 .map_err(|error| Error::BackendError(error.to_string()))?;
         }
         if let Some((command, entry)) = pending_input_catalog {
-            self.causal_state
+            self.capture_catalog
                 .as_mut()
-                .expect("input receipt lost causal state")
+                .expect("input capture lost the capture catalog")
                 .input_commands
                 .insert(command, entry);
         }
@@ -4330,7 +4331,7 @@ impl EGraph {
                 // global lowering may lift mutation prefixes out of the
                 // nested command, so guarding only the final normalized
                 // `ResolvedNCommand::Fail` is too late.
-                if self.causal_state.is_some() {
+                if self.capture_catalog.is_some() {
                     let unsupported = match &command {
                         Command::Fail(_, _) => Some("nested fail commands"),
                         Command::Push(_) | Command::Pop(_, _) => Some("push/pop state"),
@@ -4338,7 +4339,7 @@ impl EGraph {
                     };
                     if let Some(unsupported) = unsupported {
                         return Err(Error::BackendError(format!(
-                            "causal replay does not support {unsupported}"
+                            "trace capture does not support {unsupported}"
                         )));
                     }
                 }
@@ -4358,7 +4359,7 @@ impl EGraph {
                     // Preserve the macro-expanded source form separately from
                     // the normalized commands used for exact event identity.
                     // The former is parseable artifact syntax; the latter is
-                    // what native receipt ordinals refer to.
+                    // what native capture ordinals refer to.
                     let surface_replay_command = matches!(
                         &command,
                         Command::Sort { .. }
@@ -4373,10 +4374,10 @@ impl EGraph {
                             | Command::Check(..)
                     )
                     .then(|| command.clone());
-                    let causal_rule_origins = self
-                        .causal_state
+                    let capture_rule_origins = self
+                        .capture_catalog
                         .is_some()
-                        .then(|| causal_anonymous_rules(&command));
+                        .then(|| catalog_anonymous_rules(&command));
                     let relation_name = match &command {
                         Command::Relation { name, .. } => Some(name.clone()),
                         _ => None,
@@ -4384,18 +4385,18 @@ impl EGraph {
                     let inserted_relation = relation_name
                         .as_ref()
                         .is_some_and(|name| self.relation_names.insert(name.clone()));
-                    if let Some(causal) = self.causal_state.as_mut() {
-                        causal.begin_resolution()?;
+                    if let Some(catalog) = self.capture_catalog.as_mut() {
+                        catalog.begin_resolution()?;
                     }
-                    let resolved_result = if self.causal_state.is_some() {
+                    let resolved_result = if self.capture_catalog.is_some() {
                         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             self.resolve_command(command)
                         })) {
                             Ok(result) => result,
                             Err(payload) => {
-                                self.causal_state
+                                self.capture_catalog
                                     .as_mut()
-                                    .expect("causal resolution lost state while unwinding")
+                                    .expect("trace resolution lost catalog while unwinding")
                                     .finish_resolution(false);
                                 std::panic::resume_unwind(payload);
                             }
@@ -4403,8 +4404,8 @@ impl EGraph {
                     } else {
                         self.resolve_command(command)
                     };
-                    if let Some(causal) = self.causal_state.as_mut() {
-                        causal.finish_resolution(resolved_result.is_ok());
+                    if let Some(catalog) = self.capture_catalog.as_mut() {
+                        catalog.finish_resolution(resolved_result.is_ok());
                     }
                     let resolved = match resolved_result {
                         Ok(resolved) => resolved,
@@ -4417,31 +4418,31 @@ impl EGraph {
                         }
                     };
                     let surface_command = self
-                        .causal_state
+                        .capture_catalog
                         .as_mut()
-                        .map(|causal| causal.register_surface_command(surface_replay_command));
-                    if let Some(origins) = &causal_rule_origins {
+                        .map(|catalog| catalog.register_surface_command(surface_replay_command));
+                    if let Some(origins) = &capture_rule_origins {
                         let normalized_rules = resolved
                             .desugared
                             .iter()
                             .filter(|command| matches!(command, ResolvedNCommand::NormRule { .. }))
                             .count();
                         if origins.len() != normalized_rules {
-                            self.causal_state
+                            self.capture_catalog
                                 .as_mut()
-                                .expect("causal rule origins lost state")
+                                .expect("capture rule origins lost state")
                                 .poison(format!(
                                     "surface rule-origin count {} does not match {normalized_rules} normalized rules",
                                     origins.len()
                                 ));
                             return Err(Error::BackendError(
-                                "causal rule-origin catalog did not match normalized expansion"
+                                "capture rule-origin catalog did not match normalized expansion"
                                     .into(),
                             ));
                         }
                     }
-                    let mut causal_rule_origins =
-                        causal_rule_origins.map(|origins| origins.into_iter());
+                    let mut capture_rule_origins =
+                        capture_rule_origins.map(|origins| origins.into_iter());
                     let defer_checked_alias_proof_program = (run_commands
                         && self.are_proofs_enabled()
                         && resolved
@@ -4463,7 +4464,7 @@ impl EGraph {
                     for processed in resolved.desugared {
                         let anonymous_rule =
                             if matches!(processed, ResolvedNCommand::NormRule { .. }) {
-                                causal_rule_origins.as_mut().and_then(Iterator::next)
+                                capture_rule_origins.as_mut().and_then(Iterator::next)
                             } else {
                                 None
                             };
@@ -4474,23 +4475,23 @@ impl EGraph {
                                 ResolvedNCommand::Push(_) | ResolvedNCommand::Pop(_, _)
                             )
                         {
-                            if let Some(causal) = self.causal_state.as_mut() {
-                                causal.begin_command(
+                            if let Some(catalog) = self.capture_catalog.as_mut() {
+                                catalog.begin_command(
                                     &processed,
                                     anonymous_rule,
                                     surface_command
-                                        .expect("causal source command was not cataloged"),
+                                        .expect("source capture command was not cataloged"),
                                 )?;
                             }
-                            let result = if self.causal_state.is_some() {
+                            let result = if self.capture_catalog.is_some() {
                                 match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                                     self.run_command(processed)
                                 })) {
                                     Ok(result) => result,
                                     Err(payload) => {
-                                        self.causal_state
+                                        self.capture_catalog
                                             .as_mut()
-                                            .expect("causal command lost state while unwinding")
+                                            .expect("trace command lost catalog while unwinding")
                                             .finish_command(false);
                                         std::panic::resume_unwind(payload);
                                     }
@@ -4498,8 +4499,8 @@ impl EGraph {
                             } else {
                                 self.run_command(processed)
                             };
-                            if let Some(causal) = self.causal_state.as_mut() {
-                                causal.finish_command(result.is_ok());
+                            if let Some(catalog) = self.capture_catalog.as_mut() {
+                                catalog.finish_command(result.is_ok());
                             }
                             match result {
                                 Ok(result) => outputs.extend(result),
@@ -4528,16 +4529,16 @@ impl EGraph {
                         // retained proof-checking source program.
                         self.proof_check_program.extend(commands);
                     }
-                    if causal_rule_origins
+                    if capture_rule_origins
                         .as_mut()
                         .is_some_and(|origins| origins.next().is_some())
                     {
-                        self.causal_state
+                        self.capture_catalog
                             .as_mut()
-                            .expect("causal rule origins lost state")
-                            .poison("causal rule-origin iterator was not fully consumed");
+                            .expect("capture rule origins lost state")
+                            .poison("capture rule-origin iterator was not fully consumed");
                         return Err(Error::BackendError(
-                            "causal rule-origin catalog did not match normalized expansion".into(),
+                            "capture rule-origin catalog did not match normalized expansion".into(),
                         ));
                     }
                 }
@@ -4554,8 +4555,8 @@ impl EGraph {
     /// Run a program, represented as an AST.
     /// Return a list of messages.
     pub fn run_program(&mut self, program: Vec<Command>) -> Result<Vec<CommandOutput>, Error> {
-        if let Some(causal) = self.causal_state.as_ref() {
-            causal.ensure_healthy()?;
+        if let Some(catalog) = self.capture_catalog.as_ref() {
+            catalog.ensure_healthy()?;
         }
         if self.backend.requires_term_encoding() && self.proof_state.original_typechecking.is_none()
         {
@@ -4573,9 +4574,9 @@ impl EGraph {
         filename: Option<String>,
         input: &str,
     ) -> Result<Vec<ResolvedCommand>, Error> {
-        if self.causal_state.is_some() {
+        if self.capture_catalog.is_some() {
             return Err(Error::BackendError(
-                "causal replay does not support resolve_program after capture starts".into(),
+                "trace capture does not support resolve_program after capture starts".into(),
             ));
         }
         let parsed = self.parser.get_program_from_string(filename, input)?;
@@ -4688,8 +4689,8 @@ impl EGraph {
     /// Convert from a Rust container type to an egglog value.
     pub fn container_to_value<T: ContainerValue>(&mut self, x: T) -> Value {
         assert!(
-            self.causal_state.is_none(),
-            "causal replay does not support direct container interning on the recording graph"
+            self.capture_catalog.is_none(),
+            "trace capture does not support direct container interning on the recording graph"
         );
         self.backend.with_execution_state(|state| {
             self.backend.container_values().register_val::<T>(x, state)
@@ -4734,9 +4735,9 @@ impl EGraph {
         name: &str,
         args: &[Expr],
     ) -> Result<Vec<CommandOutput>, Error> {
-        if self.causal_state.is_some() {
+        if self.capture_catalog.is_some() {
             return Err(Error::BackendError(
-                "causal replay does not support direct user-defined command execution".into(),
+                "trace capture does not support direct user-defined command execution".into(),
             ));
         }
         self.run_command(ResolvedNCommand::UserDefined(
@@ -4795,9 +4796,9 @@ impl EGraph {
         &mut self,
         f: impl FnOnce(FullState<'_, '_>) -> Result<R, Error>,
     ) -> Result<R, Error> {
-        if self.causal_state.is_some() {
+        if self.capture_catalog.is_some() {
             return Err(Error::BackendError(
-                "causal replay does not support EGraph::update".into(),
+                "trace capture does not support EGraph::update".into(),
             ));
         }
         if self.are_proofs_enabled() {
@@ -4817,9 +4818,9 @@ impl EGraph {
         &mut self,
         f: impl FnOnce(FullState<'_, '_>) -> Result<R, Error>,
     ) -> Result<R, Error> {
-        if self.causal_state.is_some() {
+        if self.capture_catalog.is_some() {
             return Err(Error::BackendError(
-                "causal replay does not support EGraph::update".into(),
+                "trace capture does not support EGraph::update".into(),
             ));
         }
         let registry = self.backend.action_registry().cloned().ok_or_else(|| {
@@ -4851,9 +4852,9 @@ impl EGraph {
         vars: &[(&str, ArcSort)],
         facts: ast::Facts<String, String>,
     ) -> Result<Vec<HashMap<String, Value>>, Error> {
-        if self.causal_state.is_some() {
+        if self.capture_catalog.is_some() {
             return Err(Error::BackendError(
-                "causal replay does not support EGraph::query".into(),
+                "trace capture does not support EGraph::query".into(),
             ));
         }
         // Fail fast under proofs — otherwise the failure would
@@ -5113,12 +5114,12 @@ struct BackendRule<'a> {
     rollback_external_funcs: Vec<ExternalFunctionId>,
     functions: &'a IndexMap<String, Function>,
     type_info: &'a TypeInfo,
-    causal_state: Option<&'a CausalState>,
-    source_receipt: Option<SourceRef>,
-    causal_receipt: Option<CausalRuleSpec>,
-    check_receipt: Option<CausalCheckSpec>,
+    capture_catalog: Option<&'a CaptureCatalog>,
+    source_capture: Option<SourceRef>,
+    firing_capture: Option<FiringCaptureSpec>,
+    criterion_capture: Option<CriterionCaptureSpec>,
     literal_terms: HashMap<Literal, ReplayTermId>,
-    causal_union_sorts: Vec<ReplaySortId>,
+    capture_union_sorts: Vec<ReplaySortId>,
     /// Whether primitives may read the database. When true the per-phase
     /// [`crate::Context`] widens from `Pure`/`Write` to `Read`/`Full` (query
     /// gains reads, action gains reads on top of writes). True for `:naive` /
@@ -5131,7 +5132,7 @@ impl<'a> BackendRule<'a> {
         backend: &'a mut dyn Backend,
         functions: &'a IndexMap<String, Function>,
         type_info: &'a TypeInfo,
-        causal_state: Option<&'a CausalState>,
+        capture_catalog: Option<&'a CaptureCatalog>,
         unstable_fn_panic_ids: &'a mut HashMap<String, ExternalFunctionId>,
         requires_read_context: bool,
     ) -> BackendRule<'a> {
@@ -5141,12 +5142,12 @@ impl<'a> BackendRule<'a> {
             pending_unstable_fn_panic_ids: Default::default(),
             functions,
             type_info,
-            causal_state,
-            source_receipt: None,
-            causal_receipt: None,
-            check_receipt: None,
+            capture_catalog,
+            source_capture: None,
+            firing_capture: None,
+            criterion_capture: None,
             literal_terms: HashMap::default(),
-            causal_union_sorts: Vec::new(),
+            capture_union_sorts: Vec::new(),
             requires_read_context,
             entries: Default::default(),
             constant_bindings: Default::default(),
@@ -5184,15 +5185,15 @@ impl<'a> BackendRule<'a> {
         }
     }
 
-    fn set_causal_rule_receipt(
+    fn set_firing_capture(
         &mut self,
         rule: u32,
         inputs: &[ResolvedVar],
         substitutions: &[(ResolvedVar, ResolvedAtomTerm)],
     ) -> Result<(), Error> {
-        let causal = self
-            .causal_state
-            .expect("causal rule metadata requires an active causal catalog");
+        let catalog = self
+            .capture_catalog
+            .expect("capture rule metadata requires an active capture catalog");
         let mut bindings = Vec::with_capacity(inputs.len());
         for input in inputs {
             let mut term = ResolvedAtomTerm::Var(Span::Panic, input.clone());
@@ -5210,15 +5211,15 @@ impl<'a> BackendRule<'a> {
 
             match &term {
                 ResolvedAtomTerm::Var(_, variable) => {
-                    let current_sort = causal.sort_ids[variable.sort.name()];
+                    let current_sort = catalog.sort_ids[variable.sort.name()];
                     let lowered = self.entry(&term)?;
                     let core::GenericAtomTerm::Var(_, variable) = lowered else {
                         return Err(Error::BackendError(format!(
-                            "causal binding `{}` did not lower to a native variable",
+                            "capture binding `{}` did not lower to a native variable",
                             input.name
                         )));
                     };
-                    bindings.push(CausalRuleBinding::Variable {
+                    bindings.push(FiringCaptureBinding::Variable {
                         variable,
                         current_sort,
                     });
@@ -5227,27 +5228,27 @@ impl<'a> BackendRule<'a> {
                     self.entry(&term)?;
                     let replay = self.literal_terms.get(literal).copied().ok_or_else(|| {
                         Error::BackendError(format!(
-                            "causal binding `{}` has no typed literal term",
+                            "capture binding `{}` has no typed literal term",
                             input.name
                         ))
                     })?;
-                    bindings.push(CausalRuleBinding::Constant {
+                    bindings.push(FiringCaptureBinding::Constant {
                         term: replay,
-                        sort: causal.literal_sort(literal),
+                        sort: catalog.literal_sort(literal),
                     });
                 }
                 ResolvedAtomTerm::Global(_, variable) => {
                     return Err(Error::BackendError(format!(
-                        "causal binding `{}` still references global `{}`",
+                        "capture binding `{}` still references global `{}`",
                         input.name, variable.name
                     )));
                 }
             }
         }
-        self.causal_receipt = Some(CausalRuleSpec {
+        self.firing_capture = Some(FiringCaptureSpec {
             rule,
             bindings: bindings.into_boxed_slice(),
-            union_sorts: self.causal_union_sorts.clone().into_boxed_slice(),
+            union_sorts: self.capture_union_sorts.clone().into_boxed_slice(),
         });
         Ok(())
     }
@@ -5296,12 +5297,12 @@ impl<'a> BackendRule<'a> {
                 }),
             core::GenericAtomTerm::Literal(span, literal) => {
                 let value = literal_to_rule_value(self.backend.base_values(), literal);
-                if let Some(causal) = self.causal_state {
+                if let Some(catalog) = self.capture_catalog {
                     let term = self
                         .backend
                         .intern_replay_literal(
-                            causal.literal_sort(literal),
-                            CausalState::replay_literal(literal),
+                            catalog.literal_sort(literal),
+                            CaptureCatalog::replay_literal(literal),
                             value.value,
                         )
                         .map_err(|error| Error::BackendError(error.to_string()))?;
@@ -5395,8 +5396,8 @@ impl<'a> BackendRule<'a> {
 
         let output_ty = prim.output().column_ty(self.backend.base_values());
         let replay = self
-            .causal_state
-            .and_then(|causal| causal.primitive_spec(prim));
+            .capture_catalog
+            .and_then(|catalog| catalog.primitive_spec(prim));
         Ok((resolved_id, rule_args, output_ty, replay))
     }
 
@@ -5558,17 +5559,18 @@ impl<'a> BackendRule<'a> {
                     }
                 },
                 core::GenericCoreAction::Union(span, x, y) => {
-                    if let Some(causal) = self.causal_state {
+                    if let Some(catalog) = self.capture_catalog {
                         let x_sort = core::atom_term_sort(x);
                         let y_sort = core::atom_term_sort(y);
                         if x_sort.name() != y_sort.name() {
                             return Err(Error::BackendError(format!(
-                                "causal union joins different logical sorts `{}` and `{}`",
+                                "capture union joins different logical sorts `{}` and `{}`",
                                 x_sort.name(),
                                 y_sort.name()
                             )));
                         }
-                        self.causal_union_sorts.push(causal.sort_ids[x_sort.name()]);
+                        self.capture_union_sorts
+                            .push(catalog.sort_ids[x_sort.name()]);
                     }
                     let x = self.entry(x)?;
                     let y = self.entry(y)?;
@@ -5663,11 +5665,11 @@ impl<'a> BackendRule<'a> {
                 body: std::mem::take(&mut self.body),
                 head: std::mem::take(&mut self.head),
             },
-            causal_receipt: self.causal_receipt.take(),
-            check_receipt: self.check_receipt.take(),
-            source_receipt: self.source_receipt.take().map(|source| CausalSourceSpec {
+            firing_capture: self.firing_capture.take(),
+            criterion_capture: self.criterion_capture.take(),
+            source_capture: self.source_capture.take().map(|source| SourceCaptureSpec {
                 source,
-                union_sorts: self.causal_union_sorts.clone().into_boxed_slice(),
+                union_sorts: self.capture_union_sorts.clone().into_boxed_slice(),
             }),
             owned_external_funcs: std::mem::take(&mut self.rollback_external_funcs),
         };
@@ -5808,7 +5810,7 @@ mod tests {
 
     use crate::PureState;
 
-    fn serial_causal_pool() -> &'static rayon::ThreadPool {
+    fn serial_trace_pool() -> &'static rayon::ThreadPool {
         static SERIAL_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
         SERIAL_POOL.get_or_init(|| {
             rayon::ThreadPoolBuilder::new()
@@ -5818,37 +5820,37 @@ mod tests {
         })
     }
 
-    fn enable_serial_causal_receipts(egraph: &mut EGraph) -> Result<(), Error> {
-        serial_causal_pool().install(|| egraph.enable_causal_receipts())
+    fn enable_serial_trace(egraph: &mut EGraph) -> Result<(), Error> {
+        serial_trace_pool().install(|| egraph.enable_trace())
     }
 
     fn find_container_canonicalization(
-        view: &core_relations::CausalReceiptView<'_>,
-        root: core_relations::ReceiptCauseId,
+        view: &core_relations::TraceView<'_>,
+        root: core_relations::CauseId,
     ) -> Result<
         Option<(
-            core_relations::CausalWave,
-            core_relations::EqualityEdgeCount,
+            core_relations::Wave,
+            core_relations::EdgeHorizon,
             core_relations::HistoryPosition,
             Vec<core_relations::TypedCellEquality>,
         )>,
-        core_relations::ReceiptViewError,
+        core_relations::TraceViewError,
     > {
-        let mut pending = vec![core_relations::ReceiptCauseRef::Cause(root)];
+        let mut pending = vec![core_relations::CauseRef::Cause(root)];
         while let Some(cause) = pending.pop() {
-            let core_relations::ReceiptCauseRef::Cause(cause) = cause else {
+            let core_relations::CauseRef::Cause(cause) = cause else {
                 continue;
             };
             match view.cause(cause)? {
-                core_relations::RawReceiptCause::ContainerCanonicalize {
+                core_relations::RawCause::ContainerCanonicalize {
                     wave,
                     as_of_edges,
                     position,
                     equalities,
                 } => return Ok(Some((wave, as_of_edges, position, equalities.to_vec()))),
-                core_relations::RawReceiptCause::Merge { incoming, prior } => {
+                core_relations::RawCause::Merge { incoming, prior } => {
                     pending.push(incoming);
-                    if let core_relations::ReceiptCausePrior::Cause(prior) = prior {
+                    if let core_relations::CausePrior::Cause(prior) = prior {
                         pending.push(prior);
                     }
                 }
@@ -5859,7 +5861,7 @@ mod tests {
     }
 
     #[test]
-    fn causal_merge_input_choice_opt_in_is_explicit() {
+    fn trace_merge_input_choice_opt_in_is_explicit() {
         for name in [
             "min",
             "max",
@@ -5875,10 +5877,10 @@ mod tests {
     }
 
     #[test]
-    fn causal_receipts_attribute_pair_registry_congruence() {
-        serial_causal_pool().install(|| {
+    fn trace_attribute_pair_registry_congruence() {
+        serial_trace_pool().install(|| {
             let mut egraph = EGraph::default();
-            egraph.enable_causal_receipts().unwrap();
+            egraph.enable_trace().unwrap();
             let mut program = String::new();
             // Base literals and container ids share raw Value bits. Crowd the
             // literal and computed-Call sorts so collision selection must use
@@ -5908,7 +5910,7 @@ mod tests {
             egraph.parse_and_run_program(None, &program).unwrap();
 
             egraph
-                .with_causal_receipt_view(|view| {
+                .with_trace_view(|view| {
                     let (cause, wave, as_of_edges, position) = (1..=view
                         .totals()
                         .applied_equalities)
@@ -5955,10 +5957,10 @@ mod tests {
     }
 
     #[test]
-    fn causal_receipts_ignore_raw_colliding_unrelated_set_ancestor() {
-        serial_causal_pool().install(|| {
+    fn trace_ignore_raw_colliding_unrelated_set_ancestor() {
+        serial_trace_pool().install(|| {
             let mut egraph = EGraph::default();
-            egraph.enable_causal_receipts().unwrap();
+            egraph.enable_trace().unwrap();
             let mut program = String::from(
                 "(datatype Expr (A i64) (B i64))\
                  (sort Exprs (Vec Expr))\
@@ -5989,16 +5991,16 @@ mod tests {
             egraph.parse_and_run_program(None, &program).unwrap();
 
             egraph
-                .with_causal_receipt_view(|view| {
+                .with_trace_view(|view| {
                     let mut refreshed = false;
                     for raw in 1..=view.totals().facts {
                         let fact = view.fact(core_relations::FactId::new(raw))?;
-                        let core_relations::ReceiptCauseRef::Cause(cause) = fact.cause else {
+                        let core_relations::CauseRef::Cause(cause) = fact.cause else {
                             continue;
                         };
                         refreshed |= matches!(
                             view.cause(cause)?,
-                            core_relations::RawReceiptCause::ContainerRefresh { .. }
+                            core_relations::RawCause::ContainerRefresh { .. }
                         );
                     }
                     assert!(refreshed);
@@ -6010,10 +6012,10 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "multiple exact logical replay sorts")]
-    fn causal_receipts_reject_ambiguous_nominal_container_aliases() {
-        serial_causal_pool().install(|| {
+    fn trace_reject_ambiguous_nominal_container_aliases() {
+        serial_trace_pool().install(|| {
             let mut egraph = EGraph::default();
-            egraph.enable_causal_receipts().unwrap();
+            egraph.enable_trace().unwrap();
             egraph
                 .parse_and_run_program(
                     None,
@@ -6048,9 +6050,9 @@ mod tests {
     }
 
     #[test]
-    fn causal_receipts_defer_body_primitive_terms_until_all_guards_pass() {
+    fn trace_defer_body_primitive_terms_until_all_guards_pass() {
         let mut egraph = EGraph::default();
-        enable_serial_causal_receipts(&mut egraph).unwrap();
+        enable_serial_trace(&mut egraph).unwrap();
         egraph
             .parse_and_run_program(
                 None,
@@ -6062,26 +6064,23 @@ mod tests {
             )
             .unwrap();
 
-        let state = egraph.causal_state.as_ref().unwrap();
+        let state = egraph.capture_catalog.as_ref().unwrap();
         let add = state.op_ids[&ReplayOpKey {
             name: "+".to_owned(),
             inputs: vec!["i64".to_owned(), "i64".to_owned()],
             output: "i64".to_owned(),
         }];
         let mut ordinal = 1;
-        while let Some(term) = egraph
-            .causal_replay_term(ReplayTermId::new(ordinal))
-            .unwrap()
-        {
+        while let Some(term) = egraph.replay_term(ReplayTermId::new(ordinal)).unwrap() {
             assert!(!matches!(term, ReplayTerm::Call { op, .. } if op == add));
             ordinal += 1;
         }
     }
 
     #[test]
-    fn causal_receipts_fail_closed_when_a_pure_call_depends_on_an_unsupported_primitive() {
+    fn trace_fail_closed_when_a_pure_call_depends_on_an_unsupported_primitive() {
         let mut egraph = EGraph::default();
-        enable_serial_causal_receipts(&mut egraph).unwrap();
+        enable_serial_trace(&mut egraph).unwrap();
         egraph
             .parse_and_run_program(
                 None,
@@ -6096,18 +6095,14 @@ mod tests {
             )
             .unwrap();
         let failure = egraph
-            .with_causal_receipt_view(|view| {
+            .with_trace_view(|view| {
                 for raw in 1..=view.totals().facts {
                     view.fact_terms(core_relations::FactId::new(raw))?;
                 }
                 Ok(())
             })
             .unwrap_err();
-        assert!(
-            failure
-                .to_string()
-                .contains("unsupported causal row origin")
-        );
+        assert!(failure.to_string().contains("unsupported trace row origin"));
     }
 
     #[test]
@@ -6122,9 +6117,9 @@ mod tests {
     }
 
     #[test]
-    fn causal_subsume_mark_only_transition_records_no_specialized_receipt() {
+    fn trace_subsume_mark_only_transition_records_no_specialized_capture() {
         let mut egraph = EGraph::default();
-        enable_serial_causal_receipts(&mut egraph).unwrap();
+        enable_serial_trace(&mut egraph).unwrap();
         egraph
             .parse_and_run_program(
                 None,
@@ -6135,7 +6130,7 @@ mod tests {
             )
             .unwrap();
         let before = egraph
-            .with_causal_receipt_view(|view| Ok((view.totals().facts, view.totals().removals)))
+            .with_trace_view(|view| Ok((view.totals().facts, view.totals().removals)))
             .unwrap();
 
         egraph
@@ -6147,16 +6142,16 @@ mod tests {
             .unwrap();
 
         let after = egraph
-            .with_causal_receipt_view(|view| Ok((view.totals().facts, view.totals().removals)))
+            .with_trace_view(|view| Ok((view.totals().facts, view.totals().removals)))
             .unwrap();
         assert_eq!(after, before);
     }
 
     #[test]
-    fn causal_receipts_refresh_parent_fact_after_stable_vec_rebuild() {
-        serial_causal_pool().install(|| {
+    fn trace_refresh_parent_fact_after_stable_vec_rebuild() {
+        serial_trace_pool().install(|| {
             let mut egraph = EGraph::default();
-            egraph.enable_causal_receipts().unwrap();
+            egraph.enable_trace().unwrap();
             egraph
                 .parse_and_run_program(
                     None,
@@ -6185,12 +6180,12 @@ mod tests {
                 .unwrap();
 
             egraph
-                .with_causal_receipt_view(|view| {
-                    let observed = (1..=view.totals().matches)
+                .with_trace_view(|view| {
+                    let observed = (1..=view.totals().firings)
                         .find_map(|raw| {
-                            view.matched(core_relations::RuleMatchId::new(raw))
+                            view.firing(core_relations::FiringId::new(raw))
                                 .ok()
-                                .filter(|matched| matched.rule == 1)
+                                .filter(|firing| firing.rule == 1)
                         })
                         .expect("the post-refresh observer should fire");
                     let (fact, prior_fact, as_of_edges, position, equalities) = observed
@@ -6198,11 +6193,11 @@ mod tests {
                         .iter()
                         .find_map(|fact| {
                             let record = view.fact(*fact).ok()?;
-                            let core_relations::ReceiptCauseRef::Cause(cause) = record.cause else {
+                            let core_relations::CauseRef::Cause(cause) = record.cause else {
                                 return None;
                             };
                             match view.cause(cause).ok()? {
-                                core_relations::RawReceiptCause::ContainerRefresh {
+                                core_relations::RawCause::ContainerRefresh {
                                     prior_fact,
                                     as_of_edges,
                                     position,
@@ -6250,10 +6245,10 @@ mod tests {
     }
 
     #[test]
-    fn causal_receipts_chain_two_stable_vec_refreshes() {
-        serial_causal_pool().install(|| {
+    fn trace_chain_two_stable_vec_refreshes() {
+        serial_trace_pool().install(|| {
             let mut egraph = EGraph::default();
-            egraph.enable_causal_receipts().unwrap();
+            egraph.enable_trace().unwrap();
             egraph
                 .parse_and_run_program(
                     None,
@@ -6293,15 +6288,14 @@ mod tests {
                 .unwrap();
 
             egraph
-                .with_causal_receipt_view(|view| {
+                .with_trace_view(|view| {
                     let mut chain = None;
                     for raw in 1..=view.totals().facts {
                         let latest = view.fact(core_relations::FactId::new(raw))?;
-                        let core_relations::ReceiptCauseRef::Cause(latest_cause) = latest.cause
-                        else {
+                        let core_relations::CauseRef::Cause(latest_cause) = latest.cause else {
                             continue;
                         };
-                        let core_relations::RawReceiptCause::ContainerRefresh {
+                        let core_relations::RawCause::ContainerRefresh {
                             wave: latest_wave,
                             prior_fact: middle,
                             as_of_edges: latest_edges,
@@ -6312,12 +6306,11 @@ mod tests {
                             continue;
                         };
                         let middle_record = view.fact(middle)?;
-                        let core_relations::ReceiptCauseRef::Cause(middle_cause) =
-                            middle_record.cause
+                        let core_relations::CauseRef::Cause(middle_cause) = middle_record.cause
                         else {
                             continue;
                         };
-                        let core_relations::RawReceiptCause::ContainerRefresh {
+                        let core_relations::RawCause::ContainerRefresh {
                             wave: middle_wave,
                             prior_fact: original,
                             as_of_edges: middle_edges,
@@ -6379,10 +6372,10 @@ mod tests {
     }
 
     #[test]
-    fn causal_receipts_refresh_nested_vec_parent_fact() {
-        serial_causal_pool().install(|| {
+    fn trace_refresh_nested_vec_parent_fact() {
+        serial_trace_pool().install(|| {
             let mut egraph = EGraph::default();
-            egraph.enable_causal_receipts().unwrap();
+            egraph.enable_trace().unwrap();
             egraph
                 .parse_and_run_program(
                     None,
@@ -6400,19 +6393,19 @@ mod tests {
                 )
                 .unwrap();
 
-            let p = egraph.causal_state.as_ref().unwrap().op_ids[&ReplayOpKey {
+            let p = egraph.capture_catalog.as_ref().unwrap().op_ids[&ReplayOpKey {
                 name: "p".into(),
                 inputs: vec!["VVE".into()],
                 output: "E".into(),
             }];
-            egraph.with_causal_receipt_view(|view| {
+            egraph.with_trace_view(|view| {
             let mut parent = None;
             for raw in 1..=view.totals().facts {
                 let fact = view.fact(core_relations::FactId::new(raw))?;
-                let core_relations::ReceiptCauseRef::Cause(cause) = fact.cause else { continue };
-                let core_relations::RawReceiptCause::ContainerRefresh { as_of_edges, position, equalities, .. } = view.cause(cause)? else { continue };
+                let core_relations::CauseRef::Cause(cause) = fact.cause else { continue };
+                let core_relations::RawCause::ContainerRefresh { as_of_edges, position, equalities, .. } = view.cause(cause)? else { continue };
                 let terms = view.fact_terms(fact.id)?;
-                if terms.iter().any(|term| matches!(egraph.causal_replay_term(*term).unwrap(), Some(ReplayTerm::Call { op, .. }) if op == p)) {
+                if terms.iter().any(|term| matches!(egraph.replay_term(*term).unwrap(), Some(ReplayTerm::Call { op, .. }) if op == p)) {
                     parent = Some((as_of_edges, position, equalities.to_vec()));
                     break;
                 }
@@ -6434,10 +6427,10 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "SetContainer")]
-    fn causal_receipts_fail_closed_on_unsupported_container_rebuild() {
-        serial_causal_pool().install(|| {
+    fn trace_fail_closed_on_unsupported_container_rebuild() {
+        serial_trace_pool().install(|| {
             let mut egraph = EGraph::default();
-            egraph.enable_causal_receipts().unwrap();
+            egraph.enable_trace().unwrap();
             egraph
                 .parse_and_run_program(
                     None,
@@ -6457,10 +6450,10 @@ mod tests {
     }
 
     #[test]
-    fn causal_container_rebuild_restores_registry_on_unwind() {
-        serial_causal_pool().install(|| {
+    fn trace_container_rebuild_restores_registry_on_unwind() {
+        serial_trace_pool().install(|| {
             let mut egraph = EGraph::default();
-            egraph.enable_causal_receipts().unwrap();
+            egraph.enable_trace().unwrap();
             egraph
                 .parse_and_run_program(
                     None,
@@ -6489,7 +6482,7 @@ mod tests {
                 .value_to_container::<SetContainer>(bad_set)
                 .expect("Set must exist before the rejected rebuild")
                 .clone();
-            let receipt_state_before = egraph.causal_replay_term_counters().unwrap();
+            let term_state_before = egraph.replay_term_counters().unwrap();
 
             let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 egraph
@@ -6524,27 +6517,27 @@ mod tests {
             assert_eq!(high_after, high_before);
             assert_eq!(set_after, set_before);
             assert_eq!(
-                egraph.causal_replay_term_counters().unwrap(),
-                receipt_state_before,
+                egraph.replay_term_counters().unwrap(),
+                term_state_before,
                 "rejected rebuild published anchors, first-wins mappings, or term nodes"
             );
             assert!(
                 egraph
-                    .with_causal_receipt_view(|_| Ok(()))
+                    .with_trace_view(|_| Ok(()))
                     .unwrap_err()
                     .to_string()
                     .contains("poisoned"),
-                "an unwound native command cannot be retried against the same causal capture"
+                "an unwound native command cannot be retried against the same trace capture"
             );
         });
     }
 
     #[test]
     #[should_panic(expected = "SetContainer")]
-    fn causal_receipts_fail_closed_on_unsupported_container_ancestor() {
-        serial_causal_pool().install(|| {
+    fn trace_fail_closed_on_unsupported_container_ancestor() {
+        serial_trace_pool().install(|| {
             let mut egraph = EGraph::default();
-            egraph.enable_causal_receipts().unwrap();
+            egraph.enable_trace().unwrap();
             egraph
                 .parse_and_run_program(
                     None,
@@ -6565,9 +6558,9 @@ mod tests {
     }
 
     #[test]
-    fn causal_receipts_capture_exact_rule_premise_and_wave() {
+    fn trace_capture_exact_rule_premise_and_wave() {
         let mut egraph = EGraph::default();
-        enable_serial_causal_receipts(&mut egraph).unwrap();
+        enable_serial_trace(&mut egraph).unwrap();
         egraph
             .parse_and_run_program(
                 None,
@@ -6582,28 +6575,28 @@ mod tests {
             .unwrap();
 
         egraph
-            .with_causal_receipt_view(|view| {
-                let matched = view.matched(core_relations::RuleMatchId::new(1))?;
-                assert_eq!(matched.rule, 0);
-                assert_eq!(matched.wave.get(), 1);
-                assert_eq!(matched.premises.len(), 1);
-                let terms = view.match_terms(matched.id)?;
+            .with_trace_view(|view| {
+                let firing = view.firing(core_relations::FiringId::new(1))?;
+                assert_eq!(firing.rule, 0);
+                assert_eq!(firing.wave.get(), 1);
+                assert_eq!(firing.premises.len(), 1);
+                let terms = view.firing_terms(firing.id)?;
                 assert_eq!(terms.len(), 2);
                 assert_eq!(
-                    egraph.causal_replay_term(terms[0]).unwrap(),
+                    egraph.replay_term(terms[0]).unwrap(),
                     Some(ReplayTerm::Literal {
-                        sort: egraph.causal_state.as_ref().unwrap().sort_ids["i64"],
+                        sort: egraph.capture_catalog.as_ref().unwrap().sort_ids["i64"],
                         literal: ReplayLiteral::I64(3),
                     })
                 );
                 assert_eq!(
-                    egraph.causal_replay_term(terms[1]).unwrap(),
+                    egraph.replay_term(terms[1]).unwrap(),
                     Some(ReplayTerm::Literal {
-                        sort: egraph.causal_state.as_ref().unwrap().sort_ids["i64"],
+                        sort: egraph.capture_catalog.as_ref().unwrap().sort_ids["i64"],
                         literal: ReplayLiteral::I64(7),
                     })
                 );
-                let cataloged_rule = &egraph.causal_state.as_ref().unwrap().rule_catalog[0];
+                let cataloged_rule = &egraph.capture_catalog.as_ref().unwrap().rule_catalog[0];
                 assert_eq!(cataloged_rule.ruleset, "");
                 assert_eq!(cataloged_rule.native_name, "derive");
                 assert_eq!(cataloged_rule.replay_name, "derive");
@@ -6614,19 +6607,19 @@ mod tests {
                         ("x".to_owned(), "i64".to_owned()),
                     ]
                 );
-                let premise = view.fact(matched.premises[0])?;
-                let core_relations::ReceiptCauseRef::Cause(source) = premise.cause else {
+                let premise = view.fact(firing.premises[0])?;
+                let core_relations::CauseRef::Cause(source) = premise.cause else {
                     panic!("premise lost source cause")
                 };
                 assert!(matches!(
                     view.cause(source)?,
-                    core_relations::RawReceiptCause::Source(_)
+                    core_relations::RawCause::Source(_)
                 ));
                 for raw in 1..=view.totals().facts {
-                    if let core_relations::ReceiptCauseRef::Rule(id) =
+                    if let core_relations::CauseRef::Rule(id) =
                         view.fact(core_relations::FactId::new(raw))?.cause
                     {
-                        assert_eq!(id, matched.id);
+                        assert_eq!(id, firing.id);
                     }
                 }
                 let root = view.check_root(0)?;
@@ -6641,9 +6634,9 @@ mod tests {
     }
 
     #[test]
-    fn causal_receipts_preserve_distinct_check_equality_terms() {
+    fn trace_preserve_distinct_check_equality_terms() {
         let mut egraph = EGraph::default();
-        enable_serial_causal_receipts(&mut egraph).unwrap();
+        enable_serial_trace(&mut egraph).unwrap();
         egraph
             .parse_and_run_program(
                 None,
@@ -6658,7 +6651,7 @@ mod tests {
             .unwrap();
 
         egraph
-            .with_causal_receipt_view(|view| {
+            .with_trace_view(|view| {
                 let root = view.check_root(0)?;
                 assert_eq!(root.premises.len(), 2);
                 assert_eq!(root.equalities.len(), 1);
@@ -6670,7 +6663,7 @@ mod tests {
                 );
                 assert_ne!(left.term, right.term);
 
-                let state = egraph.causal_state.as_ref().unwrap();
+                let state = egraph.capture_catalog.as_ref().unwrap();
                 let a = state.op_ids[&ReplayOpKey {
                     name: "A".into(),
                     inputs: vec!["i64".into()],
@@ -6682,11 +6675,11 @@ mod tests {
                     output: "Expr".into(),
                 }];
                 assert!(matches!(
-                    egraph.causal_replay_term(left.term).unwrap(),
+                    egraph.replay_term(left.term).unwrap(),
                     Some(ReplayTerm::Call { op, .. }) if op == a
                 ));
                 assert!(matches!(
-                    egraph.causal_replay_term(right.term).unwrap(),
+                    egraph.replay_term(right.term).unwrap(),
                     Some(ReplayTerm::Call { op, .. }) if op == b
                 ));
                 let explanation =
@@ -6697,7 +6690,7 @@ mod tests {
                 );
                 assert!(matches!(
                     view.applied_equality(core_relations::AppliedEqualityId::new(1))?.reason,
-                    core_relations::EqualityReason::RuleUnion(rule) if view.matched(rule)?.rule == 0
+                    core_relations::EqualityReason::RuleUnion(rule) if view.firing(rule)?.rule == 0
                 ));
                 Ok(())
             })
@@ -6705,9 +6698,9 @@ mod tests {
     }
 
     #[test]
-    fn causal_receipt_waves_are_cumulative_across_run_commands() {
+    fn trace_waves_are_cumulative_across_run_commands() {
         let mut egraph = EGraph::default();
-        enable_serial_causal_receipts(&mut egraph).unwrap();
+        enable_serial_trace(&mut egraph).unwrap();
         egraph
             .parse_and_run_program(
                 None,
@@ -6723,11 +6716,11 @@ mod tests {
             .unwrap();
 
         egraph
-            .with_causal_receipt_view(|view| {
-                let waves = (1..=view.totals().matches)
-                    .filter_map(|raw| view.matched(core_relations::RuleMatchId::new(raw)).ok())
-                    .filter(|matched| matched.rule == 0)
-                    .map(|matched| matched.wave.get())
+            .with_trace_view(|view| {
+                let waves = (1..=view.totals().firings)
+                    .filter_map(|raw| view.firing(core_relations::FiringId::new(raw)).ok())
+                    .filter(|firing| firing.rule == 0)
+                    .map(|firing| firing.wave.get())
                     .collect::<Vec<_>>();
                 assert_eq!(waves, [1, 2]);
                 Ok(())
@@ -6736,9 +6729,9 @@ mod tests {
     }
 
     #[test]
-    fn causal_receipts_batch_tsv_rows_with_exact_physical_sources() {
+    fn trace_batch_tsv_rows_with_exact_physical_sources() {
         let directory = std::env::temp_dir().join(format!(
-            "egglog-causal-input-{}-{}",
+            "egglog-trace-input-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -6754,7 +6747,7 @@ mod tests {
             fact_directory: Some(directory.clone()),
             ..Default::default()
         };
-        enable_serial_causal_receipts(&mut egraph).unwrap();
+        enable_serial_trace(&mut egraph).unwrap();
         let result = egraph.parse_and_run_program(
             None,
             r#"
@@ -6778,7 +6771,7 @@ mod tests {
             fact_directory: Some(directory.clone()),
             ..Default::default()
         };
-        enable_serial_causal_receipts(&mut rejected).unwrap();
+        enable_serial_trace(&mut rejected).unwrap();
         let error = rejected
             .parse_and_run_program(
                 None,
@@ -6788,23 +6781,23 @@ mod tests {
         assert!(matches!(error, Error::InputFileFormatError(_)));
         assert!(
             rejected
-                .with_causal_receipt_view(|_| Ok(()))
+                .with_trace_view(|_| Ok(()))
                 .unwrap_err()
                 .to_string()
                 .contains("poisoned"),
-            "a command that fails after entering causal execution must make the capture unusable instead of reusing reserved identities"
+            "a command that fails after entering trace execution must make the capture unusable instead of reusing reserved identities"
         );
         std::fs::remove_dir_all(&directory).ok();
 
         egraph
-            .with_causal_receipt_view(|view| {
+            .with_trace_view(|view| {
                 let mut source_facts = Vec::new();
                 for raw in 1..=view.totals().facts {
                     let fact = view.fact(core_relations::FactId::new(raw))?;
-                    let core_relations::ReceiptCauseRef::Cause(cause) = fact.cause else {
+                    let core_relations::CauseRef::Cause(cause) = fact.cause else {
                         continue;
                     };
-                    if let core_relations::RawReceiptCause::Source(source) = view.cause(cause)? {
+                    if let core_relations::RawCause::Source(source) = view.cause(cause)? {
                         source_facts.push((source.clone(), fact.id));
                     }
                 }
@@ -6843,7 +6836,7 @@ mod tests {
                     assert!(view.fact_terms(*fact)?.iter().copied().any(|term| {
                         !term.is_missing()
                             && matches!(
-                                egraph.causal_replay_term(term).unwrap(),
+                                egraph.replay_term(term).unwrap(),
                                 Some(ReplayTerm::Call { .. })
                             )
                     }));
@@ -6852,7 +6845,7 @@ mod tests {
             })
             .unwrap();
         egraph
-            .with_causal_receipt_view(|view| {
+            .with_trace_view(|view| {
                 assert_eq!(view.counters().unattributed_commits, 0);
                 Ok(())
             })
@@ -6860,9 +6853,9 @@ mod tests {
     }
 
     #[test]
-    fn causal_source_catalog_tracks_expanded_order_and_anonymous_rule_identity() {
+    fn capture_catalog_tracks_expanded_order_and_anonymous_rule_identity() {
         let mut egraph = EGraph::default();
-        enable_serial_causal_receipts(&mut egraph).unwrap();
+        enable_serial_trace(&mut egraph).unwrap();
         egraph
             .parse_and_run_program(
                 None,
@@ -6878,8 +6871,8 @@ mod tests {
             )
             .unwrap();
 
-        let causal = egraph.causal_state.as_ref().unwrap();
-        let commands = causal
+        let catalog = egraph.capture_catalog.as_ref().unwrap();
+        let commands = catalog
             .command_catalog
             .iter()
             .map(|entry| entry.command.to_string())
@@ -6891,7 +6884,7 @@ mod tests {
                     && pair[1].starts_with("(constructor Num")),
             "datatype expansion must be cataloged in execution order: {commands:#?}"
         );
-        let datatype_surface = causal
+        let datatype_surface = catalog
             .command_catalog
             .iter()
             .filter(|entry| {
@@ -6908,10 +6901,10 @@ mod tests {
         assert_eq!(datatype_surface.len(), 1);
         let datatype_surface = *datatype_surface.iter().next().unwrap();
         assert!(matches!(
-            causal.surface_command_catalog[datatype_surface],
+            catalog.surface_command_catalog[datatype_surface],
             Some(Command::Datatype { .. })
         ));
-        let global_entries = causal
+        let global_entries = catalog
             .command_catalog
             .iter()
             .filter(|entry| {
@@ -6927,33 +6920,33 @@ mod tests {
             global_entries[1].surface_command
         );
         assert!(matches!(
-            causal.surface_command_catalog[global_entries[0].surface_command],
+            catalog.surface_command_catalog[global_entries[0].surface_command],
             Some(Command::Action(Action::Let(..)))
         ));
-        assert_eq!(causal.rule_catalog.len(), 1);
-        assert_eq!(causal.rule_catalog[0].replay_name, "__causal_anon_rule_0");
-        let rule_command = &causal.command_catalog[causal.rule_catalog[0].command].command;
+        assert_eq!(catalog.rule_catalog.len(), 1);
+        assert_eq!(catalog.rule_catalog[0].replay_name, "__causal_anon_rule_0");
+        let rule_command = &catalog.command_catalog[catalog.rule_catalog[0].command].command;
         let Command::Rule { rule } = rule_command else {
-            panic!("cataloged causal rule is not a normalized rule: {rule_command}")
+            panic!("cataloged captured rule is not a normalized rule: {rule_command}")
         };
         assert_eq!(rule.name, "__causal_anon_rule_0");
         assert!(
-            causal
+            catalog
                 .source_commands
                 .contains_key(&SourceRef::Synthetic(0))
         );
         assert!(
-            causal
+            catalog
                 .source_commands
                 .contains_key(&SourceRef::Synthetic(1))
         );
-        assert!(causal.check_commands.contains_key(&0));
+        assert!(catalog.check_commands.contains_key(&0));
     }
 
     #[test]
-    fn causal_source_catalog_detects_generated_rule_name_collision() {
+    fn capture_catalog_detects_generated_rule_name_collision() {
         let mut egraph = EGraph::default();
-        enable_serial_causal_receipts(&mut egraph).unwrap();
+        enable_serial_trace(&mut egraph).unwrap();
         egraph
             .parse_and_run_program(
                 None,
@@ -6965,7 +6958,7 @@ mod tests {
             )
             .unwrap();
         let error = egraph
-            .causal_state
+            .capture_catalog
             .as_ref()
             .unwrap()
             .validate_replay_rule_names()
@@ -6974,20 +6967,30 @@ mod tests {
     }
 
     #[test]
-    fn causal_source_catalog_rejects_stateful_command_boundaries_before_mutation() {
+    fn capture_catalog_rejects_stateful_command_boundaries_before_mutation() {
         let mut egraph = EGraph::default();
-        enable_serial_causal_receipts(&mut egraph).unwrap();
+        enable_serial_trace(&mut egraph).unwrap();
         let push = egraph.parse_and_run_program(None, "(push)").unwrap_err();
         assert!(push.to_string().contains("does not support push/pop"));
         assert!(egraph.pushed_egraph.is_none());
 
-        let catalog_len = egraph.causal_state.as_ref().unwrap().command_catalog.len();
+        let catalog_len = egraph
+            .capture_catalog
+            .as_ref()
+            .unwrap()
+            .command_catalog
+            .len();
         let nested = egraph
             .parse_and_run_program(None, "(fail (let $causal_leak 1))")
             .unwrap_err();
         assert!(nested.to_string().contains("nested fail commands"));
         assert_eq!(
-            egraph.causal_state.as_ref().unwrap().command_catalog.len(),
+            egraph
+                .capture_catalog
+                .as_ref()
+                .unwrap()
+                .command_catalog
+                .len(),
             catalog_len,
             "fail must be rejected before global lowering can lift a declaration"
         );
@@ -7018,10 +7021,10 @@ mod tests {
             .unwrap_err();
         assert!(sort.to_string().contains("registration after capture"));
         assert!(egraph.get_sort_by_name("CausalDirectSort").is_none());
-        assert!(egraph.with_causal_receipt_view(|_| Ok(())).is_ok());
+        assert!(egraph.with_trace_view(|_| Ok(())).is_ok());
 
         let mut proof = EGraph::new_with_proofs();
-        let proof_error = enable_serial_causal_receipts(&mut proof).unwrap_err();
+        let proof_error = enable_serial_trace(&mut proof).unwrap_err();
         assert!(
             proof_error
                 .to_string()
@@ -7030,7 +7033,7 @@ mod tests {
     }
 
     #[test]
-    fn causal_user_command_authority_is_not_granted_by_name() {
+    fn trace_user_command_authority_is_not_granted_by_name() {
         struct Impostor(std::sync::Arc<std::sync::atomic::AtomicBool>);
 
         impl UserDefinedCommand for Impostor {
@@ -7052,7 +7055,7 @@ mod tests {
                 std::sync::Arc::new(Impostor(called.clone())),
             )
             .unwrap();
-        enable_serial_causal_receipts(&mut egraph).unwrap();
+        enable_serial_trace(&mut egraph).unwrap();
         let error = egraph
             .parse_and_run_program(None, "(run-schedule safe-looking-ruleset)")
             .unwrap_err();
@@ -7060,7 +7063,7 @@ mod tests {
         assert!(!called.load(std::sync::atomic::Ordering::SeqCst));
         assert!(
             egraph
-                .with_causal_receipt_view(|_| Ok(()))
+                .with_trace_view(|_| Ok(()))
                 .unwrap_err()
                 .to_string()
                 .contains("poisoned")
@@ -7068,7 +7071,7 @@ mod tests {
     }
 
     #[test]
-    fn causal_direct_mutation_apis_fail_before_effects() {
+    fn trace_direct_mutation_apis_fail_before_effects() {
         struct Noop(std::sync::Arc<std::sync::atomic::AtomicBool>);
 
         impl UserDefinedCommand for Noop {
@@ -7091,7 +7094,7 @@ mod tests {
                 std::sync::Arc::new(Noop(command_called.clone())),
             )
             .unwrap();
-        enable_serial_causal_receipts(&mut egraph).unwrap();
+        enable_serial_trace(&mut egraph).unwrap();
         egraph
             .parse_and_run_program(None, "(relation R (i64)) (ruleset rs)")
             .unwrap();
@@ -7154,13 +7157,13 @@ mod tests {
                 .contains("EGraph::query")
         );
         assert_eq!(egraph.get_size("R"), 0);
-        assert!(egraph.with_causal_receipt_view(|_| Ok(())).is_ok());
+        assert!(egraph.with_trace_view(|_| Ok(())).is_ok());
     }
 
     #[test]
-    fn causal_wave_spans_multiple_native_rebuild_timestamps() {
+    fn trace_wave_spans_multiple_native_rebuild_timestamps() {
         let mut egraph = EGraph::default();
-        enable_serial_causal_receipts(&mut egraph).unwrap();
+        enable_serial_trace(&mut egraph).unwrap();
         egraph
             .parse_and_run_program(
                 None,
@@ -7176,7 +7179,7 @@ mod tests {
             .unwrap();
 
         egraph
-            .with_causal_receipt_view(|view| {
+            .with_trace_view(|view| {
                 assert!(view.totals().applied_equalities >= 3);
                 for raw in 1..=view.totals().applied_equalities {
                     assert_eq!(
@@ -7193,7 +7196,7 @@ mod tests {
     }
 
     #[test]
-    fn causal_receipts_reject_late_rule_activation_without_switching_modes() {
+    fn trace_reject_late_rule_activation_without_switching_modes() {
         let mut egraph = EGraph::default();
         egraph
             .parse_and_run_program(
@@ -7203,7 +7206,7 @@ mod tests {
             )
             .unwrap();
 
-        let error = enable_serial_causal_receipts(&mut egraph).unwrap_err();
+        let error = enable_serial_trace(&mut egraph).unwrap_err();
         assert!(error.to_string().contains("replay catalog is complete"));
         egraph
             .parse_and_run_program(None, "(A 1) (run 1) (check (B 1))")

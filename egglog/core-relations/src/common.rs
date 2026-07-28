@@ -218,7 +218,7 @@ impl SubsetTracker {
     }
 
     /// Preview the next incremental subset without advancing the cursor.
-    /// Receipt-mode rebuilds commit this cursor only after every row validates.
+    /// Capture-mode rebuilds commit this cursor only after every row validates.
     pub(crate) fn preview_recent_updates(
         &self,
         table_id: TableId,

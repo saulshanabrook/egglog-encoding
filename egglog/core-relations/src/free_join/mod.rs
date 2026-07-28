@@ -20,8 +20,8 @@ use thiserror::Error;
 use web_time::{Duration, Instant};
 
 use crate::{
-    BaseValues, CausalReceipts, CausalWave, ContainerRebuildSummary, ContainerValues, PoolSet,
-    QueryEntry, ReplayTermId, SourceRef, TupleIndex, Value,
+    BaseValues, ContainerRebuildSummary, ContainerValues, PoolSet, QueryEntry, ReplayTermId,
+    SourceRef, Trace, TupleIndex, Value, Wave,
     action::{
         Bindings, DbView,
         mask::{Mask, MaskIter, ValueSource},
@@ -138,8 +138,8 @@ pub enum GroundedRuleRunError {
     UnboundHeadVariable { match_id: u64, variable: Variable },
     #[error("grounded match {match_id} head did not complete exactly once")]
     HeadRejected { match_id: u64 },
-    #[error("grounded execution cannot record causal receipts")]
-    CausalReceiptsUnsupported,
+    #[error("grounded execution cannot record causal trace")]
+    TraceUnsupported,
     #[error("grounded execution was rejected before publishing staged heads")]
     CommitRejected,
 }
@@ -384,24 +384,24 @@ impl Counters {
     }
 }
 
-/// Prevent a caught merge panic from exposing receipts for native state that
+/// Prevent a caught merge panic from exposing trace for native state that
 /// may already have been partially mutated. This is deliberately a
-/// fail-closed receipt boundary, not native transaction rollback.
-struct MergeReceiptExecutionGuard {
-    receipts: CausalReceipts,
+/// fail-closed trace boundary, not native transaction rollback.
+struct MergeTraceExecutionGuard {
+    trace: Trace,
     completed: bool,
 }
 
-impl MergeReceiptExecutionGuard {
+impl MergeTraceExecutionGuard {
     fn complete(&mut self) {
         self.completed = true;
     }
 }
 
-impl Drop for MergeReceiptExecutionGuard {
+impl Drop for MergeTraceExecutionGuard {
     fn drop(&mut self) {
         if !self.completed {
-            self.receipts.poison_rule_execution();
+            self.trace.poison_rule_execution();
         }
     }
 }
@@ -432,15 +432,15 @@ pub struct Database {
     /// This is primarily used to determine whether or not to attempt to do some operations in
     /// parallel.
     total_size_estimate: usize,
-    pub(crate) causal_receipts: Option<CausalReceipts>,
-    pub(crate) causal_wave: CausalWave,
+    pub(crate) trace: Option<Trace>,
+    pub(crate) trace_wave: Wave,
 }
 
 impl Clone for Database {
     fn clone(&self) -> Self {
         assert!(
-            self.causal_receipts.is_none(),
-            "cloning a receipt-enabled database would fork native state while sharing one receipt arena"
+            self.trace.is_none(),
+            "cloning a capture-enabled database would fork native state while sharing one trace arena"
         );
         Self {
             tables: self.tables.clone(),
@@ -451,8 +451,8 @@ impl Clone for Database {
             deps: self.deps.clone(),
             base_values: self.base_values.clone(),
             total_size_estimate: self.total_size_estimate,
-            causal_receipts: None,
-            causal_wave: self.causal_wave,
+            trace: None,
+            trace_wave: self.trace_wave,
         }
     }
 }
@@ -466,58 +466,58 @@ impl Database {
         Database::default()
     }
 
-    /// Enable compact native receipt capture and return a read handle to the
+    /// Enable compact native trace capture and return a read handle to the
     /// shared arena. Capture must be enabled before any source rows are loaded:
     /// existing rows have no exact source identity and are never backfilled.
-    pub fn enable_causal_receipts(&mut self) -> CausalReceipts {
-        self.try_enable_causal_receipts()
-            .unwrap_or_else(|error| panic!("cannot enable causal receipts: {error}"))
+    pub fn enable_trace(&mut self) -> Trace {
+        self.try_enable_trace()
+            .unwrap_or_else(|error| panic!("cannot enable causal trace: {error}"))
     }
 
-    /// Fallible counterpart to [`Database::enable_causal_receipts`] for
+    /// Fallible counterpart to [`Database::enable_trace`] for
     /// embedding APIs that report unsupported late activation as an error.
-    pub fn try_enable_causal_receipts(&mut self) -> Result<CausalReceipts, &'static str> {
-        if let Some(receipts) = &self.causal_receipts {
-            return Ok(receipts.clone());
+    pub fn try_enable_trace(&mut self) -> Result<Trace, &'static str> {
+        if let Some(trace) = &self.trace {
+            return Ok(trace.clone());
         }
         for (_, info) in self.tables.iter() {
-            info.table.preflight_causal_receipt_activation()?;
+            info.table.preflight_trace_activation()?;
         }
         for (_, info) in self.tables.iter_mut() {
-            info.table.enable_causal_receipts();
+            info.table.enable_trace();
         }
-        let receipts = CausalReceipts::default();
-        self.causal_receipts = Some(receipts.clone());
-        Ok(receipts)
+        let trace = Trace::default();
+        self.trace = Some(trace.clone());
+        Ok(trace)
     }
 
     /// Set the globally monotone user-wave stamp inherited by rule effects.
-    pub fn set_causal_wave(&mut self, wave: CausalWave) {
+    pub fn set_trace_wave(&mut self, wave: Wave) {
         assert!(
-            wave >= self.causal_wave,
+            wave >= self.trace_wave,
             "causal waves must be globally monotone"
         );
-        if wave > self.causal_wave
-            && let Some(receipts) = &self.causal_receipts
+        if wave > self.trace_wave
+            && let Some(trace) = &self.trace
         {
             // Callers advance waves only after the preceding synchronous
             // native run/merge barrier has returned.
-            receipts.finalize_wave();
+            trace.finalize_wave();
         }
-        self.causal_wave = wave;
+        self.trace_wave = wave;
     }
 
     /// Promote effective roots from the completed synchronous native wave and
     /// reclaim every unpromoted provisional match/cause.
-    pub fn finalize_causal_wave(&mut self) {
-        if let Some(receipts) = &self.causal_receipts {
-            receipts.finalize_wave();
+    pub fn finalize_trace_wave(&mut self) {
+        if let Some(trace) = &self.trace {
+            trace.finalize_wave();
         }
     }
 
     /// Stage one original source row together with producer-installed term
     /// handles. This is intentionally explicit: an unlabelled row is not a
-    /// sound source receipt.
+    /// sound source capture.
     pub fn stage_source_row(
         &self,
         table: TableId,
@@ -528,11 +528,11 @@ impl Database {
         if row.len() != terms.len() {
             return Err("one replay-term handle is required for every source row column");
         }
-        let Some(receipts) = &self.causal_receipts else {
-            return Err("causal receipts are not enabled");
+        let Some(trace) = &self.trace else {
+            return Err("trace is not enabled");
         };
-        let origin = receipts.install_source_row(table, row, terms)?;
-        let cause = receipts.source_draft(source);
+        let origin = trace.install_source_row(table, row, terms)?;
+        let cause = trace.source_draft(source);
         let mut state = ExecutionState::new(self.read_only_view(), Default::default());
         state.set_active_cause(Some(cause));
         state.stage_insert_with_origin(table, row, origin);
@@ -540,17 +540,17 @@ impl Database {
     }
 
     /// Run one prevalidated batch of heterogeneous source rows through a
-    /// shared execution state. Causes are registered with one receipt-arena
+    /// shared execution state. Causes are registered with one trace-arena
     /// lock, then activated one row at a time before `f` stages native work.
     pub fn with_source_row_causes(
         &self,
         sources: &[SourceRef],
         mut f: impl FnMut(&mut ExecutionState, usize),
     ) -> Result<(), &'static str> {
-        let Some(receipts) = &self.causal_receipts else {
-            return Err("causal receipts are not enabled");
+        let Some(trace) = &self.trace else {
+            return Err("trace is not enabled");
         };
-        let causes = receipts.register_source_rows(sources);
+        let causes = trace.register_source_rows(sources);
         let mut state = ExecutionState::new(self.read_only_view(), Default::default());
         for (row, cause) in causes.into_iter().enumerate() {
             state.set_active_cause(Some(cause));
@@ -595,16 +595,14 @@ impl Database {
     }
 
     pub fn rebuild_containers(&mut self, table_id: TableId) -> ContainerRebuildSummary {
-        if self.causal_receipts.is_some() {
+        if self.trace.is_some() {
             // Exact container rebuild is a prepare/commit operation. Work on a
             // registry snapshot and hold every staged union behind the same
             // decision token, so an unsupported collision can neither alter
             // container identity nor leak a queued UF proposal.
             let mut working = self.container_values.clone();
-            let transaction = MutationTransaction::pending_causal(
-                self.causal_receipts.as_ref().unwrap(),
-                self.causal_wave,
-            );
+            let transaction =
+                MutationTransaction::pending_causal(self.trace.as_ref().unwrap(), self.trace_wave);
             let table = &self.tables[table_id].table;
             let rebuilt = catch_unwind(AssertUnwindSafe(|| {
                 self.with_execution_state(|state| {
@@ -614,10 +612,7 @@ impl Database {
             }));
             return match rebuilt {
                 Ok(mut summary) => {
-                    summary.defer_anchor_publication(
-                        self.causal_receipts.as_ref().unwrap(),
-                        &transaction,
-                    );
+                    summary.defer_anchor_publication(self.trace.as_ref().unwrap(), &transaction);
                     let committed = transaction.commit();
                     assert!(
                         committed.rebuild_cursors.is_empty(),
@@ -663,7 +658,7 @@ impl Database {
         to_rebuild: &[TableId],
         next_ts: Value,
     ) -> bool {
-        if self.causal_receipts.is_none() {
+        if self.trace.is_none() {
             let func = self.tables.take(func_id).unwrap();
             self.run_on_tables(to_rebuild, |_, info, view| {
                 info.table.apply_rebuild(
@@ -680,24 +675,22 @@ impl Database {
         }
         // Capture and validate the shared history boundary while every table
         // is still installed. A cutoff failure must not structurally modify
-        // the database before the receipt-safe staging transaction begins.
+        // the database before the capture-safe staging transaction begins.
         let equality_cutoff = self
-            .causal_receipts
+            .trace
             .as_ref()
-            .expect("receipt rebuild requires the receipt arena")
+            .expect("capture rebuild requires the trace arena")
             .equality_edge_count()
             .unwrap_or_else(|error| panic!("cannot start exact table rebuild: {error}"));
         let func = self.tables.take(func_id).unwrap();
         // Rebuild validation is deliberately fail-closed. Restore the
-        // temporarily removed canonicalizer table even when an exact receipt
+        // temporarily removed canonicalizer table even when an exact capture
         // invariant rejects a row, so callers that catch the diagnostic never
         // observe a structurally damaged database.
-        let transaction = MutationTransaction::pending_causal(
-            self.causal_receipts.as_ref().unwrap(),
-            self.causal_wave,
-        );
+        let transaction =
+            MutationTransaction::pending_causal(self.trace.as_ref().unwrap(), self.trace_wave);
         let rebuilt = catch_unwind(AssertUnwindSafe(|| {
-            self.run_on_tables_receipt_safe(to_rebuild, &transaction, |_, info, view| {
+            self.run_on_tables_trace_safe(to_rebuild, &transaction, |_, info, view| {
                 info.table.apply_rebuild(
                     func_id,
                     &func.table,
@@ -741,13 +734,11 @@ impl Database {
         //
         // It must run after ordinary table rebuild, which already handles
         // changed-id cases by rewriting parent rows to the new id.
-        if self.causal_receipts.is_some() {
-            let transaction = MutationTransaction::pending_causal(
-                self.causal_receipts.as_ref().unwrap(),
-                self.causal_wave,
-            );
+        if self.trace.is_some() {
+            let transaction =
+                MutationTransaction::pending_causal(self.trace.as_ref().unwrap(), self.trace_wave);
             let refreshed = catch_unwind(AssertUnwindSafe(|| {
-                self.run_on_tables_receipt_safe(to_refresh, &transaction, |_, info, view| {
+                self.run_on_tables_trace_safe(to_refresh, &transaction, |_, info, view| {
                     let exec_state = ExecutionState::new(*view, Default::default());
                     info.table.refresh_rows_for_values(
                         summary,
@@ -778,17 +769,17 @@ impl Database {
         self.merge_all()
     }
 
-    /// Receipt validation deliberately reports unsupported semantics by
+    /// Capture validation deliberately reports unsupported semantics by
     /// unwinding. Restore every temporarily removed table before propagating
     /// that diagnostic; the ordinary rebuild path keeps using the smaller
     /// unchecked helper below.
-    fn run_on_tables_receipt_safe(
+    fn run_on_tables_trace_safe(
         &mut self,
         table_ids: &[TableId],
         transaction: &MutationTransaction,
         run: impl for<'a> Fn(TableId, &mut TableInfo, &DbView<'a>) -> bool + Sync,
     ) {
-        if self.causal_receipts.is_none() && parallelize_db_level_op(self.total_size_estimate) {
+        if self.trace.is_none() && parallelize_db_level_op(self.total_size_estimate) {
             let mut tables = Vec::with_capacity(table_ids.len());
             for id in table_ids {
                 tables.push((*id, self.tables.take(*id).unwrap()));
@@ -829,7 +820,7 @@ impl Database {
         table_ids: &[TableId],
         run: impl for<'a> Fn(TableId, &mut TableInfo, &DbView<'a>) -> bool + Sync,
     ) {
-        if self.causal_receipts.is_none() && parallelize_db_level_op(self.total_size_estimate) {
+        if self.trace.is_none() && parallelize_db_level_op(self.total_size_estimate) {
             let mut tables = Vec::with_capacity(table_ids.len());
             for id in table_ids {
                 tables.push((*id, self.tables.take(*id).unwrap()));
@@ -891,8 +882,8 @@ impl Database {
         firings: &[GroundedRuleMatch],
         allow_commit: impl FnOnce() -> bool,
     ) -> Result<GroundedRuleRunOutcome, GroundedRuleRunError> {
-        if self.causal_receipts.is_some() {
-            return Err(GroundedRuleRunError::CausalReceiptsUnsupported);
+        if self.trace.is_some() {
+            return Err(GroundedRuleRunError::TraceUnsupported);
         }
         for pair in firings.windows(2) {
             if pair[0].match_id >= pair[1].match_id {
@@ -1143,8 +1134,8 @@ impl Database {
             bases: &self.base_values,
             containers: &self.container_values,
             notification_list: &self.notification_list,
-            causal_receipts: self.causal_receipts.as_ref(),
-            causal_wave: self.causal_wave,
+            trace: self.trace.as_ref(),
+            trace_wave: self.trace_wave,
         }
     }
 
@@ -1193,16 +1184,12 @@ impl Database {
     ///
     /// Useful for out-of-band insertions into the database.
     pub fn merge_all(&mut self) -> bool {
-        let mut receipt_guard =
-            self.causal_receipts
-                .as_ref()
-                .map(|receipts| MergeReceiptExecutionGuard {
-                    receipts: receipts.clone(),
-                    completed: false,
-                });
+        let mut capture_guard = self.trace.as_ref().map(|trace| MergeTraceExecutionGuard {
+            trace: trace.clone(),
+            completed: false,
+        });
         let mut ever_changed = false;
-        let do_parallel =
-            self.causal_receipts.is_none() && parallelize_db_level_op(self.total_size_estimate);
+        let do_parallel = self.trace.is_none() && parallelize_db_level_op(self.total_size_estimate);
         let mut to_merge = IndexSet::default();
         loop {
             to_merge.clear();
@@ -1308,7 +1295,7 @@ impl Database {
             size_estimate += info.table.len();
         }
         self.total_size_estimate = size_estimate;
-        if let Some(guard) = &mut receipt_guard {
+        if let Some(guard) = &mut capture_guard {
             guard.complete();
         }
         ever_changed
@@ -1354,13 +1341,10 @@ impl Database {
     /// elesewhere. The `merge_all` method runs merges to a fixed point to avoid
     /// surprises here.
     pub fn merge_table(&mut self, table: TableId) -> bool {
-        let mut receipt_guard =
-            self.causal_receipts
-                .as_ref()
-                .map(|receipts| MergeReceiptExecutionGuard {
-                    receipts: receipts.clone(),
-                    completed: false,
-                });
+        let mut capture_guard = self.trace.as_ref().map(|trace| MergeTraceExecutionGuard {
+            trace: trace.clone(),
+            completed: false,
+        });
         let mut info = self.tables.unwrap_val(table);
         self.total_size_estimate = self.total_size_estimate.wrapping_sub(info.table.len());
         let merge_result = catch_unwind(AssertUnwindSafe(|| {
@@ -1378,7 +1362,7 @@ impl Database {
             Ok(table_changed) => table_changed.added,
             Err(payload) => resume_unwind(payload),
         };
-        if let Some(guard) = &mut receipt_guard {
+        if let Some(guard) = &mut capture_guard {
             guard.complete();
         }
         changed
@@ -1425,13 +1409,11 @@ impl Database {
         let spec = table.spec();
         let expected_id = self.tables.next_id();
         table.set_table_id(expected_id);
-        if self.causal_receipts.is_some() {
-            table
-                .preflight_causal_receipt_activation()
-                .unwrap_or_else(|error| {
-                    panic!("cannot add table to receipt-enabled database: {error}")
-                });
-            table.enable_causal_receipts();
+        if self.trace.is_some() {
+            table.preflight_trace_activation().unwrap_or_else(|error| {
+                panic!("cannot add table to capture-enabled database: {error}")
+            });
+            table.enable_trace();
         }
         let table = WrappedTable::new(table);
         let res = self.tables.push(TableInfo {
@@ -1566,8 +1548,8 @@ impl Database {
     /// they need staged updates from a previous step to land before the clear.
     pub fn clear_table(&mut self, table: TableId) {
         assert!(
-            self.causal_receipts.is_none(),
-            "clearing a table is unsupported while causal receipts are enabled"
+            self.trace.is_none(),
+            "clearing a table is unsupported while trace is enabled"
         );
         let info = self
             .tables

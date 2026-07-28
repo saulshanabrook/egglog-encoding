@@ -54,7 +54,7 @@
 use std::{collections::HashMap, sync::Mutex};
 
 use egglog::{
-    CausalScheduleContext, CommandOutput, UserDefinedCommand,
+    CommandOutput, TraceScheduleContext, UserDefinedCommand,
     ast::{Command, Expr, Fact, Literal, Macro, ParseError, Parser, RunRuleConfig, Schedule, Sexp},
     prelude::Span,
     scheduler::{Scheduler, SchedulerId},
@@ -532,8 +532,8 @@ impl ScheduleState {
     /// ruleset steps; expression evaluation, forwarded commands, custom
     /// schedulers, and `:until` would bypass the normalized replay catalog and
     /// are rejected before they can mutate the graph.
-    fn run_causal(
-        context: &mut CausalScheduleContext<'_>,
+    fn run_trace(
+        context: &mut TraceScheduleContext<'_>,
         arg: &Expr,
     ) -> Result<RunReport, egglog::Error> {
         let invalid = || {
@@ -564,7 +564,7 @@ impl ScheduleState {
                 loop {
                     let mut iteration = RunReport::default();
                     for expr in exprs {
-                        iteration.union(Self::run_causal(context, expr)?);
+                        iteration.union(Self::run_trace(context, expr)?);
                     }
                     let should_stop = iteration.can_stop;
                     report.union(iteration);
@@ -576,7 +576,7 @@ impl ScheduleState {
             "seq" => {
                 let mut report = RunReport::default();
                 for expr in exprs {
-                    report.union(Self::run_causal(context, expr)?);
+                    report.union(Self::run_trace(context, expr)?);
                 }
                 Ok(report)
             }
@@ -585,7 +585,7 @@ impl ScheduleState {
                     let mut report = RunReport::default();
                     for _ in 0..*count {
                         for expr in rest {
-                            report.union(Self::run_causal(context, expr)?);
+                            report.union(Self::run_trace(context, expr)?);
                         }
                     }
                     Ok(report)
@@ -596,7 +596,7 @@ impl ScheduleState {
         }
     }
 
-    fn validate_causal(arg: &Expr) -> Result<(), egglog::Error> {
+    fn validate_trace(arg: &Expr) -> Result<(), egglog::Error> {
         let invalid = || {
             egglog::Error::ParseError(ParseError(
                 arg.span(),
@@ -615,10 +615,10 @@ impl ScheduleState {
                 [Expr::Var(_, ruleset)] if ruleset != ":until" => Ok(()),
                 _ => Err(invalid()),
             },
-            "saturate" | "seq" => exprs.iter().try_for_each(Self::validate_causal),
+            "saturate" | "seq" => exprs.iter().try_for_each(Self::validate_trace),
             "repeat" => match exprs.as_slice() {
                 [Expr::Lit(_, Literal::Int(count)), rest @ ..] if *count >= 0 => {
-                    rest.iter().try_for_each(Self::validate_causal)
+                    rest.iter().try_for_each(Self::validate_trace)
                 }
                 _ => Err(invalid()),
             },
@@ -646,17 +646,17 @@ impl UserDefinedCommand for RunExtendedSchedule {
         Ok(outputs)
     }
 
-    fn update_causal(
+    fn update_trace(
         &self,
-        context: &mut CausalScheduleContext<'_>,
+        context: &mut TraceScheduleContext<'_>,
         args: &[Expr],
     ) -> Option<Result<Vec<CommandOutput>, egglog::Error>> {
         let result = (|| {
             let args = authorized_extended_schedule_args(args)?;
-            args.iter().try_for_each(ScheduleState::validate_causal)?;
+            args.iter().try_for_each(ScheduleState::validate_trace)?;
             let mut report = RunReport::default();
             for arg in args {
-                report.union(ScheduleState::run_causal(context, arg)?);
+                report.union(ScheduleState::run_trace(context, arg)?);
             }
             Ok(vec![CommandOutput::RunSchedule(report)])
         })();

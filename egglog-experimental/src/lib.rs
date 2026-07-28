@@ -243,10 +243,10 @@ mod causal_container_tests {
     }
 
     #[test]
-    fn causal_receipts_accept_the_standard_extended_run_schedule() {
+    fn trace_accepts_the_standard_extended_run_schedule() {
         serial_pool().install(|| {
             let mut egraph = new_experimental_egraph();
-            egraph.enable_causal_receipts().unwrap();
+            egraph.enable_trace().unwrap();
             egraph
                 .parse_and_run_program(
                     None,
@@ -266,7 +266,7 @@ mod causal_container_tests {
     fn failed_extended_schedule_poisons_partial_causal_history() {
         serial_pool().install(|| {
             let mut egraph = new_experimental_egraph();
-            egraph.enable_causal_receipts().unwrap();
+            egraph.enable_trace().unwrap();
             let error = egraph
                 .parse_and_run_program(
                     None,
@@ -288,7 +288,7 @@ mod causal_container_tests {
             );
             assert!(
                 egraph
-                    .with_causal_receipt_view(|_| Ok(()))
+                    .with_trace_view(|_| Ok(()))
                     .unwrap_err()
                     .to_string()
                     .contains("poisoned"),
@@ -301,7 +301,7 @@ mod causal_container_tests {
     fn unsupported_extended_schedule_is_preflighted_before_rules_run() {
         serial_pool().install(|| {
             let mut egraph = new_experimental_egraph();
-            egraph.enable_causal_receipts().unwrap();
+            egraph.enable_trace().unwrap();
             egraph
                 .parse_and_run_program(
                     None,
@@ -327,7 +327,7 @@ mod causal_container_tests {
             );
             assert!(
                 egraph
-                    .with_causal_receipt_view(|_| Ok(()))
+                    .with_trace_view(|_| Ok(()))
                     .unwrap_err()
                     .to_string()
                     .contains("poisoned"),
@@ -340,7 +340,7 @@ mod causal_container_tests {
     fn grounded_run_rule_is_preflighted_before_a_causal_schedule_prefix() {
         serial_pool().install(|| {
             let mut egraph = new_experimental_egraph();
-            egraph.enable_causal_receipts().unwrap();
+            egraph.enable_trace().unwrap();
             egraph
                 .parse_and_run_program(
                     None,
@@ -368,10 +368,10 @@ mod causal_container_tests {
     }
 
     #[test]
-    fn causal_receipts_refresh_either_variant_by_its_logical_child_slot() {
+    fn trace_refreshes_either_variant_by_its_logical_child_slot() {
         serial_pool().install(|| {
             let mut egraph = new_experimental_egraph();
-            egraph.enable_causal_receipts().unwrap();
+            egraph.enable_trace().unwrap();
             egraph
                 .parse_and_run_program(
                     None,
@@ -397,10 +397,10 @@ mod causal_container_tests {
     }
 
     #[test]
-    fn causal_receipts_refresh_either_right_by_its_logical_child_slot() {
+    fn trace_refreshes_either_right_by_its_logical_child_slot() {
         serial_pool().install(|| {
             let mut egraph = new_experimental_egraph();
-            egraph.enable_causal_receipts().unwrap();
+            egraph.enable_trace().unwrap();
             egraph
                 .parse_and_run_program(
                     None,
@@ -426,10 +426,10 @@ mod causal_container_tests {
     }
 
     #[test]
-    fn causal_receipts_refresh_maybe_some_by_its_logical_child_slot() {
+    fn trace_refreshes_maybe_some_by_its_logical_child_slot() {
         serial_pool().install(|| {
             let mut egraph = new_experimental_egraph();
-            egraph.enable_causal_receipts().unwrap();
+            egraph.enable_trace().unwrap();
             egraph
                 .parse_and_run_program(
                     None,

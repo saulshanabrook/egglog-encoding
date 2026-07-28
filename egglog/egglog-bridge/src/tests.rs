@@ -44,29 +44,29 @@ fn only_explicit_input_choice_primitives_receive_structural_selector() {
 }
 
 #[test]
-fn causal_receipts_reject_parallel_bridge_activation() {
+fn trace_capture_rejects_parallel_bridge_activation() {
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(2)
         .build()
         .unwrap();
     pool.install(|| {
         let mut egraph = EGraph::default();
-        let error = egraph.enable_causal_receipts().unwrap_err();
+        let error = egraph.enable_trace().unwrap_err();
         assert!(error.to_string().contains(
-            "causal receipts require a one-thread Rayon pool; parallel causal capture is unsupported"
+            "trace capture requires a one-thread Rayon pool; parallel trace capture is unsupported"
         ));
     });
 }
 
 #[test]
-fn causal_receipts_reject_unsupported_merge_before_table_allocation() {
+fn trace_capture_rejects_unsupported_merge_before_table_allocation() {
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(1)
         .build()
         .unwrap();
     pool.install(|| {
         let mut egraph = EGraph::default();
-        egraph.enable_causal_receipts().unwrap();
+        egraph.enable_trace().unwrap();
         let constructor = egraph.add_table(FunctionConfig {
             n_vals: 1,
             n_identity_vals: None,

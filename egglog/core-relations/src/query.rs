@@ -9,15 +9,15 @@ use crate::{
 use smallvec::SmallVec;
 use thiserror::Error;
 
-use crate::receipts::{
-    ActionReceiptKind, ActionReceiptSpec, CheckEndpointSpec, CheckTermSource, PremiseOccurrence,
+use crate::provenance::{
+    ActionCaptureKind, ActionCaptureSpec, CheckEndpointSpec, CheckTermSource, PremiseOccurrence,
     PremiseSlot, ReplayBindingSource, ReplayEqualitySource, ReplayTerm, RowOriginSpec,
     TermOriginSpec, TermRecipe, TermTemplate,
 };
 use crate::{
-    BaseValueId, CheckEndpointSource, CheckReceiptSpec, CounterId, EqualityEndpoint,
-    ExternalFunctionId, PoolSet, ReplayConstructorSpec, ReplaySortId, RuleBindingSpec,
-    RuleReceiptSpec, SourceReceiptSpec,
+    BaseValueId, CounterId, CriterionCaptureSpec, CriterionEndpointSource, EqualityEndpoint,
+    ExternalFunctionId, FiringCaptureSpec, PoolSet, ReplayConstructorSpec, ReplaySortId,
+    RuleBindingSpec, SourceCaptureSpec,
     action::{Instr, QueryEntry, WriteVal},
     common::HashMap,
     free_join::{
@@ -114,7 +114,7 @@ impl RuleBuildOutput {
 pub(crate) struct ActionInfo {
     pub(crate) used_vars: SmallVec<[Variable; 4]>,
     pub(crate) instrs: Arc<Pooled<Vec<Instr>>>,
-    pub(crate) receipt: Option<ActionReceiptSpec>,
+    pub(crate) capture: Option<ActionCaptureSpec>,
 }
 
 /// A set of rules to run against a [`Database`].
@@ -186,11 +186,7 @@ impl<'outer> RuleSetBuilder<'outer> {
     /// Add a rule to this rule set.
     pub fn new_rule<'a>(&'a mut self) -> QueryBuilder<'outer, 'a> {
         let instrs = with_pool_set(PoolSet::get);
-        let recipe_draft = self
-            .db
-            .causal_receipts
-            .is_some()
-            .then(StaticRecipeDraft::default);
+        let recipe_draft = self.db.trace.is_some().then(StaticRecipeDraft::default);
         QueryBuilder {
             rsb: self,
             instrs,
@@ -592,12 +588,12 @@ pub enum QueryError {
     },
 }
 
-/// A receipt-aware rule could not be represented without losing exact replay
-/// provenance. The builder reports this before registering receipt recipes or
+/// A capture-aware rule could not be represented without losing exact replay
+/// provenance. The builder reports this before registering capture recipes or
 /// adding the rule to its rule set.
 #[derive(Debug, Error)]
 #[error("{0}")]
-pub struct ReceiptBuildError(&'static str);
+pub struct CaptureBuildError(&'static str);
 
 /// Builder for the "action" portion of the rule.
 ///
@@ -606,9 +602,9 @@ pub struct RuleBuilder<'outer, 'a> {
     qb: QueryBuilder<'outer, 'a>,
 }
 
-enum ReceiptBuildSpec {
-    Rule(RuleReceiptSpec),
-    Source(SourceReceiptSpec),
+enum CaptureBuildSpec {
+    Rule(FiringCaptureSpec),
+    Source(SourceCaptureSpec),
     Check { premises: Box<[AtomId]> },
 }
 
@@ -676,12 +672,7 @@ fn atom_query_entry(atom: &Atom, column: ColumnId) -> QueryEntry {
 }
 
 impl StaticRecipeDraft {
-    fn entry(
-        &self,
-        receipts: &crate::CausalReceipts,
-        entry: QueryEntry,
-        sort: ReplaySortId,
-    ) -> RecipeRoot {
+    fn entry(&self, trace: &crate::Trace, entry: QueryEntry, sort: ReplaySortId) -> RecipeRoot {
         match entry {
             QueryEntry::Var(variable) => self
                 .value_roots
@@ -689,11 +680,11 @@ impl StaticRecipeDraft {
                 .cloned()
                 .unwrap_or_else(|| Arc::new(RecipeExpr::Input(variable))),
             QueryEntry::Const(value) => {
-                let term = receipts
+                let term = trace
                     .lookup_term(sort, value)
                     .expect("typed action literal has no registered replay term");
                 assert!(
-                    matches!(receipts.replay_term(term), Some(ReplayTerm::Literal { sort: actual, .. }) if actual == sort),
+                    matches!(trace.replay_term(term), Some(ReplayTerm::Literal { sort: actual, .. }) if actual == sort),
                     "typed action constant resolved through a structural alias instead of a literal"
                 );
                 Arc::new(RecipeExpr::Static { term, sort })
@@ -703,7 +694,7 @@ impl StaticRecipeDraft {
 
     fn call_output(
         &mut self,
-        receipts: &crate::CausalReceipts,
+        trace: &crate::Trace,
         dst: Variable,
         args: &[QueryEntry],
         replay: &ReplayConstructorSpec,
@@ -715,7 +706,7 @@ impl StaticRecipeDraft {
                 .iter()
                 .copied()
                 .zip(args.iter().copied())
-                .map(|(sort, entry)| self.entry(receipts, entry, sort))
+                .map(|(sort, entry)| self.entry(trace, entry, sort))
                 .collect(),
         });
         assert!(
@@ -745,7 +736,7 @@ impl StaticRecipeDraft {
 
     fn lookup_output(
         &mut self,
-        receipts: &crate::CausalReceipts,
+        trace: &crate::Trace,
         destination: Variable,
         table: TableId,
         column: ColumnId,
@@ -757,7 +748,7 @@ impl StaticRecipeDraft {
         if !key.is_empty() {
             return;
         }
-        let sort = receipts
+        let sort = trace
             .table_column_sort(table, column.index())
             .expect("zero-key replay lookup has no registered result sort");
         let root = Arc::new(RecipeExpr::FactLookup {
@@ -828,12 +819,12 @@ impl StaticRecipeDraft {
 
     fn lower_row_origin(
         &self,
-        receipts: &crate::CausalReceipts,
+        trace: &crate::Trace,
         table: TableId,
         entries: &[Option<QueryEntry>],
         inputs: &HashMap<Variable, (RecipeInput, ReplaySortId)>,
     ) -> RowOriginSpec {
-        let layout = receipts
+        let layout = trace
             .table_replay_layout(table)
             .unwrap_or_else(|| panic!("row-origin table {table:?} has no replay layout"));
         assert_eq!(
@@ -853,13 +844,13 @@ impl StaticRecipeDraft {
             .map(|(sort, entry)| match (sort, entry) {
                 (None, _) => None,
                 (Some(sort), Some(entry)) => {
-                    let root = self.entry(receipts, entry, sort);
+                    let root = self.entry(trace, entry, sort);
                     lowerer.try_lower(&root, sort)
                 }
                 (Some(_), None) => None,
             })
             .collect::<Vec<_>>();
-        if let Some(constructor) = receipts.table_constructor(table) {
+        if let Some(constructor) = trace.table_constructor(table) {
             let output = constructor.child_sorts.len();
             assert_eq!(
                 layout.get(output).copied().flatten(),
@@ -887,38 +878,38 @@ impl StaticRecipeDraft {
 
     fn prepare_term_origin(
         &self,
-        receipts: &crate::CausalReceipts,
+        trace: &crate::Trace,
         entry: QueryEntry,
         sort: ReplaySortId,
         inputs: &HashMap<Variable, (RecipeInput, ReplaySortId)>,
         missing: &'static str,
-    ) -> Result<TermOriginSpec, ReceiptBuildError> {
+    ) -> Result<TermOriginSpec, CaptureBuildError> {
         let mut lowerer = RecipeLowerer {
             inputs: inputs.clone(),
             memo: HashMap::default(),
             observed_sorts: HashMap::default(),
         };
-        let root = self.entry(receipts, entry, sort);
+        let root = self.entry(trace, entry, sort);
         let term = lowerer
             .try_lower(&root, sort)
-            .ok_or(ReceiptBuildError(missing))?;
+            .ok_or(CaptureBuildError(missing))?;
         Ok(TermOriginSpec { sort, term })
     }
 
     fn prepare_instruction_origins(
         &self,
-        receipts: &crate::CausalReceipts,
+        trace: &crate::Trace,
         atoms: &DenseIdMap<AtomId, Atom>,
         instrs: &[Instr],
         inputs: &HashMap<Variable, (RecipeInput, ReplaySortId)>,
-    ) -> Result<Vec<PreparedInstructionOrigins>, ReceiptBuildError> {
+    ) -> Result<Vec<PreparedInstructionOrigins>, CaptureBuildError> {
         instrs
             .iter()
             .map(|instr| {
                 if let Instr::PromoteReplayCall { dst, replay, .. } = instr {
                     return self
                         .prepare_term_origin(
-                            receipts,
+                            trace,
                             QueryEntry::Var(*dst),
                             replay.result_sort,
                             inputs,
@@ -931,14 +922,14 @@ impl StaticRecipeDraft {
                 } = instr
                 {
                     let left = self.prepare_term_origin(
-                        receipts,
+                        trace,
                         *left,
                         *sort,
                         inputs,
                         "typed equality endpoint has no structural producer",
                     )?;
                     let right = self.prepare_term_origin(
-                        receipts,
+                        trace,
                         *right,
                         *sort,
                         inputs,
@@ -960,13 +951,12 @@ impl StaticRecipeDraft {
                     {
                         if let CheckTermSource::Constructor { atom, .. } = endpoint.term {
                             let atom = &atoms[atom];
-                            let replay =
-                                receipts.table_constructor(atom.table).unwrap_or_else(|| {
-                                    panic!(
-                                        "check constructor atom {:?} has no replay metadata",
-                                        atom.table
-                                    )
-                                });
+                            let replay = trace.table_constructor(atom.table).unwrap_or_else(|| {
+                                panic!(
+                                    "check constructor atom {:?} has no replay metadata",
+                                    atom.table
+                                )
+                            });
                             assert_eq!(
                                 replay.result_sort, endpoint.sort,
                                 "check constructor endpoint has the wrong replay result sort"
@@ -978,7 +968,7 @@ impl StaticRecipeDraft {
                                 .enumerate()
                                 .map(|(column, sort)| {
                                     self.entry(
-                                        receipts,
+                                        trace,
                                         atom_query_entry(atom, ColumnId::from_usize(column)),
                                         sort,
                                     )
@@ -991,7 +981,7 @@ impl StaticRecipeDraft {
                                 observed_sorts: HashMap::default(),
                             };
                             let term = lowerer.try_lower(&root, endpoint.sort).ok_or(
-                                ReceiptBuildError(
+                                CaptureBuildError(
                                     "check constructor endpoint has no exact source-term recipe",
                                 ),
                             )?;
@@ -1060,17 +1050,17 @@ impl StaticRecipeDraft {
                     Instr::UnionWithReplay { .. }
                     | Instr::RecordCheck { .. }
                     | Instr::PromoteReplayCall { .. } => {
-                        unreachable!("origin-bearing instruction escaped receipt preparation")
+                        unreachable!("origin-bearing instruction escaped capture preparation")
                     }
                 };
-                let spec = self.lower_row_origin(receipts, table, &entries, inputs);
+                let spec = self.lower_row_origin(trace, table, &entries, inputs);
                 Ok(PreparedInstructionOrigins::Row(spec))
             })
             .collect()
     }
 
     fn attach_instruction_origins(
-        receipts: &crate::CausalReceipts,
+        trace: &crate::Trace,
         instrs: &mut [Instr],
         prepared: Vec<PreparedInstructionOrigins>,
     ) {
@@ -1080,7 +1070,7 @@ impl StaticRecipeDraft {
                 (
                     Instr::PromoteReplayCall { origin, .. },
                     PreparedInstructionOrigins::Term(spec),
-                ) => *origin = Some(receipts.register_term_origin(spec)),
+                ) => *origin = Some(trace.register_term_origin(spec)),
                 (
                     Instr::UnionWithReplay {
                         left_origin,
@@ -1089,8 +1079,8 @@ impl StaticRecipeDraft {
                     },
                     PreparedInstructionOrigins::Union(left, right),
                 ) => {
-                    *left_origin = Some(receipts.register_term_origin(left));
-                    *right_origin = Some(receipts.register_term_origin(right));
+                    *left_origin = Some(trace.register_term_origin(left));
+                    *right_origin = Some(trace.register_term_origin(right));
                 }
                 (
                     Instr::RecordCheck {
@@ -1110,7 +1100,7 @@ impl StaticRecipeDraft {
                             let spec = origins
                                 .next()
                                 .expect("prepared check origin count changed before commit");
-                            *origin = Some(receipts.register_term_origin(spec));
+                            *origin = Some(trace.register_term_origin(spec));
                         }
                     }
                     assert!(
@@ -1124,9 +1114,9 @@ impl StaticRecipeDraft {
                     | Instr::LookupOrInsertDefault { origin, .. }
                     | Instr::LookupOrInsertDefaultReplay { origin, .. },
                     PreparedInstructionOrigins::Row(spec),
-                ) => *origin = Some(receipts.register_row_origin(spec)),
+                ) => *origin = Some(trace.register_row_origin(spec)),
                 (_, PreparedInstructionOrigins::None) => {}
-                _ => panic!("prepared receipt origins no longer match their instructions"),
+                _ => panic!("prepared capture origins no longer match their instructions"),
             }
         }
     }
@@ -1221,17 +1211,17 @@ impl RuleBuilder<'_, '_> {
     /// replay-typed premise cells or a premise cell and a typed constant.
     /// This includes unnamed variables introduced while lowering nested
     /// source terms; it is deliberately separate from source replay bindings.
-    fn receipt_equality_obligations(
+    fn capture_equality_obligations(
         &self,
         premises: &[AtomId],
     ) -> Vec<(ReplayEqualitySource, ReplayEqualitySource)> {
-        let receipts = self
+        let trace = self
             .qb
             .rsb
             .db
-            .causal_receipts
+            .trace
             .as_ref()
-            .expect("receipt equality obligations require causal receipts");
+            .expect("capture equality obligations require causal trace");
         let mut obligations = Vec::new();
         let mut push = |obligation| {
             if !obligations.contains(&obligation) {
@@ -1251,7 +1241,7 @@ impl RuleBuilder<'_, '_> {
                 };
                 let table = self.qb.query.atoms[atom].table;
                 for column in subatom.vars.iter().copied() {
-                    let Some(sort) = receipts.table_column_sort(table, column.index()) else {
+                    let Some(sort) = trace.table_column_sort(table, column.index()) else {
                         continue;
                     };
                     occurrences.push((
@@ -1288,10 +1278,10 @@ impl RuleBuilder<'_, '_> {
                 let Constraint::EqConst { col, val } = constraint else {
                     continue;
                 };
-                let Some(sort) = receipts.table_column_sort(atom.table, col.index()) else {
+                let Some(sort) = trace.table_column_sort(atom.table, col.index()) else {
                     continue;
                 };
-                let term = receipts.lookup_term(sort, *val).unwrap_or_else(|| {
+                let term = trace.lookup_term(sort, *val).unwrap_or_else(|| {
                     panic!(
                         "typed query constant in table {:?} column {} has no replay term",
                         atom.table,
@@ -1314,7 +1304,7 @@ impl RuleBuilder<'_, '_> {
         obligations
     }
 
-    fn receipt_occurrence_value(
+    fn capture_occurrence_value(
         &self,
         premises: &[AtomId],
         occurrence: PremiseOccurrence,
@@ -1357,92 +1347,92 @@ impl RuleBuilder<'_, '_> {
     pub fn try_build_with_description(
         self,
         desc: impl Into<String>,
-    ) -> Result<RuleId, ReceiptBuildError> {
+    ) -> Result<RuleId, CaptureBuildError> {
         Ok(self.try_build_impl(desc, None, None)?.planned())
     }
 
-    /// Build a rule together with the fixed receipt layout preserved from the
+    /// Build a rule together with the fixed capture layout preserved from the
     /// source-level rule. Runtime capture copies only FactId/ReplayTermId
     /// handles according to this layout.
-    pub fn build_with_receipts(self, desc: impl Into<String>, spec: RuleReceiptSpec) -> RuleId {
-        self.try_build_with_receipts(desc, spec)
+    pub fn build_with_capture(self, desc: impl Into<String>, spec: FiringCaptureSpec) -> RuleId {
+        self.try_build_with_capture(desc, spec)
             .unwrap_or_else(|error| panic!("{error}"))
     }
 
-    pub fn try_build_with_receipts(
+    pub fn try_build_with_capture(
         self,
         desc: impl Into<String>,
-        spec: RuleReceiptSpec,
-    ) -> Result<RuleId, ReceiptBuildError> {
+        spec: FiringCaptureSpec,
+    ) -> Result<RuleId, CaptureBuildError> {
         Ok(self
-            .try_build_impl(desc, Some(ReceiptBuildSpec::Rule(spec)), None)?
+            .try_build_impl(desc, Some(CaptureBuildSpec::Rule(spec)), None)?
             .planned())
     }
 
     /// Build a source action whose effective lanes cite one stable source
     /// identity directly, without allocating synthetic rule matches.
-    pub fn build_source_with_receipts(
+    pub fn build_source_with_capture(
         self,
         desc: impl Into<String>,
-        spec: SourceReceiptSpec,
+        spec: SourceCaptureSpec,
     ) -> RuleId {
-        self.try_build_source_with_receipts(desc, spec)
+        self.try_build_source_with_capture(desc, spec)
             .unwrap_or_else(|error| panic!("{error}"))
     }
 
-    pub fn try_build_source_with_receipts(
+    pub fn try_build_source_with_capture(
         self,
         desc: impl Into<String>,
-        spec: SourceReceiptSpec,
-    ) -> Result<RuleId, ReceiptBuildError> {
+        spec: SourceCaptureSpec,
+    ) -> Result<RuleId, CaptureBuildError> {
         assert!(
-            self.qb.rsb.db.causal_receipts.is_some(),
-            "source receipt actions require causal receipts"
+            self.qb.rsb.db.trace.is_some(),
+            "source capture actions require causal trace"
         );
         assert!(
             self.qb.query.atoms.is_empty(),
-            "source receipt actions require an empty query"
+            "source capture actions require an empty query"
         );
         Ok(self
-            .try_build_impl(desc, Some(ReceiptBuildSpec::Source(spec)), None)?
+            .try_build_impl(desc, Some(CaptureBuildSpec::Source(spec)), None)?
             .planned())
     }
 
     /// Append an exact positive-check root action and build its native premise
     /// witness layout. The recorder runs after every previously-added guard.
-    pub fn build_check_with_receipts(
+    pub fn build_check_with_capture(
         self,
         desc: impl Into<String>,
-        spec: CheckReceiptSpec,
+        spec: CriterionCaptureSpec,
     ) -> RuleId {
-        self.try_build_check_with_receipts(desc, spec)
+        self.try_build_check_with_capture(desc, spec)
             .unwrap_or_else(|error| panic!("{error}"))
     }
 
-    pub fn try_build_check_with_receipts(
+    pub fn try_build_check_with_capture(
         mut self,
         desc: impl Into<String>,
-        spec: CheckReceiptSpec,
-    ) -> Result<RuleId, ReceiptBuildError> {
+        spec: CriterionCaptureSpec,
+    ) -> Result<RuleId, CaptureBuildError> {
         assert!(
-            self.qb.rsb.db.causal_receipts.is_some(),
-            "check receipt actions require causal receipts"
+            self.qb.rsb.db.trace.is_some(),
+            "check capture actions require causal trace"
         );
-        let implicit_equalities = self.receipt_equality_obligations(&spec.premises);
+        let implicit_equalities = self.capture_equality_obligations(&spec.premises);
         for (left, right) in &spec.equalities {
             self.qb.mark_used([left.value(), right.value()]);
         }
-        let CheckReceiptSpec {
+        let CriterionCaptureSpec {
             check,
             premises,
             equalities,
         } = spec;
-        let receipts = self.qb.rsb.db.causal_receipts.as_ref().unwrap();
-        let as_of_edges = receipts
+        let trace = self.qb.rsb.db.trace.as_ref().unwrap();
+        let as_of_edges = trace
             .equality_edge_count()
             .unwrap_or_else(|error| panic!("cannot capture exact check cutoff: {error}"));
         let compile = |endpoint| match endpoint {
-            CheckEndpointSource::Premise {
+            CriterionEndpointSource::Premise {
                 premise,
                 column,
                 value,
@@ -1452,13 +1442,9 @@ impl RuleBuilder<'_, '_> {
                     .get(premise)
                     .unwrap_or_else(|| panic!("check endpoint cites missing premise {premise}"));
                 let table = self.qb.query.atoms[atom].table;
-                let sort = receipts
-                    .table_column_sort(table, column)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "check endpoint premise {premise} column {column} has no replay sort"
-                        )
-                    });
+                let sort = trace.table_column_sort(table, column).unwrap_or_else(|| {
+                    panic!("check endpoint premise {premise} column {column} has no replay sort")
+                });
                 let term = if let Some((constructor_sort, op)) = constructor {
                     assert_eq!(
                         sort, constructor_sort,
@@ -1476,7 +1462,7 @@ impl RuleBuilder<'_, '_> {
                 };
                 CheckEndpointSpec { value, sort, term }
             }
-            CheckEndpointSource::Current { value, sort } => CheckEndpointSpec {
+            CriterionEndpointSource::Current { value, sort } => CheckEndpointSpec {
                 value,
                 sort,
                 term: CheckTermSource::Current,
@@ -1499,11 +1485,11 @@ impl RuleBuilder<'_, '_> {
             ReplayEqualitySource::Premise(occurrence) => {
                 let atom = premises[occurrence.premise];
                 let table = self.qb.query.atoms[atom].table;
-                let sort = receipts
+                let sort = trace
                     .table_column_sort(table, occurrence.column)
-                    .expect("receipt equality premise has no replay sort");
+                    .expect("capture equality premise has no replay sort");
                 CheckEndpointSpec {
-                    value: self.receipt_occurrence_value(&premises, occurrence),
+                    value: self.capture_occurrence_value(&premises, occurrence),
                     sort,
                     term: CheckTermSource::Premise {
                         premise: occurrence.premise,
@@ -1533,7 +1519,7 @@ impl RuleBuilder<'_, '_> {
             as_of_edges,
         });
         Ok(self
-            .try_build_impl(desc, Some(ReceiptBuildSpec::Check { premises }), None)?
+            .try_build_impl(desc, Some(CaptureBuildSpec::Check { premises }), None)?
             .planned())
     }
 
@@ -1553,22 +1539,22 @@ impl RuleBuilder<'_, '_> {
     fn build_impl(
         self,
         desc: impl Into<String>,
-        receipt: Option<ReceiptBuildSpec>,
+        capture: Option<CaptureBuildSpec>,
         grounded_body_end: Option<usize>,
     ) -> RuleBuildOutput {
-        self.try_build_impl(desc, receipt, grounded_body_end)
+        self.try_build_impl(desc, capture, grounded_body_end)
             .unwrap_or_else(|error| panic!("{error}"))
     }
 
     fn try_build_impl(
         mut self,
         desc: impl Into<String>,
-        receipt: Option<ReceiptBuildSpec>,
+        capture: Option<CaptureBuildSpec>,
         grounded_body_end: Option<usize>,
-    ) -> Result<RuleBuildOutput, ReceiptBuildError> {
-        if receipt.is_none()
+    ) -> Result<RuleBuildOutput, CaptureBuildError> {
+        if capture.is_none()
             && grounded_body_end.is_none()
-            && self.qb.rsb.db.causal_receipts.is_some()
+            && self.qb.rsb.db.trace.is_some()
             && self.qb.query.atoms.is_empty()
         {
             let first_effect = self
@@ -1580,8 +1566,8 @@ impl RuleBuilder<'_, '_> {
                 && args.is_empty()
                 && self.qb.rsb.db.get_table(*table).get_row(&[]).is_none()
             {
-                return Err(ReceiptBuildError(
-                    "receipt-enabled action requires exact match witnesses",
+                return Err(CaptureBuildError(
+                    "capture-enabled action requires exact match witnesses",
                 ));
             }
         }
@@ -1597,9 +1583,9 @@ impl RuleBuilder<'_, '_> {
         }));
         let mut row_origin_inputs = HashMap::default();
         let mut pending_rule_recipes = None;
-        let mut receipt = receipt.map(|spec| match spec {
-            ReceiptBuildSpec::Rule(spec) => {
-                let equality_obligations = self.receipt_equality_obligations(&spec.premises);
+        let mut capture = capture.map(|spec| match spec {
+            CaptureBuildSpec::Rule(spec) => {
+                let equality_obligations = self.capture_equality_obligations(&spec.premises);
                 let premise_count = spec.premises.len();
                 let premise_slots = Arc::new(
                     spec.premises
@@ -1620,21 +1606,21 @@ impl RuleBuilder<'_, '_> {
                         let RuleBindingSpec::Constant { term, sort } = binding else {
                             unreachable!()
                         };
-                        assert!(!term.is_missing(), "receipt constant binding is missing");
+                        assert!(!term.is_missing(), "capture constant binding is missing");
                         let node = self
                             .qb
                             .rsb
                             .db
-                            .causal_receipts
+                            .trace
                             .as_ref()
-                            .and_then(|receipts| receipts.replay_term(*term))
+                            .and_then(|trace| trace.replay_term(*term))
                             .unwrap_or_else(|| {
-                                panic!("receipt constant binding has an unknown ReplayTermId")
+                                panic!("capture constant binding has an unknown ReplayTermId")
                             });
                         assert_eq!(
                             node.sort(),
                             *sort,
-                            "receipt constant binding has the wrong replay sort"
+                            "capture constant binding has the wrong replay sort"
                         );
                         binding_sources.push(ReplayBindingSource::Constant { term: *term });
                         binding_sorts.push(*sort);
@@ -1652,16 +1638,16 @@ impl RuleBuilder<'_, '_> {
                         };
                         let table = self.qb.query.atoms[atom].table;
                         for column in subatom.vars.iter().copied() {
-                            let sort = self.qb.rsb.db.causal_receipts.as_ref().and_then(|receipts| {
-                                receipts.table_column_sort(table, column.index())
+                            let sort = self.qb.rsb.db.trace.as_ref().and_then(|trace| {
+                                trace.table_column_sort(table, column.index())
                             }).unwrap_or_else(|| {
                                 panic!(
-                                    "receipt variable {var:?} selects non-replayable table column {}",
+                                    "capture variable {var:?} selects non-replayable table column {}",
                                     column.index()
                                 )
                             });
                             if let Some(prior) = occurrence_sort {
-                                assert_eq!(prior, sort, "one receipt variable crosses replay sorts");
+                                assert_eq!(prior, sort, "one capture variable crosses replay sorts");
                             } else {
                                 occurrence_sort = Some(sort);
                             }
@@ -1689,7 +1675,7 @@ impl RuleBuilder<'_, '_> {
                     } else {
                         let sort = current_sort.unwrap_or_else(|| {
                                 panic!(
-                                    "receipt variable {var:?} has neither a retained premise nor a typed current-value producer"
+                                    "capture variable {var:?} has neither a retained premise nor a typed current-value producer"
                                 )
                             });
                         (
@@ -1742,10 +1728,10 @@ impl RuleBuilder<'_, '_> {
                             .qb
                             .rsb
                             .db
-                            .causal_receipts
+                            .trace
                             .as_ref()
-                            .and_then(|receipts| {
-                                receipts.table_column_sort(table, column.index())
+                            .and_then(|trace| {
+                                trace.table_column_sort(table, column.index())
                             })
                         else {
                             continue;
@@ -1770,7 +1756,7 @@ impl RuleBuilder<'_, '_> {
                     .qb
                     .recipe_draft
                     .as_ref()
-                    .expect("rule receipt actions require a static recipe draft")
+                    .expect("rule capture actions require a static recipe draft")
                     .lower(&spec.bindings, &binding_sources, &binding_sorts);
                 pending_rule_recipes = Some(PendingRuleRecipes {
                     rule: spec.rule,
@@ -1778,20 +1764,20 @@ impl RuleBuilder<'_, '_> {
                     equality_obligations,
                     term_recipe,
                 });
-                ActionReceiptSpec {
-                    kind: ActionReceiptKind::Rule(spec.rule),
+                ActionCaptureSpec {
+                    kind: ActionCaptureKind::Rule(spec.rule),
                     premise_count,
                     premise_slots,
                     binding_sources,
                 }
             }
-            ReceiptBuildSpec::Source(spec) => ActionReceiptSpec {
-                kind: ActionReceiptKind::Source(spec.source),
+            CaptureBuildSpec::Source(spec) => ActionCaptureSpec {
+                kind: ActionCaptureKind::Source(spec.source),
                 premise_count: 0,
                 premise_slots: Arc::new(DenseIdMap::new()),
                 binding_sources: Arc::from([]),
             },
-            ReceiptBuildSpec::Check { premises } => {
+            CaptureBuildSpec::Check { premises } => {
                 let premise_count = premises.len();
                 let premise_slots = Arc::new(
                     premises
@@ -1824,10 +1810,10 @@ impl RuleBuilder<'_, '_> {
                             .qb
                             .rsb
                             .db
-                            .causal_receipts
+                            .trace
                             .as_ref()
-                            .and_then(|receipts| {
-                                receipts.table_column_sort(table, column.index())
+                            .and_then(|trace| {
+                                trace.table_column_sort(table, column.index())
                             })
                         else {
                             continue;
@@ -1848,52 +1834,52 @@ impl RuleBuilder<'_, '_> {
                         break;
                     }
                 }
-                ActionReceiptSpec {
-                    kind: ActionReceiptKind::Check,
+                ActionCaptureSpec {
+                    kind: ActionCaptureKind::Check,
                     premise_count,
                     premise_slots,
                     binding_sources: Arc::from([]),
                 }
             }
         });
-        let prepared_origins = if let Some(action_receipt) = receipt.as_mut() {
-            let receipts = self
+        let prepared_origins = if let Some(action_capture) = capture.as_mut() {
+            let trace = self
                 .qb
                 .rsb
                 .db
-                .causal_receipts
+                .trace
                 .as_ref()
-                .expect("receipt action has no causal arena")
+                .expect("capture action has no causal arena")
                 .clone();
             let prepared = self
                 .qb
                 .recipe_draft
                 .as_ref()
-                .expect("receipt action has no static term recipe draft")
+                .expect("capture action has no static term recipe draft")
                 .prepare_instruction_origins(
-                    &receipts,
+                    &trace,
                     &self.qb.query.atoms,
                     &self.qb.instrs,
                     &row_origin_inputs,
                 )?;
             if let Some(pending) = pending_rule_recipes {
                 let binding_sources =
-                    receipts.register_rule_binding_recipe(pending.rule, &pending.binding_sources);
-                receipts.register_rule_equality_recipe(pending.rule, &pending.equality_obligations);
-                receipts.register_rule_term_recipe(pending.rule, pending.term_recipe);
-                action_receipt.binding_sources = binding_sources;
+                    trace.register_rule_binding_recipe(pending.rule, &pending.binding_sources);
+                trace.register_rule_equality_recipe(pending.rule, &pending.equality_obligations);
+                trace.register_rule_term_recipe(pending.rule, pending.term_recipe);
+                action_capture.binding_sources = binding_sources;
             }
-            Some((receipts, prepared))
+            Some((trace, prepared))
         } else {
             None
         };
-        if let Some((receipts, prepared)) = prepared_origins {
-            StaticRecipeDraft::attach_instruction_origins(&receipts, &mut self.qb.instrs, prepared);
+        if let Some((trace, prepared)) = prepared_origins {
+            StaticRecipeDraft::attach_instruction_origins(&trace, &mut self.qb.instrs, prepared);
         }
         let action = ActionInfo {
             instrs: Arc::new(self.qb.instrs),
             used_vars,
-            receipt,
+            capture,
         };
         if let Some(body_end) = grounded_body_end {
             assert!(body_end <= action.instrs.len());
@@ -1959,7 +1945,7 @@ impl RuleBuilder<'_, '_> {
         Ok(res)
     }
 
-    /// Receipt-only constructor lookup/insert with one typed structural
+    /// Capture-only constructor lookup/insert with one typed structural
     /// producer. This is a distinct instruction so the ordinary hot path does
     /// not branch on replay metadata.
     pub fn lookup_or_insert_with_replay(
@@ -1978,42 +1964,42 @@ impl RuleBuilder<'_, '_> {
             args.len(),
             "constructor replay metadata needs one sort per key argument"
         );
-        let receipts = self
+        let trace = self
             .qb
             .rsb
             .db
-            .causal_receipts
+            .trace
             .as_ref()
-            .expect("constructor replay metadata requires causal receipts")
+            .expect("constructor replay metadata requires causal trace")
             .clone();
         for (column, sort) in replay.child_sorts.iter().copied().enumerate() {
             assert_eq!(
-                receipts.table_column_sort(table, column),
+                trace.table_column_sort(table, column),
                 Some(sort),
                 "constructor replay child sort does not match its table column"
             );
         }
         assert_eq!(
-            receipts.table_column_sort(table, dst_col.index()),
+            trace.table_column_sort(table, dst_col.index()),
             Some(replay.result_sort),
             "constructor replay result sort does not match its table column"
         );
         for column in args.len()..table_info.spec.arity() {
             if column != dst_col.index() {
                 assert!(
-                    receipts.table_column_sort(table, column).is_none(),
+                    trace.table_column_sort(table, column).is_none(),
                     "constructor replay has an unsupported typed default column {column}"
                 );
             }
         }
-        receipts
+        trace
             .register_table_constructor(table, replay.clone())
             .unwrap_or_else(|error| {
                 panic!("cannot register constructor replay metadata for {table:?}: {error}")
             });
         let res = self.qb.new_var();
         if let Some(draft) = self.qb.recipe_draft.as_mut() {
-            draft.call_output(&receipts, res, args, &replay);
+            draft.call_output(&trace, res, args, &replay);
         }
         self.qb.instrs.push(Instr::LookupOrInsertDefaultReplay {
             table,
@@ -2101,7 +2087,7 @@ impl RuleBuilder<'_, '_> {
         Ok(())
     }
 
-    /// Stage a receipt-only union whose two endpoints belong to the explicit
+    /// Stage a capture-only union whose two endpoints belong to the explicit
     /// logical equality sort.
     pub fn union_with_replay(
         &mut self,
@@ -2112,8 +2098,8 @@ impl RuleBuilder<'_, '_> {
         sort: ReplaySortId,
     ) -> Result<(), QueryError> {
         assert!(
-            self.qb.rsb.db.causal_receipts.is_some(),
-            "typed union actions require causal receipts"
+            self.qb.rsb.db.trace.is_some(),
+            "typed union actions require causal trace"
         );
         self.validate_row(table, self.table_info(table), &[left, right, timestamp])?;
         self.qb.instrs.push(Instr::UnionWithReplay {
@@ -2224,19 +2210,19 @@ impl RuleBuilder<'_, '_> {
                 "primitive replay metadata needs one sort per argument"
             );
             assert!(
-                self.qb.rsb.db.causal_receipts.is_some(),
-                "primitive replay metadata requires causal receipts"
+                self.qb.rsb.db.trace.is_some(),
+                "primitive replay metadata requires causal trace"
             );
-            let receipts = self
+            let trace = self
                 .qb
                 .rsb
                 .db
-                .causal_receipts
+                .trace
                 .as_ref()
-                .expect("causal recipe draft requires causal receipts")
+                .expect("causal recipe draft requires causal trace")
                 .clone();
             if let Some(draft) = self.qb.recipe_draft.as_mut() {
-                draft.call_output(&receipts, dst, args, &replay);
+                draft.call_output(&trace, dst, args, &replay);
             }
             if replay.promote_immediately {
                 self.qb.instrs.push(Instr::PromoteReplayCall {
@@ -2256,7 +2242,7 @@ impl RuleBuilder<'_, '_> {
         self.qb
             .recipe_draft
             .as_mut()
-            .expect("replay recipe alias requires causal receipts")
+            .expect("replay recipe alias requires causal trace")
             .alias_output(source, destination);
     }
 
@@ -2302,12 +2288,10 @@ impl RuleBuilder<'_, '_> {
         self.validate_keys(table, table_info, key)?;
         let res = self.qb.new_var();
         if existing_required
-            && let (Some(receipts), Some(draft)) = (
-                self.qb.rsb.db.causal_receipts.as_ref(),
-                self.qb.recipe_draft.as_mut(),
-            )
+            && let (Some(trace), Some(draft)) =
+                (self.qb.rsb.db.trace.as_ref(), self.qb.recipe_draft.as_mut())
         {
-            draft.lookup_output(receipts, res, table, dst_col, key);
+            draft.lookup_output(trace, res, table, dst_col, key);
         }
         self.qb.instrs.push(Instr::LookupWithFallback {
             table,
@@ -2353,8 +2337,8 @@ impl RuleBuilder<'_, '_> {
                 "primitive replay metadata needs one sort per argument"
             );
             assert!(
-                self.qb.rsb.db.causal_receipts.is_some(),
-                "primitive replay metadata requires causal receipts"
+                self.qb.rsb.db.trace.is_some(),
+                "primitive replay metadata requires causal trace"
             );
         }
         self.qb.instrs.push(Instr::ExternalWithFallback {

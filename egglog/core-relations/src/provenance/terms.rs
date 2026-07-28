@@ -106,7 +106,7 @@ impl ReplayTerm {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ReplayTermCounters {
+pub struct TermInternerCounters {
     pub interned_nodes: u64,
     pub installed_values: u64,
     pub table_layouts: u64,
@@ -115,7 +115,7 @@ pub struct ReplayTermCounters {
 }
 
 #[derive(Default)]
-pub(super) struct ReplayTermStore {
+pub(super) struct TermInterner {
     by_node: RwLock<HashMap<ReplayTerm, ReplayTermId>>,
     nodes: RwLock<HashMap<ReplayTermId, ReplayTerm>>,
     by_value: RwLock<HashMap<(ReplaySortId, Value), ReplayTermId>>,
@@ -134,7 +134,7 @@ pub(super) struct ReplayTermStore {
     pub(super) container_child_sorts: DashMap<ReplaySortId, Arc<[ReplaySortId]>>,
 }
 
-impl ReplayTermStore {
+impl TermInterner {
     pub(super) fn intern(&self, next_term: &AtomicU32, node: ReplayTerm) -> ReplayTermId {
         let mut by_node = self.by_node.write().unwrap();
         if let Some(id) = by_node.get(&node).copied() {
@@ -531,9 +531,9 @@ impl ReplayTermStore {
         Ok(())
     }
 
-    pub(super) fn counters(&self) -> ReplayTermCounters {
+    pub(super) fn counters(&self) -> TermInternerCounters {
         let container_anchors = self.container_anchors.read().unwrap();
-        ReplayTermCounters {
+        TermInternerCounters {
             interned_nodes: self.nodes.read().unwrap().len() as u64,
             installed_values: self.by_value.read().unwrap().len() as u64,
             table_layouts: self.table_layouts.len() as u64,
@@ -559,7 +559,7 @@ pub(crate) enum TermTemplate {
         term: ReplayTermId,
     },
     /// Read the exact value column of an earlier zero-key source/global fact.
-    /// This is resolved against immutable receipt history, never final state.
+    /// This is resolved against immutable trace history, never final state.
     FactLookup {
         table: TableId,
         column: u16,
@@ -631,7 +631,7 @@ impl ReplayBindingSource {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ActionReceiptKind {
+pub(crate) enum ActionCaptureKind {
     Rule(u32),
     Source(SourceRef),
     Check,
@@ -664,15 +664,15 @@ pub(crate) struct CheckEndpointSpec {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct ActionReceiptSpec {
-    pub(crate) kind: ActionReceiptKind,
+pub(crate) struct ActionCaptureSpec {
+    pub(crate) kind: ActionCaptureKind,
     pub(crate) premise_count: usize,
     pub(crate) premise_slots: Arc<DenseIdMap<AtomId, PremiseSlot>>,
     /// One exact term source for every ordinary variable, in source order.
     pub(crate) binding_sources: Arc<[ReplayBindingSource]>,
 }
 
-impl ActionReceiptSpec {
+impl ActionCaptureSpec {
     pub(crate) fn captures_witness(&self) -> bool {
         self.premise_count != 0
     }

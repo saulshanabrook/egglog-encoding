@@ -256,7 +256,7 @@ pub(crate) struct SinglePlan {
 #[derive(Debug, Clone)]
 pub(crate) struct JoinStages {
     pub instrs: Arc<Vec<JoinStage>>,
-    /// Variables whose values this block establishes or consumes. Receipt
+    /// Variables whose values this block establishes or consumes. Capture
     /// validation must ignore stale slots left in the shared binding map for
     /// variables projected out of a decomposed bag.
     pub live_vars: Arc<[Variable]>,
@@ -304,7 +304,7 @@ impl JoinStages {
 /// independent parts of a query and make sure they are evaluated independently.
 #[derive(Debug, Clone)]
 pub(crate) struct MatSpec {
-    // Native query atoms evaluated by this bag. Receipt witnesses use this to
+    // Native query atoms evaluated by this bag. Capture witnesses use this to
     // avoid attributing singleton rows from later bags to an intermediate.
     pub premise_atoms: SmallVec<[AtomId; 8]>,
     // Variables that are used by later stages

@@ -53,6 +53,44 @@ cargo run --release [-f fact-directory] [--to-dot] [--to-svg] [-j --threads <THR
 * Set `RUST_LOG=INFO` to see more logging messages, as we use [env-logger](https://docs.rs/env_logger/latest/env_logger/) defaulting to `warn`.
 * The `-j` option specifies the number of threads to use for parallel execution. The default value is `1`, which runs everything in a single thread. Passing `0` will use the maximum inferred parallelism available on the current system.
 
+### Check-directed slice replay
+
+`--slice-output` records one supported serial execution, retains the dynamic
+support needed by its successful `check` commands, and writes a smaller egglog
+program:
+
+```bash
+egglog --slice-output slice-replay.egg input.egg
+```
+
+The output flag implies `--slice`; `--proofs` is separate. Add `--proofs` when
+you also want the replay to produce normal proof-mode output:
+
+```bash
+egglog --slice --proofs input.egg
+```
+
+Before publishing a file, egglog reparses the exact rendered bytes on a fresh
+graph with proofs and proof testing enabled. A capture, slicing, or replay
+failure exits without publishing a new artifact, and an existing destination
+is replaced atomically only after validation succeeds. There is no fallback to
+the original program.
+
+Slicing currently supports one input file, one execution thread, the main
+backend, and ordinary seminaive execution. Proof testing, term encoding, naive
+execution, interactive/desugar modes, graph serialization, unsupported
+schedulers and unsupported mutation shapes fail closed with a diagnostic.
+Successful `check` commands are the only replay roots; `extract` and
+`multi-extract` output is not retained. The trace records effective source
+events, rule firings and their grounded premises, equality explanations,
+version changes, removals, and check positions. It is causal evidence used to
+construct the replay program, not itself a proof.
+
+Rust callers that need to inspect capture directly can enable it before loading
+or declaring user state with `EGraph::enable_trace`, then use
+`EGraph::with_trace_view`. Borrowed trace records cannot escape the view
+callback.
+
 One can also use `egglog` as a Rust library by adding the following to your `Cargo.toml`:
 
 ```

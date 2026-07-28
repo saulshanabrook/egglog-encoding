@@ -25,16 +25,17 @@ use rustc_hash::FxHasher;
 use sharded_hash_table::ShardedHashTable;
 
 use crate::{
-    CausalWave, CauseDraftId, DeferredEqualityCause, EqualityEdgeCount, FactId, Pooled,
-    RowOriginSiteId, TableChange, TableId, TypedCellEquality,
+    CauseDraftId, DeferredEqualityCause, EdgeHorizon, FactId, Pooled, RowOriginSiteId, TableChange,
+    TableId, TypedCellEquality, Wave,
     action::ExecutionState,
     common::{HashMap, HashSet, ShardData, ShardId, SubsetTracker, Value},
     hash_index::{ColumnIndex, Index},
     offsets::{OffsetRange, Offsets, RowId, Subset, SubsetRef},
     parallel_heuristics::parallelize_table_op,
     pool::with_pool_set,
-    receipts::{
-        CauseRef, PendingNativeLease, PreparedRekey, PreparedRemoval, RekeyOutcome, RowOriginRef,
+    provenance::{
+        PackedCauseRef, PendingNativeLease, PreparedRekey, PreparedRemoval, RekeyOutcome,
+        RowOriginRef,
     },
     row_buffer::{ParallelRowBufWriter, RowBuffer},
     table_spec::{
@@ -145,7 +146,7 @@ impl Rows {
     fn add_row(&mut self, row: &[Value]) -> RowId {
         debug_assert!(
             self.fact_ids.is_none(),
-            "ordinary insertion cannot extend a receipt-enabled table"
+            "ordinary insertion cannot extend a capture-enabled table"
         );
         if row[0].is_stale() {
             self.stale_rows += 1;
@@ -211,7 +212,7 @@ pub type MergeFn =
 
 pub struct SortedWritesTable {
     table_id: TableId,
-    receipts_enabled: bool,
+    trace_enabled: bool,
     generation: Generation,
     data: Rows,
     hash: ShardedHashTable<TableEntry>,
@@ -234,7 +235,7 @@ impl Clone for SortedWritesTable {
         SortedWritesTable {
             generation: self.generation,
             table_id: self.table_id,
-            receipts_enabled: self.receipts_enabled,
+            trace_enabled: self.trace_enabled,
             data: self.data.clone(),
             hash: self.hash.clone(),
             n_keys: self.n_keys,
@@ -306,16 +307,16 @@ impl ArbitraryRowBuffer {
 
 struct Buffer {
     pending_rows: DenseIdMap<ShardId, RowBuffer>,
-    receipt: Option<Box<ReceiptBuffer>>,
+    capture: Option<Box<CaptureBuffer>>,
     pending_removals: DenseIdMap<ShardId, ArbitraryRowBuffer>,
     state: Weak<PendingState>,
     n_cols: u32,
     n_keys: u32,
     shard_data: ShardData,
-    receipts_enabled: bool,
+    trace_enabled: bool,
 }
 
-struct ReceiptBuffer {
+struct CaptureBuffer {
     causes: DenseIdMap<ShardId, Vec<Option<DeferredEqualityCause>>>,
     row_rekeys: DenseIdMap<ShardId, Vec<Option<u32>>>,
     rekeys: DenseIdMap<ShardId, Vec<StagedRekey>>,
@@ -328,10 +329,10 @@ struct ReceiptBuffer {
 #[derive(Clone, Copy)]
 struct StagedRekey {
     table: TableId,
-    wave: CausalWave,
+    wave: Wave,
     prior_fact: FactId,
-    as_of_edges: EqualityEdgeCount,
-    position: crate::receipts::HistoryPosition,
+    as_of_edges: EdgeHorizon,
+    position: crate::provenance::HistoryPosition,
     equality_start: u32,
     equality_len: u16,
 }
@@ -346,8 +347,8 @@ impl MutationBuffer for Buffer {
                     .all(|(_, rows)| rows.len() == 0),
             "a rebuild commit guard must be installed before staging mutations"
         );
-        let receipt = self.receipt.get_or_insert_with(|| {
-            Box::new(ReceiptBuffer {
+        let capture = self.capture.get_or_insert_with(|| {
+            Box::new(CaptureBuffer {
                 causes: DenseIdMap::default(),
                 row_rekeys: DenseIdMap::default(),
                 rekeys: DenseIdMap::default(),
@@ -358,7 +359,7 @@ impl MutationBuffer for Buffer {
             })
         });
         assert!(
-            receipt.transaction.replace(transaction).is_none(),
+            capture.transaction.replace(transaction).is_none(),
             "a mutation buffer received more than one rebuild commit guard"
         );
     }
@@ -378,8 +379,8 @@ impl MutationBuffer for Buffer {
             .pending_rows
             .get_or_insert(shard, || RowBuffer::new(self.n_cols as _))
             .len();
-        let receipt = self.receipt.get_or_insert_with(|| {
-            Box::new(ReceiptBuffer {
+        let capture = self.capture.get_or_insert_with(|| {
+            Box::new(CaptureBuffer {
                 causes: DenseIdMap::default(),
                 row_rekeys: DenseIdMap::default(),
                 rekeys: DenseIdMap::default(),
@@ -389,12 +390,12 @@ impl MutationBuffer for Buffer {
                 transaction: None,
             })
         });
-        let causes = receipt.causes.get_or_insert(shard, || {
-            assert_eq!(rows, 0, "receipt causes were enabled after ordinary rows");
+        let causes = capture.causes.get_or_insert(shard, || {
+            assert_eq!(rows, 0, "capture causes were enabled after ordinary rows");
             Vec::new()
         });
-        let origins = receipt.origins.get_or_insert(shard, || vec![None; rows]);
-        let row_rekeys = receipt.row_rekeys.get_or_insert(shard, || vec![None; rows]);
+        let origins = capture.origins.get_or_insert(shard, || vec![None; rows]);
+        let row_rekeys = capture.row_rekeys.get_or_insert(shard, || vec![None; rows]);
         debug_assert_eq!(causes.len(), rows);
         debug_assert_eq!(row_rekeys.len(), rows);
         debug_assert_eq!(origins.len(), rows);
@@ -414,8 +415,8 @@ impl MutationBuffer for Buffer {
             .pending_rows
             .get_or_insert(shard, || RowBuffer::new(self.n_cols as _))
             .len();
-        let receipt = self.receipt.get_or_insert_with(|| {
-            Box::new(ReceiptBuffer {
+        let capture = self.capture.get_or_insert_with(|| {
+            Box::new(CaptureBuffer {
                 causes: DenseIdMap::default(),
                 row_rekeys: DenseIdMap::default(),
                 rekeys: DenseIdMap::default(),
@@ -425,12 +426,12 @@ impl MutationBuffer for Buffer {
                 transaction: None,
             })
         });
-        let causes = receipt.causes.get_or_insert(shard, || {
-            assert_eq!(rows, 0, "receipt causes were enabled after ordinary rows");
+        let causes = capture.causes.get_or_insert(shard, || {
+            assert_eq!(rows, 0, "capture causes were enabled after ordinary rows");
             Vec::new()
         });
-        let row_rekeys = receipt.row_rekeys.get_or_insert(shard, || vec![None; rows]);
-        let origins = receipt.origins.get_or_insert(shard, || vec![None; rows]);
+        let row_rekeys = capture.row_rekeys.get_or_insert(shard, || vec![None; rows]);
+        let origins = capture.origins.get_or_insert(shard, || vec![None; rows]);
         debug_assert_eq!(causes.len(), rows);
         debug_assert_eq!(row_rekeys.len(), rows);
         debug_assert_eq!(origins.len(), rows);
@@ -454,8 +455,8 @@ impl MutationBuffer for Buffer {
             .pending_rows
             .get_or_insert(shard, || RowBuffer::new(self.n_cols as _))
             .len();
-        let receipt = self.receipt.get_or_insert_with(|| {
-            Box::new(ReceiptBuffer {
+        let capture = self.capture.get_or_insert_with(|| {
+            Box::new(CaptureBuffer {
                 causes: DenseIdMap::default(),
                 row_rekeys: DenseIdMap::default(),
                 rekeys: DenseIdMap::default(),
@@ -465,12 +466,12 @@ impl MutationBuffer for Buffer {
                 transaction: None,
             })
         });
-        let causes = receipt.causes.get_or_insert(shard, || {
-            assert_eq!(rows, 0, "receipt causes were enabled after ordinary rows");
+        let causes = capture.causes.get_or_insert(shard, || {
+            assert_eq!(rows, 0, "capture causes were enabled after ordinary rows");
             Vec::new()
         });
-        let row_rekeys = receipt.row_rekeys.get_or_insert(shard, || vec![None; rows]);
-        let origins = receipt.origins.get_or_insert(shard, || vec![None; rows]);
+        let row_rekeys = capture.row_rekeys.get_or_insert(shard, || vec![None; rows]);
+        let origins = capture.origins.get_or_insert(shard, || vec![None; rows]);
         debug_assert_eq!(causes.len(), rows);
         debug_assert_eq!(row_rekeys.len(), rows);
         debug_assert_eq!(origins.len(), rows);
@@ -485,8 +486,8 @@ impl MutationBuffer for Buffer {
             .pending_rows
             .get_or_insert(shard, || RowBuffer::new(self.n_cols as _))
             .len();
-        let receipt = self.receipt.get_or_insert_with(|| {
-            Box::new(ReceiptBuffer {
+        let capture = self.capture.get_or_insert_with(|| {
+            Box::new(CaptureBuffer {
                 causes: DenseIdMap::default(),
                 row_rekeys: DenseIdMap::default(),
                 rekeys: DenseIdMap::default(),
@@ -496,23 +497,23 @@ impl MutationBuffer for Buffer {
                 transaction: None,
             })
         });
-        let causes = receipt.causes.get_or_insert(shard, || {
-            assert_eq!(rows, 0, "receipt causes were enabled after ordinary rows");
+        let causes = capture.causes.get_or_insert(shard, || {
+            assert_eq!(rows, 0, "capture causes were enabled after ordinary rows");
             Vec::new()
         });
-        let row_rekeys = receipt.row_rekeys.get_or_insert(shard, || vec![None; rows]);
-        let origins = receipt.origins.get_or_insert(shard, || vec![None; rows]);
+        let row_rekeys = capture.row_rekeys.get_or_insert(shard, || vec![None; rows]);
+        let origins = capture.origins.get_or_insert(shard, || vec![None; rows]);
         debug_assert_eq!(causes.len(), rows);
         debug_assert_eq!(row_rekeys.len(), rows);
         debug_assert_eq!(origins.len(), rows);
         let (table, wave, prior_fact, as_of_edges, position, equalities) = rekey.metadata();
-        let rekey_equalities = receipt.rekey_equalities.get_or_default(shard);
+        let rekey_equalities = capture.rekey_equalities.get_or_default(shard);
         let equality_start = u32::try_from(rekey_equalities.len())
             .expect("one staged rekey batch exceeds u32 equality storage");
         let equality_len = u16::try_from(equalities.len())
             .expect("one semantic row rekey changes more than u16 cells");
         rekey_equalities.extend_from_slice(equalities);
-        let rekeys = receipt.rekeys.get_or_default(shard);
+        let rekeys = capture.rekeys.get_or_default(shard);
         let rekey_index =
             u32::try_from(rekeys.len()).expect("one staged rekey batch exceeds u32 row storage");
         rekeys.push(StagedRekey {
@@ -531,8 +532,8 @@ impl MutationBuffer for Buffer {
     }
     fn stage_remove(&mut self, key: &[Value]) {
         assert!(
-            !self.receipts_enabled,
-            "causal receipts require an exact rule cause or native maintenance capability for removal"
+            !self.trace_enabled,
+            "trace capture requires an exact rule cause or native maintenance capability for removal"
         );
         let (shard, _) = hash_code(self.shard_data, key, self.n_keys as _);
         self.pending_removals
@@ -551,8 +552,8 @@ impl MutationBuffer for Buffer {
             .pending_removals
             .get_or_insert(shard, || ArbitraryRowBuffer::new(self.n_keys as _))
             .len();
-        let receipt = self.receipt.get_or_insert_with(|| {
-            Box::new(ReceiptBuffer {
+        let capture = self.capture.get_or_insert_with(|| {
+            Box::new(CaptureBuffer {
                 causes: DenseIdMap::default(),
                 row_rekeys: DenseIdMap::default(),
                 rekeys: DenseIdMap::default(),
@@ -562,10 +563,10 @@ impl MutationBuffer for Buffer {
                 transaction: None,
             })
         });
-        let causes = receipt.removal_causes.get_or_insert(shard, || {
+        let causes = capture.removal_causes.get_or_insert(shard, || {
             assert_eq!(
                 rows, 0,
-                "receipt causes were enabled after ordinary removals"
+                "capture causes were enabled after ordinary removals"
             );
             Vec::new()
         });
@@ -576,9 +577,9 @@ impl MutationBuffer for Buffer {
     fn fresh_handle(&self) -> Box<dyn MutationBuffer> {
         Box::new(Buffer {
             pending_rows: Default::default(),
-            receipt: self.receipt.as_ref().and_then(|receipt| {
-                receipt.transaction.as_ref().map(|transaction| {
-                    Box::new(ReceiptBuffer {
+            capture: self.capture.as_ref().and_then(|capture| {
+                capture.transaction.as_ref().map(|transaction| {
+                    Box::new(CaptureBuffer {
                         causes: DenseIdMap::default(),
                         row_rekeys: DenseIdMap::default(),
                         rekeys: DenseIdMap::default(),
@@ -594,7 +595,7 @@ impl MutationBuffer for Buffer {
             n_cols: self.n_cols,
             n_keys: self.n_keys,
             shard_data: self.shard_data,
-            receipts_enabled: self.receipts_enabled,
+            trace_enabled: self.trace_enabled,
         })
     }
 }
@@ -603,9 +604,9 @@ impl Drop for Buffer {
     fn drop(&mut self) {
         if let Some(state) = self.state.upgrade() {
             if let Some(transaction) = self
-                .receipt
+                .capture
                 .as_ref()
-                .and_then(|receipt| receipt.transaction.clone())
+                .and_then(|capture| capture.transaction.clone())
             {
                 let mut pending_rows = Vec::new();
                 let native_lease = transaction.native_lease();
@@ -617,25 +618,25 @@ impl Drop for Buffer {
                     };
                     row_count += rows.len();
                     let causes = self
-                        .receipt
+                        .capture
                         .as_mut()
-                        .and_then(|receipt| receipt.causes.take(shard));
+                        .and_then(|capture| capture.causes.take(shard));
                     let row_rekeys = self
-                        .receipt
+                        .capture
                         .as_mut()
-                        .and_then(|receipt| receipt.row_rekeys.take(shard));
+                        .and_then(|capture| capture.row_rekeys.take(shard));
                     let rekeys = self
-                        .receipt
+                        .capture
                         .as_mut()
-                        .and_then(|receipt| receipt.rekeys.take(shard));
+                        .and_then(|capture| capture.rekeys.take(shard));
                     let rekey_equalities = self
-                        .receipt
+                        .capture
                         .as_mut()
-                        .and_then(|receipt| receipt.rekey_equalities.take(shard));
+                        .and_then(|capture| capture.rekey_equalities.take(shard));
                     let origins = self
-                        .receipt
+                        .capture
                         .as_mut()
-                        .and_then(|receipt| receipt.origins.take(shard));
+                        .and_then(|capture| capture.origins.take(shard));
                     pending_rows.push((
                         shard,
                         PendingRowBatch {
@@ -658,9 +659,9 @@ impl Drop for Buffer {
                     };
                     removal_count += rows.len();
                     let causes = self
-                        .receipt
+                        .capture
                         .as_mut()
-                        .and_then(|receipt| receipt.removal_causes.take(shard));
+                        .and_then(|capture| capture.removal_causes.take(shard));
                     pending_removals.push((
                         shard,
                         PendingRemovalBatch {
@@ -696,25 +697,25 @@ impl Drop for Buffer {
                 };
                 rows += buf.len();
                 let causes = self
-                    .receipt
+                    .capture
                     .as_mut()
-                    .and_then(|receipt| receipt.causes.take(shard));
+                    .and_then(|capture| capture.causes.take(shard));
                 let row_rekeys = self
-                    .receipt
+                    .capture
                     .as_mut()
-                    .and_then(|receipt| receipt.row_rekeys.take(shard));
+                    .and_then(|capture| capture.row_rekeys.take(shard));
                 let rekeys = self
-                    .receipt
+                    .capture
                     .as_mut()
-                    .and_then(|receipt| receipt.rekeys.take(shard));
+                    .and_then(|capture| capture.rekeys.take(shard));
                 let rekey_equalities = self
-                    .receipt
+                    .capture
                     .as_mut()
-                    .and_then(|receipt| receipt.rekey_equalities.take(shard));
+                    .and_then(|capture| capture.rekey_equalities.take(shard));
                 let origins = self
-                    .receipt
+                    .capture
                     .as_mut()
-                    .and_then(|receipt| receipt.origins.take(shard));
+                    .and_then(|capture| capture.origins.take(shard));
                 state.pending_rows[shard].push(PendingRowBatch {
                     rows: buf,
                     causes,
@@ -735,9 +736,9 @@ impl Drop for Buffer {
                 };
                 rows += buf.len();
                 let causes = self
-                    .receipt
+                    .capture
                     .as_mut()
-                    .and_then(|receipt| receipt.removal_causes.take(shard));
+                    .and_then(|capture| capture.removal_causes.take(shard));
                 state.pending_removals[shard].push(PendingRemovalBatch {
                     rows: buf,
                     causes,
@@ -759,27 +760,27 @@ impl Table for SortedWritesTable {
     fn set_table_id(&mut self, table: TableId) {
         self.table_id = table;
     }
-    fn enable_causal_receipts(&mut self) {
-        self.receipts_enabled = true;
+    fn enable_trace(&mut self) {
+        self.trace_enabled = true;
     }
-    fn preflight_causal_receipt_activation(&self) -> Result<(), &'static str> {
+    fn preflight_trace_activation(&self) -> Result<(), &'static str> {
         if self.len() != 0 {
             return Err("table already contains rows without exact source identities");
         }
         if self.pending_state.total_rows.load(Ordering::Acquire) != 0
             || self.pending_state.total_removals.load(Ordering::Acquire) != 0
         {
-            return Err("table has queued receipt-disabled mutations");
+            return Err("table has queued capture-disabled mutations");
         }
         if Arc::weak_count(&self.pending_state) != 0 {
-            return Err("table has an outstanding receipt-disabled mutation buffer");
+            return Err("table has an outstanding capture-disabled mutation buffer");
         }
         Ok(())
     }
     fn clear(&mut self) {
         assert!(
-            !self.receipts_enabled,
-            "causal receipts do not support unattributed table clear; failing closed"
+            !self.trace_enabled,
+            "causal trace do not support unattributed table clear; failing closed"
         );
         self.pending_state.clear();
         if self.data.data.len() == 0 {
@@ -806,7 +807,7 @@ impl Table for SortedWritesTable {
         table: &crate::WrappedTable,
         next_ts: Value,
         exec_state: &mut ExecutionState,
-        equality_cutoff: Option<EqualityEdgeCount>,
+        equality_cutoff: Option<EdgeHorizon>,
         transaction: Option<&MutationTransaction>,
     ) -> bool {
         self.do_rebuild(
@@ -1025,13 +1026,13 @@ impl Table for SortedWritesTable {
         let n_shards = self.hash.shard_data().n_shards();
         Box::new(Buffer {
             pending_rows: DenseIdMap::with_capacity(n_shards),
-            receipt: None,
+            capture: None,
             pending_removals: DenseIdMap::with_capacity(n_shards),
             state: Arc::downgrade(&self.pending_state),
             n_keys: u32::try_from(self.n_keys).expect("n_keys should fit in u32"),
             n_cols: u32::try_from(self.n_columns).expect("n_columns should fit in u32"),
             shard_data: self.hash.shard_data(),
-            receipts_enabled: self.receipts_enabled,
+            trace_enabled: self.trace_enabled,
         })
     }
 
@@ -1103,7 +1104,7 @@ impl SortedWritesTable {
         let rebuild_index = Index::new(to_rebuild.clone(), ColumnIndex::new());
         SortedWritesTable {
             table_id: TableId::dummy(),
-            receipts_enabled: false,
+            trace_enabled: false,
             generation: Generation::new(0),
             data: Rows::new(RowBuffer::new(n_columns)),
             hash,
@@ -1169,10 +1170,10 @@ impl SortedWritesTable {
     }
     fn serial_delete(&mut self, exec_state: &ExecutionState) -> bool {
         let shard_data = self.hash.shard_data();
-        let receipts = exec_state.causal_receipts();
+        let trace = exec_state.trace();
         assert_eq!(
-            self.receipts_enabled,
-            receipts.is_some(),
+            self.trace_enabled,
+            trace.is_some(),
             "table and execution state disagree about causal removal mode"
         );
 
@@ -1187,8 +1188,8 @@ impl SortedWritesTable {
             let queue = &self.pending_state.pending_removals[shard_id];
             while let Some(batch) = queue.pop() {
                 let causes = batch.causes.as_deref();
-                if receipts.is_some() && causes.is_some() {
-                    batch.receipt_causes();
+                if trace.is_some() && causes.is_some() {
+                    batch.capture_causes();
                 }
                 let mut index = 0;
                 batch.rows.for_each(|to_remove| {
@@ -1206,17 +1207,17 @@ impl SortedWritesTable {
                     if !seen.insert(row) {
                         return;
                     }
-                    let prepared = match (receipts, cause) {
-                        (Some(receipts), Some(cause)) => {
+                    let prepared = match (trace, cause) {
+                        (Some(trace), Some(cause)) => {
                             let fact = self
                                 .data
                                 .fact_id(row)
-                                .expect("receipt removal victim has no immutable FactId");
+                                .expect("capture removal victim has no immutable FactId");
                             Some(
-                                receipts
+                                trace
                                     .prepare_removal(
                                         self.table_id,
-                                        exec_state.causal_wave(),
+                                        exec_state.trace_wave(),
                                         fact,
                                         cause,
                                     )
@@ -1226,10 +1227,10 @@ impl SortedWritesTable {
                             )
                         }
                         // Rebuild/rekey maintenance removals deliberately have
-                        // no rule cause and remain covered by rekey receipts.
+                        // no rule cause and remain covered by rekey trace.
                         (Some(_), None) | (None, None) => None,
                         (None, Some(_)) => {
-                            panic!("ordinary deletion unexpectedly carried a receipt cause")
+                            panic!("ordinary deletion unexpectedly carried a capture cause")
                         }
                     };
                     candidates.push((shard_id, hc, row, prepared));
@@ -1248,9 +1249,9 @@ impl SortedWritesTable {
             let (entry, _) = entry.remove();
             self.data.set_stale(entry.row);
         }
-        if let Some(receipts) = receipts {
-            receipts.record_removals(
-                exec_state.causal_wave(),
+        if let Some(trace) = trace {
+            trace.record_removals(
+                exec_state.trace_wave(),
                 candidates
                     .iter()
                     .filter_map(|(_, _, _, prepared)| *prepared),
@@ -1262,7 +1263,7 @@ impl SortedWritesTable {
     fn do_delete(&mut self, exec_state: &ExecutionState) -> bool {
         let total = self.pending_state.total_removals.swap(0, Ordering::Relaxed);
 
-        if !self.receipts_enabled && parallelize_table_op(total) {
+        if !self.trace_enabled && parallelize_table_op(total) {
             self.parallel_delete()
         } else {
             self.serial_delete(exec_state)
@@ -1275,8 +1276,8 @@ impl SortedWritesTable {
         // Causal capture is a serial-only contract. Keep the already-landed
         // parallel implementation dormant so direct core activation inside a
         // larger Rayon pool cannot accidentally promote candidate-scale
-        // receipt causes.
-        if exec_state.causal_receipts().is_none() && parallelize_table_op(total) {
+        // capture causes.
+        if exec_state.trace().is_none() && parallelize_table_op(total) {
             if let Some(col) = self.sort_by {
                 self.parallel_insert(
                     exec_state,
@@ -1295,26 +1296,23 @@ impl SortedWritesTable {
     }
 
     fn serial_insert(&mut self, exec_state: &mut ExecutionState) -> bool {
-        if exec_state.causal_receipts().is_none() {
+        if exec_state.trace().is_none() {
             self.serial_insert_mode::<false>(exec_state)
         } else {
             self.serial_insert_mode::<true>(exec_state)
         }
     }
 
-    fn serial_insert_mode<const RECEIPTS: bool>(
-        &mut self,
-        exec_state: &mut ExecutionState,
-    ) -> bool {
-        self.preflight_serial_receipt_collisions::<RECEIPTS>(exec_state);
+    fn serial_insert_mode<const CAPTURE: bool>(&mut self, exec_state: &mut ExecutionState) -> bool {
+        self.preflight_serial_capture_collisions::<CAPTURE>(exec_state);
         let mut changed = false;
         let n_keys = self.n_keys;
         let mut scratch = with_pool_set(|ps| ps.get::<Vec<Value>>());
-        let mut receipt_batch = if RECEIPTS {
+        let mut capture_batch = if CAPTURE {
             Some(
                 exec_state
-                    .causal_receipts()
-                    .expect("receipt mode requires an enabled arena")
+                    .trace()
+                    .expect("capture mode requires an enabled arena")
                     .new_batch(),
             )
         } else {
@@ -1324,7 +1322,7 @@ impl SortedWritesTable {
             if let Some(sort_by) = self.sort_by {
                 while let Some(mut buf) = queue.pop() {
                     for proposal_index in 0..buf.rows.len() {
-                        let mut prepared_rekey = if RECEIPTS {
+                        let mut prepared_rekey = if CAPTURE {
                             buf.take_rekey(proposal_index)
                         } else {
                             None
@@ -1333,8 +1331,8 @@ impl SortedWritesTable {
                         if query.first().is_some_and(|value| value.is_stale()) {
                             continue;
                         }
-                        let mut incoming_cause = if RECEIPTS && prepared_rekey.is_none() {
-                            Some(buf.receipt_cause(proposal_index))
+                        let mut incoming_cause = if CAPTURE && prepared_rekey.is_none() {
+                            Some(buf.capture_cause(proposal_index))
                         } else {
                             None
                         };
@@ -1350,15 +1348,15 @@ impl SortedWritesTable {
                             if let Some(rekey) = prepared_rekey.as_ref() {
                                 incoming_cause = Some(
                                     exec_state
-                                        .causal_receipts()
-                                        .expect("receipt rekey collision has no arena")
+                                        .trace()
+                                        .expect("capture rekey collision has no arena")
                                         .prepared_rekey_cause(rekey),
                                 );
                             }
                             // First case: overwriting an existing value. Apply merge
                             // function. Insert new row and update hash table if merge
                             // changes anything.
-                            let prior_fact = if RECEIPTS {
+                            let prior_fact = if CAPTURE {
                                 self.data.fact_id(*row).unwrap_or(FactId::MISSING)
                             } else {
                                 FactId::MISSING
@@ -1367,18 +1365,18 @@ impl SortedWritesTable {
                                 .data
                                 .get_row(*row)
                                 .expect("table should not point to stale entry");
-                            let incoming_origin = RECEIPTS
+                            let incoming_origin = CAPTURE
                                 .then(|| {
                                     prepared_rekey
                                         .as_ref()
                                         .map(|rekey| RowOriginRef::Fact(rekey.prior_fact()))
-                                        .or_else(|| buf.receipt_origin(proposal_index))
+                                        .or_else(|| buf.capture_origin(proposal_index))
                                 })
                                 .flatten();
-                            if RECEIPTS {
+                            if CAPTURE {
                                 exec_state
-                                    .causal_receipts()
-                                    .expect("receipt merge has no arena")
+                                    .trace()
+                                    .expect("capture merge has no arena")
                                     .validate_merge_origin(self.table_id, incoming_origin.is_some())
                                     .unwrap_or_else(|error| {
                                         panic!(
@@ -1399,10 +1397,10 @@ impl SortedWritesTable {
                                 )
                             });
                             let merged = (self.merge)(exec_state, cur, query, &mut scratch);
-                            let logical_changed = if RECEIPTS && merged {
+                            let logical_changed = if CAPTURE && merged {
                                 exec_state
-                                    .causal_receipts()
-                                    .expect("receipt merge has no arena")
+                                    .trace()
+                                    .expect("capture merge has no arena")
                                     .logical_row_changed(self.table_id, cur, &scratch)
                                     .unwrap_or_else(|error| {
                                         panic!(
@@ -1419,10 +1417,10 @@ impl SortedWritesTable {
                                     .filter(|_| logical_changed)
                             });
                             if merged {
-                                let prepared_origin = (RECEIPTS && logical_changed).then(|| {
+                                let prepared_origin = (CAPTURE && logical_changed).then(|| {
                                     exec_state
-                                        .causal_receipts()
-                                        .expect("receipt merge has no arena")
+                                        .trace()
+                                        .expect("capture merge has no arena")
                                         .prepare_merged_fact_origin(
                                             self.table_id,
                                             &scratch,
@@ -1441,28 +1439,28 @@ impl SortedWritesTable {
                                 let merge_cause = merge_cause
                                     .flatten()
                                     .map(|cause| cause.promote())
-                                    .unwrap_or(CauseRef::UNATTRIBUTED);
+                                    .unwrap_or(PackedCauseRef::UNATTRIBUTED);
                                 let sort_val = query[sort_by.index()];
-                                let fact = if RECEIPTS && !logical_changed {
+                                let fact = if CAPTURE && !logical_changed {
                                     prior_fact
                                 } else {
-                                    receipt_batch.as_mut().map_or(FactId::MISSING, |batch| {
+                                    capture_batch.as_mut().map_or(FactId::MISSING, |batch| {
                                         batch.record_merged_fact(
                                             self.table_id,
                                             merge_cause,
                                             &scratch,
                                             prepared_origin
-                                                .expect("receipt merge has no prepared origin"),
+                                                .expect("capture merge has no prepared origin"),
                                         )
                                     })
                                 };
                                 if let Some(rekey) = prepared_rekey.take() {
                                     exec_state
-                                        .causal_receipts()
-                                        .expect("receipt rekey replacement has no arena")
+                                        .trace()
+                                        .expect("capture rekey replacement has no arena")
                                         .commit_prepared_rekey(rekey, RekeyOutcome::Replaced(fact));
                                 }
-                                let new = if RECEIPTS {
+                                let new = if CAPTURE {
                                     self.data.add_row_with_fact(&scratch, fact)
                                 } else {
                                     self.data.add_row(&scratch)
@@ -1483,8 +1481,8 @@ impl SortedWritesTable {
                                 changed = true;
                             } else if let Some(rekey) = prepared_rekey.take() {
                                 exec_state
-                                    .causal_receipts()
-                                    .expect("receipt absorbed rekey has no arena")
+                                    .trace()
+                                    .expect("capture absorbed rekey has no arena")
                                     .commit_prepared_rekey(
                                         rekey,
                                         RekeyOutcome::Absorbed(prior_fact),
@@ -1497,17 +1495,17 @@ impl SortedWritesTable {
                             let fact = if let Some(rekey) = prepared_rekey.take() {
                                 let fact = rekey.prior_fact();
                                 exec_state
-                                    .causal_receipts()
-                                    .expect("receipt pure rekey has no arena")
+                                    .trace()
+                                    .expect("capture pure rekey has no arena")
                                     .commit_prepared_rekey(rekey, RekeyOutcome::Moved);
                                 fact
                             } else {
                                 let incoming_cause = incoming_cause
                                     .as_ref()
                                     .map(DeferredEqualityCause::promote)
-                                    .unwrap_or(CauseRef::UNATTRIBUTED);
-                                receipt_batch.as_mut().map_or(FactId::MISSING, |batch| {
-                                    match buf.receipt_origin(proposal_index) {
+                                    .unwrap_or(PackedCauseRef::UNATTRIBUTED);
+                                capture_batch.as_mut().map_or(FactId::MISSING, |batch| {
+                                    match buf.capture_origin(proposal_index) {
                                         Some(RowOriginRef::Site(origin)) => batch
                                             .record_fact_with_origin(
                                                 self.table_id,
@@ -1528,7 +1526,7 @@ impl SortedWritesTable {
                                     }
                                 })
                             };
-                            let new = if RECEIPTS {
+                            let new = if CAPTURE {
                                 self.data.add_row_with_fact(query, fact)
                             } else {
                                 self.data.add_row(query)
@@ -1562,7 +1560,7 @@ impl SortedWritesTable {
                 // Simplified variant without the sorting constraint.
                 while let Some(mut buf) = queue.pop() {
                     for proposal_index in 0..buf.rows.len() {
-                        let mut prepared_rekey = if RECEIPTS {
+                        let mut prepared_rekey = if CAPTURE {
                             buf.take_rekey(proposal_index)
                         } else {
                             None
@@ -1571,8 +1569,8 @@ impl SortedWritesTable {
                         if query.first().is_some_and(|value| value.is_stale()) {
                             continue;
                         }
-                        let mut incoming_cause = if RECEIPTS && prepared_rekey.is_none() {
-                            Some(buf.receipt_cause(proposal_index))
+                        let mut incoming_cause = if CAPTURE && prepared_rekey.is_none() {
+                            Some(buf.capture_cause(proposal_index))
                         } else {
                             None
                         };
@@ -1588,12 +1586,12 @@ impl SortedWritesTable {
                             if let Some(rekey) = prepared_rekey.as_ref() {
                                 incoming_cause = Some(
                                     exec_state
-                                        .causal_receipts()
-                                        .expect("receipt rekey collision has no arena")
+                                        .trace()
+                                        .expect("capture rekey collision has no arena")
                                         .prepared_rekey_cause(rekey),
                                 );
                             }
-                            let prior_fact = if RECEIPTS {
+                            let prior_fact = if CAPTURE {
                                 self.data.fact_id(*row).unwrap_or(FactId::MISSING)
                             } else {
                                 FactId::MISSING
@@ -1602,18 +1600,18 @@ impl SortedWritesTable {
                                 .data
                                 .get_row(*row)
                                 .expect("table should not point to stale entry");
-                            let incoming_origin = RECEIPTS
+                            let incoming_origin = CAPTURE
                                 .then(|| {
                                     prepared_rekey
                                         .as_ref()
                                         .map(|rekey| RowOriginRef::Fact(rekey.prior_fact()))
-                                        .or_else(|| buf.receipt_origin(proposal_index))
+                                        .or_else(|| buf.capture_origin(proposal_index))
                                 })
                                 .flatten();
-                            if RECEIPTS {
+                            if CAPTURE {
                                 exec_state
-                                    .causal_receipts()
-                                    .expect("receipt merge has no arena")
+                                    .trace()
+                                    .expect("capture merge has no arena")
                                     .validate_merge_origin(self.table_id, incoming_origin.is_some())
                                     .unwrap_or_else(|error| {
                                         panic!(
@@ -1634,10 +1632,10 @@ impl SortedWritesTable {
                                 )
                             });
                             let merged = (self.merge)(exec_state, cur, query, &mut scratch);
-                            let logical_changed = if RECEIPTS && merged {
+                            let logical_changed = if CAPTURE && merged {
                                 exec_state
-                                    .causal_receipts()
-                                    .expect("receipt merge has no arena")
+                                    .trace()
+                                    .expect("capture merge has no arena")
                                     .logical_row_changed(self.table_id, cur, &scratch)
                                     .unwrap_or_else(|error| {
                                         panic!(
@@ -1654,10 +1652,10 @@ impl SortedWritesTable {
                                     .filter(|_| logical_changed)
                             });
                             if merged {
-                                let prepared_origin = (RECEIPTS && logical_changed).then(|| {
+                                let prepared_origin = (CAPTURE && logical_changed).then(|| {
                                     exec_state
-                                        .causal_receipts()
-                                        .expect("receipt merge has no arena")
+                                        .trace()
+                                        .expect("capture merge has no arena")
                                         .prepare_merged_fact_origin(
                                             self.table_id,
                                             &scratch,
@@ -1676,27 +1674,27 @@ impl SortedWritesTable {
                                 let merge_cause = merge_cause
                                     .flatten()
                                     .map(|cause| cause.promote())
-                                    .unwrap_or(CauseRef::UNATTRIBUTED);
-                                let fact = if RECEIPTS && !logical_changed {
+                                    .unwrap_or(PackedCauseRef::UNATTRIBUTED);
+                                let fact = if CAPTURE && !logical_changed {
                                     prior_fact
                                 } else {
-                                    receipt_batch.as_mut().map_or(FactId::MISSING, |batch| {
+                                    capture_batch.as_mut().map_or(FactId::MISSING, |batch| {
                                         batch.record_merged_fact(
                                             self.table_id,
                                             merge_cause,
                                             &scratch,
                                             prepared_origin
-                                                .expect("receipt merge has no prepared origin"),
+                                                .expect("capture merge has no prepared origin"),
                                         )
                                     })
                                 };
                                 if let Some(rekey) = prepared_rekey.take() {
                                     exec_state
-                                        .causal_receipts()
-                                        .expect("receipt rekey replacement has no arena")
+                                        .trace()
+                                        .expect("capture rekey replacement has no arena")
                                         .commit_prepared_rekey(rekey, RekeyOutcome::Replaced(fact));
                                 }
-                                let new = if RECEIPTS {
+                                let new = if CAPTURE {
                                     self.data.add_row_with_fact(&scratch, fact)
                                 } else {
                                     self.data.add_row(&scratch)
@@ -1706,8 +1704,8 @@ impl SortedWritesTable {
                                 changed = true;
                             } else if let Some(rekey) = prepared_rekey.take() {
                                 exec_state
-                                    .causal_receipts()
-                                    .expect("receipt absorbed rekey has no arena")
+                                    .trace()
+                                    .expect("capture absorbed rekey has no arena")
                                     .commit_prepared_rekey(
                                         rekey,
                                         RekeyOutcome::Absorbed(prior_fact),
@@ -1719,17 +1717,17 @@ impl SortedWritesTable {
                             let fact = if let Some(rekey) = prepared_rekey.take() {
                                 let fact = rekey.prior_fact();
                                 exec_state
-                                    .causal_receipts()
-                                    .expect("receipt pure rekey has no arena")
+                                    .trace()
+                                    .expect("capture pure rekey has no arena")
                                     .commit_prepared_rekey(rekey, RekeyOutcome::Moved);
                                 fact
                             } else {
                                 let incoming_cause = incoming_cause
                                     .as_ref()
                                     .map(DeferredEqualityCause::promote)
-                                    .unwrap_or(CauseRef::UNATTRIBUTED);
-                                receipt_batch.as_mut().map_or(FactId::MISSING, |batch| {
-                                    match buf.receipt_origin(proposal_index) {
+                                    .unwrap_or(PackedCauseRef::UNATTRIBUTED);
+                                capture_batch.as_mut().map_or(FactId::MISSING, |batch| {
+                                    match buf.capture_origin(proposal_index) {
                                         Some(RowOriginRef::Site(origin)) => batch
                                             .record_fact_with_origin(
                                                 self.table_id,
@@ -1750,7 +1748,7 @@ impl SortedWritesTable {
                                     }
                                 })
                             };
-                            let new = if RECEIPTS {
+                            let new = if CAPTURE {
                                 self.data.add_row_with_fact(query, fact)
                             } else {
                                 self.data.add_row(query)
@@ -1771,7 +1769,7 @@ impl SortedWritesTable {
                 }
             };
         }
-        if let Some(batch) = receipt_batch {
+        if let Some(batch) = capture_batch {
             batch.publish();
         }
         changed
@@ -1782,7 +1780,7 @@ impl SortedWritesTable {
         exec_state: &ExecutionState,
         checker: C,
     ) -> bool {
-        if exec_state.causal_receipts().is_none() {
+        if exec_state.trace().is_none() {
             self.parallel_insert_mode::<C, false>(exec_state, checker)
         } else {
             self.parallel_insert_mode::<C, true>(exec_state, checker)
@@ -1793,18 +1791,18 @@ impl SortedWritesTable {
     /// boundary. Supported tables stay on the ordinary one-pass path; only a
     /// table with missing/Unsupported merge metadata pays for a keyed scan.
     /// Every queue is restored in FIFO order before reporting the error, so no
-    /// native row or receipt promotion becomes visible first.
-    fn preflight_serial_receipt_collisions<const RECEIPTS: bool>(
+    /// native row or capture promotion becomes visible first.
+    fn preflight_serial_capture_collisions<const CAPTURE: bool>(
         &self,
         exec_state: &ExecutionState,
     ) {
-        if !RECEIPTS {
+        if !CAPTURE {
             return;
         }
-        let receipts = exec_state
-            .causal_receipts()
-            .expect("receipt insert mode requires an enabled arena");
-        if !receipts.requires_collision_preflight(self.table_id) {
+        let trace = exec_state
+            .trace()
+            .expect("capture insert mode requires an enabled arena");
+        if !trace.requires_collision_preflight(self.table_id) {
             return;
         }
 
@@ -1832,7 +1830,7 @@ impl SortedWritesTable {
             }
         }
         if collision {
-            receipts
+            trace
                 .validate_merge_origin(self.table_id, true)
                 .unwrap_or_else(|error| {
                     panic!(
@@ -1843,7 +1841,7 @@ impl SortedWritesTable {
         }
     }
 
-    fn parallel_insert_mode<C: OrderingChecker, const RECEIPTS: bool>(
+    fn parallel_insert_mode<C: OrderingChecker, const CAPTURE: bool>(
         &mut self,
         exec_state: &ExecutionState,
         checker: C,
@@ -1871,18 +1869,18 @@ impl SortedWritesTable {
                 let queue = &self.pending_state.pending_rows[shard_id];
                 let mut marked_stale = 0usize;
                 let mut staged =
-                    StagedOutputs::new::<RECEIPTS>(n_keys, n_cols, BATCH_SIZE);
-                let mut receipt_batch = if RECEIPTS {
+                    StagedOutputs::new::<CAPTURE>(n_keys, n_cols, BATCH_SIZE);
+                let mut capture_batch = if CAPTURE {
                     Some(
                         exec_state
-                            .causal_receipts()
-                            .expect("receipt mode requires an enabled arena")
+                            .trace()
+                            .expect("capture mode requires an enabled arena")
                             .new_batch(),
                     )
                 } else {
                     None
                 };
-                let mut fact_assignments = receipt_batch
+                let mut fact_assignments = capture_batch
                     .as_ref()
                     .map(|_| HashMap::<RowId, FactId>::default());
                 let mut changed = false;
@@ -1905,7 +1903,7 @@ impl SortedWritesTable {
                         let mut cur_row = start_row;
                         let read_handle = row_writer.read_handle();
                         for (row_index, row) in staged.rows() {
-                            let staged_cause = staged.cause::<RECEIPTS>(row_index);
+                            let staged_cause = staged.cause::<CAPTURE>(row_index);
                             if row.first().map(Value::is_stale).unwrap_or(false) {
                                 cur_row = cur_row.inc();
                                 continue;
@@ -1938,10 +1936,10 @@ impl SortedWritesTable {
                                     // into the map.
                                     let cur = unsafe { read_handle.get_row_unchecked(occ.get().row) };
 
-                                    let prior_fact = if RECEIPTS {
+                                    let prior_fact = if CAPTURE {
                                         let assignments = fact_assignments
                                             .as_ref()
-                                            .expect("receipt mode requires fact assignments");
+                                            .expect("capture mode requires fact assignments");
                                         if occ.get().row < next_offset {
                                             self.data
                                                 .fact_id(occ.get().row)
@@ -1955,16 +1953,16 @@ impl SortedWritesTable {
                                     } else {
                                         FactId::MISSING
                                     };
-                                    let merge_cause = receipt_batch.as_mut().map(|batch| {
+                                    let merge_cause = capture_batch.as_mut().map(|batch| {
                                         batch.merge_draft_capability(staged_cause, prior_fact)
                                     });
-                                    let previous_cause = RECEIPTS
+                                    let previous_cause = CAPTURE
                                         .then(|| exec_state.active_cause_capability())
                                         .flatten();
-                                    if RECEIPTS {
+                                    if CAPTURE {
                                         exec_state.set_active_cause_capability(Some(
                                             merge_cause.expect(
-                                                "receipt merge is missing its capability",
+                                                "capture merge is missing its capability",
                                             ),
                                         ));
                                     }
@@ -1976,13 +1974,13 @@ impl SortedWritesTable {
                                     // shard.
                                     if (self.merge)(&mut exec_state, cur, row, &mut scratch) {
                                         if let (Some(batch), Some(assignments)) =
-                                            (&mut receipt_batch, &mut fact_assignments)
+                                            (&mut capture_batch, &mut fact_assignments)
                                         {
                                             let fact = batch.record_fact(
                                                 self.table_id,
                                                 merge_cause
                                                     .expect(
-                                                        "receipt merge is missing its capability",
+                                                        "capture merge is missing its capability",
                                                     )
                                                     .cause_ref(),
                                                 row,
@@ -2002,7 +2000,7 @@ impl SortedWritesTable {
                                             debug_assert!(!_was_stale);
                                         }
                                     }
-                                    if RECEIPTS {
+                                    if CAPTURE {
                                         exec_state.set_active_cause_capability(previous_cause);
                                     }
                                     marked_stale += 1;
@@ -2010,7 +2008,7 @@ impl SortedWritesTable {
                                 }
                                 Entry::Vacant(v) => {
                                     if let (Some(batch), Some(assignments)) =
-                                        (&mut receipt_batch, &mut fact_assignments)
+                                        (&mut capture_batch, &mut fact_assignments)
                                     {
                                         let fact =
                                             batch.record_fact(self.table_id, staged_cause, row);
@@ -2034,11 +2032,11 @@ impl SortedWritesTable {
                 // * Removing entries in `shard` and mark them as stale in
                 // `data` if they will be overwritten.
                 while let Some(buf) = queue.pop() {
-                    let ready_causes = if RECEIPTS {
-                        let causes = buf.promoted_receipt_causes();
-                        receipt_batch
+                    let ready_causes = if CAPTURE {
+                        let causes = buf.promoted_capture_causes();
+                        capture_batch
                             .as_mut()
-                            .expect("receipt mode requires an open batch")
+                            .expect("capture mode requires an open batch")
                             .preload_cause_summaries(&causes);
                         Some(causes)
                     } else {
@@ -2051,34 +2049,34 @@ impl SortedWritesTable {
                         if row.first().is_some_and(|value| value.is_stale()) {
                             continue;
                         }
-                        let cause = if RECEIPTS {
+                        let cause = if CAPTURE {
                             ready_causes.as_ref().unwrap()[proposal_index]
                         } else {
-                            CauseRef::UNATTRIBUTED
+                            PackedCauseRef::UNATTRIBUTED
                         };
-                        staged.insert::<RECEIPTS>(
+                        staged.insert::<CAPTURE>(
                             row,
                             cause,
                             |cur, cur_cause, new, incoming_cause, out| {
-                            let merge_cause = receipt_batch.as_mut().map(|batch| {
+                            let merge_cause = capture_batch.as_mut().map(|batch| {
                                 batch.merge_drafts_capability(incoming_cause, cur_cause)
                             });
-                            let previous = RECEIPTS
+                            let previous = CAPTURE
                                 .then(|| exec_state.active_cause_capability())
                                 .flatten();
-                            if RECEIPTS {
+                            if CAPTURE {
                                 exec_state.set_active_cause_capability(Some(
                                     merge_cause
-                                        .expect("receipt merge is missing its capability"),
+                                        .expect("capture merge is missing its capability"),
                                 ));
                             }
                             let changed = (self.merge)(&mut exec_state, cur, new, out);
-                            if RECEIPTS {
+                            if CAPTURE {
                                 exec_state.set_active_cause_capability(previous);
                             }
                             (
                                 changed,
-                                merge_cause.map_or(CauseRef::UNATTRIBUTED, |cause| cause.cause_ref()),
+                                merge_cause.map_or(PackedCauseRef::UNATTRIBUTED, |cause| cause.cause_ref()),
                             )
                         });
                         if staged.len() >= BATCH_SIZE {
@@ -2087,20 +2085,20 @@ impl SortedWritesTable {
                     }
                 }
                 flush_staged_outputs!();
-                if let Some(batch) = receipt_batch {
+                if let Some(batch) = capture_batch {
                     batch.publish();
                 }
                 (checker, marked_stale, changed, fact_assignments)
             })
             .collect_vec_list();
         self.data.data = row_writer.finish();
-        if RECEIPTS {
+        if CAPTURE {
             let fact_ids = self.data.fact_ids.get_or_insert_with(FactSidecars::default);
             fact_ids.data.resize(self.data.data.len(), FactId::MISSING);
             for (_, _, _, assignments) in pending_adds.iter().flatten() {
                 let assignments = assignments
                     .as_ref()
-                    .expect("receipt mode requires fact assignments");
+                    .expect("capture mode requires fact assignments");
                 for (&row, &fact) in assignments {
                     fact_ids.data[row.index()] = fact;
                 }
@@ -2523,44 +2521,44 @@ struct PendingRemovalBatch {
 }
 
 impl PendingRemovalBatch {
-    fn receipt_causes(&self) -> &[DeferredEqualityCause] {
+    fn capture_causes(&self) -> &[DeferredEqualityCause] {
         let causes = self
             .causes
             .as_deref()
-            .expect("receipt-enabled removal batch has no cause sidecar");
+            .expect("capture-enabled removal batch has no cause sidecar");
         assert_eq!(
             causes.len(),
             self.rows.len(),
-            "receipt-enabled removal batch has incomplete cause sidecar"
+            "capture-enabled removal batch has incomplete cause sidecar"
         );
         causes
     }
 }
 
 impl PendingRowBatch {
-    fn receipt_causes(&self) -> &[Option<DeferredEqualityCause>] {
+    fn capture_causes(&self) -> &[Option<DeferredEqualityCause>] {
         let causes = self
             .causes
             .as_deref()
-            .expect("receipt-enabled table batch has no cause sidecar");
+            .expect("capture-enabled table batch has no cause sidecar");
         assert_eq!(
             causes.len(),
             self.rows.len(),
-            "receipt-enabled table batch has incomplete cause sidecar"
+            "capture-enabled table batch has incomplete cause sidecar"
         );
         causes
     }
 
-    fn receipt_cause(&self, index: usize) -> DeferredEqualityCause {
+    fn capture_cause(&self, index: usize) -> DeferredEqualityCause {
         assert!(
             self.row_rekeys
                 .as_ref()
                 .is_none_or(|rekeys| rekeys[index].is_none()),
             "semantic rekeys acquire a cause only if native collision enters merge"
         );
-        self.receipt_causes()[index]
+        self.capture_causes()[index]
             .clone()
-            .expect("ordinary receipt row has no exact cause")
+            .expect("ordinary capture row has no exact cause")
     }
 
     fn take_rekey(&mut self, index: usize) -> Option<PreparedRekey> {
@@ -2568,7 +2566,7 @@ impl PendingRowBatch {
         assert_eq!(
             row_rekeys.len(),
             self.rows.len(),
-            "receipt-enabled table batch has incomplete rekey sidecar"
+            "capture-enabled table batch has incomplete rekey sidecar"
         );
         let staged = row_rekeys[index].take()?;
         let staged = *self
@@ -2595,27 +2593,27 @@ impl PendingRowBatch {
         ))
     }
 
-    fn promoted_receipt_causes(&self) -> Vec<CauseRef> {
-        self.receipt_causes()
+    fn promoted_capture_causes(&self) -> Vec<PackedCauseRef> {
+        self.capture_causes()
             .iter()
             .map(|cause| {
                 cause
                     .as_ref()
-                    .expect("parallel receipt publication cannot contain semantic rekeys")
+                    .expect("parallel capture publication cannot contain semantic rekeys")
                     .promote()
             })
             .collect()
     }
 
-    fn receipt_origin(&self, index: usize) -> Option<RowOriginRef> {
+    fn capture_origin(&self, index: usize) -> Option<RowOriginRef> {
         let origins = self
             .origins
             .as_deref()
-            .expect("receipt-enabled table batch has no row-origin sidecar");
+            .expect("capture-enabled table batch has no row-origin sidecar");
         assert_eq!(
             origins.len(),
             self.rows.len(),
-            "receipt-enabled table batch has incomplete row-origin sidecar"
+            "capture-enabled table batch has incomplete row-origin sidecar"
         );
         origins[index]
     }
@@ -2796,9 +2794,9 @@ struct StagedOutputs {
     n_keys: usize,
     hash: Pooled<HashTable<TableEntry>>,
     rows: RowBuffer,
-    // Receipt causes are a lazy sidecar. The ordinary monomorphization keeps
+    // Capture causes are a lazy sidecar. The ordinary monomorphization keeps
     // this `None`, so it neither allocates nor writes causal metadata.
-    causes: Option<Vec<CauseRef>>,
+    causes: Option<Vec<PackedCauseRef>>,
     n_stale: usize,
     scratch: Pooled<Vec<Value>>,
 }
@@ -2808,26 +2806,26 @@ impl StagedOutputs {
         self.rows.iter().enumerate()
     }
 
-    fn cause<const RECEIPTS: bool>(&self, row_index: usize) -> CauseRef {
-        if RECEIPTS {
+    fn cause<const CAPTURE: bool>(&self, row_index: usize) -> PackedCauseRef {
+        if CAPTURE {
             self.causes
                 .as_ref()
-                .expect("receipt staging requires a cause sidecar")[row_index]
+                .expect("capture staging requires a cause sidecar")[row_index]
         } else {
-            CauseRef::UNATTRIBUTED
+            PackedCauseRef::UNATTRIBUTED
         }
     }
 
-    fn new<const RECEIPTS: bool>(n_keys: usize, n_cols: usize, capacity: usize) -> Self {
+    fn new<const CAPTURE: bool>(n_keys: usize, n_cols: usize, capacity: usize) -> Self {
         let mut res = with_pool_set(|ps| StagedOutputs {
             shard_data: ShardData::new(1),
             n_keys,
             n_stale: 0,
             hash: ps.get(),
             rows: RowBuffer::new(n_cols),
-            // Do not reserve BATCH_SIZE causes (2 MiB) up front. Receipt
+            // Do not reserve BATCH_SIZE causes (2 MiB) up front. Capture
             // staging grows only with rows actually observed by this shard.
-            causes: RECEIPTS.then(Vec::new),
+            causes: CAPTURE.then(Vec::new),
             scratch: ps.get(),
         });
         res.hash.reserve(capacity, TableEntry::hashcode);
@@ -2848,17 +2846,17 @@ impl StagedOutputs {
         self.rows.len() - self.n_stale
     }
 
-    fn insert<const RECEIPTS: bool>(
+    fn insert<const CAPTURE: bool>(
         &mut self,
         row: &[Value],
-        cause: CauseRef,
+        cause: PackedCauseRef,
         mut merge_fn: impl FnMut(
             &[Value],
-            CauseRef,
+            PackedCauseRef,
             &[Value],
-            CauseRef,
+            PackedCauseRef,
             &mut Vec<Value>,
-        ) -> (bool, CauseRef),
+        ) -> (bool, PackedCauseRef),
     ) {
         if row[0].is_stale() {
             return;
@@ -2877,22 +2875,22 @@ impl StagedOutputs {
             Entry::Occupied(mut occupied_entry) => {
                 let prior_row = occupied_entry.get().row;
                 let cur = self.rows.get_row(prior_row);
-                let prior_cause = if RECEIPTS {
+                let prior_cause = if CAPTURE {
                     self.causes
                         .as_ref()
-                        .expect("receipt staging requires a cause sidecar")[prior_row.index()]
+                        .expect("capture staging requires a cause sidecar")[prior_row.index()]
                 } else {
-                    CauseRef::UNATTRIBUTED
+                    PackedCauseRef::UNATTRIBUTED
                 };
                 let (changed, merged_cause) =
                     merge_fn(cur, prior_cause, row, cause, &mut self.scratch);
                 if changed {
                     let new = self.rows.add_row(&self.scratch);
-                    if RECEIPTS {
+                    if CAPTURE {
                         let causes = self
                             .causes
                             .as_mut()
-                            .expect("receipt staging requires a cause sidecar");
+                            .expect("capture staging requires a cause sidecar");
                         debug_assert_eq!(new.index(), causes.len());
                         causes.push(merged_cause);
                     }
@@ -2904,11 +2902,11 @@ impl StagedOutputs {
             }
             Entry::Vacant(vacant_entry) => {
                 let next = self.rows.add_row(row);
-                if RECEIPTS {
+                if CAPTURE {
                     let causes = self
                         .causes
                         .as_mut()
-                        .expect("receipt staging requires a cause sidecar");
+                        .expect("capture staging requires a cause sidecar");
                     debug_assert_eq!(next.index(), causes.len());
                     causes.push(cause);
                 }

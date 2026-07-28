@@ -9,7 +9,7 @@ use super::{
 };
 
 #[test]
-fn instruction_footprint_stays_within_the_pre_receipt_baseline() {
+fn instruction_footprint_stays_within_the_pre_capture_baseline() {
     assert!(
         std::mem::size_of::<Instr>() <= 80,
         "replay-only metadata must not enlarge every ordinary action instruction"

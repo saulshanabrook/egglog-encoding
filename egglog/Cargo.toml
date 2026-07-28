@@ -25,6 +25,10 @@ name = "files"
 harness = false
 required-features = ["bin"]
 
+[[test]]
+name = "slice_cli"
+required-features = ["bin"]
+
 [[bin]]
 name = "egglog"
 path = "src/main.rs"
@@ -40,6 +44,7 @@ bin = [
   "dep:env_logger",
   "dep:chrono",
   "dep:mimalloc",
+  "dep:tempfile",
 ]
 serde = ["egraph-serialize/serde"]
 graphviz = ["egraph-serialize/graphviz"]
@@ -72,6 +77,7 @@ egglog-backend-trait = { workspace = true }
 rayon = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+tempfile = { workspace = true, optional = true }
 
 [build-dependencies]
 chrono = { workspace = true, features = ["now"], optional = true }

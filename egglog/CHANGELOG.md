@@ -2,6 +2,10 @@
 
 ## [Unreleased] - ReleaseDate
 
+- Add fail-closed, check-directed replay slicing. `--slice-output FILE` records
+  a supported serial run, emits only the dynamic support cone of successful
+  checks, validates the exact rendered program on a fresh proof-testing graph,
+  and atomically publishes it; `--proofs` remains an independent option.
 - Fix user-defined primitives (registered through the Rust API after construction) being reported as unbound under term encoding / proofs: primitive registration now also reaches the term-encoding typechecker, so the encoder can typecheck the encoded program. Previously callers had to manually register the primitive on `proof_state.original_typechecking` as well.
 - **Pluggable backend SPI.** `EGraph::with_backend(Box<dyn Backend>)` lets a third party drive the egglog frontend with their own backend (see the `egglog-backend-trait` crate and the `egglog-experimental-dd` example). A backend without a native union-find declares `Backend::requires_term_encoding()`; `EGraph::with_term_encoding()` opts such an e-graph into the term-encoding pipeline (congruence and rebuild lower to rules over `@uf` tables), and running a term-encoding-only backend without it now errors with `Error::BackendRequiresTermEncoding` instead of silently dropping `union`s.
 - Add `make nightly` and `scripts/nightly_bench.py`, a hyperfine-based benchmark harness that measures every `tests/**/*.egg` program at 1/2/4/8 threads and (where supported) in proof-testing mode, caps each run at a 2-minute timeout, skips sub-50ms programs, and emits an HTML dashboard (one row per benchmark, one column per configuration) for nightly.cs.washington.edu. The dashboard uses [eval-live](https://github.com/oflatt/eval-live) for interactive filtering and sorting.

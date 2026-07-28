@@ -20,20 +20,20 @@ macro_rules! handle {
 }
 
 handle!(FactId, u64);
-handle!(RuleMatchId, u64);
+handle!(FiringId, u64);
 handle!(ReplayTermId, u32);
 handle!(ReplaySortId, u32);
 handle!(ReplayOpId, u32);
-// Dense identity of one effective native union in raw receipt history,
+// Dense identity of one effective native union in raw trace history,
 // including same-syntax alias joins.
 handle!(AppliedEqualityId, u64);
-handle!(EqualityEdgeCount, u64);
-handle!(CausalWave, u64);
+handle!(EdgeHorizon, u64);
+handle!(Wave, u64);
 handle!(HistoryPosition, u64);
 handle!(RowOriginSiteId, u32);
 handle!(TermOriginSiteId, u32);
 handle!(CauseDraftId, u64);
-handle!(ReceiptCauseId, u32);
+handle!(CauseId, u32);
 
 /// Replay-observable keyed-table semantics.
 ///
@@ -48,13 +48,13 @@ pub enum ReplayTableKind {
 }
 
 /// Stable index into the shared causal DAG.
-/// A dependency can point directly at an observed rule match or at a shared
+/// A dependency can point directly at an observed firing or at a shared
 /// non-rule cause node. Keeping the tagged distinction public avoids
-/// manufacturing one cause-arena node for every native match.
+/// manufacturing one cause-arena node for every native firing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum ReceiptCauseRef {
-    Rule(RuleMatchId),
-    Cause(ReceiptCauseId),
+pub enum CauseRef {
+    Rule(FiringId),
+    Cause(CauseId),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,7 +65,7 @@ impl PremiseSlot {
         Self(
             value
                 .try_into()
-                .expect("a receipt has more than u16 premises"),
+                .expect("a capture has more than u16 premises"),
         )
     }
 
@@ -97,40 +97,40 @@ impl CauseDraftId {
         self == Self::UNATTRIBUTED
     }
 
-    pub(super) fn public(self) -> ReceiptCauseId {
-        ReceiptCauseId::new(
+    pub(super) fn public(self) -> CauseId {
+        CauseId::new(
             self.get()
                 .try_into()
-                .expect("public receipt cause arena exceeds u32"),
+                .expect("public capture cause arena exceeds u32"),
         )
     }
 }
 
 /// One word carried by native effects. The high bit distinguishes a direct
-/// rule observation from a generic cause-node id; zero remains unattributed.
+/// firing from a generic cause-node id; zero remains unattributed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub(crate) struct CauseRef(u64);
+pub(crate) struct PackedCauseRef(u64);
 
-impl CauseRef {
-    const MATCH_TAG: u64 = 1 << 63;
+impl PackedCauseRef {
+    const FIRING_TAG: u64 = 1 << 63;
     pub(crate) const UNATTRIBUTED: Self = Self(0);
 
-    pub(super) fn rule(matched: RuleMatchId) -> Self {
-        assert!(matched.get() != 0 && matched.get() < Self::MATCH_TAG);
-        Self(Self::MATCH_TAG | matched.get())
+    pub(super) fn rule(firing: FiringId) -> Self {
+        assert!(firing.get() != 0 && firing.get() < Self::FIRING_TAG);
+        Self(Self::FIRING_TAG | firing.get())
     }
 
     pub(super) fn node(node: CauseDraftId) -> Self {
-        assert!(!node.is_unattributed() && node.get() < Self::MATCH_TAG);
+        assert!(!node.is_unattributed() && node.get() < Self::FIRING_TAG);
         Self(node.get())
     }
 
-    pub(super) fn rule_match(self) -> Option<RuleMatchId> {
-        (self.0 & Self::MATCH_TAG != 0).then(|| RuleMatchId::new(self.0 & !Self::MATCH_TAG))
+    pub(super) fn firing(self) -> Option<FiringId> {
+        (self.0 & Self::FIRING_TAG != 0).then(|| FiringId::new(self.0 & !Self::FIRING_TAG))
     }
 
     pub(super) fn cause_node(self) -> Option<CauseDraftId> {
-        (self != Self::UNATTRIBUTED && self.0 & Self::MATCH_TAG == 0)
+        (self != Self::UNATTRIBUTED && self.0 & Self::FIRING_TAG == 0)
             .then(|| CauseDraftId::new(self.0))
     }
 
@@ -139,10 +139,10 @@ impl CauseRef {
     }
 
     #[cfg(test)]
-    pub(super) fn into_public(self) -> ReceiptCauseRef {
-        match self.rule_match() {
-            Some(rule) => ReceiptCauseRef::Rule(rule),
-            None => ReceiptCauseRef::Cause(
+    pub(super) fn into_public(self) -> CauseRef {
+        match self.firing() {
+            Some(rule) => CauseRef::Rule(rule),
+            None => CauseRef::Cause(
                 self.cause_node()
                     .expect("unattributed cause cannot be published")
                     .public(),
@@ -152,47 +152,47 @@ impl CauseRef {
 }
 
 #[cfg(test)]
-impl From<CauseRef> for ReceiptCauseRef {
-    fn from(value: CauseRef) -> Self {
+impl From<PackedCauseRef> for CauseRef {
+    fn from(value: PackedCauseRef) -> Self {
         value.into_public()
     }
 }
 
-impl From<CauseDraftId> for CauseRef {
+impl From<CauseDraftId> for PackedCauseRef {
     fn from(value: CauseDraftId) -> Self {
         Self::node(value)
     }
 }
 
-impl From<RuleMatchId> for CauseRef {
-    fn from(value: RuleMatchId) -> Self {
+impl From<FiringId> for PackedCauseRef {
+    fn from(value: FiringId) -> Self {
         Self::rule(value)
     }
 }
 
-impl From<ReceiptCauseRef> for CauseRef {
-    fn from(value: ReceiptCauseRef) -> Self {
+impl From<CauseRef> for PackedCauseRef {
+    fn from(value: CauseRef) -> Self {
         match value {
-            ReceiptCauseRef::Rule(rule) => Self::rule(rule),
-            ReceiptCauseRef::Cause(cause) => Self::node(CauseDraftId::new(cause.get() as u64)),
+            CauseRef::Rule(rule) => Self::rule(rule),
+            CauseRef::Cause(cause) => Self::node(CauseDraftId::new(cause.get() as u64)),
         }
     }
 }
 
-impl From<CauseDraftId> for ReceiptCauseRef {
+impl From<CauseDraftId> for CauseRef {
     fn from(value: CauseDraftId) -> Self {
         Self::Cause(value.public())
     }
 }
 
-impl From<ReceiptCauseId> for ReceiptCauseRef {
-    fn from(value: ReceiptCauseId) -> Self {
+impl From<CauseId> for CauseRef {
+    fn from(value: CauseId) -> Self {
         Self::Cause(value)
     }
 }
 
-impl From<RuleMatchId> for ReceiptCauseRef {
-    fn from(value: RuleMatchId) -> Self {
+impl From<FiringId> for CauseRef {
+    fn from(value: FiringId) -> Self {
         Self::Rule(value)
     }
 }
@@ -212,13 +212,13 @@ pub enum SourceRef {
 }
 
 /// Static source identity attached to every effective lane of one source
-/// action. Source actions do not manufacture rule matches.
+/// action. Source actions do not manufacture firings.
 #[derive(Clone, Debug)]
-pub struct SourceReceiptSpec {
+pub struct SourceCaptureSpec {
     pub(crate) source: SourceRef,
 }
 
-impl SourceReceiptSpec {
+impl SourceCaptureSpec {
     pub fn new(source: SourceRef) -> Self {
         Self { source }
     }
@@ -226,7 +226,7 @@ impl SourceReceiptSpec {
 
 /// Static witness and typed-equality layout for one positive check.
 #[derive(Clone, Copy, Debug)]
-pub enum CheckEndpointSource {
+pub enum CriterionEndpointSource {
     Premise {
         premise: usize,
         column: usize,
@@ -239,7 +239,7 @@ pub enum CheckEndpointSource {
     },
 }
 
-impl CheckEndpointSource {
+impl CriterionEndpointSource {
     pub fn premise(premise: usize, column: usize, value: QueryEntry) -> Self {
         Self::Premise {
             premise,
@@ -277,13 +277,13 @@ impl CheckEndpointSource {
 
 /// Static witness and typed-equality layout for one positive check.
 #[derive(Clone, Debug)]
-pub struct CheckReceiptSpec {
+pub struct CriterionCaptureSpec {
     pub(crate) check: u32,
     pub(crate) premises: Box<[AtomId]>,
-    pub(crate) equalities: Box<[(CheckEndpointSource, CheckEndpointSource)]>,
+    pub(crate) equalities: Box<[(CriterionEndpointSource, CriterionEndpointSource)]>,
 }
 
-impl CheckReceiptSpec {
+impl CriterionCaptureSpec {
     pub fn new(check: u32, premises: impl IntoIterator<Item = AtomId>) -> Self {
         Self {
             check,
@@ -294,22 +294,22 @@ impl CheckReceiptSpec {
 
     pub fn with_equalities(
         mut self,
-        equalities: impl IntoIterator<Item = (CheckEndpointSource, CheckEndpointSource)>,
+        equalities: impl IntoIterator<Item = (CriterionEndpointSource, CriterionEndpointSource)>,
     ) -> Self {
         self.equalities = equalities.into_iter().collect();
         self
     }
 }
 
-/// Static receipt metadata retained with a compiled rule.
+/// Static capture metadata retained with a compiled rule.
 #[derive(Clone, Debug)]
-pub struct RuleReceiptSpec {
+pub struct FiringCaptureSpec {
     pub(crate) rule: u32,
     pub(crate) premises: Box<[AtomId]>,
     pub(crate) bindings: Box<[RuleBindingSpec]>,
 }
 
-/// One source-ordered binding retained by an effective rule match.
+/// One source-ordered binding retained by an effective firing.
 #[derive(Clone, Copy, Debug)]
 pub enum RuleBindingSpec {
     Variable {
@@ -335,7 +335,7 @@ impl RuleBindingSpec {
     }
 }
 
-impl RuleReceiptSpec {
+impl FiringCaptureSpec {
     pub fn new(
         rule: u32,
         premises: impl IntoIterator<Item = AtomId>,
@@ -383,9 +383,9 @@ impl RuleReceiptSpec {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct PremiseOccurrence {
-    pub(crate) premise: usize,
-    pub(crate) column: usize,
+pub struct PremiseOccurrence {
+    pub premise: usize,
+    pub column: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -411,7 +411,7 @@ pub enum RekeyOutcome {
 pub(crate) struct RekeyRecord {
     pub(crate) fact: FactId,
     pub(crate) table: TableId,
-    pub(crate) wave: CausalWave,
+    pub(crate) wave: Wave,
     pub(crate) position: HistoryPosition,
     pub(crate) equalities: EqualityLandmark,
     pub(crate) outcome: RekeyOutcome,
@@ -423,11 +423,11 @@ pub(crate) struct RekeyRecord {
 /// child equalities makes that same term denote the rebuilt native container.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ContainerDependency {
-    pub(crate) wave: CausalWave,
+    pub(crate) wave: Wave,
     pub(crate) equalities: EqualityLandmark,
 }
 
-/// Receipt-only logical identity for one container version. Borrowed views
+/// Capture-only logical identity for one container version. Borrowed views
 /// expose the dependency itself; native refresh bookkeeping additionally
 /// needs the exact structural producer that owned the raw container id.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -445,7 +445,7 @@ pub(crate) struct ContainerParentCandidate {
 /// Forward-only overlay of existing immutable container terms during one
 /// cloned-registry rebuild transaction. Source mappings remain historical;
 /// only additional `(sort, raw) -> term` anchors are staged. Abort drops this
-/// value without touching shared receipt state.
+/// value without touching shared trace state.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ContainerAnchorJournal {
     pub(super) additions: HashMap<(ReplaySortId, Value), SmallVec<[ReplayTermId; 2]>>,
@@ -475,26 +475,26 @@ impl ContainerAnchorJournal {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EqualityReason {
-    RuleUnion(RuleMatchId),
+    RuleUnion(FiringId),
     SourceUnion {
-        cause: ReceiptCauseId,
+        cause: CauseId,
     },
     MergeFn {
         /// Shared exact cause root. Dependencies are unfolded lazily through
-        /// [`CausalReceiptView::cause`].
-        cause: ReceiptCauseId,
+        /// [`TraceView::cause`].
+        cause: CauseId,
     },
     Congruence {
         /// Shared exact cause root; no growing prefix is copied per edge.
-        cause: ReceiptCauseId,
-        wave: CausalWave,
-        as_of_edges: EqualityEdgeCount,
+        cause: CauseId,
+        wave: Wave,
+        as_of_edges: EdgeHorizon,
         position: HistoryPosition,
     },
 }
 
 impl EqualityReason {
-    pub fn rule_match(&self) -> Option<RuleMatchId> {
+    pub fn firing(&self) -> Option<FiringId> {
         match self {
             EqualityReason::RuleUnion(id) => Some(*id),
             EqualityReason::SourceUnion { .. } => None,
@@ -505,9 +505,9 @@ impl EqualityReason {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ReceiptCausePrior {
+pub enum CausePrior {
     Fact(FactId),
-    Cause(ReceiptCauseRef),
+    Cause(CauseRef),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -518,21 +518,21 @@ pub struct EqualityEndpoint {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CheckEndpointOccurrence {
+pub enum CriterionEndpointOccurrence {
     FactCell(FactCellRef),
     Current,
 }
 
 /// Exact native support retained for the first successful match of one check.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CheckRoot {
+pub struct Criterion {
     pub check: u32,
-    pub wave: CausalWave,
+    pub wave: Wave,
     pub position: HistoryPosition,
     pub premises: Box<[FactId]>,
     pub equalities: Box<[(EqualityEndpoint, EqualityEndpoint)]>,
-    pub equality_occurrences: Box<[(CheckEndpointOccurrence, CheckEndpointOccurrence)]>,
-    pub as_of_edges: EqualityEdgeCount,
+    pub equality_occurrences: Box<[(CriterionEndpointOccurrence, CriterionEndpointOccurrence)]>,
+    pub as_of_edges: EdgeHorizon,
 }
 
 /// One effective replay-observable keyed-row removal.
@@ -541,12 +541,12 @@ pub struct CheckRoot {
 /// event needs no copied key payload. `cause` is the exact rule lane whose
 /// head staged the removal.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RemovalRecord {
-    pub wave: CausalWave,
+pub struct Tombstone {
+    pub wave: Wave,
     pub position: HistoryPosition,
-    pub as_of_edges: EqualityEdgeCount,
+    pub as_of_edges: EdgeHorizon,
     pub removed_fact: FactId,
-    pub cause: RuleMatchId,
+    pub cause: FiringId,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -559,25 +559,25 @@ pub struct TypedCellEquality {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct EqualityLandmark {
     /// Dense applied-edge prefix visible at this exact global history point.
-    pub(crate) as_of_edges: EqualityEdgeCount,
+    pub(crate) as_of_edges: EdgeHorizon,
     /// Cross-stream cutoff for zero-edge fact/rekey/alias attachments.
     pub(crate) position: HistoryPosition,
     pub(crate) pairs: Box<[TypedCellEquality]>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ReceiptCounters {
+pub struct CaptureCounters {
     /// Every normal-return native rule lane, including inert observations.
-    pub observed_matches: u64,
+    pub observed_firings: u64,
     pub premise_handles: u64,
-    /// Logical match-term handles exposed by [`CausalReceiptView::match_terms`].
-    pub logical_match_term_handles: u64,
-    /// Match-term handles physically retained by the receipt arena.
-    pub stored_match_term_handles: u64,
-    /// Logical bytes exposed by [`CausalReceiptView::match_terms`].
-    pub logical_match_term_bytes: u64,
-    /// Match-term bytes physically retained by the receipt arena.
-    pub stored_match_term_bytes: u64,
+    /// Logical firing-term handles exposed by [`TraceView::firing_terms`].
+    pub logical_firing_term_handles: u64,
+    /// Firing-term handles physically retained by the trace arena.
+    pub stored_firing_term_handles: u64,
+    /// Logical bytes exposed by [`TraceView::firing_terms`].
+    pub logical_firing_term_bytes: u64,
+    /// Firing-term bytes physically retained by the trace arena.
+    pub stored_firing_term_bytes: u64,
     pub unattributed_commits: u64,
     pub redundant_unions: u64,
     /// Effective constructor/value-function removals retained for slicing.
@@ -599,9 +599,9 @@ pub struct ReceiptCounters {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct CausalReceiptTotals {
+pub struct TraceTotals {
     pub facts: u64,
-    pub matches: u64,
+    pub firings: u64,
     pub causes: u64,
     pub applied_equalities: u64,
     pub rekeys: u64,
@@ -636,7 +636,7 @@ pub struct HistoricalFactCell {
 pub struct RawEqualitySupport {
     pub applied: Box<[AppliedEqualityId]>,
     pub facts: Box<[FactId]>,
-    pub causes: Box<[ReceiptCauseRef]>,
+    pub causes: Box<[CauseRef]>,
     pub rekeys: Box<[HistoryPosition]>,
 }
 
@@ -693,17 +693,11 @@ pub(super) fn combine_raw_equality_support(
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ReceiptPremiseOccurrence {
-    pub premise: usize,
-    pub column: usize,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ReceiptBindingSource {
+pub enum BindingSource {
     Premise {
-        representative: ReceiptPremiseOccurrence,
-        occurrences: Box<[ReceiptPremiseOccurrence]>,
+        representative: PremiseOccurrence,
+        occurrences: Box<[PremiseOccurrence]>,
     },
     Current {
         sort: ReplaySortId,
@@ -716,8 +710,8 @@ pub enum ReceiptBindingSource {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ReceiptEqualitySource {
-    Premise(ReceiptPremiseOccurrence),
+pub enum FiringEqualitySource {
+    Premise(PremiseOccurrence),
     Constant(EqualityEndpoint),
 }
 
@@ -726,47 +720,47 @@ pub struct RawFactRecord<'a> {
     pub id: FactId,
     pub table: TableId,
     pub position: HistoryPosition,
-    pub cause: ReceiptCauseRef,
+    pub cause: CauseRef,
     pub values: &'a [Value],
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct RawMatchRecord<'a> {
-    pub id: RuleMatchId,
+pub struct Firing<'a> {
+    pub id: FiringId,
     pub rule: u32,
-    pub wave: CausalWave,
+    pub wave: Wave,
     pub position: HistoryPosition,
-    pub as_of_edges: EqualityEdgeCount,
+    pub as_of_edges: EdgeHorizon,
     pub premises: &'a [FactId],
     pub merge_reads: &'a [FactId],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RawReceiptCause<'a> {
+pub enum RawCause<'a> {
     Source(&'a SourceRef),
     Rebuild {
-        wave: CausalWave,
+        wave: Wave,
         prior_fact: FactId,
-        as_of_edges: EqualityEdgeCount,
+        as_of_edges: EdgeHorizon,
         position: HistoryPosition,
         equalities: &'a [TypedCellEquality],
     },
     ContainerCanonicalize {
-        wave: CausalWave,
-        as_of_edges: EqualityEdgeCount,
+        wave: Wave,
+        as_of_edges: EdgeHorizon,
         position: HistoryPosition,
         equalities: &'a [TypedCellEquality],
     },
     ContainerRefresh {
-        wave: CausalWave,
+        wave: Wave,
         prior_fact: FactId,
-        as_of_edges: EqualityEdgeCount,
+        as_of_edges: EdgeHorizon,
         position: HistoryPosition,
         equalities: &'a [TypedCellEquality],
     },
     Merge {
-        incoming: ReceiptCauseRef,
-        prior: ReceiptCausePrior,
+        incoming: CauseRef,
+        prior: CausePrior,
     },
 }
 
@@ -779,7 +773,7 @@ pub struct RawEqualityEndpoint {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RawAppliedEquality {
     pub id: AppliedEqualityId,
-    pub wave: CausalWave,
+    pub wave: Wave,
     pub position: HistoryPosition,
     pub left: RawEqualityEndpoint,
     pub right: RawEqualityEndpoint,
@@ -791,7 +785,7 @@ pub struct RawAppliedEquality {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProjectedAppliedEquality {
     pub id: AppliedEqualityId,
-    pub wave: CausalWave,
+    pub wave: Wave,
     pub position: HistoryPosition,
     pub left: EqualityEndpoint,
     pub right: EqualityEndpoint,
@@ -804,26 +798,26 @@ pub struct ProjectedAppliedEquality {
 pub struct RawRekeyRecord<'a> {
     pub fact: FactId,
     pub table: TableId,
-    pub wave: CausalWave,
+    pub wave: Wave,
     pub position: HistoryPosition,
-    pub as_of_edges: EqualityEdgeCount,
+    pub as_of_edges: EdgeHorizon,
     pub equality_position: HistoryPosition,
     pub equalities: &'a [TypedCellEquality],
     pub outcome: RekeyOutcome,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum ReceiptViewError {
-    #[error("causal receipt history is not finalized: {0}")]
+pub enum TraceViewError {
+    #[error("causal trace history is not finalized: {0}")]
     NotFinalized(&'static str),
-    #[error("causal receipt lock is poisoned: {0}")]
+    #[error("causal trace lock is poisoned: {0}")]
     Poisoned(&'static str),
     #[error("unknown causal fact {0:?}")]
     UnknownFact(FactId),
-    #[error("unknown causal match {0:?}")]
-    UnknownMatch(RuleMatchId),
+    #[error("unknown firing {0:?}")]
+    UnknownFiring(FiringId),
     #[error("unknown causal cause {0:?}")]
-    UnknownCause(ReceiptCauseId),
+    UnknownCause(CauseId),
     #[error("unknown applied equality {0:?}")]
     UnknownEquality(AppliedEqualityId),
     #[error("unknown causal rekey at {0:?}")]
@@ -834,7 +828,7 @@ pub enum ReceiptViewError {
     UnknownCheck(u32),
     #[error("unknown replay table {0:?}")]
     UnknownTable(TableId),
-    #[error("invalid causal receipt history: {0}")]
+    #[error("invalid causal trace history: {0}")]
     Invalid(String),
     #[error(
         "causal fact {fact:?} ended at {ended_at:?} with successor {successor:?}; it is not live at {position:?}"
@@ -870,13 +864,13 @@ pub(crate) struct PendingEqualityEndpoint {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[doc(hidden)]
 pub struct TypedEqualityProposal {
-    pub(super) wave: CausalWave,
+    pub(super) wave: Wave,
     pub(super) left: PendingEqualityEndpoint,
     pub(super) right: PendingEqualityEndpoint,
 }
 
 impl TypedEqualityProposal {
-    pub(crate) fn wave(self) -> CausalWave {
+    pub(crate) fn wave(self) -> Wave {
         self.wave
     }
 

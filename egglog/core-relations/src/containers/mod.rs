@@ -26,11 +26,11 @@ use rustc_hash::FxHasher;
 use smallvec::SmallVec;
 
 use crate::{
-    CausalReceipts, ColumnId, CounterId, ExecutionState, Offset, ReplaySortId, SubsetRef, TableId,
-    TaggedRowBuffer, Value, WrappedTable,
+    ColumnId, CounterId, ExecutionState, Offset, ReplaySortId, SubsetRef, TableId, TaggedRowBuffer,
+    Trace, Value, WrappedTable,
     common::{DashMap, HashMap, IndexSet, SubsetTracker},
     parallel_heuristics::{parallelize_inter_container_op, parallelize_intra_container_op},
-    receipts::{ContainerAnchorJournal, ContainerVersionDependency},
+    provenance::{ContainerAnchorJournal, ContainerVersionDependency},
     table_spec::{MutationTransaction, Rebuilder, ValueRebuilder},
 };
 
@@ -97,7 +97,7 @@ pub struct ContainerRebuildSummary {
     // fresh parent-row delta during ordinary table rebuild.
     dirty_ids: IndexSet<Value>,
     dirty_dependencies: HashMap<(ReplaySortId, Value), SmallVec<[ContainerVersionDependency; 1]>>,
-    /// Forward-only receipt overlay published only if the cloned-registry
+    /// Forward-only capture overlay published only if the cloned-registry
     /// transaction commits.
     anchor_journal: ContainerAnchorJournal,
 }
@@ -161,19 +161,19 @@ impl ContainerRebuildSummary {
 
     pub(crate) fn defer_anchor_publication(
         &mut self,
-        receipts: &CausalReceipts,
+        trace: &Trace,
         transaction: &MutationTransaction,
     ) {
         if self.anchor_journal.is_empty() {
             return;
         }
-        receipts
+        trace
             .validate_container_anchor_journal(&self.anchor_journal)
             .unwrap_or_else(|error| panic!("invalid container anchor journal: {error}"));
-        let receipts = receipts.clone();
+        let trace = trace.clone();
         let journal = std::mem::take(&mut self.anchor_journal);
         transaction.defer_publication(move || {
-            receipts.publish_container_anchor_journal(journal);
+            trace.publish_container_anchor_journal(journal);
         });
     }
 
@@ -269,7 +269,7 @@ impl ContainerValues {
             // We may attempt an incremental rebuild.
             self.subset_tracker.recent_updates(table_id, table)
         });
-        let mut summary = if exec_state.causal_receipts().is_none()
+        let mut summary = if exec_state.trace().is_none()
             && parallelize_inter_container_op(self.data.next_id().index())
         {
             self.data
@@ -292,7 +292,7 @@ impl ContainerValues {
         } else {
             let mut summary = ContainerRebuildSummary::default();
             for (_, env) in self.data.iter_mut() {
-                let causal = exec_state.causal_receipts().is_some();
+                let causal = exec_state.trace().is_some();
                 let env_summary = env.apply_rebuild(
                     table,
                     &*rebuilder,
@@ -304,7 +304,7 @@ impl ContainerValues {
             }
             summary
         };
-        self.expand_dirty_id_closure(&mut summary, exec_state.causal_receipts());
+        self.expand_dirty_id_closure(&mut summary, exec_state.trace());
         summary
     }
 
@@ -322,11 +322,10 @@ impl ContainerValues {
     fn expand_dirty_id_closure(
         &self,
         summary: &mut ContainerRebuildSummary,
-        receipts: Option<&CausalReceipts>,
+        trace: Option<&Trace>,
     ) {
         if !summary.dirty_dependencies.is_empty() {
-            let receipts =
-                receipts.expect("typed dirty-container dependencies require causal receipts");
+            let trace = trace.expect("typed dirty-container dependencies require causal trace");
             let mut frontier = summary
                 .dirty_dependencies
                 .values()
@@ -342,7 +341,7 @@ impl ContainerValues {
                         let mut parents = IndexSet::default();
                         env.extend_containers_containing(&child_set, &mut parents);
                         for parent in parents {
-                            let parent_candidates = receipts
+                            let parent_candidates = trace
                                 .container_parent_candidates(
                                     &summary.anchor_journal,
                                     env.container_type_id(),
@@ -364,7 +363,7 @@ impl ContainerValues {
                                 // logical sort is not ancestry.
                                 continue;
                             };
-                            if env.causal_receipt_kind().is_none() {
+                            if env.capture_kind().is_none() {
                                 panic!(
                                     "causal container rebuild does not support {}",
                                     env.container_type_name()
@@ -459,7 +458,7 @@ pub trait ContainerValue: Hash + Eq + Clone + Send + Sync + 'static {
     /// The positional container shape supported by exact causal rebuild
     /// capture. Unlisted container semantics fail closed only if rebuild
     /// actually changes the container; ordinary execution is unaffected.
-    fn causal_receipt_kind() -> Option<CausalContainerKind> {
+    fn capture_kind() -> Option<CausalContainerKind> {
         None
     }
 
@@ -468,7 +467,7 @@ pub trait ContainerValue: Hash + Eq + Clone + Send + Sync + 'static {
     /// variant containers such as Either override it.
     fn causal_child_sort_slots(&self) -> Option<Box<[usize]>> {
         let len = self.iter().count();
-        match Self::causal_receipt_kind()? {
+        match Self::capture_kind()? {
             CausalContainerKind::Pair => Some((0..len).collect()),
             CausalContainerKind::Vec | CausalContainerKind::Maybe => {
                 Some(std::iter::repeat_n(0, len).collect())
@@ -495,7 +494,7 @@ pub trait ContainerValue: Hash + Eq + Clone + Send + Sync + 'static {
 pub(crate) trait DynamicContainerEnv: Any + dyn_clone::DynClone + Send + Sync {
     fn as_any(&self) -> &dyn Any;
     fn container_type_id(&self) -> TypeId;
-    fn causal_receipt_kind(&self) -> Option<CausalContainerKind>;
+    fn capture_kind(&self) -> Option<CausalContainerKind>;
     fn container_type_name(&self) -> &'static str;
     fn contains_typed_child(
         &self,
@@ -557,8 +556,8 @@ impl<C: ContainerValue> DynamicContainerEnv for ContainerEnv<C> {
         TypeId::of::<C>()
     }
 
-    fn causal_receipt_kind(&self) -> Option<CausalContainerKind> {
-        C::causal_receipt_kind()
+    fn capture_kind(&self) -> Option<CausalContainerKind> {
+        C::capture_kind()
     }
 
     fn container_type_name(&self) -> &'static str {
@@ -609,14 +608,14 @@ impl<C: ContainerValue> DynamicContainerEnv for ContainerEnv<C> {
                 parallelize_intra_container_op(self.to_id.len()),
             )
         });
-        if exec_state.causal_receipts().is_some() {
+        if exec_state.trace().is_some() {
             assert_eq!(
                 rayon::current_num_threads(),
                 1,
                 "causal container rebuild requires serial execution"
             );
             if use_incremental {
-                return self.apply_rebuild_incremental_receipts(
+                return self.apply_rebuild_incremental_capture(
                     table,
                     rebuilder,
                     exec_state,
@@ -625,7 +624,7 @@ impl<C: ContainerValue> DynamicContainerEnv for ContainerEnv<C> {
                     rebuilder.hint_col().unwrap(),
                 );
             }
-            return self.apply_rebuild_nonincremental_receipts(
+            return self.apply_rebuild_nonincremental_capture(
                 rebuilder,
                 exec_state,
                 journal.expect("causal container rebuild has no anchor journal"),
@@ -732,21 +731,21 @@ impl<C: ContainerValue> ContainerEnv<C> {
         let target_map = self.to_id.determine_map(&container);
         match self.to_id.entry(container) {
             dashmap::Entry::Occupied(mut occ) => {
-                if let Some(receipts) = exec_state.causal_receipts() {
+                if let Some(trace) = exec_state.trace() {
                     assert!(
                         exec_state.active_cause_capability().is_none(),
                         "container rebuild inherited an unrelated active cause"
                     );
-                    let cutoff = receipts.equality_edge_count().unwrap_or_else(|error| {
+                    let cutoff = trace.equality_edge_count().unwrap_or_else(|error| {
                         panic!("cannot prepare container canonicalization: {error}")
                     });
-                    let prepared = receipts
+                    let prepared = trace
                         .container_canonicalization_cause(
                             journal
                                 .as_deref()
                                 .expect("causal container collision has no anchor overlay"),
                             TypeId::of::<C>(),
-                            exec_state.causal_wave(),
+                            exec_state.trace_wave(),
                             *occ.get(),
                             value,
                             cutoff,
@@ -757,15 +756,15 @@ impl<C: ContainerValue> ContainerEnv<C> {
                     exec_state.set_active_container_canonicalization(Some(prepared));
                 }
                 let result = (self.merge_fn)(exec_state, *occ.get(), value);
-                if exec_state.causal_receipts().is_some() {
+                if exec_state.trace().is_some() {
                     exec_state.set_active_container_canonicalization(None);
                 }
                 let old_val = *occ.get();
-                if let Some(receipts) = exec_state.causal_receipts() {
+                if let Some(trace) = exec_state.trace() {
                     let journal =
                         journal.expect("causal container collision has no anchor overlay");
                     for source in [old_val, value] {
-                        receipts
+                        trace
                             .stage_container_anchor_transfer(
                                 journal,
                                 TypeId::of::<C>(),
@@ -823,7 +822,7 @@ impl<C: ContainerValue> ContainerEnv<C> {
         }
     }
 
-    fn apply_rebuild_nonincremental_receipts(
+    fn apply_rebuild_nonincremental_capture(
         &mut self,
         rebuilder: &dyn Rebuilder,
         exec_state: &mut ExecutionState,
@@ -838,14 +837,14 @@ impl<C: ContainerValue> ContainerEnv<C> {
             dependencies: SmallVec<[ContainerVersionDependency; 2]>,
         }
 
-        let receipts = exec_state
-            .causal_receipts()
-            .expect("receipt container rebuild requires the receipt arena")
+        let trace = exec_state
+            .trace()
+            .expect("capture container rebuild requires the trace arena")
             .clone();
-        let cutoff = receipts
+        let cutoff = trace
             .equality_edge_count()
             .unwrap_or_else(|error| panic!("cannot start exact container rebuild: {error}"));
-        let wave = exec_state.causal_wave();
+        let wave = exec_state.trace_wave();
         let mut prepared = Vec::<Prepared<C>>::new();
         for entry in self.to_id.iter() {
             let before = entry.key().clone();
@@ -856,7 +855,7 @@ impl<C: ContainerValue> ContainerEnv<C> {
             if !contents_changed && rebuilt_id == old_id {
                 continue;
             }
-            let kind = C::causal_receipt_kind().unwrap_or_else(|| {
+            let kind = C::capture_kind().unwrap_or_else(|| {
                 panic!(
                     "causal container rebuild does not support {}",
                     std::any::type_name::<C>()
@@ -869,7 +868,7 @@ impl<C: ContainerValue> ContainerEnv<C> {
             let dependencies = if contents_changed {
                 let before_children = before.iter().collect::<SmallVec<[Value; 4]>>();
                 let after_children = after.iter().collect::<SmallVec<[Value; 4]>>();
-                let dependencies = receipts
+                let dependencies = trace
                     .container_dependency(
                         journal,
                         TypeId::of::<C>(),
@@ -910,7 +909,7 @@ impl<C: ContainerValue> ContainerEnv<C> {
                 .remove_entry(hc, |(_, value)| *value.get() == change.old_id)
                 .expect("prepared container disappeared before serial publication");
             self.to_container.remove(&change.old_id);
-            receipts
+            trace
                 .stage_container_anchor_transfer(
                     journal,
                     TypeId::of::<C>(),
@@ -920,7 +919,7 @@ impl<C: ContainerValue> ContainerEnv<C> {
                 .unwrap_or_else(|error| panic!("cannot stage container rekey anchors: {error}"));
             let actual =
                 self.insert_owned(change.after, change.rebuilt_id, exec_state, Some(journal));
-            receipts
+            trace
                 .stage_container_anchor_transfer(
                     journal,
                     TypeId::of::<C>(),
@@ -999,7 +998,7 @@ impl<C: ContainerValue> ContainerEnv<C> {
         summary
     }
 
-    fn apply_rebuild_incremental_receipts(
+    fn apply_rebuild_incremental_capture(
         &mut self,
         table: &WrappedTable,
         rebuilder: &dyn Rebuilder,
@@ -1018,7 +1017,7 @@ impl<C: ContainerValue> ContainerEnv<C> {
         }
 
         // Preserve the ordinary incremental candidate scan and insertion
-        // order. Receipt preparation is read-only and validates every selected
+        // order. Capture preparation is read-only and validates every selected
         // change before the first registry mutation.
         let mut buf = TaggedRowBuffer::new(1);
         table.scan_project(
@@ -1038,14 +1037,14 @@ impl<C: ContainerValue> ContainerEnv<C> {
             to_rebuild.extend(&*ids);
         }
 
-        let receipts = exec_state
-            .causal_receipts()
-            .expect("receipt container rebuild requires the receipt arena")
+        let trace = exec_state
+            .trace()
+            .expect("capture container rebuild requires the trace arena")
             .clone();
-        let cutoff = receipts
+        let cutoff = trace
             .equality_edge_count()
             .unwrap_or_else(|error| panic!("cannot start exact container rebuild: {error}"));
-        let wave = exec_state.causal_wave();
+        let wave = exec_state.trace_wave();
         let mut prepared = Vec::<Prepared<C>>::new();
         for old_id in to_rebuild {
             let Some(before) = self
@@ -1060,7 +1059,7 @@ impl<C: ContainerValue> ContainerEnv<C> {
             if !contents_changed && rebuilt_id == old_id {
                 continue;
             }
-            let kind = C::causal_receipt_kind().unwrap_or_else(|| {
+            let kind = C::capture_kind().unwrap_or_else(|| {
                 panic!(
                     "causal container rebuild does not support {}",
                     std::any::type_name::<C>()
@@ -1073,7 +1072,7 @@ impl<C: ContainerValue> ContainerEnv<C> {
             let dependencies = if contents_changed {
                 let before_children = before.iter().collect::<SmallVec<[Value; 4]>>();
                 let after_children = after.iter().collect::<SmallVec<[Value; 4]>>();
-                let dependencies = receipts
+                let dependencies = trace
                     .container_dependency(
                         journal,
                         TypeId::of::<C>(),
@@ -1120,11 +1119,11 @@ impl<C: ContainerValue> ContainerEnv<C> {
             };
             assert!(
                 before == change.before,
-                "incremental container changed after receipt preflight"
+                "incremental container changed after capture preflight"
             );
             self.to_container.remove(&change.old_id);
             summary.note_change();
-            receipts
+            trace
                 .stage_container_anchor_transfer(
                     journal,
                     TypeId::of::<C>(),
@@ -1134,7 +1133,7 @@ impl<C: ContainerValue> ContainerEnv<C> {
                 .unwrap_or_else(|error| panic!("cannot stage container rekey anchors: {error}"));
             let actual =
                 self.insert_owned(change.after, change.rebuilt_id, exec_state, Some(journal));
-            receipts
+            trace
                 .stage_container_anchor_transfer(
                     journal,
                     TypeId::of::<C>(),

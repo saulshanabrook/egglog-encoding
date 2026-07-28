@@ -297,8 +297,8 @@ impl EGraph {
         presort_and_args: &Option<(String, Vec<Expr>)>,
         span: Span,
     ) -> Result<(), TypeError> {
-        if !self.causal_registration_is_allowed() {
-            return Err(TypeError::CausalRegistrationAfterCapture { kind: "sort", span });
+        if !self.capture_registration_is_allowed() {
+            return Err(TypeError::RegistrationAfterCapture { kind: "sort", span });
         }
         let name = name.into();
         if self.type_info.func_types.contains_key(&name) {
@@ -331,24 +331,24 @@ impl EGraph {
 
     /// Add a user-defined sort to the e-graph.
     pub fn add_arcsort(&mut self, sort: ArcSort, span: Span) -> Result<(), TypeError> {
-        if !self.causal_registration_is_allowed() {
-            return Err(TypeError::CausalRegistrationAfterCapture { kind: "sort", span });
+        if !self.capture_registration_is_allowed() {
+            return Err(TypeError::RegistrationAfterCapture { kind: "sort", span });
         }
         sort.register_type(self.backend.as_mut());
 
         let name = sort.name();
-        let causal_container = self
-            .causal_state
+        let capture_container = self
+            .capture_catalog
             .as_mut()
-            .and_then(|causal| causal.container_sort_spec(&sort));
+            .and_then(|catalog| catalog.container_sort_spec(&sort));
         match self.type_info.sorts.entry(name.to_owned()) {
             HEntry::Occupied(_) => Err(TypeError::SortAlreadyBound(name.to_owned(), span)),
             HEntry::Vacant(e) => {
                 e.insert(sort.clone());
-                if let Some((logical_sort, container_type, child_sorts)) = causal_container {
+                if let Some((logical_sort, container_type, child_sorts)) = capture_container {
                     self.backend
                         .register_container_replay_sort(logical_sort, container_type, &child_sorts)
-                        .expect("cannot register causal container sort metadata");
+                        .expect("cannot register trace container sort metadata");
                 }
                 // A sort's primitives already reach the term-encoding typechecker
                 // through its OWN `add_arcsort` when it typechecks the sort
@@ -377,8 +377,8 @@ impl EGraph {
         T: PurePrim + Clone,
     {
         assert!(
-            self.causal_registration_is_allowed(),
-            "causal replay does not support primitive registration after capture starts"
+            self.capture_registration_is_allowed(),
+            "trace capture does not support primitive registration after capture starts"
         );
         self.register_per_context(
             x,
@@ -397,8 +397,8 @@ impl EGraph {
         T: WritePrim + Clone,
     {
         assert!(
-            self.causal_registration_is_allowed(),
-            "causal replay does not support primitive registration after capture starts"
+            self.capture_registration_is_allowed(),
+            "trace capture does not support primitive registration after capture starts"
         );
         self.register_registry_primitive::<T, WrapWrite>(
             x,
@@ -414,8 +414,8 @@ impl EGraph {
         T: ReadPrim + Clone,
     {
         assert!(
-            self.causal_registration_is_allowed(),
-            "causal replay does not support primitive registration after capture starts"
+            self.capture_registration_is_allowed(),
+            "trace capture does not support primitive registration after capture starts"
         );
         self.register_registry_primitive::<T, WrapRead>(x, validator, ReadState::valid_contexts());
     }
@@ -427,8 +427,8 @@ impl EGraph {
         T: FullPrim + Clone,
     {
         assert!(
-            self.causal_registration_is_allowed(),
-            "causal replay does not support primitive registration after capture starts"
+            self.capture_registration_is_allowed(),
+            "trace capture does not support primitive registration after capture starts"
         );
         self.register_registry_primitive::<T, WrapFull>(x, validator, FullState::valid_contexts());
     }
@@ -1835,8 +1835,8 @@ pub enum TypeError {
     SortAlreadyBound(String, Span),
     #[error("{1}\nPrimitive {0} already declared.")]
     PrimitiveAlreadyBound(String, Span),
-    #[error("{span}\nCausal replay does not support {kind} registration after capture starts")]
-    CausalRegistrationAfterCapture { kind: &'static str, span: Span },
+    #[error("{span}\nTrace capture does not support {kind} registration after capture starts")]
+    RegistrationAfterCapture { kind: &'static str, span: Span },
     #[error("Function type mismatch: expected {} => {}, actual {} => {}", .1.iter().map(|s| s.name().to_string()).collect::<Vec<_>>().join(", "), .0.name(), .3.iter().map(|s| s.name().to_string()).collect::<Vec<_>>().join(", "), .2.name())]
     FunctionTypeMismatch(ArcSort, Vec<ArcSort>, ArcSort, Vec<ArcSort>),
     #[error("{1}\nPresort {0} not found.")]

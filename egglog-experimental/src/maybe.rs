@@ -14,7 +14,7 @@ pub struct MaybeContainer {
 }
 
 impl ContainerValue for MaybeContainer {
-    fn causal_receipt_kind() -> Option<CausalContainerKind> {
+    fn capture_kind() -> Option<CausalContainerKind> {
         Some(CausalContainerKind::Maybe)
     }
 

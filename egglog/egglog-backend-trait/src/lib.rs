@@ -138,9 +138,9 @@ pub struct RuleValue {
     pub ty: ColumnTy,
 }
 
-/// One source-ordered binding in an ordinary-rule receipt template.
+/// One source-ordered binding in an ordinary-rule capture template.
 #[derive(Clone, Debug)]
-pub enum CausalRuleBinding {
+pub enum FiringCaptureBinding {
     Variable {
         variable: RuleVar,
         current_sort: ReplaySortId,
@@ -151,18 +151,18 @@ pub enum CausalRuleBinding {
     },
 }
 
-/// Backend-neutral causal metadata for one ordinary rule.
+/// Backend-neutral capture metadata for one ordinary rule firing.
 #[derive(Clone, Debug)]
-pub struct CausalRuleSpec {
+pub struct FiringCaptureSpec {
     pub rule: u32,
-    pub bindings: Box<[CausalRuleBinding]>,
+    pub bindings: Box<[FiringCaptureBinding]>,
     /// Logical equality sorts for rule-head `union` actions, in head order.
     pub union_sorts: Box<[ReplaySortId]>,
 }
 
-/// Backend-neutral causal metadata for one top-level source action.
+/// Backend-neutral capture metadata for one top-level source action.
 #[derive(Clone, Debug)]
-pub struct CausalSourceSpec {
+pub struct SourceCaptureSpec {
     pub source: SourceRef,
     /// Logical equality sorts for source `union` actions, in head order.
     pub union_sorts: Box<[ReplaySortId]>,
@@ -171,7 +171,7 @@ pub struct CausalSourceSpec {
 /// Exact positive-check root metadata. Equality endpoint witnesses are added
 /// independently; relational premises are always captured in source order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CausalCheckPremise {
+pub struct CriterionCapturePremise {
     /// Index in the final canonical backend-rule body.
     pub body_atom: usize,
     /// Logical function column containing the source expression's value.
@@ -186,9 +186,9 @@ pub struct CausalCheckPremise {
 /// in source order; equality endpoints cite the premise cells that retain each
 /// source expression's replay term.
 #[derive(Clone, Debug)]
-pub struct CausalCheckSpec {
+pub struct CriterionCaptureSpec {
     pub check: u32,
-    pub equalities: Box<[(CausalCheckPremise, CausalCheckPremise)]>,
+    pub equalities: Box<[(CriterionCapturePremise, CriterionCapturePremise)]>,
 }
 
 /// A call in a rule body.
@@ -203,7 +203,7 @@ pub enum RuleBodyCall {
         name: Box<str>,
         output: ColumnTy,
         /// Typed structural call used only when this primitive binds a new
-        /// value in a receipt-enabled rule.
+        /// value in a capture-enabled rule.
         replay: Option<Arc<ReplayConstructorSpec>>,
     },
 }
@@ -220,7 +220,7 @@ pub enum RuleActionCall {
         name: Box<str>,
         output: ColumnTy,
         /// Typed structural call recorded only for proof-checkable pure
-        /// primitives while causal receipts are active.
+        /// primitives while trace capture is active.
         replay: Option<Arc<ReplayConstructorSpec>>,
     },
 }
@@ -230,23 +230,23 @@ pub type BackendCoreRule =
 
 /// A complete logical rule supplied to a backend.
 ///
-/// At most one of [`RuleSpec::causal_receipt`],
-/// [`RuleSpec::check_receipt`], and [`RuleSpec::source_receipt`] may be set.
+/// At most one of [`RuleSpec::firing_capture`],
+/// [`RuleSpec::criterion_capture`], and [`RuleSpec::source_capture`] may be set.
 #[derive(Clone, Debug)]
 pub struct RuleSpec {
     pub name: String,
     pub seminaive: bool,
     pub no_decomp: bool,
     pub core: BackendCoreRule,
-    /// Exact ordinary-rule receipt metadata, absent outside causal mode.
-    pub causal_receipt: Option<CausalRuleSpec>,
-    pub check_receipt: Option<CausalCheckSpec>,
+    /// Exact ordinary-rule firing metadata, absent outside trace capture.
+    pub firing_capture: Option<FiringCaptureSpec>,
+    pub criterion_capture: Option<CriterionCaptureSpec>,
     /// Stable source identity for a top-level action command.
     ///
     /// Source actions have an empty query and attribute every effective
     /// commit directly to this identity rather than manufacturing a rule
     /// match. Ordinary rules leave this unset.
-    pub source_receipt: Option<CausalSourceSpec>,
+    pub source_capture: Option<SourceCaptureSpec>,
     /// External-function registrations whose lifetime is owned by this rule.
     ///
     /// [`Backend::add_rule`] takes ownership of these handles, including on
@@ -450,13 +450,13 @@ pub trait Backend: Send + Sync {
         false
     }
 
-    /// Enable causal receipt capture before input rows or rule plans exist.
+    /// Enable trace capture before input rows or rule plans exist.
     ///
     /// This capability is currently provided only by the in-memory reference
     /// backend.
-    fn enable_causal_receipts(&mut self) -> Result<()> {
+    fn enable_trace(&mut self) -> Result<()> {
         Err(anyhow::anyhow!(
-            "this backend does not support causal receipts"
+            "this backend does not support trace capture"
         ))
     }
 
@@ -468,7 +468,7 @@ pub trait Backend: Send + Sync {
         _spec: FunctionReplaySpec,
     ) -> Result<()> {
         Err(anyhow::anyhow!(
-            "this backend does not support causal receipts"
+            "this backend does not support trace capture"
         ))
     }
 
@@ -482,11 +482,11 @@ pub trait Backend: Send + Sync {
         _child_sorts: &[ReplaySortId],
     ) -> Result<()> {
         Err(anyhow::anyhow!(
-            "this backend does not support causal receipts"
+            "this backend does not support trace capture"
         ))
     }
 
-    /// Intern one typed literal used by a receipt-enabled rule plan.
+    /// Intern one typed literal used by a capture-enabled rule plan.
     fn intern_replay_literal(
         &self,
         _sort: ReplaySortId,
@@ -494,22 +494,22 @@ pub trait Backend: Send + Sync {
         _value: Value,
     ) -> Result<ReplayTermId> {
         Err(anyhow::anyhow!(
-            "this backend does not support causal receipts"
+            "this backend does not support trace capture"
         ))
     }
 
-    /// Promote all effective roots from the completed synchronous causal
+    /// Promote all effective roots from the completed synchronous trace
     /// wave. Call only at an existing native merge/rebuild barrier.
-    fn finalize_causal_wave(&mut self) -> Result<()> {
+    fn finalize_trace_wave(&mut self) -> Result<()> {
         Err(anyhow::anyhow!(
-            "this backend does not support causal receipts"
+            "this backend does not support trace capture"
         ))
     }
 
     /// Set the globally monotone wave inherited by subsequent native effects.
-    fn set_causal_wave(&mut self, _wave: u64) -> Result<()> {
+    fn set_trace_wave(&mut self, _wave: u64) -> Result<()> {
         Err(anyhow::anyhow!(
-            "this backend does not support causal receipts"
+            "this backend does not support trace capture"
         ))
     }
 

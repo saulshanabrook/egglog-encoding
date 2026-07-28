@@ -24,7 +24,7 @@ from ..models import (
 )
 
 type ReportSchemaVersion = Literal[1]
-REPORT_SCHEMA_VERSION: Final[ReportSchemaVersion] = 1
+REPORT_SCHEMA_VERSION: Final[ReportSchemaVersion] = 2
 
 type TimingSummarySchemaVersion = Literal[2]
 TIMING_SUMMARY_SCHEMA_VERSION: Final[TimingSummarySchemaVersion] = 2

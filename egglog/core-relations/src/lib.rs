@@ -14,7 +14,6 @@ pub(crate) mod parallel_heuristics;
 pub(crate) mod pool;
 pub(crate) mod provenance;
 pub(crate) mod query;
-pub(crate) use provenance as receipts;
 pub(crate) mod row_buffer;
 pub(crate) mod table;
 
@@ -38,23 +37,22 @@ pub use free_join::{
 pub use hash_index::TupleIndex;
 pub use offsets::{OffsetRange, RowId, Subset, SubsetRef};
 pub use pool::{Pool, PoolSet, Pooled};
-pub use query::{
-    CachedPlan, GroundedProbe, GroundedRule, QueryBuilder, QueryError, ReceiptBuildError,
-    RuleBuilder, RuleId, RuleSet, RuleSetBuilder,
+pub use provenance::{
+    AppliedEqualityId, BindingSource, CaptureCounters, CauseDraftId, CauseId, CausePrior, CauseRef,
+    Criterion, CriterionCaptureSpec, CriterionEndpointOccurrence, CriterionEndpointSource,
+    DeferredEqualityCause, EdgeHorizon, EqualityEndpoint, EqualityReason, FactCellRef, FactId,
+    Firing, FiringCaptureSpec, FiringEqualitySource, FiringId, HistoricalFactCell, HistoryPosition,
+    MergeOriginSelector, PremiseOccurrence, PreparedRekey, ProjectedAppliedEquality,
+    RawAliasWindow, RawAppliedEquality, RawCause, RawEqualityEndpoint, RawEqualitySupport,
+    RawFactRecord, RawRekeyRecord, RawTermAvailability, RekeyOutcome, ReplayConstructorSpec,
+    ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTableKind, ReplayTableSchema, ReplayTerm,
+    ReplayTermId, RowOriginSiteId, RuleBindingSpec, SourceCaptureSpec, SourceRef,
+    TermInternerCounters, Tombstone, Trace, TraceTotals, TraceView, TraceViewCounters,
+    TraceViewError, TypedCellEquality, TypedEqualityProposal, Wave,
 };
-pub use receipts::{
-    AppliedEqualityId, CausalReceiptTotals, CausalReceiptView, CausalReceiptViewCounters,
-    CausalReceipts, CausalWave, CauseDraftId, CheckEndpointOccurrence, CheckEndpointSource,
-    CheckReceiptSpec, CheckRoot, DeferredEqualityCause, EqualityEdgeCount, EqualityEndpoint,
-    EqualityReason, FactCellRef, FactId, HistoricalFactCell, HistoryPosition, MergeOriginSelector,
-    PreparedRekey, ProjectedAppliedEquality, RawAliasWindow, RawAppliedEquality,
-    RawEqualityEndpoint, RawEqualitySupport, RawFactRecord, RawMatchRecord, RawReceiptCause,
-    RawRekeyRecord, RawTermAvailability, ReceiptCauseId, ReceiptCausePrior, ReceiptCauseRef,
-    ReceiptCounters, ReceiptEqualitySource, ReceiptPremiseOccurrence, ReceiptViewError,
-    RekeyOutcome, RemovalRecord, ReplayConstructorSpec, ReplayLiteral, ReplayOpId, ReplaySortId,
-    ReplayTableKind, ReplayTableSchema, ReplayTerm, ReplayTermCounters, ReplayTermId,
-    RowOriginSiteId, RuleBindingSpec, RuleMatchId, RuleReceiptSpec, SourceReceiptSpec, SourceRef,
-    TypedCellEquality, TypedEqualityProposal,
+pub use query::{
+    CachedPlan, CaptureBuildError, GroundedProbe, GroundedRule, QueryBuilder, QueryError,
+    RuleBuilder, RuleId, RuleSet, RuleSetBuilder,
 };
 pub use row_buffer::TaggedRowBuffer;
 pub use table::{MergeFn, SortedWritesTable};

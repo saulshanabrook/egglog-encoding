@@ -26,8 +26,8 @@ use crate::core_relations::{
 use crate::numeric_id::{DenseIdMap, DenseIdMapWithReuse, NumericId, define_id};
 use egglog_core_relations as core_relations;
 pub use egglog_core_relations::{
-    CausalReceipts, CausalWave, ReplayConstructorSpec, ReplayLiteral, ReplayOpId, ReplaySortId,
-    ReplayTableKind, ReplayTermCounters, ReplayTermId,
+    ReplayConstructorSpec, ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTableKind, ReplayTermId,
+    TermInternerCounters, Trace, TraceView, TraceViewError, Wave,
 };
 use egglog_numeric_id as numeric_id;
 use egglog_reports::{IterationReport, PreMergeTiming, ReportLevel, RuleReport, RuleSetReport};
@@ -44,8 +44,8 @@ pub(crate) mod rule;
 mod tests;
 
 pub use rule::{
-    CheckReplayPremise, CheckReplaySpec, Function, QueryEntry, RuleBuilder, RuleReplayBinding,
-    RuleReplaySpec, Variable, VariableId,
+    CriterionCapturePremise, CriterionCaptureSpec, FiringCaptureBinding, FiringCaptureSpec,
+    Function, QueryEntry, RuleBuilder, Variable, VariableId,
 };
 use thiserror::Error;
 
@@ -149,7 +149,7 @@ impl Timestamp {
 #[derive(Clone)]
 pub struct EGraph {
     db: Database,
-    causal_receipts: Option<CausalReceipts>,
+    trace: Option<Trace>,
     uf_table: TableId,
     id_counter: CounterId,
     timestamp_counter: CounterId,
@@ -223,7 +223,7 @@ impl Default for EGraph {
 
         Self {
             db,
-            causal_receipts: None,
+            trace: None,
             uf_table,
             id_counter,
             timestamp_counter: ts_counter,
@@ -284,7 +284,7 @@ fn validate_replay_merge_origins(
 ///
 /// The logical sorts cover only the user-visible key and value columns. The
 /// bridge expands this layout with ignored timestamp and subsumption columns
-/// before registering it with the native receipt store.
+/// before registering it with the native trace.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FunctionReplaySpec {
     pub logical_sorts: Box<[ReplaySortId]>,
@@ -292,7 +292,7 @@ pub struct FunctionReplaySpec {
     pub table_kind: ReplayTableKind,
 }
 
-/// One fully parsed source row ready for causal input staging.
+/// One fully parsed source row ready for trace input staging.
 #[derive(Clone, Debug)]
 pub struct SourceInputRow {
     pub source: core_relations::SourceRef,
@@ -381,7 +381,7 @@ impl EGraph {
             move |state, old, new| {
                 if old != new {
                     let next_ts = Value::from_usize(state.read_counter(ts_counter));
-                    if state.causal_receipts_enabled() {
+                    if state.trace_enabled() {
                         state.stage_container_union(uf_table, old, new, next_ts);
                     } else {
                         state.stage_insert(uf_table, &[old, new, next_ts]);
@@ -706,7 +706,7 @@ impl EGraph {
             .unwrap_or_else(|error| panic!("{error}"))
     }
 
-    /// Register a function, returning a controlled error when receipt capture
+    /// Register a function, returning a controlled error when trace capture
     /// cannot represent its merge before allocating any table state.
     pub fn try_add_table(&mut self, config: FunctionConfig) -> Result<FunctionId> {
         let FunctionConfig {
@@ -755,7 +755,7 @@ impl EGraph {
         let n_cols = schema_math.table_columns();
         let has_function_result = merge.has_function_result();
         let merge_origins = merge.origin_selectors(&schema, n_keys);
-        if self.causal_receipts.is_some() {
+        if self.trace.is_some() {
             validate_replay_merge_origins(&name, &merge_origins, has_function_result)?;
         }
         let next_func_id = self.funcs.next_id();
@@ -831,20 +831,16 @@ impl EGraph {
         Ok(res)
     }
 
-    /// Enable compact causal receipt capture before any rows are inserted.
-    pub fn enable_causal_receipts(&mut self) -> Result<()> {
-        if self.causal_receipts.is_none() {
+    /// Enable compact trace capture before any rows are inserted.
+    pub fn enable_trace(&mut self) -> Result<()> {
+        if self.trace.is_none() {
             let threads = rayon::current_num_threads();
             anyhow::ensure!(
                 threads == 1,
-                "causal receipts require a one-thread Rayon pool; \
-                 parallel causal capture is unsupported (active pool has {threads} threads)"
+                "trace capture requires a one-thread Rayon pool; \
+                 parallel trace capture is unsupported (active pool has {threads} threads)"
             );
-            self.causal_receipts = Some(
-                self.db
-                    .try_enable_causal_receipts()
-                    .map_err(anyhow::Error::msg)?,
-            );
+            self.trace = Some(self.db.try_enable_trace().map_err(anyhow::Error::msg)?);
         }
         Ok(())
     }
@@ -895,10 +891,10 @@ impl EGraph {
         }
         validate_replay_merge_origins(&info.name, &info.merge_origins, info.has_function_result)?;
 
-        let receipts = self
-            .causal_receipts
+        let trace = self
+            .trace
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("causal receipts are not enabled"))?;
+            .ok_or_else(|| anyhow::anyhow!("trace capture is not enabled"))?;
         let mut layout = spec
             .logical_sorts
             .iter()
@@ -909,27 +905,27 @@ impl EGraph {
         if info.can_subsume {
             layout.push(None);
         }
-        receipts
+        trace
             .register_table_layout(info.table, &layout)
             .map_err(anyhow::Error::msg)?;
-        receipts
+        trace
             .register_table_kind(info.table, spec.table_kind)
             .map_err(anyhow::Error::msg)?;
-        receipts
+        trace
             .register_table_key_columns(info.table, info.n_keys)
             .map_err(anyhow::Error::msg)?;
         if let Some(constructor) = spec.constructor.clone() {
-            receipts
+            trace
                 .register_table_constructor(info.table, constructor)
                 .map_err(anyhow::Error::msg)?;
         }
         let mut merge_origins = info.merge_origins.to_vec();
         merge_origins.resize(layout.len(), MergeOriginSelector::Unsupported);
-        receipts
+        trace
             .register_table_merge_origins(info.table, &merge_origins)
             .map_err(anyhow::Error::msg)?;
         if let Some(identity_columns) = info.n_identity_vals {
-            receipts
+            trace
                 .register_table_merge_identity_guard(info.table, info.n_keys, identity_columns)
                 .map_err(anyhow::Error::msg)?;
         }
@@ -943,25 +939,25 @@ impl EGraph {
         container_type: TypeId,
         child_sorts: &[ReplaySortId],
     ) -> Result<()> {
-        self.causal_receipts
+        self.trace
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("causal receipts are not enabled"))?
+            .ok_or_else(|| anyhow::anyhow!("trace capture is not enabled"))?
             .register_container_sort(sort, container_type, child_sorts)
             .map_err(anyhow::Error::msg)
     }
 
     /// Stage one prevalidated TSV input batch with exact per-line source
-    /// causes. All rows share one native execution state and one bulk receipt
+    /// causes. All rows share one native execution state and one bulk trace
     /// registration; constructor prediction therefore keeps its normal
     /// within-batch identity semantics.
     pub fn stage_source_input_rows(&self, func: FunctionId, rows: &[SourceInputRow]) -> Result<()> {
-        let receipts = self
-            .causal_receipts
+        let trace = self
+            .trace
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("causal receipts are not enabled"))?;
+            .ok_or_else(|| anyhow::anyhow!("trace capture is not enabled"))?;
         let info = &self.funcs[func];
         let replay = info.replay.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("function `{}` has no causal replay metadata", info.name)
+            anyhow::anyhow!("function `{}` has no trace replay metadata", info.name)
         })?;
         let constructor = replay.constructor.as_ref();
         let expected_columns = if constructor.is_some() {
@@ -986,7 +982,7 @@ impl EGraph {
                 .zip(row.values.iter().copied())
                 .zip(row.terms.iter().copied())
             {
-                if receipts.lookup_term(sort, value) != Some(term) {
+                if trace.lookup_term(sort, value) != Some(term) {
                     anyhow::bail!(
                         "function `{}` source value is missing its exact typed replay term",
                         info.name
@@ -998,7 +994,7 @@ impl EGraph {
             .map(|constructor| {
                 rows.iter()
                     .map(|row| {
-                        receipts
+                        trace
                             .source_constructor_origin(info.table, &row.terms, constructor)
                             .map_err(anyhow::Error::msg)
                     })
@@ -1022,12 +1018,12 @@ impl EGraph {
                             constructor_origins.as_ref().unwrap()[row_index],
                         )
                         .expect("constructor source insertion must return its result value");
-                    receipts
+                    trace
                         .intern_spec_call(constructor, &row.terms, output)
                         .expect("prevalidated constructor source terms must form a replay call");
                 } else {
                     action
-                        .insert_source_row(state, &row.values, &row.terms, receipts)
+                        .insert_source_row(state, &row.values, &row.terms, trace)
                         .expect("prevalidated source row must have an exact structural origin");
                 }
             })
@@ -1041,65 +1037,60 @@ impl EGraph {
         literal: ReplayLiteral,
         value: Value,
     ) -> Result<ReplayTermId> {
-        let receipts = self
-            .causal_receipts
+        let trace = self
+            .trace
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("causal receipts are not enabled"))?;
-        Ok(receipts.intern_literal(sort, literal, value))
+            .ok_or_else(|| anyhow::anyhow!("trace capture is not enabled"))?;
+        Ok(trace.intern_literal(sort, literal, value))
     }
 
-    /// Inspect finalized raw causal receipts. Borrowed arena data cannot
+    /// Inspect the finalized trace. Borrowed arena data cannot
     /// escape `inspect`.
-    pub fn with_causal_receipt_view<R>(
+    pub fn with_trace_view<R>(
         &self,
-        inspect: impl for<'view> FnOnce(
-            &mut core_relations::CausalReceiptView<'view>,
-        )
-            -> std::result::Result<R, core_relations::ReceiptViewError>,
-    ) -> std::result::Result<R, core_relations::ReceiptViewError> {
-        let receipts = self.causal_receipts.as_ref().ok_or_else(|| {
-            core_relations::ReceiptViewError::Invalid("causal receipts are not enabled".into())
-        })?;
-        receipts.with_view(inspect)
+        inspect: impl for<'view> FnOnce(&mut TraceView<'view>) -> std::result::Result<R, TraceViewError>,
+    ) -> std::result::Result<R, TraceViewError> {
+        let trace = self
+            .trace
+            .as_ref()
+            .ok_or_else(|| TraceViewError::Invalid("trace capture is not enabled".into()))?;
+        trace.with_view(inspect)
     }
 
     /// Inspect live replay-term and container-anchor cardinalities. Unlike a
-    /// finalized receipt view, this remains valid while a rejected causal
-    /// wave is being diagnosed.
-    pub fn causal_replay_term_counters(&self) -> Result<ReplayTermCounters> {
-        let receipts = self
-            .causal_receipts
+    /// finalized trace view, this remains valid while a rejected trace wave is
+    /// being diagnosed.
+    pub fn replay_term_counters(&self) -> Result<TermInternerCounters> {
+        let trace = self
+            .trace
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("causal receipts are not enabled"))?;
-        Ok(receipts.replay_term_counters())
+            .ok_or_else(|| anyhow::anyhow!("trace capture is not enabled"))?;
+        Ok(trace.replay_term_counters())
     }
 
-    /// Promote the current receipt wave after a synchronous native barrier.
-    pub fn finalize_causal_wave(&mut self) -> Result<()> {
-        if self.causal_receipts.is_none() {
-            anyhow::bail!("causal receipts are not enabled");
+    /// Promote the current trace wave after a synchronous native barrier.
+    pub fn finalize_trace_wave(&mut self) -> Result<()> {
+        if self.trace.is_none() {
+            anyhow::bail!("trace capture is not enabled");
         }
-        self.db.finalize_causal_wave();
+        self.db.finalize_trace_wave();
         Ok(())
     }
 
-    pub fn set_causal_wave(&mut self, wave: u64) -> Result<()> {
-        if self.causal_receipts.is_none() {
-            anyhow::bail!("causal receipts are not enabled");
+    pub fn set_trace_wave(&mut self, wave: u64) -> Result<()> {
+        if self.trace.is_none() {
+            anyhow::bail!("trace capture is not enabled");
         }
-        self.db.set_causal_wave(CausalWave::new(wave));
+        self.db.set_trace_wave(Wave::new(wave));
         Ok(())
     }
 
-    pub fn causal_replay_term(
-        &self,
-        id: ReplayTermId,
-    ) -> Result<Option<core_relations::ReplayTerm>> {
-        let receipts = self
-            .causal_receipts
+    pub fn replay_term(&self, id: ReplayTermId) -> Result<Option<core_relations::ReplayTerm>> {
+        let trace = self
+            .trace
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("causal receipts are not enabled"))?;
-        Ok(receipts.replay_term(id))
+            .ok_or_else(|| anyhow::anyhow!("trace capture is not enabled"))?;
+        Ok(trace.replay_term(id))
     }
 
     /// A handle to the live [`ActionRegistry`] for this EGraph.
@@ -1125,7 +1116,7 @@ impl EGraph {
         let info = &mut self.rules[rule];
         anyhow::ensure!(
             info.query.supports_grounded_execution(),
-            "rule {} records causal receipts and cannot be grounded",
+            "rule {} records trace capture and cannot be grounded",
             info.desc
         );
         if info.grounded_rule.is_none() {
@@ -1147,7 +1138,7 @@ impl EGraph {
             let info = &mut self.rules[firing.rule];
             anyhow::ensure!(
                 info.query.supports_grounded_execution(),
-                "rule {} records causal receipts and cannot be grounded",
+                "rule {} records trace capture and cannot be grounded",
                 info.desc
             );
             if info.grounded_rule.is_none() {
@@ -2298,8 +2289,8 @@ impl ResolvedMergeAction {
                 let bv = b.run(state, cur, new, n_keys, 0, ts, env, merge_table);
                 if av != bv {
                     assert!(
-                        !state.causal_receipts_enabled(),
-                        "receipt recording does not support union effects inside merge blocks"
+                        !state.trace_enabled(),
+                        "trace capture does not support union effects inside merge blocks"
                     );
                     state.stage_insert(*uf_table, &[av, bv, ts]);
                 }
@@ -2345,14 +2336,11 @@ impl ResolvedMergeFn {
             ResolvedMergeFn::UnionId { uf_table } => {
                 let (cur, new) = (cur[n_keys + self_col], new[n_keys + self_col]);
                 if cur != new {
-                    if state.causal_receipts_enabled() {
+                    if state.trace_enabled() {
                         let sort = state
-                            .causal_replay_sort(
-                                merge_table,
-                                ColumnId::from_usize(n_keys + self_col),
-                            )
+                            .replay_sort(merge_table, ColumnId::from_usize(n_keys + self_col))
                             .expect(
-                                "receipt-enabled merge is missing its logical replay-sort layout",
+                                "capture-enabled merge is missing its logical replay-sort layout",
                             );
                         state.stage_merge_union_with_replay(
                             *uf_table,
@@ -2694,7 +2682,7 @@ impl TableAction {
         state: &mut ExecutionState,
         row: &[Value],
         terms: &[ReplayTermId],
-        receipts: &CausalReceipts,
+        trace: &Trace,
     ) -> Result<()> {
         if row.len() != terms.len() {
             anyhow::bail!("source row values and structural terms have different arities");
@@ -2718,7 +2706,7 @@ impl TableAction {
                 ret_val: None,
             },
         );
-        let origin = receipts
+        let origin = trace
             .install_source_row(self.table, &scratch, &structural)
             .map_err(anyhow::Error::msg)?;
         state.stage_insert_with_origin(self.table, &scratch, origin);

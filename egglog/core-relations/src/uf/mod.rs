@@ -10,12 +10,12 @@ use crate::numeric_id::{DenseIdMap, NumericId};
 use crossbeam_queue::SegQueue;
 
 use crate::{
-    CauseDraftId, ReceiptCauseRef, TableChange, TaggedRowBuffer,
+    CauseDraftId, CauseRef, TableChange, TaggedRowBuffer,
     action::ExecutionState,
     common::{HashMap, Value},
     offsets::{OffsetRange, RowId, Subset, SubsetRef},
     pool::with_pool_set,
-    receipts::{
+    provenance::{
         AppliedEqualityProposal, DeferredEqualityCause, PendingNativeLease, TypedEqualityProposal,
     },
     row_buffer::RowBuffer,
@@ -61,7 +61,7 @@ pub struct DisplacedTable {
     changed: bool,
     lookup_table: HashMap<Value, RowId>,
     buffered_writes: Arc<SegQueue<UfPendingBatch>>,
-    receipts_enabled: bool,
+    trace_enabled: bool,
 }
 
 struct Canonicalizer<'a> {
@@ -204,7 +204,7 @@ impl Default for DisplacedTable {
             changed: false,
             lookup_table: HashMap::default(),
             buffered_writes: Arc::new(SegQueue::new()),
-            receipts_enabled: false,
+            trace_enabled: false,
         }
     }
 }
@@ -218,27 +218,27 @@ impl Clone for DisplacedTable {
             changed: self.changed,
             lookup_table: self.lookup_table.clone(),
             buffered_writes: Default::default(),
-            receipts_enabled: self.receipts_enabled,
+            trace_enabled: self.trace_enabled,
         }
     }
 }
 
 struct UfBuffer {
     to_insert: ManuallyDrop<RowBuffer>,
-    receipts: ManuallyDrop<Option<Vec<UfProposalReceipt>>>,
-    wave: Option<crate::CausalWave>,
+    captures: ManuallyDrop<Option<Vec<UfProposalCapture>>>,
+    wave: Option<crate::Wave>,
     buffered_writes: Weak<SegQueue<UfPendingBatch>>,
     transaction: Option<crate::table_spec::MutationTransaction>,
 }
 
 #[derive(Clone)]
-struct UfProposalReceipt {
+struct UfProposalCapture {
     cause: DeferredEqualityCause,
-    left: crate::receipts::PendingEqualityEndpoint,
-    right: crate::receipts::PendingEqualityEndpoint,
+    left: crate::provenance::PendingEqualityEndpoint,
+    right: crate::provenance::PendingEqualityEndpoint,
 }
 
-/// Transaction-local union overlay used to validate an entire receipt-mode
+/// Transaction-local union overlay used to validate an entire capture-mode
 /// publication before touching the native union-find. It stores only roots
 /// reached by this publication, so preflight is proportional to proposals
 /// rather than to the size of the existing e-graph.
@@ -280,8 +280,8 @@ impl UnionPreflight {
 #[derive(Clone)]
 struct UfPendingBatch {
     rows: RowBuffer,
-    receipts: Option<Vec<UfProposalReceipt>>,
-    wave: Option<crate::CausalWave>,
+    captures: Option<Vec<UfProposalCapture>>,
+    wave: Option<crate::Wave>,
     _native_lease: Option<PendingNativeLease>,
 }
 
@@ -291,7 +291,7 @@ impl Drop for UfBuffer {
             // SAFETY: If we can't write updates, manually drop to_insert
             unsafe {
                 ManuallyDrop::drop(&mut self.to_insert);
-                ManuallyDrop::drop(&mut self.receipts);
+                ManuallyDrop::drop(&mut self.captures);
             }
             return;
         };
@@ -300,13 +300,13 @@ impl Drop for UfBuffer {
         // This avoids creating a fresh row buffer via `mem::take` or `mem::swap` and
         // dropping it immediately.
         let to_insert = unsafe { ManuallyDrop::take(&mut self.to_insert) };
-        let receipts = unsafe { ManuallyDrop::take(&mut self.receipts) };
+        let captures = unsafe { ManuallyDrop::take(&mut self.captures) };
         if to_insert.len() == 0 {
             return;
         }
         let pending = UfPendingBatch {
             rows: to_insert,
-            receipts,
+            captures,
             wave: self.wave,
             _native_lease: self
                 .transaction
@@ -336,22 +336,22 @@ impl MutationBuffer for UfBuffer {
 
     fn stage_insert(&mut self, row: &[Value]) {
         assert!(
-            self.receipts.is_none(),
-            "receipt-mode DisplacedTable insert requires a typed union proposal"
+            self.captures.is_none(),
+            "capture-mode DisplacedTable insert requires a typed union proposal"
         );
         self.to_insert.add_row(row);
     }
     fn stage_insert_with_cause(&mut self, row: &[Value], _cause: CauseDraftId) {
         assert!(
-            self.receipts.is_none(),
-            "receipt-mode DisplacedTable insert requires a typed union proposal"
+            self.captures.is_none(),
+            "capture-mode DisplacedTable insert requires a typed union proposal"
         );
         self.to_insert.add_row(row);
     }
     fn stage_typed_union(
         &mut self,
         row: &[Value],
-        cause: ReceiptCauseRef,
+        cause: CauseRef,
         proposal: TypedEqualityProposal,
     ) {
         self.stage_typed_union_deferred(row, DeferredEqualityCause::ready(cause), proposal);
@@ -362,10 +362,10 @@ impl MutationBuffer for UfBuffer {
         cause: DeferredEqualityCause,
         proposal: TypedEqualityProposal,
     ) {
-        let receipts = self
-            .receipts
+        let captures = self
+            .captures
             .as_mut()
-            .expect("typed union proposal staged while causal receipts are disabled");
+            .expect("typed union proposal staged while trace capture is disabled");
         assert_eq!(
             row.len(),
             3,
@@ -395,12 +395,12 @@ impl MutationBuffer for UfBuffer {
         }
         let prior_len = self.to_insert.len();
         assert_eq!(
-            receipts.len(),
+            captures.len(),
             prior_len,
-            "cannot add typed receipts after ordinary union proposals"
+            "cannot add typed captures after ordinary union proposals"
         );
         self.to_insert.add_row(row);
-        receipts.push(UfProposalReceipt { cause, left, right });
+        captures.push(UfProposalCapture { cause, left, right });
     }
     fn stage_remove(&mut self, _: &[Value]) {
         panic!("attempting to remove data from a DisplacedTable")
@@ -408,7 +408,7 @@ impl MutationBuffer for UfBuffer {
     fn fresh_handle(&self) -> Box<dyn MutationBuffer> {
         Box::new(UfBuffer {
             to_insert: ManuallyDrop::new(RowBuffer::new(self.to_insert.arity())),
-            receipts: ManuallyDrop::new(self.receipts.as_ref().map(|_| Vec::new())),
+            captures: ManuallyDrop::new(self.captures.as_ref().map(|_| Vec::new())),
             wave: None,
             buffered_writes: self.buffered_writes.clone(),
             transaction: self.transaction.clone(),
@@ -426,20 +426,20 @@ impl Table for DisplacedTable {
     fn set_table_id(&mut self, table: crate::TableId) {
         self.table_id = table;
     }
-    fn preflight_causal_receipt_activation(&self) -> Result<(), &'static str> {
+    fn preflight_trace_activation(&self) -> Result<(), &'static str> {
         if self.len() != 0 {
             return Err("union-find already contains rows without exact source identities");
         }
         if !self.buffered_writes.is_empty() {
-            return Err("union-find has queued receipt-disabled mutations");
+            return Err("union-find has queued capture-disabled mutations");
         }
         if Arc::weak_count(&self.buffered_writes) != 0 {
-            return Err("union-find has an outstanding receipt-disabled mutation buffer");
+            return Err("union-find has an outstanding capture-disabled mutation buffer");
         }
         Ok(())
     }
-    fn enable_causal_receipts(&mut self) {
-        self.receipts_enabled = true;
+    fn enable_trace(&mut self) {
+        self.trace_enabled = true;
     }
     fn spec(&self) -> TableSpec {
         let mut uncacheable_columns = DenseIdMap::default();
@@ -616,7 +616,7 @@ impl Table for DisplacedTable {
     fn new_buffer(&self) -> Box<dyn MutationBuffer> {
         Box::new(UfBuffer {
             to_insert: ManuallyDrop::new(RowBuffer::new(3)),
-            receipts: ManuallyDrop::new(self.receipts_enabled.then(Vec::new)),
+            captures: ManuallyDrop::new(self.trace_enabled.then(Vec::new)),
             wave: None,
             buffered_writes: Arc::downgrade(&self.buffered_writes),
             transaction: None,
@@ -624,49 +624,49 @@ impl Table for DisplacedTable {
     }
 
     fn merge(&mut self, exec_state: &mut ExecutionState) -> TableChange {
-        if let Some(receipts) = exec_state.causal_receipts() {
+        if let Some(trace) = exec_state.trace() {
             // Rejection is terminal for these invalid proposals: drain their
             // owned buffers, validate the complete publication, and discard
-            // them on unwind without mutating native or receipt state.
+            // them on unwind without mutating native or trace state.
             let mut batches = Vec::new();
             while let Some(batch) = self.buffered_writes.pop() {
                 if batch.rows.len() != 0 {
                     batches.push(batch);
                 }
             }
-            self.preflight_receipt_batches(&mut batches, receipts, exec_state.causal_wave());
+            self.preflight_capture_batches(&mut batches, trace, exec_state.trace_wave());
 
-            let mut receipt_batch = receipts.new_batch();
+            let mut capture_batch = trace.new_batch();
             for batch in batches {
-                let proposal_receipts = batch
-                    .receipts
+                let proposal_captures = batch
+                    .captures
                     .as_ref()
-                    .expect("receipt-enabled union batch has no typed proposal sidecar");
+                    .expect("capture-enabled union batch has no typed proposal sidecar");
                 assert_eq!(
-                    proposal_receipts.len(),
+                    proposal_captures.len(),
                     batch.rows.len(),
-                    "receipt-enabled union batch has incomplete typed proposals"
+                    "capture-enabled union batch has incomplete typed proposals"
                 );
                 let wave = batch
                     .wave
-                    .expect("receipt-enabled union batch has no causal wave");
+                    .expect("capture-enabled union batch has no causal wave");
                 assert_eq!(
                     wave,
-                    exec_state.causal_wave(),
+                    exec_state.trace_wave(),
                     "typed union proposal crossed a causal-wave boundary"
                 );
                 for (index, row) in batch.rows.iter().enumerate() {
-                    let UfProposalReceipt {
+                    let UfProposalCapture {
                         ref cause,
                         left,
                         right,
                         ..
-                    } = proposal_receipts[index];
+                    } = proposal_captures[index];
                     assert_eq!(row.len(), 3, "attempt to insert a row with the wrong arity");
                     let left_root = self.uf.find_naive(row[0]);
                     let right_root = self.uf.find_naive(row[1]);
                     if left_root == right_root {
-                        receipt_batch.record_redundant_union();
+                        capture_batch.record_redundant_union();
                         continue;
                     }
                     let cause = cause
@@ -679,12 +679,12 @@ impl Table for DisplacedTable {
                             || (parent == right_root && child == left_root),
                         "native union parent/child do not match the captured pre-roots"
                     );
-                    self.finish_receipt_insert(row, parent, child);
-                    receipt_batch.record_applied_union(proposal, parent, child, cause);
+                    self.finish_capture_insert(row, parent, child);
+                    capture_batch.record_applied_union(proposal, parent, child, cause);
                     self.changed = true;
                 }
             }
-            receipt_batch.publish();
+            capture_batch.publish();
         } else {
             while let Some(batch) = self.buffered_writes.pop() {
                 for row in batch.rows.iter() {
@@ -729,11 +729,11 @@ impl DisplacedTable {
         let vals = self.expand(row);
         eval_constraint(&vals, constraint)
     }
-    fn preflight_receipt_batches(
+    fn preflight_capture_batches(
         &self,
         batches: &mut [UfPendingBatch],
-        receipts: &crate::CausalReceipts,
-        current_wave: crate::CausalWave,
+        trace: &crate::Trace,
+        current_wave: crate::Wave,
     ) {
         let mut effective = Vec::<(usize, usize)>::new();
         let mut effective_causes = Vec::new();
@@ -742,18 +742,18 @@ impl DisplacedTable {
             ..Default::default()
         };
         for (batch_index, batch) in batches.iter().enumerate() {
-            let proposal_receipts = batch
-                .receipts
+            let proposal_captures = batch
+                .captures
                 .as_ref()
-                .expect("receipt-enabled union batch has no typed proposal sidecar");
+                .expect("capture-enabled union batch has no typed proposal sidecar");
             assert_eq!(
-                proposal_receipts.len(),
+                proposal_captures.len(),
                 batch.rows.len(),
-                "receipt-enabled union batch has incomplete typed proposals"
+                "capture-enabled union batch has incomplete typed proposals"
             );
             let wave = batch
                 .wave
-                .expect("receipt-enabled union batch has no causal wave");
+                .expect("capture-enabled union batch has no causal wave");
             assert_eq!(
                 wave, current_wave,
                 "typed union proposal crossed a causal-wave boundary"
@@ -761,7 +761,7 @@ impl DisplacedTable {
 
             for (index, row) in batch.rows.iter().enumerate() {
                 assert_eq!(row.len(), 3, "attempt to insert a row with the wrong arity");
-                let proposal = &proposal_receipts[index];
+                let proposal = &proposal_captures[index];
                 let left_root = overlay.find(self.uf.find_naive(row[0]));
                 let right_root = overlay.find(self.uf.find_naive(row[1]));
                 if left_root == right_root {
@@ -783,15 +783,15 @@ impl DisplacedTable {
         // Validate every effective cause, including deferred merge summaries,
         // before publishing any draft or touching native state.
         for cause in &effective_causes {
-            if let Err(error) = cause.prepare(receipts, current_wave) {
+            if let Err(error) = cause.prepare(trace, current_wave) {
                 panic!("{error}");
             }
         }
         for (batch_index, proposal_index) in effective {
             let proposal = batches[batch_index]
-                .receipts
+                .captures
                 .as_mut()
-                .expect("receipt-enabled union batch has no typed proposal sidecar")
+                .expect("capture-enabled union batch has no typed proposal sidecar")
                 .get_mut(proposal_index)
                 .expect("effective union proposal disappeared after preflight");
             let cause = proposal.cause.promote();
@@ -799,7 +799,7 @@ impl DisplacedTable {
         }
     }
 
-    fn finish_receipt_insert(&mut self, row: &[Value], parent: Value, child: Value) {
+    fn finish_capture_insert(&mut self, row: &[Value], parent: Value, child: Value) {
         // Compress paths somewhat, given that we perform naive finds everywhere else.
         let _ = self.uf.find(parent);
         let _ = self.uf.find(child);

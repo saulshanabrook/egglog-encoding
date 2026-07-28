@@ -11,15 +11,17 @@ use std::sync::{Arc, RwLock};
 
 use anyhow::{Result, bail};
 use egglog_bridge::{
-    ActionRegistry, CheckReplayPremise, CheckReplaySpec, EGraph, QueryEntry, RuleBuilder,
-    RuleReplayBinding, RuleReplaySpec,
+    ActionRegistry, CriterionCapturePremise as BridgeCriterionCapturePremise,
+    CriterionCaptureSpec as BridgeCriterionCaptureSpec, EGraph,
+    FiringCaptureBinding as BridgeFiringCaptureBinding,
+    FiringCaptureSpec as BridgeFiringCaptureSpec, QueryEntry, RuleBuilder,
 };
 
 use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
 
 use crate::{
-    Backend, BaseValues, CausalCheckPremise, CausalRuleBinding, ColumnTy, ContainerValues,
-    ExecutionState, ExternalFunction, ExternalFunctionId, FunctionConfig, FunctionId,
+    Backend, BaseValues, ColumnTy, ContainerValues, CriterionCapturePremise, ExecutionState,
+    ExternalFunction, ExternalFunctionId, FiringCaptureBinding, FunctionConfig, FunctionId,
     FunctionReplaySpec, IterationReport, ReplayLiteral, ReplaySortId, ReplayTermId, ReportLevel,
     RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry,
     Value,
@@ -60,38 +62,38 @@ fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
         seminaive,
         no_decomp,
         core,
-        causal_receipt,
-        check_receipt,
-        source_receipt,
+        firing_capture,
+        criterion_capture,
+        source_capture,
         owned_external_funcs,
     } = rule;
     let mut builder = egraph.new_rule(&name, seminaive);
     for func in owned_external_funcs {
         builder.own_external_func(func);
     }
-    let causal_metadata_count = [
-        causal_receipt.is_some(),
-        check_receipt.is_some(),
-        source_receipt.is_some(),
+    let capture_metadata_count = [
+        firing_capture.is_some(),
+        criterion_capture.is_some(),
+        source_capture.is_some(),
     ]
     .into_iter()
     .filter(|present| *present)
     .count();
-    if causal_metadata_count > 1 {
-        bail!("one backend rule cannot have more than one kind of causal metadata");
+    if capture_metadata_count > 1 {
+        bail!("one backend rule cannot have more than one kind of capture metadata");
     }
-    if let Some(receipt) = &source_receipt {
-        builder.set_source_receipt(receipt.source.clone());
+    if let Some(capture) = &source_capture {
+        builder.set_source_capture(capture.source.clone());
     }
     builder.set_no_decomp(no_decomp);
     let mut variables = BTreeMap::new();
-    let mut union_sorts = causal_receipt
+    let mut union_sorts = firing_capture
         .as_ref()
-        .map(|receipt| receipt.union_sorts.iter().copied())
+        .map(|capture| capture.union_sorts.iter().copied())
         .or_else(|| {
-            source_receipt
+            source_capture
                 .as_ref()
-                .map(|receipt| receipt.union_sorts.iter().copied())
+                .map(|capture| capture.union_sorts.iter().copied())
         });
 
     let mut body_atom_to_table_premise = vec![None; core.body.atoms.len()];
@@ -180,7 +182,7 @@ fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
                 let rhs = rule_entry(&mut builder, &mut variables, rhs)?;
                 if let Some(sorts) = union_sorts.as_mut() {
                     let sort = sorts.next().ok_or_else(|| {
-                        anyhow::anyhow!("causal metadata has fewer union sorts than union actions")
+                        anyhow::anyhow!("capture metadata has fewer union sorts than union actions")
                     })?;
                     builder.union_with_replay(lhs, rhs, sort);
                 } else {
@@ -191,42 +193,44 @@ fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
         }
     }
     if union_sorts.is_some_and(|mut sorts| sorts.next().is_some()) {
-        bail!("causal metadata has more union sorts than union actions");
+        bail!("capture metadata has more union sorts than union actions");
     }
 
-    if let Some(receipt) = causal_receipt {
-        let bindings = receipt
+    if let Some(capture) = firing_capture {
+        let bindings = capture
             .bindings
             .iter()
             .map(|binding| match binding {
-                CausalRuleBinding::Variable {
+                FiringCaptureBinding::Variable {
                     variable,
                     current_sort,
                 } => {
                     let entry = variables.get(&variable.id).cloned().ok_or_else(|| {
                         anyhow::anyhow!(
-                            "causal rule binding `{}` was not lowered into the native rule",
+                            "firing capture binding `{}` was not lowered into the native rule",
                             variable.name
                         )
                     })?;
-                    Ok(RuleReplayBinding::Entry {
+                    Ok(BridgeFiringCaptureBinding::Entry {
                         entry,
                         current_sort: *current_sort,
                     })
                 }
-                CausalRuleBinding::Constant { term, sort } => Ok(RuleReplayBinding::Constant {
-                    term: *term,
-                    sort: *sort,
-                }),
+                FiringCaptureBinding::Constant { term, sort } => {
+                    Ok(BridgeFiringCaptureBinding::Constant {
+                        term: *term,
+                        sort: *sort,
+                    })
+                }
             })
             .collect::<Result<Vec<_>>>()?;
-        builder.set_rule_receipt(RuleReplaySpec {
-            rule: receipt.rule,
+        builder.set_firing_capture(BridgeFiringCaptureSpec {
+            rule: capture.rule,
             bindings: bindings.into_boxed_slice(),
         });
     }
-    if let Some(receipt) = check_receipt {
-        let premise = |source: CausalCheckPremise| -> Result<CheckReplayPremise> {
+    if let Some(capture) = criterion_capture {
+        let premise = |source: CriterionCapturePremise| -> Result<BridgeCriterionCapturePremise> {
             let logical_columns = core
                 .body
                 .atoms
@@ -234,7 +238,7 @@ fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
                 .map(|atom| atom.args.len())
                 .ok_or_else(|| {
                     anyhow::anyhow!(
-                        "causal check endpoint cites missing body atom {}",
+                        "criterion capture endpoint cites missing body atom {}",
                         source.body_atom
                     )
                 })?;
@@ -244,30 +248,30 @@ fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
                 .flatten()
                 .ok_or_else(|| {
                     anyhow::anyhow!(
-                        "causal check endpoint body atom {} is not a table premise",
+                        "criterion capture endpoint body atom {} is not a table premise",
                         source.body_atom
                     )
                 })?;
             if source.column >= logical_columns {
                 bail!(
-                    "causal check endpoint body atom {} has no logical column {}",
+                    "criterion capture endpoint body atom {} has no logical column {}",
                     source.body_atom,
                     source.column
                 );
             }
-            Ok(CheckReplayPremise {
+            Ok(BridgeCriterionCapturePremise {
                 premise,
                 column: source.column,
                 constructor: source.constructor,
             })
         };
-        let equalities = receipt
+        let equalities = capture
             .equalities
             .iter()
             .map(|(left, right)| Ok((premise(*left)?, premise(*right)?)))
             .collect::<Result<Vec<_>>>()?;
-        builder.set_check_receipt(CheckReplaySpec {
-            check: receipt.check,
+        builder.set_criterion_capture(BridgeCriterionCaptureSpec {
+            check: capture.check,
             equalities: equalities.into_boxed_slice(),
         });
     }
@@ -288,8 +292,8 @@ impl Backend for EGraph {
         EGraph::try_add_table(self, config)
     }
 
-    fn enable_causal_receipts(&mut self) -> Result<()> {
-        EGraph::enable_causal_receipts(self)
+    fn enable_trace(&mut self) -> Result<()> {
+        EGraph::enable_trace(self)
     }
 
     fn register_function_replay(
@@ -318,12 +322,12 @@ impl Backend for EGraph {
         EGraph::intern_replay_literal(self, sort, literal, value)
     }
 
-    fn finalize_causal_wave(&mut self) -> Result<()> {
-        EGraph::finalize_causal_wave(self)
+    fn finalize_trace_wave(&mut self) -> Result<()> {
+        EGraph::finalize_trace_wave(self)
     }
 
-    fn set_causal_wave(&mut self, wave: u64) -> Result<()> {
-        EGraph::set_causal_wave(self, wave)
+    fn set_trace_wave(&mut self, wave: u64) -> Result<()> {
+        EGraph::set_trace_wave(self, wave)
     }
 
     fn peek_next_function_id(&self) -> FunctionId {
@@ -439,15 +443,15 @@ mod tests {
     use egglog_ast::{core::GenericCoreRule, span::Span};
 
     use super::*;
-    use crate::{CausalCheckSpec, CausalRuleSpec, CausalSourceSpec, SourceRef};
+    use crate::{CriterionCaptureSpec, FiringCaptureSpec, SourceCaptureSpec, SourceRef};
 
     fn empty_rule(
-        causal_receipt: Option<CausalRuleSpec>,
-        check_receipt: Option<CausalCheckSpec>,
-        source_receipt: Option<CausalSourceSpec>,
+        firing_capture: Option<FiringCaptureSpec>,
+        criterion_capture: Option<CriterionCaptureSpec>,
+        source_capture: Option<SourceCaptureSpec>,
     ) -> RuleSpec {
         RuleSpec {
-            name: "invalid-causal-metadata".into(),
+            name: "invalid-capture-metadata".into(),
             seminaive: false,
             no_decomp: false,
             core: GenericCoreRule {
@@ -455,25 +459,25 @@ mod tests {
                 body: Default::default(),
                 head: Default::default(),
             },
-            causal_receipt,
-            check_receipt,
-            source_receipt,
+            firing_capture,
+            criterion_capture,
+            source_capture,
             owned_external_funcs: Vec::new(),
         }
     }
 
     #[test]
-    fn backend_rejects_multiple_causal_metadata_kinds_without_panicking() {
-        let rule = CausalRuleSpec {
+    fn backend_rejects_multiple_capture_metadata_kinds_without_panicking() {
+        let rule = FiringCaptureSpec {
             rule: 0,
             bindings: Box::new([]),
             union_sorts: Box::new([]),
         };
-        let check = CausalCheckSpec {
+        let check = CriterionCaptureSpec {
             check: 0,
             equalities: Box::new([]),
         };
-        let source = CausalSourceSpec {
+        let source = SourceCaptureSpec {
             source: SourceRef::Synthetic(0),
             union_sorts: Box::new([]),
         };
@@ -490,7 +494,7 @@ mod tests {
             let error = Backend::add_rule(&mut EGraph::default(), spec).unwrap_err();
             assert_eq!(
                 error.to_string(),
-                "one backend rule cannot have more than one kind of causal metadata"
+                "one backend rule cannot have more than one kind of capture metadata"
             );
         }
     }

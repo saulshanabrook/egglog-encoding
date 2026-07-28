@@ -19,16 +19,16 @@ use egglog_concurrency::NotificationList;
 use smallvec::SmallVec;
 
 use crate::{
-    BaseValues, CausalReceipts, CausalWave, CauseDraftId, ContainerValues, EqualityEdgeCount,
-    EqualityEndpoint, ExternalFunctionId, FactId, ReplayConstructorSpec, ReplaySortId,
-    WrappedTable,
+    BaseValues, CauseDraftId, ContainerValues, EdgeHorizon, EqualityEndpoint, ExternalFunctionId,
+    FactId, ReplayConstructorSpec, ReplaySortId, Trace, Wave, WrappedTable,
     common::Value,
     free_join::{CounterId, Counters, ExternalFunctions, TableId, TableInfo, Variable},
     pool::{Clear, Pooled, with_pool_set},
-    receipts::{
-        ActionReceiptKind, CauseCapability, CauseRef, CheckEndpointOccurrence, CheckEndpointSpec,
-        CheckTermSource, DeferredEqualityCause, FactCellRef, PendingPremiseResolver,
-        ReplayBindingSource, RowOriginSiteId, TermOriginSiteId, TypedEqualityProposal,
+    provenance::{
+        ActionCaptureKind, CauseCapability, CheckEndpointSpec, CheckTermSource,
+        CriterionEndpointOccurrence, DeferredEqualityCause, FactCellRef, PackedCauseRef,
+        PendingPremiseResolver, ReplayBindingSource, RowOriginSiteId, TermOriginSiteId,
+        TypedEqualityProposal,
     },
     table_spec::{ColumnId, MutationBuffer},
 };
@@ -123,39 +123,39 @@ pub(crate) struct Bindings {
     /// Points into `data`. `data[vars[var].. vars[var]+matches]` contains the values for `data`.
     var_offsets: DenseIdMap<Variable, usize>,
     /// Absent for ordinary rules, keeping every causal allocation off the
-    /// receipt-disabled path.
-    receipt: Option<Box<ReceiptBindings>>,
+    /// capture-disabled path.
+    capture: Option<Box<CaptureBindings>>,
 }
 
-struct ReceiptBindings {
-    kind: ActionReceiptKind,
-    wave: CausalWave,
+struct CaptureBindings {
+    kind: ActionCaptureKind,
+    wave: Wave,
     binding_sources: Arc<[ReplayBindingSource]>,
-    premises: ReceiptPremises,
-    causes: Vec<Option<CauseRef>>,
-    observed: Option<crate::receipts::ObservedMatchBatch>,
+    premises: CapturePremises,
+    causes: Vec<Option<PackedCauseRef>>,
+    observed: Option<crate::provenance::ObservedFiringBatch>,
 }
 
-struct RuleReceiptExecutionGuard {
-    receipts: CausalReceipts,
+struct RuleCaptureExecutionGuard {
+    trace: Trace,
     completed: bool,
 }
 
-impl RuleReceiptExecutionGuard {
+impl RuleCaptureExecutionGuard {
     fn complete(&mut self) {
         self.completed = true;
     }
 }
 
-impl Drop for RuleReceiptExecutionGuard {
+impl Drop for RuleCaptureExecutionGuard {
     fn drop(&mut self) {
         if !self.completed {
-            self.receipts.poison_rule_execution();
+            self.trace.poison_rule_execution();
         }
     }
 }
 
-enum ReceiptPremises {
+enum CapturePremises {
     Flat {
         arity: usize,
         facts: Vec<FactId>,
@@ -167,7 +167,7 @@ enum ReceiptPremises {
     },
 }
 
-impl ReceiptPremises {
+impl CapturePremises {
     fn arity(&self) -> usize {
         match self {
             Self::Flat { arity, .. } | Self::Lazy { arity, .. } => *arity,
@@ -186,7 +186,7 @@ impl ReceiptPremises {
                 lanes,
             } => {
                 let result = resolver.resolve(lanes[lane]);
-                assert_eq!(result.len(), *arity, "receipt witness has wrong arity");
+                assert_eq!(result.len(), *arity, "capture witness has wrong arity");
                 result
             }
         }
@@ -217,7 +217,7 @@ impl Bindings {
             max_batch_size,
             data: Default::default(),
             var_offsets: DenseIdMap::new(),
-            receipt: None,
+            capture: None,
         }
     }
     fn assert_invariant(&self) {
@@ -240,7 +240,7 @@ impl Bindings {
         self.matches = 0;
         self.var_offsets.clear();
         self.data.clear();
-        self.receipt = None;
+        self.capture = None;
         self.assert_invariant();
     }
 
@@ -321,29 +321,29 @@ impl Bindings {
         self.assert_invariant();
     }
 
-    pub(crate) fn push_receipt(
+    pub(crate) fn push_capture(
         &mut self,
-        kind: &ActionReceiptKind,
-        wave: CausalWave,
+        kind: &ActionCaptureKind,
+        wave: Wave,
         premises: &[FactId],
         binding_sources: &Arc<[ReplayBindingSource]>,
     ) {
-        if let Some(existing) = &mut self.receipt {
+        if let Some(existing) = &mut self.capture {
             assert_eq!(&existing.kind, kind);
             assert_eq!(existing.wave, wave);
             assert_eq!(existing.binding_sources.as_ref(), binding_sources.as_ref());
-            let ReceiptPremises::Flat { arity, facts } = &mut existing.premises else {
-                panic!("cannot mix eager and lazy receipt witnesses in one action batch")
+            let CapturePremises::Flat { arity, facts } = &mut existing.premises else {
+                panic!("cannot mix eager and lazy capture witnesses in one action batch")
             };
             assert_eq!(*arity, premises.len());
             facts.extend_from_slice(premises);
             existing.causes.push(None);
         } else {
-            self.receipt = Some(Box::new(ReceiptBindings {
+            self.capture = Some(Box::new(CaptureBindings {
                 kind: kind.clone(),
                 wave,
                 binding_sources: Arc::clone(binding_sources),
-                premises: ReceiptPremises::Flat {
+                premises: CapturePremises::Flat {
                     arity: premises.len(),
                     facts: premises.into(),
                 },
@@ -353,26 +353,26 @@ impl Bindings {
         }
     }
 
-    pub(crate) fn push_lazy_receipt(
+    pub(crate) fn push_lazy_capture(
         &mut self,
-        kind: &ActionReceiptKind,
-        wave: CausalWave,
+        kind: &ActionCaptureKind,
+        wave: Wave,
         premise_arity: usize,
         binding_sources: &Arc<[ReplayBindingSource]>,
         resolver: Arc<dyn PendingPremiseResolver>,
         witness_lane: u32,
     ) {
-        if let Some(existing) = &mut self.receipt {
+        if let Some(existing) = &mut self.capture {
             assert_eq!(&existing.kind, kind);
             assert_eq!(existing.wave, wave);
             assert_eq!(existing.binding_sources.as_ref(), binding_sources.as_ref());
-            let ReceiptPremises::Lazy {
+            let CapturePremises::Lazy {
                 arity,
                 resolver: existing_resolver,
                 lanes,
             } = &mut existing.premises
             else {
-                panic!("cannot mix eager and lazy receipt witnesses in one action batch")
+                panic!("cannot mix eager and lazy capture witnesses in one action batch")
             };
             assert_eq!(*arity, premise_arity);
             assert!(
@@ -382,11 +382,11 @@ impl Bindings {
             lanes.push(witness_lane);
             existing.causes.push(None);
         } else {
-            self.receipt = Some(Box::new(ReceiptBindings {
+            self.capture = Some(Box::new(CaptureBindings {
                 kind: kind.clone(),
                 wave,
                 binding_sources: Arc::clone(binding_sources),
-                premises: ReceiptPremises::Lazy {
+                premises: CapturePremises::Lazy {
                     arity: premise_arity,
                     resolver,
                     lanes: vec![witness_lane],
@@ -397,24 +397,24 @@ impl Bindings {
         }
     }
 
-    fn ensure_observed_rule_batch(&mut self, receipts: &CausalReceipts) {
+    fn ensure_observed_firing_batch(&mut self, trace: &Trace) {
         let state = self
-            .receipt
+            .capture
             .as_ref()
-            .expect("receipt-enabled action requires exact match witnesses");
+            .expect("capture-enabled action requires exact match witnesses");
         if state.observed.is_some() {
             return;
         }
-        let ActionReceiptKind::Rule(rule) = &state.kind else {
-            panic!("only rule matches may defer equality cause promotion")
+        let ActionCaptureKind::Rule(rule) = &state.kind else {
+            panic!("only firings may defer equality cause promotion")
         };
         let rule = *rule;
         let wave = state.wave;
         let premise_arity = state.premises.arity();
         let binding_sources = state.binding_sources.clone();
-        let first_native_ordinal = receipts.reserve_native_match_ordinals(self.matches);
+        let first_native_ordinal = trace.reserve_firing_ordinals(self.matches);
         let observed = match &state.premises {
-            ReceiptPremises::Flat { facts, .. } => receipts.observe_rule_batch_at(
+            CapturePremises::Flat { facts, .. } => trace.observe_firing_batch_at(
                 rule,
                 wave,
                 first_native_ordinal,
@@ -423,9 +423,9 @@ impl Bindings {
                 facts,
                 self.matches,
             ),
-            ReceiptPremises::Lazy {
+            CapturePremises::Lazy {
                 resolver, lanes, ..
-            } => receipts.observe_rule_batch_lazy(
+            } => trace.observe_firing_batch_lazy(
                 rule,
                 wave,
                 first_native_ordinal,
@@ -435,62 +435,55 @@ impl Bindings {
                 lanes,
             ),
         };
-        self.receipt.as_mut().unwrap().observed = Some(observed);
+        self.capture.as_mut().unwrap().observed = Some(observed);
     }
 
-    fn begin_receipt_execution(
-        &mut self,
-        receipts: &CausalReceipts,
-    ) -> Option<RuleReceiptExecutionGuard> {
+    fn begin_capture_execution(&mut self, trace: &Trace) -> Option<RuleCaptureExecutionGuard> {
         {
-            let state = self.receipt.as_mut()?;
-            if !matches!(state.kind, ActionReceiptKind::Rule(_)) {
+            let state = self.capture.as_mut()?;
+            if !matches!(state.kind, ActionCaptureKind::Rule(_)) {
                 return None;
             }
             assert!(
                 state.observed.is_none(),
-                "one receipt binding batch executed more than once"
+                "one capture binding batch executed more than once"
             );
         }
-        let guard = RuleReceiptExecutionGuard {
-            receipts: receipts.clone(),
+        let guard = RuleCaptureExecutionGuard {
+            trace: trace.clone(),
             completed: false,
         };
         // Record every normal input lane before effects select the reachable
-        // subset. RuleMatchId is therefore the dense native observation id.
-        self.ensure_observed_rule_batch(receipts);
+        // subset. FiringId is therefore the dense native observation id.
+        self.ensure_observed_firing_batch(trace);
         Some(guard)
     }
 
-    fn deferred_equality_cause(
-        &mut self,
-        lane: usize,
-        receipts: &CausalReceipts,
-    ) -> DeferredEqualityCause {
-        if let Some(cause) = self.receipt_cause(lane) {
+    fn deferred_equality_cause(&mut self, lane: usize, trace: &Trace) -> DeferredEqualityCause {
+        if let Some(cause) = self.capture_cause(lane) {
             return DeferredEqualityCause::ready(cause);
         }
         if matches!(
-            self.receipt.as_ref().map(|state| &state.kind),
-            Some(ActionReceiptKind::Source(_))
+            self.capture.as_ref().map(|state| &state.kind),
+            Some(ActionCaptureKind::Source(_))
         ) {
-            self.ensure_receipt_causes(&[lane], receipts);
+            self.ensure_capture_causes(&[lane], trace);
             return DeferredEqualityCause::ready(
-                self.receipt_cause(lane)
-                    .expect("source effect is missing its exact receipt cause"),
+                self.capture_cause(lane)
+                    .expect("source effect is missing its exact capture cause"),
             );
         }
-        self.ensure_observed_rule_batch(receipts);
-        let state = self.receipt.as_ref().unwrap();
+        self.ensure_observed_firing_batch(trace);
+        let state = self.capture.as_ref().unwrap();
         let observed = state.observed.as_ref().unwrap();
-        DeferredEqualityCause::pending(receipts.pending_rule_cause(observed, lane))
+        DeferredEqualityCause::pending(trace.pending_firing_cause(observed, lane))
     }
 
-    fn ensure_receipt_causes(&mut self, lanes: &[usize], receipts: &CausalReceipts) {
+    fn ensure_capture_causes(&mut self, lanes: &[usize], trace: &Trace) {
         let state = self
-            .receipt
+            .capture
             .as_ref()
-            .expect("receipt-enabled action requires exact match witnesses");
+            .expect("capture-enabled action requires exact match witnesses");
         let mut missing = SmallVec::<[usize; 16]>::new();
         missing.extend(
             lanes
@@ -505,58 +498,58 @@ impl Bindings {
             let registered = missing
                 .iter()
                 .copied()
-                .map(|lane| (lane, receipts.pending_rule_cause(observed, lane).promote()))
-                .collect::<SmallVec<[(usize, CauseRef); 16]>>();
-            let state = self.receipt.as_mut().unwrap();
+                .map(|lane| (lane, trace.pending_firing_cause(observed, lane).promote()))
+                .collect::<SmallVec<[(usize, PackedCauseRef); 16]>>();
+            let state = self.capture.as_mut().unwrap();
             for (lane, cause) in registered {
                 state.causes[lane] = Some(cause);
             }
             return;
         }
-        if let ActionReceiptKind::Source(source) = &state.kind {
-            let registered = receipts.register_source_actions(source, &missing);
-            let state = self.receipt.as_mut().unwrap();
+        if let ActionCaptureKind::Source(source) = &state.kind {
+            let registered = trace.register_source_actions(source, &missing);
+            let state = self.capture.as_mut().unwrap();
             for (lane, cause) in registered {
                 state.causes[lane] = Some(cause.into());
             }
             return;
         }
-        let ActionReceiptKind::Rule(_) = &state.kind else {
-            panic!("check receipt action cannot stage native effects");
+        let ActionCaptureKind::Rule(_) = &state.kind else {
+            panic!("check capture action cannot stage native effects");
         };
-        panic!("rule causes must be promoted through their pending match batch")
+        panic!("rule causes must be promoted through their pending firing batch")
     }
 
-    fn receipt_cause(&self, lane: usize) -> Option<CauseRef> {
-        self.receipt.as_ref()?.causes[lane]
+    fn capture_cause(&self, lane: usize) -> Option<PackedCauseRef> {
+        self.capture.as_ref()?.causes[lane]
     }
 
-    fn check_receipt(&self, lane: usize) -> (CausalWave, SmallVec<[FactId; 4]>) {
+    fn check_capture(&self, lane: usize) -> (Wave, SmallVec<[FactId; 4]>) {
         let state = self
-            .receipt
+            .capture
             .as_ref()
-            .expect("receipt-aware check requires exact native witnesses");
+            .expect("capture-aware check requires exact native witnesses");
         assert_eq!(
             state.kind,
-            ActionReceiptKind::Check,
-            "check recorder reached non-check receipt metadata"
+            ActionCaptureKind::Check,
+            "check recorder reached non-check capture metadata"
         );
         (state.wave, state.premises.resolve(lane))
     }
 
     fn container_anchor_binding_sources(&self) -> Result<Arc<[ReplayBindingSource]>, String> {
         let state = self
-            .receipt
+            .capture
             .as_ref()
-            .ok_or_else(|| "container anchor has no exact receipt bindings".to_owned())?;
+            .ok_or_else(|| "container anchor has no exact capture bindings".to_owned())?;
         Ok(Arc::clone(&state.binding_sources))
     }
 
     fn container_anchor_premises(&self, lane: usize) -> Result<SmallVec<[FactId; 4]>, String> {
         let state = self
-            .receipt
+            .capture
             .as_ref()
-            .ok_or_else(|| "container anchor has no exact receipt bindings".to_owned())?;
+            .ok_or_else(|| "container anchor has no exact capture bindings".to_owned())?;
         Ok(state.premises.resolve(lane))
     }
 
@@ -643,18 +636,18 @@ impl PredictedVals {
 pub(crate) enum ActiveCause {
     Ready(CauseCapability),
     #[cfg(test)]
-    Direct(CauseRef),
+    Direct(PackedCauseRef),
     DeferredMerge {
         incoming: DeferredEqualityCause,
         prior_fact: FactId,
         table: TableId,
-        incoming_origin: Option<crate::receipts::RowOriginRef>,
+        incoming_origin: Option<crate::provenance::RowOriginRef>,
         shared: Option<DeferredEqualityCause>,
     },
 }
 
 impl ActiveCause {
-    fn deferred(&mut self, receipts: &CausalReceipts) -> DeferredEqualityCause {
+    fn deferred(&mut self, trace: &Trace) -> DeferredEqualityCause {
         match self {
             Self::Ready(cause) => DeferredEqualityCause::capability(*cause),
             #[cfg(test)]
@@ -665,7 +658,7 @@ impl ActiveCause {
                 shared,
                 ..
             } => shared
-                .get_or_insert_with(|| receipts.pending_merge_cause(incoming.clone(), *prior_fact))
+                .get_or_insert_with(|| trace.pending_merge_cause(incoming.clone(), *prior_fact))
                 .clone(),
         }
     }
@@ -688,8 +681,8 @@ pub(crate) struct DbView<'a> {
     pub(crate) bases: &'a BaseValues,
     pub(crate) containers: &'a ContainerValues,
     pub(crate) notification_list: &'a NotificationList<TableId>,
-    pub(crate) causal_receipts: Option<&'a CausalReceipts>,
-    pub(crate) causal_wave: CausalWave,
+    pub(crate) trace: Option<&'a Trace>,
+    pub(crate) trace_wave: Wave,
 }
 
 /// A handle on a database that may be in the process of running a rule.
@@ -880,8 +873,8 @@ impl<'a> ExecutionState<'a> {
         &mut self,
         transaction: crate::table_spec::MutationTransaction,
     ) {
-        if let Some(receipts) = self.db.causal_receipts {
-            transaction.validate_causal_scope(receipts, self.db.causal_wave);
+        if let Some(trace) = self.db.trace {
+            transaction.validate_causal_scope(trace, self.db.trace_wave);
         }
         self.buffers.defer_until(transaction);
     }
@@ -891,8 +884,8 @@ impl<'a> ExecutionState<'a> {
     /// If you are using `egglog`, consider using `egglog_bridge::TableAction`.
     pub fn stage_insert(&mut self, table: TableId, row: &[Value]) {
         assert!(
-            self.db.causal_receipts.is_none(),
-            "receipt-enabled insertion requires an exact static row origin"
+            self.db.trace.is_none(),
+            "capture-enabled insertion requires an exact static row origin"
         );
         self.buffers
             .lazy_init(table, || self.db.table_info[table].table.new_buffer());
@@ -911,15 +904,15 @@ impl<'a> ExecutionState<'a> {
     ) {
         self.buffers
             .lazy_init(table, || self.db.table_info[table].table.new_buffer());
-        let receipts = self
+        let trace = self
             .db
-            .causal_receipts
-            .expect("origin-attributed insertion requires causal receipts");
+            .trace
+            .expect("origin-attributed insertion requires causal trace");
         let cause = self
             .active_cause
             .as_mut()
             .expect("origin-attributed insertion has no active cause")
-            .deferred(receipts);
+            .deferred(trace);
         self.buffers
             .stage_insert_deferred_with_origin(table, row, cause, origin);
         self.changed = true;
@@ -936,15 +929,15 @@ impl<'a> ExecutionState<'a> {
         timestamp: Value,
         sort: ReplaySortId,
     ) {
-        let receipts = self
+        let trace = self
             .db
-            .causal_receipts
-            .expect("typed union staging requires causal receipts");
+            .trace
+            .expect("typed union staging requires causal trace");
         let cause = self
             .active_cause
             .as_mut()
-            .expect("receipt-enabled union reached an uninstrumented action")
-            .deferred(receipts);
+            .expect("capture-enabled union reached an uninstrumented action")
+            .deferred(trace);
         self.stage_union_with_deferred_cause(table, left, right, timestamp, sort, cause);
     }
 
@@ -957,18 +950,18 @@ impl<'a> ExecutionState<'a> {
         sort: ReplaySortId,
         cause: DeferredEqualityCause,
     ) {
-        let receipts = self
+        let trace = self
             .db
-            .causal_receipts
-            .expect("typed union staging requires causal receipts");
-        receipts
+            .trace
+            .expect("typed union staging requires causal trace");
+        trace
             .validate_deferred_equality_cause(&cause)
             .unwrap_or_else(|error| panic!("invalid equality cause: {error}"));
-        receipts
-            .validate_equality_wave_timestamp(self.db.causal_wave, timestamp)
+        trace
+            .validate_equality_wave_timestamp(self.db.trace_wave, timestamp)
             .unwrap_or_else(|error| panic!("invalid equality timestamp: {error}"));
-        let proposal = receipts
-            .typed_equality_proposal(self.db.causal_wave, sort, left, right)
+        let proposal = trace
+            .typed_equality_proposal(self.db.trace_wave, sort, left, right)
             .unwrap_or_else(|error| panic!("invalid typed union proposal: {error}"));
         self.stage_typed_union_proposal(table, left, right, timestamp, cause, proposal);
     }
@@ -1000,24 +993,24 @@ impl<'a> ExecutionState<'a> {
         );
         let incoming_origin =
             incoming_origin.expect("merge union incoming row has no exact structural origin");
-        let receipts = self
+        let trace = self
             .db
-            .causal_receipts
-            .expect("typed merge union staging requires causal receipts");
+            .trace
+            .expect("typed merge union staging requires causal trace");
         let cause = self
             .active_cause
             .as_mut()
             .expect("merge union lost its active cause")
-            .deferred(receipts);
-        receipts
+            .deferred(trace);
+        trace
             .validate_deferred_equality_cause(&cause)
             .unwrap_or_else(|error| panic!("invalid equality cause: {error}"));
-        receipts
-            .validate_equality_wave_timestamp(self.db.causal_wave, timestamp)
+        trace
+            .validate_equality_wave_timestamp(self.db.trace_wave, timestamp)
             .unwrap_or_else(|error| panic!("invalid equality timestamp: {error}"));
-        let proposal = receipts
+        let proposal = trace
             .typed_merge_equality_proposal(
-                self.db.causal_wave,
+                self.db.trace_wave,
                 sort,
                 left,
                 right,
@@ -1047,31 +1040,31 @@ impl<'a> ExecutionState<'a> {
         self.changed = true;
     }
 
-    /// Whether this execution belongs to a database recording causal receipts.
-    pub fn causal_receipts_enabled(&self) -> bool {
-        self.db.causal_receipts.is_some()
+    /// Whether this execution belongs to a database recording causal trace.
+    pub fn trace_enabled(&self) -> bool {
+        self.db.trace.is_some()
     }
 
     /// Resolve the instance-local logical sort registered for one table cell.
-    pub fn causal_replay_sort(&self, table: TableId, column: ColumnId) -> Option<ReplaySortId> {
+    pub fn replay_sort(&self, table: TableId, column: ColumnId) -> Option<ReplaySortId> {
         self.db
-            .causal_receipts
-            .and_then(|receipts| receipts.table_column_sort(table, column.index()))
+            .trace
+            .and_then(|trace| trace.table_column_sort(table, column.index()))
     }
 
     pub(crate) fn set_active_cause(&mut self, cause: Option<CauseDraftId>) {
         self.active_cause = cause.map(|cause| {
             ActiveCause::Ready(
                 self.db
-                    .causal_receipts
-                    .expect("active receipt cause requires causal receipts")
+                    .trace
+                    .expect("active capture cause requires causal trace")
                     .cause_capability(cause),
             )
         });
     }
 
     #[cfg(test)]
-    pub(crate) fn set_active_cause_ref(&mut self, cause: Option<crate::ReceiptCauseRef>) {
+    pub(crate) fn set_active_cause_ref(&mut self, cause: Option<crate::CauseRef>) {
         self.active_cause = cause.map(|cause| ActiveCause::Direct(cause.into()));
     }
 
@@ -1090,7 +1083,7 @@ impl<'a> ExecutionState<'a> {
         incoming: DeferredEqualityCause,
         prior_fact: FactId,
         table: TableId,
-        incoming_origin: Option<crate::receipts::RowOriginRef>,
+        incoming_origin: Option<crate::provenance::RowOriginRef>,
     ) -> Option<ActiveCause> {
         self.active_cause.replace(ActiveCause::DeferredMerge {
             incoming,
@@ -1111,11 +1104,11 @@ impl<'a> ExecutionState<'a> {
             .take()
             .expect("deferred merge lost its active cause");
         let result = require_cause.then(|| {
-            let receipts = self
+            let trace = self
                 .db
-                .causal_receipts
-                .expect("deferred merge cause requires causal receipts");
-            active.deferred(receipts)
+                .trace
+                .expect("deferred merge cause requires causal trace");
+            active.deferred(trace)
         });
         self.active_cause = previous;
         result
@@ -1149,32 +1142,32 @@ impl<'a> ExecutionState<'a> {
         let proposal = self
             .active_container_union
             .expect("container union has no prepared structural proposal");
-        assert_eq!(proposal.wave(), self.db.causal_wave);
+        assert_eq!(proposal.wave(), self.db.trace_wave);
         assert_eq!((proposal.left().raw, proposal.right().raw), (left, right));
-        let receipts = self
+        let trace = self
             .db
-            .causal_receipts
-            .expect("container union staging requires causal receipts");
+            .trace
+            .expect("container union staging requires causal trace");
         let cause = self
             .active_cause
             .as_mut()
             .expect("container union lost its active cause")
-            .deferred(receipts);
-        receipts
+            .deferred(trace);
+        trace
             .validate_deferred_equality_cause(&cause)
             .unwrap_or_else(|error| panic!("invalid container equality cause: {error}"));
-        receipts
-            .validate_equality_wave_timestamp(self.db.causal_wave, timestamp)
+        trace
+            .validate_equality_wave_timestamp(self.db.trace_wave, timestamp)
             .unwrap_or_else(|error| panic!("invalid container equality timestamp: {error}"));
         self.stage_typed_union_proposal(table, left, right, timestamp, cause, proposal);
     }
 
-    pub(crate) fn causal_receipts(&self) -> Option<&CausalReceipts> {
-        self.db.causal_receipts
+    pub(crate) fn trace(&self) -> Option<&Trace> {
+        self.db.trace
     }
 
-    pub(crate) fn causal_wave(&self) -> CausalWave {
-        self.db.causal_wave
+    pub(crate) fn trace_wave(&self) -> Wave {
+        self.db.trace_wave
     }
 
     /// Stage a removal of the given row from `table` if it is present.
@@ -1182,8 +1175,8 @@ impl<'a> ExecutionState<'a> {
     /// If you are using `egglog`, consider using `egglog_bridge::TableAction`.
     pub fn stage_remove(&mut self, table: TableId, key: &[Value]) {
         assert!(
-            self.db.causal_receipts.is_none(),
-            "causal receipts do not support removal; failing closed"
+            self.db.trace.is_none(),
+            "causal trace do not support removal; failing closed"
         );
         self.buffers
             .lazy_init(table, || self.db.table_info[table].table.new_buffer());
@@ -1251,8 +1244,8 @@ impl<'a> ExecutionState<'a> {
             return row.vals;
         }
         assert!(
-            self.db.causal_receipts.is_none(),
-            "receipt-enabled prediction requires an exact static row origin"
+            self.db.trace.is_none(),
+            "capture-enabled prediction requires an exact static row origin"
         );
         Pooled::cloned(
             self.predicted
@@ -1288,15 +1281,15 @@ impl<'a> ExecutionState<'a> {
         if let Some(row) = self.predicted.data.get(&prediction_key) {
             return Pooled::cloned(row);
         }
-        let receipts = self
+        let trace = self
             .db
-            .causal_receipts
-            .expect("origin-attributed prediction requires causal receipts");
+            .trace
+            .expect("origin-attributed prediction requires causal trace");
         let cause = self
             .active_cause
             .as_mut()
             .expect("origin-attributed prediction has no active source cause")
-            .deferred(receipts);
+            .deferred(trace);
         let mut row = with_pool_set(|ps| ps.get::<Vec<Value>>());
         row.reserve(key.len() + vals.len());
         row.extend_from_slice(key);
@@ -1334,7 +1327,7 @@ impl<'a> ExecutionState<'a> {
                 })
             }
             buffers.lazy_init(table, || db.table_info[table].table.new_buffer());
-            debug_assert!(db.causal_receipts.is_none());
+            debug_assert!(db.trace.is_none());
             buffers.stage_insert(table, &new);
             *changed = true;
             new
@@ -1354,8 +1347,8 @@ impl<'a> ExecutionState<'a> {
             return val;
         }
         assert!(
-            self.db.causal_receipts.is_none(),
-            "receipt-enabled prediction requires an exact static row origin"
+            self.db.trace.is_none(),
+            "capture-enabled prediction requires an exact static row origin"
         );
         self.predicted.get_val(table, key, || {
             Self::construct_new_row(
@@ -1392,10 +1385,10 @@ impl ExecutionState<'_> {
             // If we have no variables, we want to run the rules once.
             bindings.matches = 1;
         }
-        let mut receipt_guard = self
+        let mut capture_guard = self
             .db
-            .causal_receipts
-            .and_then(|receipts| bindings.begin_receipt_execution(receipts));
+            .trace
+            .and_then(|trace| bindings.begin_capture_execution(trace));
 
         // Vectorized execution for larger batch sizes
         let mut mask = with_pool_set(|ps| Mask::new(0..bindings.matches, ps));
@@ -1406,7 +1399,7 @@ impl ExecutionState<'_> {
             self.run_instr(&mut mask, instr, bindings);
         }
         let succeeded = mask.count_ones();
-        if let Some(guard) = &mut receipt_guard {
+        if let Some(guard) = &mut capture_guard {
             guard.complete();
         }
         succeeded
@@ -1459,11 +1452,11 @@ impl ExecutionState<'_> {
                 if mask_copy.is_empty() {
                     return;
                 }
-                let deferred_causes = if let Some(receipts) = self.db.causal_receipts {
+                let deferred_causes = if let Some(trace) = self.db.trace {
                     let mut causes = vec![None; bindings.matches];
                     let mut cause_mask = mask_copy.clone();
                     cause_mask.empty_iter().for_each_indexed(|offset, ()| {
-                        causes[offset] = Some(bindings.deferred_equality_cause(offset, receipts));
+                        causes[offset] = Some(bindings.deferred_equality_cause(offset, trace));
                     });
                     Some(causes)
                 } else {
@@ -1517,10 +1510,10 @@ impl ExecutionState<'_> {
                                         *table_id,
                                         &row,
                                         causes[offset].clone().expect(
-                                            "constructor lane is missing its exact receipt cause",
+                                            "constructor lane is missing its exact capture cause",
                                         ),
                                         origin.expect(
-                                            "receipt lookup/insert has no static row origin",
+                                            "capture lookup/insert has no static row origin",
                                         ),
                                     );
                                 } else {
@@ -1541,10 +1534,10 @@ impl ExecutionState<'_> {
                 dst_var,
                 origin,
             } => {
-                let receipts = self
+                let trace = self
                     .db
-                    .causal_receipts
-                    .expect("replay constructor instruction requires causal receipts");
+                    .trace
+                    .expect("replay constructor instruction requires causal trace");
                 let pool = with_pool_set(|ps| ps.get_pool::<Vec<Value>>().clone());
                 self.buffers.lazy_init(*table_id, || {
                     self.db.table_info[*table_id].table.new_buffer()
@@ -1608,8 +1601,8 @@ impl ExecutionState<'_> {
                         buffers.stage_insert_deferred_with_origin(
                             *table_id,
                             row,
-                            bindings.deferred_equality_cause(lane, receipts),
-                            origin.expect("receipt constructor has no static row origin"),
+                            bindings.deferred_equality_cause(lane, trace),
+                            origin.expect("capture constructor has no static row origin"),
                         );
                     }
                 }
@@ -1678,11 +1671,11 @@ impl ExecutionState<'_> {
                 vals,
                 origin,
             } => {
-                if let Some(receipts) = self.db.causal_receipts {
+                if let Some(trace) = self.db.trace {
                     let mut causes = vec![None; bindings.matches];
                     let mut cause_mask = mask.clone();
                     cause_mask.empty_iter().for_each_indexed(|offset, ()| {
-                        causes[offset] = Some(bindings.deferred_equality_cause(offset, receipts));
+                        causes[offset] = Some(bindings.deferred_equality_cause(offset, trace));
                     });
                     for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| {
                         iter.for_each_indexed(|offset, vals| {
@@ -1694,15 +1687,15 @@ impl ExecutionState<'_> {
                                 vals.as_slice(),
                                 causes[offset]
                                     .clone()
-                                    .expect("receipt insert lane has no exact cause"),
-                                origin.expect("receipt insert has no static row origin"),
+                                    .expect("capture insert lane has no exact cause"),
+                                origin.expect("capture insert has no static row origin"),
                             );
                             self.changed = true;
                         })
                     });
                 } else {
                     // Keep the ordinary loop byte-for-byte equivalent to the
-                    // pre-receipt action path.
+                    // pre-capture action path.
                     for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| {
                         iter.for_each(|vals| {
                             self.stage_insert(*table, vals.as_slice());
@@ -1719,10 +1712,10 @@ impl ExecutionState<'_> {
                 left_origin,
                 right_origin,
             } => {
-                let receipts = self
+                let trace = self
                     .db
-                    .causal_receipts
-                    .expect("typed union instruction requires causal receipts");
+                    .trace
+                    .expect("typed union instruction requires causal trace");
                 mask.empty_iter().for_each_indexed(|offset, ()| {
                     let get = |entry| match entry {
                         QueryEntry::Const(value) => value,
@@ -1731,10 +1724,10 @@ impl ExecutionState<'_> {
                     let left = get(*left);
                     let right = get(*right);
                     let timestamp = get(*timestamp);
-                    let cause = bindings.deferred_equality_cause(offset, receipts);
-                    let proposal = receipts
+                    let cause = bindings.deferred_equality_cause(offset, trace);
+                    let proposal = trace
                         .typed_equality_proposal_from_sites(
-                            self.db.causal_wave,
+                            self.db.trace_wave,
                             *sort,
                             left,
                             left_origin.expect("typed union has no left structural origin"),
@@ -1754,7 +1747,7 @@ impl ExecutionState<'_> {
                 vals,
                 origin,
             } => {
-                if let Some(receipts) = self.db.causal_receipts {
+                if let Some(trace) = self.db.trace {
                     fn get(bindings: &Bindings, entry: QueryEntry, offset: usize) -> Value {
                         match entry {
                             QueryEntry::Const(value) => value,
@@ -1771,8 +1764,7 @@ impl ExecutionState<'_> {
                     if !lanes.is_empty() {
                         let mut causes = vec![None; bindings.matches];
                         for offset in lanes {
-                            causes[offset] =
-                                Some(bindings.deferred_equality_cause(offset, receipts));
+                            causes[offset] = Some(bindings.deferred_equality_cause(offset, trace));
                         }
                         for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| {
                             iter.for_each_indexed(|offset, vals| {
@@ -1785,9 +1777,9 @@ impl ExecutionState<'_> {
                                         vals.as_slice(),
                                         causes[offset]
                                             .clone()
-                                            .expect("receipt conditional insert has no cause"),
+                                            .expect("capture conditional insert has no cause"),
                                         origin.expect(
-                                            "receipt conditional insert has no static row origin",
+                                            "capture conditional insert has no static row origin",
                                         ),
                                     );
                                     self.changed = true;
@@ -1836,11 +1828,11 @@ impl ExecutionState<'_> {
                 }
             }
             Instr::Remove { table, args } => {
-                if let Some(receipts) = self.db.causal_receipts {
+                if let Some(trace) = self.db.trace {
                     let mut causes = vec![None; bindings.matches];
                     let mut cause_mask = mask.clone();
                     cause_mask.empty_iter().for_each_indexed(|offset, ()| {
-                        causes[offset] = Some(bindings.deferred_equality_cause(offset, receipts));
+                        causes[offset] = Some(bindings.deferred_equality_cause(offset, trace));
                     });
                     for_each_binding_with_mask!(mask, args.as_slice(), bindings, |iter| {
                         iter.for_each_indexed(|offset, args| {
@@ -1852,7 +1844,7 @@ impl ExecutionState<'_> {
                                 args.as_slice(),
                                 causes[offset]
                                     .clone()
-                                    .expect("receipt removal lane has no exact cause"),
+                                    .expect("capture removal lane has no exact cause"),
                             );
                             self.changed = true;
                         })
@@ -1925,10 +1917,10 @@ impl ExecutionState<'_> {
                 replay,
                 origin,
             } => {
-                let receipts = self
+                let trace = self
                     .db
-                    .causal_receipts
-                    .expect("container replay promotion requires causal receipts");
+                    .trace
+                    .expect("container replay promotion requires causal trace");
                 assert!(
                     replay.promote_immediately,
                     "runtime replay promotion is reserved for registry-mutating containers"
@@ -1937,7 +1929,7 @@ impl ExecutionState<'_> {
                 let binding_sources = bindings
                     .container_anchor_binding_sources()
                     .unwrap_or_else(|error| panic!("cannot resolve container anchor: {error}"));
-                receipts
+                trace
                     .with_container_anchor_installer(
                         origin.expect("container replay call has no static term origin"),
                         replay,
@@ -1982,10 +1974,10 @@ impl ExecutionState<'_> {
                 implicit_equalities,
                 as_of_edges,
             } => {
-                let receipts = self
+                let trace = self
                     .db
-                    .causal_receipts
-                    .expect("receipt-aware check requires causal receipts");
+                    .trace
+                    .expect("capture-aware check requires causal trace");
                 let premise_requests = equalities
                     .iter()
                     .chain(implicit_equalities.iter())
@@ -1996,13 +1988,10 @@ impl ExecutionState<'_> {
                         CheckTermSource::Constant { .. } | CheckTermSource::Current => None,
                     })
                     .collect::<SmallVec<[(CheckTermSource, ReplaySortId); 8]>>();
-                let mut winner = None::<(
-                    CausalWave,
-                    SmallVec<[FactId; 4]>,
-                    SmallVec<[(Value, Value); 4]>,
-                )>;
+                let mut winner =
+                    None::<(Wave, SmallVec<[FactId; 4]>, SmallVec<[(Value, Value); 4]>)>;
                 mask.empty_iter().for_each_indexed(|offset, ()| {
-                    let (wave, premises) = bindings.check_receipt(offset);
+                    let (wave, premises) = bindings.check_capture(offset);
                     let get = |entry| match entry {
                         QueryEntry::Const(value) => value,
                         QueryEntry::Var(variable) => bindings[variable][offset],
@@ -2022,7 +2011,7 @@ impl ExecutionState<'_> {
                 });
                 let (wave, premises, raw_equalities) =
                     winner.expect("nonempty check mask has one exact candidate");
-                let premise_endpoints = receipts
+                let premise_endpoints = trace
                     .check_premise_endpoints(&premises, &premise_requests)
                     .unwrap_or_else(|error| panic!("invalid exact check root: {error}"));
                 let mut premise_endpoints = premise_endpoints.into_iter();
@@ -2038,13 +2027,13 @@ impl ExecutionState<'_> {
                         term,
                         raw,
                     },
-                    CheckTermSource::Current => receipts
+                    CheckTermSource::Current => trace
                         .equality_endpoint(endpoint.sort, raw)
                         .unwrap_or_else(|error| panic!("invalid exact check root: {error}")),
                 };
                 let occurrence = |endpoint: CheckEndpointSpec| match endpoint.term {
                     CheckTermSource::Premise { premise, column } => {
-                        CheckEndpointOccurrence::FactCell(FactCellRef {
+                        CriterionEndpointOccurrence::FactCell(FactCellRef {
                             fact: premises[premise],
                             column: ColumnId::from_usize(column),
                         })
@@ -2053,17 +2042,18 @@ impl ExecutionState<'_> {
                         premise,
                         input_columns,
                         ..
-                    } => CheckEndpointOccurrence::FactCell(FactCellRef {
+                    } => CriterionEndpointOccurrence::FactCell(FactCellRef {
                         fact: premises[premise],
                         column: ColumnId::from_usize(input_columns),
                     }),
                     CheckTermSource::Constant { .. } | CheckTermSource::Current => {
-                        CheckEndpointOccurrence::Current
+                        CriterionEndpointOccurrence::Current
                     }
                 };
                 let mut resolved = SmallVec::<[(EqualityEndpoint, EqualityEndpoint); 4]>::new();
-                let mut equality_occurrences =
-                    SmallVec::<[(CheckEndpointOccurrence, CheckEndpointOccurrence); 4]>::new();
+                let mut equality_occurrences = SmallVec::<
+                    [(CriterionEndpointOccurrence, CriterionEndpointOccurrence); 4],
+                >::new();
                 for (&(left, right), implicit) in equalities
                     .iter()
                     .map(|pair| (pair, false))
@@ -2095,7 +2085,7 @@ impl ExecutionState<'_> {
                 }
                 debug_assert!(premise_endpoints.next().is_none());
                 debug_assert!(raw_equalities.next().is_none());
-                receipts
+                trace
                     .record_check_root(
                         *check,
                         wave,
@@ -2131,7 +2121,7 @@ pub(crate) enum Instr {
         origin: Option<RowOriginSiteId>,
     },
 
-    /// Receipt-only constructor producer. Ordinary rules use the distinct
+    /// Capture-only constructor producer. Ordinary rules use the distinct
     /// variant above and never touch replay-term metadata or storage.
     LookupOrInsertDefaultReplay {
         table: TableId,
@@ -2182,7 +2172,7 @@ pub(crate) enum Instr {
         origin: Option<RowOriginSiteId>,
     },
 
-    /// Receipt-only typed staging for the native equality table.
+    /// Capture-only typed staging for the native equality table.
     UnionWithReplay {
         table: TableId,
         left: QueryEntry,
@@ -2193,12 +2183,12 @@ pub(crate) enum Instr {
         right_origin: Option<TermOriginSiteId>,
     },
 
-    /// Terminal receipt-only action for one successful positive check.
+    /// Terminal capture-only action for one successful positive check.
     RecordCheck {
         check: u32,
         equalities: Box<[(CheckEndpointSpec, CheckEndpointSpec)]>,
         implicit_equalities: Box<[(CheckEndpointSpec, CheckEndpointSpec)]>,
-        as_of_edges: EqualityEdgeCount,
+        as_of_edges: EdgeHorizon,
     },
 
     /// Insert `vals` into `table` if `l` and `r` are equal.

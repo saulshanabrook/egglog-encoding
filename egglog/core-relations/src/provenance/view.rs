@@ -5,12 +5,12 @@ use super::*;
 #[path = "explain.rs"]
 mod explain;
 
-/// Lazy receipt-view projector. Native capture stores raw creation rows and
+/// Lazy trace-view projector. Native capture stores raw creation rows and
 /// compact static origin sites; selected reads expand only the requested
 /// references into the historical replay-term DAG.
 #[derive(Clone)]
 enum TemplateOwner {
-    Durable(RuleMatchId),
+    Durable(FiringId),
     Fact(FactId),
     History {
         position: HistoryPosition,
@@ -19,23 +19,23 @@ enum TemplateOwner {
 }
 
 pub(super) struct TermProjector<'a> {
-    arena: &'a ReceiptArena,
+    arena: &'a TraceArena,
     binding_recipes: &'a HashMap<u32, Arc<[ReplayBindingSource]>>,
     term_recipes: &'a StaticTermRecipeStore,
-    replay_terms: &'a ReplayTermStore,
+    replay_terms: &'a TermInterner,
     next_term: &'a AtomicU32,
     fact_memo: HashMap<(FactId, usize), ReplayTermId>,
-    match_memo: HashMap<(RuleMatchId, usize), ReplayTermId>,
+    firing_memo: HashMap<(FiringId, usize), ReplayTermId>,
     visiting_facts: HashSet<(FactId, usize)>,
-    visiting_matches: HashSet<(RuleMatchId, usize)>,
+    visiting_firings: HashSet<(FiringId, usize)>,
 }
 
 impl<'a> TermProjector<'a> {
     pub(super) fn new(
-        arena: &'a ReceiptArena,
+        arena: &'a TraceArena,
         binding_recipes: &'a HashMap<u32, Arc<[ReplayBindingSource]>>,
         term_recipes: &'a StaticTermRecipeStore,
-        replay_terms: &'a ReplayTermStore,
+        replay_terms: &'a TermInterner,
         next_term: &'a AtomicU32,
     ) -> Self {
         Self {
@@ -45,9 +45,9 @@ impl<'a> TermProjector<'a> {
             replay_terms,
             next_term,
             fact_memo: HashMap::default(),
-            match_memo: HashMap::default(),
+            firing_memo: HashMap::default(),
             visiting_facts: HashSet::default(),
-            visiting_matches: HashSet::default(),
+            visiting_firings: HashSet::default(),
         }
     }
 
@@ -161,34 +161,30 @@ impl<'a> TermProjector<'a> {
         self.template(template, owner)
     }
 
-    fn match_term(
-        &mut self,
-        match_id: RuleMatchId,
-        binding: usize,
-    ) -> Result<ReplayTermId, String> {
-        if let Some(term) = self.match_memo.get(&(match_id, binding)).copied() {
+    fn firing_term(&mut self, firing_id: FiringId, binding: usize) -> Result<ReplayTermId, String> {
+        if let Some(term) = self.firing_memo.get(&(firing_id, binding)).copied() {
             return Ok(term);
         }
-        if !self.visiting_matches.insert((match_id, binding)) {
+        if !self.visiting_firings.insert((firing_id, binding)) {
             return Err(format!(
-                "cyclic causal match term at {match_id:?} binding {binding}"
+                "cyclic firing term at {firing_id:?} binding {binding}"
             ));
         }
         let result = (|| {
             let record = self
                 .arena
-                .durable_matches
-                .get((match_id.get().checked_sub(1).ok_or("missing RuleMatchId")?) as usize)
+                .durable_firings
+                .get((firing_id.get().checked_sub(1).ok_or("missing FiringId")?) as usize)
                 .and_then(Option::as_ref)
-                .ok_or_else(|| format!("unknown causal match {match_id:?}"))?;
+                .ok_or_else(|| format!("unknown firing {firing_id:?}"))?;
             let rule = record.rule;
             let premises: Arc<[FactId]> =
                 self.arena.durable_premises[record.premises.as_range()].into();
-            self.binding_term(rule, &premises, binding, &TemplateOwner::Durable(match_id))
+            self.binding_term(rule, &premises, binding, &TemplateOwner::Durable(firing_id))
         })();
-        self.visiting_matches.remove(&(match_id, binding));
+        self.visiting_firings.remove(&(firing_id, binding));
         let term = result?;
-        self.match_memo.insert((match_id, binding), term);
+        self.firing_memo.insert((firing_id, binding), term);
         Ok(term)
     }
 
@@ -244,7 +240,9 @@ impl<'a> TermProjector<'a> {
             TermTemplate::Binding { binding } => match owner.ok_or_else(|| {
                 format!("source row origin unexpectedly references binding {binding}")
             })? {
-                TemplateOwner::Durable(match_id) => self.match_term(*match_id, *binding as usize),
+                TemplateOwner::Durable(firing_id) => {
+                    self.firing_term(*firing_id, *binding as usize)
+                }
                 TemplateOwner::Fact(fact) => Err(format!(
                     "source fact {fact:?} unexpectedly references binding {binding}"
                 )),
@@ -259,23 +257,23 @@ impl<'a> TermProjector<'a> {
                     )
                 })?;
                 let fact = match owner {
-                    TemplateOwner::Durable(match_id) => {
+                    TemplateOwner::Durable(firing_id) => {
                         let record = self
                             .arena
-                            .durable_matches
+                            .durable_firings
                             .get(
-                                (match_id.get().checked_sub(1).ok_or("missing RuleMatchId")?)
+                                (firing_id.get().checked_sub(1).ok_or("missing FiringId")?)
                                     as usize,
                             )
                             .and_then(Option::as_ref)
-                            .ok_or_else(|| format!("unknown causal match {match_id:?}"))?;
+                            .ok_or_else(|| format!("unknown firing {firing_id:?}"))?;
                         *self
                             .arena
                             .durable_premises
                             .get(record.premises.as_range())
                             .and_then(|premises| premises.get(*premise as usize))
                             .ok_or_else(|| {
-                                format!("causal match {match_id:?} has no premise {premise}")
+                                format!("firing {firing_id:?} has no premise {premise}")
                             })?
                     }
                     TemplateOwner::Fact(fact) => {
@@ -296,15 +294,15 @@ impl<'a> TermProjector<'a> {
                 let (position, inclusive) = match owner
                     .ok_or_else(|| format!("historical lookup of {table:?} has no owning event"))?
                 {
-                    TemplateOwner::Durable(match_id) => (
+                    TemplateOwner::Durable(firing_id) => (
                         self.arena
-                            .durable_matches
+                            .durable_firings
                             .get(
-                                (match_id.get().checked_sub(1).ok_or("missing RuleMatchId")?)
+                                (firing_id.get().checked_sub(1).ok_or("missing FiringId")?)
                                     as usize,
                             )
                             .and_then(Option::as_ref)
-                            .ok_or_else(|| format!("unknown causal match {match_id:?}"))?
+                            .ok_or_else(|| format!("unknown firing {firing_id:?}"))?
                             .position,
                         true,
                     ),
@@ -428,7 +426,7 @@ impl<'a> TermProjector<'a> {
     fn equality_endpoint(
         &mut self,
         endpoint: PendingEqualityEndpoint,
-        cause: CauseRef,
+        cause: PackedCauseRef,
         position: HistoryPosition,
     ) -> Result<EqualityEndpoint, String> {
         let term = match endpoint.term {
@@ -507,34 +505,34 @@ impl<'a> TermProjector<'a> {
     }
 }
 
-/// Borrowed, non-escaping view of one finalized raw receipt arena.
+/// Borrowed, non-escaping view of one finalized raw trace arena.
 ///
 /// Accessors project structural terms only for explicitly selected facts,
-/// matches, or equality events.
-pub struct CausalReceiptView<'a> {
-    pub(super) arena: &'a ReceiptArena,
+/// firings, or equality events.
+pub struct TraceView<'a> {
+    pub(super) arena: &'a TraceArena,
     pub(super) binding_recipes: &'a HashMap<u32, Arc<[ReplayBindingSource]>>,
     pub(super) equality_recipes:
         &'a HashMap<u32, Arc<[(ReplayEqualitySource, ReplayEqualitySource)]>>,
     pub(super) term_recipes: &'a StaticTermRecipeStore,
-    pub(super) replay_terms: &'a ReplayTermStore,
+    pub(super) replay_terms: &'a TermInterner,
     pub(super) projector: TermProjector<'a>,
     pub(super) history_boundary: HistoryPosition,
-    pub(super) equality_index: Option<RawEqualityIndex>,
-    pub(super) rekey_index: Option<RekeyIndex>,
+    pub(super) equality_index: Option<ExplanationForest>,
+    pub(super) rekey_index: Option<VersionChain>,
     pub(super) constructor_occurrence_index: Option<ConstructorOccurrenceIndex>,
     pub(super) occurrence_support_cache:
         HashMap<StructuralOccurrenceQuery, Option<RawEqualitySupport>>,
     pub(super) exact_occurrence_support_cache:
         HashMap<StructuralOccurrenceQuery, Option<RawEqualitySupport>>,
-    pub(super) counters: CausalReceiptViewCounters,
+    pub(super) counters: TraceViewCounters,
 }
 
-pub(super) struct RawEqualityIndex {
+pub(super) struct ExplanationForest {
     parents: HashMap<(ReplaySortId, Value), (Value, AppliedEqualityId)>,
 }
 
-pub(super) struct RekeyIndex {
+pub(super) struct VersionChain {
     by_fact: HashMap<FactId, Arc<[usize]>>,
     by_position: HashMap<HistoryPosition, usize>,
 }
@@ -544,7 +542,7 @@ pub(super) struct ConstructorOccurrenceIndex {
     registered: HashSet<(ReplaySortId, ReplayOpId)>,
     /// Non-table calls that were emitted by a frontend-certified static term
     /// recipe. Only these calls may be recomputed by `let-check` without a
-    /// constructor FactId. Building this set is deliberately cold: receipt
+    /// constructor FactId. Building this set is deliberately cold: capture
     /// capture never walks term recipes.
     certified_calls: HashSet<(ReplaySortId, ReplayOpId)>,
 }
@@ -571,7 +569,7 @@ enum ObservedEqualitySupport {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct CausalReceiptViewCounters {
+pub struct TraceViewCounters {
     pub equality_index_builds: u64,
     pub equality_events_indexed: u64,
     pub equality_positions_validated: u64,
@@ -583,7 +581,7 @@ pub struct CausalReceiptViewCounters {
     pub rekey_records_scanned: u64,
 }
 
-impl<'a> CausalReceiptView<'a> {
+impl<'a> TraceView<'a> {
     fn collect_certified_replay_term_calls(
         &self,
         term: ReplayTermId,
@@ -630,27 +628,27 @@ impl<'a> CausalReceiptView<'a> {
         }
     }
 
-    fn public_cause(cause: CauseRef) -> Result<ReceiptCauseRef, ReceiptViewError> {
+    fn public_cause(cause: PackedCauseRef) -> Result<CauseRef, TraceViewError> {
         if cause.is_unattributed() {
-            return Err(ReceiptViewError::Invalid(
+            return Err(TraceViewError::Invalid(
                 "durable event has an unattributed cause".into(),
             ));
         }
-        if let Some(rule) = cause.rule_match() {
-            return Ok(ReceiptCauseRef::Rule(rule));
+        if let Some(rule) = cause.firing() {
+            return Ok(CauseRef::Rule(rule));
         }
-        let draft = cause.cause_node().ok_or_else(|| {
-            ReceiptViewError::Invalid("durable event has no cause identity".into())
-        })?;
+        let draft = cause
+            .cause_node()
+            .ok_or_else(|| TraceViewError::Invalid("durable event has no cause identity".into()))?;
         let id = u32::try_from(draft.get())
-            .map_err(|_| ReceiptViewError::Invalid("receipt cause identity exceeds u32".into()))?;
-        Ok(ReceiptCauseRef::Cause(ReceiptCauseId::new(id)))
+            .map_err(|_| TraceViewError::Invalid("capture cause identity exceeds u32".into()))?;
+        Ok(CauseRef::Cause(CauseId::new(id)))
     }
 
-    pub fn totals(&self) -> CausalReceiptTotals {
-        CausalReceiptTotals {
+    pub fn totals(&self) -> TraceTotals {
+        TraceTotals {
             facts: self.arena.published_facts,
-            matches: self.arena.published_matches,
+            firings: self.arena.published_firings,
             causes: self.arena.published_causes,
             applied_equalities: self.arena.published_equalities,
             rekeys: self.arena.rekeys.len() as u64,
@@ -659,24 +657,24 @@ impl<'a> CausalReceiptView<'a> {
         }
     }
 
-    pub fn view_counters(&self) -> CausalReceiptViewCounters {
+    pub fn view_counters(&self) -> TraceViewCounters {
         self.counters
     }
 
-    pub fn counters(&self) -> ReceiptCounters {
+    pub fn counters(&self) -> CaptureCounters {
         self.arena.counters
     }
 
-    pub fn fact(&self, id: FactId) -> Result<RawFactRecord<'a>, ReceiptViewError> {
+    pub fn fact(&self, id: FactId) -> Result<RawFactRecord<'a>, TraceViewError> {
         if id.is_missing() {
-            return Err(ReceiptViewError::UnknownFact(id));
+            return Err(TraceViewError::UnknownFact(id));
         }
         let fact = self
             .arena
             .facts
             .get((id.get() - 1) as usize)
             .and_then(Option::as_ref)
-            .ok_or(ReceiptViewError::UnknownFact(id))?;
+            .ok_or(TraceViewError::UnknownFact(id))?;
         Ok(RawFactRecord {
             id,
             table: fact.table,
@@ -686,7 +684,7 @@ impl<'a> CausalReceiptView<'a> {
         })
     }
 
-    fn rekey_index(&mut self) -> &RekeyIndex {
+    fn rekey_index(&mut self) -> &VersionChain {
         if self.rekey_index.is_none() {
             let mut by_fact = HashMap::<FactId, Vec<usize>>::default();
             let mut by_position = HashMap::default();
@@ -697,7 +695,7 @@ impl<'a> CausalReceiptView<'a> {
                     "two logical rekeys share one history position"
                 );
             }
-            self.rekey_index = Some(RekeyIndex {
+            self.rekey_index = Some(VersionChain {
                 by_fact: by_fact
                     .into_iter()
                     .map(|(fact, indexes)| (fact, Arc::from(indexes)))
@@ -708,49 +706,49 @@ impl<'a> CausalReceiptView<'a> {
         self.rekey_index.as_ref().unwrap()
     }
 
-    pub fn matched(&self, id: RuleMatchId) -> Result<RawMatchRecord<'a>, ReceiptViewError> {
+    pub fn firing(&self, id: FiringId) -> Result<Firing<'a>, TraceViewError> {
         if id.get() == 0 {
-            return Err(ReceiptViewError::UnknownMatch(id));
+            return Err(TraceViewError::UnknownFiring(id));
         }
-        let matched = self
+        let firing = self
             .arena
-            .durable_matches
+            .durable_firings
             .get((id.get() - 1) as usize)
             .and_then(Option::as_ref)
-            .ok_or(ReceiptViewError::UnknownMatch(id))?;
+            .ok_or(TraceViewError::UnknownFiring(id))?;
         let merge_reads = self
             .arena
             .merge_reads
             .get(&id)
             .map_or(&[][..], SmallVec::as_slice);
-        Ok(RawMatchRecord {
+        Ok(Firing {
             id,
-            rule: matched.rule,
-            wave: matched.wave,
-            position: matched.position,
-            as_of_edges: matched.as_of_edges,
-            premises: &self.arena.durable_premises[matched.premises.as_range()],
+            rule: firing.rule,
+            wave: firing.wave,
+            position: firing.position,
+            as_of_edges: firing.as_of_edges,
+            premises: &self.arena.durable_premises[firing.premises.as_range()],
             merge_reads,
         })
     }
 
-    pub fn cause(&self, id: ReceiptCauseId) -> Result<RawReceiptCause<'a>, ReceiptViewError> {
+    pub fn cause(&self, id: CauseId) -> Result<RawCause<'a>, TraceViewError> {
         if id.get() == 0 {
-            return Err(ReceiptViewError::UnknownCause(id));
+            return Err(TraceViewError::UnknownCause(id));
         }
         let cause = self
             .arena
             .durable_cause(CauseDraftId::new(id.get() as u64))
-            .ok_or(ReceiptViewError::UnknownCause(id))?;
+            .ok_or(TraceViewError::UnknownCause(id))?;
         Ok(match cause {
-            DurableCause::Source(source) => RawReceiptCause::Source(source),
+            DurableCause::Source(source) => RawCause::Source(source),
             DurableCause::Rebuild {
                 wave,
                 prior_fact,
                 as_of_edges,
                 position,
                 equalities,
-            } => RawReceiptCause::Rebuild {
+            } => RawCause::Rebuild {
                 wave: *wave,
                 prior_fact: *prior_fact,
                 as_of_edges: *as_of_edges,
@@ -762,7 +760,7 @@ impl<'a> CausalReceiptView<'a> {
                 as_of_edges,
                 position,
                 equalities,
-            } => RawReceiptCause::ContainerCanonicalize {
+            } => RawCause::ContainerCanonicalize {
                 wave: *wave,
                 as_of_edges: *as_of_edges,
                 position: *position,
@@ -774,20 +772,18 @@ impl<'a> CausalReceiptView<'a> {
                 as_of_edges,
                 position,
                 equalities,
-            } => RawReceiptCause::ContainerRefresh {
+            } => RawCause::ContainerRefresh {
                 wave: *wave,
                 prior_fact: *prior_fact,
                 as_of_edges: *as_of_edges,
                 position: *position,
                 equalities: &self.arena.durable_rebuild_equalities[equalities.as_range()],
             },
-            DurableCause::Merge { incoming, prior } => RawReceiptCause::Merge {
+            DurableCause::Merge { incoming, prior } => RawCause::Merge {
                 incoming: Self::public_cause(*incoming)?,
                 prior: match prior {
-                    DurablePrior::Fact(fact) => ReceiptCausePrior::Fact(*fact),
-                    DurablePrior::Cause(cause) => {
-                        ReceiptCausePrior::Cause(Self::public_cause(*cause)?)
-                    }
+                    DurablePrior::Fact(fact) => CausePrior::Fact(*fact),
+                    DurablePrior::Cause(cause) => CausePrior::Cause(Self::public_cause(*cause)?),
                 },
             },
         })
@@ -796,16 +792,16 @@ impl<'a> CausalReceiptView<'a> {
     pub fn applied_equality(
         &self,
         id: AppliedEqualityId,
-    ) -> Result<RawAppliedEquality, ReceiptViewError> {
+    ) -> Result<RawAppliedEquality, TraceViewError> {
         if id.get() == 0 {
-            return Err(ReceiptViewError::UnknownEquality(id));
+            return Err(TraceViewError::UnknownEquality(id));
         }
         let event = self
             .arena
             .durable_equalities
             .get((id.get() - 1) as usize)
             .and_then(Option::as_ref)
-            .ok_or(ReceiptViewError::UnknownEquality(id))?;
+            .ok_or(TraceViewError::UnknownEquality(id))?;
         Ok(RawAppliedEquality {
             id,
             wave: event.proposal.wave,
@@ -827,24 +823,24 @@ impl<'a> CausalReceiptView<'a> {
     pub fn project_applied_equality(
         &mut self,
         id: AppliedEqualityId,
-    ) -> Result<ProjectedAppliedEquality, ReceiptViewError> {
+    ) -> Result<ProjectedAppliedEquality, TraceViewError> {
         if id.get() == 0 {
-            return Err(ReceiptViewError::UnknownEquality(id));
+            return Err(TraceViewError::UnknownEquality(id));
         }
         let event = self
             .arena
             .durable_equalities
             .get((id.get() - 1) as usize)
             .and_then(Option::as_ref)
-            .ok_or(ReceiptViewError::UnknownEquality(id))?;
+            .ok_or(TraceViewError::UnknownEquality(id))?;
         let left = self
             .projector
             .equality_endpoint(event.proposal.left, event.cause, event.position)
-            .map_err(ReceiptViewError::Invalid)?;
+            .map_err(TraceViewError::Invalid)?;
         let right = self
             .projector
             .equality_endpoint(event.proposal.right, event.cause, event.position)
-            .map_err(ReceiptViewError::Invalid)?;
+            .map_err(TraceViewError::Invalid)?;
         Ok(ProjectedAppliedEquality {
             id,
             wave: event.proposal.wave,
@@ -860,14 +856,14 @@ impl<'a> CausalReceiptView<'a> {
     pub fn rekey_at(
         &mut self,
         position: HistoryPosition,
-    ) -> Result<RawRekeyRecord<'a>, ReceiptViewError> {
+    ) -> Result<RawRekeyRecord<'a>, TraceViewError> {
         self.counters.rekey_lookups += 1;
         let index = self
             .rekey_index()
             .by_position
             .get(&position)
             .copied()
-            .ok_or(ReceiptViewError::UnknownRekey(position))?;
+            .ok_or(TraceViewError::UnknownRekey(position))?;
         self.counters.rekey_records_scanned += 1;
         let record = &self.arena.rekeys[index];
         Ok(RawRekeyRecord {
@@ -882,43 +878,43 @@ impl<'a> CausalReceiptView<'a> {
         })
     }
 
-    pub fn removal(&self, index: usize) -> Result<&'a RemovalRecord, ReceiptViewError> {
+    pub fn removal(&self, index: usize) -> Result<&'a Tombstone, TraceViewError> {
         self.arena
             .removals
             .get(index)
-            .ok_or(ReceiptViewError::UnknownRemoval(index))
+            .ok_or(TraceViewError::UnknownRemoval(index))
     }
 
-    pub fn check_root(&self, check: u32) -> Result<&'a CheckRoot, ReceiptViewError> {
+    pub fn check_root(&self, check: u32) -> Result<&'a Criterion, TraceViewError> {
         self.arena
             .check_roots
             .get(&check)
-            .ok_or(ReceiptViewError::UnknownCheck(check))
+            .ok_or(TraceViewError::UnknownCheck(check))
     }
 
-    pub fn check_roots(&self) -> Vec<&'a CheckRoot> {
+    pub fn check_roots(&self) -> Vec<&'a Criterion> {
         let mut roots = self.arena.check_roots.values().collect::<Vec<_>>();
         roots.sort_unstable_by_key(|root| root.check);
         roots
     }
 
-    pub fn table_schema(&self, table: TableId) -> Result<ReplayTableSchema, ReceiptViewError> {
+    pub fn table_schema(&self, table: TableId) -> Result<ReplayTableSchema, TraceViewError> {
         let columns = self
             .replay_terms
             .table_layout(table)
-            .ok_or(ReceiptViewError::UnknownTable(table))?;
+            .ok_or(TraceViewError::UnknownTable(table))?;
         let kind = self
             .replay_terms
             .table_kinds
             .get(&table)
             .map(|kind| *kind)
-            .ok_or(ReceiptViewError::UnknownTable(table))?;
+            .ok_or(TraceViewError::UnknownTable(table))?;
         let key_columns = self
             .replay_terms
             .table_key_columns
             .get(&table)
             .map(|columns| *columns as usize)
-            .ok_or(ReceiptViewError::UnknownTable(table))?;
+            .ok_or(TraceViewError::UnknownTable(table))?;
         let constructor = self
             .replay_terms
             .table_constructors
@@ -933,13 +929,11 @@ impl<'a> CausalReceiptView<'a> {
         })
     }
 
-    pub fn rule_binding_layout(
-        &self,
-        rule: u32,
-    ) -> Result<Box<[ReceiptBindingSource]>, ReceiptViewError> {
-        let bindings = self.binding_recipes.get(&rule).ok_or_else(|| {
-            ReceiptViewError::Invalid(format!("rule {rule} has no binding recipe"))
-        })?;
+    pub fn rule_binding_layout(&self, rule: u32) -> Result<Box<[BindingSource]>, TraceViewError> {
+        let bindings = self
+            .binding_recipes
+            .get(&rule)
+            .ok_or_else(|| TraceViewError::Invalid(format!("rule {rule} has no binding recipe")))?;
         let current_roots = self
             .term_recipes
             .rules
@@ -953,56 +947,54 @@ impl<'a> CausalReceiptView<'a> {
                     ReplayBindingSource::Premise {
                         representative,
                         occurrences,
-                    } => ReceiptBindingSource::Premise {
-                        representative: ReceiptPremiseOccurrence {
+                    } => BindingSource::Premise {
+                        representative: PremiseOccurrence {
                             premise: representative.premise,
                             column: representative.column,
                         },
                         occurrences: occurrences
                             .iter()
-                            .map(|occurrence| ReceiptPremiseOccurrence {
+                            .map(|occurrence| PremiseOccurrence {
                                 premise: occurrence.premise,
                                 column: occurrence.column,
                             })
                             .collect(),
                     },
-                    ReplayBindingSource::Current { sort, residual, .. } => {
-                        ReceiptBindingSource::Current {
-                            sort: *sort,
-                            residual: *residual,
-                            replay_safe: current_roots
-                                .get(*residual as usize)
-                                .is_some_and(Option::is_some),
-                        }
-                    }
+                    ReplayBindingSource::Current { sort, residual, .. } => BindingSource::Current {
+                        sort: *sort,
+                        residual: *residual,
+                        replay_safe: current_roots
+                            .get(*residual as usize)
+                            .is_some_and(Option::is_some),
+                    },
                     ReplayBindingSource::Constant { term } => {
-                        ReceiptBindingSource::Constant { term: *term }
+                        BindingSource::Constant { term: *term }
                     }
                 })
             })
-            .collect::<Result<Vec<_>, ReceiptViewError>>()
+            .collect::<Result<Vec<_>, TraceViewError>>()
             .map(Vec::into_boxed_slice)
     }
 
     pub fn rule_equality_layout(
         &self,
         rule: u32,
-    ) -> Result<Box<[(ReceiptEqualitySource, ReceiptEqualitySource)]>, ReceiptViewError> {
+    ) -> Result<Box<[(FiringEqualitySource, FiringEqualitySource)]>, TraceViewError> {
         let equalities = self.equality_recipes.get(&rule).ok_or_else(|| {
-            ReceiptViewError::Invalid(format!("rule {rule} has no equality-obligation recipe"))
+            TraceViewError::Invalid(format!("rule {rule} has no equality-obligation recipe"))
         })?;
         Ok(equalities
             .iter()
             .map(|&(left, right)| {
                 let public = |source| match source {
                     ReplayEqualitySource::Premise(occurrence) => {
-                        ReceiptEqualitySource::Premise(ReceiptPremiseOccurrence {
+                        FiringEqualitySource::Premise(PremiseOccurrence {
                             premise: occurrence.premise,
                             column: occurrence.column,
                         })
                     }
                     ReplayEqualitySource::Constant(endpoint) => {
-                        ReceiptEqualitySource::Constant(endpoint)
+                        FiringEqualitySource::Constant(endpoint)
                     }
                 };
                 (public(left), public(right))
@@ -1011,12 +1003,12 @@ impl<'a> CausalReceiptView<'a> {
             .into_boxed_slice())
     }
 
-    pub fn fact_terms(&mut self, id: FactId) -> Result<Box<[ReplayTermId]>, ReceiptViewError> {
+    pub fn fact_terms(&mut self, id: FactId) -> Result<Box<[ReplayTermId]>, TraceViewError> {
         let fact = self.fact(id)?;
         let layout = self
             .replay_terms
             .table_layout(fact.table)
-            .ok_or(ReceiptViewError::UnknownTable(fact.table))?;
+            .ok_or(TraceViewError::UnknownTable(fact.table))?;
         layout
             .iter()
             .enumerate()
@@ -1024,30 +1016,27 @@ impl<'a> CausalReceiptView<'a> {
                 sort.map_or(Ok(ReplayTermId::MISSING), |_| {
                     self.projector
                         .fact_term(id, column)
-                        .map_err(ReceiptViewError::Invalid)
+                        .map_err(TraceViewError::Invalid)
                 })
             })
             .collect::<Result<Vec<_>, _>>()
             .map(Vec::into_boxed_slice)
     }
 
-    pub fn match_terms(
-        &mut self,
-        id: RuleMatchId,
-    ) -> Result<Box<[ReplayTermId]>, ReceiptViewError> {
-        let matched = self.matched(id)?;
+    pub fn firing_terms(&mut self, id: FiringId) -> Result<Box<[ReplayTermId]>, TraceViewError> {
+        let firing = self.firing(id)?;
         let binding_count = self
             .binding_recipes
-            .get(&matched.rule)
+            .get(&firing.rule)
             .ok_or_else(|| {
-                ReceiptViewError::Invalid(format!("rule {} has no binding recipe", matched.rule))
+                TraceViewError::Invalid(format!("rule {} has no binding recipe", firing.rule))
             })?
             .len();
         (0..binding_count)
             .map(|binding| {
                 self.projector
-                    .match_term(id, binding)
-                    .map_err(ReceiptViewError::Invalid)
+                    .firing_term(id, binding)
+                    .map_err(TraceViewError::Invalid)
             })
             .collect::<Result<Vec<_>, _>>()
             .map(Vec::into_boxed_slice)
@@ -1058,18 +1047,18 @@ impl<'a> CausalReceiptView<'a> {
     /// asks only for structural availability: pure calls and ordered
     /// containers are recomputed from their children, while every table
     /// constructor must have one exact live producer row.
-    pub fn explain_match_term_availability(
+    pub fn explain_firing_term_availability(
         &mut self,
-        id: RuleMatchId,
+        id: FiringId,
         binding: usize,
-    ) -> Result<RawTermAvailability, ReceiptViewError> {
+    ) -> Result<RawTermAvailability, TraceViewError> {
         let (rule, position, as_of_edges, premises) = {
-            let matched = self.matched(id)?;
+            let firing = self.firing(id)?;
             (
-                matched.rule,
-                matched.position,
-                matched.as_of_edges,
-                matched.premises.to_vec(),
+                firing.rule,
+                firing.position,
+                firing.as_of_edges,
+                firing.premises.to_vec(),
             )
         };
         let binding_source = self
@@ -1078,12 +1067,12 @@ impl<'a> CausalReceiptView<'a> {
             .and_then(|sources| sources.get(binding))
             .cloned()
             .ok_or_else(|| {
-                ReceiptViewError::Invalid(format!("rule {rule} has no binding source {binding}"))
+                TraceViewError::Invalid(format!("rule {rule} has no binding source {binding}"))
             })?;
         let anchor = match &binding_source {
             ReplayBindingSource::Premise { representative, .. } => {
                 let fact = *premises.get(representative.premise).ok_or_else(|| {
-                    ReceiptViewError::Invalid(format!(
+                    TraceViewError::Invalid(format!(
                         "match {id:?} has no premise {}",
                         representative.premise
                     ))
@@ -1100,8 +1089,8 @@ impl<'a> CausalReceiptView<'a> {
         };
         let term = self
             .projector
-            .match_term(id, binding)
-            .map_err(ReceiptViewError::Invalid)?;
+            .firing_term(id, binding)
+            .map_err(TraceViewError::Invalid)?;
         let availability = (|| {
             if let Some(anchor) = anchor {
                 let endpoint = EqualityEndpoint {
@@ -1132,7 +1121,7 @@ impl<'a> CausalReceiptView<'a> {
             }
         })()
             .map_err(|error| {
-                ReceiptViewError::Invalid(format!(
+                TraceViewError::Invalid(format!(
                     "match {id:?} rule {rule} binding {binding} ({binding_source:?}) availability failed: {error}"
                 ))
             })?;
@@ -1143,9 +1132,9 @@ impl<'a> CausalReceiptView<'a> {
         &mut self,
         occurrence: FactCellRef,
         endpoint: EqualityEndpoint,
-        as_of: EqualityEdgeCount,
+        as_of: EdgeHorizon,
         position: HistoryPosition,
-    ) -> Result<RawTermAvailability, ReceiptViewError> {
+    ) -> Result<RawTermAvailability, TraceViewError> {
         let anchor = self.fact_cell_at(occurrence, position)?;
         self.explain_anchored_term_availability_at(endpoint, anchor, as_of, position)
     }
@@ -1154,12 +1143,12 @@ impl<'a> CausalReceiptView<'a> {
         &mut self,
         endpoint: EqualityEndpoint,
         anchor: HistoricalFactCell,
-        as_of: EqualityEdgeCount,
+        as_of: EdgeHorizon,
         position: HistoryPosition,
-    ) -> Result<RawTermAvailability, ReceiptViewError> {
+    ) -> Result<RawTermAvailability, TraceViewError> {
         self.validate_equality_cutoff(as_of, position)?;
         if endpoint.sort != anchor.endpoint.sort {
-            return Err(ReceiptViewError::Invalid(
+            return Err(TraceViewError::Invalid(
                 "anchored structural term has the wrong logical sort".into(),
             ));
         }
@@ -1208,25 +1197,25 @@ impl<'a> CausalReceiptView<'a> {
         })
     }
 
-    pub fn replay_term(&self, term: ReplayTermId) -> Result<ReplayTerm, ReceiptViewError> {
+    pub fn replay_term(&self, term: ReplayTermId) -> Result<ReplayTerm, TraceViewError> {
         self.replay_terms
             .node(term)
-            .ok_or_else(|| ReceiptViewError::Invalid(format!("unknown replay term {term:?}")))
+            .ok_or_else(|| TraceViewError::Invalid(format!("unknown replay term {term:?}")))
     }
 
     fn live_fact_at(
         &self,
         fact: FactId,
         position: HistoryPosition,
-    ) -> Result<RawFactRecord<'a>, ReceiptViewError> {
+    ) -> Result<RawFactRecord<'a>, TraceViewError> {
         if position > self.history_boundary {
-            return Err(ReceiptViewError::Invalid(
-                "fact query exceeds the captured receipt history".into(),
+            return Err(TraceViewError::Invalid(
+                "fact query exceeds the captured trace history".into(),
             ));
         }
         let record = self.fact(fact)?;
         if record.position > position {
-            return Err(ReceiptViewError::Invalid(format!(
+            return Err(TraceViewError::Invalid(format!(
                 "fact {fact:?} was created after {position:?}"
             )));
         }
@@ -1236,7 +1225,7 @@ impl<'a> CausalReceiptView<'a> {
             .iter()
             .find(|removal| removal.removed_fact == fact && removal.position <= position)
         {
-            return Err(ReceiptViewError::FactNoLongerLive {
+            return Err(TraceViewError::FactNoLongerLive {
                 fact,
                 position,
                 ended_at: removal.position,
@@ -1250,18 +1239,18 @@ impl<'a> CausalReceiptView<'a> {
         &mut self,
         occurrence: FactCellRef,
         position: HistoryPosition,
-    ) -> Result<HistoricalFactCell, ReceiptViewError> {
+    ) -> Result<HistoricalFactCell, TraceViewError> {
         let fact = self.live_fact_at(occurrence.fact, position)?;
         let column = occurrence.column.index();
         let sort = self
             .replay_terms
             .table_layout(fact.table)
-            .ok_or(ReceiptViewError::UnknownTable(fact.table))?
+            .ok_or(TraceViewError::UnknownTable(fact.table))?
             .get(column)
             .copied()
             .flatten()
             .ok_or_else(|| {
-                ReceiptViewError::Invalid(format!(
+                TraceViewError::Invalid(format!(
                     "fact {:?} column {column} has no logical replay sort",
                     occurrence.fact
                 ))
@@ -1269,9 +1258,9 @@ impl<'a> CausalReceiptView<'a> {
         let term = self
             .projector
             .fact_term(occurrence.fact, column)
-            .map_err(ReceiptViewError::Invalid)?;
+            .map_err(TraceViewError::Invalid)?;
         let creation_raw = *fact.values.get(column).ok_or_else(|| {
-            ReceiptViewError::Invalid(format!("fact {:?} has no column {column}", occurrence.fact))
+            TraceViewError::Invalid(format!("fact {:?} has no column {column}", occurrence.fact))
         })?;
         let mut raw = creation_raw;
         let mut rekeys = Vec::new();
@@ -1293,7 +1282,7 @@ impl<'a> CausalReceiptView<'a> {
                 .filter(|pair| pair.column == occurrence.column)
             {
                 if pair.left.raw != raw || pair.left.sort != sort || pair.right.sort != sort {
-                    return Err(ReceiptViewError::Invalid(format!(
+                    return Err(TraceViewError::Invalid(format!(
                         "rekey {:?} does not continue fact-cell occurrence {:?}: expected {:?}/{:?}, observed {:?}, outcome {:?}",
                         rekey.position, occurrence, sort, raw, pair, rekey.outcome
                     )));
@@ -1306,7 +1295,7 @@ impl<'a> CausalReceiptView<'a> {
                     RekeyOutcome::Moved => unreachable!(),
                     RekeyOutcome::Absorbed(fact) | RekeyOutcome::Replaced(fact) => fact,
                 };
-                return Err(ReceiptViewError::FactNoLongerLive {
+                return Err(TraceViewError::FactNoLongerLive {
                     fact: occurrence.fact,
                     position,
                     ended_at: rekey.position,
@@ -1330,7 +1319,7 @@ impl<'a> CausalReceiptView<'a> {
         &mut self,
         fact: FactId,
         position: HistoryPosition,
-    ) -> Result<Box<[Value]>, ReceiptViewError> {
+    ) -> Result<Box<[Value]>, TraceViewError> {
         let record = self.live_fact_at(fact, position)?;
         let schema = self.table_schema(record.table)?;
         (0..schema.key_columns)
@@ -1340,7 +1329,7 @@ impl<'a> CausalReceiptView<'a> {
                         FactCellRef {
                             fact,
                             column: crate::ColumnId::new(column.try_into().map_err(|_| {
-                                ReceiptViewError::Invalid("table key column exceeds u32".into())
+                                TraceViewError::Invalid("table key column exceeds u32".into())
                             })?),
                         },
                         position,
@@ -1348,9 +1337,7 @@ impl<'a> CausalReceiptView<'a> {
                     .map(|cell| cell.endpoint.raw)
                 } else {
                     record.values.get(column).copied().ok_or_else(|| {
-                        ReceiptViewError::Invalid(format!(
-                            "fact {fact:?} has no key column {column}"
-                        ))
+                        TraceViewError::Invalid(format!("fact {fact:?} has no key column {column}"))
                     })
                 }
             })
@@ -1360,20 +1347,20 @@ impl<'a> CausalReceiptView<'a> {
 
     fn validate_equality_cutoff(
         &self,
-        as_of: EqualityEdgeCount,
+        as_of: EdgeHorizon,
         position: HistoryPosition,
-    ) -> Result<usize, ReceiptViewError> {
+    ) -> Result<usize, TraceViewError> {
         let cutoff: usize = as_of.get().try_into().map_err(|_| {
-            ReceiptViewError::Invalid("equality cutoff exceeds addressable storage".into())
+            TraceViewError::Invalid("equality cutoff exceeds addressable storage".into())
         })?;
         if cutoff > self.arena.durable_equalities.len() {
-            return Err(ReceiptViewError::Invalid(
+            return Err(TraceViewError::Invalid(
                 "equality cutoff exceeds the raw applied-event history".into(),
             ));
         }
         if position > self.history_boundary {
-            return Err(ReceiptViewError::Invalid(
-                "equality query exceeds the captured receipt history".into(),
+            return Err(TraceViewError::Invalid(
+                "equality query exceeds the captured trace history".into(),
             ));
         }
         let previous_visible = cutoff
@@ -1382,7 +1369,7 @@ impl<'a> CausalReceiptView<'a> {
                 self.arena.durable_equalities[index]
                     .as_ref()
                     .ok_or_else(|| {
-                        ReceiptViewError::Invalid(
+                        TraceViewError::Invalid(
                             "raw applied-equality history has an ID hole".into(),
                         )
                     })
@@ -1398,7 +1385,7 @@ impl<'a> CausalReceiptView<'a> {
                 event
                     .as_ref()
                     .ok_or_else(|| {
-                        ReceiptViewError::Invalid(
+                        TraceViewError::Invalid(
                             "raw applied-equality history has an ID hole".into(),
                         )
                     })
@@ -1407,7 +1394,7 @@ impl<'a> CausalReceiptView<'a> {
             .transpose()?
             .unwrap_or(true);
         if !previous_visible || !next_hidden {
-            return Err(ReceiptViewError::Invalid(
+            return Err(TraceViewError::Invalid(
                 "equality cutoff disagrees with the global history position".into(),
             ));
         }

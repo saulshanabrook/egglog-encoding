@@ -8,11 +8,11 @@ use std::sync::Arc;
 
 use crate::core_relations;
 use crate::core_relations::{
-    CheckEndpointSource, CheckReceiptSpec as CoreCheckReceiptSpec, ColumnId, Constraint, CounterId,
-    ExternalFunctionId, PlanStrategy, QueryBuilder, ReplayConstructorSpec, ReplaySortId,
-    ReplayTermId, RuleBindingSpec, RuleBuilder as CoreRuleBuilder,
-    RuleReceiptSpec as CoreRuleReceiptSpec, RuleSetBuilder, SourceReceiptSpec, SourceRef, TableId,
-    Value, WriteVal,
+    ColumnId, Constraint, CounterId, CriterionCaptureSpec as CoreCriterionCaptureSpec,
+    CriterionEndpointSource, ExternalFunctionId, FiringCaptureSpec as CoreFiringCaptureSpec,
+    PlanStrategy, QueryBuilder, ReplayConstructorSpec, ReplaySortId, ReplayTermId, RuleBindingSpec,
+    RuleBuilder as CoreRuleBuilder, RuleSetBuilder, SourceCaptureSpec as CoreSourceCaptureSpec,
+    SourceRef, TableId, Value, WriteVal,
 };
 use crate::numeric_id::{DenseIdMap, NumericId, define_id};
 use anyhow::Context;
@@ -69,7 +69,7 @@ pub enum QueryEntry {
 }
 
 #[derive(Clone, Debug)]
-pub enum RuleReplayBinding {
+pub enum FiringCaptureBinding {
     Entry {
         entry: QueryEntry,
         current_sort: ReplaySortId,
@@ -81,13 +81,13 @@ pub enum RuleReplayBinding {
 }
 
 #[derive(Clone, Debug)]
-pub struct RuleReplaySpec {
+pub struct FiringCaptureSpec {
     pub rule: u32,
-    pub bindings: Box<[RuleReplayBinding]>,
+    pub bindings: Box<[FiringCaptureBinding]>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CheckReplayPremise {
+pub struct CriterionCapturePremise {
     /// Source-ordered table-premise ordinal in this bridge query.
     pub premise: usize,
     /// Logical function column containing the source expression's value.
@@ -98,9 +98,9 @@ pub struct CheckReplayPremise {
 }
 
 #[derive(Clone, Debug)]
-pub struct CheckReplaySpec {
+pub struct CriterionCaptureSpec {
     pub check: u32,
-    pub equalities: Box<[(CheckReplayPremise, CheckReplayPremise)]>,
+    pub equalities: Box<[(CriterionCapturePremise, CriterionCapturePremise)]>,
 }
 
 impl From<Variable> for QueryEntry {
@@ -162,11 +162,11 @@ pub(crate) struct Query {
     /// [`core_relations::QueryBuilder::set_no_decomp`].
     no_decomp: bool,
     /// Stable source identity for an empty-query top-level action.
-    source_receipt: Option<SourceRef>,
-    /// Exact ordinary-rule receipt metadata translated during lazy plan build.
-    rule_receipt: Option<RuleReplaySpec>,
-    /// Exact successful-check root metadata translated during lazy plan build.
-    check_receipt: Option<CheckReplaySpec>,
+    source_capture: Option<SourceRef>,
+    /// Exact ordinary-rule firing metadata translated during lazy plan build.
+    firing_capture: Option<FiringCaptureSpec>,
+    /// Exact successful-criterion metadata translated during lazy plan build.
+    criterion_capture: Option<CriterionCaptureSpec>,
 }
 
 pub struct RuleBuilder<'a> {
@@ -213,9 +213,9 @@ impl EGraph {
                 head_start: None,
                 plan_strategy: Default::default(),
                 no_decomp: false,
-                source_receipt: None,
-                rule_receipt: None,
-                check_receipt: None,
+                source_capture: None,
+                firing_capture: None,
+                criterion_capture: None,
             },
         }
     }
@@ -412,22 +412,22 @@ impl RuleBuilder<'_> {
 
     /// Attribute effective commits from this empty-query action directly to
     /// one stable source identity.
-    pub fn set_source_receipt(&mut self, source: SourceRef) {
-        assert!(self.query.rule_receipt.is_none());
-        assert!(self.query.check_receipt.is_none());
-        self.query.source_receipt = Some(source);
+    pub fn set_source_capture(&mut self, source: SourceRef) {
+        assert!(self.query.firing_capture.is_none());
+        assert!(self.query.criterion_capture.is_none());
+        self.query.source_capture = Some(source);
     }
 
-    pub fn set_rule_receipt(&mut self, receipt: RuleReplaySpec) {
-        assert!(self.query.source_receipt.is_none());
-        assert!(self.query.check_receipt.is_none());
-        self.query.rule_receipt = Some(receipt);
+    pub fn set_firing_capture(&mut self, capture: FiringCaptureSpec) {
+        assert!(self.query.source_capture.is_none());
+        assert!(self.query.criterion_capture.is_none());
+        self.query.firing_capture = Some(capture);
     }
 
-    pub fn set_check_receipt(&mut self, receipt: CheckReplaySpec) {
-        assert!(self.query.source_receipt.is_none());
-        assert!(self.query.rule_receipt.is_none());
-        self.query.check_receipt = Some(receipt);
+    pub fn set_criterion_capture(&mut self, capture: CriterionCaptureSpec) {
+        assert!(self.query.source_capture.is_none());
+        assert!(self.query.firing_capture.is_none());
+        self.query.criterion_capture = Some(capture);
     }
 
     /// Bind a new variable of the given type in the query.
@@ -936,7 +936,9 @@ impl Query {
     }
 
     pub(crate) fn supports_grounded_execution(&self) -> bool {
-        self.source_receipt.is_none() && self.rule_receipt.is_none() && self.check_receipt.is_none()
+        self.source_capture.is_none()
+            && self.firing_capture.is_none()
+            && self.criterion_capture.is_none()
     }
 
     fn query_state<'a, 'outer>(
@@ -986,73 +988,73 @@ impl Query {
         self.add_rule[head_start..]
             .iter()
             .try_for_each(|f| f(&mut inner, &mut rb))?;
-        Ok(if let Some(source) = &self.source_receipt {
-            rb.try_build_source_with_receipts(desc, SourceReceiptSpec::new(source.clone()))?
-        } else if let Some(receipt) = &self.rule_receipt {
-            let bindings = receipt.bindings.iter().map(|binding| match binding {
-                RuleReplayBinding::Entry {
+        Ok(if let Some(source) = &self.source_capture {
+            rb.try_build_source_with_capture(desc, CoreSourceCaptureSpec::new(source.clone()))?
+        } else if let Some(capture) = &self.firing_capture {
+            let bindings = capture.bindings.iter().map(|binding| match binding {
+                FiringCaptureBinding::Entry {
                     entry,
                     current_sort,
                 } => {
                     let DstVar::Var(variable) = inner.convert(entry) else {
-                        panic!("rule receipt variable unexpectedly lowered to a constant")
+                        panic!("firing capture variable unexpectedly lowered to a constant")
                     };
                     RuleBindingSpec::variable(variable, Some(*current_sort))
                 }
-                RuleReplayBinding::Constant { term, sort } => {
+                FiringCaptureBinding::Constant { term, sort } => {
                     RuleBindingSpec::constant(*term, *sort)
                 }
             });
-            rb.try_build_with_receipts(
+            rb.try_build_with_capture(
                 desc,
-                CoreRuleReceiptSpec::with_bindings(
-                    receipt.rule,
+                CoreFiringCaptureSpec::with_bindings(
+                    capture.rule,
                     atom_mapping.iter().copied(),
                     bindings,
                 ),
             )?
-        } else if let Some(receipt) = &self.check_receipt {
-            let endpoint = |source: CheckReplayPremise| {
+        } else if let Some(capture) = &self.criterion_capture {
+            let endpoint = |source: CriterionCapturePremise| {
                 let (_, entries, schema) = self.atoms.get(source.premise).unwrap_or_else(|| {
                     panic!(
-                        "check endpoint cites missing table premise {}",
+                        "criterion capture endpoint cites missing table premise {}",
                         source.premise
                     )
                 });
                 assert!(
                     source.column < schema.func_cols,
-                    "check endpoint premise {} column {} cites an engine-only column",
+                    "criterion capture endpoint premise {} column {} cites an engine-only column",
                     source.premise,
                     source.column
                 );
                 let entry = entries.get(source.column).unwrap_or_else(|| {
                     panic!(
-                        "check endpoint premise {} has no logical column {}",
+                        "criterion capture endpoint premise {} has no logical column {}",
                         source.premise, source.column
                     )
                 });
                 match source.constructor {
-                    Some((sort, op)) => CheckEndpointSource::premise_constructor(
+                    Some((sort, op)) => CriterionEndpointSource::premise_constructor(
                         source.premise,
                         source.column,
                         inner.convert(entry),
                         sort,
                         op,
                     ),
-                    None => CheckEndpointSource::premise(
+                    None => CriterionEndpointSource::premise(
                         source.premise,
                         source.column,
                         inner.convert(entry),
                     ),
                 }
             };
-            let equalities = receipt
+            let equalities = capture
                 .equalities
                 .iter()
                 .map(|(left, right)| (endpoint(*left), endpoint(*right)));
-            rb.try_build_check_with_receipts(
+            rb.try_build_check_with_capture(
                 desc,
-                CoreCheckReceiptSpec::new(receipt.check, atom_mapping.iter().copied())
+                CoreCriterionCaptureSpec::new(capture.check, atom_mapping.iter().copied())
                     .with_equalities(equalities),
             )?
         } else {
@@ -1083,7 +1085,7 @@ impl Query {
     ) -> Result<GroundedRuleInfo> {
         anyhow::ensure!(
             self.supports_grounded_execution(),
-            "grounded execution cannot compile receipt-recording rules"
+            "grounded execution cannot compile trace-recording rules"
         );
         let mut rsb = RuleSetBuilder::new(db);
         let (mut qb, mut inner) = self.query_state(&mut rsb);

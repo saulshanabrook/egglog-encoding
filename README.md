@@ -91,8 +91,9 @@ Treatments map directly to engine modes:
 | `off` | no term or proof encoding |
 | `term` | `--term-encoding` |
 | `proofs` | `--proofs` |
+| `sliced-proofs` | `--slice --proofs` |
 
-The `main` backend supports all three treatments; `dd` supports `term` and
+The `main` backend supports all four treatments; `dd` supports `term` and
 `proofs`. The engine's `--proof-testing` option is a correctness mode, not a
 benchmark treatment.
 

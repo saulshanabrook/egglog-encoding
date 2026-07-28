@@ -506,10 +506,10 @@ fn run_case(case: &CausalCase, resolve_roots: RootResolver) {
     for (assets, relative_destination) in &case.asset_directories {
         copy_assets(assets, &sandbox.path().join(relative_destination));
     }
-    let artifact = sandbox.path().join("causal-replay.egg");
+    let artifact = sandbox.path().join("slice-replay.egg");
     let capture = Command::new(&case.binary)
         .current_dir(&case.working_directory)
-        .args(["--proofs", "--causal-slice", "--causal-slice-output"])
+        .arg("--slice-output")
         .arg(&artifact)
         .args(["--fact-directory"])
         .arg(sandbox.path())
@@ -519,7 +519,7 @@ fn run_case(case: &CausalCase, resolve_roots: RootResolver) {
 
     match case.allowlisted {
         None | Some(Disposition::ChecksOnly) | Some(Disposition::ExtractRootsUnsupported) => {
-            assert_success("causal capture", &case.name, &capture)
+            assert_success("slice capture", &case.name, &capture)
         }
         Some(Disposition::StaticUnsupported { .. }) => unreachable!(),
         Some(Disposition::Unsupported {

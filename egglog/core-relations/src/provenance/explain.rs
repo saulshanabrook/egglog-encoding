@@ -5,23 +5,23 @@
 
 use super::*;
 
-impl<'a> CausalReceiptView<'a> {
-    fn raw_equality_index(&mut self) -> Result<&RawEqualityIndex, ReceiptViewError> {
+impl<'a> TraceView<'a> {
+    fn raw_equality_index(&mut self) -> Result<&ExplanationForest, TraceViewError> {
         if self.equality_index.is_none() {
             let mut parents = HashMap::default();
             let mut previous_position = None;
             for (index, event) in self.arena.durable_equalities.iter().enumerate() {
                 let event = event.as_ref().ok_or_else(|| {
-                    ReceiptViewError::Invalid("raw applied-equality history has an ID hole".into())
+                    TraceViewError::Invalid("raw applied-equality history has an ID hole".into())
                 })?;
                 if previous_position.is_some_and(|previous| event.position <= previous) {
-                    return Err(ReceiptViewError::Invalid(
+                    return Err(TraceViewError::Invalid(
                         "raw applied-equality positions are not strictly increasing".into(),
                     ));
                 }
                 previous_position = Some(event.position);
                 if event.proposal.left.sort != event.proposal.right.sort {
-                    return Err(ReceiptViewError::Invalid(
+                    return Err(TraceViewError::Invalid(
                         "one applied equality crosses logical sorts".into(),
                     ));
                 }
@@ -36,7 +36,7 @@ impl<'a> CausalReceiptView<'a> {
                     )
                     .is_some()
                 {
-                    return Err(ReceiptViewError::Invalid(
+                    return Err(TraceViewError::Invalid(
                         "one native equality child acquired two historical parents".into(),
                     ));
                 }
@@ -45,7 +45,7 @@ impl<'a> CausalReceiptView<'a> {
             self.counters.equality_events_indexed += self.arena.durable_equalities.len() as u64;
             self.counters.equality_positions_validated +=
                 self.arena.durable_equalities.len() as u64;
-            self.equality_index = Some(RawEqualityIndex { parents });
+            self.equality_index = Some(ExplanationForest { parents });
         }
         Ok(self
             .equality_index
@@ -57,12 +57,12 @@ impl<'a> CausalReceiptView<'a> {
         &mut self,
         left: RawEqualityEndpoint,
         right: RawEqualityEndpoint,
-        as_of: EqualityEdgeCount,
+        as_of: EdgeHorizon,
         position: HistoryPosition,
-    ) -> Result<RawEqualitySupport, ReceiptViewError> {
+    ) -> Result<RawEqualitySupport, TraceViewError> {
         self.raw_equality_support_if_connected_at(left, right, as_of, position)?
             .ok_or_else(|| {
-                ReceiptViewError::Invalid(
+                TraceViewError::Invalid(
                     "equality endpoints were disconnected at the historical landmark".into(),
                 )
             })
@@ -79,9 +79,9 @@ impl<'a> CausalReceiptView<'a> {
         &mut self,
         left: EqualityEndpoint,
         right: EqualityEndpoint,
-        as_of: EqualityEdgeCount,
+        as_of: EdgeHorizon,
         position: HistoryPosition,
-    ) -> Result<RawEqualitySupport, ReceiptViewError> {
+    ) -> Result<RawEqualitySupport, TraceViewError> {
         self.validate_equality_cutoff(as_of, position)?;
         self.validate_equality_endpoints(left, right)?;
         let (
@@ -97,7 +97,7 @@ impl<'a> CausalReceiptView<'a> {
             },
         ) = (self.replay_term(left.term)?, self.replay_term(right.term)?)
         else {
-            return Err(ReceiptViewError::Invalid(
+            return Err(TraceViewError::Invalid(
                 "congruence equality endpoints are not structural calls".into(),
             ));
         };
@@ -105,7 +105,7 @@ impl<'a> CausalReceiptView<'a> {
             || left_op != right_op
             || left_children.len() != right_children.len()
         {
-            return Err(ReceiptViewError::Invalid(
+            return Err(TraceViewError::Invalid(
                 "congruence equality endpoints have incompatible structure".into(),
             ));
         }
@@ -140,7 +140,7 @@ impl<'a> CausalReceiptView<'a> {
                 }
             }
         }
-        Err(ReceiptViewError::Invalid(
+        Err(TraceViewError::Invalid(
             "congruence equality has no exact historically connected constructor occurrences"
                 .into(),
         ))
@@ -149,11 +149,11 @@ impl<'a> CausalReceiptView<'a> {
     fn congruence_call_child_candidates(
         &mut self,
         endpoint: EqualityEndpoint,
-        as_of: EqualityEdgeCount,
+        as_of: EdgeHorizon,
         position: HistoryPosition,
-    ) -> Result<Vec<Box<[RawEqualityEndpoint]>>, ReceiptViewError> {
+    ) -> Result<Vec<Box<[RawEqualityEndpoint]>>, TraceViewError> {
         let ReplayTerm::Call { sort, op, children } = self.replay_term(endpoint.term)? else {
-            return Err(ReceiptViewError::Invalid(
+            return Err(TraceViewError::Invalid(
                 "congruence equality endpoint is not a structural call".into(),
             ));
         };
@@ -171,17 +171,17 @@ impl<'a> CausalReceiptView<'a> {
                 .table_constructors
                 .get(&table)
                 .map(|entry| entry.clone())
-                .ok_or(ReceiptViewError::UnknownTable(table))?;
+                .ok_or(TraceViewError::UnknownTable(table))?;
             let output = constructor.child_sorts.len();
             if output != children.len() || values.len() <= output {
-                return Err(ReceiptViewError::Invalid(format!(
+                return Err(TraceViewError::Invalid(format!(
                     "constructor fact {producer:?} has an invalid replay arity"
                 )));
             }
             let projected = self
                 .projector
                 .fact_term(producer, output)
-                .map_err(ReceiptViewError::Invalid)?;
+                .map_err(TraceViewError::Invalid)?;
             if projected != endpoint.term {
                 continue;
             }
@@ -213,7 +213,7 @@ impl<'a> CausalReceiptView<'a> {
             );
         }
         if candidates.is_empty() {
-            return Err(ReceiptViewError::Invalid(format!(
+            return Err(TraceViewError::Invalid(format!(
                 "congruence endpoint term {:?} has no exact historical constructor occurrence",
                 endpoint.term
             )));
@@ -225,11 +225,11 @@ impl<'a> CausalReceiptView<'a> {
         &mut self,
         left: RawEqualityEndpoint,
         right: RawEqualityEndpoint,
-        as_of: EqualityEdgeCount,
+        as_of: EdgeHorizon,
         position: HistoryPosition,
-    ) -> Result<Option<RawEqualitySupport>, ReceiptViewError> {
+    ) -> Result<Option<RawEqualitySupport>, TraceViewError> {
         if left.sort != right.sort {
-            return Err(ReceiptViewError::Invalid(
+            return Err(TraceViewError::Invalid(
                 "cannot explain equality across logical sorts".into(),
             ));
         }
@@ -283,12 +283,12 @@ impl<'a> CausalReceiptView<'a> {
         &mut self,
         left: EqualityEndpoint,
         right: EqualityEndpoint,
-        as_of: EqualityEdgeCount,
+        as_of: EdgeHorizon,
         position: HistoryPosition,
-    ) -> Result<RawEqualitySupport, ReceiptViewError> {
+    ) -> Result<RawEqualitySupport, TraceViewError> {
         match self.observed_equality_support(left, right, as_of, position)? {
             ObservedEqualitySupport::Support(support) => Ok(support),
-            ObservedEqualitySupport::Missing(term) => Err(ReceiptViewError::Invalid(format!(
+            ObservedEqualitySupport::Missing(term) => Err(TraceViewError::Invalid(format!(
                 "endpoint term {term:?} has no supported historical native occurrence"
             ))),
         }
@@ -298,14 +298,14 @@ impl<'a> CausalReceiptView<'a> {
     /// historical native occurrence. A structurally available checked term
     /// may deliberately have no standalone occurrence; callers that already
     /// retain anchored availability can distinguish that case from malformed
-    /// receipt history without weakening other validation errors.
+    /// trace history without weakening other validation errors.
     pub fn explain_equality_support_if_observed_at(
         &mut self,
         left: EqualityEndpoint,
         right: EqualityEndpoint,
-        as_of: EqualityEdgeCount,
+        as_of: EdgeHorizon,
         position: HistoryPosition,
-    ) -> Result<Option<RawEqualitySupport>, ReceiptViewError> {
+    ) -> Result<Option<RawEqualitySupport>, TraceViewError> {
         match self.observed_equality_support(left, right, as_of, position)? {
             ObservedEqualitySupport::Support(support) => Ok(Some(support)),
             ObservedEqualitySupport::Missing(_) => Ok(None),
@@ -316,9 +316,9 @@ impl<'a> CausalReceiptView<'a> {
         &mut self,
         left: EqualityEndpoint,
         right: EqualityEndpoint,
-        as_of: EqualityEdgeCount,
+        as_of: EdgeHorizon,
         position: HistoryPosition,
-    ) -> Result<ObservedEqualitySupport, ReceiptViewError> {
+    ) -> Result<ObservedEqualitySupport, TraceViewError> {
         self.validate_equality_cutoff(as_of, position)?;
         self.validate_equality_endpoints(left, right)?;
         let Some(left_support) =
@@ -361,27 +361,27 @@ impl<'a> CausalReceiptView<'a> {
         &self,
         left: EqualityEndpoint,
         right: EqualityEndpoint,
-    ) -> Result<(), ReceiptViewError> {
+    ) -> Result<(), TraceViewError> {
         if left.term.is_missing() || right.term.is_missing() {
-            return Err(ReceiptViewError::Invalid(
+            return Err(TraceViewError::Invalid(
                 "cannot explain equality with a missing ReplayTermId".into(),
             ));
         }
         for endpoint in [left, right] {
             let node = self.replay_terms.node(endpoint.term).ok_or_else(|| {
-                ReceiptViewError::Invalid(format!(
+                TraceViewError::Invalid(format!(
                     "equality endpoint owns unknown term {:?}",
                     endpoint.term
                 ))
             })?;
             if node.sort() != endpoint.sort {
-                return Err(ReceiptViewError::Invalid(
+                return Err(TraceViewError::Invalid(
                     "equality endpoint term has the wrong logical sort".into(),
                 ));
             }
         }
         if left.sort != right.sort {
-            return Err(ReceiptViewError::Invalid(
+            return Err(TraceViewError::Invalid(
                 "cannot explain equality across logical sorts".into(),
             ));
         }
@@ -392,10 +392,10 @@ impl<'a> CausalReceiptView<'a> {
         &mut self,
         endpoint: EqualityEndpoint,
         position: HistoryPosition,
-    ) -> Result<RawEqualitySupport, ReceiptViewError> {
+    ) -> Result<RawEqualitySupport, TraceViewError> {
         self.explain_endpoint_term_occurrence_if_observed(endpoint, position)?
             .ok_or_else(|| {
-                ReceiptViewError::Invalid(format!(
+                TraceViewError::Invalid(format!(
                     "endpoint term {:?} has no supported historical native occurrence",
                     endpoint.term
                 ))
@@ -406,7 +406,7 @@ impl<'a> CausalReceiptView<'a> {
         &mut self,
         endpoint: EqualityEndpoint,
         position: HistoryPosition,
-    ) -> Result<Option<RawEqualitySupport>, ReceiptViewError> {
+    ) -> Result<Option<RawEqualitySupport>, TraceViewError> {
         match self.replay_term(endpoint.term)? {
             ReplayTerm::Literal { .. } => Ok(Some(RawEqualitySupport {
                 applied: Box::new([]),
@@ -429,14 +429,14 @@ impl<'a> CausalReceiptView<'a> {
         &mut self,
         left: FactCellRef,
         right: FactCellRef,
-        as_of: EqualityEdgeCount,
+        as_of: EdgeHorizon,
         position: HistoryPosition,
-    ) -> Result<RawEqualitySupport, ReceiptViewError> {
+    ) -> Result<RawEqualitySupport, TraceViewError> {
         self.validate_equality_cutoff(as_of, position)?;
         let left = self.fact_cell_at(left, position)?;
         let right = self.fact_cell_at(right, position)?;
         if left.created.sort != right.created.sort {
-            return Err(ReceiptViewError::Invalid(
+            return Err(TraceViewError::Invalid(
                 "cannot explain fact-cell equality across logical sorts".into(),
             ));
         }
@@ -448,7 +448,7 @@ impl<'a> CausalReceiptView<'a> {
             self.explain_same_raw_fact_occurrences(&left, &right)?
         } else if left.created.raw == right.created.raw {
             self.explain_fact_term_occurrence(&left)?.ok_or_else(|| {
-                ReceiptViewError::Invalid(format!(
+                TraceViewError::Invalid(format!(
                     "{} has no supported historical native occurrence",
                     self.describe_fact_cell(&left),
                 ))
@@ -460,13 +460,13 @@ impl<'a> CausalReceiptView<'a> {
             // cell's own producer, then explain only their historical native
             // connectivity.
             let left_support = self.explain_fact_term_occurrence(&left)?.ok_or_else(|| {
-                ReceiptViewError::Invalid(format!(
+                TraceViewError::Invalid(format!(
                     "left {} has no supported historical native occurrence",
                     self.describe_fact_cell(&left),
                 ))
             })?;
             let right_support = self.explain_fact_term_occurrence(&right)?.ok_or_else(|| {
-                ReceiptViewError::Invalid(format!(
+                TraceViewError::Invalid(format!(
                     "right {} has no supported historical native occurrence",
                     self.describe_fact_cell(&right),
                 ))
@@ -506,13 +506,13 @@ impl<'a> CausalReceiptView<'a> {
         &mut self,
         fact: FactCellRef,
         endpoint: EqualityEndpoint,
-        as_of: EqualityEdgeCount,
+        as_of: EdgeHorizon,
         position: HistoryPosition,
-    ) -> Result<RawEqualitySupport, ReceiptViewError> {
+    ) -> Result<RawEqualitySupport, TraceViewError> {
         self.validate_equality_cutoff(as_of, position)?;
         let fact = self.fact_cell_at(fact, position)?;
         if fact.created.sort != endpoint.sort {
-            return Err(ReceiptViewError::Invalid(
+            return Err(TraceViewError::Invalid(
                 "cannot explain fact/endpoint equality across logical sorts".into(),
             ));
         }
@@ -522,7 +522,7 @@ impl<'a> CausalReceiptView<'a> {
         // check may then read its requested parent through a no-op canonical
         // lookup. Retain both occurrence witnesses at every raw-path shape.
         let fact_support = self.explain_fact_term_occurrence(&fact)?.ok_or_else(|| {
-            ReceiptViewError::Invalid(format!(
+            TraceViewError::Invalid(format!(
                 "{} has no supported historical native occurrence",
                 self.describe_fact_cell(&fact),
             ))
@@ -569,7 +569,7 @@ impl<'a> CausalReceiptView<'a> {
     fn equality_edge_count_at(
         &mut self,
         position: HistoryPosition,
-    ) -> Result<EqualityEdgeCount, ReceiptViewError> {
+    ) -> Result<EdgeHorizon, TraceViewError> {
         // Building the forest validates ID density and strictly increasing
         // positions once. Every later historical cutoff is then a binary
         // search instead of another full equality-history walk.
@@ -578,7 +578,7 @@ impl<'a> CausalReceiptView<'a> {
             .arena
             .durable_equalities
             .partition_point(|event| event.as_ref().unwrap().position <= position);
-        Ok(EqualityEdgeCount::new(count as u64))
+        Ok(EdgeHorizon::new(count as u64))
     }
 
     fn constructor_occurrence_facts(
@@ -693,7 +693,7 @@ impl<'a> CausalReceiptView<'a> {
         aliases: &mut Vec<RawAliasWindow>,
         desired: Option<RawEqualityEndpoint>,
         anchor: Option<&HistoricalFactCell>,
-    ) -> Result<RawEqualitySupport, ReceiptViewError> {
+    ) -> Result<RawEqualitySupport, TraceViewError> {
         if let Some(support) = self.try_explain_structural_term_availability_at(
             term,
             position,
@@ -707,7 +707,7 @@ impl<'a> CausalReceiptView<'a> {
         )? {
             return Ok(support);
         }
-        Err(ReceiptViewError::Invalid(format!(
+        Err(TraceViewError::Invalid(format!(
             "structural term {term:?} ({:?}, desired {desired:?}) has no exact historical producer by {position:?}",
             self.replay_term(term)?
         )))
@@ -720,14 +720,14 @@ impl<'a> CausalReceiptView<'a> {
         depth: usize,
         aliases: &mut Vec<RawAliasWindow>,
         context: StructuralAvailabilityContext<'_>,
-    ) -> Result<Option<RawEqualitySupport>, ReceiptViewError> {
+    ) -> Result<Option<RawEqualitySupport>, TraceViewError> {
         let StructuralAvailabilityContext {
             desired,
             anchor,
             fresh_after: inherited_fresh_after,
         } = context;
         if depth > 256 {
-            return Err(ReceiptViewError::Invalid(
+            return Err(TraceViewError::Invalid(
                 "structural term availability exceeds 256 call levels".into(),
             ));
         }
@@ -742,7 +742,7 @@ impl<'a> CausalReceiptView<'a> {
 
         if !self.is_registered_constructor_call(sort, op) {
             if !self.is_certified_replay_call(sort, op) {
-                return Err(ReceiptViewError::Invalid(format!(
+                return Err(TraceViewError::Invalid(format!(
                     "structural call {op:?} for {sort:?} has no replay-safe availability producer"
                 )));
             }
@@ -854,7 +854,7 @@ impl<'a> CausalReceiptView<'a> {
                     .get(&self.fact(producer)?.table)
                     .map(|entry| entry.clone())
                     .ok_or_else(|| {
-                        ReceiptViewError::Invalid(format!(
+                        TraceViewError::Invalid(format!(
                             "constructor occurrence {producer:?} lost its replay metadata"
                         ))
                     })?;
@@ -863,7 +863,7 @@ impl<'a> CausalReceiptView<'a> {
                 let produced_term = self
                     .projector
                     .fact_term(producer, output)
-                    .map_err(ReceiptViewError::Invalid)?;
+                    .map_err(TraceViewError::Invalid)?;
                 let exact_term = produced_term == term;
                 if (pass == 0) != exact_term {
                     continue;
@@ -875,7 +875,7 @@ impl<'a> CausalReceiptView<'a> {
                 let (output_cell, occurrence_position) =
                     match self.fact_cell_at(occurrence, position) {
                         Ok(cell) => (cell, position),
-                        Err(ReceiptViewError::FactNoLongerLive { .. }) => {
+                        Err(TraceViewError::FactNoLongerLive { .. }) => {
                             (self.fact_cell_at(occurrence, fact_position)?, fact_position)
                         }
                         Err(error) => return Err(error),
@@ -929,7 +929,7 @@ impl<'a> CausalReceiptView<'a> {
                     None
                 };
                 if children.len() != constructor.child_sorts.len() {
-                    return Err(ReceiptViewError::Invalid(format!(
+                    return Err(TraceViewError::Invalid(format!(
                         "constructor term {term:?} has {} children but its producer expects {}",
                         children.len(),
                         constructor.child_sorts.len()
@@ -955,7 +955,7 @@ impl<'a> CausalReceiptView<'a> {
                         occurrence_position,
                     )?;
                     if child_cell.endpoint.sort != child_sort {
-                        return Err(ReceiptViewError::Invalid(format!(
+                        return Err(TraceViewError::Invalid(format!(
                             "constructor producer {producer:?} child {column} changed replay sort"
                         )));
                     }
@@ -1021,7 +1021,7 @@ impl<'a> CausalReceiptView<'a> {
         desired_raw: Value,
         position: HistoryPosition,
         depth: usize,
-    ) -> Result<RawEqualitySupport, ReceiptViewError> {
+    ) -> Result<RawEqualitySupport, TraceViewError> {
         struct WalkContext {
             result_sort: ReplaySortId,
             desired_raw: Value,
@@ -1029,15 +1029,15 @@ impl<'a> CausalReceiptView<'a> {
         }
 
         fn walk(
-            view: &mut CausalReceiptView<'_>,
+            view: &mut TraceView<'_>,
             context: &WalkContext,
             term: ReplayTermId,
             depth: usize,
             visited: &mut HashSet<ReplayTermId>,
             supports: &mut Vec<RawEqualitySupport>,
-        ) -> Result<(), ReceiptViewError> {
+        ) -> Result<(), TraceViewError> {
             if depth > 256 {
-                return Err(ReceiptViewError::Invalid(
+                return Err(TraceViewError::Invalid(
                     "pure-call occurrence explanation exceeds 256 structural levels".into(),
                 ));
             }
@@ -1084,7 +1084,7 @@ impl<'a> CausalReceiptView<'a> {
             )?;
         }
         if supports.is_empty() {
-            return Err(ReceiptViewError::Invalid(format!(
+            return Err(TraceViewError::Invalid(format!(
                 "certified pure call for {result_sort:?} has no supported same-sort constructor descendant"
             )));
         }
@@ -1107,7 +1107,7 @@ impl<'a> CausalReceiptView<'a> {
         desired_raw: Value,
         position: HistoryPosition,
         depth: usize,
-    ) -> Result<RawEqualitySupport, ReceiptViewError> {
+    ) -> Result<RawEqualitySupport, TraceViewError> {
         let anchors = self.replay_terms.container_anchors(sort, desired_raw);
         let mut parts = Vec::new();
         let mut found_compatible_anchor = false;
@@ -1193,7 +1193,7 @@ impl<'a> CausalReceiptView<'a> {
             }
         }
         if !found_compatible_anchor {
-            return Err(ReceiptViewError::Invalid(format!(
+            return Err(TraceViewError::Invalid(format!(
                 "container call {op:?} for {sort:?} has no compatible structural anchor at {desired_raw:?}"
             )));
         }
@@ -1206,9 +1206,9 @@ impl<'a> CausalReceiptView<'a> {
         output: usize,
         sort: ReplaySortId,
         desired_raw: Value,
-        as_of: EqualityEdgeCount,
+        as_of: EdgeHorizon,
         position: HistoryPosition,
-    ) -> Result<Option<(HistoricalFactCell, RawEqualitySupport)>, ReceiptViewError> {
+    ) -> Result<Option<(HistoricalFactCell, RawEqualitySupport)>, TraceViewError> {
         let output_cell = match self.fact_cell_at(
             FactCellRef {
                 fact: producer,
@@ -1217,7 +1217,7 @@ impl<'a> CausalReceiptView<'a> {
             position,
         ) {
             Ok(cell) => cell,
-            Err(ReceiptViewError::FactNoLongerLive { .. }) => return Ok(None),
+            Err(TraceViewError::FactNoLongerLive { .. }) => return Ok(None),
             Err(error) => return Err(error),
         };
         let output_support = match self.explain_raw_equality_support_at(
@@ -1233,7 +1233,7 @@ impl<'a> CausalReceiptView<'a> {
             position,
         ) {
             Ok(support) => support,
-            Err(ReceiptViewError::Invalid(message))
+            Err(TraceViewError::Invalid(message))
                 if message == "equality endpoints were disconnected at the historical landmark" =>
             {
                 return Ok(None);
@@ -1256,7 +1256,7 @@ impl<'a> CausalReceiptView<'a> {
         desired_raw: Value,
         position: HistoryPosition,
         excluded_fact: FactId,
-    ) -> Result<Option<RawEqualitySupport>, ReceiptViewError> {
+    ) -> Result<Option<RawEqualitySupport>, TraceViewError> {
         let query = StructuralOccurrenceQuery {
             term,
             sort,
@@ -1284,7 +1284,7 @@ impl<'a> CausalReceiptView<'a> {
             return Ok(Some(support));
         };
         if term_sort != sort {
-            return Err(ReceiptViewError::Invalid(
+            return Err(TraceViewError::Invalid(
                 "exact occurrence term has the wrong logical sort".into(),
             ));
         }
@@ -1303,7 +1303,7 @@ impl<'a> CausalReceiptView<'a> {
                 .table_constructors
                 .get(&fact.table)
                 .map(|entry| entry.clone())
-                .ok_or(ReceiptViewError::UnknownTable(fact.table))?;
+                .ok_or(TraceViewError::UnknownTable(fact.table))?;
             let output = constructor.child_sorts.len();
             self.counters.equality_occurrence_terms_projected += 1;
             let produced_term = match self.projector.fact_term(producer, output) {
@@ -1317,7 +1317,7 @@ impl<'a> CausalReceiptView<'a> {
                 continue;
             }
             let creation_raw = *fact.values.get(output).ok_or_else(|| {
-                ReceiptViewError::Invalid(format!(
+                TraceViewError::Invalid(format!(
                     "constructor fact {producer:?} has no output column {output}"
                 ))
             })?;
@@ -1334,7 +1334,7 @@ impl<'a> CausalReceiptView<'a> {
                 position,
             ) {
                 Ok(support) => support,
-                Err(ReceiptViewError::Invalid(message))
+                Err(TraceViewError::Invalid(message))
                     if message
                         == "equality endpoints were disconnected at the historical landmark" =>
                 {
@@ -1354,7 +1354,7 @@ impl<'a> CausalReceiptView<'a> {
         }
         if supports.is_empty() {
             if let Some(error) = first_projection_error {
-                return Err(ReceiptViewError::Invalid(error));
+                return Err(TraceViewError::Invalid(error));
             }
             self.exact_occurrence_support_cache.insert(query, None);
             return Ok(None);
@@ -1368,7 +1368,7 @@ impl<'a> CausalReceiptView<'a> {
     fn explain_fact_term_occurrence(
         &mut self,
         cell: &HistoricalFactCell,
-    ) -> Result<Option<RawEqualitySupport>, ReceiptViewError> {
+    ) -> Result<Option<RawEqualitySupport>, TraceViewError> {
         let fact = self.fact(cell.occurrence.fact)?;
         let schema = self.table_schema(fact.table)?;
         if cell.occurrence.column.index() >= schema.key_columns
@@ -1419,9 +1419,9 @@ impl<'a> CausalReceiptView<'a> {
         fact: FactId,
         column: usize,
         depth: usize,
-    ) -> Result<FactId, ReceiptViewError> {
+    ) -> Result<FactId, TraceViewError> {
         if depth > 256 {
-            return Err(ReceiptViewError::Invalid(
+            return Err(TraceViewError::Invalid(
                 "fact-cell structural origin exceeds 256 links".into(),
             ));
         }
@@ -1430,11 +1430,11 @@ impl<'a> CausalReceiptView<'a> {
             .facts
             .get(
                 (fact.get().checked_sub(1).ok_or_else(|| {
-                    ReceiptViewError::Invalid("missing FactId has no structural origin".into())
+                    TraceViewError::Invalid("missing FactId has no structural origin".into())
                 })?) as usize,
             )
             .and_then(Option::as_ref)
-            .ok_or(ReceiptViewError::UnknownFact(fact))?;
+            .ok_or(TraceViewError::UnknownFact(fact))?;
         match record.origin {
             Some(FactOrigin::Site(_)) => Ok(fact),
             Some(FactOrigin::Fact(source)) => {
@@ -1451,7 +1451,7 @@ impl<'a> CausalReceiptView<'a> {
                     .get(cells.as_range())
                     .and_then(|cells| cells.get(column))
                     .ok_or_else(|| {
-                        ReceiptViewError::Invalid(format!(
+                        TraceViewError::Invalid(format!(
                             "merge origin for {fact:?} has no column {column}"
                         ))
                     })?;
@@ -1461,19 +1461,19 @@ impl<'a> CausalReceiptView<'a> {
                         Some(RowOriginRef::Fact(source_fact)) => {
                             self.exact_fact_cell_origin(source_fact, source as usize, depth + 1)
                         }
-                        None => Err(ReceiptViewError::Invalid(format!(
+                        None => Err(TraceViewError::Invalid(format!(
                             "merge origin for {fact:?} lost incoming column {column}"
                         ))),
                     },
                     MergeCellOrigin::Prior(source) => {
                         self.exact_fact_cell_origin(prior, source as usize, depth + 1)
                     }
-                    MergeCellOrigin::Unsupported => Err(ReceiptViewError::Invalid(format!(
+                    MergeCellOrigin::Unsupported => Err(TraceViewError::Invalid(format!(
                         "merge origin for {fact:?} synthesized column {column}"
                     ))),
                 }
             }
-            None => Err(ReceiptViewError::Invalid(format!(
+            None => Err(TraceViewError::Invalid(format!(
                 "fact {fact:?} column {column} has no structural origin"
             ))),
         }
@@ -1493,9 +1493,9 @@ impl<'a> CausalReceiptView<'a> {
         position: HistoryPosition,
         excluded_fact: FactId,
         depth: usize,
-    ) -> Result<Option<RawEqualitySupport>, ReceiptViewError> {
+    ) -> Result<Option<RawEqualitySupport>, TraceViewError> {
         if depth > 256 {
-            return Err(ReceiptViewError::Invalid(
+            return Err(TraceViewError::Invalid(
                 "structural occurrence explanation exceeds 256 constructor levels".into(),
             ));
         }
@@ -1508,7 +1508,7 @@ impl<'a> CausalReceiptView<'a> {
             return Ok(None);
         };
         if term_sort != sort {
-            return Err(ReceiptViewError::Invalid(
+            return Err(TraceViewError::Invalid(
                 "structural occurrence term has the wrong logical sort".into(),
             ));
         }
@@ -1532,7 +1532,7 @@ impl<'a> CausalReceiptView<'a> {
         // container anchor index before treating the call as available.
         if !self.is_registered_constructor_call(sort, op) {
             if !self.is_certified_replay_call(sort, op) {
-                return Err(ReceiptViewError::Invalid(format!(
+                return Err(TraceViewError::Invalid(format!(
                     "structural call {op:?} for {sort:?} has no registered constructor or certified replay recipe"
                 )));
             }
@@ -1589,19 +1589,19 @@ impl<'a> CausalReceiptView<'a> {
                 .table_constructors
                 .get(&fact.table)
                 .map(|entry| entry.clone())
-                .ok_or(ReceiptViewError::UnknownTable(fact.table))?;
+                .ok_or(TraceViewError::UnknownTable(fact.table))?;
             let output = constructor.child_sorts.len();
             self.counters.equality_occurrence_terms_projected += 1;
             let produced_term = self
                 .projector
                 .fact_term(producer, output)
-                .map_err(ReceiptViewError::Invalid)?;
+                .map_err(TraceViewError::Invalid)?;
             if produced_term != term {
                 continue;
             }
             let output_support = if later_sibling {
                 let creation_raw = *fact.values.get(output).ok_or_else(|| {
-                    ReceiptViewError::Invalid(format!(
+                    TraceViewError::Invalid(format!(
                         "constructor fact {producer:?} has no output column {output}"
                     ))
                 })?;
@@ -1618,7 +1618,7 @@ impl<'a> CausalReceiptView<'a> {
                     position,
                 ) {
                     Ok(support) => support,
-                    Err(ReceiptViewError::Invalid(message))
+                    Err(TraceViewError::Invalid(message))
                         if message
                             == "equality endpoints were disconnected at the historical landmark" =>
                     {
@@ -1669,13 +1669,13 @@ impl<'a> CausalReceiptView<'a> {
                 .table_constructors
                 .get(&fact.table)
                 .map(|entry| entry.clone())
-                .ok_or(ReceiptViewError::UnknownTable(fact.table))?;
+                .ok_or(TraceViewError::UnknownTable(fact.table))?;
             let output = constructor.child_sorts.len();
             self.counters.equality_occurrence_terms_projected += 1;
             let produced_term = self
                 .projector
                 .fact_term(producer, output)
-                .map_err(ReceiptViewError::Invalid)?;
+                .map_err(TraceViewError::Invalid)?;
             let ReplayTerm::Call {
                 sort: produced_sort,
                 op: produced_op,
@@ -1742,7 +1742,7 @@ impl<'a> CausalReceiptView<'a> {
                     position,
                 ) {
                     Ok(cell) => cell,
-                    Err(ReceiptViewError::FactNoLongerLive { .. }) => {
+                    Err(TraceViewError::FactNoLongerLive { .. }) => {
                         compatible = false;
                         break;
                     }
@@ -1780,7 +1780,7 @@ impl<'a> CausalReceiptView<'a> {
     fn explain_equal_term_child_occurrences(
         &mut self,
         cell: &HistoricalFactCell,
-    ) -> Result<Option<RawEqualitySupport>, ReceiptViewError> {
+    ) -> Result<Option<RawEqualitySupport>, TraceViewError> {
         let ReplayTerm::Call { sort, op, children } = self.replay_term(cell.created.term)? else {
             return Ok(None);
         };
@@ -1798,7 +1798,7 @@ impl<'a> CausalReceiptView<'a> {
                 .table_constructors
                 .get(&fact.table)
                 .map(|entry| entry.clone())
-                .ok_or(ReceiptViewError::UnknownTable(fact.table))?;
+                .ok_or(TraceViewError::UnknownTable(fact.table))?;
             let output = constructor.child_sorts.len();
             self.counters.equality_occurrence_terms_projected += 1;
             let produced_term = match self.projector.fact_term(producer, output) {
@@ -1859,7 +1859,7 @@ impl<'a> CausalReceiptView<'a> {
             return Ok(Some(combine_raw_equality_support(parts)));
         }
         if let Some(error) = first_projection_error {
-            return Err(ReceiptViewError::Invalid(error));
+            return Err(TraceViewError::Invalid(error));
         }
         Ok(None)
     }
@@ -1868,12 +1868,12 @@ impl<'a> CausalReceiptView<'a> {
         &mut self,
         left: &HistoricalFactCell,
         right: &HistoricalFactCell,
-    ) -> Result<RawEqualitySupport, ReceiptViewError> {
+    ) -> Result<RawEqualitySupport, TraceViewError> {
         let left_support = match self.explain_fact_term_occurrence(left)? {
             Some(support) => support,
             None => {
                 let producers = self.exact_term_producer_diagnostics(left.created.term);
-                return Err(ReceiptViewError::Invalid(format!(
+                return Err(TraceViewError::Invalid(format!(
                     "left {} has no supported historical native occurrence; exact producers: {producers:?}",
                     self.describe_fact_cell(left),
                 )));
@@ -1883,7 +1883,7 @@ impl<'a> CausalReceiptView<'a> {
             Some(support) => support,
             None => {
                 let producers = self.exact_term_producer_diagnostics(right.created.term);
-                return Err(ReceiptViewError::Invalid(format!(
+                return Err(TraceViewError::Invalid(format!(
                     "right {} has no supported historical native occurrence; exact producers: {producers:?}",
                     self.describe_fact_cell(right),
                 )));
