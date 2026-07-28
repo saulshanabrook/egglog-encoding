@@ -1,7 +1,9 @@
 use crate::*;
 use std::ffi::OsString;
+use std::fs::OpenOptions;
 use std::io::{self, BufRead, BufReader, IsTerminal, Read, Write};
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use clap::Parser;
 use egglog_reports::TimingSummaryV2;
@@ -136,20 +138,49 @@ fn validate_slice_paths(args: &Args) -> Result<(), String> {
 }
 
 fn publish_slice_output(path: &Path, rendered: &str) -> io::Result<()> {
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-    temporary.write_all(rendered.as_bytes())?;
-    temporary.as_file().sync_all()?;
-    if std::fs::read(temporary.path())? != rendered.as_bytes() {
-        return Err(io::Error::other(
-            "temporary artifact differs from the validated replay program",
-        ));
+
+    let (temporary_path, mut temporary) = (0..128)
+        .find_map(|_| {
+            let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+            let candidate = parent.join(format!(".egglog-slice-{}-{id}.tmp", std::process::id()));
+            match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&candidate)
+            {
+                Ok(file) => Some(Ok((candidate, file))),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => None,
+                Err(error) => Some(Err(error)),
+            }
+        })
+        .unwrap_or_else(|| {
+            Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "could not reserve a temporary slice artifact",
+            ))
+        })?;
+
+    let result = (|| {
+        temporary.write_all(rendered.as_bytes())?;
+        temporary.sync_all()?;
+        drop(temporary);
+        if std::fs::read(&temporary_path)? != rendered.as_bytes() {
+            return Err(io::Error::other(
+                "temporary artifact differs from the validated replay program",
+            ));
+        }
+        std::fs::rename(&temporary_path, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(temporary_path);
     }
-    temporary.persist(path).map_err(|error| error.error)?;
-    Ok(())
+    result
 }
 
 /// Start a command-line interface for the E-graph.

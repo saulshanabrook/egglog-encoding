@@ -1,4 +1,36 @@
-use std::{path::Path, process::Command};
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+    sync::atomic::{AtomicU64, Ordering},
+};
+
+struct TestDir(PathBuf);
+
+impl TestDir {
+    fn new() -> Self {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+        loop {
+            let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+            let path =
+                std::env::temp_dir().join(format!("egglog-slice-cli-{}-{id}", std::process::id()));
+            match std::fs::create_dir(&path) {
+                Ok(()) => return Self(path),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => panic!("cannot create test directory: {error}"),
+            }
+        }
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TestDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
 
 fn write_program(directory: &Path) -> std::path::PathBuf {
     let path = directory.join("input.egg");
@@ -12,7 +44,7 @@ fn egglog() -> Command {
 
 #[test]
 fn slice_output_implies_slice_and_strictly_replays() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = TestDir::new();
     let program = write_program(directory.path());
     let artifact = directory.path().join("slice-replay.egg");
     std::fs::write(&artifact, "old artifact").unwrap();
@@ -45,7 +77,7 @@ fn slice_output_implies_slice_and_strictly_replays() {
 
 #[test]
 fn rewrite_root_collision_strictly_replays() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = TestDir::new();
     let program = directory.path().join("rewrite-collision.egg");
     let artifact = directory.path().join("slice-replay.egg");
     std::fs::write(
@@ -80,7 +112,7 @@ fn rewrite_root_collision_strictly_replays() {
 
 #[test]
 fn slice_requires_an_output_and_proofs_remains_optional() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = TestDir::new();
     let program = write_program(directory.path());
     let proofs = egglog()
         .args(["--slice", "--proofs"])
@@ -103,7 +135,7 @@ fn slice_requires_an_output_and_proofs_remains_optional() {
 
 #[test]
 fn slice_rejects_parallel_and_serialization_modes() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = TestDir::new();
     let program = write_program(directory.path());
     for (flags, diagnostic) in [
         (
@@ -123,7 +155,7 @@ fn slice_rejects_parallel_and_serialization_modes() {
 
 #[test]
 fn slice_output_cannot_alias_an_input_or_report() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = TestDir::new();
     let program = write_program(directory.path());
 
     let input_collision = egglog()
@@ -162,7 +194,7 @@ fn removed_capture_only_flag_is_unknown() {
 
 #[test]
 fn failed_strict_validation_preserves_existing_output() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = TestDir::new();
     let artifact = directory.path().join("slice-replay.egg");
     std::fs::write(&artifact, "keep me").unwrap();
     let program = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/web-demo/eqsolve.egg");
