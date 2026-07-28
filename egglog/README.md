@@ -70,6 +70,10 @@ you also want the replay to produce normal proof-mode output:
 egglog --slice --proofs input.egg
 ```
 
+Bare `--slice` is rejected because it has no requested output. Use
+`--slice-output` to write a validated artifact without proof-mode output, or
+combine `--slice` with `--proofs`.
+
 Before publishing a file, egglog reparses the exact rendered bytes on a fresh
 graph with proofs and proof testing enabled. A capture, slicing, or replay
 failure exits without publishing a new artifact, and an existing destination
@@ -85,6 +89,11 @@ Successful `check` commands are the only replay roots; `extract` and
 events, rule firings and their grounded premises, equality explanations,
 version changes, removals, and check positions. It is causal evidence used to
 construct the replay program, not itself a proof.
+
+Retained source `rewrite` commands remain rewrites in the artifact. When both
+directions of a retained `birewrite` are needed, the artifact emits one
+`birewrite`; when only one is needed, it emits an oriented, deterministically
+named `rewrite` so grounded replay can select it exactly.
 
 Rust callers that need to inspect capture directly can enable it before loading
 or declaring user state with `EGraph::enable_trace`, then use
