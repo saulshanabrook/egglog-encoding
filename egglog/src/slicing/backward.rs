@@ -1,3 +1,8 @@
+//! Backward dynamic slicing from recorded criteria.
+//!
+//! A slice selects one sound historical support cone. It does not claim global
+//! minimality and does not construct a proof.
+
 use std::collections::VecDeque;
 
 use crate::core_relations::{

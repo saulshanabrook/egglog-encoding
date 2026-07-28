@@ -1,8 +1,7 @@
-//! Owned, graph-neutral causal replay input.
+//! Graph-neutral replay-program construction for a selected slice.
 //!
-//! This module is deliberately a cold boundary. It may inspect selected raw
-//! receipts while the recording graph is alive, but none of its output owns a
-//! backend id, runtime value, receipt handle, or borrow into that graph.
+//! Output owns no backend ids, runtime values, trace handles, or borrows from
+//! the recording graph. A fresh graph may execute it under ordinary proof mode.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
