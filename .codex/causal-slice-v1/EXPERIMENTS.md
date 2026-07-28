@@ -10,19 +10,20 @@
 - Non-goals: Prefix or conservative recovery, selector rules, partial
   bindings, query planning, source projection, proof-database translation, a
   second evaluator, proof extraction, Herbie, or workload-specific behavior.
-- Current frontier: exact deletion receipts are green on all five cohort
-  workloads and the recorder is frozen under the final-proof headroom
-  decision. The next checkpoint is the check-root-seeded lazy receipt view and
-  passive slicer; no further recorder optimization precedes end-to-end replay.
+- Current frontier: production commit `8ff038b` closes the last known replay
+  failure by retaining strict pre-event structural denotation dependencies.
+  The 187-case corpus, five byte-stable artifacts, final proof/full gates, and
+  six-round benchmark comparisons are green. Compatibility expansion and
+  further performance tuning are explicitly deferred to post-review work.
 
 ## Roster
 
 | Agent | Circle/domain | Aim | Status | Output | Stop |
 |---|---|---|---|---|---|
-| root | coordinator | Preserve scope, integrate, and own final gates | active | accepted checkpoints and final handoff | gates pass or user decision is needed |
-| implementation worker | Rust/Python implementation | Build the accepted design serially | deletion checkpoint accepted; slicer next | reviewable diff and targeted tests | checkpoint passes, path is disproved, or two cycles show no movement |
-| proof reviewer | read-only proof boundary | Verify exact-one replay and unchanged proof checking | replay map complete; implementation pending | evidence-backed findings | criteria pass or one blocking objection remains |
-| benchmark verifier | read-only benchmark gate | Own broad benchmark commands and endpoint identity | benchmark surface green; final gate pending | per-file measurements with SHAs | comparison completes or validity fails |
+| root | coordinator | Preserve scope, integrate, and own final gates | completed; review handoff ready | accepted checkpoints and final handoff | gates pass or user decision is needed |
+| implementation worker | Rust/Python implementation | Build the accepted design serially | completed at `8ff038b` | reviewable diff and targeted tests | checkpoint passes, path is disproved, or two cycles show no movement |
+| proof reviewer | read-only proof boundary | Verify exact-one replay and unchanged proof checking | completed; no soundness blocker | evidence-backed findings | criteria pass or one blocking objection remains |
+| benchmark verifier | read-only benchmark gate | Own broad benchmark commands and endpoint identity | completed; exact final binary measured | per-file measurements with SHAs | comparison completes or validity fails |
 
 All sub-agents use `gpt-5.6-sol` at `ultra` reasoning effort. Only the
 implementation worker writes feature code. Reviewers are read-only.
@@ -3167,3 +3168,91 @@ subset, `make check` then passed lockfile validation, formatting, Ruff, mypy,
 both Clippy configurations, 173 Python tests, the complete Rust workspace and
 doctests, and the DD timing-summary integration test. The core unit target now
 reports 136 passed and the one named desired-behavior regression ignored.
+
+## 2026-07-28: close structural-carrier denotation dependencies
+
+Commit `8ff038bfdf18b373db051fa98a999dda8e871f51` supersedes the
+desired-behavior and `KnownReplayFailure` status recorded immediately above.
+The seven-command counterexample identified the right missing edge: a selected
+equality carrier replays its structural proposal, so the slice must also retain
+the historical state that made each proposal endpoint denote its native
+pre-event representative.
+
+### Accepted model correction
+
+- Every equality that becomes replay-visible now queues one denotation query.
+  `TraceView::explain_equality_denotation_before` explains both endpoints at
+  the strict `equality_id - 1` and `history_position - 1` cutoff, then checks
+  that the resulting representatives are exactly the recorded native edge.
+  The event can never justify its own precondition.
+- The closure uses the existing structural terms, raw proposal values, native
+  parent/child edge, equality forest, occurrence facts, and rekey history. No
+  capture schema, replay syntax, dependency, or equality-event stream was
+  added.
+- Carrier-owned terms do not retain a redundant older producer merely because
+  the carrier itself will construct the target. Historical container anchors
+  remain inputs, however, and therefore retain their exact producer. A direct
+  `RuleUnion`/`Vec` canary distinguishes those modes: inheriting the carrier
+  mode loses source `FactId(1)`; the accepted historical-anchor mode retains
+  it.
+- The occurrence memoization key now includes the equality horizon and the
+  exact-producer mode. This removes the latent possibility of reusing support
+  computed for a later forest state or a different ownership contract.
+- One bounded unification succeeded: the older optional check-root
+  cross-endpoint equality seeding and its sole-use wrapper were deleted because
+  the general denotation law derives that support. Removing congruence-child
+  support still breaks Knapsack, and removing firing-term availability still
+  breaks Combinators; those are distinct laws and remain explicit.
+
+### Completeness and precision evidence
+
+- The six constructor-allocation orders now pass in both native and term
+  replay; the regression is no longer ignored.
+- A fixed-seed 32-case property covers source/rule unions, source/rule sets,
+  deletion/recreation, shuffled allocation orders, disconnected prefix noise,
+  and native plus term replay. Its bounded shrinker prints a copy-ready minimal
+  program if a future seed fails.
+- The precision canary proves a disconnected earlier equality is not retained.
+  The fix is transitive endpoint closure, not prefix retention.
+- All 31 slicing unit tests pass. The complete causal corpus passes 151 core
+  plus 36 experimental/workload cases. Eqsolve now publishes and strictly
+  replays its seven check roots; its three extracts remain intentionally
+  outside the check-directed root contract, so the file uses the existing
+  `ChecksOnly` disposition rather than a failure classification.
+- `KnownReplayFailure` and its final registry entry were deleted. Runtime
+  `Unsupported` remains reserved for the 48 by-design fail-closed boundaries.
+
+### Artifact and performance gates
+
+The current release binary generated the five-workload artifacts twice. Both
+generations matched each other and the frozen oracle byte-for-byte:
+
+```text
+Math        417b80f7a08d29000ab7c8288df22c0c457be3b607ae0bb8a70177b5d8663a6b
+Eggcc       15cc5a6f4cbb5c40d3c06c55fe5361cb399bc435d704d1b900aa36f273f975bb
+Pointer     86046da30e97b0d73349d5e63b4e02a2efba5a8a49b38fd2e2b7c115b0e496a1
+Hardboiled  fb5f701069049b8f86df546fd7303daaa6a3823350631ed9d71b8398779ffff0
+Luminal     49c83a9764bc67e12a554fab66a9244c0fa4b2c73f4a2d14f9345bccfb39a811
+```
+
+All five strictly replayed through the experimental entrypoint; the four
+main-compatible artifacts also strictly replayed through main. The public
+benchmark harness then progressed from one to three to six rounds without
+forcing rows. On the final six-round comparison, sliced proofs versus proofs
+had suite wall ratio `0.138-0.141x`; every per-file upper bound was below
+`0.56x`, and every file used less peak RSS. Versus normal/off, the suite wall
+ratio was `2.20-2.23x`. The append-only `.reports.jsonl` after collection has
+SHA-256 `5ea7b06e013177ea3f1805e741b694862a0c816b08125509aacb9e1b73d13b15`.
+
+The fix commit adds 305 rustfmt-normalized production lines and 415 test/harness
+lines net; tests receive no size credit. Together with the earlier 15-line
+validation-publication seam, the current production tree is 320 lines above
+`df8aeab`: `+22,609` versus whole-feature base `4940be37`, `+11,002`
+versus logical-v1 base `0d7ffbb`, `+347` versus pre-refactor `8598ad4`, and
+`-623` versus reduction start `74eb9218`.
+
+Final validation ran in the required order on this commit. `make proof-tests`
+passed 349 core and 44 experimental/workload cases. Without rerunning that
+subset, `make check` then passed lockfile validation, formatting, Ruff, mypy,
+both Clippy configurations, 173 Python tests, the complete Rust workspace and
+doctests, and the DD timing-summary integration test.

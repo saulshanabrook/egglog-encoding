@@ -2,30 +2,23 @@
 
 ## Status
 
-The production checkpoint measured for performance and calibrated line-count
-accounting is `df8aeab6313cdd086d899778e5b750a2b7948d47`. The current review
-candidate starts from tracked commit
-`587ba23b11ef7beedfe6c2805f0c9a7c68fa4c63` and replaces the
-Eqsolve-dependent publication integration test with a small private
-validation-before-publication seam and injected-failure test. That seam
-decouples the publication safety oracle from the known Eqsolve defect; it does
-not change capture, slicing, replay semantics, or the five generated artifact
-byte oracles. The current candidate has been fully revalidated, but has not
-been rebenchmarked or recalibrated for production line accounting. Performance
-and size numbers below therefore remain explicitly checkpoint evidence rather
-than measurements of this post-checkpoint binary.
+The production review candidate is
+`8ff038bfdf18b373db051fa98a999dda8e871f51`. It closes the last known replay
+failure by retaining the pre-event denotation read by every selected structural
+equality carrier. The correction is consumer-side: it uses existing trace
+history and changes neither capture schema nor replay syntax. The five frozen
+artifacts remain byte-identical.
 
 The implementation is ready for architectural and correctness review under a
 deliberately bounded contract:
 
 - Supported programs either produce an artifact that passes strict replay in
   a fresh proof-testing graph, or fail closed without publishing one.
-- `core/web-demo/eqsolve.egg` is the one named, known slicing defect. Strict
-  replay catches it and prevents publication; it is not presented as an
-  intentional `Unsupported` boundary.
-- Compatibility expansion and further performance tuning are deferred. At the
-  measured checkpoint, sliced proofs were materially faster and used less
-  memory than full proofs on every benchmark in the accepted five-file cohort.
+- There are no known capture panics or replay-failure classifications. Eqsolve
+  now publishes and strictly replays all seven check roots.
+- Compatibility expansion and further performance tuning are deferred. On the
+  current binary, sliced proofs are materially faster and use less memory than
+  full proofs on every benchmark in the accepted five-file cohort.
 
 ## User-visible contract
 
@@ -124,7 +117,7 @@ The high-level corpus is green across 187 programs: 151 core and 36
 experimental/workload cases.
 
 - `KnownCapturePanic`: 0.
-- `KnownReplayFailure`: 1 (`CS-REPLAY-EQSOLVE`, below).
+- `KnownReplayFailure`: 0; the variant and its final registry entry are gone.
 - Runtime `Unsupported`: 48 explicit contract boundaries.
 - Static proof-incompatible exclusions: 52.
 - Extract-only root exclusions: 4.
@@ -133,35 +126,45 @@ Every runtime rejection expects exit 1 and an absent fresh artifact. The
 allowlist is centralized and checked for sortedness, duplicates, stale paths,
 and stale dispositions.
 
-`CS-REPLAY-EQSOLVE` is retained as an honest defect classification. Its first
-surface failure, localized by a diagnostic probe, is the missing inner `Add`
-in the final equality check; public stderr remains `@ExistsConstructor2`. A
-maximal pre-criterion slice proves that the recorded prefix contains a
-sufficient path. The root cause is now reduced to seven commands and explained:
-backward closure follows native applied equality edges, but replay re-executes
-their source or rule actions. An action endpoint can already be canonicalized
-when the native edge is applied, so replaying that action without the earlier
-endpoint-normalization equality applies a different edge. In the reduced
-Eqsolve trace, equality 954 proposes `328 = 4082` but actually applies
-`4082 -> 327`; omitted equality 724 is what made 328 canonicalize to 327. The
-extra ordinary round restores 724 and then equality 3005, disproving its prior
-classification as an unrelated alternate proof. A three-node `A = B; B = C`
-counterexample reproduces the same failure in native and term-encoded graphs,
-without proofs, grounded schedules, congruence, or rebuild. Three of six
-allocation orders expose it, so orientation affects incomplete closure rather
-than Egglog semantics. The trace already contains the endpoint terms, raw
-values, native parent/child, order, and causes needed for a future consumer-side
-fix; no schema expansion is indicated. That fix is deliberately deferred to a
-separate reviewed change. The validation gate reports the replay error and
-leaves a fresh artifact absent while preserving an existing destination; no
-broad predictive predicate, over-retention, or recording-schema expansion was
-introduced to relabel it as supported or `Unsupported`.
+`CS-REPLAY-EQSOLVE` was reduced before fixing it, so the correction follows a
+named model error rather than the surface failure. Backward closure followed
+native applied equality edges, while replay re-executed their structural source
+or rule actions. An action endpoint can already be canonicalized when the
+native edge is applied, so replaying that action without the earlier endpoint
+denotation equality applies a different edge. In the reduced Eqsolve trace,
+equality 954 proposes `328 = 4082` but actually applies `4082 -> 327`; equality
+724 is what made 328 denote 327. A three-node `A = B; B = C` counterexample
+reproduced the failure without proofs, grounded schedules, congruence, or
+rebuild. Three of six allocation orders exposed it.
+
+The fix gives every replay-visible equality one strict pre-event denotation
+query. It explains each structural proposal endpoint at `id - 1` and
+`position - 1`, verifies those representatives against the recorded native
+parent/child edge, and queues the prerequisite equalities, facts, causes, and
+rekeys through ordinary backward closure. An event cannot justify itself. The
+trace already contained every required field, so no recording or artifact
+schema changed.
+
+Carrier-owned targets do not retain a redundant producer, but a historical
+container anchor remains an input. A direct rule-union/Vec regression proves
+that distinction: the old mode loses the source anchor; the accepted mode
+retains it. A fixed-seed property additionally covers source and rule unions,
+source and rule sets, deletion/recreation, shuffled allocation order, and
+unrelated prefix noise in native and term replay. The six-order counterexample
+is unignored and green.
+
+One bounded simplification succeeded: the general denotation law replaced the
+old optional check-root cross-endpoint seeding. Two tempting special-case
+deletions were rejected on evidence: congruence-child support remains necessary
+for Knapsack, and firing-term availability remains necessary for Combinators.
+Eqsolve is now `ChecksOnly` because its seven checks are supported while
+extracts are not replay roots—not because any replay failure remains.
 
 ### Five-workload artifact oracle
 
-At checkpoint `df8aeab`, the final artifacts were generated twice and were
-byte-identical between repetitions. The current candidate regenerated them
-once and matched that oracle. The refactor intentionally renamed generated
+The current candidate generated all five artifacts twice; both generations
+matched each other and the frozen `df8aeab` oracle byte-for-byte. The refactor
+intentionally renamed generated
 identifiers and preserved rewrite syntax, so these are a new frozen byte
 oracle rather than a claim of identity to the pre-rename files.
 
@@ -184,26 +187,39 @@ and no old `__causal` identifier remains.
 
 ## Performance evidence
 
-The final public-harness comparison used the same clean release binary for both
-treatments (`sha256:5a7e77e2b4480d7da6904e6ba79272d468e804ee2632eb1f615e31ca5bc17d32`),
+The final public-harness comparison used the same release binary for all
+treatments
+(`sha256:874d47768da4466f19426c18b6a27c0e9cd0c0bed3324586f2b7909e3277ca77`),
 a 120-second timeout, and the normal append-only cache. It progressed from one
-to three to six rounds without forcing rows. All 60 observations succeeded.
+to three to six rounds without forcing rows. All observations succeeded. The
+harness marked the checkout dirty only because the two pre-existing untracked
+files were present; the benchmarked tracked sources are exactly `8ff038b`.
 
 | Workload | Sliced proofs / proofs wall, 95% CI | Peak RSS, 95% CI |
 | --- | ---: | ---: |
-| Math | 0.235-0.257x | 0.388-0.392x |
-| Eggcc | 0.391-0.408x | 0.589-0.611x |
-| Pointer | 0.0924-0.0941x | 0.190-0.193x |
-| Hardboiled | 0.552-0.560x | 0.473-0.487x |
-| Luminal | 0.0371-0.0381x | 0.0908-0.0959x |
+| Math | 0.217-0.220x | 0.387-0.391x |
+| Eggcc | 0.397-0.399x | 0.594-0.603x |
+| Pointer | 0.0932-0.0962x | 0.191-0.194x |
+| Hardboiled | 0.545-0.557x | 0.475-0.482x |
+| Luminal | 0.0338-0.0352x | 0.0904-0.0925x |
 
-Suite-total wall is **0.149-0.155x**. Every per-file upper bound is below 1,
+Suite-total wall is **0.138-0.141x**. Every per-file upper bound is below 1,
 and every workload also uses less peak RSS than full proofs. The report is
-`/private/tmp/egglog-sliced-review-depless.jh27Wx/results.jsonl`, SHA-256
-`c6f51f454f3792e4e1fcf395caa4a521994004c443f9f5a95efb7d4ef5737a7c`.
+the normal append-only `.reports.jsonl`, SHA-256
+`5ea7b06e013177ea3f1805e741b694862a0c816b08125509aacb9e1b73d13b15`.
 
-The earlier same-binary measurement at the pre-refactor checkpoint put capture
-plus slicing at 2.00-2.12x normal/off suite wall. The separate whole-feature
+The same final binary measured sliced proofs versus normal/off at **2.20-2.23x**
+suite wall:
+
+| Workload | Sliced proofs / off wall, 95% CI | Peak RSS, 95% CI |
+| --- | ---: | ---: |
+| Math | 3.47-3.73x | 5.11-5.17x |
+| Eggcc | 1.83-1.84x | 3.51-3.60x |
+| Pointer | 4.08-4.28x | 2.28-2.30x |
+| Hardboiled | 2.34-2.38x | 2.32-2.34x |
+| Luminal | 1.66-1.69x | 1.34-1.35x |
+
+The separate whole-feature
 base-versus-current ordinary comparison was inconclusive on wall time: suite
 0.601-1.03x and every per-file interval included 1. Peak RSS was higher for
 four of five workloads. Two plausible causes remain disclosed: binary-layout
@@ -217,21 +233,20 @@ after layout-changing review refactors.
 
 The calibrated rustfmt-normalized production metric is:
 
-| Base | Additions | Deletions | Net production LoC |
-| --- | ---: | ---: | ---: |
-| Whole-feature `4940be37` | 24,167 | 1,878 | **+22,289** |
-| Logical-v1 `0d7ffbb` | 19,276 | 8,594 | **+10,682** |
-| Pre-refactor `8598ad4` | 13,062 | 13,035 | **+27** |
-| Reduction start `74eb9218` | 13,676 | 14,619 | **-943** |
+| Base | Net production LoC |
+| --- | ---: |
+| Whole-feature `4940be37` | **+22,609** |
+| Logical-v1 `0d7ffbb` | **+11,002** |
+| Pre-refactor `8598ad4` | **+347** |
+| Reduction start `74eb9218` | **-623** |
 
-At the measured checkpoint, the review-readiness work was therefore
-approximately LoC-neutral (+27) after the rewrite-preservation feature and
-dependency-free atomic publication. The
-whole reduction campaign remains 943 production lines smaller than its clean
-start. That checkpoint contains 465,679 nontrivia Rust syntax tokens, 4,891
-fewer than `74eb9218`, and 121 `unsafe` keywords, one fewer than that base. The
-small post-checkpoint validation seam has not been added to this calibrated
-accounting.
+The endpoint-denotation commit is +305 production lines; the publication-test
+seam after `df8aeab` is +15. Together they are +425/-105 production lines
+relative to that checkpoint. The fix's 415 net test/harness lines receive no
+size credit. The whole reduction campaign remains 623 production lines smaller
+than its clean start. The last calibrated token inventory was at `df8aeab`: 465,679
+nontrivia Rust syntax tokens, 4,891 fewer than `74eb9218`; it was not rerun for
+this correctness patch.
 
 The accounting formats each Rust source with rustfmt 1.8.0, excludes dedicated
 tests/snapshots/docs/ledgers and complete outer `#[cfg(test)]` items, then uses
@@ -246,7 +261,7 @@ reduction credit. No new direct dependency was introduced versus `8598ad4` or
 
 Focused gates already passed during implementation:
 
-- Full core suite: 125 unit tests and 2 doctests.
+- Full `egglog` library suite: 141 unit tests.
 - Causal corpus: 151 core plus 36 experimental/workload programs.
 - Proof snapshot regeneration: 349 core plus 44 experimental/workload cases.
 - `make python-check` (Ruff, mypy, 173 pytest cases, 2 snapshots).
@@ -261,18 +276,13 @@ rerunning that subset, `make check` then passed lockfile validation, formatting,
 Ruff, mypy, both Clippy configurations, 173 Python tests, the full Rust
 workspace and doctest suite, and the DD timing-summary integration test. The
 rebuilt release binaries are
-`078c80d4328c76697941ecd155c3912cbb4ea5d65daf7bc04b8e286a38bd0797`
+`c7abdfab3dabf8ae5358b0a5e90cd55b2016c365a4eda2976fbb660894871b4f`
 (main) and
-`436d97795b2fe5403a03ef71b42f6145ac42492e8aa825c0be641def52c0ffbe`
+`874d47768da4466f19426c18b6a27c0e9cd0c0bed3324586f2b7909e3277ca77`
 (experimental). The candidate reproduced all five frozen artifact hashes.
 
 ## Explicitly deferred
 
-- Correct the now-characterized `CS-REPLAY-EQSOLVE` endpoint-normalization
-  closure defect. For each selected equality owner, retain the historical
-  support that made its structural proposal endpoints denote their canonical
-  representatives immediately before application. Use the seven-command
-  orientation canary; do not expand recording merely to hide the defect.
 - The 48 runtime and 56 static/extract fail-closed compatibility boundaries.
 - Parallel trace capture; both public multi-thread activation errors remain.
 - Annotation-only provenance and slice-time premise re-derivation. That is a
@@ -299,3 +309,7 @@ rebuilt release binaries are
 - `1a97d0e`: refresh deterministic rewrite proof snapshots and delete one
   unreachable snapshot.
 - `df8aeab`: publish atomically without adding a dependency.
+- `eb312ec`: decouple the publication-safety oracle from a known replay defect.
+- `4bd0264`: reduce Eqsolve to the structural-endpoint denotation error.
+- `8ff038b`: close structural-carrier denotation dependencies and delete the
+  final replay-failure classification.
