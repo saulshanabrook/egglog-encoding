@@ -214,6 +214,8 @@ fn cli_with_args_inner<I, T>(
     if slice_requested {
         let invalid = if args.threads != 1 {
             Some("--slice requires --threads 1")
+        } else if args.slice && !args.proofs && args.slice_output.is_none() {
+            Some("--slice requires --proofs or --slice-output")
         } else if args.inputs.len() != 1 {
             Some("--slice requires exactly one input file")
         } else if args.proof_testing {

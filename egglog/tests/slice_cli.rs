@@ -44,18 +44,26 @@ fn slice_output_implies_slice_and_strictly_replays() {
 }
 
 #[test]
-fn slice_and_proofs_are_orthogonal() {
+fn slice_requires_an_output_and_proofs_remains_optional() {
     let directory = tempfile::tempdir().unwrap();
     let program = write_program(directory.path());
-    for flags in [&["--slice"][..], &["--slice", "--proofs"][..]] {
-        let output = egglog().args(flags).arg(&program).output().unwrap();
-        assert!(
-            output.status.success(),
-            "{} failed:\n{}",
-            flags.join(" "),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
+    let proofs = egglog()
+        .args(["--slice", "--proofs"])
+        .arg(&program)
+        .output()
+        .unwrap();
+    assert!(
+        proofs.status.success(),
+        "--slice --proofs failed:\n{}",
+        String::from_utf8_lossy(&proofs.stderr)
+    );
+
+    let bare = egglog().arg("--slice").arg(&program).output().unwrap();
+    assert_eq!(bare.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&bare.stderr)
+            .contains("--slice requires --proofs or --slice-output")
+    );
 }
 
 #[test]
@@ -64,11 +72,11 @@ fn slice_rejects_parallel_and_serialization_modes() {
     let program = write_program(directory.path());
     for (flags, diagnostic) in [
         (
-            vec!["--slice", "--threads", "2"],
+            vec!["--slice", "--proofs", "--threads", "2"],
             "--slice requires --threads 1",
         ),
         (
-            vec!["--slice", "--to-json"],
+            vec!["--slice", "--proofs", "--to-json"],
             "--slice conflicts with --to-json, --to-dot, and --to-svg",
         ),
     ] {
