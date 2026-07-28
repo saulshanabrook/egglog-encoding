@@ -276,6 +276,42 @@ impl EGraph {
     /// The DD backend retains the accepted [`RuleSpec`] directly; this pass does
     /// not introduce a second rule IR.
     fn validate_rule(&self, rule: &RuleSpec) -> Result<()> {
+        let has_primitive_replay = rule.core.body.atoms.iter().any(|atom| {
+            matches!(
+                &atom.head,
+                RuleBodyCall::Primitive {
+                    replay: Some(_),
+                    ..
+                }
+            )
+        }) || rule.core.head.0.iter().any(|action| {
+            let call = match action {
+                GenericCoreAction::Let(_, _, call, _)
+                | GenericCoreAction::Set(_, call, _, _)
+                | GenericCoreAction::Change(_, _, call, _) => call,
+                GenericCoreAction::LetAtomTerm(..)
+                | GenericCoreAction::Union(..)
+                | GenericCoreAction::Panic(..) => return false,
+            };
+            matches!(
+                call,
+                RuleActionCall::Primitive {
+                    replay: Some(_),
+                    ..
+                }
+            )
+        });
+        if rule.firing_capture.is_some()
+            || rule.criterion_capture.is_some()
+            || rule.source_capture.is_some()
+            || has_primitive_replay
+        {
+            bail!(
+                "DD backend cannot add rule {:?}: trace capture metadata is unsupported",
+                rule.name
+            );
+        }
+
         let validate_terms =
             |terms: &[GenericAtomTerm<RuleVar, RuleValue>], location: &str| -> Result<()> {
                 if let Some(GenericAtomTerm::Global(_, global)) = terms
@@ -1046,9 +1082,10 @@ mod tests {
         span::Span,
     };
     use egglog_backend_trait::{
-        Backend, BaseValueId, ColumnTy, DefaultVal, ExternalFunctionId, FunctionConfig,
-        MergeAction, MergeFn, ReadMode, RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec,
-        RuleValue, RuleVar, Value,
+        Backend, BaseValueId, ColumnTy, CriterionCaptureSpec, DefaultVal, ExternalFunctionId,
+        FiringCaptureSpec, FunctionConfig, MergeAction, MergeFn, ReadMode, ReplayConstructorSpec,
+        ReplayOpId, ReplaySortId, RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec,
+        RuleValue, RuleVar, SourceCaptureSpec, SourceRef, Value,
     };
     use egglog_numeric_id::NumericId;
 
@@ -1066,9 +1103,9 @@ mod tests {
                     name: name.to_owned(),
                     seminaive: true,
                     no_decomp: false,
-                    causal_receipt: None,
-                    check_receipt: None,
-                    source_receipt: None,
+                    firing_capture: None,
+                    criterion_capture: None,
+                    source_capture: None,
                     owned_external_funcs: Vec::new(),
                     core: GenericCoreRule {
                         span: Span::Panic,
@@ -1372,6 +1409,80 @@ mod tests {
 
         let error = Backend::add_rule(&mut eg, builder.spec).unwrap_err();
         assert!(error.to_string().contains("received a native union"));
+    }
+
+    #[test]
+    fn add_rule_rejects_trace_capture_metadata_before_mutation() {
+        let replay = Arc::new(ReplayConstructorSpec::new(
+            ReplaySortId::new(0),
+            ReplayOpId::new(0),
+            [],
+        ));
+        let mut cases = Vec::new();
+
+        let mut firing = TestRule::new("firing capture");
+        firing.spec.firing_capture = Some(FiringCaptureSpec {
+            rule: 0,
+            bindings: Box::new([]),
+            union_sorts: Box::new([]),
+        });
+        cases.push(firing.spec);
+
+        let mut criterion = TestRule::new("criterion capture");
+        criterion.spec.criterion_capture = Some(CriterionCaptureSpec {
+            check: 0,
+            equalities: Box::new([]),
+        });
+        cases.push(criterion.spec);
+
+        let mut source = TestRule::new("source capture");
+        source.spec.source_capture = Some(SourceCaptureSpec {
+            source: SourceRef::Synthetic(0),
+            union_sorts: Box::new([]),
+        });
+        cases.push(source.spec);
+
+        let mut body_replay = TestRule::new("body primitive replay");
+        body_replay.spec.core.body.atoms.push(GenericAtom {
+            span: Span::Panic,
+            head: RuleBodyCall::Primitive {
+                id: ExternalFunctionId::new(0),
+                name: "external".into(),
+                output: ColumnTy::Id,
+                replay: Some(Arc::clone(&replay)),
+            },
+            // Deliberately structurally invalid: the capture boundary must run
+            // before ordinary DD shape validation.
+            args: Vec::new(),
+        });
+        cases.push(body_replay.spec);
+
+        let mut action_replay = TestRule::new("action primitive replay");
+        action_replay.spec.core.head.0.push(GenericCoreAction::Set(
+            Span::Panic,
+            RuleActionCall::Primitive {
+                id: ExternalFunctionId::new(0),
+                name: "external".into(),
+                output: ColumnTy::Id,
+                replay: Some(replay),
+            },
+            Vec::new(),
+            Vec::new(),
+        ));
+        cases.push(action_replay.spec);
+
+        let mut eg = EGraph::new();
+        for spec in cases {
+            let name = spec.name.clone();
+            let error = Backend::add_rule(&mut eg, spec).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "DD backend cannot add rule {name:?}: trace capture metadata is unsupported"
+                )
+            );
+            assert!(eg.rules.is_empty());
+        }
     }
 
     #[test]
