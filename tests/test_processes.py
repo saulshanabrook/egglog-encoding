@@ -155,24 +155,24 @@ def test_run_command_records_peak_rss() -> None:
     assert result.timing.max_rss_bytes > 0
 
 
-def test_run_command_can_require_capability_output() -> None:
+def test_run_command_can_require_capability_outputs() -> None:
     present = processes.run_command(
+        [sys.executable, "-c", "print('--timing-summary PATH --slice')"],
+        ROOT,
+        120,
+        required_outputs=("--timing-summary", "--slice"),
+    )
+    missing = processes.run_command(
         [sys.executable, "-c", "print('--timing-summary PATH')"],
         ROOT,
         120,
-        required_output="--timing-summary",
-    )
-    missing = processes.run_command(
-        [sys.executable, "-c", "print('usage')"],
-        ROOT,
-        120,
-        required_output="--timing-summary",
+        required_outputs=("--timing-summary", "--slice"),
     )
 
     assert present.status == "success"
     assert missing.status == "failure"
     assert missing.error is not None
-    assert "did not contain" in missing.error.message
+    assert missing.error.message == "successful process output did not contain '--slice'"
 
 
 def test_timing_from_usage_records_peak_rss() -> None:

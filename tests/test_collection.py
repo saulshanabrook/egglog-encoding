@@ -368,6 +368,57 @@ def test_partial_and_forced_plans_show_only_total_work() -> None:
     assert forced_text == "abc123: 6/6 runs cached · collecting 6 fresh"
 
 
+def captured_preflight_requirements(
+    monkeypatch: pytest.MonkeyPatch,
+    runs: tuple[collection.BenchmarkRunPlan, ...],
+) -> list[tuple[str, ...]]:
+    required_outputs: list[tuple[str, ...]] = []
+
+    def capture_preflight(
+        _binary_path: Path,
+        _checkout_path: Path,
+        _timeout_sec: int,
+        required: tuple[str, ...],
+    ) -> processes.TimingResult:
+        required_outputs.append(required)
+        return processes.TimingResult("success", processes.TimingRow(), None)
+
+    monkeypatch.setattr(collection, "run_preflight", capture_preflight)
+    target = make_target(binary_path=ROOT / "egglog-experimental")
+    collection.preflight_collection(collection.CollectionPlan(target, runs), 120)
+    return required_outputs
+
+
+def test_preflight_requires_slice_for_fresh_sliced_proofs(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert captured_preflight_requirements(
+        monkeypatch,
+        (
+            planned_run(treatment="proofs", required=1),
+            planned_run(treatment="sliced-proofs", required=1),
+        ),
+    ) == [("--timing-summary", "--slice")]
+
+
+def test_preflight_ignores_cached_sliced_treatment(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert captured_preflight_requirements(
+        monkeypatch,
+        (
+            planned_run(treatment="sliced-proofs", required=1, cached=("success",)),
+            planned_run(treatment="proofs", required=1),
+        ),
+    ) == [("--timing-summary",)]
+
+
+def test_fully_cached_plan_skips_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert (
+        captured_preflight_requirements(
+            monkeypatch,
+            (planned_run(treatment="sliced-proofs", required=1, cached=("success",)),),
+        )
+        == []
+    )
+
+
 def test_collect_rows_appends_process_and_ruleset_timing_together(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
