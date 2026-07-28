@@ -553,7 +553,7 @@ struct ParsedInputRow {
 
 struct ParsedInputFile {
     path: PathBuf,
-    digest: [u8; 32],
+    digest: Option<[u8; 32]>,
     rows: Vec<ParsedInputRow>,
 }
 
@@ -4138,6 +4138,7 @@ impl EGraph {
         function_type: &FuncType,
         span: &Span,
         file: &str,
+        capture_digest: bool,
     ) -> Result<ParsedInputFile, Error> {
         let mut filename = fact_directory.map_or_else(PathBuf::new, PathBuf::from);
         filename.push(file);
@@ -4147,7 +4148,10 @@ impl EGraph {
         log::info!("Opening file '{filename:?}'...");
         let bytes = std::fs::read(&filename)
             .map_err(|error| Error::IoError(filename.clone(), error, span.clone()))?;
-        let digest: [u8; 32] = Sha256::digest(&bytes).into();
+        let digest = capture_digest.then(|| {
+            let digest: [u8; 32] = Sha256::digest(&bytes).into();
+            digest
+        });
         let contents = String::from_utf8(bytes).map_err(|error| {
             Error::IoError(
                 filename.clone(),
@@ -4248,8 +4252,13 @@ impl EGraph {
             .get_func_type(func_name)
             .unwrap_or_else(|| panic!("Unrecognized function name {func_name}"))
             .clone();
-        let parsed_file =
-            Self::read_input_file(self.fact_directory.as_deref(), &function_type, &span, &file)?;
+        let parsed_file = Self::read_input_file(
+            self.fact_directory.as_deref(),
+            &function_type,
+            &span,
+            &file,
+            self.capture_catalog.is_some(),
+        )?;
         let resolved_input_path = if parsed_file.path.is_absolute() {
             parsed_file.path.clone()
         } else {
@@ -4272,7 +4281,9 @@ impl EGraph {
                     function: func_name.to_owned(),
                     file: file.clone(),
                     resolved_path: resolved_input_path,
-                    digest: parsed_file.digest,
+                    digest: parsed_file
+                        .digest
+                        .expect("input capture requires a parsed file digest"),
                     unsupported: catalog
                         .has_run
                         .then(|| "input command executed after a run command".to_owned())
@@ -6342,7 +6353,9 @@ mod tests {
             })
             .unwrap_err();
         assert!(
-            failure.to_string().contains("unsupported causal row origin"),
+            failure
+                .to_string()
+                .contains("unsupported causal row origin"),
             "unexpected trace failure: {failure}"
         );
     }
@@ -6976,6 +6989,50 @@ mod tests {
                 Ok(())
             })
             .unwrap();
+    }
+
+    #[test]
+    fn parsed_input_digest_is_optional() {
+        let directory = std::env::temp_dir().join(format!(
+            "egglog-input-digest-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(directory.join("rows.tsv"), "first\nsecond\n").unwrap();
+
+        let mut egraph = EGraph {
+            fact_directory: Some(directory.clone()),
+            ..Default::default()
+        };
+        egraph
+            .parse_and_run_program(None, "(relation R (String))")
+            .unwrap();
+        let function_type = egraph.type_info.get_func_type("R").unwrap();
+        let uncaptured = EGraph::read_input_file(
+            egraph.fact_directory.as_deref(),
+            function_type,
+            &Span::Panic,
+            "rows.tsv",
+            false,
+        )
+        .unwrap();
+        assert_eq!(uncaptured.digest, None);
+
+        let captured = EGraph::read_input_file(
+            egraph.fact_directory.as_deref(),
+            function_type,
+            &Span::Panic,
+            "rows.tsv",
+            true,
+        )
+        .unwrap();
+        let expected: [u8; 32] = Sha256::digest(b"first\nsecond\n").into();
+        assert_eq!(captured.digest, Some(expected));
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
