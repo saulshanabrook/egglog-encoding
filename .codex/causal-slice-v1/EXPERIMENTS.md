@@ -2733,3 +2733,32 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   returned GO on the narrowed container-generation rule. The unrelated
   untracked `LITERATURE-REVIEW.md` was not read, edited, staged, or benchmarked
   as production input.
+
+## 2026-07-27: review-readiness refactor oracle
+
+- The refactor started from clean tracked commit `8598ad44ffa506244cf3d7f5f8c43357aa169fbf`.
+  The unrelated untracked `LITERATURE-REVIEW.md` remains outside the work. The
+  calibrated production delta is A=24,155, D=1,893, net **+22,262** versus
+  `4940be37`, and the five frozen artifact hashes remain the Math, Eggcc,
+  Pointer, Hardboiled, and Luminal hashes recorded immediately above. This is
+  the semantic oracle before the intentional rewrite and generated-namespace
+  changes; after those changes, equivalence is semantic and the new bytes will
+  receive fresh frozen hashes.
+- A previously missing six-round ordinary/off comparison was collected through
+  the public append-only benchmark cache without forced rows. The whole-feature
+  base binary is `623f1dcf6a9ac01f1385b8a36eb18b1ad541dfe26c41bf579737839c936b2559`;
+  the `8598ad44` binary is
+  `262f16f129fc535d879b9345e2d03bf7eec531744e8847af19bf9fa27434f8fa`.
+  All 60 observations succeeded with a 120-second timeout.
+- Ordinary wall results are too noisy to distinguish the endpoints: the suite
+  interval is 0.601-1.03x and every per-file wall interval includes 1. Peak RSS
+  is higher on the current binary for Math (1.02-1.08x), Pointer (1.11-1.13x),
+  Hardboiled (1.04-1.05x), and Luminal (1.08-1.11x), while Eggcc includes 1
+  (0.988-1.03x). These are disclosure data, not a review blocker. The two live
+  priors remain binary-layout sensitivity, observed twice on this branch at
+  roughly 5-8%, and real shared-path cost from the correctness consolidation's
+  571 production lines.
+- The first implementation checkpoint moved the 9,266-line receipt kernel to
+  `core-relations/src/provenance`, the slicer to `slicing/backward.rs`, and the
+  artifact builder to `slicing/replay.rs` as a 100% move-only diff. Both focused
+  core and frontend causal test sets passed before commit `53f2397`.
