@@ -439,7 +439,7 @@ struct CaptureCatalog {
     /// only to the normalized `run_program` resolution seam; public
     /// `resolve_program` is rejected after capture starts.
     resolving_command: bool,
-    active_rule_anonymous: Option<bool>,
+    active_rule_origin: Option<RuleOrigin>,
     immutable_globals: HashMap<String, SourceRef>,
     has_run: bool,
     /// Once a command crosses the native execution boundary and then fails,
@@ -461,17 +461,68 @@ struct ActiveCatalogCommand {
     command: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RewriteDirection {
+    Forward,
+    Reverse,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum RuleOriginKind {
+    Rule,
+    Rewrite,
+    BiRewrite(RewriteDirection),
+}
+
 #[derive(Clone, Debug)]
-#[allow(dead_code)] // Consumed by the next, owned replay-IR checkpoint.
+struct RuleOrigin {
+    kind: RuleOriginKind,
+    name: String,
+    anonymous: bool,
+    surface_variables: Box<[String]>,
+    rewrite_root: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RuleBindingRole {
+    SurfaceVar,
+    RewriteRoot,
+    DerivedGlobal(String),
+}
+
+#[derive(Clone, Debug)]
+struct RuleCatalogVariable {
+    name: String,
+    sort: String,
+    role: RuleBindingRole,
+}
+
+struct CapturedRuleInputs {
+    variables: Vec<ResolvedVar>,
+    derived_global_by_var: HashMap<String, String>,
+}
+
+#[derive(Clone, Debug)]
+enum CatalogRuleSurface {
+    Normalized,
+    Rewrite {
+        surface_command: usize,
+        direction: RewriteDirection,
+        bidirectional: bool,
+        base_name: String,
+    },
+}
+
+#[derive(Clone, Debug)]
 struct RuleCatalogEntry {
     ruleset: String,
     native_name: String,
     replay_name: String,
-    variables: Box<[(String, String)]>,
+    variables: Box<[RuleCatalogVariable]>,
     command: usize,
+    surface: CatalogRuleSurface,
 }
 
-#[allow(dead_code)] // consumed by the owned replay IR in the next checkpoint
 #[derive(Clone, Debug)]
 struct InputCatalogEntry {
     command: usize,
@@ -482,7 +533,6 @@ struct InputCatalogEntry {
     unsupported: Option<String>,
 }
 
-#[allow(dead_code)] // consumed by the owned replay IR in the next checkpoint
 #[derive(Clone, Debug)]
 struct SourceCatalogEntry {
     command: usize,
@@ -523,7 +573,7 @@ impl Default for CaptureCatalog {
             check_commands: HashMap::default(),
             active_command: None,
             resolving_command: false,
-            active_rule_anonymous: None,
+            active_rule_origin: None,
             immutable_globals: HashMap::default(),
             has_run: false,
             poisoned: None,
@@ -780,17 +830,103 @@ impl CaptureCatalog {
         }
     }
 
-    fn register_rule(&mut self, ruleset: &str, name: &str, inputs: &[ResolvedVar]) -> u32 {
+    fn register_rule(
+        &mut self,
+        ruleset: &str,
+        name: &str,
+        inputs: &CapturedRuleInputs,
+    ) -> Result<u32, Error> {
         let id = u32::try_from(self.rule_catalog.len()).expect("too many captured rules");
         let command = self
             .active_command
             .expect("firing capture requires an active catalog command")
             .command;
-        let replay_name = if self.active_rule_anonymous == Some(true) {
-            format!("__causal_anon_rule_{id}")
+        let origin = self.active_rule_origin.as_ref().ok_or_else(|| {
+            Error::BackendError(format!(
+                "trace capture cannot classify normalized rule `{name}` without a surface origin"
+            ))
+        })?;
+        let surface_command = self.command_catalog[command].surface_command;
+        let generated_name = format!("__slice_replay_rule_s{surface_command}");
+        let base_name = if origin.anonymous {
+            generated_name
         } else {
-            name.to_owned()
+            origin.name.clone()
         };
+        let (replay_name, surface) = match origin.kind {
+            RuleOriginKind::Rule => (
+                if origin.anonymous {
+                    base_name.clone()
+                } else {
+                    name.to_owned()
+                },
+                CatalogRuleSurface::Normalized,
+            ),
+            RuleOriginKind::Rewrite => (
+                base_name.clone(),
+                CatalogRuleSurface::Rewrite {
+                    surface_command,
+                    direction: RewriteDirection::Forward,
+                    bidirectional: false,
+                    base_name,
+                },
+            ),
+            RuleOriginKind::BiRewrite(direction) => (
+                format!(
+                    "{base_name}{}",
+                    match direction {
+                        RewriteDirection::Forward => "=>",
+                        RewriteDirection::Reverse => "<=",
+                    }
+                ),
+                CatalogRuleSurface::Rewrite {
+                    surface_command,
+                    direction,
+                    bidirectional: true,
+                    base_name,
+                },
+            ),
+        };
+        let variables = inputs
+            .variables
+            .iter()
+            .map(|variable| {
+                let role = if origin
+                    .surface_variables
+                    .iter()
+                    .any(|surface| surface == &variable.name)
+                {
+                    RuleBindingRole::SurfaceVar
+                } else if origin.rewrite_root.as_deref() == Some(variable.name.as_str()) {
+                    RuleBindingRole::RewriteRoot
+                } else if let Some(global) = inputs.derived_global_by_var.get(&variable.name) {
+                    RuleBindingRole::DerivedGlobal(global.clone())
+                } else {
+                    return Err(Error::BackendError(format!(
+                        "trace capture cannot classify normalized input `{}` of rule `{name}`",
+                        variable.name
+                    )));
+                };
+                Ok(RuleCatalogVariable {
+                    name: variable.name.clone(),
+                    sort: variable.sort.name().to_owned(),
+                    role,
+                })
+            })
+            .collect::<Result<Box<[_]>, Error>>()?;
+        if matches!(
+            origin.kind,
+            RuleOriginKind::Rewrite | RuleOriginKind::BiRewrite(_)
+        ) && variables
+            .iter()
+            .filter(|variable| variable.role == RuleBindingRole::RewriteRoot)
+            .count()
+            != 1
+        {
+            return Err(Error::BackendError(format!(
+                "trace capture expected exactly one hidden root input for rewrite `{name}`"
+            )));
+        }
         let cataloged = self
             .command_catalog
             .get_mut(command)
@@ -803,13 +939,11 @@ impl CaptureCatalog {
             ruleset: ruleset.to_owned(),
             native_name: name.to_owned(),
             replay_name,
-            variables: inputs
-                .iter()
-                .map(|variable| (variable.name.clone(), variable.sort.name().to_owned()))
-                .collect(),
+            variables,
             command,
+            surface,
         });
-        id
+        Ok(id)
     }
 
     fn next_check(&mut self) -> u32 {
@@ -826,7 +960,7 @@ impl CaptureCatalog {
     fn begin_command(
         &mut self,
         command: &ResolvedNCommand,
-        anonymous_rule: Option<bool>,
+        rule_origin: Option<RuleOrigin>,
         surface_command: usize,
     ) -> Result<(), Error> {
         self.ensure_healthy()?;
@@ -842,7 +976,7 @@ impl CaptureCatalog {
             surface_command,
         });
         self.active_command = Some(ActiveCatalogCommand { command: id });
-        self.active_rule_anonymous = anonymous_rule;
+        self.active_rule_origin = rule_origin;
         Ok(())
     }
 
@@ -885,7 +1019,7 @@ impl CaptureCatalog {
                 active.command
             ));
         }
-        self.active_rule_anonymous = None;
+        self.active_rule_origin = None;
     }
 
     fn poison(&mut self, reason: impl Into<String>) {
@@ -903,13 +1037,12 @@ impl CaptureCatalog {
         }
     }
 
-    #[allow(dead_code)] // enforced when the owned replay IR is constructed
     fn validate_replay_rule_names(&self) -> Result<(), String> {
         let mut names = HashMap::default();
         for (ordinal, rule) in self.rule_catalog.iter().enumerate() {
             if let Some(previous) = names.insert(rule.replay_name.as_str(), ordinal) {
                 return Err(format!(
-                    "causal replay rule name `{}` collides between rule ordinals {previous} and {ordinal}",
+                    "slice replay rule name `{}` collides between rule ordinals {previous} and {ordinal}",
                     rule.replay_name
                 ));
             }
@@ -927,25 +1060,122 @@ impl CaptureCatalog {
     }
 }
 
-fn source_rule_inputs(rule: &ResolvedRule) -> Vec<ResolvedVar> {
-    let mut inputs = Vec::new();
+fn source_rule_inputs(
+    rule: &ResolvedRule,
+    immutable_globals: &HashMap<String, SourceRef>,
+) -> Result<CapturedRuleInputs, Error> {
+    let mut variables = Vec::new();
     let mut seen = HashSet::default();
     for fact in &rule.body {
         fact.visit_vars(&mut |_span, variable| {
             if !variable.is_global_ref && seen.insert(variable.name.clone()) {
-                inputs.push(variable.clone());
+                variables.push(variable.clone());
             }
         });
     }
-    inputs
+
+    fn derived_global(
+        left: &ResolvedExpr,
+        right: &ResolvedExpr,
+        immutable_globals: &HashMap<String, SourceRef>,
+    ) -> Option<(String, String)> {
+        let (
+            ResolvedExpr::Call(_, ResolvedCall::Func(function), children),
+            ResolvedExpr::Var(_, variable),
+        ) = (left, right)
+        else {
+            return None;
+        };
+        (children.is_empty() && immutable_globals.contains_key(&function.name))
+            .then(|| (variable.name.clone(), function.name.clone()))
+    }
+
+    let mut derived_global_by_var = HashMap::default();
+    for fact in &rule.body {
+        let ResolvedFact::Eq(_, left, right) = fact else {
+            continue;
+        };
+        let Some((variable, global)) = derived_global(left, right, immutable_globals)
+            .or_else(|| derived_global(right, left, immutable_globals))
+        else {
+            continue;
+        };
+        if let Some(previous) = derived_global_by_var.insert(variable.clone(), global.clone())
+            && previous != global
+        {
+            return Err(Error::BackendError(format!(
+                "trace capture cannot map normalized input `{variable}` to both immutable globals `{previous}` and `{global}`"
+            )));
+        }
+    }
+    Ok(CapturedRuleInputs {
+        variables,
+        derived_global_by_var,
+    })
 }
 
-fn catalog_anonymous_rules(command: &Command) -> Vec<bool> {
+fn catalog_rule_origins(command: &Command) -> Vec<RuleOrigin> {
+    fn rule_variables(rule: &ast::Rule) -> Box<[String]> {
+        let mut variables = IndexSet::default();
+        for fact in &rule.body {
+            fact.visit_vars(&mut |_span, variable| {
+                variables.insert(variable.clone());
+            });
+        }
+        rule.head.visit_vars(&mut |_span, variable| {
+            variables.insert(variable.clone());
+        });
+        variables.into_iter().collect()
+    }
+
+    fn rewrite_variables(rewrite: &ast::Rewrite) -> Box<[String]> {
+        let mut variables = IndexSet::default();
+        rewrite.lhs.visit_vars(&mut |_span, variable| {
+            variables.insert(variable.clone());
+        });
+        rewrite.rhs.visit_vars(&mut |_span, variable| {
+            variables.insert(variable.clone());
+        });
+        for condition in &rewrite.conditions {
+            condition.visit_vars(&mut |_span, variable| {
+                variables.insert(variable.clone());
+            });
+        }
+        variables.into_iter().collect()
+    }
+
     match command {
-        Command::Rule { rule } => vec![rule.name.is_empty()],
-        Command::Rewrite(_, rewrite, _) => vec![rewrite.name.is_empty()],
-        Command::BiRewrite(_, rewrite) => vec![rewrite.name.is_empty(); 2],
-        Command::Fail(_, command) => catalog_anonymous_rules(command),
+        Command::Rule { rule } => vec![RuleOrigin {
+            kind: RuleOriginKind::Rule,
+            name: rule.name.clone(),
+            anonymous: rule.name.is_empty(),
+            surface_variables: rule_variables(rule),
+            rewrite_root: None,
+        }],
+        Command::Rewrite(_, rewrite, _) => vec![RuleOrigin {
+            kind: RuleOriginKind::Rewrite,
+            name: rewrite.name.clone(),
+            anonymous: rewrite.name.is_empty(),
+            surface_variables: rewrite_variables(rewrite),
+            rewrite_root: Some(ast::desugar::rewrite_root_name(rewrite)),
+        }],
+        Command::BiRewrite(_, rewrite) => {
+            let origin = RuleOrigin {
+                kind: RuleOriginKind::BiRewrite(RewriteDirection::Forward),
+                name: rewrite.name.clone(),
+                anonymous: rewrite.name.is_empty(),
+                surface_variables: rewrite_variables(rewrite),
+                rewrite_root: Some(ast::desugar::rewrite_root_name(rewrite)),
+            };
+            vec![
+                origin.clone(),
+                RuleOrigin {
+                    kind: RuleOriginKind::BiRewrite(RewriteDirection::Reverse),
+                    ..origin
+                },
+            ]
+        }
+        Command::Fail(_, command) => catalog_rule_origins(command),
         _ => Vec::new(),
     }
 }
@@ -2281,7 +2511,7 @@ impl EGraph {
         let report_name = if rulesets.len() == 1 {
             rulesets.first().expect("one ruleset disappeared").as_str()
         } else {
-            "__causal_replay"
+            "__slice_replay"
         };
         Ok(RunReport::singleton(report_name, report))
     }
@@ -2473,21 +2703,24 @@ impl EGraph {
         let capture_inputs = self
             .capture_catalog
             .as_ref()
-            .map(|_| source_rule_inputs(&rule));
+            .map(|catalog| source_rule_inputs(&rule, &catalog.immutable_globals))
+            .transpose()?;
 
         let canonicalized = rule.to_canonicalized_core_rule_with_substitutions(
             &self.type_info,
             &mut self.parser.symbol_gen,
             union_to_set,
         )?;
-        let rule_capture = capture_inputs.map(|inputs| {
+        let rule_capture = if let Some(inputs) = capture_inputs {
             let id = self
                 .capture_catalog
                 .as_mut()
                 .expect("capture inputs require an active catalog")
-                .register_rule(&rule.ruleset, &rule.name, &inputs);
-            (id, inputs)
-        });
+                .register_rule(&rule.ruleset, &rule.name, &inputs)?;
+            Some((id, inputs))
+        } else {
+            None
+        };
         if let Some(catalog) = self.capture_catalog.as_mut() {
             catalog.register_rule_primitives(&canonicalized.core);
         }
@@ -2505,7 +2738,11 @@ impl EGraph {
             translator.query(query, rule.include_subsumed)?;
             translator.actions(actions)?;
             if let Some((rule, inputs)) = &rule_capture {
-                translator.set_firing_capture(*rule, inputs, &canonicalized.substitutions)?;
+                translator.set_firing_capture(
+                    *rule,
+                    &inputs.variables,
+                    &canonicalized.substitutions,
+                )?;
             }
             translator.try_build(&rule.name, seminaive, no_decomp, core_rule.span.clone())?
         };
@@ -4370,6 +4607,8 @@ impl EGraph {
                             | Command::Function { .. }
                             | Command::AddRuleset(..)
                             | Command::UnstableCombinedRuleset(..)
+                            | Command::Rewrite(..)
+                            | Command::BiRewrite(..)
                             | Command::Action(_)
                             | Command::Check(..)
                     )
@@ -4377,7 +4616,7 @@ impl EGraph {
                     let capture_rule_origins = self
                         .capture_catalog
                         .is_some()
-                        .then(|| catalog_anonymous_rules(&command));
+                        .then(|| catalog_rule_origins(&command));
                     let relation_name = match &command {
                         Command::Relation { name, .. } => Some(name.clone()),
                         _ => None,
@@ -4462,12 +4701,12 @@ impl EGraph {
                     desugared.extend(resolved.desugared.clone());
 
                     for processed in resolved.desugared {
-                        let anonymous_rule =
-                            if matches!(processed, ResolvedNCommand::NormRule { .. }) {
-                                capture_rule_origins.as_mut().and_then(Iterator::next)
-                            } else {
-                                None
-                            };
+                        let rule_origin = if matches!(processed, ResolvedNCommand::NormRule { .. })
+                        {
+                            capture_rule_origins.as_mut().and_then(Iterator::next)
+                        } else {
+                            None
+                        };
                         // even in desugar mode we still run push and pop
                         if run_commands
                             || matches!(
@@ -4478,7 +4717,7 @@ impl EGraph {
                             if let Some(catalog) = self.capture_catalog.as_mut() {
                                 catalog.begin_command(
                                     &processed,
-                                    anonymous_rule,
+                                    rule_origin,
                                     surface_command
                                         .expect("source capture command was not cataloged"),
                                 )?;
@@ -6102,7 +6341,10 @@ mod tests {
                 Ok(())
             })
             .unwrap_err();
-        assert!(failure.to_string().contains("unsupported trace row origin"));
+        assert!(
+            failure.to_string().contains("unsupported causal row origin"),
+            "unexpected trace failure: {failure}"
+        );
     }
 
     #[test]
@@ -6601,10 +6843,18 @@ mod tests {
                 assert_eq!(cataloged_rule.native_name, "derive");
                 assert_eq!(cataloged_rule.replay_name, "derive");
                 assert_eq!(
-                    &*cataloged_rule.variables,
-                    &[
-                        ("y".to_owned(), "i64".to_owned()),
-                        ("x".to_owned(), "i64".to_owned()),
+                    cataloged_rule
+                        .variables
+                        .iter()
+                        .map(|variable| (
+                            variable.name.as_str(),
+                            variable.sort.as_str(),
+                            variable.role.clone()
+                        ))
+                        .collect::<Vec<_>>(),
+                    vec![
+                        ("y", "i64", RuleBindingRole::SurfaceVar),
+                        ("x", "i64", RuleBindingRole::SurfaceVar),
                     ]
                 );
                 let premise = view.fact(firing.premises[0])?;
@@ -6924,12 +7174,16 @@ mod tests {
             Some(Command::Action(Action::Let(..)))
         ));
         assert_eq!(catalog.rule_catalog.len(), 1);
-        assert_eq!(catalog.rule_catalog[0].replay_name, "__causal_anon_rule_0");
+        let generated_name = format!(
+            "__slice_replay_rule_s{}",
+            catalog.command_catalog[catalog.rule_catalog[0].command].surface_command
+        );
+        assert_eq!(catalog.rule_catalog[0].replay_name, generated_name);
         let rule_command = &catalog.command_catalog[catalog.rule_catalog[0].command].command;
         let Command::Rule { rule } = rule_command else {
             panic!("cataloged captured rule is not a normalized rule: {rule_command}")
         };
-        assert_eq!(rule.name, "__causal_anon_rule_0");
+        assert_eq!(rule.name, generated_name);
         assert!(
             catalog
                 .source_commands
@@ -6953,8 +7207,16 @@ mod tests {
                 r#"
                     (relation R (i64))
                     (rule ((R x)) ((R x)))
-                    (rule ((R x)) ((R x)) :name "__causal_anon_rule_0")
                 "#,
+            )
+            .unwrap();
+        let generated_name = egraph.capture_catalog.as_ref().unwrap().rule_catalog[0]
+            .replay_name
+            .clone();
+        egraph
+            .parse_and_run_program(
+                None,
+                &format!(r#"(rule ((R x)) ((R x)) :name "{generated_name}")"#),
             )
             .unwrap();
         let error = egraph

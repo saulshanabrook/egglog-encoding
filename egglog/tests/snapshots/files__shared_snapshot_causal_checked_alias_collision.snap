@@ -3,7 +3,7 @@ source: egglog/tests/files.rs
 assertion_line: 132
 expression: snapshot_content_across_treatments
 ---
-(($__causal_replay_0 0)
+(($__slice_replay_0 0)
  (A 1)
  (Out 1)
  (Seed 1))

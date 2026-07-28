@@ -158,7 +158,7 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
             "experimental/web-demo/node-limit.egg",
         ],
         disposition: Disposition::StaticUnsupported {
-            reason: "the ordinary proof-support predicate rejects this file before causal replay",
+            reason: "the ordinary proof-support predicate rejects this file before slice replay",
         },
     },
     AllowlistGroup {
@@ -188,14 +188,14 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
             "experimental/stresstest_large_expr_old.egg",
         ],
         disposition: Disposition::Unsupported {
-            diagnostic: "causal replay does not support push/pop state",
+            diagnostic: "trace capture does not support push/pop state",
             artifact: ArtifactExpectation::Absent,
         },
     },
     AllowlistGroup {
         paths: &["experimental/web-demo/multi-extract.egg"],
         disposition: Disposition::Unsupported {
-            diagnostic: "causal replay does not support user-defined command `multi-extract`",
+            diagnostic: "trace capture does not support user-defined command `multi-extract`",
             artifact: ArtifactExpectation::Absent,
         },
     },
@@ -242,7 +242,7 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
             "core/web-demo/lambda.egg",
         ],
         disposition: Disposition::Unsupported {
-            diagnostic: "causal replay does not support push/pop state",
+            diagnostic: "trace capture does not support push/pop state",
             artifact: ArtifactExpectation::Absent,
         },
     },
@@ -262,21 +262,21 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
             "experimental/web-demo/with-ruleset.egg",
         ],
         disposition: Disposition::Unsupported {
-            diagnostic: "causal replay does not support nested fail commands",
+            diagnostic: "trace capture does not support nested fail commands",
             artifact: ArtifactExpectation::Absent,
         },
     },
     AllowlistGroup {
         paths: &["core/proofs/run-rule-selected.egg"],
         disposition: Disposition::Unsupported {
-            diagnostic: "causal receipt recording does not support source run-rule schedules",
+            diagnostic: "trace capture does not support source run-rule schedules",
             artifact: ArtifactExpectation::Absent,
         },
     },
     AllowlistGroup {
         paths: &["core/run-rule.egg"],
         disposition: Disposition::Unsupported {
-            diagnostic: "checked aliases are replay-only and cannot be recorded as causal sources",
+            diagnostic: "checked aliases are replay-only and cannot be recorded as trace sources",
             artifact: ArtifactExpectation::Absent,
         },
     },
@@ -306,7 +306,7 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
     AllowlistGroup {
         paths: &["core/repro-738-fn-sort.egg"],
         disposition: Disposition::Unsupported {
-            diagnostic: "receipt-enabled action requires exact match witnesses",
+            diagnostic: "capture-enabled action requires exact match witnesses",
             artifact: ArtifactExpectation::Absent,
         },
     },
@@ -333,7 +333,7 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
     AllowlistGroup {
         paths: &["core/web-demo/eqsolve.egg"],
         disposition: Disposition::KnownReplayFailure {
-            diagnostic: r#"tests/web-demo/eqsolve.egg: (check (= (Var "y") (Add (Add (Num 12) (Neg (Var "y"))) (Neg (Var "y")))))"#,
+            diagnostic: r#"generated slice replay: (check (= (Var "y") (Add (Add (Num 12) (Neg (Var "y"))) (Neg (Var "y")))))"#,
             artifact: ArtifactExpectation::Absent,
         },
     },
@@ -572,7 +572,7 @@ fn run_strict_replay(case: &CausalCase, sandbox: &Sandbox, artifact: &Path) -> O
 fn assert_expected_failure(name: &str, output: &Output, diagnostic: &str) {
     assert!(
         !output.status.success(),
-        "{name} is stale: causal replay now succeeds"
+        "{name} is stale: slice replay now succeeds"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(

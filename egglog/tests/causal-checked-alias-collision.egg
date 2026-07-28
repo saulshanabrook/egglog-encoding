@@ -1,4 +1,4 @@
-(function $__causal_replay_0 (i64) i64 :no-merge)
+(function $__slice_replay_0 (i64) i64 :no-merge)
 (datatype E (A i64))
 (relation Seed (E))
 (relation Out (E))

@@ -129,11 +129,9 @@ pub(crate) fn desugar_command(
             } else {
                 rewrite.name.clone()
             };
-            desugar_rewrite(ruleset, resolved_name, rewrite, subsume, parser)
+            desugar_rewrite(ruleset, resolved_name, rewrite, subsume)
         }
-        Command::BiRewrite(ruleset, rewrite) => {
-            desugar_birewrite(ruleset, rule_name, rewrite, parser)
-        }
+        Command::BiRewrite(ruleset, rewrite) => desugar_birewrite(ruleset, rule_name, rewrite),
         Command::Include(_span, _file) => {
             unreachable!("Include commands should be expanded before desugaring")
         }
@@ -333,10 +331,9 @@ fn desugar_rewrite(
     name: String,
     rewrite: Rewrite,
     subsume: bool,
-    parser: &mut Parser,
 ) -> Vec<NCommand> {
     let span = rewrite.span.clone();
-    let var = parser.symbol_gen.fresh("rewrite_var__");
+    let var = rewrite_root_name(&rewrite);
     let mut head = Actions::singleton(Action::Union(
         span.clone(),
         Expr::Var(span.clone(), var.clone()),
@@ -381,12 +378,7 @@ fn desugar_rewrite(
     }]
 }
 
-fn desugar_birewrite(
-    ruleset: String,
-    name: String,
-    rewrite: Rewrite,
-    parser: &mut Parser,
-) -> Vec<NCommand> {
+fn desugar_birewrite(ruleset: String, name: String, rewrite: Rewrite) -> Vec<NCommand> {
     let span = rewrite.span.clone();
     let rewrite_name = if rewrite.name.is_empty() {
         name
@@ -400,22 +392,37 @@ fn desugar_birewrite(
         conditions: rewrite.conditions.clone(),
         name: rewrite_name.clone(),
     };
-    desugar_rewrite(
-        ruleset.clone(),
-        format!("{rewrite_name}=>"),
-        rewrite,
-        false,
-        parser,
-    )
-    .into_iter()
-    .chain(desugar_rewrite(
-        ruleset,
-        format!("{rewrite_name}<="),
-        rw2,
-        false,
-        parser,
-    ))
-    .collect()
+    desugar_rewrite(ruleset.clone(), format!("{rewrite_name}=>"), rewrite, false)
+        .into_iter()
+        .chain(desugar_rewrite(
+            ruleset,
+            format!("{rewrite_name}<="),
+            rw2,
+            false,
+        ))
+        .collect()
+}
+
+pub(crate) fn rewrite_root_name(rewrite: &Rewrite) -> String {
+    let mut occupied = crate::util::HashSet::default();
+    rewrite
+        .lhs
+        .visit_vars(&mut |_span, variable| _ = occupied.insert(variable.clone()));
+    rewrite
+        .rhs
+        .visit_vars(&mut |_span, variable| _ = occupied.insert(variable.clone()));
+    for condition in &rewrite.conditions {
+        condition.visit_vars(&mut |_span, variable| _ = occupied.insert(variable.clone()));
+    }
+
+    let root = "__rewrite_root";
+    if !occupied.contains(root) {
+        return root.to_owned();
+    }
+    (1..)
+        .map(|suffix| format!("{root}_{suffix}"))
+        .find(|candidate| !occupied.contains(candidate))
+        .expect("rewrite root suffix space is inexhaustible")
 }
 
 /// Desugar relation by making a new sort and a constructor for it.
@@ -459,4 +466,37 @@ where
     Leaf: Clone + PartialEq + Eq + Hash + Display,
 {
     command.to_string().replace('\"', "'")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rewrite(lhs: Expr, rhs: Expr) -> Rewrite {
+        Rewrite {
+            span: Span::Panic,
+            lhs,
+            rhs,
+            conditions: Vec::new(),
+            name: String::new(),
+        }
+    }
+
+    #[test]
+    fn rewrite_root_is_static_and_avoids_surface_variables() {
+        assert_eq!(
+            rewrite_root_name(&rewrite(
+                Expr::Var(Span::Panic, "x".into()),
+                Expr::Var(Span::Panic, "y".into()),
+            )),
+            "__rewrite_root"
+        );
+        assert_eq!(
+            rewrite_root_name(&rewrite(
+                Expr::Var(Span::Panic, "__rewrite_root".into()),
+                Expr::Var(Span::Panic, "__rewrite_root_1".into()),
+            )),
+            "__rewrite_root_2"
+        );
+    }
 }

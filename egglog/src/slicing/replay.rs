@@ -15,7 +15,10 @@ use crate::core_relations::{
 };
 use crate::slicing::backward::Slice;
 use crate::util::{HashMap, HashSet};
-use crate::{CaptureCatalog, EGraph, Literal, ReplayOpKey};
+use crate::{
+    CaptureCatalog, CatalogRuleSurface, EGraph, Literal, ReplayOpKey, RewriteDirection,
+    RuleBindingRole, RuleCatalogEntry,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct ReplayTermRef(u32);
@@ -310,7 +313,7 @@ impl ReplayProgram {
         let mut rendered = String::new();
         for command in commands {
             writeln!(&mut rendered, "{command}").map_err(|error| {
-                ReplayError::Invalid(format!("cannot render causal replay command: {error}"))
+                ReplayError::Invalid(format!("cannot render slice replay command: {error}"))
             })?;
         }
         Ok(rendered)
@@ -396,7 +399,7 @@ fn hygienic_source_commands(commands: Vec<Command>) -> Vec<Command> {
     for (slot, original) in internal.into_iter().enumerate() {
         let mut suffix = 0usize;
         let replacement = loop {
-            let candidate = format!("__causal_replay_internal_{slot}_{suffix}");
+            let candidate = format!("__slice_replay_internal_{slot}_{suffix}");
             if occupied.insert(candidate.clone()) {
                 break candidate;
             }
@@ -421,7 +424,7 @@ fn hygienic_source_commands(commands: Vec<Command>) -> Vec<Command> {
 
 fn replay_span(command: usize) -> Span {
     Span::Rust(Arc::new(RustSpan {
-        file: "generated causal replay",
+        file: "generated slice replay",
         line: command.saturating_add(1).try_into().unwrap_or(u32::MAX),
         column: 1,
     }))
@@ -429,17 +432,17 @@ fn replay_span(command: usize) -> Span {
 
 #[derive(Debug, Error)]
 pub(crate) enum ReplayError {
-    #[error("causal replay is unavailable without exact trace capture")]
+    #[error("slice replay is unavailable without exact trace capture")]
     Disabled,
-    #[error("causal replay requires the main native backend")]
+    #[error("slice replay requires the main native backend")]
     UnsupportedBackend,
-    #[error("causal replay trace error: {0}")]
+    #[error("slice replay trace error: {0}")]
     Trace(String),
-    #[error("causal replay input error: {0}")]
+    #[error("slice replay input error: {0}")]
     Input(String),
-    #[error("invalid causal replay: {0}")]
+    #[error("invalid slice replay: {0}")]
     Invalid(String),
-    #[error("unsupported causal replay: {0}")]
+    #[error("unsupported slice replay: {0}")]
     Unsupported(String),
 }
 
@@ -777,6 +780,185 @@ fn restore_selected_rule_globals(
     Ok(command)
 }
 
+fn validate_selected_surface_globals(
+    command: &Command,
+    catalog: &CaptureCatalog,
+    sources: &HashSet<SourceRef>,
+    rule: &str,
+) -> Result<(), ReplayError> {
+    let mut missing = None;
+    let _ = command.clone().visit_exprs(&mut |expr| {
+        if let Expr::Var(_, name) = &expr
+            && let Some(source) = catalog.immutable_globals.get(name)
+            && !sources.contains(source)
+        {
+            missing.get_or_insert((name.clone(), source.clone()));
+        }
+        expr
+    });
+    if let Some((name, source)) = missing {
+        return Err(ReplayError::Invalid(format!(
+            "retained rewrite `{rule}` reads immutable global `{name}` from unselected source {source:?}"
+        )));
+    }
+    Ok(())
+}
+
+fn normalized_rule_command(
+    catalog: &CaptureCatalog,
+    sources: &HashSet<SourceRef>,
+    ordinal: u32,
+    entry: &RuleCatalogEntry,
+) -> Result<Command, ReplayError> {
+    let command = catalog
+        .command_catalog
+        .get(entry.command)
+        .ok_or_else(|| {
+            ReplayError::Invalid(format!(
+                "rule ordinal {ordinal} cites missing command {}",
+                entry.command
+            ))
+        })?
+        .command
+        .clone();
+    let command = restore_selected_rule_globals(command, catalog, sources, &entry.replay_name)?;
+    let Command::Rule { rule } = &command else {
+        return Err(ReplayError::Invalid(format!(
+            "rule ordinal {ordinal} does not map to a normalized rule command"
+        )));
+    };
+    if rule.name != entry.replay_name || rule.ruleset != entry.ruleset {
+        return Err(ReplayError::Invalid(format!(
+            "rule ordinal {ordinal} catalog identity disagrees with its normalized command"
+        )));
+    }
+    Ok(command)
+}
+
+fn retained_rewrite_command(
+    catalog: &CaptureCatalog,
+    sources: &HashSet<SourceRef>,
+    surface_command: usize,
+    ordinals: &[u32],
+) -> Result<Command, ReplayError> {
+    let surface = catalog
+        .surface_command_catalog
+        .get(surface_command)
+        .and_then(Option::as_ref)
+        .ok_or_else(|| {
+            ReplayError::Invalid(format!(
+                "retained rewrite cites missing surface command {surface_command}"
+            ))
+        })?
+        .clone();
+
+    let mut forward = None;
+    let mut reverse = None;
+    let mut expected_bidirectional = None;
+    let mut expected_base_name = None;
+    let mut expected_ruleset = None;
+    for &ordinal in ordinals {
+        let entry = catalog.rule_catalog.get(ordinal as usize).ok_or_else(|| {
+            ReplayError::Invalid(format!("selected rule ordinal {ordinal} is absent"))
+        })?;
+        let _ = normalized_rule_command(catalog, sources, ordinal, entry)?;
+        let CatalogRuleSurface::Rewrite {
+            surface_command: entry_surface,
+            direction,
+            bidirectional,
+            base_name,
+        } = &entry.surface
+        else {
+            return Err(ReplayError::Invalid(format!(
+                "rule ordinal {ordinal} is not cataloged as a rewrite"
+            )));
+        };
+        if *entry_surface != surface_command {
+            return Err(ReplayError::Invalid(format!(
+                "rule ordinal {ordinal} cites rewrite surface command {entry_surface}, expected {surface_command}"
+            )));
+        }
+        if expected_bidirectional
+            .replace(*bidirectional)
+            .is_some_and(|expected| expected != *bidirectional)
+            || expected_base_name
+                .replace(base_name.clone())
+                .is_some_and(|expected| expected != *base_name)
+            || expected_ruleset
+                .replace(entry.ruleset.clone())
+                .is_some_and(|expected| expected != entry.ruleset)
+        {
+            return Err(ReplayError::Invalid(format!(
+                "retained rewrite surface command {surface_command} has inconsistent catalog entries"
+            )));
+        }
+        let slot = match direction {
+            RewriteDirection::Forward => &mut forward,
+            RewriteDirection::Reverse => &mut reverse,
+        };
+        if slot.replace(entry).is_some() {
+            return Err(ReplayError::Invalid(format!(
+                "retained rewrite surface command {surface_command} contains duplicate {direction:?} directions"
+            )));
+        }
+    }
+
+    let bidirectional = expected_bidirectional.ok_or_else(|| {
+        ReplayError::Invalid(format!(
+            "retained rewrite surface command {surface_command} has no rule directions"
+        ))
+    })?;
+    let base_name = expected_base_name.expect("rewrite direction has no base name");
+    let ruleset = expected_ruleset.expect("rewrite direction has no ruleset");
+    validate_selected_surface_globals(&surface, catalog, sources, &base_name)?;
+
+    match surface {
+        Command::Rewrite(surface_ruleset, mut rewrite, subsume) if !bidirectional => {
+            let entry = forward.ok_or_else(|| {
+                ReplayError::Invalid(format!(
+                    "one-way rewrite surface command {surface_command} retained no forward direction"
+                ))
+            })?;
+            if reverse.is_some() || surface_ruleset != ruleset {
+                return Err(ReplayError::Invalid(format!(
+                    "one-way rewrite surface command {surface_command} disagrees with its catalog"
+                )));
+            }
+            rewrite.name.clone_from(&entry.replay_name);
+            Ok(Command::Rewrite(surface_ruleset, rewrite, subsume))
+        }
+        Command::BiRewrite(surface_ruleset, mut rewrite) if bidirectional => {
+            if surface_ruleset != ruleset {
+                return Err(ReplayError::Invalid(format!(
+                    "bidirectional rewrite surface command {surface_command} disagrees with its ruleset"
+                )));
+            }
+            match (forward, reverse) {
+                (Some(_), Some(_)) => {
+                    rewrite.name = base_name;
+                    Ok(Command::BiRewrite(surface_ruleset, rewrite))
+                }
+                (Some(entry), None) => {
+                    rewrite.name.clone_from(&entry.replay_name);
+                    Ok(Command::Rewrite(surface_ruleset, rewrite, false))
+                }
+                (None, Some(entry)) => {
+                    std::mem::swap(&mut rewrite.lhs, &mut rewrite.rhs);
+                    rewrite.name.clone_from(&entry.replay_name);
+                    Ok(Command::Rewrite(surface_ruleset, rewrite, false))
+                }
+                (None, None) => unreachable!("rewrite direction presence was checked above"),
+            }
+        }
+        Command::Rewrite(..) | Command::BiRewrite(..) => Err(ReplayError::Invalid(format!(
+            "rewrite surface command {surface_command} disagrees with its directionality"
+        ))),
+        _ => Err(ReplayError::Invalid(format!(
+            "retained rewrite surface command {surface_command} is not a rewrite"
+        ))),
+    }
+}
+
 fn validate_alias_namespace(
     egraph: &EGraph,
     catalog: &CaptureCatalog,
@@ -794,11 +976,11 @@ fn validate_alias_namespace(
             entry
                 .variables
                 .iter()
-                .map(|(name, _)| canonical_symbol(name).to_owned()),
+                .map(|variable| canonical_symbol(&variable.name).to_owned()),
         );
     }
     for index in 0..max_aliases {
-        let canonical = format!("__causal_replay_{index}");
+        let canonical = format!("__slice_replay_{index}");
         if occupied.contains(&canonical) || egraph.names.contains_canonical(&canonical) {
             return Err(ReplayError::Invalid(format!(
                 "generated checked alias `${canonical}` collides with a user symbol"
@@ -885,36 +1067,37 @@ fn build_owned(
     }
     let mut source_events = source_events.into_values().collect::<Vec<_>>();
     source_events.extend(selected_input_rows(egraph, catalog, &sources)?);
+    let mut rewrite_groups = BTreeMap::<usize, Vec<u32>>::new();
     for rule in &retained_rules {
         let entry = catalog.rule_catalog.get(*rule as usize).ok_or_else(|| {
             ReplayError::Invalid(format!("selected rule ordinal {rule} is absent"))
         })?;
-        let command = catalog
-            .command_catalog
-            .get(entry.command)
-            .ok_or_else(|| {
-                ReplayError::Invalid(format!(
-                    "rule ordinal {rule} cites missing command {}",
-                    entry.command
-                ))
-            })?
-            .command
-            .clone();
-        let command =
-            restore_selected_rule_globals(command, catalog, &sources, &entry.replay_name)?;
-        let Command::Rule { rule: command_rule } = &command else {
-            return Err(ReplayError::Invalid(format!(
-                "rule ordinal {rule} does not map to a rule command"
-            )));
-        };
-        if command_rule.name != entry.replay_name || command_rule.ruleset != entry.ruleset {
-            return Err(ReplayError::Invalid(format!(
-                "rule ordinal {rule} catalog identity disagrees with its emitted command"
-            )));
+        match entry.surface {
+            CatalogRuleSurface::Normalized => {
+                setup.push(ReplaySetup {
+                    catalog_ordinal: catalog.command_catalog[entry.command].surface_command,
+                    kind: ReplaySetupKind::Command(normalized_rule_command(
+                        catalog, &sources, *rule, entry,
+                    )?),
+                });
+            }
+            CatalogRuleSurface::Rewrite {
+                surface_command, ..
+            } => rewrite_groups
+                .entry(surface_command)
+                .or_default()
+                .push(*rule),
         }
+    }
+    for (surface_command, rules) in rewrite_groups {
         setup.push(ReplaySetup {
-            catalog_ordinal: catalog.command_catalog[entry.command].surface_command,
-            kind: ReplaySetupKind::Command(command),
+            catalog_ordinal: surface_command,
+            kind: ReplaySetupKind::Command(retained_rewrite_command(
+                catalog,
+                &sources,
+                surface_command,
+                &rules,
+            )?),
         });
     }
     setup.sort_by_key(|entry| entry.catalog_ordinal);
@@ -960,19 +1143,19 @@ fn build_owned(
     }
     let mut next_alias = 0usize;
     for (id, rule, wave, position) in firings {
-        let catalog = &catalog.rule_catalog[rule as usize];
+        let rule_entry = &catalog.rule_catalog[rule as usize];
         let binding_terms = slice.firing_terms.get(&id).ok_or_else(|| {
             ReplayError::Invalid(format!(
                 "selected firing {} has no projected bindings",
                 id.get()
             ))
         })?;
-        if binding_terms.len() != catalog.variables.len() {
+        if binding_terms.len() != rule_entry.variables.len() {
             return Err(ReplayError::Invalid(format!(
                 "selected firing {} has {} terms for {} rule variables",
                 id.get(),
                 binding_terms.len(),
-                catalog.variables.len()
+                rule_entry.variables.len()
             )));
         }
         let binding_windows = slice.firing_term_windows.get(&id).ok_or_else(|| {
@@ -990,24 +1173,54 @@ fn build_owned(
             )));
         }
         let mut bindings = Vec::with_capacity(binding_terms.len());
-        for (((variable, expected_sort), source_term), alias_windows) in catalog
+        for ((variable, source_term), alias_windows) in rule_entry
             .variables
             .iter()
             .zip(binding_terms.iter().copied())
             .zip(binding_windows.iter())
         {
+            let variable_name = &variable.name;
+            let expected_sort = &variable.sort;
+            match (&rule_entry.surface, &variable.role) {
+                (CatalogRuleSurface::Normalized, RuleBindingRole::RewriteRoot) => {
+                    return Err(ReplayError::Invalid(format!(
+                        "normalized rule `{}` unexpectedly owns rewrite-root binding `{variable_name}`",
+                        rule_entry.replay_name
+                    )));
+                }
+                // The fresh graph lowers the selected source global again, and
+                // may choose a different private normalized input name. Its
+                // selected source reconstructs the value, so the private
+                // recorded term and binding must not enter the artifact.
+                (CatalogRuleSurface::Rewrite { .. }, RuleBindingRole::DerivedGlobal(global)) => {
+                    let source = catalog.immutable_globals.get(global).ok_or_else(|| {
+                        ReplayError::Invalid(format!(
+                            "surface rewrite `{}` maps binding `{variable_name}` to unknown immutable global `{global}`",
+                            rule_entry.replay_name
+                        ))
+                    })?;
+                    if !sources.contains(source) {
+                        return Err(ReplayError::Invalid(format!(
+                            "surface rewrite `{}` requires immutable global `{global}` from unselected source {source:?}",
+                            rule_entry.replay_name
+                        )));
+                    }
+                    continue;
+                }
+                _ => {}
+            }
             let term = terms.intern(source_term)?;
             let actual_sort = terms.nodes[term.index()].sort();
             if actual_sort != expected_sort {
                 return Err(ReplayError::Invalid(format!(
-                    "firing {} variable `{variable}` expects `{expected_sort}` but term owns `{actual_sort}`",
+                    "firing {} variable `{variable_name}` expects `{expected_sort}` but term owns `{actual_sort}`",
                     id.get()
                 )));
             }
             let new_calls = terms.take_new_calls();
             if new_calls.len() != alias_windows.len() {
                 return Err(ReplayError::Invalid(format!(
-                    "firing {} binding `{variable}` owns {} structural call occurrences but has {} availability windows",
+                    "firing {} binding `{variable_name}` owns {} structural call occurrences but has {} availability windows",
                     id.get(),
                     new_calls.len(),
                     alias_windows.len()
@@ -1016,7 +1229,7 @@ fn build_owned(
             for ((source_call, call), window) in new_calls.into_iter().zip(alias_windows.iter()) {
                 if source_call != window.term {
                     return Err(ReplayError::Invalid(format!(
-                        "firing {} binding `{variable}` availability order expected call {} but projected call {}",
+                        "firing {} binding `{variable_name}` availability order expected call {} but projected call {}",
                         id.get(),
                         source_call.get(),
                         window.term.get()
@@ -1049,7 +1262,7 @@ fn build_owned(
                     })
                     .ok_or_else(|| {
                         ReplayError::Invalid(format!(
-                            "firing {} binding `{variable}` call {} has no retained pre-wave point in its availability window",
+                            "firing {} binding `{variable_name}` call {} has no retained pre-wave point in its availability window",
                             id.get(),
                             source_call.get()
                         ))
@@ -1100,7 +1313,7 @@ fn build_owned(
                     .entry(alias_wave)
                     .or_default()
                     .push(ReplayAlias {
-                        name: format!("$__causal_replay_{next_alias}"),
+                        name: format!("$__slice_replay_{next_alias}"),
                         term: call,
                     });
                 alias_wave_by_term.insert(call, alias_wave);
@@ -1108,7 +1321,7 @@ fn build_owned(
                 next_alias += 1;
             }
             bindings.push(ReplayBinding {
-                variable: variable.clone(),
+                variable: variable_name.clone(),
                 sort: expected_sort.clone(),
                 term: canonical_term.get(&term).copied().unwrap_or(term),
             });
@@ -1118,7 +1331,7 @@ fn build_owned(
         wave_entry.1.push(ReplayFiring {
             firing_id: id.get(),
             rule_ordinal: rule,
-            replay_name: catalog.replay_name.clone(),
+            replay_name: rule_entry.replay_name.clone(),
             bindings: bindings.into_boxed_slice(),
         });
     }
@@ -1289,6 +1502,22 @@ mod tests {
         path
     }
 
+    fn slice_commands(program: &str) -> (Vec<Command>, String) {
+        let mut recorder = EGraph::default();
+        serial_pool().install(|| recorder.enable_trace()).unwrap();
+        recorder.parse_and_run_program(None, program).unwrap();
+        let slice = slice_all_checks(&recorder).unwrap();
+        let ir = build_replay_program(&recorder, &slice).unwrap();
+        let commands = ir.to_commands().unwrap();
+        let rendered = ReplayProgram::render_commands(&commands).unwrap();
+
+        let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
+        serial_pool()
+            .install(|| proof.parse_and_run_program(None, &rendered))
+            .unwrap();
+        (commands, rendered)
+    }
+
     #[test]
     fn owned_ir_preserves_pre_run_check_and_source_order() {
         let mut egraph = EGraph::default();
@@ -1361,7 +1590,7 @@ mod tests {
         assert!(rendered.contains("(relation Seed"));
         assert!(rendered.contains("(let $seed (A 1))"));
         assert!(!rendered.contains(":internal-let"));
-        assert!(rendered.contains("(let-check $__causal_replay_0 (A 1) :sort E)"));
+        assert!(rendered.contains("(let-check $__slice_replay_0 (A 1) :sort E)"));
         assert!(
             !rendered.contains('@'),
             "rendered replay leaked a parser-reserved internal symbol:\n{rendered}"
@@ -1382,6 +1611,103 @@ mod tests {
         serial_pool()
             .install(|| proof.parse_and_run_program(None, &rendered))
             .unwrap();
+    }
+
+    #[test]
+    fn rendered_artifact_preserves_anonymous_rewrite_and_selected_global() {
+        let (commands, rendered) = slice_commands(
+            "(datatype E (A i64) (B i64))
+             (let $left (A 1))
+             (let $target (B 1))
+             (rewrite (A x) $target)
+             (run 1)
+             (check (= $left $target))",
+        );
+        let rewrites = commands
+            .iter()
+            .filter_map(|command| match command {
+                Command::Rewrite(_, rewrite, _) => Some(rewrite),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(rewrites.len(), 1, "unexpected artifact:\n{rendered}");
+        assert!(rewrites[0].name.starts_with("__slice_replay_rule_s"));
+        assert!(
+            !commands
+                .iter()
+                .any(|command| matches!(command, Command::Rule { .. })),
+            "surface rewrite was lowered back to a rule:\n{rendered}"
+        );
+        assert!(rendered.contains("(__rewrite_root "));
+        assert!(!rendered.contains(crate::util::INTERNAL_SYMBOL_PREFIX));
+    }
+
+    #[test]
+    fn rendered_artifact_preserves_birewrite_when_both_directions_are_retained() {
+        let (commands, rendered) = slice_commands(
+            "(datatype E (A i64) (B i64))
+             (let $a (A 1))
+             (let $b (B 2))
+             (birewrite (A x) (B x))
+             (run 1)
+             (check (= $a (B 1)))
+             (check (= (A 2) $b))",
+        );
+        let birewrites = commands
+            .iter()
+            .filter_map(|command| match command {
+                Command::BiRewrite(_, rewrite) => Some(rewrite),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(birewrites.len(), 1, "unexpected artifact:\n{rendered}");
+        assert!(birewrites[0].name.starts_with("__slice_replay_rule_s"));
+        assert!(
+            !commands
+                .iter()
+                .any(|command| matches!(command, Command::Rewrite(..) | Command::Rule { .. }))
+        );
+    }
+
+    #[test]
+    fn rendered_artifact_orients_single_retained_birewrite_direction() {
+        let (commands, rendered) = slice_commands(
+            "(datatype E (A i64) (B i64))
+             (let $a (A 1))
+             (birewrite (A x) (B x))
+             (run 1)
+             (check (= $a (B 1)))",
+        );
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                Command::Rewrite(_, rewrite, false) if rewrite.name.ends_with("=>")
+            )),
+            "single selected direction was not emitted as an oriented rewrite:\n{rendered}"
+        );
+        assert!(
+            !commands
+                .iter()
+                .any(|command| matches!(command, Command::BiRewrite(..)))
+        );
+
+        let (commands, rendered) = slice_commands(
+            "(datatype E (A i64) (B i64))
+             (let $b (B 2))
+             (birewrite (A x) (B x))
+             (run 1)
+             (check (= (A 2) $b))",
+        );
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                Command::Rewrite(_, rewrite, false)
+                    if rewrite.name.ends_with("<=")
+                        && rewrite.lhs.to_string() == "(B x)"
+                        && rewrite.rhs.to_string() == "(A x)"
+            )),
+            "reverse selected direction was not swapped into an oriented rewrite:\n{rendered}"
+        );
     }
 
     #[test]

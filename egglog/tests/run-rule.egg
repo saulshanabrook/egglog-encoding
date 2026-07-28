@@ -16,17 +16,17 @@
 (Wrap (B))
 
 ;; Grounded replay names existing values through read-only checked aliases.
-(let-check $__causal_replay_a (A))
-(let-check $__causal_replay_b (B))
-(let-check $__causal_replay_wrapped_a (Wrap $__causal_replay_a))
-(let-check $__causal_replay_wrapped_b (Wrap $__causal_replay_b))
+(let-check $__slice_replay_a (A))
+(let-check $__slice_replay_b (B))
+(let-check $__slice_replay_wrapped_a (Wrap $__slice_replay_a))
+(let-check $__slice_replay_wrapped_b (Wrap $__slice_replay_b))
 
 ;; Each list entry completely grounds one rule invocation. The whole list is
 ;; one run-rule schedule leaf, and every grounding implicitly expects one match.
 (run-schedule
   (run-rule
     ("mark-wrapped"
-      ((root $__causal_replay_wrapped_a) (x $__causal_replay_a)))))
+      ((root $__slice_replay_wrapped_a) (x $__slice_replay_a)))))
 (check (Fired (A)))
 (fail (check (Fired (B))))
 
@@ -34,9 +34,9 @@
 (run-schedule
   (run-rule
     ("mark-wrapped"
-      ((root $__causal_replay_wrapped_a) (x $__causal_replay_a)))
+      ((root $__slice_replay_wrapped_a) (x $__slice_replay_a)))
     ("mark-wrapped"
-      ((root $__causal_replay_wrapped_b) (x $__causal_replay_b)))))
+      ((root $__slice_replay_wrapped_b) (x $__slice_replay_b)))))
 
 (check (Fired (A)))
 (check (Fired (B)))
