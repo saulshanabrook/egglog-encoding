@@ -12,8 +12,9 @@ pub(crate) mod hash_index;
 pub(crate) mod offsets;
 pub(crate) mod parallel_heuristics;
 pub(crate) mod pool;
+pub(crate) mod provenance;
 pub(crate) mod query;
-pub(crate) mod receipts;
+pub(crate) use provenance as receipts;
 pub(crate) mod row_buffer;
 pub(crate) mod table;
 
