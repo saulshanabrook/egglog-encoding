@@ -46,23 +46,7 @@ pub(crate) struct Slice {
     /// a selected deletion and then reused by later grounded waves.
     pub(crate) firing_term_windows: HashMap<FiringId, Box<[Box<[RawAliasWindow]>]>>,
     pub(crate) equality_records: HashMap<AppliedEqualityId, ProjectedAppliedEquality>,
-    interfering_cell_count: usize,
-    delete_cone_firing_count: usize,
     requirements: Vec<SupportRequirement>,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct SliceStats {
-    pub(crate) selected_checks: u64,
-    pub(crate) causal_facts: u64,
-    pub(crate) causal_firings: u64,
-    pub(crate) causal_equalities: u64,
-    pub(crate) replay_facts: u64,
-    pub(crate) replay_equalities: u64,
-    pub(crate) replay_removals: u64,
-    pub(crate) interference_removals: u64,
-    pub(crate) interfering_cells: u64,
-    pub(crate) delete_cone_firings: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -128,13 +112,6 @@ impl SelectedEqualityDsu {
             _ => false,
         }
     }
-
-    fn canonical(&mut self, cell: KeyCell) -> KeyCell {
-        match cell {
-            KeyCell::Base(_) => cell,
-            KeyCell::Equality(term) => KeyCell::Equality(self.find(term)),
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -150,21 +127,6 @@ pub(crate) enum SliceError {
 }
 
 impl Slice {
-    pub(crate) fn stats(&self) -> SliceStats {
-        SliceStats {
-            selected_checks: self.checks.len() as u64,
-            causal_facts: self.facts.len() as u64,
-            causal_firings: self.firings.len() as u64,
-            causal_equalities: self.equalities.len() as u64,
-            replay_facts: self.replay_facts.len() as u64,
-            replay_equalities: self.replay_equalities.len() as u64,
-            replay_removals: self.replay_removals.len() as u64,
-            interference_removals: self.interference_removals.len() as u64,
-            interfering_cells: self.interfering_cell_count as u64,
-            delete_cone_firings: self.delete_cone_firing_count as u64,
-        }
-    }
-
     pub(crate) fn validate_exact_support(&self) -> Result<(), SliceError> {
         for requirement in &self.requirements {
             for id in &requirement.applied {
@@ -705,26 +667,6 @@ fn select_interfering_removals(
     Ok(selected_any)
 }
 
-fn count_interfering_cells(
-    view: &mut TraceView<'_>,
-    slice: &Slice,
-) -> Result<usize, TraceViewError> {
-    let mut dsu = selected_equality_dsu(slice);
-    let mut cells = HashSet::default();
-    for index in &slice.interference_removals {
-        let removal = view.removal(*index)?;
-        let victim_position = position_before_event(removal.position)?;
-        let (table, key) = replay_key_at(view, removal.removed_fact, victim_position)?;
-        let key = key
-            .iter()
-            .copied()
-            .map(|cell| dsu.canonical(cell))
-            .collect::<Vec<_>>();
-        cells.insert((table, key));
-    }
-    Ok(cells.len())
-}
-
 fn seed_check_root(
     view: &mut TraceView<'_>,
     slice: &mut Slice,
@@ -825,7 +767,6 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
         seed_check_root(view, &mut slice, &mut work, root)?;
     }
 
-    let mut firings_before_interference = None;
     loop {
         while let Some(item) = work.pop_front() {
             match item {
@@ -1027,23 +968,17 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
             }
         }
         select_replay_maintenance_equalities(view, &mut slice)?;
-        let firings_before_interference =
-            *firings_before_interference.get_or_insert(slice.firings.len());
         if !select_interfering_removals(view, &mut slice, &mut work)? {
-            slice.delete_cone_firing_count = slice
-                .firings
-                .len()
-                .saturating_sub(firings_before_interference);
             break;
         }
     }
-    slice.interfering_cell_count = count_interfering_cells(view, &slice)?;
     slice
         .validate_exact_support()
         .map_err(|error| TraceViewError::Invalid(error.to_string()))?;
     Ok(slice)
 }
 
+#[cfg(test)]
 fn slice_view(view: &mut TraceView<'_>, check: u32) -> Result<Slice, TraceViewError> {
     slice_roots(view, vec![view.check_root(check)?.clone()])
 }
@@ -1053,6 +988,7 @@ fn slice_all_view(view: &mut TraceView<'_>) -> Result<Slice, TraceViewError> {
     slice_roots(view, roots)
 }
 
+#[cfg(test)]
 pub(crate) fn slice_check(egraph: &EGraph, check: u32) -> Result<Slice, SliceError> {
     egraph
         .capture_catalog
@@ -1085,10 +1021,6 @@ pub(crate) fn slice_all_checks(egraph: &EGraph) -> Result<Slice, SliceError> {
     bridge
         .with_trace_view(slice_all_view)
         .map_err(SliceError::Trace)
-}
-
-pub(crate) fn slice_all_check_stats(egraph: &EGraph) -> Result<SliceStats, SliceError> {
-    slice_all_checks(egraph).map(|slice| slice.stats())
 }
 
 #[cfg(test)]
@@ -1197,21 +1129,11 @@ mod tests {
             4,
             "the independent delete must be rooted"
         );
-        assert_eq!(
-            slice.stats(),
-            SliceStats {
-                selected_checks: 1,
-                causal_facts: slice.facts.len() as u64,
-                causal_firings: 4,
-                causal_equalities: 0,
-                replay_facts: slice.replay_facts.len() as u64,
-                replay_equalities: 0,
-                replay_removals: 1,
-                interference_removals: 1,
-                interfering_cells: 1,
-                delete_cone_firings: 1,
-            }
-        );
+        assert_eq!(slice.checks.len(), 1);
+        assert!(slice.equalities.is_empty());
+        assert!(slice.replay_equalities.is_empty());
+        assert_eq!(slice.replay_removals.len(), 1);
+        assert_eq!(slice.interference_removals.len(), 1);
     }
 
     #[test]
@@ -1242,9 +1164,6 @@ mod tests {
         assert_eq!(slice.check_positions.len(), 2);
         assert!(slice.check_positions[&0] < slice.check_positions[&1]);
         assert_eq!(slice.firings.len(), 2);
-        let stats = slice_all_check_stats(&egraph).unwrap();
-        assert_eq!(stats.selected_checks, 2);
-        assert_eq!(stats.causal_firings, 2);
     }
 
     #[test]
