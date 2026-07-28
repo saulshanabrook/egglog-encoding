@@ -4606,22 +4606,24 @@ impl EGraph {
                     // the normalized commands used for exact event identity.
                     // The former is parseable artifact syntax; the latter is
                     // what native capture ordinals refer to.
-                    let surface_replay_command = matches!(
-                        &command,
-                        Command::Sort { .. }
-                            | Command::Datatype { .. }
-                            | Command::Datatypes { .. }
-                            | Command::Constructor { .. }
-                            | Command::Relation { .. }
-                            | Command::Function { .. }
-                            | Command::AddRuleset(..)
-                            | Command::UnstableCombinedRuleset(..)
-                            | Command::Rewrite(..)
-                            | Command::BiRewrite(..)
-                            | Command::Action(_)
-                            | Command::Check(..)
-                    )
-                    .then(|| command.clone());
+                    let surface_replay_command = self.capture_catalog.as_ref().and_then(|_| {
+                        matches!(
+                            &command,
+                            Command::Sort { .. }
+                                | Command::Datatype { .. }
+                                | Command::Datatypes { .. }
+                                | Command::Constructor { .. }
+                                | Command::Relation { .. }
+                                | Command::Function { .. }
+                                | Command::AddRuleset(..)
+                                | Command::UnstableCombinedRuleset(..)
+                                | Command::Rewrite(..)
+                                | Command::BiRewrite(..)
+                                | Command::Action(_)
+                                | Command::Check(..)
+                        )
+                        .then(|| command.clone())
+                    });
                     let capture_rule_origins = self
                         .capture_catalog
                         .is_some()
