@@ -31,7 +31,7 @@ are blocking, while full-workload timeouts are censored performance results.
   per-row backend metadata is only generation and subsumption state.
 - Full `UnstableFn`, causal receipts/replay, Windows support, every example,
   and a standalone full-Math SQL program are outside the blocking scope.
-- No subprocess may run longer than 115 seconds.
+- No subprocess may run longer than 110 seconds.
 - Do not push or open a pull request without explicit user approval.
 
 ## Provenance
@@ -86,13 +86,17 @@ preserve these current SPI semantics:
 ## Steering frame
 
 - **Current frontier:** checkpoints 0 and 0.5 are implemented on current main,
-  and the first bounded checkpoint-1 slice is frozen and independently reviewed.
+  and the first bounded checkpoint-1 slice is committed and independently reviewed.
   The backend now retains complete recursively validated `FunctionConfig`s,
   executes one-output `MergeFn::AssertEq` natively for input and one-Set rules,
   and stores proof-reached BigInt, BigRat, and Rational values in typed exact
   DuckDB columns. All five frozen proof-mode workloads register the shared
   23-table prefix and fail closed at the same next compiler boundary:
-  `@uf_path_compress` has a primitive body atom and a four-action head. This is
+  `@uf_path_compress` has a primitive body atom and a four-action head. Three
+  independent read-only audits now pin its exact backend IR and tuple-output
+  union-find merge. The rule itself fits the existing `RuleSpec`; the real
+  shared boundary is that `MergeFn::Primitive` and `MergeFn::Const` discard the
+  call-site type/semantic information a native SQL compiler needs. This is
   progress through the prefix, not complete checkpoint-1 or program support.
 - **Scoreboard:** current-main pinned; proof gate green (212/212); loaded runtime
   DuckDB v1.5.4; DuckDB backend tests 27/27 and feature-enabled CLI 4/4 pass;
@@ -115,19 +119,21 @@ preserve these current SPI semantics:
   proof-instrumented primitive breadth; order-sensitive merge semantics; public
   result transport for future nested container columns without a client patch;
   DuckDB BIGNUM has a finite domain and exact-number readback relies on the
-  pinned v1.5.4 canonical decimal projection; frontend `native_input` may mint
-  fresh IDs before the backend's atomic
-  `add_values` boundary, so those IDs cannot yet roll back with a rejected batch;
+  pinned v1.5.4 canonical decimal projection; frontend `native_input` currently
+  mints fresh IDs before the backend's atomic `add_values` boundary, so one
+  atomic fresh-slot batch API is now a prerequisite for a single SQL-authoritative
+  ID counter and rejected-input rollback;
   the benchmark harness does not yet advertise the DuckDB endpoint; direct
   execution of the downloaded dylib needs its dependency directory added to
   `DYLD_LIBRARY_PATH` on macOS; and slow bounded proof workloads.
-- **Next decision:** after documentation-only re-review and local checkpoint
-  commit, diagnose the exact backend-neutral `RuleSpec` for `@uf_path_compress`
-  before seating another writer. The next contract must account for its primitive
-  predicate, ordered multi-action effect stream, fresh-ID allocation, and write
-  into the currently deferred tuple-output union-find merge; it may not merely
-  relax admission. Preserve UnstableFn as schema-only deferred: hardboiled stores
-  only its `ColumnTy::Id`, while no frozen workload constructs or applies one.
+- **Next decision:** implement and independently gate one bounded shared-SPI
+  prerequisite: call-site typed/named merge primitives, typed merge constants,
+  and atomic fresh-slot native input backed by one DuckDB counter. Only after
+  that passes may a DuckDB writer compile `@uf_path_compress` through staged SQL
+  work queues and fixed-point merge-effect waves. Merely relaxing admission,
+  invoking opaque callbacks, or recognizing proof/table names is prohibited.
+  Preserve UnstableFn as schema-only deferred: hardboiled stores only its
+  `ColumnTy::Id`, while no frozen workload constructs or applies one.
 
 ## Roster
 
@@ -143,6 +149,10 @@ preserve these current SPI semantics:
 | `/root/assert_eq_semantics_audit` | checkpoint 1 read-only semantic review | pin AssertEq behavior, config admission invariants, and rollback hazards against current main/DD | no writes/builds; current source/tests and frozen diff only | exact conformance matrix and likely defect probes for independent review | completed; existing SPI suffices for the bounded slice, with one fresh-ID caveat |
 | `/root/checkpoint_reviewer` | independent read-only review | evaluate checkpoint artifacts against scope, safety, semantics, and evidence rubric | no writes; raw diff and raw artifacts only | `PASS`, `REVISE`, or `REASSESS` with live issues separated from stale feedback | one evidence-backed verdict and one bounded re-review if needed |
 | `/root/checkpoint_1_reviewer` | checkpoint 1 independent read-only review | evaluate the frozen shared-prefix slice against reference semantics, transactionality, codec boundaries, and evidence | no writes/builds/tests; complete raw diff plus pinned source only | formal verdict with code defects separated from ledger drift | completed final `PASS` after one ledger/evidence-only repair; no implementation defect found |
+| `/root/primary_lowering_frontier` and subcircles | path-compression IR/SPI diagnosis | pin the exact first rule/config across all five workloads and identify the smallest non-special-cased continuation | committed-source/desugar inspection only; no writes or DuckDB execution | exact RuleSpec, merge tree, shared blockers, canaries, and writer contract | completed; all five are isomorphic and a DuckDB-only admission patch is rejected |
+| `/root/causal_semantics_audit/committed_semantics_review/duckdb_contract` | independent semantic contract | separate mandatory observable semantics from SQL-physical choices using current reference/DD and committed causal lessons | committed blobs only; no writes/builds/tests | old/new tuple, action/fresh/fixed-point/generation/rollback matrix | completed; native staged-wave design is coherent after typed merge metadata |
+| `/root/sql_artifact` | independent SQL architecture | compare multi-statement work queues with a tagged recursive CTE for the exact frontier | safe public DuckDB 1.5.4 SQL/source only; no writes/builds/tests | two materially different designs and bounded recommendation | completed; staged work queues recommended first, recursive CTE retained as the second design |
+| `/root/typed_merge_input_spi_worker` | checkpoint 1 shared prerequisite | preserve reference/DD behavior while making merge calls typed and native input fresh allocation atomic | bounded shared bridge/backend-trait/frontend/DD/DuckDB paths listed in its contract; targeted commands only | independently reviewable typed merge IR plus fresh-slot batch boundary | to be seated after this ledger contract is committed |
 
 No overlapping writing worker may be added. Read-only specialist circles may
 be seated only for disjoint evidence questions with explicit stop terms.
@@ -185,7 +195,7 @@ be seated only for disjoint evidence questions with explicit stop terms.
 |---|---|---|---|
 | 0 provenance/integration/census | exact refs and primary surface census; plausible safe-native lowering for every reached primary surface | **passed** | worktree/base and frozen corpus pinned; census complete; safe crates.io client and loaded v1.5.4 runtime verified; typed literal/no-ART/transaction/input/CLI surfaces passed focused gates; final independent review PASS |
 | 0.5 API/literal/kernel spike | typed input/API probes and two real kernels agree with main on reduced data | **passed** | 19/19 DuckDB tests pass against loaded DuckDB v1.5.4; reduced source-pinned Pointer and Math fixtures use production `add_rule`/`run_rules` on independently constructed main and DuckDB state and agree across initial/fresh/no-delta transcripts; independent implementation review found no live defect |
-| 1 typed IR/storage/input | primary schemas and input commands install; deterministic SQL manifest | **in progress** | shared-prefix slice implemented: full valid config retention, typed BigInt/BigRat/Rational storage, and native one-output AssertEq; all five advance through 23 tables to `@uf_path_compress`. Complete primary schema installation and deterministic SQL manifest remain open. |
+| 1 typed IR/storage/input | primary schemas and input commands install; deterministic SQL manifest | **in progress** | shared-prefix slice implemented: full valid config retention, typed BigInt/BigRat/Rational storage, and native one-output AssertEq; all five advance through 23 tables to `@uf_path_compress`. Exact diagnosis found two shared IR/input prerequisites before native Block lowering. Complete primary schema installation and deterministic SQL manifest remain open. |
 | 2 SQL matching/transcripts | bounded primary proxies match main without Rust match enumeration | pending | |
 | 3 primitives/containers | all five statically compile with deny fallback and run bounded first iteration | pending | |
 | 4 native merges/effects/fixed point | canaries and bounded proxies agree; complete rollback; host oracle removed | pending | |
@@ -232,6 +242,10 @@ be seated only for disjoint evidence questions with explicit stop terms.
 | 2026-07-28 | coordinator | `/opt/homebrew/bin/timeout --signal=TERM --kill-after=5s 110s env -u DUCKDB_LIB_DIR -u DUCKDB_INCLUDE_DIR -u DUCKDB_STATIC make proof-tests`, repository root, frozen dirty diff | fresh PASS: core 204/204 plus experimental 8/8, exit 0, 29.37s wall; no retained artifact | current reference proof suite remains green |
 | 2026-07-28 | independent checkpoint-1 review | frozen eight-path diff and current reference semantics; no writes/builds/tests | `REVISE` for stale ledger/evidence only; implementation, transaction, codec, reference, and test subreviews found no code defect; residual coverage gaps and fresh-ID/clone boundaries recorded above | authorized one documentation-only reconciliation and bounded re-review; code remains frozen |
 | 2026-07-28 | independent checkpoint-1 documentation re-review | reconciled `STATE.md`, frozen non-ledger diff `e1c6089d736801b1c25c79b806df2a944d1196d6b9ad1147fd1d0103ebdd3b61`; no writes/builds/tests | final `PASS`; frontier, in-progress checkpoint status, provenance-complete evidence, residual risks, and next action agree | shared-prefix slice accepted for a local checkpoint commit; complete checkpoint 1 remains open |
+| 2026-07-28 | coordinator | local checkpoint commit | `f9d07ebd57712a102b08969cd3b130411346aa04 feat: add typed AssertEq DuckDB storage`; clean worktree; no push | accepted shared-prefix slice is now a durable rollback point |
+| 2026-07-28 | read-only exact RuleSpec census | five proof-mode desugar invocations, each under a 20-second cap, plus committed lowering source | all five first rules are isomorphic: two Live UF atoms, `!=`, one `get-fresh!`, its SSA alias, `Trans` Set, and tuple UF Set; the complete desugared corpus contains 174 instances of this one shape | removed action-count ambiguity and proved one structural lowering can advance every primary workload |
+| 2026-07-28 | three independent read-only path/merge audits | current bridge/DD merge evaluators, exact `FunctionConfig`, backend SPI, and safe DuckDB SQL design at clean `f9d07eb` | effective path compression necessarily executes the identity-changing UF `Block`; merge primitives retain only opaque IDs and constants are untyped, so a DuckDB-only native compiler would require a host callback, registration-order guess, or proof-specific branch | authorized one shared typed-merge prerequisite; admission-only work is a recorded no-go |
+| 2026-07-28 | independent SQL architecture audit | staged per-key work queues versus tagged `USING KEY` recursion | both are feasible after typed merge metadata; staged queues preserve one old/new fold per key per wave and isolate failures, while the recursive CTE remains a higher-risk artifact/performance alternative | selected staged multi-statement waves without a statement-count performance gate |
 
 ## Review rubric
 
@@ -411,10 +425,102 @@ frontier to reassessment rather than another micro-variant.
   rows; a shared-SPI expansion becomes necessary; or the two-cycle trigger
   fires.
 
+## Worker contract: typed merge IR and atomic fresh-slot input prerequisite
+
+- **Hypothesis:** the frontend already possesses every concrete sort and
+  primitive identity needed by a native backend, and all three current backend
+  implementations can resolve native-input fresh placeholders atomically without
+  changing successful-program semantics. A narrow shared contract can preserve
+  reference/DD execution while making DuckDB's later SQL lowering type-directed
+  and its ID counter authoritative.
+- **Target artifact:** enrich merge-expression primitive calls with their stable
+  semantic name plus concrete input/output `ColumnTy`s, and make merge constants
+  carry `ColumnTy`. Keep the runtime `ExternalFunctionId` so reference and DD
+  continue calling their existing implementations. Add an object-safe native
+  input batch value with `Existing(Value)` and a repeatable `FreshSlot(u32)`, plus
+  one fallible backend method that resolves a dense slot set and inserts the
+  complete batch atomically. Existing direct `add_values` remains available.
+- **Frontend behavior:** `native_input` assigns deterministic dense fresh slots
+  instead of calling `fresh_id` before `add_values`. Repeated occurrences of one
+  slot resolve to one ID; distinct slots resolve in ascending slot order. The
+  frontend does not need the resolved values after the batch commits. Invalid,
+  sparse, or type-incompatible slots fail closed before mutation.
+- **Reference/DD behavior:** preserve current row/merge/proof results. Resolve
+  slots against each backend's existing ID counter inside an outer rollback
+  boundary that includes both allocation and merge-aware insertion. A rejected
+  batch restores the counter and all rows and leaves the backend reusable.
+- **DuckDB behavior:** add a `fresh_id` row to the existing backend metadata
+  counter table. Resolve slots and typed rows inside the same DuckDB transaction
+  as conflict checks, insertion, and generation. `fresh_id()` and the backend's
+  `get-fresh!` registration must draw from that same SQL-authoritative counter;
+  the host registry counter may remain only as a non-authoritative compatibility
+  handle and must never allocate a production ID. Use safe public SQL APIs only.
+- **Typed-IR population:** build merge primitive metadata from the resolved
+  call site (`SpecializedPrimitive::name`, concrete inputs, concrete output) and
+  build typed constants from each resolved expression's output sort. Do not add
+  SQL text, DuckDB types, proof tags, table names, or a closed proof-specific
+  opcode to the shared IR. Reference and DD may ignore the descriptive metadata
+  when executing by external ID, but validation/tests must prove it is retained.
+- **Canaries:** typed metadata for polymorphic ordering/orientation calls and the
+  string argument to `get-fresh!`; reference and DD merge behavior unchanged;
+  one fresh slot reused across several rows; multiple slots remain distinct and
+  deterministic; a late merge failure restores rows and the counter; the next
+  successful batch reuses the rolled-back ID; DuckDB interleaves `fresh_id`, an
+  atomic fresh-slot batch, and another `fresh_id` without collision; hostile
+  slot layouts/types reject without consuming IDs; existing input/fail/proof
+  gates remain green.
+- **Owned write set:** `egglog/egglog-bridge/src/{lib.rs,tests.rs}`;
+  `egglog/egglog-backend-trait/src/{lib.rs,backend_impl.rs}`;
+  `egglog/src/lib.rs` and only a focused frontend regression file if required;
+  `egglog-experimental/dd/src/{compile.rs,lib.rs}`; and
+  `egglog-experimental/duckdb/src/{lib.rs,storage.rs}` plus focused existing test
+  modules. No fixtures, proof generators, container implementation, benchmark
+  harness, Makefile, dependency manifests, or snapshots may change.
+- **Forbidden shortcuts:** proof/table/sort-name recognition; opaque primitive-ID
+  ordering; host callback execution from DuckDB; a second production ID counter;
+  mint-then-insert outside one rollback boundary; weakening the existing
+  fallible input contract; unsafe/private DuckDB APIs; Appender/file readers;
+  unrelated cleanup or benchmark work.
+- **Owned commands:** targeted bridge/backend-trait/DD/DuckDB/frontend tests,
+  scoped checks/clippy, formatting, and diff checks, every subprocess under an
+  external 110-second watchdog. The coordinator owns the broad proof gate and
+  public five-file probes after independent review. No bundled DuckDB build.
+- **Stop:** two materially different type-carrier designs cannot preserve
+  reference/DD behavior; fresh slots cannot be resolved atomically through the
+  existing three backends without broad unrelated API changes; any implementation
+  needs proof-specific metadata or unsafe/private APIs; two no-movement cycles
+  occur; or a user decision is required. Preserve the accepted `f9d07eb` prefix
+  and report the exact blocker rather than falling back to opaque callbacks.
+
+## Planned contract after the prerequisite: native path compression
+
+- Compile the exact structural rule vocabulary—Live table atoms, partial `!=`,
+  action `get-fresh!`, aliases, and ordered Sets—without inspecting names.
+- Compile the reached typed merge vocabulary—old/new columns, lets, constants,
+  ordering/payload-selection primitives, tuple Columns, identity guard, ordered
+  Sets, and fresh allocation—into staged DuckDB work queues.
+- Materialize every scheduled rule's matches before effects. Process at most one
+  pending candidate per logical key per SQL wave, append self-writes to later
+  waves, and continue to fixed point. Rust may schedule statements and read
+  scalar counts/booleans, but may not enumerate matches, effects, or merge rows.
+- Keep head IDs, collision IDs, proof rows, UF rows, generation, scratch state,
+  and the SQL fresh counter in one transaction; update Rust watermarks/telemetry
+  only after commit. Unsupported primitives/actions/dependencies fail during
+  admission before a Rule ID is consumed.
+- Differential canaries cover an ordered `a -> b -> c` chain, identity-equal
+  no-op, old-min effects with unchanged retained row, new-min replacement,
+  multi-wave self-writes, duplicate incoming keys, stable pre-wave visibility,
+  late AssertEq rollback, phantom scratch cleanup, deterministic allocation, and
+  a renamed non-proof instance of the same typed IR. Then all five public probes
+  must move beyond `@uf_path_compress` to one precisely recorded later boundary.
+- If staged work queues fail semantically after one bounded repair, test the
+  independently proposed tagged `USING KEY` recursive CTE. If both designs fail
+  the same semantic gate, stop the goal early with the preserved exact evidence.
+
 ## Next action
 
-Commit the accepted shared-prefix slice locally without pushing. Then run one
-read-only Understand/Explore/Decide diagnosis of the exact
-`@uf_path_compress` IR and its native merge/fresh-ID requirements before seating
-the next single writer. Do not weaken compiler admission, add a host fallback, or
+Commit this diagnosis/worker contract locally without pushing, then seat exactly
+one typed-merge/fresh-slot prerequisite writer. Freeze and independently review
+that shared artifact before authorizing the native path-compression SQL writer.
+Do not weaken compiler admission, add a host fallback, recognize proof names, or
 edit the benchmark harness merely to move the reported boundary.
