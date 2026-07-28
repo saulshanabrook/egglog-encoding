@@ -2762,3 +2762,89 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   `core-relations/src/provenance`, the slicer to `slicing/backward.rs`, and the
   artifact builder to `slicing/replay.rs` as a 100% move-only diff. Both focused
   core and frontend causal test sets passed before commit `53f2397`.
+
+## 2026-07-28: review-readiness refactor complete
+
+- The production checkpoint is clean commit
+  `df8aeab6313cdd086d899778e5b750a2b7948d47`. The mechanical review sequence
+  first isolated the conceptual moves (`53f2397`), module split (`e37e3b2`),
+  and vocabulary/CLI rename (`f4d3c1c`) so reviewers can use
+  `git log --follow`. The former receipt kernel is now the execution-trace
+  `provenance` module; backward closure and owned artifact construction are
+  separate `slicing/backward.rs` and `slicing/replay.rs` modules.
+- `--slice-output FILE` now independently requests validated artifact output
+  without enabling normal proof output. `--proofs` remains orthogonal, and
+  bare `--slice` is rejected because it requests no output. The DD frontend
+  rejects both explicit and output-implied slicing, and DD rule registration
+  rejects all trace metadata before mutation.
+- Retained source rewrites remain rewrites in the artifact. Both retained
+  birewrite directions render once as a birewrite; one retained direction
+  renders as a deterministically named, correctly oriented rewrite. Hidden
+  rewrite roots use `__rewrite_root` plus a deterministic suffix on collision;
+  the end-to-end canary proves that a user binding named `__rewrite_root`
+  remains intact while strict replay succeeds.
+- Artifact publication is filesystem-atomic as well as validation-gated. The
+  rendered bytes are written to an exclusively created file in the destination
+  directory, synced, reread byte-for-byte, then renamed over the destination.
+  Errors clean up the temporary path and preserve the existing artifact. A
+  candidate `tempfile` dependency was removed before acceptance; the final
+  helper uses only the standard library and adds no direct dependency.
+- The bounded cleanup removed unreachable parallel trace table insertion
+  (`2fd90b8`), parallel-only trace cause drafts (`8b93e56`), production-only
+  test accounting, dead replay catalog state, and obsolete counters/exports.
+  Ordinary parallel insertion remains intact and its four-thread large-insert
+  canary passes. Input SHA-256 and surface command cloning are now capture-only;
+  independent hot-path review found no per-row ordinary regression. The one
+  disclosed shared setup change is the deterministic rewrite-root variable
+  scan.
+- The executable contract remains green across 187 programs: 151 core and 36
+  experimental/workload cases. There are zero `KnownCapturePanic` entries, one
+  `KnownReplayFailure`, and 48 runtime `Unsupported` boundaries; the separate
+  inventory has 52 static proof-incompatible and four extract-root exclusions.
+  Named defect `CS-REPLAY-EQSOLVE` is still honestly classified as a slicing
+  defect. Strict replay fails at the final equality check, exits 1, and
+  preserves or omits the output as appropriate; no loose capability predicate
+  or recording expansion relabels it as `Unsupported`.
+- The intentional generated-namespace and rewrite-surface change establishes a
+  new byte oracle. Two repetitions were identical, and the final dependency-free
+  checkpoint reproduced the same hashes:
+
+  | Workload | SHA-256 | Lines | Bytes |
+  | --- | --- | ---: | ---: |
+  | Math | `417b80f7a08d29000ab7c8288df22c0c457be3b607ae0bb8a70177b5d8663a6b` | 64 | 6,606 |
+  | Eggcc | `15cc5a6f4cbb5c40d3c06c55fe5361cb399bc435d704d1b900aa36f273f975bb` | 3,422 | 160,753 |
+  | Pointer | `86046da30e97b0d73349d5e63b4e02a2efba5a8a49b38fd2e2b7c115b0e496a1` | 34 | 1,998 |
+  | Hardboiled | `fb5f701069049b8f86df546fd7303daaa6a3823350631ed9d71b8398779ffff0` | 294 | 26,141 |
+  | Luminal | `49c83a9764bc67e12a554fab66a9244c0fa4b2c73f4a2d14f9345bccfb39a811` | 49 | 6,493 |
+
+  Independent inspection strictly replayed all five through both main and
+  experimental entrypoints, verified one source-equivalent check apiece, all
+  28 list-form `run-rule` commands, schedule/check order, rewrite direction,
+  and absence of the old `__causal` namespace.
+- The public benchmark advanced from one to three to six cached rounds without
+  forcing observations. All 60 rows succeeded at 120 seconds. Same-final-binary
+  sliced-proofs versus proofs wall intervals are Math 0.235-0.257x, Eggcc
+  0.391-0.408x, Pointer 0.0924-0.0941x, Hardboiled 0.552-0.560x, and Luminal
+  0.0371-0.0381x; suite total is 0.149-0.155x. Every RSS interval is also below
+  one. The clean binary is
+  `5a7e77e2b4480d7da6904e6ba79272d468e804ee2632eb1f615e31ca5bc17d32`.
+  The 60-row report is
+  `/private/tmp/egglog-sliced-review-depless.jh27Wx/results.jsonl`, SHA-256
+  `c6f51f454f3792e4e1fcf395caa4a521994004c443f9f5a95efb7d4ef5737a7c`.
+- Final calibrated production accounting is A=24,167, D=1,878, net
+  **+22,289** versus `4940be37`; A=19,276, D=8,594, net **+10,682** versus
+  `0d7ffbb`; A=13,062, D=13,035, net **+27** from review-refactor start
+  `8598ad4`; and A=13,676, D=14,619, net **-943** from reduction start
+  `74eb9218`. Current production has 465,679 nontrivia syntax tokens, 4,891
+  fewer than `74eb9218`, and 121 unsafe-keyword tokens, one fewer than that
+  base. Tests, snapshots, documentation, ledgers, and inline `#[cfg(test)]`
+  parents receive no production credit.
+- Independent semantic and hot-path reviews returned GO at the production
+  checkpoint. Final validation ran in the required order: `make proof-tests`
+  passed 349 core and 44 experimental/workload cases, then `make check` passed
+  lockfile, formatting, Ruff, mypy, both Clippy configurations, 173 Python
+  tests, the full Rust workspace and doctests, and the DD timing-summary test.
+  The proof subset was not rerun between those two commands.
+- The complete review synopsis and suggested reading order are in `REVIEW.md`.
+  The unrelated untracked `LITERATURE-REVIEW.md` was not read, edited, staged,
+  or used as benchmark input.
