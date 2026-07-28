@@ -615,13 +615,12 @@ fn test_cause_dependencies(
                         },
                     ));
                 }
-                crate::RawCause::Merge { incoming, prior } => {
+                crate::RawCause::Merge {
+                    incoming,
+                    prior_fact,
+                } => {
                     stack.push(incoming);
-                    if let crate::CausePrior::Cause(cause) = prior {
-                        stack.push(cause);
-                    } else if let crate::CausePrior::Fact(fact) = prior {
-                        result.facts.push(fact);
-                    }
+                    result.facts.push(prior_fact);
                 }
             },
         }
@@ -1913,60 +1912,6 @@ fn same_term_native_bridge_joins_distinct_historical_components() {
                 .as_ref(),
                 &[crate::AppliedEqualityId::new(2)]
             );
-            Ok(())
-        })
-        .unwrap();
-}
-
-#[test]
-fn same_wave_merge_function_union_keeps_every_rule_proposal() {
-    let mut db = Database::default();
-    let trace = db.enable_trace();
-    let mut uf = DisplacedTable::default();
-    uf.enable_trace();
-    let sort = ReplaySortId::new(109);
-    let left = Value::new(30);
-    let right = Value::new(20);
-    trace.intern_literal(sort, ReplayLiteral::Internal(30), left);
-    trace.intern_literal(sort, ReplayLiteral::Internal(20), right);
-    db.set_trace_wave(Wave::new(1));
-
-    let first = empty_rule_cause(&trace, 109, Wave::new(1));
-    let second = empty_rule_cause(&trace, 110, Wave::new(1));
-    let third = empty_rule_cause(&trace, 111, Wave::new(1));
-    let mut causes = trace.new_batch();
-    let first_fold = causes.merge_drafts(second, first);
-    let nested_fold = causes.merge_drafts(third, first_fold);
-    causes.publish();
-
-    {
-        let mut buffer = uf.new_buffer();
-        buffer.stage_typed_union(
-            &[left, right, Value::new(1)],
-            nested_fold,
-            trace
-                .typed_equality_proposal(Wave::new(1), sort, left, right)
-                .unwrap(),
-        );
-    }
-    let mut state = ExecutionState::new(db.read_only_view(), Default::default());
-    assert!(uf.merge(&mut state).added);
-    db.finalize_trace_wave();
-
-    trace
-        .with_view(|view| {
-            let equality = view.applied_equality(crate::AppliedEqualityId::new(1))?;
-            let crate::EqualityReason::MergeFn { cause } = equality.reason else {
-                panic!("same-wave merge-function union lost its proposal DAG")
-            };
-            let dependencies = test_cause_dependencies(view, cause)?;
-            assert!(dependencies.facts.is_empty());
-            let rules = dependencies
-                .rules
-                .iter()
-                .map(|id| view.firing(*id).unwrap().rule)
-                .collect::<Vec<_>>();
-            assert_eq!(rules, [109, 110, 111]);
             Ok(())
         })
         .unwrap();

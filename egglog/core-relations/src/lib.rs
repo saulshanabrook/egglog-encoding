@@ -38,8 +38,8 @@ pub use hash_index::TupleIndex;
 pub use offsets::{OffsetRange, RowId, Subset, SubsetRef};
 pub use pool::{Pool, PoolSet, Pooled};
 pub use provenance::{
-    AppliedEqualityId, BindingSource, CaptureCounters, CauseDraftId, CauseId, CausePrior, CauseRef,
-    Criterion, CriterionCaptureSpec, CriterionEndpointOccurrence, CriterionEndpointSource,
+    AppliedEqualityId, BindingSource, CaptureCounters, CauseDraftId, CauseId, CauseRef, Criterion,
+    CriterionCaptureSpec, CriterionEndpointOccurrence, CriterionEndpointSource,
     DeferredEqualityCause, EdgeHorizon, EqualityEndpoint, EqualityReason, FactCellRef, FactId,
     Firing, FiringCaptureSpec, FiringEqualitySource, FiringId, HistoricalFactCell, HistoryPosition,
     MergeOriginSelector, PremiseOccurrence, PreparedRekey, ProjectedAppliedEquality,

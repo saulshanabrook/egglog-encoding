@@ -1068,10 +1068,6 @@ impl<'a> ExecutionState<'a> {
         self.active_cause = cause.map(|cause| ActiveCause::Direct(cause.into()));
     }
 
-    pub(crate) fn set_active_cause_capability(&mut self, cause: Option<CauseCapability>) {
-        self.active_cause = cause.map(ActiveCause::Ready);
-    }
-
     pub(crate) fn active_cause_capability(&self) -> Option<CauseCapability> {
         self.active_cause
             .as_ref()

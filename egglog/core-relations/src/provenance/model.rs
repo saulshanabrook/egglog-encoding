@@ -504,12 +504,6 @@ impl EqualityReason {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CausePrior {
-    Fact(FactId),
-    Cause(CauseRef),
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct EqualityEndpoint {
     pub sort: ReplaySortId,
@@ -760,7 +754,7 @@ pub enum RawCause<'a> {
     },
     Merge {
         incoming: CauseRef,
-        prior: CausePrior,
+        prior_fact: FactId,
     },
 }
 

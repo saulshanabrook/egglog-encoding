@@ -779,12 +779,12 @@ impl<'a> TraceView<'a> {
                 position: *position,
                 equalities: &self.arena.durable_rebuild_equalities[equalities.as_range()],
             },
-            DurableCause::Merge { incoming, prior } => RawCause::Merge {
+            DurableCause::Merge {
+                incoming,
+                prior_fact,
+            } => RawCause::Merge {
                 incoming: Self::public_cause(*incoming)?,
-                prior: match prior {
-                    DurablePrior::Fact(fact) => CausePrior::Fact(*fact),
-                    DurablePrior::Cause(cause) => CausePrior::Cause(Self::public_cause(*cause)?),
-                },
+                prior_fact: *prior_fact,
             },
         })
     }

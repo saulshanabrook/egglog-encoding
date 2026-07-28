@@ -6096,11 +6096,8 @@ mod tests {
                     position,
                     equalities,
                 } => return Ok(Some((wave, as_of_edges, position, equalities.to_vec()))),
-                core_relations::RawCause::Merge { incoming, prior } => {
+                core_relations::RawCause::Merge { incoming, .. } => {
                     pending.push(incoming);
-                    if let core_relations::CausePrior::Cause(prior) = prior {
-                        pending.push(prior);
-                    }
                 }
                 _ => {}
             }

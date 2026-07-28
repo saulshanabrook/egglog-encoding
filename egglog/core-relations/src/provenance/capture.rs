@@ -357,20 +357,11 @@ pub(crate) enum PreparedRemoval {
     PresenceRelation,
 }
 
-#[derive(Clone, Debug)]
-enum CauseDraft {
-    Merge {
-        incoming: PackedCauseRef,
-        prior: PriorVersion,
-    },
-}
-
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum EqualityCauseError {
     Source,
     Mixed,
     MissingFact,
-    LandmarkMismatch,
 }
 
 impl EqualityCauseError {
@@ -384,9 +375,6 @@ impl EqualityCauseError {
             }
             EqualityCauseError::MissingFact => {
                 "equality cause references a missing immutable FactId"
-            }
-            EqualityCauseError::LandmarkMismatch => {
-                "congruence dependencies used different waves or equality landmarks"
             }
         }
     }
@@ -434,45 +422,6 @@ impl EqualityCauseSummary {
         }
     }
 
-    fn merge(self, prior: Self) -> Self {
-        match (self, prior) {
-            (Self::Rule, Self::Rule) => Self::Rule,
-            (
-                Self::Rebuild {
-                    wave: incoming_wave,
-                    as_of_edges: incoming_edges,
-                    position: incoming_position,
-                    ..
-                },
-                Self::Rebuild {
-                    wave: prior_wave,
-                    as_of_edges: prior_edges,
-                    position: prior_position,
-                    ..
-                },
-            ) if incoming_wave == prior_wave
-                && incoming_edges == prior_edges
-                && incoming_position == prior_position =>
-            {
-                Self::Rebuild {
-                    wave: incoming_wave,
-                    as_of_edges: incoming_edges,
-                    position: incoming_position,
-                    complete: true,
-                }
-            }
-            (Self::Invalid(error), _) | (_, Self::Invalid(error)) => Self::Invalid(error),
-            (Self::Source, _) | (_, Self::Source) => Self::Invalid(EqualityCauseError::Source),
-            (Self::Container { .. }, _) | (_, Self::Container { .. }) => {
-                Self::Invalid(EqualityCauseError::Mixed)
-            }
-            (Self::Rebuild { .. }, Self::Rebuild { .. }) => {
-                Self::Invalid(EqualityCauseError::LandmarkMismatch)
-            }
-            _ => Self::Invalid(EqualityCauseError::Mixed),
-        }
-    }
-
     pub(crate) fn validate(self) -> Result<(), &'static str> {
         match self {
             Self::Rule | Self::Container { .. } => Ok(()),
@@ -497,16 +446,6 @@ impl CauseCapability {
     pub(crate) fn id(self) -> CauseDraftId {
         self.id
     }
-
-    pub(crate) fn cause_ref(self) -> PackedCauseRef {
-        PackedCauseRef::node(self.id)
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-enum PriorVersion {
-    Fact(FactId),
-    Cause(PackedCauseRef),
 }
 
 #[derive(Clone, Debug)]
@@ -534,14 +473,8 @@ enum DurableCause {
     },
     Merge {
         incoming: PackedCauseRef,
-        prior: DurablePrior,
+        prior_fact: FactId,
     },
-}
-
-#[derive(Clone, Copy, Debug)]
-enum DurablePrior {
-    Fact(FactId),
-    Cause(PackedCauseRef),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -869,8 +802,6 @@ impl TraceShared {
 /// rows are merged and publishes once at the surrounding engine barrier.
 pub(crate) struct CaptureBatch {
     shared: Arc<TraceShared>,
-    drafts: Vec<(CauseDraftId, CauseDraft)>,
-    draft_summaries: HashMap<CauseDraftId, EqualityCauseSummary>,
     facts: Vec<(FactId, PendingFact)>,
     fact_values: Vec<Value>,
     merge_cell_origins: Vec<MergeCellOrigin>,
@@ -885,8 +816,6 @@ impl CaptureBatch {
         shared.open_fragments.fetch_add(1, Ordering::Relaxed);
         Self {
             shared,
-            drafts: Vec::new(),
-            draft_summaries: HashMap::default(),
             facts: Vec::new(),
             fact_values: Vec::new(),
             merge_cell_origins: Vec::new(),
@@ -895,120 +824,6 @@ impl CaptureBatch {
             unattributed_commits: 0,
             published: false,
         }
-    }
-
-    pub(crate) fn merge_draft_capability(
-        &mut self,
-        incoming: PackedCauseRef,
-        prior_fact: FactId,
-    ) -> CauseCapability {
-        assert!(
-            !incoming.is_unattributed(),
-            "merge capture is missing its incoming cause"
-        );
-        assert!(
-            !prior_fact.is_missing(),
-            "merge capture is missing its prior FactId"
-        );
-        let equality = self.cause_summary(incoming).with_prior_fact(prior_fact);
-        self.add_draft(
-            CauseDraft::Merge {
-                incoming,
-                prior: PriorVersion::Fact(prior_fact),
-            },
-            equality,
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn merge_drafts(
-        &mut self,
-        incoming: impl Into<PackedCauseRef>,
-        prior: impl Into<PackedCauseRef>,
-    ) -> CauseRef {
-        self.merge_drafts_capability(incoming.into(), prior.into())
-            .cause_ref()
-            .into()
-    }
-
-    pub(crate) fn merge_drafts_capability(
-        &mut self,
-        incoming: PackedCauseRef,
-        prior: PackedCauseRef,
-    ) -> CauseCapability {
-        assert!(
-            !incoming.is_unattributed() && !prior.is_unattributed(),
-            "same-wave merge capture is missing an exact proposal cause"
-        );
-        let equality = self
-            .cause_summary(incoming)
-            .merge(self.cause_summary(prior));
-        self.add_draft(
-            CauseDraft::Merge {
-                incoming,
-                prior: PriorVersion::Cause(prior),
-            },
-            equality,
-        )
-    }
-
-    fn cause_summary(&self, cause: PackedCauseRef) -> EqualityCauseSummary {
-        if cause.firing().is_some() {
-            return EqualityCauseSummary::Rule;
-        }
-        let cause = cause.cause_node().expect("merge cause is unattributed");
-        if let Some(summary) = self.draft_summaries.get(&cause).copied() {
-            return summary;
-        }
-        let arena = self.shared.arena.lock().unwrap();
-        arena
-            .cause_summary(cause)
-            .unwrap_or_else(|error| panic!("cannot classify merge input cause: {error}"))
-    }
-
-    /// Prime published cause classifications once for an entire native row
-    /// batch. Merge callbacks then consult only this worker-local map, avoiding
-    /// one global arena lock for every colliding row.
-    pub(crate) fn preload_cause_summaries(&mut self, causes: &[PackedCauseRef]) {
-        for cause in causes {
-            assert!(
-                !cause.is_unattributed(),
-                "capture-enabled table proposal has no exact cause"
-            );
-        }
-        let mut error = None;
-        {
-            let shared = Arc::clone(&self.shared);
-            let arena = shared.arena.lock().unwrap();
-            for cause in causes {
-                if cause.firing().is_some() {
-                    continue;
-                }
-                let cause = cause.cause_node().expect("merge cause is unattributed");
-                if self.draft_summaries.contains_key(&cause) {
-                    continue;
-                }
-                match arena.cause_summary(cause) {
-                    Ok(summary) => {
-                        self.draft_summaries.insert(cause, summary);
-                    }
-                    Err(cause_error) => {
-                        error = Some(cause_error);
-                        break;
-                    }
-                }
-            }
-        }
-        if let Some(error) = error {
-            panic!("cannot preload merge input cause: {error}");
-        }
-    }
-
-    fn add_draft(&mut self, draft: CauseDraft, equality: EqualityCauseSummary) -> CauseCapability {
-        let id = CauseDraftId::new(TraceShared::alloc_u64(&self.shared.next_cause_draft, 1));
-        self.drafts.push((id, draft));
-        assert!(self.draft_summaries.insert(id, equality).is_none());
-        CauseCapability { id, equality }
     }
 
     pub(crate) fn record_fact(
@@ -1161,30 +976,6 @@ impl CaptureBatch {
     pub(crate) fn publish(mut self) {
         {
             let mut arena = self.shared.arena.lock().unwrap();
-            for (id, draft) in self.drafts.drain(..) {
-                let equality = self
-                    .draft_summaries
-                    .remove(&id)
-                    .expect("local merge draft has no cached equality classification");
-                let durable = match draft {
-                    CauseDraft::Merge { incoming, prior } => DurableCause::Merge {
-                        incoming,
-                        prior: match prior {
-                            PriorVersion::Fact(fact) if !fact.is_missing() => {
-                                DurablePrior::Fact(fact)
-                            }
-                            PriorVersion::Fact(_) => {
-                                panic!("merge cause references a missing prior FactId")
-                            }
-                            PriorVersion::Cause(cause) => DurablePrior::Cause(cause),
-                        },
-                    },
-                };
-                arena.install_cause(id, durable, equality);
-            }
-            // Published input summaries are only a worker-local lookup cache;
-            // the arena already owns their canonical entries.
-            self.draft_summaries.clear();
             let fact_value_base = arena.durable_fact_values.len();
             arena.durable_fact_values.append(&mut self.fact_values);
             let merge_origin_base = arena.durable_merge_cell_origins.len();
@@ -1232,8 +1023,7 @@ impl Drop for CaptureBatch {
         if self.published {
             return;
         }
-        if !self.drafts.is_empty()
-            || !self.facts.is_empty()
+        if !self.facts.is_empty()
             || !self.fact_values.is_empty()
             || !self.merge_cell_origins.is_empty()
             || !self.equalities.is_empty()
@@ -1992,7 +1782,7 @@ impl Trace {
             id,
             DurableCause::Merge {
                 incoming,
-                prior: DurablePrior::Fact(cause.prior_fact),
+                prior_fact: cause.prior_fact,
             },
             cause.equality,
         );

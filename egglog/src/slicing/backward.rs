@@ -6,7 +6,7 @@
 use std::collections::VecDeque;
 
 use crate::core_relations::{
-    AppliedEqualityId, CausePrior, CauseRef, Criterion, CriterionEndpointOccurrence, EdgeHorizon,
+    AppliedEqualityId, CauseRef, Criterion, CriterionEndpointOccurrence, EdgeHorizon,
     EqualityEndpoint, EqualityReason, FactCellRef, FactId, FiringEqualitySource, FiringId,
     HistoryPosition, ProjectedAppliedEquality, RawAliasWindow, RawCause, RawEqualityEndpoint,
     RawEqualitySupport, ReplaySortId, ReplayTableKind, ReplayTermId, SourceRef, TableId, TraceView,
@@ -455,7 +455,10 @@ fn maintenance_cause_is_replay_visible(
         CauseRef::Rule(rule) => slice.firings.contains(&rule),
         CauseRef::Cause(id) => match view.cause(id)? {
             RawCause::Source(source) => slice.sources.contains(source),
-            RawCause::Merge { incoming, prior } => {
+            RawCause::Merge {
+                incoming,
+                prior_fact,
+            } => {
                 let incoming = maintenance_cause_is_replay_visible(
                     view,
                     slice,
@@ -463,16 +466,7 @@ fn maintenance_cause_is_replay_visible(
                     current_event,
                     active,
                 )?;
-                let prior = match prior {
-                    CausePrior::Fact(fact) => slice.replay_facts.contains(&fact),
-                    CausePrior::Cause(cause) => maintenance_cause_is_replay_visible(
-                        view,
-                        slice,
-                        cause,
-                        current_event,
-                        active,
-                    )?,
-                };
+                let prior = slice.replay_facts.contains(&prior_fact);
                 incoming && prior
             }
             RawCause::Rebuild {
@@ -893,12 +887,12 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                                 enqueue_support(&mut slice, &mut work, support);
                             }
                         }
-                        RawCause::Merge { incoming, prior } => {
+                        RawCause::Merge {
+                            incoming,
+                            prior_fact,
+                        } => {
                             work.push_back(Work::Cause(incoming));
-                            work.push_back(match prior {
-                                CausePrior::Fact(fact) => Work::Fact(fact),
-                                CausePrior::Cause(cause) => Work::Cause(cause),
-                            });
+                            work.push_back(Work::Fact(prior_fact));
                         }
                     }
                 }
