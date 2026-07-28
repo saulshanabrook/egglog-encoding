@@ -46,6 +46,7 @@ pub(crate) struct Slice {
     /// a selected deletion and then reused by later grounded waves.
     pub(crate) firing_term_windows: HashMap<FiringId, Box<[Box<[RawAliasWindow]>]>>,
     pub(crate) equality_records: HashMap<AppliedEqualityId, ProjectedAppliedEquality>,
+    denotation_equalities: HashSet<AppliedEqualityId>,
     requirements: Vec<SupportRequirement>,
 }
 
@@ -176,6 +177,7 @@ enum Work {
     Firing(FiringId),
     Cause(CauseRef),
     Equality(AppliedEqualityId),
+    EqualityDenotation(AppliedEqualityId),
     Rekey(HistoryPosition),
 }
 
@@ -365,10 +367,25 @@ fn build_owner_index(view: &TraceView<'_>) -> Result<OwnerIndex, TraceViewError>
     Ok(index)
 }
 
+fn mark_replay_equality(
+    view: &mut TraceView<'_>,
+    slice: &mut Slice,
+    work: &mut VecDeque<Work>,
+    id: AppliedEqualityId,
+) -> Result<(), TraceViewError> {
+    if slice.replay_equalities.insert(id) {
+        let event = view.project_applied_equality(id)?;
+        slice.equality_records.insert(id, event);
+        work.push_back(Work::EqualityDenotation(id));
+    }
+    Ok(())
+}
+
 fn mark_owner_visible(
     view: &mut TraceView<'_>,
     index: &OwnerIndex,
     slice: &mut Slice,
+    work: &mut VecDeque<Work>,
     owner: &ReplayOwner,
 ) -> Result<(), TraceViewError> {
     let Some(effects) = index.get(owner) else {
@@ -376,11 +393,7 @@ fn mark_owner_visible(
     };
     slice.replay_facts.extend(effects.facts.iter().copied());
     for id in effects.equalities.iter().copied() {
-        if slice.replay_equalities.insert(id) {
-            slice
-                .equality_records
-                .insert(id, view.project_applied_equality(id)?);
-        }
+        mark_replay_equality(view, slice, work, id)?;
     }
     slice
         .replay_removals
@@ -519,6 +532,7 @@ fn maintenance_cause_is_replay_visible(
 fn select_replay_maintenance_equalities(
     view: &mut TraceView<'_>,
     slice: &mut Slice,
+    work: &mut VecDeque<Work>,
 ) -> Result<bool, TraceViewError> {
     if view.totals().removals == 0 {
         return Ok(false);
@@ -547,10 +561,7 @@ fn select_replay_maintenance_equalities(
         if !maintenance_cause_is_replay_visible(view, slice, cause, id, &mut active)? {
             continue;
         }
-        slice.replay_equalities.insert(id);
-        slice
-            .equality_records
-            .insert(id, view.project_applied_equality(id)?);
+        mark_replay_equality(view, slice, work, id)?;
         selected_any = true;
     }
     Ok(selected_any)
@@ -688,14 +699,6 @@ fn seed_check_root(
                     root.position,
                 )?;
                 enqueue_support(slice, work, exact);
-                if let Some(endpoint_equality) = view.explain_equality_support_if_observed_at(
-                    left_endpoint,
-                    right_endpoint,
-                    root.as_of_edges,
-                    root.position,
-                )? {
-                    enqueue_support(slice, work, endpoint_equality);
-                }
                 let left_source = view.explain_fact_endpoint_availability_at(
                     left,
                     left_endpoint,
@@ -778,7 +781,13 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                     if !slice.firings.insert(id) {
                         continue;
                     }
-                    mark_owner_visible(view, &owner_index, &mut slice, &ReplayOwner::Firing(id))?;
+                    mark_owner_visible(
+                        view,
+                        &owner_index,
+                        &mut slice,
+                        &mut work,
+                        &ReplayOwner::Firing(id),
+                    )?;
                     let firing = view.firing(id)?;
                     let rule = firing.rule;
                     let position = firing.position;
@@ -829,6 +838,7 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                                 view,
                                 &owner_index,
                                 &mut slice,
+                                &mut work,
                                 &ReplayOwner::Source(source),
                             )?;
                         }
@@ -900,8 +910,12 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                     if !slice.equalities.insert(id) {
                         continue;
                     }
-                    slice.replay_equalities.insert(id);
-                    let event = view.project_applied_equality(id)?;
+                    mark_replay_equality(view, &mut slice, &mut work, id)?;
+                    let event = slice
+                        .equality_records
+                        .get(&id)
+                        .expect("selected equality lost its projected record")
+                        .clone();
                     let reason = event.reason.clone();
                     if let EqualityReason::Congruence {
                         as_of_edges,
@@ -917,13 +931,19 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                         )?;
                         enqueue_support(&mut slice, &mut work, support);
                     }
-                    slice.equality_records.insert(id, event);
                     work.push_back(Work::Cause(match reason {
                         EqualityReason::RuleUnion(rule) => CauseRef::Rule(rule),
                         EqualityReason::SourceUnion { cause }
                         | EqualityReason::MergeFn { cause }
                         | EqualityReason::Congruence { cause, .. } => CauseRef::Cause(cause),
                     }));
+                }
+                Work::EqualityDenotation(id) => {
+                    if !slice.denotation_equalities.insert(id) {
+                        continue;
+                    }
+                    let support = view.explain_equality_denotation_before(id)?;
+                    enqueue_support(&mut slice, &mut work, support);
                 }
                 Work::Rekey(position) => {
                     if !slice.rekeys.insert(position) {
@@ -961,8 +981,9 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                 }
             }
         }
-        select_replay_maintenance_equalities(view, &mut slice)?;
-        if !select_interfering_removals(view, &mut slice, &mut work)? {
+        select_replay_maintenance_equalities(view, &mut slice, &mut work)?;
+        let selected_removal = select_interfering_removals(view, &mut slice, &mut work)?;
+        if work.is_empty() && !selected_removal {
             break;
         }
     }

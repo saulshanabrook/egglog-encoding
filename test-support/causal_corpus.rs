@@ -30,10 +30,6 @@ pub enum Disposition {
         diagnostic: &'static str,
         artifact: ArtifactExpectation,
     },
-    KnownReplayFailure {
-        diagnostic: &'static str,
-        artifact: ArtifactExpectation,
-    },
     NoReplayRoot,
     ExtractRootsUnsupported,
     ChecksOnly,
@@ -112,6 +108,7 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
             "core/repro-typecheck-term-encoding.egg",
             "core/web-demo/antiunify.egg",
             "core/web-demo/combinators.egg",
+            "core/web-demo/eqsolve.egg",
             "core/web-demo/typecheck.egg",
             "core/web-demo/unification-points-to.egg",
         ],
@@ -331,13 +328,6 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
         },
     },
     AllowlistGroup {
-        paths: &["core/web-demo/eqsolve.egg"],
-        disposition: Disposition::KnownReplayFailure {
-            diagnostic: r#"generated slice replay: (check (= (Var "y") (Add (Add (Num 12) (Neg (Var "y"))) (Neg (Var "y")))))"#,
-            artifact: ArtifactExpectation::Absent,
-        },
-    },
-    AllowlistGroup {
         paths: &[
             "core/complex-merge-prim.egg",
             "core/merge-action-block.egg",
@@ -388,8 +378,7 @@ pub fn disposition_for(path: &str, allowlist: &[AllowlistGroup]) -> Option<Dispo
             Disposition::StaticUnsupported { reason } => {
                 assert!(!reason.is_empty(), "static causal exclusion has no reason");
             }
-            Disposition::Unsupported { diagnostic, .. }
-            | Disposition::KnownReplayFailure { diagnostic, .. } => {
+            Disposition::Unsupported { diagnostic, .. } => {
                 assert!(
                     !diagnostic.is_empty(),
                     "runtime causal exclusion has no diagnostic"
@@ -443,10 +432,8 @@ fn run_case(case: &CausalCase, resolve_roots: RootResolver) {
         .unwrap_or_else(|error| panic!("failed to resolve {}: {error}", case.path.display()));
     let extract_roots_unsupported =
         matches!(case.allowlisted, Some(Disposition::ExtractRootsUnsupported));
-    let classified_runtime_failure = matches!(
-        case.allowlisted,
-        Some(Disposition::Unsupported { .. } | Disposition::KnownReplayFailure { .. })
-    );
+    let classified_runtime_failure =
+        matches!(case.allowlisted, Some(Disposition::Unsupported { .. }));
     match case.allowlisted {
         Some(Disposition::NoReplayRoot) => {
             assert!(
@@ -523,10 +510,6 @@ fn run_case(case: &CausalCase, resolve_roots: RootResolver) {
         }
         Some(Disposition::StaticUnsupported { .. }) => unreachable!(),
         Some(Disposition::Unsupported {
-            diagnostic,
-            artifact: expected,
-        })
-        | Some(Disposition::KnownReplayFailure {
             diagnostic,
             artifact: expected,
         }) => {

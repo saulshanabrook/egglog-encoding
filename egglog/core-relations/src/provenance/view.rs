@@ -552,8 +552,10 @@ pub(super) struct StructuralOccurrenceQuery {
     term: ReplayTermId,
     sort: ReplaySortId,
     raw: Value,
+    as_of: EdgeHorizon,
     position: HistoryPosition,
     excluded_fact: FactId,
+    retain_exact_producer: bool,
 }
 
 #[derive(Clone, Copy)]

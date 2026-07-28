@@ -3720,9 +3720,9 @@ mod tests {
                     certified_term,
                     sort,
                     certified_raw,
+                    EdgeHorizon::new(0),
                     HistoryPosition::new(0),
                     FactId::MISSING,
-                    0,
                 )?;
                 assert!(
                     support.is_some(),
@@ -3738,9 +3738,9 @@ mod tests {
                     unknown_term,
                     sort,
                     unknown_raw,
+                    EdgeHorizon::new(0),
                     HistoryPosition::new(0),
                     FactId::MISSING,
-                    0,
                 )
             })
             .unwrap_err();

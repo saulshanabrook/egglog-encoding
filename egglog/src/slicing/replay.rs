@@ -1550,13 +1550,24 @@ mod tests {
                 assert_eq!(second.native_parent, first.native_parent);
                 assert_eq!(second.native_parent, second.left.raw);
                 assert_eq!(second.native_child, second.right.raw);
+                let support = view.explain_equality_denotation_before(
+                    crate::core_relations::AppliedEqualityId::new(2),
+                )?;
+                assert_eq!(
+                    support.applied.as_ref(),
+                    [crate::core_relations::AppliedEqualityId::new(1)]
+                );
+                assert!(
+                    !support
+                        .applied
+                        .contains(&crate::core_relations::AppliedEqualityId::new(2))
+                );
                 Ok(())
             })
             .unwrap();
     }
 
     #[test]
-    #[ignore = "CS-REPLAY-EQSOLVE: retain pre-application endpoint normalization"]
     fn slice_replays_precanonicalized_union_endpoints_in_any_allocation_order() {
         for order in [
             ["A", "B", "C"],
@@ -1586,6 +1597,427 @@ mod tests {
                             "{mode} replay failed for constructor order {order:?}: {error}\n{rendered}"
                         )
                     });
+            }
+        }
+    }
+
+    #[test]
+    fn endpoint_denotation_does_not_retain_an_unrelated_prefix() {
+        let mut recorder = EGraph::default();
+        serial_pool().install(|| recorder.enable_trace()).unwrap();
+        recorder
+            .parse_and_run_program(
+                None,
+                "(datatype E (A) (B) (C) (NoiseL) (NoiseR))
+                 (NoiseL) (NoiseR) (A) (B) (C)
+                 (union (NoiseL) (NoiseR))
+                 (union (A) (B))
+                 (union (B) (C))
+                 (check (= (A) (C)))",
+            )
+            .unwrap();
+        let slice = slice_all_checks(&recorder).unwrap();
+        let noise = crate::core_relations::AppliedEqualityId::new(1);
+        assert!(!slice.equalities.contains(&noise));
+        assert!(!slice.replay_equalities.contains(&noise));
+        let ir = build_replay_program(&recorder, &slice).unwrap();
+        let rendered = ReplayProgram::render_commands(&ir.to_commands().unwrap()).unwrap();
+        for mut replay in [
+            EGraph::default(),
+            EGraph::default().with_term_encoding_enabled(),
+        ] {
+            replay.parse_and_run_program(None, &rendered).unwrap();
+        }
+    }
+
+    #[test]
+    fn rule_union_retains_precanonicalized_endpoint_denotation() {
+        let mut recorder = EGraph::default();
+        serial_pool().install(|| recorder.enable_trace()).unwrap();
+        recorder
+            .parse_and_run_program(
+                None,
+                "(datatype E (A) (B) (C))
+                 (relation Trigger ())
+                 (A) (B) (C)
+                 (union (A) (B))
+                 (Trigger)
+                 (rule ((Trigger)) ((union (B) (C))) :name \"bridge\")
+                 (run 1)
+                 (check (= (A) (C)))",
+            )
+            .unwrap();
+        let slice = slice_all_checks(&recorder).unwrap();
+        assert!(
+            slice
+                .equalities
+                .contains(&crate::core_relations::AppliedEqualityId::new(1)),
+            "the rule union reads B through the earlier A=B denotation"
+        );
+        let ir = build_replay_program(&recorder, &slice).unwrap();
+        let rendered = ReplayProgram::render_commands(&ir.to_commands().unwrap()).unwrap();
+        for mut replay in [
+            EGraph::default(),
+            EGraph::default().with_term_encoding_enabled(),
+        ] {
+            replay.parse_and_run_program(None, &rendered).unwrap();
+        }
+    }
+
+    #[test]
+    fn carrier_container_denotation_retains_its_historical_anchor() {
+        let program = "(sort E)
+                       (constructor A () E)
+                       (constructor Alias () E)
+                       (constructor C () E)
+                       (sort Es (Vec E))
+                       (constructor Wrap (Es) E)
+                       (relation Eq ())
+                       (relation Finish ())
+                       (ruleset equate)
+                       (ruleset finish)
+                       (A)
+                       (Wrap (vec-of (A)))
+                       (C)
+                       (Eq)
+                       (Finish)
+                       (rule ((Eq)) ((union (A) (Alias)))
+                         :ruleset equate :name \"equate\")
+                       (rule ((Finish)) ((union (Wrap (vec-of (Alias))) (C)))
+                         :ruleset finish :name \"finish\")
+                       (run equate 1)
+                       (run finish 1)
+                       (check (= (Wrap (vec-of (A))) (C)))";
+        let mut recorder = EGraph::default();
+        serial_pool().install(|| recorder.enable_trace()).unwrap();
+        serial_pool()
+            .install(|| recorder.parse_and_run_program(None, program))
+            .unwrap();
+        recorder
+            .with_trace_view(|view| {
+                let mut rule_unions = Vec::new();
+                for raw_id in 1..=view.totals().applied_equalities {
+                    let id = crate::core_relations::AppliedEqualityId::new(raw_id);
+                    let event = view.project_applied_equality(id)?;
+                    if matches!(
+                        event.reason,
+                        crate::core_relations::EqualityReason::RuleUnion(_)
+                    ) {
+                        rule_unions.push(event);
+                    }
+                }
+                assert_eq!(rule_unions.len(), 2, "expected equate and finish unions");
+                let equate = &rule_unions[0];
+                let finish = &rule_unions[1];
+                let equate_terms = [equate.left.term, equate.right.term];
+                let mut source_anchor = None;
+                for raw_fact in 1..=view.totals().facts {
+                    let fact = crate::core_relations::FactId::new(raw_fact);
+                    let record = view.fact(fact)?;
+                    let crate::core_relations::CauseRef::Cause(cause) = record.cause else {
+                        continue;
+                    };
+                    if !matches!(
+                        view.cause(cause)?,
+                        crate::core_relations::RawCause::Source(_)
+                    ) {
+                        continue;
+                    }
+                    let schema = view.table_schema(record.table)?;
+                    let Some(constructor) = schema.constructor else {
+                        continue;
+                    };
+                    let terms = view.fact_terms(fact)?;
+                    let output = constructor.child_sorts.len();
+                    if terms
+                        .get(output)
+                        .is_some_and(|term| equate_terms.contains(term))
+                    {
+                        assert!(source_anchor.replace(fact).is_none());
+                    }
+                }
+                let source_anchor = source_anchor.expect("missing source A producer");
+
+                let support = view.explain_equality_denotation_before(finish.id)?;
+                assert!(
+                    support.facts.contains(&source_anchor),
+                    "container denotation lost source anchor {source_anchor:?}: got {:?}",
+                    support.facts
+                );
+                assert!(support.applied.contains(&equate.id));
+                assert!(!support.applied.contains(&finish.id));
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum EndpointCarrier {
+        SourceUnion,
+        RuleUnion,
+        SourceSet,
+        RuleSet,
+        DeleteRecreate,
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    struct EndpointCase {
+        carrier: EndpointCarrier,
+        order: [&'static str; 5],
+        noise: bool,
+        compact: bool,
+    }
+
+    fn next_endpoint_random(state: &mut u64) -> u64 {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        *state
+    }
+
+    fn shuffled_endpoint_order(state: &mut u64) -> [&'static str; 5] {
+        let mut order = ["A", "B", "C", "NoiseL", "NoiseR"];
+        for index in (1..order.len()).rev() {
+            let other = (next_endpoint_random(state) as usize) % (index + 1);
+            order.swap(index, other);
+        }
+        order
+    }
+
+    fn endpoint_case_program(case: EndpointCase) -> String {
+        let mut lines = vec!["(datatype E (A) (B) (C) (F E) (NoiseL) (NoiseR))".to_owned()];
+        match case.carrier {
+            EndpointCarrier::SourceUnion => {}
+            EndpointCarrier::RuleUnion => {
+                lines.push("(relation Trigger ())".into());
+                lines.push("(ruleset bridge)".into());
+            }
+            EndpointCarrier::SourceSet => {
+                lines.push("(function f (E) i64 :no-merge)".into());
+                lines.push("(relation Out (i64))".into());
+                lines.push("(ruleset read)".into());
+            }
+            EndpointCarrier::RuleSet => {
+                lines.push("(function f (E) i64 :no-merge)".into());
+                lines.push("(relation Trigger ())".into());
+                lines.push("(relation Out (i64))".into());
+                lines.push("(ruleset write)".into());
+                lines.push("(ruleset read)".into());
+            }
+            EndpointCarrier::DeleteRecreate => {
+                lines.push("(relation Delete ())".into());
+                lines.push("(relation Recreate ())".into());
+                lines.push("(relation Before (E))".into());
+                lines.push("(relation After (E))".into());
+                lines.push("(relation Final ())".into());
+                lines.push("(ruleset cleanup)".into());
+                lines.push("(ruleset recreate)".into());
+                lines.push("(ruleset reconcile)".into());
+                lines.push("(ruleset finish)".into());
+            }
+        }
+
+        let needs_c = matches!(
+            case.carrier,
+            EndpointCarrier::SourceUnion
+                | EndpointCarrier::RuleUnion
+                | EndpointCarrier::DeleteRecreate
+        );
+        for name in case.order {
+            if matches!(name, "NoiseL" | "NoiseR") && !case.noise {
+                continue;
+            }
+            if name == "C" && case.compact && !needs_c {
+                continue;
+            }
+            lines.push(format!("({name})"));
+        }
+        if case.noise {
+            lines.push("(union (NoiseL) (NoiseR))".into());
+        }
+        lines.push("(union (A) (B))".into());
+
+        match case.carrier {
+            EndpointCarrier::SourceUnion => {
+                lines.push("(union (B) (C))".into());
+                lines.push("(check (= (A) (C)))".into());
+            }
+            EndpointCarrier::RuleUnion => {
+                lines.push("(Trigger)".into());
+                lines.push(
+                    "(rule ((Trigger)) ((union (B) (C))) :ruleset bridge :name \"bridge\")".into(),
+                );
+                lines.push("(run bridge 1)".into());
+                lines.push("(check (= (A) (C)))".into());
+            }
+            EndpointCarrier::SourceSet => {
+                lines.push("(set (f (B)) 7)".into());
+                lines.push(
+                    "(rule ((= value (f (A)))) ((Out value)) :ruleset read :name \"read\")".into(),
+                );
+                lines.push("(run read 1)".into());
+                lines.push("(check (Out 7))".into());
+            }
+            EndpointCarrier::RuleSet => {
+                lines.push("(Trigger)".into());
+                lines.push(
+                    "(rule ((Trigger)) ((set (f (B)) 7)) :ruleset write :name \"write\")".into(),
+                );
+                lines.push("(run write 1)".into());
+                lines.push(
+                    "(rule ((= value (f (A)))) ((Out value)) :ruleset read :name \"read\")".into(),
+                );
+                lines.push("(run read 1)".into());
+                lines.push("(check (Out 7))".into());
+            }
+            EndpointCarrier::DeleteRecreate => {
+                lines.push("(Before (F (B)))".into());
+                lines.push("(Delete)".into());
+                lines.push("(Recreate)".into());
+                lines.push("(Final)".into());
+                lines.push(
+                    "(rule ((Delete)) ((delete (F (B)))) :ruleset cleanup :name \"delete-f\")"
+                        .into(),
+                );
+                lines.push(
+                    "(rule ((Recreate)) ((After (F (B)))) :ruleset recreate :name \"recreate-f\")"
+                        .into(),
+                );
+                lines.push(
+                    "(rule ((Before old) (After new)) ((union old new)) :ruleset reconcile :name \"reconcile\")"
+                        .into(),
+                );
+                lines.push(
+                    "(rule ((Final)) ((union (B) (C))) :ruleset finish :name \"finish\")".into(),
+                );
+                lines.push("(run cleanup 1)".into());
+                lines.push("(run recreate 1)".into());
+                lines.push("(run reconcile 1)".into());
+                lines.push("(run finish 1)".into());
+                lines.push("(check (= (A) (C)) (Before x) (After x))".into());
+            }
+        }
+        lines.join("\n")
+    }
+
+    fn run_endpoint_case(case: EndpointCase) -> Result<(), String> {
+        let program = endpoint_case_program(case);
+        let mut recorder = EGraph::default();
+        serial_pool()
+            .install(|| recorder.enable_trace())
+            .map_err(|error| format!("enable trace: {error}"))?;
+        serial_pool()
+            .install(|| recorder.parse_and_run_program(None, &program))
+            .map_err(|error| format!("capture: {error}"))?;
+        let slice = slice_all_checks(&recorder).map_err(|error| format!("slice: {error}"))?;
+        let anchor = crate::core_relations::AppliedEqualityId::new(u64::from(case.noise) + 1);
+        if !slice.equalities.contains(&anchor) || !slice.replay_equalities.contains(&anchor) {
+            return Err(format!("missing denotation anchor {anchor:?}"));
+        }
+        if case.noise {
+            let noise = crate::core_relations::AppliedEqualityId::new(1);
+            if slice.equalities.contains(&noise) || slice.replay_equalities.contains(&noise) {
+                return Err("disconnected noise equality was retained".into());
+            }
+        }
+        if matches!(case.carrier, EndpointCarrier::DeleteRecreate)
+            && slice.replay_removals.is_empty()
+        {
+            return Err("delete/recreate case lost its selected removal".into());
+        }
+        let replay = build_replay_program(&recorder, &slice)
+            .map_err(|error| format!("build replay: {error}"))?;
+        let rendered = ReplayProgram::render_commands(
+            &replay
+                .to_commands()
+                .map_err(|error| format!("build commands: {error}"))?,
+        )
+        .map_err(|error| format!("render: {error}"))?;
+        for (mode, mut graph) in [
+            ("native", EGraph::default()),
+            ("term", EGraph::default().with_term_encoding_enabled()),
+        ] {
+            graph
+                .parse_and_run_program(None, &rendered)
+                .map_err(|error| format!("{mode} replay: {error}\n{rendered}"))?;
+        }
+        Ok(())
+    }
+
+    fn retain_failing_endpoint_candidate(
+        case: &mut EndpointCase,
+        error: &mut String,
+        probes: &mut usize,
+        candidate: EndpointCase,
+    ) {
+        if *probes == 128 {
+            return;
+        }
+        *probes += 1;
+        if let Err(candidate_error) = run_endpoint_case(candidate) {
+            *case = candidate;
+            *error = candidate_error;
+        }
+    }
+
+    fn shrink_endpoint_failure(
+        mut case: EndpointCase,
+        mut error: String,
+    ) -> (EndpointCase, String) {
+        let mut probes = 0usize;
+
+        if case.noise {
+            let candidate = EndpointCase {
+                noise: false,
+                ..case
+            };
+            retain_failing_endpoint_candidate(&mut case, &mut error, &mut probes, candidate);
+        }
+        if !case.compact {
+            let candidate = EndpointCase {
+                compact: true,
+                ..case
+            };
+            retain_failing_endpoint_candidate(&mut case, &mut error, &mut probes, candidate);
+        }
+        let canonical = ["A", "B", "C", "NoiseL", "NoiseR"];
+        for (target, canonical_name) in canonical.iter().enumerate() {
+            let Some(current) = case.order.iter().position(|name| name == canonical_name) else {
+                continue;
+            };
+            if current == target {
+                continue;
+            }
+            let mut candidate = case;
+            candidate.order.swap(target, current);
+            retain_failing_endpoint_candidate(&mut case, &mut error, &mut probes, candidate);
+        }
+        (case, error)
+    }
+
+    #[test]
+    fn endpoint_denotation_is_complete_across_carriers_and_allocation_orders() {
+        let carriers = [
+            EndpointCarrier::SourceUnion,
+            EndpointCarrier::RuleUnion,
+            EndpointCarrier::SourceSet,
+            EndpointCarrier::RuleSet,
+            EndpointCarrier::DeleteRecreate,
+        ];
+        let mut random = 0x6a09_e667_f3bc_c909;
+        for index in 0..32 {
+            let case = EndpointCase {
+                carrier: carriers[index % carriers.len()],
+                order: shuffled_endpoint_order(&mut random),
+                noise: true,
+                compact: false,
+            };
+            if let Err(error) = run_endpoint_case(case) {
+                let (minimal, error) = shrink_endpoint_failure(case, error);
+                panic!(
+                    "endpoint denotation property failed for {minimal:?}: {error}\nminimal program:\n{}",
+                    endpoint_case_program(minimal)
+                );
             }
         }
     }
