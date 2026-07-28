@@ -2817,10 +2817,13 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   | Hardboiled | `fb5f701069049b8f86df546fd7303daaa6a3823350631ed9d71b8398779ffff0` | 294 | 26,141 |
   | Luminal | `49c83a9764bc67e12a554fab66a9244c0fa4b2c73f4a2d14f9345bccfb39a811` | 49 | 6,493 |
 
-  Independent inspection strictly replayed all five through both main and
-  experimental entrypoints, verified one source-equivalent check apiece, all
-  28 list-form `run-rule` commands, schedule/check order, rewrite direction,
-  and absence of the old `__causal` namespace.
+  Independent inspection strictly replayed all five through the experimental
+  entrypoint and the four main-binary-compatible artifacts through the main
+  entrypoint, verified one source-equivalent check apiece, all 28 list-form
+  `run-rule` commands, schedule/check order, rewrite direction, and absence of
+  the old `__causal` namespace. Eggcc intentionally requires the experimental
+  `pair-min-by-second-i64` primitive, so vanilla egglog rejects it during
+  declaration rather than exposing a replay defect.
 - The public benchmark advanced from one to three to six cached rounds without
   forcing observations. All 60 rows succeeded at 120 seconds. Same-final-binary
   sliced-proofs versus proofs wall intervals are Math 0.235-0.257x, Eggcc
@@ -2848,3 +2851,319 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
 - The complete review synopsis and suggested reading order are in `REVIEW.md`.
   The unrelated untracked `LITERATURE-REVIEW.md` was not read, edited, staged,
   or used as benchmark input.
+
+## 2026-07-28: bounded `CS-REPLAY-EQSOLVE` localization
+
+- Investigation started from clean tracked commit
+  `587ba23b11ef7beedfe6c2805f0c9a7c68fa4c63`. The strict-publication safety
+  test was first decoupled from Eqsolve: a private injected-validation seam now
+  proves that validation failure cannot invoke publication, preserves an
+  existing destination, and leaves a fresh destination absent.
+- A single-check reduction still failed after removing the other six checks
+  and all extracts, so the failure does not require cross-criterion
+  interaction. `(run 5)` is minimal for the reduced source to pass. A leaf-up
+  strict diagnostic probe localized the first absent surface constructor to
+  `(Add (Num 12) (Neg (Var "y")))`; stderr itself retains the public
+  `@ExistsConstructor2` diagnostic. The leaves and both recorded canonical Add
+  spellings remain available.
+- A diagnostic maximal slice containing every effective fact and applied
+  equality before the criterion replayed successfully (8,970 facts, 5,312
+  firings, and 4,151 equalities). Seeding every prior fact or, separately,
+  every prior equality and then closing normal dependencies also passed, while
+  seeding prior removals did not. The recorded prefix therefore contains at
+  least one sufficient replay path; recording-schema expansion is not
+  justified merely to make this case replay.
+- In the reduced single-check trace, the normal slice selects
+  `AppliedEqualityId(4140)`, but strict probes show that equality and its
+  congruence prerequisites 4079 and 3005 do not replay. Equality 3005 is the
+  earliest observed failing equality on the inspected dependency chain: at the
+  diagnostic prefix boundary both parent constructor rows exist and all three
+  selected child equalities (954, 1666, and 1670) replay, yet the parent
+  congruence does not. This did not prove those effects shared the original
+  historical congruence boundary; maintenance ordering was still a hypothesis
+  at this stage.
+  These numeric IDs identify the reduced trace at commit `587ba23`, not a
+  stable public schema. Later observed failures on this chain are downstream of
+  that boundary.
+- Seeding equality 724, equivalently the closed owner firing 3120, makes the
+  artifact replay. At this stage it was tentatively classified as a separate
+  numeric/`x` derivation and rejected as workload-specific over-retention. The
+  later endpoint-carrier experiment below disproved that classification:
+  equality 724 is the omitted pre-application normalization prerequisite of
+  selected equality 954. Two bounded production hypotheses were also rejected
+  and fully reverted: bridging same-raw root spellings to selected
+  equality-event spellings selected no decisive new support, and rebuilding
+  after every mutating grounded batch did not restore the missing congruence.
+- A later one-variable replay matrix falsified proof production and the simple
+  maintenance-barrier explanation. The same normal slice failed its semantic
+  check in native, term-encoding, proof-enabled, and strict proof-testing
+  graphs. An empty-ruleset maintenance pulse and splitting each list-form
+  grounded wave into singleton grounded invocations also failed, including in
+  native mode. In contrast, one real ordinary `(run 1)` before the check passed
+  in both native and strict modes, as did replacing the selected grounded
+  waves with an ordinary `(run 5)` over the same retained declarations and
+  rules. The extra round updated the graph and reported matches for all nine
+  retained rules. Thus proof production is not required for the defect, and a
+  maintenance-only pulse is not sufficient to repair it; additional rule
+  effects are required.
+- `CS-REPLAY-EQSOLVE` therefore remains a known slicing defect that fails
+  closed through strict replay validation, not an `Unsupported` contract
+  boundary. No trace schema, loose predictive rejection, replay fallback, or
+  speculative over-retention was landed. The remaining boundary is the
+  selected-firing/effect closure versus exact grounded-effect reproduction,
+  not proof generation or a generic one-barrier maintenance defect. The next
+  probe should isolate which extra-round rule effect first makes equality 3005
+  or the final check available, then test whether its original receipt was
+  recorded, selected, and ordered. The scientific pass below completed that
+  probe and supersedes this checkpoint diagnosis.
+
+Historical diagnostic setup used
+`/Users/saul/p/wt/egglog-encoding/causal-slice-logical-v1` at tracked
+`587ba23b11ef7beedfe6c2805f0c9a7c68fa4c63`. The reduced fixture kept only
+source check 37, deleted all extracts and other checks plus source lines 18 and
+20, and retained `(run 5)`. Temporary test-only probes ran with the commands
+below. The instrumentation was fully reverted and has no retained patch/blob
+hash, so these diagnostic commands are historical rather than directly
+rerunnable from the candidate (they now select zero tests):
+
+```text
+cargo test -p egglog --features bin --lib \
+  slicing::replay::tests::reduced_eqsolve_names_the_known_replay_gap \
+  -- --exact --nocapture
+cargo test -p egglog --features bin --lib \
+  slicing::replay::tests::diagnostic_reduced_eqsolve_layer_and_barrier_matrix \
+  -- --exact --nocapture
+```
+
+The probe success predicate was strict replay of the generated program in a
+fresh proof-testing graph; its expected failure was a returned error containing
+`query not matching (constructor @ExistsConstructor`. Cargo exited 0 when the
+temporary test asserted that error. Maximal/category probes, equality/firing
+seeds, leaf-up constructor checks, and the inspected equality chain were all
+diagnostic-only and fully reverted. The retained CLI/corpus oracle continues
+to require exit 1 for the known defect. The retained high-level oracle and
+publication seam were then checked with:
+
+```text
+cargo test -p egglog --features bin --lib \
+  cli::tests::failed_slice_validation_skips_publication -- --exact --nocapture
+cargo test -p egglog --features bin --test files \
+  'proofs/causal/core/web-demo/eqsolve.egg' -- --exact --nocapture
+cargo test --workspace --test files 'proofs/causal/' -- --nocapture
+```
+
+The current candidate is tracked commit
+`587ba23b11ef7beedfe6c2805f0c9a7c68fa4c63` plus the four-file working patch;
+the executable/test portion has SHA-256
+`24e5d73b56b50360c36ddf86f07cf24bc1ff9b31e943da943cb062f4e4fc773c`.
+After restoring the original replay-timer boundary, release rebuilds produced
+SHA-256 `078c80d4328c76697941ecd155c3912cbb4ea5d65daf7bc04b8e286a38bd0797`
+for main and
+`436d97795b2fe5403a03ef71b42f6145ac42492e8aa825c0be641def52c0ffbe`
+for experimental. The experimental binary regenerated all five frozen artifact
+hashes with `--slice-output` and without `--proofs`; Pointer additionally used
+its fact directory. The exact matrix was:
+
+```text
+target/release/egglog-experimental --mode no-messages \
+  --slice-output /tmp/egglog-eqsolve-gate.1KQpLp/math.egg \
+  egglog/tests/math-microbenchmark.egg
+target/release/egglog-experimental --mode no-messages \
+  --slice-output /tmp/egglog-eqsolve-gate.1KQpLp/eggcc.egg \
+  egglog-experimental/tests/fixtures/eggcc-2mm-pass1.egg
+target/release/egglog-experimental --mode no-messages \
+  --fact-directory benchmarks/data/pointer-analysis-small \
+  --slice-output /tmp/egglog-eqsolve-gate.1KQpLp/pointer.egg \
+  benchmarks/pointer-analysis-small.egg
+target/release/egglog-experimental --mode no-messages \
+  --slice-output /tmp/egglog-eqsolve-gate.1KQpLp/hardboiled.egg \
+  egglog/tests/hardboiled_conv1d_32.egg
+target/release/egglog-experimental --mode no-messages \
+  --slice-output /tmp/egglog-eqsolve-gate.1KQpLp/luminal.egg \
+  benchmarks/luminal-llama.egg
+for artifact in /tmp/egglog-eqsolve-gate.1KQpLp/*.egg; do
+  target/release/egglog-experimental --mode no-messages --proofs "$artifact"
+done
+for name in hardboiled luminal math pointer; do
+  target/release/egglog --mode no-messages --proofs \
+    "/tmp/egglog-eqsolve-gate.1KQpLp/$name.egg"
+done
+```
+
+All five replayed through the workload-supported experimental entrypoint;
+Math, Pointer, Hardboiled, and Luminal also replayed through main. Eggcc's
+expected unbound `pair-min-by-second-i64` under main is an entrypoint
+incompatibility, not a causal-slicing defect: strict replay succeeds through
+the supported experimental entrypoint.
+
+Final validation ran in the required order on this candidate:
+`make proof-tests` passed 349 core and 44 experimental/workload cases, then
+`make check` passed lockfile validation, formatting, Ruff, mypy, both Clippy
+configurations, 173 Python tests, the full Rust workspace and doctests, and the
+DD timing-summary integration test. The proof subset was not rerun afterward.
+Performance was deliberately not rerun: the six-round `df8aeab` results remain
+checkpoint evidence, not a measurement of these candidate binaries. The
+private validation seam changes neither capture/slicing/replay semantics nor
+artifact bytes, and its replay timing boundary matches the checkpoint; future
+layout/performance stabilization remains deferred. Calibrated production LoC
+and token counts likewise remain scoped to `df8aeab` rather than this small
+post-checkpoint seam.
+
+## 2026-07-28: `CS-REPLAY-EQSOLVE` endpoint-normalization counterexample
+
+This pass made no production change and attempted no fix. It used a
+hypothesis/test/invalidate loop to identify the semantic model error, reduce it
+below Eqsolve, and leave an executable statement of the desired invariant.
+
+### Carrier matrix and first divergence
+
+- The renderer emits selected sources and grounded firings, not selected
+  equality records. `Slice::equalities`, `replay_equalities`, and
+  `equality_records` therefore express backward support and expected runtime
+  closure; they are not an equality event stream.
+- In the reduced Eqsolve trace, equalities 954, 1666, and 1670 are selected and
+  each resolves through a selected firing owner (5767, 6429, and 6534). At the
+  final grounded prefix their endpoints are canonically equal in both native
+  and term-encoded graphs. The strong hypothesis that one of those applied
+  child equalities lacked an operational carrier was falsified.
+- Equality 3005 remains unequal in both graphs. Both parent spellings are
+  lookupable. Its historical congruence explanation chooses raw child rows
+  `[4, 6]` and `[1, 4082]` with applied support `[954, 1666, 1670]`. At replay,
+  the first structural child pair is equal but the second is not. The missing
+  parent congruence is consequently downstream of an absent child identity,
+  not a false maintenance fixpoint.
+- The exact missing identity is visible in the equality record fields:
+
+  | Equality | Projected proposal raw values | Native applied edge | Selected | Owner |
+  | --- | --- | --- | --- | --- |
+  | 724 | `327 = 328` | `328 -> 327` | no | firing 3120 |
+  | 954 | `328 = 4082` | `4082 -> 327` | yes | firing 5767 |
+  | 1666 | `6 = 327` | `327 -> 6` | yes | firing 6429 |
+  | 1670 | `1 = 4` | `4 -> 1` | yes | firing 6534 |
+
+  Equality 954 did not apply the edge implied by its projected proposal. Its
+  left endpoint 328 was already canonicalized through equality 724, so native
+  execution applied `4082 -> 327`. Replaying firing 5767 without firing 3120
+  instead connects 4082 to the fresh replay value for the 328 spelling. The
+  later equality 1666 connects 327 to 6, leaving the two replay components
+  separate. The backward forest follows the native edge and therefore omits
+  the history that made the replayed proposal endpoint denote that edge.
+- Before an extra ordinary round, both structural endpoints of equality 724
+  are absent from the reduced replay. After one ordinary round, equality 724
+  and equality 3005 are both true in native and term-encoded graphs. The extra
+  round is not an unrelated alternate proof: it executes the omitted
+  endpoint-normalization carrier and then allows the recorded congruence chain
+  to reappear.
+
+Numeric IDs above are diagnostic identities for the reduced trace at
+`587ba23b11ef7beedfe6c2805f0c9a7c68fa4c63`, not public or stable schema.
+
+### Seven-command minimal reproduction
+
+The Eqsolve mechanism reduces to:
+
+```text
+(datatype E (A) (B) (C))
+(A)
+(B)
+(C)
+(union (A) (B))
+(union (B) (C))
+(check (= (A) (C)))
+```
+
+The complete program succeeds. With constructors allocated in `A, B, C`
+order, capture records `A = B` as the first equality. The second source action
+is still spelled `B = C`, but its projected left term `B` carries A's canonical
+raw value and its native edge is `C -> A`. The slice selects only the second
+equality and renders:
+
+```text
+(datatype E (A) (B) (C))
+(A)
+(C)
+(union (B) (C))
+(check (= (A) (C)))
+```
+
+That replay fails identically with native and term encoding. The failure needs
+no proof production, grounded schedule, congruence rule, rebuild, or Eqsolve
+surface complexity.
+
+All six constructor-allocation orders were tested. Orders `A,B,C`, `A,C,B`,
+and `C,A,B` selected only equality 2 and failed in both graph modes. Orders
+`B,A,C`, `B,C,A`, and `C,B,A` selected both equalities and passed in both
+modes. Orientation therefore controls whether the incomplete forest closure
+exposes the bug; it is not itself an engine correctness defect. A sound slice
+must be allocation-order independent.
+
+### Model conclusion and hypothesis disposition
+
+The falsified assumption is:
+
+> Replaying the owner of every selected native applied edge is sufficient to
+> reproduce that edge.
+
+It is not sufficient because an action's structural endpoint can already have
+been canonicalized when the native edge is applied. Backward closure must also
+retain the historical support that made each replayed proposal term denote its
+pre-application canonical representative. This is a forward/replay-model
+error, not an Egglog maintenance failure and not missing proof evidence.
+
+- H-A, "a selected child equality was merely provable but not operationally
+  applied": falsified for 954, 1666, and 1670.
+- H-A2, "a congruence input is absent": observed, then explained as the
+  downstream consequence of omitted endpoint normalization.
+- H-B, "maintenance reports a false fixpoint": falsified by the minimal
+  reproduction and the earlier pulse/singleton controls.
+- H-C, "allocation orientation matters": confirmed only as an exposure
+  condition for incomplete closure; three of six orders fail.
+- H-D, "grounded execution fails to apply the selected rule effect": replaced
+  by a more precise statement. Grounded replay faithfully applies the emitted
+  proposal, but the slice omitted the prestate equality that made the original
+  proposal apply a different native edge.
+- H-E, "the extra ordinary round uses another path": narrowed. It restores
+  equality 724, after which 3005 reappears; it is the missing prerequisite,
+  not a compensating proof.
+
+The trace already records projected endpoint term/raw pairs,
+`native_parent`/`native_child`, chronological equality IDs, and their causes.
+No recording-schema expansion is justified by this diagnosis. A future
+production fix should close each selected equality owner's structural
+endpoints against their canonical representatives immediately before the
+event, using the existing historical equality explanation. That proposal must
+receive a separate falsifying test and the normal artifact/performance gates;
+it was deliberately not attempted in this knowledge-capture pass.
+
+Temporary Eqsolve/table probes were removed. Two test-only artifacts remain:
+
+- `applied_equality_distinguishes_proposal_from_native_edge` is a green
+  semantic canary for the proposal-versus-native-edge distinction.
+- `slice_replays_precanonicalized_union_endpoints_in_any_allocation_order` is
+  an ignored desired-behavior regression tied to `CS-REPLAY-EQSOLVE`. Running
+  it explicitly currently fails on the first bad orientation and prints the
+  five-command replay above. It should be unignored when endpoint-normalization
+  closure lands.
+
+Focused commands:
+
+```text
+cargo test -p egglog --features bin --lib \
+  slicing::replay::tests::applied_equality_distinguishes_proposal_from_native_edge \
+  -- --exact --nocapture
+cargo test -p egglog --features bin --lib \
+  slicing::replay::tests::slice_replays_precanonicalized_union_endpoints_in_any_allocation_order \
+  -- --exact --ignored --nocapture
+```
+
+The first passed. The second failed exactly as documented for order `A,B,C`.
+`CS-REPLAY-EQSOLVE` remains `KnownReplayFailure`, protected by strict
+validation-before-publication. No benchmark was run because production
+semantics and hot paths did not change.
+
+After the retained tests and documentation were finalized, `make proof-tests`
+passed 349 core and 44 experimental/workload cases. Without rerunning that
+subset, `make check` then passed lockfile validation, formatting, Ruff, mypy,
+both Clippy configurations, 173 Python tests, the complete Rust workspace and
+doctests, and the DD timing-summary integration test. The core unit target now
+reports 136 passed and the one named desired-behavior regression ignored.

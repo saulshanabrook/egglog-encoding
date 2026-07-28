@@ -1514,6 +1514,82 @@ mod tests {
         (commands, rendered)
     }
 
+    fn endpoint_normalization_program(order: [&str; 3]) -> String {
+        let constructors = order
+            .into_iter()
+            .map(|name| format!("({name})"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "(datatype E (A) (B) (C))\n{constructors}\n(union (A) (B))\n(union (B) (C))\n(check (= (A) (C)))"
+        )
+    }
+
+    #[test]
+    fn applied_equality_distinguishes_proposal_from_native_edge() {
+        let mut recorder = EGraph::default();
+        serial_pool().install(|| recorder.enable_trace()).unwrap();
+        recorder
+            .parse_and_run_program(None, &endpoint_normalization_program(["A", "B", "C"]))
+            .unwrap();
+
+        recorder
+            .with_trace_view(|view| {
+                let first = view
+                    .project_applied_equality(crate::core_relations::AppliedEqualityId::new(1))?;
+                let second = view
+                    .project_applied_equality(crate::core_relations::AppliedEqualityId::new(2))?;
+
+                // The second source action spells its left endpoint as B, but
+                // native execution has already canonicalized B to A. Its
+                // recorded proposal and applied forest edge therefore carry
+                // observably different identities.
+                assert_eq!(second.left.term, first.right.term);
+                assert_ne!(second.left.raw, first.right.raw);
+                assert_eq!(second.left.raw, first.left.raw);
+                assert_eq!(second.native_parent, first.native_parent);
+                assert_eq!(second.native_parent, second.left.raw);
+                assert_eq!(second.native_child, second.right.raw);
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    #[ignore = "CS-REPLAY-EQSOLVE: retain pre-application endpoint normalization"]
+    fn slice_replays_precanonicalized_union_endpoints_in_any_allocation_order() {
+        for order in [
+            ["A", "B", "C"],
+            ["A", "C", "B"],
+            ["B", "A", "C"],
+            ["B", "C", "A"],
+            ["C", "A", "B"],
+            ["C", "B", "A"],
+        ] {
+            let mut recorder = EGraph::default();
+            serial_pool().install(|| recorder.enable_trace()).unwrap();
+            recorder
+                .parse_and_run_program(None, &endpoint_normalization_program(order))
+                .unwrap();
+            let slice = slice_all_checks(&recorder).unwrap();
+            let ir = build_replay_program(&recorder, &slice).unwrap();
+            let rendered = ReplayProgram::render_commands(&ir.to_commands().unwrap()).unwrap();
+
+            for (mode, mut replay) in [
+                ("native", EGraph::default()),
+                ("term", EGraph::default().with_term_encoding_enabled()),
+            ] {
+                replay
+                    .parse_and_run_program(None, &rendered)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "{mode} replay failed for constructor order {order:?}: {error}\n{rendered}"
+                        )
+                    });
+            }
+        }
+    }
+
     #[test]
     fn owned_ir_preserves_pre_run_check_and_source_order() {
         let mut egraph = EGraph::default();
