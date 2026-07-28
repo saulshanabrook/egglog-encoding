@@ -212,6 +212,88 @@ fn failed_database_table_removal_restores_function_registration() {
     egraph.remove_last_table(function).unwrap();
 }
 
+#[test]
+fn fallible_add_values_rolls_back_all_targets_and_remains_usable() {
+    let mut egraph = EGraph::default();
+    // Register the unrelated table first so its lower table id is flushed
+    // before the later conflicting table. Its absence after the error then
+    // proves rollback rather than merely early-stop ordering.
+    let unrelated = egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::AssertEq,
+        name: "unrelated".into(),
+        can_subsume: false,
+    });
+    let function = egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::AssertEq,
+        name: "fallible".into(),
+        can_subsume: false,
+    });
+    egraph
+        .try_add_values(vec![(function, vec![Value::new(1), Value::new(10)])])
+        .unwrap();
+
+    let unrelated_action = TableAction::new(&egraph, unrelated);
+    egraph.with_execution_state(|state| {
+        unrelated_action.insert(state, [Value::new(9), Value::new(90)].into_iter());
+    });
+    assert_eq!(
+        egraph.lookup_row(unrelated, &[Value::new(9)]),
+        None,
+        "the canary must still be staged before try_add_values"
+    );
+
+    let error = egraph
+        .try_add_values(vec![
+            (function, vec![Value::new(1), Value::new(20)]),
+            (unrelated, vec![Value::new(2), Value::new(30)]),
+        ])
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("Illegal merge attempted"),
+        "unexpected input error: {error}"
+    );
+    assert_eq!(
+        egraph.lookup_row(function, &[Value::new(1)]),
+        Some(vec![Value::new(1), Value::new(10)])
+    );
+    assert_eq!(
+        egraph.lookup_row(unrelated, &[Value::new(9)]),
+        Some(vec![Value::new(9), Value::new(90)]),
+        "preexisting staged work must be committed before checkpointing"
+    );
+    assert_eq!(
+        egraph.lookup_row(unrelated, &[Value::new(2)]),
+        None,
+        "the unrelated row from the failed input batch must roll back"
+    );
+    egraph.flush_updates();
+    assert_eq!(
+        egraph.lookup_row(unrelated, &[Value::new(9)]),
+        Some(vec![Value::new(9), Value::new(90)]),
+        "a later flush must not strand or lose the preexisting canary"
+    );
+
+    egraph
+        .try_add_values(vec![
+            (function, vec![Value::new(2), Value::new(30)]),
+            (unrelated, vec![Value::new(2), Value::new(40)]),
+        ])
+        .unwrap();
+    assert_eq!(egraph.table_size(function), 2);
+    assert_eq!(
+        egraph.lookup_row(unrelated, &[Value::new(2)]),
+        Some(vec![Value::new(2), Value::new(40)])
+    );
+}
+
 /// Run a simple associativity/commutativity test.
 ///
 /// The `can_subsume` argument is only used to enable subsumption on the underlying tables created

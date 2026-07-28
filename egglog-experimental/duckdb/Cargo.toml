@@ -1,0 +1,19 @@
+[package]
+name = "egglog-experimental-duckdb"
+version = "0.1.0"
+edition = "2024"
+description = "An experimental DuckDB-authoritative egglog backend."
+license = "MIT"
+publish = false
+
+[features]
+default = []
+bundled = ["duckdb/bundled"]
+
+[dependencies]
+anyhow = { workspace = true }
+duckdb = { workspace = true }
+egglog-backend-trait = { workspace = true }
+egglog-core-relations = { workspace = true }
+egglog-numeric-id = { workspace = true }
+ordered-float = { workspace = true }

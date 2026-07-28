@@ -5,6 +5,20 @@ enum Backend {
     Main,
     #[cfg(feature = "dd-backend")]
     Dd,
+    #[cfg(feature = "duckdb-backend")]
+    DuckDb,
+}
+
+impl Backend {
+    fn uses_term_encoding(self) -> bool {
+        match self {
+            Self::Main => false,
+            #[cfg(feature = "dd-backend")]
+            Self::Dd => true,
+            #[cfg(feature = "duckdb-backend")]
+            Self::DuckDb => true,
+        }
+    }
 }
 
 fn main() {
@@ -18,8 +32,7 @@ fn main() {
             Some("--proofs" | "--proof-testing" | "--proof-extraction" | "--term-encoding")
         )
     });
-    #[cfg(feature = "dd-backend")]
-    let args = if matches!(backend, Backend::Dd) {
+    let args = if backend.uses_term_encoding() {
         strip_term_encoding_arg(args)
     } else {
         args
@@ -31,6 +44,14 @@ fn main() {
         Backend::Dd => egglog_experimental::new_experimental_egraph_with_backend_for_proofs(
             Box::new(egglog_experimental_dd::EGraph::new()),
         ),
+        #[cfg(feature = "duckdb-backend")]
+        Backend::DuckDb => {
+            let backend = egglog_experimental_duckdb::EGraph::new().unwrap_or_else(|error| {
+                eprintln!("error: failed to create DuckDB backend: {error:#}");
+                std::process::exit(1);
+            });
+            egglog_experimental::new_experimental_egraph_with_backend_for_proofs(Box::new(backend))
+        }
     };
     egglog::cli_with_args(egraph, args)
 }
@@ -50,7 +71,7 @@ where
                     return Err("--backend may only be passed once".to_string());
                 }
                 let Some(value) = iter.next() else {
-                    return Err("--backend requires one of: main, dd".to_string());
+                    return Err("--backend requires one of: main, dd, duckdb".to_string());
                 };
                 backend = parse_backend(value.to_str())?;
                 saw_backend = true;
@@ -68,9 +89,9 @@ where
     Ok((backend, filtered))
 }
 
-/// The DD backend always runs under the term encoding, so `--term-encoding` is
-/// redundant there; drop it before handing the arguments to the CLI.
-#[cfg(feature = "dd-backend")]
+/// Relational backends always run under the term encoding, so
+/// `--term-encoding` is redundant there; drop it before handing the arguments
+/// to the CLI.
 fn strip_term_encoding_arg(args: Vec<OsString>) -> Vec<OsString> {
     args.into_iter()
         .filter(|arg| arg.to_str() != Some("--term-encoding"))
@@ -87,8 +108,15 @@ fn parse_backend(value: Option<&str>) -> Result<Backend, String> {
             "backend \"dd\" requires building egglog-experimental with --features dd-backend"
                 .to_string(),
         ),
+        #[cfg(feature = "duckdb-backend")]
+        Some("duckdb") => Ok(Backend::DuckDb),
+        #[cfg(not(feature = "duckdb-backend"))]
+        Some("duckdb") => Err(
+            "backend \"duckdb\" requires building egglog-experimental with --features duckdb-backend"
+                .to_string(),
+        ),
         Some(other) => Err(format!(
-            "unknown backend {other:?}; expected one of: main, dd"
+            "unknown backend {other:?}; expected one of: main, dd, duckdb"
         )),
         None => Err("backend value must be valid UTF-8".to_string()),
     }
@@ -121,6 +149,24 @@ mod tests {
         assert_eq!(parse_backend(Some("dd")), Ok(Backend::Dd));
     }
 
+    #[cfg(not(feature = "duckdb-backend"))]
+    #[test]
+    fn explains_how_to_enable_duckdb_backend() {
+        assert_eq!(
+            parse_backend(Some("duckdb")),
+            Err(
+                "backend \"duckdb\" requires building egglog-experimental with --features duckdb-backend"
+                    .to_string()
+            )
+        );
+    }
+
+    #[cfg(feature = "duckdb-backend")]
+    #[test]
+    fn parses_enabled_duckdb_backend() {
+        assert_eq!(parse_backend(Some("duckdb")), Ok(Backend::DuckDb));
+    }
+
     #[cfg(feature = "dd-backend")]
     #[test]
     fn dd_backend_arg_filtering_drops_term_encoding() {
@@ -132,6 +178,30 @@ mod tests {
         assert_eq!(
             strip_term_encoding_arg(rest),
             vec![OsString::from("egglog"), OsString::from("prog.egg")]
+        );
+    }
+
+    #[cfg(feature = "duckdb-backend")]
+    #[test]
+    fn duckdb_backend_arg_filtering_drops_term_encoding() {
+        let args = [
+            "egglog",
+            "--backend=duckdb",
+            "--term-encoding",
+            "--proofs",
+            "prog.egg",
+        ]
+        .into_iter()
+        .map(OsString::from);
+        let (backend, rest) = extract_backend_arg(args).unwrap();
+        assert_eq!(backend, Backend::DuckDb);
+        assert_eq!(
+            strip_term_encoding_arg(rest),
+            vec![
+                OsString::from("egglog"),
+                OsString::from("--proofs"),
+                OsString::from("prog.egg")
+            ]
         );
     }
 }

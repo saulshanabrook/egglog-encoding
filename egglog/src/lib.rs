@@ -2550,7 +2550,9 @@ impl EGraph {
             vrow.push(view_proof);
             batch.push((view_id, vrow));
         }
-        self.backend.add_values(batch);
+        self.backend
+            .add_values(batch)
+            .map_err(|error| Error::BackendError(error.to_string()))?;
         log::info!("Natively loaded {num_facts} facts into {func_name} from '{file}'.");
         Ok(())
     }
@@ -2575,11 +2577,26 @@ impl EGraph {
                     &command.to_command(),
                     &original_typechecking.type_info,
                 ) {
-                    let command_text = format!("{}", command.to_command());
-                    return Err(Error::UnsupportedProofCommand {
-                        command: command_text,
-                        reason,
-                    });
+                    // Proof checking needs each input expanded into top-level
+                    // fiat actions, which cannot preserve a surrounding
+                    // `fail`. Term-encoding-only backends do not build that
+                    // proof-check program: keep the input nested so the
+                    // backend's fallible native-input boundary is observed by
+                    // `fail` itself.
+                    let term_only_single_fail_input = !self.proof_state.proofs_enabled
+                        && matches!(&reason, ProofEncodingUnsupportedReason::FailInputCommand)
+                        && matches!(
+                            command,
+                            ResolvedNCommand::Fail(_, commands)
+                                if matches!(commands.as_slice(), [ResolvedNCommand::Input { .. }])
+                        );
+                    if !term_only_single_fail_input {
+                        let command_text = format!("{}", command.to_command());
+                        return Err(Error::UnsupportedProofCommand {
+                            command: command_text,
+                            reason,
+                        });
+                    }
                 }
             }
 

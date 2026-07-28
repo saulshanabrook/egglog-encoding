@@ -1607,6 +1607,55 @@ mod tests {
     }
 
     #[test]
+    fn add_values_returns_merge_error_immediately_and_remains_usable() {
+        let mut eg = EGraph::new();
+        let function = id_function(&mut eg, "input", MergeFn::AssertEq);
+        eg.insert_live_row(function, row(&[1, 10]));
+
+        let error = Backend::add_values(
+            &mut eg,
+            vec![(function, vec![Value::new(1), Value::new(20)])],
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("illegal merge attempted"));
+        assert_eq!(eg.mirror[&function], HashSet::from([row(&[1, 10])]));
+
+        Backend::add_values(
+            &mut eg,
+            vec![(function, vec![Value::new(2), Value::new(30)])],
+        )
+        .unwrap();
+        assert_eq!(
+            eg.mirror[&function],
+            HashSet::from([row(&[1, 10]), row(&[2, 30])])
+        );
+    }
+
+    #[test]
+    fn fail_wrapped_native_input_observes_backend_error_immediately() {
+        let directory =
+            std::env::temp_dir().join(format!("egglog_dd_fallible_input_{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(directory.join("bad.tsv"), "1\t10\n1\t20\n").unwrap();
+        std::fs::write(directory.join("good.tsv"), "2\t30\n").unwrap();
+
+        let mut egraph = egglog::EGraph::with_backend(Box::new(EGraph::new())).with_term_encoding();
+        egraph.fact_directory = Some(directory.clone());
+        let result = egraph.parse_and_run_program(
+            None,
+            r#"
+            (function score (i64) i64 :no-merge)
+            (fail (input score "bad.tsv"))
+            (input score "good.tsv")
+            (check (= (score 2) 30))
+            "#,
+        );
+
+        std::fs::remove_dir_all(directory).ok();
+        result.unwrap();
+    }
+
+    #[test]
     #[should_panic(expected = "references OldCol(1) but has only 1 value columns")]
     fn merge_rejects_out_of_range_output_column() {
         let mut eg = EGraph::new();
@@ -2481,7 +2530,7 @@ impl Backend for EGraph {
         Value::new(self.fresh_id_internal())
     }
 
-    fn add_values(&mut self, values: Vec<(FunctionId, Vec<Value>)>) {
+    fn add_values(&mut self, values: Vec<(FunctionId, Vec<Value>)>) -> Result<()> {
         // Route through the merge-aware path (like the reference backend's staged
         // flush) so that same-key/different-value rows are collapsed by each
         // function's `:merge` — FD-view congruence unions colliding e-classes, and
@@ -2491,18 +2540,7 @@ impl Backend for EGraph {
             .into_iter()
             .map(|(func, row)| (func, row.iter().map(|v| v.rep()).collect()))
             .collect();
-        if let Err(err) = self.apply_sets(sets) {
-            // `add_values` cannot return an error; stash it to surface on the next
-            // `run_rules` (the reference backend likewise reports a conflicting
-            // merge lazily rather than at load time).
-            let mut pending = self
-                .panic_message
-                .lock()
-                .expect("DD panic-message side channel must not be poisoned");
-            if pending.is_none() {
-                *pending = Some(err.to_string());
-            }
-        }
+        self.apply_sets(sets).map(|_| ())
     }
 
     fn free_rule(&mut self, id: RuleId) {

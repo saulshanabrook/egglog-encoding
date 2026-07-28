@@ -20,12 +20,15 @@ name = "files"
 default = ["bin"]
 bin = ["egglog/bin"]
 dd-backend = ["dep:egglog-experimental-dd"]
+duckdb-backend = ["dep:egglog-experimental-duckdb"]
+duckdb-backend-bundled = ["duckdb-backend", "egglog-experimental-duckdb/bundled"]
 
 [dependencies]
 egglog = { workspace = true }
 egglog-ast = { workspace = true }
 egglog-reports = { workspace = true }
 egglog-experimental-dd = { path = "dd", optional = true }
+egglog-experimental-duckdb = { path = "duckdb", optional = true, default-features = false }
 
 num = "0.4.3"
 lazy_static = "1.4"

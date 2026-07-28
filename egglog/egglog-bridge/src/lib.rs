@@ -469,6 +469,39 @@ impl EGraph {
         self.flush_updates();
     }
 
+    /// Atomically load a batch of function rows and report merge failures.
+    ///
+    /// The older [`EGraph::add_values`] API predates fallible native input and
+    /// can leave a panic primitive's message in the side channel after its
+    /// flush has already changed unrelated tables. This wrapper checkpoints the
+    /// complete bridge state, restores it when that channel reports a merge
+    /// error, and leaves the e-graph reusable by the caller.
+    pub fn try_add_values(
+        &mut self,
+        values: impl IntoIterator<Item = (FunctionId, Vec<Value>)>,
+    ) -> Result<()> {
+        // Database clones share their notification list while owning separate
+        // pending buffers. Quiesce those buffers before cloning so a merge in
+        // this call cannot reset notifications needed by the checkpoint.
+        self.flush_updates();
+        if let Some(message) = self.panic_message.lock().unwrap().take() {
+            return Err(PanicError(message).into());
+        }
+
+        // EGraph's clone is the same snapshot mechanism used by frontend
+        // push/pop. Its panic side channel is intentionally shared by cloned
+        // external functions; taking the new message before restoring the
+        // checkpoint clears it for both copies.
+        let checkpoint = self.clone();
+        self.add_values(values);
+        let error = self.panic_message.lock().unwrap().take();
+        if let Some(message) = error {
+            *self = checkpoint;
+            return Err(PanicError(message).into());
+        }
+        Ok(())
+    }
+
     /// A term-oriented means of adding data to the database: hand back a "term
     /// id" for the given function and keys for the function.
     ///

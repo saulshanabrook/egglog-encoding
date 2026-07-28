@@ -199,8 +199,8 @@ impl Backend for EGraph {
         EGraph::fresh_id(self)
     }
 
-    fn add_values(&mut self, values: Vec<(FunctionId, Vec<Value>)>) {
-        EGraph::add_values(self, values);
+    fn add_values(&mut self, values: Vec<(FunctionId, Vec<Value>)>) -> Result<()> {
+        EGraph::try_add_values(self, values)
     }
 
     fn free_rule(&mut self, id: RuleId) {

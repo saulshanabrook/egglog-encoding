@@ -310,8 +310,9 @@ pub trait Backend: Send + Sync {
     /// function id and its row as keys followed by all value columns (no
     /// timestamp/subsumption — the backend fills those in). Duplicate keys are
     /// resolved by the function's `:merge` on flush, so callers plain-insert
-    /// rather than get-or-insert.
-    fn add_values(&mut self, values: Vec<(FunctionId, Vec<Value>)>);
+    /// rather than get-or-insert. An error rejects the whole batch: no target
+    /// table may retain a partial input transaction.
+    fn add_values(&mut self, values: Vec<(FunctionId, Vec<Value>)>) -> Result<()>;
 
     // -- execution state (object-safe; see `with_execution_state` sugar) -----
 

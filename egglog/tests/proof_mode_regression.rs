@@ -120,6 +120,54 @@ fn proof_mode_rejects_fail_wrapped_input() {
 }
 
 #[test]
+fn term_encoding_fail_observes_single_native_input_error_and_reuses_backend() {
+    let directory = std::env::temp_dir().join(format!(
+        "egglog_fallible_native_input_{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(directory.join("bad.tsv"), "1\t10\n1\t20\n").unwrap();
+    std::fs::write(directory.join("good.tsv"), "2\t30\n").unwrap();
+
+    let mut egraph = EGraph::new_with_term_encoding();
+    egraph.fact_directory = Some(directory.clone());
+    let result = egraph.parse_and_run_program(
+        None,
+        r#"
+        (function score (i64) i64 :no-merge)
+        (fail (input score "bad.tsv"))
+        (input score "good.tsv")
+        (check (= (score 2) 30))
+        "#,
+    );
+
+    std::fs::remove_dir_all(directory).ok();
+    result.unwrap();
+}
+
+#[test]
+fn term_encoding_rejects_fail_input_with_sibling_commands() {
+    let error = EGraph::new_with_term_encoding()
+        .parse_and_run_program(
+            None,
+            r#"
+            (function score (i64) i64 :no-merge)
+            (fail
+              (input score "unused.tsv")
+              (set (score 1) 10))
+            "#,
+        )
+        .unwrap_err();
+
+    assert!(matches!(error, Error::UnsupportedProofCommand { .. }));
+    assert!(
+        error
+            .to_string()
+            .contains("`fail` wrapping an `input` command")
+    );
+}
+
+#[test]
 fn proof_mode_allows_fail_wrapping_set() {
     // A `(fail (set …))` is accepted by proof encoding (it used to be rejected as a
     // non-atomic wrapped command). The set succeeds, so `fail` reports that its
