@@ -1,8 +1,8 @@
 //! Compact execution-trace capture for backward slicing.
 //!
-//! Native workers append effective events to worker-local capture batches and
-//! publish them at existing engine barriers. The trace is causal evidence, not
-//! a proof object; explanation, slicing, and replay are lazy cold consumers.
+//! Native commit paths append effective events to short-lived local batches
+//! and publish them at existing engine barriers. The trace is causal evidence,
+//! not a proof object; explanation, slicing, and replay are lazy cold consumers.
 
 use std::{
     any::TypeId,

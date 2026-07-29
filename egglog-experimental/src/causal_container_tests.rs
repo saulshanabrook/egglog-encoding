@@ -110,8 +110,7 @@ fn failed_extended_schedule_poisons_partial_causal_history() {
             "the first schedule step is deliberately not rolled back"
         );
         assert!(
-            egraph
-                .with_trace_view(|_| Ok(()))
+            egglog::slicing::slice_all_checks(&egraph)
                 .unwrap_err()
                 .to_string()
                 .contains("poisoned"),
@@ -149,8 +148,7 @@ fn unsupported_extended_schedule_is_preflighted_before_rules_run() {
             "whole-schedule validation must run before the first native step"
         );
         assert!(
-            egraph
-                .with_trace_view(|_| Ok(()))
+            egglog::slicing::slice_all_checks(&egraph)
                 .unwrap_err()
                 .to_string()
                 .contains("poisoned"),

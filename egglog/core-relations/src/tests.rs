@@ -66,7 +66,7 @@ fn install_test_row_terms(trace: &Trace, row: &[Value]) {
     for value in row {
         trace.intern_literal(
             TEST_REPLAY_SORT,
-            ReplayLiteral::Internal(value.index() as u64),
+            ReplayLiteral::I64(value.index() as i64),
             *value,
         );
     }
@@ -266,8 +266,7 @@ fn causal_trace_record_only_effective_constructor_and_union_commits() {
             .unwrap();
     }
     let input_term = trace.intern_literal(value_sort, ReplayLiteral::I64(7), Value::new(7));
-    let input_as_node_term =
-        trace.intern_literal(node_sort, ReplayLiteral::Internal(7), Value::new(7));
+    let input_as_node_term = trace.intern_literal(node_sort, ReplayLiteral::I64(7), Value::new(7));
     db.stage_source_row(
         input,
         &[Value::new(7), Value::new(7), Value::new(0)],
@@ -683,8 +682,8 @@ fn causal_capture_rebuild_rekeys_with_exact_landmark_and_noop_preserves_fact() {
         .unwrap();
     let old = Value::new(20);
     let new = Value::new(10);
-    let old_term = trace.intern_literal(sort, ReplayLiteral::Internal(20), old);
-    let new_term = trace.intern_literal(sort, ReplayLiteral::Internal(10), new);
+    let old_term = trace.intern_literal(sort, ReplayLiteral::I64(20), old);
+    let new_term = trace.intern_literal(sort, ReplayLiteral::I64(10), new);
     db.stage_source_row(
         rebuilt,
         &[old, Value::new(0)],
@@ -784,8 +783,8 @@ fn causal_capture_rebuild_rekeys_with_exact_landmark_and_noop_preserves_fact() {
         .unwrap();
     let later_left = Value::new(40);
     let later_right = Value::new(30);
-    trace.intern_literal(sort, ReplayLiteral::Internal(40), later_left);
-    trace.intern_literal(sort, ReplayLiteral::Internal(30), later_right);
+    trace.intern_literal(sort, ReplayLiteral::I64(40), later_left);
+    trace.intern_literal(sort, ReplayLiteral::I64(30), later_right);
     db.set_trace_wave(Wave::new(4));
     stage_test_union(
         &db,
@@ -819,7 +818,7 @@ fn trusted_exact_occurrences_extend_from_both_native_roots() {
     let trace = db.enable_trace();
     let child_sort = ReplaySortId::new(7902);
     let sort = ReplaySortId::new(7903);
-    let child = trace.intern_literal(child_sort, ReplayLiteral::Internal(7), Value::new(7));
+    let child = trace.intern_literal(child_sort, ReplayLiteral::I64(7), Value::new(7));
     let a = Value::new(50);
     let b = Value::new(40);
     let x = Value::new(30);
@@ -921,11 +920,10 @@ fn causal_capture_rebuild_collision_records_exact_congruence() {
     let target_key = Value::new(20);
     let old_output = Value::new(300);
     let target_output = Value::new(200);
-    let old_key_term = trace.intern_literal(sort, ReplayLiteral::Internal(30), old_key);
-    let target_key_term = trace.intern_literal(sort, ReplayLiteral::Internal(20), target_key);
-    let old_output_term = trace.intern_literal(sort, ReplayLiteral::Internal(300), old_output);
-    let target_output_term =
-        trace.intern_literal(sort, ReplayLiteral::Internal(200), target_output);
+    let old_key_term = trace.intern_literal(sort, ReplayLiteral::I64(30), old_key);
+    let target_key_term = trace.intern_literal(sort, ReplayLiteral::I64(20), target_key);
+    let old_output_term = trace.intern_literal(sort, ReplayLiteral::I64(300), old_output);
+    let target_output_term = trace.intern_literal(sort, ReplayLiteral::I64(200), target_output);
     db.stage_source_row(
         rebuilt,
         &[old_key, old_output, Value::new(0)],
@@ -1061,18 +1059,10 @@ fn causal_capture_rebuild_abort_is_atomic_across_target_tables() {
     let second_new = Value::new(80);
     let recovery = Value::new(200);
     for raw in [120, 110, 90, 80, 200] {
-        trace.intern_literal(
-            table_sort,
-            ReplayLiteral::Internal(raw),
-            Value::new(raw as u32),
-        );
+        trace.intern_literal(table_sort, ReplayLiteral::I64(raw), Value::new(raw as u32));
     }
     for raw in [120, 110, 90, 80] {
-        trace.intern_literal(
-            uf_sort,
-            ReplayLiteral::Internal(raw),
-            Value::new(raw as u32),
-        );
+        trace.intern_literal(uf_sort, ReplayLiteral::I64(raw), Value::new(raw as u32));
     }
     for (table, value, source) in [(first, first_old, 910), (second, second_old, 911)] {
         db.stage_source_row(
@@ -1168,9 +1158,9 @@ fn typed_union_forest_is_immutable_across_native_path_compression_and_redundancy
     let a = Value::new(30);
     let b = Value::new(20);
     let c = Value::new(10);
-    let a_term = trace.intern_literal(sort, ReplayLiteral::Internal(30), a);
-    let b_term = trace.intern_literal(sort, ReplayLiteral::Internal(20), b);
-    let c_term = trace.intern_literal(sort, ReplayLiteral::Internal(10), c);
+    let a_term = trace.intern_literal(sort, ReplayLiteral::I64(30), a);
+    let b_term = trace.intern_literal(sort, ReplayLiteral::I64(20), b);
+    let c_term = trace.intern_literal(sort, ReplayLiteral::I64(10), c);
 
     db.set_trace_wave(Wave::new(1));
     stage_test_union(
@@ -1285,11 +1275,11 @@ fn invalid_typed_union_staging_fails_before_native_mutation() {
         let right = Value::new(5);
         if case == "wrong-sort" {
             let other = ReplaySortId::new(91);
-            trace.intern_literal(other, ReplayLiteral::Internal(4), left);
-            trace.intern_literal(other, ReplayLiteral::Internal(5), right);
+            trace.intern_literal(other, ReplayLiteral::I64(4), left);
+            trace.intern_literal(other, ReplayLiteral::I64(5), right);
         } else if case == "token-row-mismatch" {
-            trace.intern_literal(sort, ReplayLiteral::Internal(4), left);
-            trace.intern_literal(sort, ReplayLiteral::Internal(5), right);
+            trace.intern_literal(sort, ReplayLiteral::I64(4), left);
+            trace.intern_literal(sort, ReplayLiteral::I64(5), right);
         }
         db.set_trace_wave(Wave::new(1));
         let cause = empty_rule_cause(&trace, 90, Wave::new(1));
@@ -1380,9 +1370,9 @@ fn merge_function_union_cites_one_match_and_immutable_prior_fact() {
     let key = Value::new(1);
     let prior = Value::new(30);
     let incoming = Value::new(20);
-    let key_term = trace.intern_literal(sort, ReplayLiteral::Internal(1), key);
-    let prior_term = trace.intern_literal(sort, ReplayLiteral::Internal(30), prior);
-    let incoming_term = trace.intern_literal(sort, ReplayLiteral::Internal(20), incoming);
+    let key_term = trace.intern_literal(sort, ReplayLiteral::I64(1), key);
+    let prior_term = trace.intern_literal(sort, ReplayLiteral::I64(30), prior);
+    let incoming_term = trace.intern_literal(sort, ReplayLiteral::I64(20), incoming);
     db.stage_source_row(
         target,
         &[key, prior],
@@ -1479,9 +1469,9 @@ fn invalid_merge_function_union_fails_before_replacing_its_parent_row() {
     let key = Value::new(1);
     let prior = Value::new(30);
     let incoming = Value::new(20);
-    let key_term = trace.intern_literal(sort, ReplayLiteral::Internal(1), key);
-    let prior_term = trace.intern_literal(sort, ReplayLiteral::Internal(30), prior);
-    let incoming_term = trace.intern_literal(sort, ReplayLiteral::Internal(20), incoming);
+    let key_term = trace.intern_literal(sort, ReplayLiteral::I64(1), key);
+    let prior_term = trace.intern_literal(sort, ReplayLiteral::I64(30), prior);
+    let incoming_term = trace.intern_literal(sort, ReplayLiteral::I64(20), incoming);
 
     db.stage_source_row(
         target,
@@ -1626,7 +1616,7 @@ fn causal_trace_record_same_term_native_alias_without_equality_edge() {
     let child = Value::new(7);
     let left = Value::new(30);
     let right = Value::new(20);
-    let child_term = trace.intern_literal(child_sort, ReplayLiteral::Internal(7), child);
+    let child_term = trace.intern_literal(child_sort, ReplayLiteral::I64(7), child);
     certify_test_replay_call(&trace, 10_900, container_sort, op);
     certify_test_replay_call(&trace, 11_000, container_sort, ReplayOpId::new(110));
     let call = trace
@@ -1773,7 +1763,7 @@ fn same_term_native_bridge_joins_distinct_historical_components() {
     let trace = db.enable_trace();
     let sort = ReplaySortId::new(214);
     let child_sort = ReplaySortId::new(215);
-    let child = trace.intern_literal(child_sort, ReplayLiteral::Internal(1), Value::new(1));
+    let child = trace.intern_literal(child_sort, ReplayLiteral::I64(1), Value::new(1));
     let left = Value::new(80);
     let right = Value::new(100);
     let other = Value::new(90);
@@ -1924,7 +1914,7 @@ fn same_batch_native_catch_up_matches_durable_component_behavior() {
     uf.enable_trace();
     let child_sort = ReplaySortId::new(117);
     let sort = ReplaySortId::new(118);
-    let child = trace.intern_literal(child_sort, ReplayLiteral::Internal(7), Value::new(7));
+    let child = trace.intern_literal(child_sort, ReplayLiteral::I64(7), Value::new(7));
     let (owner, alias, other) = (Value::new(30), Value::new(20), Value::new(10));
     let shared = trace
         .intern_call(sort, ReplayOpId::new(118), &[child], owner)
@@ -2050,10 +2040,8 @@ fn causal_trace_capture_exact_rhs_producer_term_not_global_alias() {
     let wrong_child_value = Value::new(1970);
     let exact_child_value = Value::new(1971);
     let output_value = Value::new(1972);
-    let wrong_child =
-        trace.intern_literal(child_sort, ReplayLiteral::Internal(1970), wrong_child_value);
-    let exact_child =
-        trace.intern_literal(child_sort, ReplayLiteral::Internal(1971), exact_child_value);
+    let wrong_child = trace.intern_literal(child_sort, ReplayLiteral::I64(1970), wrong_child_value);
+    let exact_child = trace.intern_literal(child_sort, ReplayLiteral::I64(1971), exact_child_value);
     let wrong_call = trace
         .intern_call(result_sort, op, &[wrong_child], output_value)
         .unwrap();
@@ -2128,13 +2116,16 @@ fn capture_recipe_failure_precedes_catalog_and_rule_set_mutation() {
         valid_before_failure,
         Some(
             ReplayConstructorSpec::new(sort, op, iter::empty::<ReplaySortId>())
-                .with_immediate_promotion(),
+                .with_immediate_container_promotion(TypeId::of::<Vec<Value>>()),
         ),
     );
     action.promote_replay_call(
         &[missing.into()],
         destination,
-        Some(ReplayConstructorSpec::new(sort, op, [sort]).with_immediate_promotion()),
+        Some(
+            ReplayConstructorSpec::new(sort, op, [sort])
+                .with_immediate_container_promotion(TypeId::of::<Vec<Value>>()),
+        ),
     );
     let error = action
         .try_build_with_capture(
@@ -2154,7 +2145,6 @@ fn capture_recipe_failure_precedes_catalog_and_rule_set_mutation() {
     );
     trace
         .with_view(|view| {
-            assert!(view.rule_binding_layout(RULE).is_err());
             assert!(view.rule_equality_layout(RULE).is_err());
             Ok(())
         })
@@ -2168,7 +2158,7 @@ fn capture_recipe_failure_precedes_catalog_and_rule_set_mutation() {
         destination,
         Some(
             ReplayConstructorSpec::new(sort, op, iter::empty::<ReplaySortId>())
-                .with_immediate_promotion(),
+                .with_immediate_container_promotion(TypeId::of::<Vec<Value>>()),
         ),
     );
     action
@@ -2387,9 +2377,9 @@ fn prior_or_incoming_uses_callback_result_not_opaque_value_order() {
     let key = Value::new(2160);
     let prior = Value::new(10);
     let incoming = Value::new(20);
-    let key_term = trace.intern_literal(sort, ReplayLiteral::Internal(2160), key);
-    let prior_term = trace.intern_literal(sort, ReplayLiteral::Internal(10), prior);
-    let incoming_term = trace.intern_literal(sort, ReplayLiteral::Internal(20), incoming);
+    let key_term = trace.intern_literal(sort, ReplayLiteral::I64(2160), key);
+    let prior_term = trace.intern_literal(sort, ReplayLiteral::I64(10), prior);
+    let incoming_term = trace.intern_literal(sort, ReplayLiteral::I64(20), incoming);
     db.stage_source_row(
         table,
         &[key, prior],
@@ -3111,19 +3101,8 @@ fn causal_same_wave_remove_precedes_replacement_write() {
             ));
             let before_removal = crate::HistoryPosition::new(removal.position.get() - 1);
             assert!(view.fact_cell_at(old_cell, before_removal).is_ok());
-            assert!(view.fact_key_at(removed_fact, before_removal).is_ok());
-            assert!(matches!(
-                view.fact_key_at(removed_fact, removal.position),
-                Err(crate::TraceViewError::FactNoLongerLive { fact, .. })
-                    if fact == removed_fact
-            ));
             assert!(matches!(
                 view.fact_cell_at(old_cell, replacement_record.position),
-                Err(crate::TraceViewError::FactNoLongerLive { fact, .. })
-                    if fact == removed_fact
-            ));
-            assert!(matches!(
-                view.fact_key_at(removed_fact, replacement_record.position),
                 Err(crate::TraceViewError::FactNoLongerLive { fact, .. })
                     if fact == removed_fact
             ));
@@ -4567,7 +4546,7 @@ fn check_trace_keep_distinct_premise_terms_for_the_same_runtime_equality_value()
     let second_left = Value::new(30);
     let right = Value::new(10);
     for raw in [join, first_left, second_left, right] {
-        trace.intern_literal(sort, ReplayLiteral::Internal(raw.index() as u64), raw);
+        trace.intern_literal(sort, ReplayLiteral::I64(raw.index() as i64), raw);
     }
     let term = |raw| trace.lookup_term(sort, raw).unwrap();
     // Commit the lexicographically smaller FactId on the row that scans
@@ -4722,7 +4701,7 @@ fn check_capture_missing_equality_term_publishes_no_root() {
     let sort = ReplaySortId::new(402);
     trace.register_table_layout(premise, &[Some(sort)]).unwrap();
     let present = Value::new(7);
-    let present_term = trace.intern_literal(sort, ReplayLiteral::Internal(7), present);
+    let present_term = trace.intern_literal(sort, ReplayLiteral::I64(7), present);
     db.stage_source_row(
         premise,
         &[present],
@@ -4804,9 +4783,9 @@ fn late_fact_rekey_attachment_case(reverse_equality_endpoints: bool) {
         .unwrap();
     let a = Value::new(20);
     let c = Value::new(10);
-    let ta = trace.intern_literal(sort, ReplayLiteral::Internal(1), a);
-    let tb = trace.intern_literal(sort, ReplayLiteral::Internal(2), Value::new(200));
-    let tc = trace.intern_literal(sort, ReplayLiteral::Internal(3), c);
+    let ta = trace.intern_literal(sort, ReplayLiteral::I64(1), a);
+    let tb = trace.intern_literal(sort, ReplayLiteral::I64(2), Value::new(200));
+    let tc = trace.intern_literal(sort, ReplayLiteral::I64(3), c);
     let site = |term| {
         trace.register_term_origin(TermOriginSpec {
             sort,
@@ -4983,11 +4962,9 @@ fn effective_constructor_rebuild_inherits_prior_terms_over_competing_alias() {
     let exact_child = Value::new(7911);
     let canonical_child = Value::new(7909);
     let output = Value::new(7920);
-    let wrong_child_term =
-        trace.intern_literal(child_sort, ReplayLiteral::Internal(7910), wrong_child);
-    let exact_child_term =
-        trace.intern_literal(child_sort, ReplayLiteral::Internal(7911), exact_child);
-    trace.intern_literal(child_sort, ReplayLiteral::Internal(7909), canonical_child);
+    let wrong_child_term = trace.intern_literal(child_sort, ReplayLiteral::I64(7910), wrong_child);
+    let exact_child_term = trace.intern_literal(child_sort, ReplayLiteral::I64(7911), exact_child);
+    trace.intern_literal(child_sort, ReplayLiteral::I64(7909), canonical_child);
     let wrong_call = trace
         .intern_call(result_sort, op, &[wrong_child_term], output)
         .unwrap();
@@ -5063,8 +5040,8 @@ fn forged_direct_rule_match_fails_before_native_union() {
     let sort = ReplaySortId::new(901);
     let left = Value::new(9010);
     let right = Value::new(9011);
-    trace.intern_literal(sort, ReplayLiteral::Internal(9010), left);
-    trace.intern_literal(sort, ReplayLiteral::Internal(9011), right);
+    trace.intern_literal(sort, ReplayLiteral::I64(9010), left);
+    trace.intern_literal(sort, ReplayLiteral::I64(9011), right);
 
     let wave = Wave::new(1);
     db.set_trace_wave(wave);
@@ -5097,8 +5074,8 @@ fn direct_rule_match_cannot_cross_a_causal_wave() {
     let sort = ReplaySortId::new(902);
     let left = Value::new(9020);
     let right = Value::new(9021);
-    trace.intern_literal(sort, ReplayLiteral::Internal(9020), left);
-    trace.intern_literal(sort, ReplayLiteral::Internal(9021), right);
+    trace.intern_literal(sort, ReplayLiteral::I64(9020), left);
+    trace.intern_literal(sort, ReplayLiteral::I64(9021), right);
 
     let first_wave = Wave::new(1);
     db.set_trace_wave(first_wave);
@@ -5138,8 +5115,8 @@ fn pending_rule_cause_cannot_cross_capture_arenas() {
     let sort = ReplaySortId::new(903);
     let left = Value::new(9030);
     let right = Value::new(9031);
-    trace.intern_literal(sort, ReplayLiteral::Internal(9030), left);
-    trace.intern_literal(sort, ReplayLiteral::Internal(9031), right);
+    trace.intern_literal(sort, ReplayLiteral::I64(9030), left);
+    trace.intern_literal(sort, ReplayLiteral::I64(9031), right);
     db.set_trace_wave(wave);
     let proposal = trace
         .typed_equality_proposal(wave, sort, left, right)
@@ -5167,8 +5144,8 @@ fn pending_rule_cause_rejects_a_missing_same_arena_match() {
     let sort = ReplaySortId::new(904);
     let left = Value::new(9040);
     let right = Value::new(9041);
-    trace.intern_literal(sort, ReplayLiteral::Internal(9040), left);
-    trace.intern_literal(sort, ReplayLiteral::Internal(9041), right);
+    trace.intern_literal(sort, ReplayLiteral::I64(9040), left);
+    trace.intern_literal(sort, ReplayLiteral::I64(9041), right);
     db.set_trace_wave(wave);
     let forged = trace.observed_firing_batch_for_test(crate::FiringId::new(999), 1, wave);
     let failed = catch_unwind(AssertUnwindSafe(|| trace.pending_firing_cause(&forged, 0)));
@@ -5191,8 +5168,8 @@ fn pending_rule_cause_rejects_a_lane_outside_its_observed_batch() {
     let sort = ReplaySortId::new(905);
     let left = Value::new(9050);
     let right = Value::new(9051);
-    trace.intern_literal(sort, ReplayLiteral::Internal(9050), left);
-    trace.intern_literal(sort, ReplayLiteral::Internal(9051), right);
+    trace.intern_literal(sort, ReplayLiteral::I64(9050), left);
+    trace.intern_literal(sort, ReplayLiteral::I64(9051), right);
     db.set_trace_wave(wave);
     let failed = catch_unwind(AssertUnwindSafe(|| trace.pending_firing_cause(&first, 1)));
     assert!(
@@ -5210,8 +5187,8 @@ fn observed_match_ids_are_dense_before_effect_reachability() {
     let sort = ReplaySortId::new(200);
     let left = Value::new(2000);
     let right = Value::new(2001);
-    trace.intern_literal(sort, ReplayLiteral::Internal(2000), left);
-    trace.intern_literal(sort, ReplayLiteral::Internal(2001), right);
+    trace.intern_literal(sort, ReplayLiteral::I64(2000), left);
+    trace.intern_literal(sort, ReplayLiteral::I64(2001), right);
 
     let wave = Wave::new(1);
     db.set_trace_wave(wave);
@@ -5260,7 +5237,7 @@ fn promoted_match_ids_follow_native_batch_order_not_union_order() {
         Value::new(1943),
     ];
     for (index, value) in values.into_iter().enumerate() {
-        trace.intern_literal(sort, ReplayLiteral::Internal(index as u64), value);
+        trace.intern_literal(sort, ReplayLiteral::I64(index as i64), value);
     }
     let wave = Wave::new(1);
     db.set_trace_wave(wave);
@@ -5346,7 +5323,7 @@ fn promoted_match_order_follows_full_batch_then_tail_execution() {
     for endpoint in endpoints {
         trace.intern_literal(
             TEST_REPLAY_SORT,
-            ReplayLiteral::Internal(endpoint.index() as u64),
+            ReplayLiteral::I64(endpoint.index() as i64),
             endpoint,
         );
     }
@@ -5356,7 +5333,7 @@ fn promoted_match_order_follows_full_batch_then_tail_execution() {
             let raw = Value::from_usize(value);
             let term = trace.intern_literal(
                 TEST_REPLAY_SORT,
-                ReplayLiteral::Internal(10_000 + source),
+                ReplayLiteral::I64((10_000 + source) as i64),
                 raw,
             );
             db.stage_source_row(
@@ -5510,16 +5487,14 @@ fn causal_trace_merge_origin_selects_each_cell_without_value_alias_lookup() {
     let new_child_value = Value::new(1983);
     let old_tail_value = Value::new(1984);
     let new_tail_value = Value::new(1985);
-    let key_term = trace.intern_literal(value_sort, ReplayLiteral::Internal(1980), key_value);
-    let old_child =
-        trace.intern_literal(value_sort, ReplayLiteral::Internal(1982), old_child_value);
-    let new_child =
-        trace.intern_literal(value_sort, ReplayLiteral::Internal(1983), new_child_value);
+    let key_term = trace.intern_literal(value_sort, ReplayLiteral::I64(1980), key_value);
+    let old_child = trace.intern_literal(value_sort, ReplayLiteral::I64(1982), old_child_value);
+    let new_child = trace.intern_literal(value_sort, ReplayLiteral::I64(1983), new_child_value);
     let old_alias = trace
         .intern_call(alias_sort, alias_op, &[old_child], shared_alias_value)
         .unwrap();
-    let old_tail = trace.intern_literal(value_sort, ReplayLiteral::Internal(1984), old_tail_value);
-    let new_tail = trace.intern_literal(value_sort, ReplayLiteral::Internal(1985), new_tail_value);
+    let old_tail = trace.intern_literal(value_sort, ReplayLiteral::I64(1984), old_tail_value);
+    let new_tail = trace.intern_literal(value_sort, ReplayLiteral::I64(1985), new_tail_value);
     let prior_row = [key_value, shared_alias_value, old_tail_value];
     db.stage_source_row(
         table,
@@ -5617,8 +5592,8 @@ fn transactional_native_lease_blocks_wave_finalization_until_queue_drain() {
     let sort = ReplaySortId::new(143);
     let left = Value::new(1430);
     let right = Value::new(1431);
-    trace.intern_literal(sort, ReplayLiteral::Internal(1430), left);
-    trace.intern_literal(sort, ReplayLiteral::Internal(1431), right);
+    trace.intern_literal(sort, ReplayLiteral::I64(1430), left);
+    trace.intern_literal(sort, ReplayLiteral::I64(1431), right);
     let wave = Wave::new(1);
     db.set_trace_wave(wave);
     let cause = empty_rule_cause(&trace, 143, wave);

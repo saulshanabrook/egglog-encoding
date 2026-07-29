@@ -4,6 +4,8 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+use egglog::{EGraph, slicing};
+
 struct TestDir(PathBuf);
 
 impl TestDir {
@@ -168,6 +170,42 @@ fn slice_output_composes_without_requesting_replay() {
         .unwrap();
     assert_success(&output, "naive output-only slice");
     assert!(artifact.exists());
+}
+
+#[test]
+fn public_slice_api_replays_and_output_only_does_not_call_its_factory() {
+    let directory = TestDir::new();
+    let program = write_program(directory.path());
+    let source = std::fs::read_to_string(&program).unwrap();
+    let serial = rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .unwrap();
+
+    let rendered = serial.install(|| {
+        let mut captured = EGraph::default();
+        captured.enable_trace().unwrap();
+        captured.parse_and_run_program(None, &source).unwrap();
+        slicing::slice_all_checks(&captured).unwrap()
+    });
+    serial.install(|| {
+        EGraph::default()
+            .parse_and_run_program(None, &rendered)
+            .unwrap();
+    });
+
+    let artifact = directory.path().join("output-only.egg");
+    egglog::cli(
+        EGraph::default(),
+        [
+            "egglog",
+            "--slice-output",
+            artifact.to_str().unwrap(),
+            program.to_str().unwrap(),
+        ],
+        || -> EGraph { panic!("output-only slicing called the replay factory") },
+    );
+    assert!(!std::fs::read_to_string(artifact).unwrap().is_empty());
 }
 
 #[test]

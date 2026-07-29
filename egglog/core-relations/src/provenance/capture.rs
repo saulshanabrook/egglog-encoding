@@ -769,8 +769,8 @@ impl TraceShared {
     }
 }
 
-/// A worker/shard-local capture fragment. It performs no locking while native
-/// rows are merged and publishes once at the surrounding engine barrier.
+/// A commit-local capture batch. It performs no locking while native rows are
+/// merged and publishes once at the surrounding engine barrier.
 pub(crate) struct CaptureBatch {
     shared: Arc<TraceShared>,
     facts: Vec<(FactId, FactRecord)>,
@@ -2390,23 +2390,6 @@ impl Trace {
         self.0.replay_terms.lookup(sort, value)
     }
 
-    /// Resolve one already-recorded structural call without installing a
-    /// current-value mapping or allocating a new DAG node. Positive check roots
-    /// use this to preserve their source endpoint syntax after congruence has
-    /// canonicalized both runtime values.
-    pub fn lookup_call(
-        &self,
-        sort: ReplaySortId,
-        op: ReplayOpId,
-        children: &[ReplayTermId],
-    ) -> Option<ReplayTermId> {
-        self.0.replay_terms.lookup_node(&ReplayTerm::Call {
-            sort,
-            op,
-            children: children.into(),
-        })
-    }
-
     pub(crate) fn equality_endpoint(
         &self,
         sort: ReplaySortId,
@@ -2625,7 +2608,7 @@ impl Trace {
             ) -> Result<ReplayTermId, String>,
         ) -> R,
     ) -> Result<R, String> {
-        if !replay.promote_immediately || replay.container_type.is_none() {
+        if !replay.anchors_on_primitive_return() || replay.container_type.is_none() {
             return Err("runtime term anchoring is reserved for container producers".into());
         }
         self.0.replay_terms.register_container_type(replay)?;
@@ -3044,6 +3027,7 @@ impl Trace {
         }))
     }
 
+    #[cfg(test)]
     pub(crate) fn source_draft(&self, source: SourceRef) -> CauseDraftId {
         let id = CauseDraftId::new(TraceShared::alloc_u64(&self.0.next_cause_draft, 1));
         let mut arena = self.0.arena.lock().unwrap();
@@ -3363,12 +3347,12 @@ impl Trace {
         assert_eq!(
             self.0.open_fragments.load(Ordering::Acquire),
             0,
-            "cannot finalize causal wave with open worker fragments"
+            "cannot finalize causal wave with open capture batches"
         );
         assert_eq!(
             self.0.abandoned_fragments.load(Ordering::Acquire),
             0,
-            "causal worker fragment was dropped without publication"
+            "causal capture batch was dropped without publication"
         );
         assert_eq!(
             self.0.open_native_leases.load(Ordering::Acquire),
@@ -3398,9 +3382,9 @@ impl Trace {
         );
     }
 
-    /// Borrow a checked view of finalized raw trace. The closure cannot
-    /// return references tied to the arena guards, so no capture storage or
-    /// static recipe can escape its read boundary.
+    /// Borrow a checked view of publication-complete trace history. The
+    /// closure cannot return references tied to the arena guards, so no
+    /// capture storage or static recipe can escape its read boundary.
     pub fn with_view<R>(
         &self,
         inspect: impl for<'view> FnOnce(&mut TraceView<'view>) -> Result<R, TraceViewError>,
@@ -3410,9 +3394,7 @@ impl Trace {
             return Err(TraceViewError::NotFinalized("a rule execution panicked"));
         }
         if self.0.open_fragments.load(Ordering::Acquire) != 0 {
-            return Err(TraceViewError::NotFinalized(
-                "worker capture fragments remain open",
-            ));
+            return Err(TraceViewError::NotFinalized("capture batches remain open"));
         }
         if self.0.open_native_leases.load(Ordering::Acquire) != 0 {
             return Err(TraceViewError::NotFinalized(
@@ -3421,7 +3403,7 @@ impl Trace {
         }
         if self.0.abandoned_fragments.load(Ordering::Acquire) != 0 {
             return Err(TraceViewError::NotFinalized(
-                "a worker capture fragment was abandoned",
+                "a capture batch was abandoned",
             ));
         }
         let recipes = self

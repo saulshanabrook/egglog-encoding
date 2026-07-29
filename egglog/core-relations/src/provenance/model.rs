@@ -336,6 +336,7 @@ impl RuleBindingSpec {
 }
 
 impl FiringCaptureSpec {
+    #[cfg(test)]
     pub fn new(
         rule: u32,
         premises: impl IntoIterator<Item = AtomId>,
@@ -363,6 +364,7 @@ impl FiringCaptureSpec {
         }
     }
 
+    #[cfg(test)]
     pub fn with_current_vars(
         mut self,
         vars: impl IntoIterator<Item = (Variable, ReplaySortId)>,
@@ -672,22 +674,6 @@ pub(super) fn combine_raw_equality_support(
         facts: facts.into_boxed_slice(),
         rekeys: rekeys.into_boxed_slice(),
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum BindingSource {
-    Premise {
-        representative: PremiseOccurrence,
-        occurrences: Box<[PremiseOccurrence]>,
-    },
-    Current {
-        sort: ReplaySortId,
-        residual: u32,
-        replay_safe: bool,
-    },
-    Constant {
-        term: ReplayTermId,
-    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

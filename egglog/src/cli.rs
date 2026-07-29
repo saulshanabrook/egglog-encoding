@@ -86,7 +86,7 @@ struct Args {
     /// Record an ordinary run and replay the support for its successful checks
     #[clap(long)]
     slice: bool,
-    /// Write the replay program without running it. This implies `--slice`.
+    /// Write the replay program to PATH. Output alone does not replay it.
     #[clap(long)]
     slice_output: Option<PathBuf>,
     /// Extract proofs for all `check` statements without verifying them
@@ -97,8 +97,8 @@ struct Args {
 /// Start a command-line interface for the E-graph.
 ///
 /// `replay_factory` constructs a fresh graph with the same extensions as
-/// `egraph`. It is called only when `--slice` or another output mode needs to
-/// execute the generated replay program.
+/// `egraph`. It is called only when a requested mode executes a generated
+/// replay program; `--slice-output` alone does not call it.
 #[allow(clippy::disallowed_macros)]
 pub fn cli<I, T, F>(mut egraph: EGraph, args: I, replay_factory: F)
 where

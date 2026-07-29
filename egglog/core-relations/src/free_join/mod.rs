@@ -19,9 +19,11 @@ use smallvec::SmallVec;
 use thiserror::Error;
 use web_time::{Duration, Instant};
 
+#[cfg(test)]
+use crate::ReplayTermId;
 use crate::{
-    BaseValues, ContainerRebuildSummary, ContainerValues, PoolSet, QueryEntry, ReplayTermId,
-    SourceRef, Trace, TupleIndex, Value, Wave,
+    BaseValues, ContainerRebuildSummary, ContainerValues, PoolSet, QueryEntry, SourceRef, Trace,
+    TupleIndex, Value, Wave,
     action::{
         Bindings, DbView,
         mask::{Mask, MaskIter, ValueSource},
@@ -521,7 +523,8 @@ impl Database {
     /// Stage one original source row together with producer-installed term
     /// handles. This is intentionally explicit: an unlabelled row is not a
     /// sound source capture.
-    pub fn stage_source_row(
+    #[cfg(test)]
+    pub(crate) fn stage_source_row(
         &self,
         table: TableId,
         row: &[Value],

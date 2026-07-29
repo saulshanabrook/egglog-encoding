@@ -1918,7 +1918,7 @@ impl ExecutionState<'_> {
                     .trace
                     .expect("container replay promotion requires causal trace");
                 assert!(
-                    replay.promote_immediately,
+                    replay.anchors_on_primitive_return(),
                     "runtime replay promotion is reserved for registry-mutating containers"
                 );
                 let outputs = bindings[*dst].to_vec();

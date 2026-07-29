@@ -32,10 +32,10 @@ use core::{CoreActionContext, ResolvedAtomTerm};
 pub use core::{ResolvedCall, SpecializedPrimitive};
 #[cfg(test)]
 use core_relations::ReplayTerm;
-pub use core_relations::{
-    BaseValue, CausalContainerKind, ContainerValue, TraceView, TraceViewError, Value,
-};
+pub use core_relations::{BaseValue, CausalContainerKind, ContainerValue, Value};
 use core_relations::{ExecutionState, ExternalFunctionId, make_external_func};
+#[cfg(test)]
+use core_relations::{TraceView, TraceViewError};
 use csv::Writer;
 pub use egglog_add_primitive::add_literal_prim;
 pub use egglog_add_primitive::add_primitive;
@@ -744,14 +744,12 @@ impl CaptureCatalog {
             .collect::<Option<Vec<_>>>()?;
         let replay = ReplayConstructorSpec::new(result_sort, op, child_sorts);
         Some(Arc::new(if primitive.output().is_container_sort() {
-            replay
-                .with_container_type(
-                    primitive
-                        .output()
-                        .value_type()
-                        .expect("container sort must expose its physical value type"),
-                )
-                .with_immediate_promotion()
+            replay.with_immediate_container_promotion(
+                primitive
+                    .output()
+                    .value_type()
+                    .expect("container sort must expose its physical value type"),
+            )
         } else {
             replay
         }))
@@ -1632,8 +1630,9 @@ impl EGraph {
         Ok(())
     }
 
-    /// Inspect a finalized native trace without copying its arena.
-    pub fn with_trace_view<R>(
+    /// Inspect a checked native trace without copying its arena.
+    #[cfg(test)]
+    fn with_trace_view<R>(
         &self,
         inspect: impl for<'view> FnOnce(&mut TraceView<'view>) -> Result<R, TraceViewError>,
     ) -> Result<R, Error> {

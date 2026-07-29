@@ -911,53 +911,6 @@ impl<'a> TraceView<'a> {
         })
     }
 
-    pub fn rule_binding_layout(&self, rule: u32) -> Result<Box<[BindingSource]>, TraceViewError> {
-        let bindings = self
-            .binding_recipes
-            .get(&rule)
-            .ok_or_else(|| TraceViewError::Invalid(format!("rule {rule} has no binding recipe")))?;
-        let current_roots = self
-            .term_recipes
-            .rules
-            .get(&rule)
-            .map(|recipe| recipe.current_roots.as_ref())
-            .unwrap_or(&[]);
-        bindings
-            .iter()
-            .map(|binding| {
-                Ok(match binding {
-                    ReplayBindingSource::Premise {
-                        representative,
-                        occurrences,
-                    } => BindingSource::Premise {
-                        representative: PremiseOccurrence {
-                            premise: representative.premise,
-                            column: representative.column,
-                        },
-                        occurrences: occurrences
-                            .iter()
-                            .map(|occurrence| PremiseOccurrence {
-                                premise: occurrence.premise,
-                                column: occurrence.column,
-                            })
-                            .collect(),
-                    },
-                    ReplayBindingSource::Current { sort, residual, .. } => BindingSource::Current {
-                        sort: *sort,
-                        residual: *residual,
-                        replay_safe: current_roots
-                            .get(*residual as usize)
-                            .is_some_and(Option::is_some),
-                    },
-                    ReplayBindingSource::Constant { term } => {
-                        BindingSource::Constant { term: *term }
-                    }
-                })
-            })
-            .collect::<Result<Vec<_>, TraceViewError>>()
-            .map(Vec::into_boxed_slice)
-    }
-
     pub fn rule_equality_layout(
         &self,
         rule: u32,
@@ -1276,36 +1229,6 @@ impl<'a> TraceView<'a> {
             endpoint: EqualityEndpoint { sort, term, raw },
             rekeys: rekeys.into_boxed_slice(),
         })
-    }
-
-    pub fn fact_key_at(
-        &mut self,
-        fact: FactId,
-        position: HistoryPosition,
-    ) -> Result<Box<[Value]>, TraceViewError> {
-        let record = self.live_fact_at(fact, position)?;
-        let schema = self.table_schema(record.table)?;
-        (0..schema.key_columns)
-            .map(|column| {
-                if schema.columns[column].is_some() {
-                    self.fact_cell_at(
-                        FactCellRef {
-                            fact,
-                            column: crate::ColumnId::new(column.try_into().map_err(|_| {
-                                TraceViewError::Invalid("table key column exceeds u32".into())
-                            })?),
-                        },
-                        position,
-                    )
-                    .map(|cell| cell.endpoint.raw)
-                } else {
-                    record.values.get(column).copied().ok_or_else(|| {
-                        TraceViewError::Invalid(format!("fact {fact:?} has no key column {column}"))
-                    })
-                }
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map(Vec::into_boxed_slice)
     }
 
     fn validate_equality_cutoff(

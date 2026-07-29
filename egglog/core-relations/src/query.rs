@@ -1352,8 +1352,9 @@ impl RuleBuilder<'_, '_> {
     }
 
     /// Build a rule together with the fixed capture layout preserved from the
-    /// source-level rule. Runtime capture copies only FactId/ReplayTermId
-    /// handles according to this layout.
+    /// source-level rule. Runtime capture stores exact premise [`FactId`]
+    /// occurrences; structural bindings are reconstructed lazily from the
+    /// static recipe.
     pub fn build_with_capture(self, desc: impl Into<String>, spec: FiringCaptureSpec) -> RuleId {
         self.try_build_with_capture(desc, spec)
             .unwrap_or_else(|error| panic!("{error}"))
@@ -2224,7 +2225,7 @@ impl RuleBuilder<'_, '_> {
             if let Some(draft) = self.qb.recipe_draft.as_mut() {
                 draft.call_output(&trace, dst, args, &replay);
             }
-            if replay.promote_immediately {
+            if replay.anchors_on_primitive_return() {
                 self.qb.instrs.push(Instr::PromoteReplayCall {
                     args: args.to_vec(),
                     dst,

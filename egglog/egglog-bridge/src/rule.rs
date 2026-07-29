@@ -617,10 +617,10 @@ impl RuleBuilder<'_> {
                 }
                 return Ok(());
             }
-            let promote_immediately = replay
+            let anchor_on_primitive_return = replay
                 .as_ref()
-                .is_some_and(|replay| replay.promote_immediately);
-            let var = if promote_immediately {
+                .is_some_and(|replay| replay.anchors_on_primitive_return());
+            let var = if anchor_on_primitive_return {
                 rb.call_external_with_replay(func, &dst_vars, replay.clone())?
             } else {
                 rb.call_external(func, &dst_vars)?
@@ -629,7 +629,7 @@ impl RuleBuilder<'_> {
                 QueryEntry::Var(Variable { id, .. }) if !inner.grounded.contains(id) => {
                     inner.mapping.insert(*id, var.into());
                     inner.grounded.insert(*id);
-                    if !promote_immediately && let Some(replay) = replay.clone() {
+                    if !anchor_on_primitive_return && let Some(replay) = replay.clone() {
                         inner.replay_promotions.push(DeferredReplayCall {
                             args: dst_vars,
                             dst: var,
@@ -641,7 +641,7 @@ impl RuleBuilder<'_> {
                 _ => {
                     rb.assert_eq(var.into(), expected);
                     if let (Some(replay), DstVar::Var(alias)) = (replay.clone(), expected) {
-                        if promote_immediately {
+                        if anchor_on_primitive_return {
                             rb.alias_replay_recipe(var, alias);
                         } else {
                             inner.replay_promotions.push(DeferredReplayCall {

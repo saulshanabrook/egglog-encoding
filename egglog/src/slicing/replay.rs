@@ -542,11 +542,6 @@ fn replay_literal(literal: ReplayLiteral) -> Result<Literal, ReplayError> {
             Literal::Float(ordered_float::OrderedFloat(f64::from_bits(bits)))
         }
         ReplayLiteral::String(value) => Literal::String(value.to_string()),
-        ReplayLiteral::Internal(value) => {
-            return Err(ReplayError::Unsupported(format!(
-                "internal replay literal {value} has no source representation"
-            )));
-        }
     })
 }
 

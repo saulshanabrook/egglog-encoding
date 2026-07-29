@@ -10,9 +10,6 @@ pub enum ReplayLiteral {
     I64(i64),
     F64(u64),
     String(Arc<str>),
-    /// Embeddings may reserve stable literal ordinals without exposing a
-    /// runtime [`Value`] from the recorded database.
-    Internal(u64),
 }
 
 /// One compact typed node in the replay-term DAG.
@@ -34,10 +31,9 @@ pub struct ReplayConstructorSpec {
     pub result_sort: ReplaySortId,
     pub op: ReplayOpId,
     pub child_sorts: Box<[ReplaySortId]>,
-    /// Promote successful calls before later query guards run. Container
-    /// primitives need this because native interning is globally visible even
-    /// when the surrounding rule match subsequently fails.
-    pub promote_immediately: bool,
+    /// Whether a container primitive's structural version is anchored as soon
+    /// as the primitive returns, before later query guards can reject the lane.
+    anchor_on_primitive_return: bool,
     /// Physical registry type for a container result. This is intentionally
     /// absent for ordinary e-class constructors and base-value primitives.
     pub(super) container_type: Option<TypeId>,
@@ -53,19 +49,29 @@ impl ReplayConstructorSpec {
             result_sort,
             op,
             child_sorts: child_sorts.into_iter().collect(),
-            promote_immediately: false,
+            anchor_on_primitive_return: false,
             container_type: None,
         }
-    }
-
-    pub fn with_immediate_promotion(mut self) -> Self {
-        self.promote_immediately = true;
-        self
     }
 
     pub fn with_container_type(mut self, container_type: TypeId) -> Self {
         self.container_type = Some(container_type);
         self
+    }
+
+    /// Mark a container-producing primitive for immediate version anchoring.
+    ///
+    /// Combining the timing policy with its physical container type makes the
+    /// invalid state “immediate promotion without a container” unrepresentable.
+    pub fn with_immediate_container_promotion(mut self, container_type: TypeId) -> Self {
+        self.container_type = Some(container_type);
+        self.anchor_on_primitive_return = true;
+        self
+    }
+
+    /// Whether this specification anchors a container primitive on return.
+    pub fn anchors_on_primitive_return(&self) -> bool {
+        self.anchor_on_primitive_return
     }
 }
 
@@ -159,10 +165,6 @@ impl TermInterner {
 
     pub(super) fn node(&self, id: ReplayTermId) -> Option<ReplayTerm> {
         self.nodes.read().unwrap().get(&id).cloned()
-    }
-
-    pub(super) fn lookup_node(&self, node: &ReplayTerm) -> Option<ReplayTermId> {
-        self.by_node.read().unwrap().get(node).copied()
     }
 
     pub(super) fn install_value(
