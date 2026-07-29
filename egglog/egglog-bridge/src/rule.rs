@@ -10,7 +10,7 @@ use crate::core_relations;
 use crate::core_relations::{
     ColumnId, Constraint, CounterId, CriterionCaptureSpec as CoreCriterionCaptureSpec,
     CriterionEndpointSource, ExternalFunctionId, FiringCaptureSpec as CoreFiringCaptureSpec,
-    PlanStrategy, QueryBuilder, ReplayConstructorSpec, ReplaySortId, ReplayTermId, RuleBindingSpec,
+    PlanStrategy, QueryBuilder, ReplayCallSpec, ReplaySortId, ReplayTermId, RuleBindingSpec,
     RuleBuilder as CoreRuleBuilder, RuleSetBuilder, SourceRef, TableId, Value, WriteVal,
 };
 use crate::numeric_id::{DenseIdMap, NumericId, define_id};
@@ -513,7 +513,7 @@ impl RuleBuilder<'_> {
         func: ExternalFunctionId,
         args: &[QueryEntry],
         ret_ty: ColumnTy,
-        replay: Option<ReplayConstructorSpec>,
+        replay: Option<ReplayCallSpec>,
         panic_msg: impl FnOnce() -> String + 'static + Send,
     ) -> Variable {
         let args = args.to_vec();
@@ -593,7 +593,7 @@ impl RuleBuilder<'_> {
         entries: &[QueryEntry],
         // NB: not clear if we still need this now that proof checker is in a separate crate.
         _ret_ty: ColumnTy,
-        replay: Option<ReplayConstructorSpec>,
+        replay: Option<ReplayCallSpec>,
     ) -> Result<()> {
         let entries = entries.to_vec();
         self.query.add_rule.push(Box::new(move |inner, rb| {

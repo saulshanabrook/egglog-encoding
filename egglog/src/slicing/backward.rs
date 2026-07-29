@@ -29,9 +29,9 @@ use std::collections::VecDeque;
 use crate::core_relations::{
     AppliedEqualityId, CauseId, CauseRef, Criterion, CriterionEndpointOccurrence, EqualityEndpoint,
     EqualityReason, FactCellRef, FactId, FiringEqualitySource, FiringId, HistoryPosition,
-    PremiseOccurrence, ProjectedAppliedEquality, RawCause, RawEqualityEndpoint, RawEqualitySupport,
-    ReplayAliasPlan, ReplayTableKind, ReplayTermId, SourceRef, TableId, TraceView, TraceViewError,
-    TypedCellEquality, Value,
+    PremiseOccurrence, ProjectedEqualityProposal, RawCause, RawEqualityEndpoint,
+    RawEqualitySupport, ReplayAliasPlan, ReplayTableKind, ReplayTermId, SourceRef, TableId,
+    TraceView, TraceViewError, TypedCellEquality, Value,
 };
 use crate::numeric_id::NumericId;
 use crate::util::{HashMap, HashSet};
@@ -62,7 +62,7 @@ struct SelectionState {
     replay_facts: HashSet<FactId>,
     rekeys: HashSet<HistoryPosition>,
     causes: HashSet<CauseRef>,
-    equality_records: HashMap<AppliedEqualityId, ProjectedAppliedEquality>,
+    equality_records: HashMap<AppliedEqualityId, ProjectedEqualityProposal>,
 }
 
 #[derive(Debug)]
@@ -710,7 +710,7 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                     )?;
                     let firing = view.firing(id)?;
                     let rule = firing.rule;
-                    let position = firing.position;
+                    let history_cutoff = firing.history_cutoff;
                     let premises = firing.premises.to_vec();
                     let merge_reads = firing.merge_reads.to_vec();
                     work.extend(premises.iter().copied().map(Work::Fact));
@@ -731,7 +731,7 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                         .insert(id, bindings.into_boxed_slice());
                     for (left, right) in view.rule_equality_layout(rule)?.iter().copied() {
                         let support =
-                            explain_rule_equality(view, left, right, &premises, position)?;
+                            explain_rule_equality(view, left, right, &premises, history_cutoff)?;
                         enqueue_support(&mut work, support);
                     }
                 }

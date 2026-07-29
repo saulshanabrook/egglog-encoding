@@ -20,7 +20,7 @@ use smallvec::SmallVec;
 
 use crate::{
     BaseValues, CauseDraftId, ContainerValues, EqualityEndpoint, ExternalFunctionId, FactId,
-    HistoryPosition, ReplayConstructorSpec, ReplaySortId, Trace, Wave, WrappedTable,
+    HistoryPosition, ReplayCallSpec, ReplaySortId, Trace, Wave, WrappedTable,
     common::Value,
     free_join::{CounterId, Counters, ExternalFunctions, TableId, TableInfo, Variable},
     pool::{Clear, Pooled, with_pool_set},
@@ -2155,7 +2155,7 @@ pub(crate) enum Instr {
     AnchorContainerCall {
         args: Vec<QueryEntry>,
         dst: Variable,
-        replay: Box<ReplayConstructorSpec>,
+        replay: Box<ReplayCallSpec>,
         origin: Option<TermOriginSiteId>,
     },
 

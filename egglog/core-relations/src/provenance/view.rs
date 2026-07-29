@@ -299,7 +299,7 @@ impl<'a> TermProjector<'a> {
                             )
                             .and_then(Option::as_ref)
                             .ok_or_else(|| format!("unknown firing {firing_id:?}"))?
-                            .position,
+                            .history_cutoff,
                         true,
                     ),
                     TemplateOwner::Fact(fact) => (
@@ -697,8 +697,8 @@ impl<'a> TraceView<'a> {
     ///
     /// `premises` are the matched fact occurrences in the rule's premise
     /// order. `merge_reads` are additional prior rows consulted by effective
-    /// merge callbacks. The recorded history position bounds every explanation
-    /// of what the firing observed, including its derived equality prefix.
+    /// merge callbacks. The sampled history cutoff bounds every explanation of
+    /// what the firing observed, including its derived equality prefix.
     pub fn firing(&self, id: FiringId) -> Result<Firing<'a>, TraceViewError> {
         if id.get() == 0 {
             return Err(TraceViewError::UnknownFiring(id));
@@ -717,7 +717,7 @@ impl<'a> TraceView<'a> {
         Ok(Firing {
             rule: firing.rule,
             wave: firing.wave,
-            position: firing.position,
+            history_cutoff: firing.history_cutoff,
             premises: &self.arena.durable_premises[firing.premises.as_range()],
             merge_reads,
         })
@@ -745,14 +745,14 @@ impl<'a> TraceView<'a> {
             } => RawCause::Rebuild {
                 prior_fact: *prior_fact,
                 position: *position,
-                equalities: &self.arena.durable_rebuild_equalities[equalities.as_range()],
+                equalities: &self.arena.durable_cell_equalities[equalities.as_range()],
             },
             DurableCause::ContainerCanonicalize {
                 position,
                 equalities,
             } => RawCause::ContainerCanonicalize {
                 position: *position,
-                equalities: &self.arena.durable_rebuild_equalities[equalities.as_range()],
+                equalities: &self.arena.durable_cell_equalities[equalities.as_range()],
             },
             DurableCause::ContainerRefresh {
                 prior_fact,
@@ -761,7 +761,7 @@ impl<'a> TraceView<'a> {
             } => RawCause::ContainerRefresh {
                 prior_fact: *prior_fact,
                 position: *position,
-                equalities: &self.arena.durable_rebuild_equalities[equalities.as_range()],
+                equalities: &self.arena.durable_cell_equalities[equalities.as_range()],
             },
             DurableCause::Merge {
                 incoming,
@@ -808,16 +808,16 @@ impl<'a> TraceView<'a> {
         })
     }
 
-    /// Return an applied equality with lazily reconstructed structural
-    /// endpoints.
+    /// Return the lazily reconstructed structural proposal for an applied equality.
     ///
     /// Projection follows the event's retained cause/origin metadata and
-    /// memoizes only the selected fact and firing terms. The native edge and
-    /// reason are identical to [`TraceView::applied_equality`].
+    /// memoizes only the selected fact and firing terms. The result preserves
+    /// the exact reason; the native edge and event position remain available
+    /// from [`TraceView::applied_equality`].
     pub fn project_applied_equality(
         &mut self,
         id: AppliedEqualityId,
-    ) -> Result<ProjectedAppliedEquality, TraceViewError> {
+    ) -> Result<ProjectedEqualityProposal, TraceViewError> {
         if id.get() == 0 {
             return Err(TraceViewError::UnknownEquality(id));
         }
@@ -835,7 +835,7 @@ impl<'a> TraceView<'a> {
             .projector
             .equality_endpoint(event.proposal.right, event.cause, event.position)
             .map_err(TraceViewError::Invalid)?;
-        Ok(ProjectedAppliedEquality {
+        Ok(ProjectedEqualityProposal {
             left,
             right,
             reason: self.arena.equality_reason(event.cause),
@@ -928,7 +928,7 @@ impl<'a> TraceView<'a> {
     ///
     /// The shared slice is source metadata, not a record of which equalities a
     /// particular firing required. Historical support is computed lazily at
-    /// that firing's history position.
+    /// that firing's history cutoff.
     pub fn rule_equality_layout(
         &self,
         rule: u32,
@@ -990,7 +990,7 @@ impl<'a> TraceView<'a> {
     }
 
     /// Establish that one complete grounded binding can be named by `let-check`
-    /// at the match's historical position. Unlike equality explanation this
+    /// at the match's sampled history cutoff. Unlike equality explanation this
     /// asks only for structural availability: pure calls and ordered
     /// containers are recomputed from their children, while every table
     /// constructor must have one exact live producer row.
@@ -999,9 +999,9 @@ impl<'a> TraceView<'a> {
         id: FiringId,
         binding: usize,
     ) -> Result<RawTermAvailability, TraceViewError> {
-        let (rule, position, premises) = {
+        let (rule, history_cutoff, premises) = {
             let firing = self.firing(id)?;
-            (firing.rule, firing.position, firing.premises.to_vec())
+            (firing.rule, firing.history_cutoff, firing.premises.to_vec())
         };
         let binding_source = self
             .binding_recipes
@@ -1024,7 +1024,7 @@ impl<'a> TraceView<'a> {
                         fact,
                         column: crate::ColumnId::from_usize(representative.column),
                     },
-                    position,
+                    history_cutoff,
                 )?)
             }
             ReplayBindingSource::Current { .. } | ReplayBindingSource::Constant { .. } => None,
@@ -1043,13 +1043,13 @@ impl<'a> TraceView<'a> {
                 self.explain_anchored_term_availability_at(
                     endpoint,
                     anchor,
-                    position,
+                    history_cutoff,
                 )
             } else {
                 let mut aliases = Vec::new();
                 let support = self.explain_structural_term_availability_at(
                     term,
-                    position,
+                    history_cutoff,
                     0,
                     &mut aliases,
                     None,

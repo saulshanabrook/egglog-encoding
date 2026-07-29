@@ -157,8 +157,8 @@ fn grounded_wave_point_probes_every_match_before_running_any_head_without_planni
         (builder.build(), value_var, id_var)
     };
 
-    let firing = |match_id, value_arg, id_arg| GroundedRuleRun {
-        match_id,
+    let firing = |invocation_ordinal, value_arg, id_arg| GroundedRuleRun {
+        invocation_ordinal,
         rule,
         bindings: vec![
             GroundedRuleBinding {
@@ -181,7 +181,7 @@ fn grounded_wave_point_probes_every_match_before_running_any_head_without_planni
         .unwrap_err();
     assert_eq!(
         error.to_string(),
-        "grounded matches must be in strict MatchId order; observed 11 followed by 10"
+        "grounded invocation ordinals must be strictly increasing; observed 11 followed by 10"
     );
     assert_eq!(head_calls.load(Ordering::Relaxed), 0);
 
@@ -244,8 +244,8 @@ fn grounded_wave_uses_one_common_prestate_and_reports_committed_matches() {
         };
         (builder.build(), value, id, target)
     };
-    let firing = |match_id, value_arg, id_arg, target_arg| GroundedRuleRun {
-        match_id,
+    let firing = |invocation_ordinal, value_arg, id_arg, target_arg| GroundedRuleRun {
+        invocation_ordinal,
         rule,
         bindings: vec![
             GroundedRuleBinding {
@@ -339,8 +339,8 @@ fn grounded_wave_guard_failure_runs_no_head() {
         };
         (builder.build(), value, id)
     };
-    let firing = |match_id, value_arg, id_arg| GroundedRuleRun {
-        match_id,
+    let firing = |invocation_ordinal, value_arg, id_arg| GroundedRuleRun {
+        invocation_ordinal,
         rule,
         bindings: vec![
             GroundedRuleBinding {
@@ -415,9 +415,9 @@ fn grounded_wave_head_failure_aborts_earlier_staged_mutations() {
     };
     let (write_rule, write_key, write_id) = build(&mut egraph, "grounded-write", false);
     let (fail_rule, fail_key, fail_id) = build(&mut egraph, "grounded-fail", true);
-    let firing =
-        |match_id, rule, key_variable: &Variable, id_variable: &Variable| GroundedRuleRun {
-            match_id,
+    let firing = |invocation_ordinal, rule, key_variable: &Variable, id_variable: &Variable| {
+        GroundedRuleRun {
+            invocation_ordinal,
             rule,
             bindings: vec![
                 GroundedRuleBinding {
@@ -432,7 +432,8 @@ fn grounded_wave_head_failure_aborts_earlier_staged_mutations() {
                 },
             ]
             .into_boxed_slice(),
-        };
+        }
+    };
 
     let error = egraph
         .run_grounded_wave(&[
@@ -509,7 +510,7 @@ fn grounded_wave_resolves_proof_like_probe_dependencies_without_supplied_proof_v
 
     let report = egraph
         .run_grounded_wave(&[GroundedRuleRun {
-            match_id: 40,
+            invocation_ordinal: 40,
             rule,
             bindings: vec![GroundedRuleBinding {
                 variable: key_variable.id,
@@ -589,7 +590,7 @@ fn grounded_wave_computes_hidden_primitive_keys_before_point_probes() {
 
     egraph
         .run_grounded_wave(&[GroundedRuleRun {
-            match_id: 41,
+            invocation_ordinal: 41,
             rule,
             bindings: vec![GroundedRuleBinding {
                 variable: seed_variable.id,
@@ -671,7 +672,7 @@ fn grounded_wave_handles_reverse_primitive_dependency_order() {
 
     let error = egraph
         .run_grounded_wave(&[GroundedRuleRun {
-            match_id: 42,
+            invocation_ordinal: 42,
             rule,
             bindings: vec![binding(&seed, seven), binding(&x, eight)].into_boxed_slice(),
         }])
@@ -681,7 +682,7 @@ fn grounded_wave_handles_reverse_primitive_dependency_order() {
 
     egraph
         .run_grounded_wave(&[GroundedRuleRun {
-            match_id: 43,
+            invocation_ordinal: 43,
             rule,
             bindings: vec![binding(&seed, seven)].into_boxed_slice(),
         }])

@@ -20,7 +20,7 @@ use super::{Database, TableId, Variable};
 #[derive(Clone, Debug)]
 #[doc(hidden)]
 pub struct GroundedRuleMatch {
-    pub match_id: u64,
+    pub invocation_ordinal: u64,
     pub rule: Arc<GroundedRule>,
     pub bindings: Box<[(Variable, Value)]>,
 }
@@ -34,55 +34,70 @@ pub struct GroundedRuleRunOutcome {
     pub merge_time: Duration,
 }
 
-/// A grounded firing did not exactly match its declared pre-wave witness.
+/// A grounded invocation did not exactly match its declared pre-wave witness.
 #[derive(Debug, Error)]
 #[doc(hidden)]
 pub enum GroundedRuleRunError {
     #[error(
-        "grounded matches must be in strict MatchId order; observed {previous} followed by {current}"
+        "grounded invocation ordinals must be strictly increasing; observed {previous} followed by {current}"
     )]
-    MatchOrder { previous: u64, current: u64 },
-    #[error("grounded match {match_id} binds variable {variable:?} more than once")]
-    DuplicateBinding { match_id: u64, variable: Variable },
-    #[error("grounded match {match_id} premise {premise} has unbound key variable {variable:?}")]
+    InvocationOrder { previous: u64, current: u64 },
+    #[error("grounded invocation {invocation_ordinal} binds variable {variable:?} more than once")]
+    DuplicateBinding {
+        invocation_ordinal: u64,
+        variable: Variable,
+    },
+    #[error(
+        "grounded invocation {invocation_ordinal} premise {premise} has unbound key variable {variable:?}"
+    )]
     UnboundPremiseKey {
-        match_id: u64,
+        invocation_ordinal: u64,
         premise: usize,
         variable: Variable,
     },
     #[error(
-        "grounded match {match_id} body instruction {instruction} has unbound input variable {variable:?}"
+        "grounded invocation {invocation_ordinal} body instruction {instruction} has unbound input variable {variable:?}"
     )]
     UnboundBodyInput {
-        match_id: u64,
+        invocation_ordinal: u64,
         instruction: usize,
         variable: Variable,
     },
     #[error(
-        "grounded match {match_id} premise {premise} is absent from table {table:?} at key {key:?}"
+        "grounded invocation {invocation_ordinal} premise {premise} is absent from table {table:?} at key {key:?}"
     )]
     MissingPremise {
-        match_id: u64,
+        invocation_ordinal: u64,
         premise: usize,
         table: TableId,
         key: Box<[Value]>,
     },
-    #[error("grounded match {match_id} premise {premise} column {column} does not match")]
+    #[error(
+        "grounded invocation {invocation_ordinal} premise {premise} column {column} does not match"
+    )]
     PremiseMismatch {
-        match_id: u64,
+        invocation_ordinal: u64,
         premise: usize,
         column: usize,
     },
-    #[error("grounded match {match_id} body guard rejected its declared bindings")]
-    GuardRejected { match_id: u64 },
-    #[error("grounded match {match_id} body guard attempted to mutate the database")]
-    MutatingGuard { match_id: u64 },
-    #[error("grounded match {match_id} changed supplied variable {variable:?}")]
-    BindingMismatch { match_id: u64, variable: Variable },
-    #[error("grounded match {match_id} did not bind required head variable {variable:?}")]
-    UnboundHeadVariable { match_id: u64, variable: Variable },
-    #[error("grounded match {match_id} head did not complete exactly once")]
-    HeadRejected { match_id: u64 },
+    #[error("grounded invocation {invocation_ordinal} body guard rejected its declared bindings")]
+    GuardRejected { invocation_ordinal: u64 },
+    #[error("grounded invocation {invocation_ordinal} body guard attempted to mutate the database")]
+    MutatingGuard { invocation_ordinal: u64 },
+    #[error("grounded invocation {invocation_ordinal} changed supplied variable {variable:?}")]
+    BindingMismatch {
+        invocation_ordinal: u64,
+        variable: Variable,
+    },
+    #[error(
+        "grounded invocation {invocation_ordinal} did not bind required head variable {variable:?}"
+    )]
+    UnboundHeadVariable {
+        invocation_ordinal: u64,
+        variable: Variable,
+    },
+    #[error("grounded invocation {invocation_ordinal} head did not complete exactly once")]
+    HeadRejected { invocation_ordinal: u64 },
     #[error("grounded execution cannot record causal trace")]
     TraceUnsupported,
     #[error("grounded execution was rejected before publishing staged heads")]
@@ -90,15 +105,15 @@ pub enum GroundedRuleRunError {
 }
 
 impl Database {
-    /// Validate and execute a list of exact grounded rule matches without
+    /// Validate and execute a list of exact grounded rule invocations without
     /// constructing or consulting a query plan.
     ///
     /// Every premise and body guard is checked against the same committed
     /// pre-wave view before any head runs. Heads then execute in the supplied
-    /// MatchId order and publish through one mutation transaction and one merge
-    /// barrier. `allow_commit` lets an embedding inspect side channels (notably
-    /// callback panics) before any staged table or union-find mutation becomes
-    /// visible.
+    /// invocation-ordinal order and publish through one mutation transaction
+    /// and one merge barrier. `allow_commit` lets an embedding inspect side
+    /// channels (notably callback panics) before any staged table or union-find
+    /// mutation becomes visible.
     #[doc(hidden)]
     pub fn run_grounded_rule_batch(
         &mut self,
@@ -109,10 +124,10 @@ impl Database {
             return Err(GroundedRuleRunError::TraceUnsupported);
         }
         for pair in firings.windows(2) {
-            if pair[0].match_id >= pair[1].match_id {
-                return Err(GroundedRuleRunError::MatchOrder {
-                    previous: pair[0].match_id,
-                    current: pair[1].match_id,
+            if pair[0].invocation_ordinal >= pair[1].invocation_ordinal {
+                return Err(GroundedRuleRunError::InvocationOrder {
+                    previous: pair[0].invocation_ordinal,
+                    current: pair[1].invocation_ordinal,
                 });
             }
         }
@@ -126,7 +141,7 @@ impl Database {
                 for (variable, value) in firing.bindings.iter().copied() {
                     if bindings.get(variable).is_some() {
                         return Err(GroundedRuleRunError::DuplicateBinding {
-                            match_id: firing.match_id,
+                            invocation_ordinal: firing.invocation_ordinal,
                             variable,
                         });
                     }
@@ -156,7 +171,7 @@ impl Database {
                             || probe.entries.len() != table.spec.arity()
                         {
                             return Err(GroundedRuleRunError::PremiseMismatch {
-                                match_id: firing.match_id,
+                                invocation_ordinal: firing.invocation_ordinal,
                                 premise,
                                 column: 0,
                             });
@@ -185,7 +200,7 @@ impl Database {
                         }
                         let row = table.table.get_row(&key).ok_or_else(|| {
                             GroundedRuleRunError::MissingPremise {
-                                match_id: firing.match_id,
+                                invocation_ordinal: firing.invocation_ordinal,
                                 premise,
                                 table: probe.table,
                                 key: key.clone().into_vec().into_boxed_slice(),
@@ -200,7 +215,7 @@ impl Database {
                             match entry {
                                 QueryEntry::Const(expected) if *expected != observed => {
                                     return Err(GroundedRuleRunError::PremiseMismatch {
-                                        match_id: firing.match_id,
+                                        invocation_ordinal: firing.invocation_ordinal,
                                         premise,
                                         column,
                                     });
@@ -214,7 +229,7 @@ impl Database {
                                     {
                                         if expected != observed {
                                             return Err(GroundedRuleRunError::PremiseMismatch {
-                                                match_id: firing.match_id,
+                                                invocation_ordinal: firing.invocation_ordinal,
                                                 premise,
                                                 column,
                                             });
@@ -242,12 +257,12 @@ impl Database {
                             state.run_instrs(std::slice::from_ref(instr), &mut bindings);
                         if state.changed {
                             return Err(GroundedRuleRunError::MutatingGuard {
-                                match_id: firing.match_id,
+                                invocation_ordinal: firing.invocation_ordinal,
                             });
                         }
                         if succeeded != 1 {
                             return Err(GroundedRuleRunError::GuardRejected {
-                                match_id: firing.match_id,
+                                invocation_ordinal: firing.invocation_ordinal,
                             });
                         }
                         progressed = true;
@@ -258,7 +273,7 @@ impl Database {
                     }
                     if let Some((premise, variable)) = first_unbound_probe {
                         return Err(GroundedRuleRunError::UnboundPremiseKey {
-                            match_id: firing.match_id,
+                            invocation_ordinal: firing.invocation_ordinal,
                             premise,
                             variable,
                         });
@@ -266,7 +281,7 @@ impl Database {
                     let (instruction, variable) = first_unbound_instr
                         .expect("nonempty grounded dependency frontier has one missing input");
                     return Err(GroundedRuleRunError::UnboundBodyInput {
-                        match_id: firing.match_id,
+                        invocation_ordinal: firing.invocation_ordinal,
                         instruction,
                         variable,
                     });
@@ -275,7 +290,7 @@ impl Database {
                 for (variable, expected) in firing.bindings.iter().copied() {
                     if bindings.get(variable) != Some(std::slice::from_ref(&expected)) {
                         return Err(GroundedRuleRunError::BindingMismatch {
-                            match_id: firing.match_id,
+                            invocation_ordinal: firing.invocation_ordinal,
                             variable,
                         });
                     }
@@ -283,21 +298,25 @@ impl Database {
                 for variable in firing.rule.action.used_vars.iter().copied() {
                     if bindings.get(variable).is_none() {
                         return Err(GroundedRuleRunError::UnboundHeadVariable {
-                            match_id: firing.match_id,
+                            invocation_ordinal: firing.invocation_ordinal,
                             variable,
                         });
                     }
                 }
-                prepared.push((firing.match_id, Arc::clone(&firing.rule), bindings));
+                prepared.push((
+                    firing.invocation_ordinal,
+                    Arc::clone(&firing.rule),
+                    bindings,
+                ));
             }
 
             let mut state = ExecutionState::new(self.read_only_view(), Default::default());
             state.defer_mutations_until(transaction.clone());
-            for (match_id, rule, mut bindings) in prepared {
+            for (invocation_ordinal, rule, mut bindings) in prepared {
                 let succeeded =
                     state.run_instrs(&rule.action.instrs[rule.body_end..], &mut bindings);
                 if succeeded != 1 || state.should_stop() {
-                    return Err(GroundedRuleRunError::HeadRejected { match_id });
+                    return Err(GroundedRuleRunError::HeadRejected { invocation_ordinal });
                 }
             }
             let changed = state.changed;

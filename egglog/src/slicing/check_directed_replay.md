@@ -128,7 +128,7 @@ not a proof object.
 Replay lowering copies the selection into an owned, graph-neutral program and
 then lowers that program to ordinary [`Command`] values. Backend IDs,
 recording-graph values, trace handles, and borrows do not cross into the fresh
-graph. Literal values remain source literals; constructor-valued bindings are
+graph. Literal values remain source literals; structural-call-valued bindings are
 re-established through checked `let-check` aliases.
 
 Selected firings are emitted as grounded `run-rule` configurations. Firings

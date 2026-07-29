@@ -48,7 +48,7 @@ use egglog_ast::util::ListDisplay;
 pub use egglog_backend_trait::{Backend, BackendExt};
 use egglog_backend_trait::{
     CriterionCapturePremise, CriterionCaptureSpec, FiringCaptureBinding, FiringCaptureSpec,
-    FunctionReplaySpec, ReadMode, ReplayConstructorSpec, ReplayLiteral, ReplayOpId, ReplaySortId,
+    FunctionReplaySpec, ReadMode, ReplayCallSpec, ReplayLiteral, ReplayOpId, ReplaySortId,
     ReplayTableKind, ReplayTermId, RuleActionCall, RuleBodyCall, RuleCaptureSpec, RuleSetRun,
     RuleSpec, RuleValue, RuleVar, SourceCaptureSpec, SourceRef,
 };
@@ -670,8 +670,7 @@ impl CaptureCatalog {
                 output: output_names[0].clone(),
             };
             let op = self.op_id(key);
-            let replay =
-                ReplayConstructorSpec::new(output_sorts[0], op, input_sorts.iter().copied());
+            let replay = ReplayCallSpec::new(output_sorts[0], op, input_sorts.iter().copied());
             if schema.outputs[0].is_container_sort() {
                 replay.with_container_type(
                     schema.outputs[0]
@@ -720,7 +719,7 @@ impl CaptureCatalog {
     fn primitive_spec(
         &self,
         primitive: &core::SpecializedPrimitive,
-    ) -> Option<Arc<ReplayConstructorSpec>> {
+    ) -> Option<Arc<ReplayCallSpec>> {
         if !primitive.is_pure() || primitive.validator().is_none() {
             return None;
         }
@@ -731,7 +730,7 @@ impl CaptureCatalog {
             .iter()
             .map(|sort| self.sort_ids.get(sort.name()).copied())
             .collect::<Option<Vec<_>>>()?;
-        let replay = ReplayConstructorSpec::new(result_sort, op, child_sorts);
+        let replay = ReplayCallSpec::new(result_sort, op, child_sorts);
         Some(Arc::new(if primitive.output().is_container_sort() {
             replay.with_primitive_return_anchor(
                 primitive
@@ -2454,7 +2453,7 @@ impl EGraph {
                 Error::BackendError("run-rule requires the concrete main bridge backend".into())
             })?;
         let mut firings = Vec::with_capacity(pending.len());
-        for (index, (name, rule, canonical)) in pending.into_iter().enumerate() {
+        for (invocation_ordinal, (name, rule, canonical)) in pending.into_iter().enumerate() {
             let variables = bridge
                 .grounded_rule_variables(rule)
                 .map_err(|error| Error::BackendError(error.to_string()))?;
@@ -2484,7 +2483,7 @@ impl EGraph {
                 });
             }
             firings.push(egglog_bridge::GroundedRuleRun {
-                match_id: index as u64,
+                invocation_ordinal: invocation_ordinal as u64,
                 rule,
                 bindings: bindings.into_boxed_slice(),
             });
@@ -5584,7 +5583,7 @@ type LoweredPrimitive = (
     ExternalFunctionId,
     Vec<core::GenericAtomTerm<RuleVar, RuleValue>>,
     ColumnTy,
-    Option<Arc<ReplayConstructorSpec>>,
+    Option<Arc<ReplayCallSpec>>,
 );
 
 struct BackendRule<'a> {

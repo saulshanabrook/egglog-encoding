@@ -1,12 +1,12 @@
 use super::*;
 use egglog_backend_trait::{
-    CriterionCaptureSpec, FiringCaptureSpec, ReplayConstructorSpec, ReplayOpId, ReplaySortId,
+    CriterionCaptureSpec, FiringCaptureSpec, ReplayCallSpec, ReplayOpId, ReplaySortId,
     RuleCaptureSpec, SourceCaptureSpec, SourceRef,
 };
 
 #[test]
 fn add_rule_rejects_trace_capture_metadata_before_mutation() {
-    let replay = Arc::new(ReplayConstructorSpec::new(
+    let replay = Arc::new(ReplayCallSpec::new(
         ReplaySortId::new(0),
         ReplayOpId::new(0),
         [],

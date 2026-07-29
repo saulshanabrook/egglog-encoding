@@ -26,8 +26,8 @@ use crate::core_relations::{
 use crate::numeric_id::{DenseIdMap, DenseIdMapWithReuse, NumericId, define_id};
 use egglog_core_relations as core_relations;
 pub use egglog_core_relations::{
-    ReplayConstructorSpec, ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTableKind, ReplayTermId,
-    Trace, TraceView, TraceViewError, Wave,
+    ReplayCallSpec, ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTableKind, ReplayTermId, Trace,
+    TraceView, TraceViewError, Wave,
 };
 use egglog_numeric_id as numeric_id;
 use egglog_reports::{IterationReport, PreMergeTiming, ReportLevel, RuleSetReport};
@@ -280,7 +280,7 @@ fn validate_replay_merge_origins(
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FunctionReplaySpec {
     pub logical_sorts: Box<[ReplaySortId]>,
-    pub constructor: Option<ReplayConstructorSpec>,
+    pub constructor: Option<ReplayCallSpec>,
     pub table_kind: ReplayTableKind,
 }
 
@@ -309,7 +309,7 @@ impl SourceInputRow {
 impl FunctionReplaySpec {
     pub fn new(
         logical_sorts: impl IntoIterator<Item = ReplaySortId>,
-        constructor: Option<ReplayConstructorSpec>,
+        constructor: Option<ReplayCallSpec>,
     ) -> Self {
         Self {
             logical_sorts: logical_sorts.into_iter().collect(),

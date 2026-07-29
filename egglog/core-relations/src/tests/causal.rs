@@ -11,7 +11,7 @@ use std::{
 use crate::provenance::{RowOriginSpec, TermOriginSpec, TermTemplate};
 use crate::{
     CriterionCaptureSpec, CriterionEndpointSource, FactId, FiringCaptureSpec, MergeOriginSelector,
-    ReplayConstructorSpec, ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTableKind, ReplayTerm,
+    ReplayCallSpec, ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTableKind, ReplayTerm,
     RowOriginSiteId, SourceRef, Trace, Wave,
     action::{ExecutionState, Instr},
     free_join::plan::{JoinStage, MatScanMode, Plan},
@@ -309,7 +309,7 @@ fn causal_trace_record_only_effective_constructor_and_union_commits() {
             &[value.into()],
             &[WriteVal::IncCounter(fresh), Value::new(1).into()],
             ColumnId::new(1),
-            ReplayConstructorSpec::new(node_sort, node_op, [value_sort]),
+            ReplayCallSpec::new(node_sort, node_op, [value_sort]),
         )
         .unwrap();
     action
@@ -425,7 +425,7 @@ fn causal_trace_record_only_effective_constructor_and_union_commits() {
             &[consumed_value.into()],
             &[WriteVal::IncCounter(fresh), Value::new(2).into()],
             ColumnId::new(1),
-            ReplayConstructorSpec::new(node_sort, node_op, [value_sort]),
+            ReplayCallSpec::new(node_sort, node_op, [value_sort]),
         )
         .unwrap();
     action
@@ -2040,7 +2040,7 @@ fn causal_trace_capture_exact_rhs_producer_term_not_global_alias() {
     trace
         .register_table_constructor(
             constructor,
-            ReplayConstructorSpec::new(result_sort, op, [child_sort]),
+            ReplayCallSpec::new(result_sort, op, [child_sort]),
         )
         .unwrap();
     trace
@@ -2064,7 +2064,7 @@ fn causal_trace_capture_exact_rhs_producer_term_not_global_alias() {
             &[exact_child_value.into()],
             &[output_value.into(), Value::new(1).into()],
             ColumnId::new(1),
-            ReplayConstructorSpec::new(result_sort, op, [child_sort]),
+            ReplayCallSpec::new(result_sort, op, [child_sort]),
         )
         .unwrap();
     action.insert(derived, &[produced.into()]).unwrap();
@@ -2129,7 +2129,7 @@ fn capture_recipe_failure_precedes_catalog_and_rule_set_mutation() {
         &[],
         valid_before_failure,
         Some(
-            ReplayConstructorSpec::new(sort, op, iter::empty::<ReplaySortId>())
+            ReplayCallSpec::new(sort, op, iter::empty::<ReplaySortId>())
                 .with_primitive_return_anchor(TypeId::of::<Vec<Value>>()),
         ),
     );
@@ -2137,7 +2137,7 @@ fn capture_recipe_failure_precedes_catalog_and_rule_set_mutation() {
         &[missing.into()],
         destination,
         Some(
-            ReplayConstructorSpec::new(sort, op, [sort])
+            ReplayCallSpec::new(sort, op, [sort])
                 .with_primitive_return_anchor(TypeId::of::<Vec<Value>>()),
         ),
     );
@@ -2169,7 +2169,7 @@ fn capture_recipe_failure_precedes_catalog_and_rule_set_mutation() {
         &[],
         destination,
         Some(
-            ReplayConstructorSpec::new(sort, op, iter::empty::<ReplaySortId>())
+            ReplayCallSpec::new(sort, op, iter::empty::<ReplaySortId>())
                 .with_primitive_return_anchor(TypeId::of::<Vec<Value>>()),
         ),
     );
@@ -2221,7 +2221,7 @@ fn captureless_static_constructor_miss_fails_before_counter_or_rule_mutation() {
     let trace = db.try_enable_trace().unwrap();
     let sort = ReplaySortId::new(200);
     let op = ReplayOpId::new(200);
-    let replay = ReplayConstructorSpec::new(sort, op, iter::empty::<ReplaySortId>());
+    let replay = ReplayCallSpec::new(sort, op, iter::empty::<ReplaySortId>());
     trace
         .register_table_layout(constructor, &[Some(sort), None])
         .unwrap();
@@ -3466,7 +3466,7 @@ fn effective_constructor_rebuild_inherits_prior_terms_over_competing_alias() {
     trace
         .register_table_constructor(
             constructor,
-            ReplayConstructorSpec::new(result_sort, op, [child_sort]),
+            ReplayCallSpec::new(result_sort, op, [child_sort]),
         )
         .unwrap();
 

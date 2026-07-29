@@ -16,8 +16,8 @@ use crate::provenance::{
 };
 use crate::{
     BaseValueId, CounterId, CriterionCaptureSpec, CriterionEndpointSource, EqualityEndpoint,
-    ExternalFunctionId, FiringCaptureSpec, PoolSet, ReplayConstructorSpec, ReplaySortId,
-    RuleBindingSpec, SourceRef,
+    ExternalFunctionId, FiringCaptureSpec, PoolSet, ReplayCallSpec, ReplaySortId, RuleBindingSpec,
+    SourceRef,
     action::{Instr, QueryEntry, WriteVal},
     common::HashMap,
     free_join::{
@@ -633,7 +633,7 @@ enum RecipeExpr {
         sort: ReplaySortId,
     },
     Call {
-        replay: ReplayConstructorSpec,
+        replay: ReplayCallSpec,
         children: Arc<[RecipeRoot]>,
     },
 }
@@ -689,7 +689,7 @@ impl StaticRecipeDraft {
         trace: &crate::Trace,
         dst: Variable,
         args: &[QueryEntry],
-        replay: &ReplayConstructorSpec,
+        replay: &ReplayCallSpec,
     ) {
         let root = Arc::new(RecipeExpr::Call {
             replay: replay.clone(),
@@ -1917,7 +1917,7 @@ impl RuleBuilder<'_, '_> {
         args: &[QueryEntry],
         default_vals: &[WriteVal],
         dst_col: ColumnId,
-        replay: ReplayConstructorSpec,
+        replay: ReplayCallSpec,
     ) -> Result<Variable, QueryError> {
         let table_info = self.table_info(table);
         self.validate_keys(table, table_info, args)?;
@@ -2128,7 +2128,7 @@ impl RuleBuilder<'_, '_> {
         &mut self,
         func: ExternalFunctionId,
         args: &[QueryEntry],
-        replay: Option<ReplayConstructorSpec>,
+        replay: Option<ReplayCallSpec>,
     ) -> Result<Variable, QueryError> {
         let res = self.qb.new_var();
         self.qb.instrs.push(Instr::External {
@@ -2168,7 +2168,7 @@ impl RuleBuilder<'_, '_> {
         &mut self,
         args: &[QueryEntry],
         dst: Variable,
-        replay: Option<ReplayConstructorSpec>,
+        replay: Option<ReplayCallSpec>,
     ) {
         if let Some(replay) = replay {
             assert_eq!(

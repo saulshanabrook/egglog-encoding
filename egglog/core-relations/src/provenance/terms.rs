@@ -52,7 +52,7 @@ pub enum ReplayTerm {
 
 /// Static typing and capture policy for one structural call producer.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ReplayConstructorSpec {
+pub struct ReplayCallSpec {
     /// Logical sort produced by the call.
     pub result_sort: ReplaySortId,
     /// Frontend identity of the operation or constructor.
@@ -68,7 +68,7 @@ pub struct ReplayConstructorSpec {
     pub(super) container_type: Option<TypeId>,
 }
 
-impl ReplayConstructorSpec {
+impl ReplayCallSpec {
     /// Creates a static structural call specification with no container registry type.
     pub fn new(
         result_sort: ReplaySortId,
@@ -168,7 +168,7 @@ pub(super) struct TermInterner {
     pub(super) table_layouts: DashMap<TableId, Arc<[Option<ReplaySortId>]>>,
     pub(super) table_kinds: DashMap<TableId, ReplayTableKind>,
     pub(super) table_key_columns: DashMap<TableId, u16>,
-    pub(super) table_constructors: DashMap<TableId, ReplayConstructorSpec>,
+    pub(super) table_constructors: DashMap<TableId, ReplayCallSpec>,
     pub(super) table_merge_origins: DashMap<TableId, Arc<[MergeOriginSelector]>>,
     pub(super) table_merge_identity_guards: DashMap<TableId, (u16, u16)>,
     pub(super) container_type_by_sort: DashMap<ReplaySortId, TypeId>,
@@ -465,7 +465,7 @@ impl TermInterner {
     pub(super) fn register_table_constructor(
         &self,
         table: TableId,
-        constructor: ReplayConstructorSpec,
+        constructor: ReplayCallSpec,
     ) -> Result<(), &'static str> {
         match self.table_constructors.entry(table) {
             Entry::Occupied(entry) if entry.get() == &constructor => Ok(()),
@@ -494,12 +494,12 @@ impl TermInterner {
 
     pub(super) fn register_container_type(
         &self,
-        constructor: &ReplayConstructorSpec,
+        spec: &ReplayCallSpec,
     ) -> Result<(), &'static str> {
-        let Some(container_type) = constructor.container_type else {
+        let Some(container_type) = spec.container_type else {
             return Ok(());
         };
-        match self.container_type_by_sort.entry(constructor.result_sort) {
+        match self.container_type_by_sort.entry(spec.result_sort) {
             Entry::Occupied(entry) if *entry.get() == container_type => Ok(()),
             Entry::Occupied(_) => Err("replay sort has conflicting physical container types"),
             Entry::Vacant(entry) => {

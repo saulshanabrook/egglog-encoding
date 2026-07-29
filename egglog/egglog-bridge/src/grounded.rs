@@ -15,11 +15,13 @@ pub struct GroundedRuleBinding {
     pub value: Value,
 }
 
-/// One source-ordered grounded firing. A wave must be strictly ordered by
-/// `match_id` and is validated atomically against one pre-wave snapshot.
+/// One source-ordered grounded invocation.
+///
+/// A wave must have strictly increasing [`GroundedRuleRun::invocation_ordinal`]
+/// values and is validated atomically against one pre-wave snapshot.
 #[derive(Clone, Debug)]
 pub struct GroundedRuleRun {
-    pub match_id: u64,
+    pub invocation_ordinal: u64,
     pub rule: RuleId,
     pub bindings: Box<[GroundedRuleBinding]>,
 }
@@ -82,30 +84,30 @@ impl EGraph {
                     .grounded_variable_type(binding.variable)
                     .ok_or_else(|| {
                         anyhow::anyhow!(
-                            "grounded match {} binds unknown variable {:?}",
-                            firing.match_id,
+                            "grounded invocation {} binds unknown variable {:?}",
+                            firing.invocation_ordinal,
                             binding.variable
                         )
                     })?;
                 anyhow::ensure!(
                     expected == binding.ty,
-                    "grounded match {} binds variable {:?} as {:?}, expected {:?}",
-                    firing.match_id,
+                    "grounded invocation {} binds variable {:?} as {:?}, expected {:?}",
+                    firing.invocation_ordinal,
                     binding.variable,
                     binding.ty,
                     expected
                 );
                 let variable = grounded.variables.get(binding.variable).ok_or_else(|| {
                     anyhow::anyhow!(
-                        "grounded match {} has no compiled slot for variable {:?}",
-                        firing.match_id,
+                        "grounded invocation {} has no compiled slot for variable {:?}",
+                        firing.invocation_ordinal,
                         binding.variable
                     )
                 })?;
                 bindings.push((*variable, binding.value));
             }
             core_firings.push(core_relations::GroundedRuleMatch {
-                match_id: firing.match_id,
+                invocation_ordinal: firing.invocation_ordinal,
                 rule: Arc::clone(&grounded.rule),
                 bindings: bindings.into_boxed_slice(),
             });

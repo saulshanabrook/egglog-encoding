@@ -20,7 +20,7 @@
 //! rewrite, and a selected direction of a birewrite preserves the original
 //! birewrite form and orientation.
 //!
-//! Constructor-valued bindings cross into the fresh graph only through checked
+//! Structural-call-valued bindings cross into the fresh graph only through checked
 //! aliases. Each alias is scheduled at a retained pre-wave boundary after its
 //! children and historical key support are available and before its producer is
 //! removed. Structural reuse is confined to an occurrence lifetime: removals
@@ -66,7 +66,7 @@ impl ReplayTermRef {
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
-/// A typed, graph-neutral recipe for a literal or constructor call.
+/// A typed, graph-neutral recipe for a literal or structural call.
 enum OwnedReplayTerm {
     Literal {
         sort: String,
@@ -193,7 +193,7 @@ impl ReplayProgram {
     /// Lower the owned IR into ordinary commands for a fresh graph.
     ///
     /// Setup commands are emitted no later than the first chronological event
-    /// that needs them. Constructor values are re-established by `let-check`,
+    /// that needs them. Structural call values are re-established by `let-check`,
     /// grounded firings use ordinary `run-rule` schedules, and literals remain
     /// source literals. The final hygiene pass alpha-renames retained internal
     /// symbols consistently across declarations, rules, bindings, and sorts.
@@ -1242,7 +1242,12 @@ fn lower_slice_to_owned_program(
     for id in firing_ids {
         let firing = view.firing(id)?;
         retained_rules.insert(firing.rule);
-        firings.push((id, firing.rule, firing.wave.get(), firing.position.get()));
+        firings.push((
+            id,
+            firing.rule,
+            firing.wave.get(),
+            firing.history_cutoff.get(),
+        ));
     }
 
     let mut setup = Vec::new();
@@ -1361,12 +1366,12 @@ fn lower_slice_to_owned_program(
     let mut canonical_call_by_boundary =
         HashMap::<(usize, Option<u64>, OwnedReplayTerm), ReplayTermRef>::default();
     let mut canonical_term = HashMap::<ReplayTermRef, ReplayTermRef>::default();
-    let mut wave_positions = BTreeMap::<u64, u64>::new();
-    for (_, _, wave, position) in &firings {
-        wave_positions
+    let mut wave_history_cutoffs = BTreeMap::<u64, u64>::new();
+    for (_, _, wave, history_cutoff) in &firings {
+        wave_history_cutoffs
             .entry(*wave)
-            .and_modify(|current| *current = (*current).min(*position))
-            .or_insert(*position);
+            .and_modify(|current| *current = (*current).min(*history_cutoff))
+            .or_insert(*history_cutoff);
     }
     let mut next_alias = 0usize;
     for (id, rule, wave, _) in firings {
@@ -1463,13 +1468,13 @@ fn lower_slice_to_owned_program(
                 let live_before = plan
                     .producer
                     .and_then(|producer| selected_removal_by_fact.get(&producer).copied());
-                let alias_wave = wave_positions
+                let alias_wave = wave_history_cutoffs
                     .iter()
-                    .find_map(|(candidate_wave, candidate_position)| {
+                    .find_map(|(candidate_wave, candidate_cutoff)| {
                         (*candidate_wave >= dependency_wave
                             && *candidate_wave <= wave
-                            && *candidate_position >= history_ready_after
-                            && live_before.is_none_or(|end| *candidate_position < end))
+                            && *candidate_cutoff >= history_ready_after
+                            && live_before.is_none_or(|end| *candidate_cutoff < end))
                         .then_some(*candidate_wave)
                     })
                     .ok_or_else(|| {
@@ -1493,11 +1498,11 @@ fn lower_slice_to_owned_program(
                 } else {
                     source_call_by_boundary.insert((alias_wave, fresh_after, source_call), call);
                 }
-                let alias_position = *wave_positions
+                let alias_history_cutoff = *wave_history_cutoffs
                     .get(&alias_wave)
-                    .expect("selected alias wave has no history position");
-                let alias_epoch =
-                    alias_reset_positions.partition_point(|position| *position <= alias_position);
+                    .expect("selected alias wave has no history cutoff");
+                let alias_epoch = alias_reset_positions
+                    .partition_point(|position| *position <= alias_history_cutoff);
                 let structural_key = (alias_epoch, fresh_after, terms.nodes[call.index()].clone());
                 if let Some(canonical) = canonical_call_by_boundary.get(&structural_key).copied() {
                     let canonical_wave = alias_wave_by_term[&canonical];

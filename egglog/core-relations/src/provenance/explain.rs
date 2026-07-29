@@ -1855,7 +1855,7 @@ impl<'a> TraceView<'a> {
     ) -> Result<Option<RawEqualitySupport>, TraceViewError> {
         if depth > 256 {
             return Err(TraceViewError::Invalid(
-                "structural occurrence explanation exceeds 256 constructor levels".into(),
+                "structural occurrence explanation exceeds 256 call levels".into(),
             ));
         }
         let ReplayTerm::Call {

@@ -500,7 +500,7 @@ struct EqualityRecord {
 struct DurableFiring {
     rule: u32,
     wave: Wave,
-    position: HistoryPosition,
+    history_cutoff: HistoryPosition,
     premises: FlatRange,
 }
 
@@ -513,7 +513,8 @@ struct TraceArena {
     merge_reads: HashMap<FiringId, SmallVec<[FactId; 2]>>,
     durable_fact_values: Vec<Value>,
     durable_merge_cell_origins: Vec<MergeCellOrigin>,
-    durable_rebuild_equalities: Vec<TypedCellEquality>,
+    /// Flat typed-cell equality slab shared by rebuild and container causes.
+    durable_cell_equalities: Vec<TypedCellEquality>,
     durable_causes: Vec<Option<(DurableCause, EqualityCauseSummary)>>,
     durable_equalities: Vec<Option<EqualityRecord>>,
     rekeys: Vec<RekeyRecord>,
@@ -1216,7 +1217,7 @@ impl Trace {
     pub fn register_table_constructor(
         &self,
         table: TableId,
-        constructor: ReplayConstructorSpec,
+        constructor: ReplayCallSpec,
     ) -> Result<(), &'static str> {
         self.0
             .replay_terms
@@ -1342,7 +1343,7 @@ impl Trace {
             .map(|kind| *kind)
     }
 
-    pub(crate) fn table_constructor(&self, table: TableId) -> Option<ReplayConstructorSpec> {
+    pub(crate) fn table_constructor(&self, table: TableId) -> Option<ReplayCallSpec> {
         self.0
             .replay_terms
             .table_constructors
@@ -1832,12 +1833,10 @@ impl Trace {
     /// Pure moves never allocate a cause or copy their endpoint pairs.
     pub(crate) fn prepared_rekey_cause(&self, rekey: &PreparedRekey) -> DeferredEqualityCause {
         let mut arena = self.0.arena.lock().unwrap();
-        let equalities = FlatRange::new(
-            arena.durable_rebuild_equalities.len(),
-            rekey.equalities.len(),
-        );
+        let equalities =
+            FlatRange::new(arena.durable_cell_equalities.len(), rekey.equalities.len());
         arena
-            .durable_rebuild_equalities
+            .durable_cell_equalities
             .extend_from_slice(&rekey.equalities);
         let id = CauseDraftId::new(TraceShared::alloc_u64(&self.0.next_cause_draft, 1));
         arena.install_cause(
@@ -2188,8 +2187,8 @@ impl Trace {
             },
         )?;
         let mut arena = self.0.arena.lock().unwrap();
-        let equalities = FlatRange::new(arena.durable_rebuild_equalities.len(), pairs.len());
-        arena.durable_rebuild_equalities.extend_from_slice(&pairs);
+        let equalities = FlatRange::new(arena.durable_cell_equalities.len(), pairs.len());
+        arena.durable_cell_equalities.extend_from_slice(&pairs);
         let id = CauseDraftId::new(TraceShared::alloc_u64(&self.0.next_cause_draft, 1));
         let summary = EqualityCauseSummary::Container { position };
         arena.install_cause(
@@ -2258,11 +2257,11 @@ impl Trace {
         }
         let mut arena = self.0.arena.lock().unwrap();
         let equalities = FlatRange::new(
-            arena.durable_rebuild_equalities.len(),
+            arena.durable_cell_equalities.len(),
             dependency.equalities.pairs.len(),
         );
         arena
-            .durable_rebuild_equalities
+            .durable_cell_equalities
             .extend_from_slice(&dependency.equalities.pairs);
         let id = CauseDraftId::new(TraceShared::alloc_u64(&self.0.next_cause_draft, 1));
         arena.install_cause(
@@ -2332,25 +2331,25 @@ impl Trace {
 
     /// Intern a call using its registered producer metadata.
     ///
-    /// This uses the constructor's result sort, operation, and optional
+    /// This uses the call specification's result sort, operation, and optional
     /// container type. Every child id must exist, but this method does not
-    /// validate child arity or sorts against `constructor.child_sorts`; the
+    /// validate child arity or sorts against `spec.child_sorts`; the
     /// caller must supply those children in the registered order. Container
     /// producers also retain an exact structural-version anchor for the raw id.
     /// This method records the call immediately regardless of whether the
     /// producer is configured to anchor on primitive return.
     pub fn intern_spec_call(
         &self,
-        constructor: &ReplayConstructorSpec,
+        spec: &ReplayCallSpec,
         children: &[ReplayTermId],
         value: Value,
     ) -> Result<ReplayTermId, &'static str> {
-        self.0.replay_terms.register_container_type(constructor)?;
-        let term = self.intern_call(constructor.result_sort, constructor.op, children, value)?;
-        if constructor.container_type.is_some() {
+        self.0.replay_terms.register_container_type(spec)?;
+        let term = self.intern_call(spec.result_sort, spec.op, children, value)?;
+        if spec.container_type.is_some() {
             self.0
                 .replay_terms
-                .install_container_anchor(constructor.result_sort, value, term)?;
+                .install_container_anchor(spec.result_sort, value, term)?;
         }
         Ok(term)
     }
@@ -2573,7 +2572,7 @@ impl Trace {
     pub(crate) fn with_container_anchor_installer<R>(
         &self,
         site: TermOriginSiteId,
-        replay: &ReplayConstructorSpec,
+        replay: &ReplayCallSpec,
         f: impl FnOnce(
             &mut dyn FnMut(
                 &[ReplayBindingSource],
@@ -2903,7 +2902,7 @@ impl Trace {
         &self,
         rule: u32,
         wave: Wave,
-        position: HistoryPosition,
+        history_cutoff: HistoryPosition,
         first_firing: FiringId,
         premise_arity: usize,
         premises: &[FactId],
@@ -2925,7 +2924,7 @@ impl Trace {
             arena.durable_firings[index] = Some(DurableFiring {
                 rule,
                 wave,
-                position,
+                history_cutoff,
                 premises: FlatRange::new(premise_start + lane * premise_arity, premise_arity),
             });
         }
@@ -2974,7 +2973,7 @@ impl Trace {
         &self,
         table: TableId,
         children: &[ReplayTermId],
-        constructor: &ReplayConstructorSpec,
+        constructor: &ReplayCallSpec,
     ) -> Result<RowOriginSiteId, &'static str> {
         if children.len() != constructor.child_sorts.len() {
             return Err("source constructor has the wrong structural child arity");
@@ -3128,7 +3127,7 @@ impl Trace {
                 .expect("pending firing premise slab exceeds usize"),
             "observed firing premises must be dense and lane-aligned"
         );
-        let position = self.history_boundary();
+        let history_cutoff = self.history_boundary();
         let premises: Box<[FactId]> = flat_premises.into();
         self.validate_pending_premises(&premises)
             .unwrap_or_else(|error| panic!("cannot observe firing batch: {error}"));
@@ -3136,7 +3135,7 @@ impl Trace {
         self.install_observed_firings(
             rule,
             wave,
-            position,
+            history_cutoff,
             first_firing,
             premise_arity,
             &premises,
@@ -3170,12 +3169,12 @@ impl Trace {
         let premises = resolver.resolve_batch(witness_lanes, premise_arity);
         self.validate_pending_premises(&premises)
             .unwrap_or_else(|error| panic!("cannot observe firing batch: {error}"));
-        let position = self.history_boundary();
+        let history_cutoff = self.history_boundary();
         let first_firing = FiringId::new(first_native_ordinal);
         self.install_observed_firings(
             rule,
             wave,
-            position,
+            history_cutoff,
             first_firing,
             premise_arity,
             &premises,
@@ -3285,7 +3284,7 @@ impl Trace {
         }
         self.register_rule_binding_recipe(rule, binding_sources);
         let first_firing = FiringId::new(self.reserve_firing_ordinals(lanes.len()));
-        let position = self.history_boundary();
+        let history_cutoff = self.history_boundary();
         let mut selected_premises = Vec::with_capacity(lanes.len() * premise_arity);
         for lane in lanes.iter().copied() {
             let premise_start = lane * premise_arity;
@@ -3297,7 +3296,7 @@ impl Trace {
         self.install_observed_firings(
             rule,
             wave,
-            position,
+            history_cutoff,
             first_firing,
             premise_arity,
             &selected_premises,

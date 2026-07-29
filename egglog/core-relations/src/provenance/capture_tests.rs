@@ -369,9 +369,8 @@ fn container_anchor_projects_only_referenced_bindings_and_memoizes_repeated_leav
             children: [Arc::clone(&repeated_current), repeated_current].into(),
         }),
     });
-    let replay =
-        ReplayConstructorSpec::new(container_sort, container_op, [current_sort, current_sort])
-            .with_primitive_return_anchor(TypeId::of::<Vec<Value>>());
+    let replay = ReplayCallSpec::new(container_sort, container_op, [current_sort, current_sort])
+        .with_primitive_return_anchor(TypeId::of::<Vec<Value>>());
     let current_value = Value::new_const(12);
     let container_value = Value::new_const(13);
 

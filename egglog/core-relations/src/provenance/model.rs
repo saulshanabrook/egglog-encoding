@@ -721,7 +721,7 @@ pub struct Firing<'a> {
     pub wave: Wave,
     /// Inclusive high-water mark of retained history visible to this firing.
     /// All lanes observed in one batch may share this value.
-    pub position: HistoryPosition,
+    pub history_cutoff: HistoryPosition,
     /// Exact source-ordered premise facts of the match.
     pub premises: &'a [FactId],
     /// Prior keyed rows read by merge effects of this match.
@@ -803,13 +803,13 @@ pub struct RawAppliedEquality {
     pub reason: EqualityReason,
 }
 
-/// One effective native union edge with lazily projected proposal operands.
+/// Lazily projected structural proposal for one applied native equality.
 ///
-/// The projected `left` and `right` preserve the structural occurrences the
-/// action proposed, while the native endpoints preserve the representative
-/// edge actually applied by union-find.
+/// `left` and `right` preserve the structural occurrences the action proposed,
+/// while `reason` preserves its exact causal classification. The event's
+/// position and native representative edge remain in [`RawAppliedEquality`].
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProjectedAppliedEquality {
+pub struct ProjectedEqualityProposal {
     /// Typed structural spelling of the proposal's left occurrence.
     pub left: EqualityEndpoint,
     /// Typed structural spelling of the proposal's right occurrence.
@@ -940,7 +940,7 @@ pub(crate) struct PendingEqualityEndpoint {
 ///
 /// The record remains externally nameable for backend integration but is
 /// hidden because consumers should read published [`RawAppliedEquality`] or
-/// [`ProjectedAppliedEquality`] records instead of replaying proposals.
+/// [`ProjectedEqualityProposal`] records instead of replaying proposals.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[doc(hidden)]
 pub struct TypedEqualityProposal {

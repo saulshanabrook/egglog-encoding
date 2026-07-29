@@ -101,8 +101,8 @@ pub use egglog_bridge::{
 };
 pub use egglog_core_relations::{
     BaseValue, BaseValueId, BaseValues, ContainerValue, ContainerValues, CounterId, ExecutionState,
-    ExternalFunction, ExternalFunctionId, ReplayConstructorSpec, ReplayLiteral, ReplayOpId,
-    ReplaySortId, ReplayTableKind, ReplayTermId, SourceRef, Value,
+    ExternalFunction, ExternalFunctionId, ReplayCallSpec, ReplayLiteral, ReplayOpId, ReplaySortId,
+    ReplayTableKind, ReplayTermId, SourceRef, Value,
 };
 pub use egglog_reports::{IterationReport, PreMergeTiming, ReportLevel};
 
@@ -216,7 +216,7 @@ pub enum RuleBodyCall {
         output: ColumnTy,
         /// Typed structural call used by a capture-enabled rule. A known output
         /// can still need a container-version anchor before a later guard.
-        replay: Option<Arc<ReplayConstructorSpec>>,
+        replay: Option<Arc<ReplayCallSpec>>,
     },
 }
 
@@ -233,7 +233,7 @@ pub enum RuleActionCall {
         output: ColumnTy,
         /// Typed structural call recorded only for proof-checkable pure
         /// primitives while trace capture is active.
-        replay: Option<Arc<ReplayConstructorSpec>>,
+        replay: Option<Arc<ReplayCallSpec>>,
     },
 }
 
