@@ -816,7 +816,19 @@ impl Display for Literal {
                 }
             }
             Literal::Bool(b) => Display::fmt(b, f),
-            Literal::String(s) => write!(f, "\"{s}\""),
+            Literal::String(s) => {
+                f.write_str("\"")?;
+                for character in s.chars() {
+                    match character {
+                        '\n' => f.write_str("\\n")?,
+                        '\t' => f.write_str("\\t")?,
+                        '\\' => f.write_str("\\\\")?,
+                        '"' => f.write_str("\\\"")?,
+                        character => Display::fmt(&character, f)?,
+                    }
+                }
+                f.write_str("\"")
+            }
             Literal::Unit => write!(f, "()"),
         }
     }
@@ -831,6 +843,15 @@ mod tests {
         let expr = GenericExpr::<String, String>::Call(Span::Panic, "foo".into(), vec![]);
 
         assert_eq!(expr.to_string(), "(foo)");
+    }
+
+    #[test]
+    fn display_string_escapes_source_delimiters() {
+        let literal = Literal::String("quote\" slash\\ newline\n tab\t cr\r nul\0".into());
+        assert_eq!(
+            literal.to_string(),
+            "\"quote\\\" slash\\\\ newline\\n tab\\t cr\r nul\0\""
+        );
     }
 
     #[test]

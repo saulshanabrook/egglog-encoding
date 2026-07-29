@@ -1039,7 +1039,7 @@ impl EGraph {
                 .zip(row.values.iter().copied())
                 .zip(row.terms.iter().copied())
             {
-                if trace.lookup_term(sort, value) != Some(term) {
+                if !trace.term_matches_value(sort, value, term) {
                     anyhow::bail!(
                         "function `{}` source value is missing its exact typed replay term",
                         info.name

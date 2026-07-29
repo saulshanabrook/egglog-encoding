@@ -749,7 +749,7 @@ fn owned_ir_embeds_only_selected_input_rows() {
     let dir = std::env::current_dir().unwrap().join(&relative_dir);
     fs::create_dir_all(&dir).unwrap();
     let file = relative_dir.join("rows.tsv");
-    fs::write(&file, "drop\t1.0\nkeep\t-0.0\n").unwrap();
+    fs::write(&file, "drop\t0.0\nkeep\"quoted\\path\t-0.0\n").unwrap();
 
     let mut egraph = EGraph {
         fact_directory: Some(relative_dir),
@@ -759,9 +759,9 @@ fn owned_ir_embeds_only_selected_input_rows() {
     egraph
         .parse_and_run_program(
             None,
-            "(relation R (String f64))
-                 (input R \"rows.tsv\")
-                 (check (R \"keep\" -0.0))",
+            r#"(relation R (String f64))
+                 (input R "rows.tsv")
+                 (check (R "keep\"quoted\\path" -0.0))"#,
         )
         .unwrap();
     let slice = select_all_checks(&egraph).unwrap();
@@ -791,7 +791,7 @@ fn owned_ir_embeds_only_selected_input_rows() {
     });
     let (line, literals) = selected.expect("selected input row disappeared");
     assert_eq!(line, 2);
-    assert_eq!(literals[0], Literal::String("keep".into()));
+    assert_eq!(literals[0], Literal::String("keep\"quoted\\path".into()));
     let Literal::Float(value) = literals[1] else {
         panic!("selected f64 input cell lost its literal type")
     };
@@ -799,10 +799,39 @@ fn owned_ir_embeds_only_selected_input_rows() {
 
     let commands = ir.to_commands().unwrap();
     let rendered = render_commands_as_source(&commands);
-    let mut replay = EGraph::default().with_proofs_enabled().with_proof_testing();
-    serial_pool()
-        .install(|| replay.parse_and_run_program(None, &rendered))
-        .unwrap();
+    for (mode, mut replay) in [
+        ("native", EGraph::default()),
+        ("term", EGraph::default().with_term_encoding_enabled()),
+        (
+            "proof",
+            EGraph::default().with_proofs_enabled().with_proof_testing(),
+        ),
+    ] {
+        serial_pool()
+            .install(|| replay.parse_and_run_program(None, &rendered))
+            .unwrap_or_else(|error| panic!("{mode} input replay failed: {error}\n{rendered}"));
+    }
+}
+
+#[test]
+fn capture_rejects_unrepresentable_nan_input_before_staging_rows() {
+    let dir = temp_fact_dir();
+    fs::write(dir.join("rows.tsv"), "keep\t-NaN\n").unwrap();
+    let mut egraph = EGraph {
+        fact_directory: Some(dir.clone()),
+        ..EGraph::default()
+    };
+    serial_pool().install(|| egraph.enable_trace()).unwrap();
+    let error = egraph
+        .parse_and_run_program(None, "(relation R (String f64)) (input R \"rows.tsv\")")
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("trace capture does not support noncanonical f64 NaN literals"),
+        "unexpected error: {error}"
+    );
+    fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]

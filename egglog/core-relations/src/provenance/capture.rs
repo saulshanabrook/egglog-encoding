@@ -2278,9 +2278,10 @@ impl Trace {
 
     /// Intern a typed structural literal and associate it with one raw value.
     ///
-    /// Raw-value lookup is first-wins: if `(sort, value)` already has a term,
-    /// that existing term is returned, although the requested literal node is
-    /// still interned. Structurally identical nodes share one [`ReplayTermId`].
+    /// Raw-value lookup is first-wins, but this method returns the exact
+    /// requested literal node. This distinction preserves source spellings
+    /// such as `0.0` versus `-0.0` even when the native value arena gives them
+    /// one identity. Structurally identical nodes share one [`ReplayTermId`].
     pub fn intern_literal(
         &self,
         sort: ReplaySortId,
@@ -2294,7 +2295,8 @@ impl Trace {
         self.0
             .replay_terms
             .install_value(sort, value, term)
-            .expect("newly interned literal must have a matching sort")
+            .expect("newly interned literal must have a matching sort");
+        term
     }
 
     /// Intern a typed structural call and associate it with one raw value.
@@ -2361,6 +2363,14 @@ impl Trace {
     /// first-wins mapping.
     pub fn lookup_term(&self, sort: ReplaySortId, value: Value) -> Option<ReplayTermId> {
         self.0.replay_terms.lookup(sort, value)
+    }
+
+    /// Whether `term` was installed from this exact typed native value.
+    ///
+    /// This accepts structural spellings that share one native value even
+    /// when the stable reverse lookup above points at an earlier spelling.
+    pub fn term_matches_value(&self, sort: ReplaySortId, value: Value, term: ReplayTermId) -> bool {
+        self.0.replay_terms.original_value(sort, term) == Some(value)
     }
 
     #[cfg(test)]

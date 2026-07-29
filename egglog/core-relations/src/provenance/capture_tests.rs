@@ -414,3 +414,15 @@ fn replay_value_lookup_is_scoped_by_stable_sort() {
     assert_eq!(trace.lookup_term(left_sort, value), Some(left));
     assert_eq!(trace.lookup_term(right_sort, value), Some(right));
 }
+
+#[test]
+fn literal_interning_returns_exact_node_while_value_lookup_stays_first_wins() {
+    let trace = Trace::default();
+    let sort = ReplaySortId::new(42);
+    let value = Value::new_const(7);
+    let positive = trace.intern_literal(sort, ReplayLiteral::F64(0.0f64.to_bits()), value);
+    let negative = trace.intern_literal(sort, ReplayLiteral::F64((-0.0f64).to_bits()), value);
+
+    assert_ne!(positive, negative);
+    assert_eq!(trace.lookup_term(sort, value), Some(positive));
+}

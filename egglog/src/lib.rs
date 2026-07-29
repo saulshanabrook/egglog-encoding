@@ -628,14 +628,22 @@ impl CaptureCatalog {
         self.sort_ids[name]
     }
 
-    fn replay_literal(literal: &Literal) -> ReplayLiteral {
-        match literal {
+    fn replay_literal(literal: &Literal) -> Result<ReplayLiteral, Error> {
+        Ok(match literal {
             Literal::Unit => ReplayLiteral::Unit,
             Literal::Bool(value) => ReplayLiteral::Bool(*value),
             Literal::Int(value) => ReplayLiteral::I64(*value),
-            Literal::Float(value) => ReplayLiteral::F64(value.0.to_bits()),
+            Literal::Float(value) => {
+                let bits = value.0.to_bits();
+                if value.0.is_nan() && bits != f64::NAN.to_bits() {
+                    return Err(Error::BackendError(
+                        "trace capture does not support noncanonical f64 NaN literals".into(),
+                    ));
+                }
+                ReplayLiteral::F64(bits)
+            }
             Literal::String(value) => ReplayLiteral::String(Arc::from(value.as_str())),
-        }
+        })
     }
 
     fn function_spec(
@@ -4361,7 +4369,7 @@ impl EGraph {
                         .backend
                         .intern_replay_literal(
                             catalog.literal_sort(literal),
-                            CaptureCatalog::replay_literal(literal),
+                            CaptureCatalog::replay_literal(literal)?,
                             value,
                         )
                         .map_err(|error| Error::BackendError(error.to_string()))?;
@@ -5786,7 +5794,7 @@ impl<'a> BackendRule<'a> {
                         .backend
                         .intern_replay_literal(
                             catalog.literal_sort(literal),
-                            CaptureCatalog::replay_literal(literal),
+                            CaptureCatalog::replay_literal(literal)?,
                             value.value,
                         )
                         .map_err(|error| Error::BackendError(error.to_string()))?;

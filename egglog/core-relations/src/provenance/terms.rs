@@ -17,9 +17,11 @@ pub enum ReplayLiteral {
         /// Source-level integer value.
         i64,
     ),
-    /// A 64-bit floating-point literal stored by bits to preserve exact identity.
+    /// A supported 64-bit floating-point literal stored by bits to preserve exact identity.
     F64(
-        /// [`f64::to_bits`] representation of the source-level value.
+        /// [`f64::to_bits`] representation of the source-level value. The
+        /// frontend rejects noncanonical NaN bit patterns that its source
+        /// language cannot reconstruct exactly.
         u64,
     ),
     /// An owned source-level string literal.
