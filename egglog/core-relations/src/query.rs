@@ -899,7 +899,7 @@ impl StaticRecipeDraft {
         instrs
             .iter()
             .map(|instr| {
-                if let Instr::PromoteReplayCall { dst, replay, .. } = instr {
+                if let Instr::AnchorContainerCall { dst, replay, .. } = instr {
                     return self
                         .prepare_term_origin(
                             trace,
@@ -1042,7 +1042,7 @@ impl StaticRecipeDraft {
                     }
                     Instr::UnionWithReplay { .. }
                     | Instr::RecordCheck { .. }
-                    | Instr::PromoteReplayCall { .. } => {
+                    | Instr::AnchorContainerCall { .. } => {
                         unreachable!("origin-bearing instruction escaped capture preparation")
                     }
                 };
@@ -1061,7 +1061,7 @@ impl StaticRecipeDraft {
         for (instr, prepared) in instrs.iter_mut().zip(prepared) {
             match (instr, prepared) {
                 (
-                    Instr::PromoteReplayCall { origin, .. },
+                    Instr::AnchorContainerCall { origin, .. },
                     PreparedInstructionOrigins::Term(spec),
                 ) => *origin = Some(trace.register_term_origin(spec)),
                 (
@@ -2142,7 +2142,7 @@ impl RuleBuilder<'_, '_> {
         });
         self.qb.mark_used(args);
         self.qb.mark_defined(&res.into());
-        self.promote_replay_call(args, res, replay);
+        self.register_replay_call(args, res, replay);
         Ok(res)
     }
 
@@ -2165,7 +2165,10 @@ impl RuleBuilder<'_, '_> {
         Ok(())
     }
 
-    pub fn promote_replay_call(
+    /// Register the static structural recipe for a primitive result. Mutable
+    /// containers additionally emit a runtime instruction that anchors the
+    /// exact returned container version.
+    pub fn register_replay_call(
         &mut self,
         args: &[QueryEntry],
         dst: Variable,
@@ -2193,7 +2196,7 @@ impl RuleBuilder<'_, '_> {
                 draft.call_output(&trace, dst, args, &replay);
             }
             if replay.anchors_on_primitive_return() {
-                self.qb.instrs.push(Instr::PromoteReplayCall {
+                self.qb.instrs.push(Instr::AnchorContainerCall {
                     args: args.to_vec(),
                     dst,
                     replay: Box::new(replay),

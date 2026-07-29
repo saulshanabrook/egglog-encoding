@@ -640,13 +640,12 @@ impl<'a> TraceView<'a> {
 
     /// Return point-in-time cardinalities of the checked trace view.
     ///
-    /// The fields count facts, firings, shared causes, applied equalities,
-    /// rekeys, retained removals, and check roots.
+    /// The fields count facts, firings, applied equalities, rekeys, retained
+    /// removals, and check roots.
     pub fn totals(&self) -> TraceTotals {
         TraceTotals {
             facts: self.arena.published_facts,
             firings: self.arena.published_firings,
-            causes: self.arena.published_causes,
             applied_equalities: self.arena.published_equalities,
             rekeys: self.arena.rekeys.len() as u64,
             removals: self.arena.removals.len() as u64,

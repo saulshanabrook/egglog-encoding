@@ -110,6 +110,13 @@ fn cause_firing(cause: crate::CauseRef) -> Option<crate::FiringId> {
     }
 }
 
+fn equality_firing(reason: &crate::EqualityReason) -> crate::FiringId {
+    let crate::EqualityReason::RuleUnion(firing) = reason else {
+        panic!("expected a direct rule-union reason")
+    };
+    *firing
+}
+
 fn view_end_position(view: &crate::TraceView<'_>) -> crate::HistoryPosition {
     let totals = view.totals();
     crate::HistoryPosition::new(
@@ -2121,7 +2128,7 @@ fn capture_recipe_failure_precedes_catalog_and_rule_set_mutation() {
     let destination = query.new_var_named("destination");
     let missing = query.new_var_named("missing");
     let mut action = query.build();
-    action.promote_replay_call(
+    action.register_replay_call(
         &[],
         valid_before_failure,
         Some(
@@ -2129,7 +2136,7 @@ fn capture_recipe_failure_precedes_catalog_and_rule_set_mutation() {
                 .with_primitive_return_anchor(TypeId::of::<Vec<Value>>()),
         ),
     );
-    action.promote_replay_call(
+    action.register_replay_call(
         &[missing.into()],
         destination,
         Some(
@@ -2161,7 +2168,7 @@ fn capture_recipe_failure_precedes_catalog_and_rule_set_mutation() {
     let mut query = rules.new_rule();
     let destination = query.new_var_named("destination");
     let mut action = query.build();
-    action.promote_replay_call(
+    action.register_replay_call(
         &[],
         destination,
         Some(
@@ -2185,12 +2192,12 @@ fn capture_recipe_failure_precedes_catalog_and_rule_set_mutation() {
     assert!(rules.plans.get(rule).is_some());
     assert_eq!(rules.actions.len(), 1);
     let action = &rules.actions.iter().next().unwrap().1;
-    let Instr::PromoteReplayCall {
+    let Instr::AnchorContainerCall {
         origin: Some(origin),
         ..
     } = action.instrs[0]
     else {
-        panic!("valid rule lost its replay promotion origin")
+        panic!("valid rule lost its container anchor origin")
     };
     assert_eq!(origin.get(), 1, "failed preflight consumed an origin id");
 }
@@ -4613,25 +4620,37 @@ fn check_trace_keep_distinct_premise_terms_for_the_same_runtime_equality_value()
                 assert_eq!(root.as_of_edges, crate::EdgeHorizon::new(2));
                 assert_eq!(
                     root.equalities.as_ref(),
-                    &[(
-                        crate::EqualityEndpoint {
-                            sort,
-                            term: term(second_left),
-                            raw: second_left,
-                        },
-                        crate::EqualityEndpoint {
-                            sort,
-                            term: term(right),
-                            raw: right,
-                        },
-                    )]
+                    &[crate::CriterionEquality {
+                        endpoints: (
+                            crate::EqualityEndpoint {
+                                sort,
+                                term: term(second_left),
+                                raw: second_left,
+                            },
+                            crate::EqualityEndpoint {
+                                sort,
+                                term: term(right),
+                                raw: right,
+                            },
+                        ),
+                        occurrences: (
+                            crate::CriterionEndpointOccurrence::FactCell(crate::FactCellRef {
+                                fact: second_left_fact,
+                                column: ColumnId::new(0),
+                            }),
+                            crate::CriterionEndpointOccurrence::FactCell(crate::FactCellRef {
+                                fact: right_fact,
+                                column: ColumnId::new(1),
+                            }),
+                        ),
+                    }]
                 );
                 assert_ne!(
-                    root.equalities[0].0.raw, root.equalities[0].1.raw,
+                    root.equalities[0].endpoints.0.raw, root.equalities[0].endpoints.1.raw,
                     "the root keeps each premise's immutable creation occurrence"
                 );
                 assert_ne!(
-                    root.equalities[0].0.term, root.equalities[0].1.term,
+                    root.equalities[0].endpoints.0.term, root.equalities[0].endpoints.1.term,
                     "equal runtime values must retain their distinct premise-owned syntax"
                 );
             }
@@ -4744,25 +4763,21 @@ fn late_fact_rekey_attachment_case(reverse_equality_endpoints: bool) {
         term: tc,
         raw: c,
     };
-    let occurrences = [(
-        crate::CriterionEndpointOccurrence::FactCell(crate::FactCellRef {
-            fact,
-            column: ColumnId::new(0),
-        }),
-        crate::CriterionEndpointOccurrence::Current,
-    )];
+    let equality = crate::CriterionEquality {
+        endpoints: (left, right),
+        occurrences: (
+            crate::CriterionEndpointOccurrence::FactCell(crate::FactCellRef {
+                fact,
+                column: ColumnId::new(0),
+            }),
+            crate::CriterionEndpointOccurrence::Current,
+        ),
+    };
     trace
-        .record_check_root(7900, wave, &[fact], &[(left, right)], &occurrences, cutoff)
+        .record_check_root(7900, wave, &[fact], &[equality], cutoff)
         .unwrap();
     trace
-        .record_check_root(
-            7900,
-            Wave::new(99),
-            &[fact],
-            &[(left, right)],
-            &occurrences,
-            cutoff,
-        )
+        .record_check_root(7900, Wave::new(99), &[fact], &[equality], cutoff)
         .unwrap();
     db.finalize_trace_wave();
 
@@ -5117,8 +5132,8 @@ fn observed_match_ids_are_dense_before_effect_reachability() {
             );
             let equality = view.applied_equality(crate::AppliedEqualityId::new(1))?;
             assert_eq!(
-                equality.reason.firing(),
-                Some(crate::FiringId::new(4)),
+                equality_firing(&equality.reason),
+                crate::FiringId::new(4),
                 "only the effective fourth observation should be reachable from an effect"
             );
             Ok(())
@@ -5166,7 +5181,7 @@ fn promoted_match_ids_follow_native_batch_order_not_union_order() {
         .with_view(|view| {
             let cited = (1..=view.totals().applied_equalities)
                 .map(|id| view.applied_equality(crate::AppliedEqualityId::new(id)))
-                .map(|event| event.map(|event| event.reason.firing().unwrap()))
+                .map(|event| event.map(|event| equality_firing(&event.reason)))
                 .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
             let rules = cited
                 .into_iter()
@@ -5298,7 +5313,7 @@ fn promoted_match_order_follows_full_batch_then_tail_execution() {
             assert_eq!(view.totals().applied_equalities, 2);
             let effective = (1..=view.totals().applied_equalities)
                 .map(|id| view.applied_equality(crate::AppliedEqualityId::new(id)))
-                .map(|event| event.and_then(|event| view.firing(event.reason.firing().unwrap())))
+                .map(|event| event.and_then(|event| view.firing(equality_firing(&event.reason))))
                 .map(|matched| matched.map(|matched| matched.rule))
                 .collect::<Result<Vec<_>, _>>()?;
             assert_eq!(

@@ -870,7 +870,8 @@ fn trace_preserve_distinct_check_equality_terms() {
             let root = view.check_root(0)?;
             assert_eq!(root.premises.len(), 2);
             assert_eq!(root.equalities.len(), 1);
-            let (left, right) = root.equalities[0];
+            let equality = root.equalities[0];
+            let (left, right) = equality.endpoints;
             assert_eq!(left.sort, right.sort);
             assert_ne!(
                 left.raw, right.raw,

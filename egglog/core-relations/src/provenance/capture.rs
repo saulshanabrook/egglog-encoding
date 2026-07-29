@@ -2741,19 +2741,15 @@ impl Trace {
         check: u32,
         wave: Wave,
         premises: &[FactId],
-        equalities: &[(EqualityEndpoint, EqualityEndpoint)],
-        equality_occurrences: &[(CriterionEndpointOccurrence, CriterionEndpointOccurrence)],
+        equalities: &[CriterionEquality],
         as_of_edges: EdgeHorizon,
     ) -> Result<(), &'static str> {
         if premises.iter().any(|fact| fact.is_missing()) {
             return Err("check root has a missing exact premise FactId");
         }
-        if equality_occurrences.len() != equalities.len() {
-            return Err("check equality endpoints and occurrence metadata have different arities");
-        }
-        for ((left, right), (left_occurrence, right_occurrence)) in
-            equalities.iter().zip(equality_occurrences)
-        {
+        for equality in equalities {
+            let ((left, right), (left_occurrence, right_occurrence)) =
+                (equality.endpoints, equality.occurrences);
             if left.sort != right.sort {
                 return Err("one check equality crosses logical sorts");
             }
@@ -2783,9 +2779,9 @@ impl Trace {
                 }
             }
         }
-        for occurrence in equality_occurrences
+        for occurrence in equalities
             .iter()
-            .flat_map(|(left, right)| [left, right])
+            .flat_map(|equality| [&equality.occurrences.0, &equality.occurrences.1])
         {
             let fact = match occurrence {
                 CriterionEndpointOccurrence::FactCell(cell) => Some(cell.fact),
@@ -2811,12 +2807,16 @@ impl Trace {
         if let Some(current) = arena.check_roots.get(&check) {
             if current.premises.len() != premises.len()
                 || current.equalities.len() != equalities.len()
-                || current.equality_occurrences.as_ref() != equality_occurrences
                 || current
                     .equalities
                     .iter()
-                    .map(|(left, _)| left.sort)
-                    .ne(equalities.iter().map(|(left, _)| left.sort))
+                    .zip(equalities)
+                    .any(|(old, new)| old.occurrences != new.occurrences)
+                || current
+                    .equalities
+                    .iter()
+                    .map(|equality| equality.endpoints.0.sort)
+                    .ne(equalities.iter().map(|equality| equality.endpoints.0.sort))
             {
                 return Err("stable check id was reused with a different capture layout");
             }
@@ -2834,7 +2834,6 @@ impl Trace {
                 position,
                 premises: premises.into(),
                 equalities: equalities.into(),
-                equality_occurrences: equality_occurrences.into(),
                 as_of_edges,
             },
         );

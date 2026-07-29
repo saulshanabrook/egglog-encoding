@@ -26,9 +26,9 @@ use crate::{
     pool::{Clear, Pooled, with_pool_set},
     provenance::{
         ActionCaptureKind, CauseCapability, CheckEndpointSpec, CheckTermSource,
-        CriterionEndpointOccurrence, DeferredEqualityCause, FactCellRef, PackedCauseRef,
-        PendingPremiseResolver, ReplayBindingSource, RowOriginSiteId, TermOriginSiteId,
-        TypedEqualityProposal,
+        CriterionEndpointOccurrence, CriterionEquality, DeferredEqualityCause, FactCellRef,
+        PackedCauseRef, PendingPremiseResolver, ReplayBindingSource, RowOriginSiteId,
+        TermOriginSiteId, TypedEqualityProposal,
     },
     table_spec::{ColumnId, MutationBuffer},
 };
@@ -1904,7 +1904,7 @@ impl ExecutionState<'_> {
                 f1_result.union(&to_call_f2);
                 *mask = f1_result;
             }
-            Instr::PromoteReplayCall {
+            Instr::AnchorContainerCall {
                 args,
                 dst,
                 replay,
@@ -1913,10 +1913,10 @@ impl ExecutionState<'_> {
                 let trace = self
                     .db
                     .trace
-                    .expect("container replay promotion requires causal trace");
+                    .expect("container return anchoring requires causal trace");
                 assert!(
                     replay.anchors_on_primitive_return(),
-                    "runtime replay promotion is reserved for registry-mutating containers"
+                    "runtime replay anchoring is reserved for registry-mutating containers"
                 );
                 let outputs = bindings[*dst].to_vec();
                 let binding_sources = bindings
@@ -2038,10 +2038,7 @@ impl ExecutionState<'_> {
                     }),
                     CheckTermSource::Constant { .. } => CriterionEndpointOccurrence::Current,
                 };
-                let mut resolved = SmallVec::<[(EqualityEndpoint, EqualityEndpoint); 4]>::new();
-                let mut equality_occurrences = SmallVec::<
-                    [(CriterionEndpointOccurrence, CriterionEndpointOccurrence); 4],
-                >::new();
+                let mut resolved = SmallVec::<[CriterionEquality; 4]>::new();
                 for (&(left, right), implicit) in equalities
                     .iter()
                     .map(|pair| (pair, false))
@@ -2055,33 +2052,25 @@ impl ExecutionState<'_> {
                         continue;
                     }
                     let occurrences = (occurrence(left), occurrence(right));
+                    let equality = CriterionEquality {
+                        endpoints: pair,
+                        occurrences,
+                    };
                     if implicit
-                        && resolved.iter().zip(&equality_occurrences).any(
-                            |(existing, existing_occurrences)| {
-                                (*existing == pair && *existing_occurrences == occurrences)
-                                    || (existing.0 == pair.1
-                                        && existing.1 == pair.0
-                                        && existing_occurrences.0 == occurrences.1
-                                        && existing_occurrences.1 == occurrences.0)
-                            },
-                        )
+                        && resolved.iter().any(|existing| {
+                            *existing == equality
+                                || (existing.endpoints == (pair.1, pair.0)
+                                    && existing.occurrences == (occurrences.1, occurrences.0))
+                        })
                     {
                         continue;
                     }
-                    resolved.push(pair);
-                    equality_occurrences.push(occurrences);
+                    resolved.push(equality);
                 }
                 debug_assert!(premise_endpoints.next().is_none());
                 debug_assert!(raw_equalities.next().is_none());
                 trace
-                    .record_check_root(
-                        *check,
-                        wave,
-                        &premises,
-                        &resolved,
-                        &equality_occurrences,
-                        *as_of_edges,
-                    )
+                    .record_check_root(*check, wave, &premises, &resolved, *as_of_edges)
                     .unwrap_or_else(|error| panic!("invalid exact check root: {error}"));
             }
             Instr::AssertEq(l, r) => assert_impl(bindings, mask, l, r, |l, r| l == r),
@@ -2222,7 +2211,7 @@ pub(crate) enum Instr {
 
     /// Container-only anchoring of one registry-mutating pure call. Ordinary
     /// primitives remain static recipes and perform no runtime term work.
-    PromoteReplayCall {
+    AnchorContainerCall {
         args: Vec<QueryEntry>,
         dst: Variable,
         replay: Box<ReplayConstructorSpec>,
@@ -2311,7 +2300,7 @@ impl Instr {
             Instr::ExternalWithFallback { args1, args2, .. } => {
                 entries(args1).or_else(|| entries(args2))
             }
-            Instr::PromoteReplayCall { args, dst, .. } => {
+            Instr::AnchorContainerCall { args, dst, .. } => {
                 entries(args).or_else(|| bindings.get(*dst).is_none().then_some(*dst))
             }
             Instr::AssertEq(left, right) | Instr::AssertNe(left, right) => {

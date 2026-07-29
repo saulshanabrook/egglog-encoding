@@ -11,10 +11,10 @@
 use super::*;
 
 macro_rules! trace_handle {
-    ($(#[$meta:meta])* $name:ident, $inner:ty) => {
+    ($(#[$meta:meta])* $visibility:vis $name:ident, $inner:ty) => {
         $(#[$meta])*
         #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-        pub struct $name($inner);
+        $visibility struct $name($inner);
 
         impl $name {
             /// Creates a handle from its compact trace-local integer representation.
@@ -32,44 +32,44 @@ macro_rules! trace_handle {
 
 trace_handle!(
     /// Stable identity of one immutable effective logical-row occurrence.
-    FactId,
+    pub FactId,
     u64
 );
 trace_handle!(
     /// Stable identity of one effective grounded rule match whose effects share a cause.
-    FiringId,
+    pub FiringId,
     u64
 );
 trace_handle!(
     /// Stable node identity in the typed structural replay-term DAG.
-    ReplayTermId,
+    pub ReplayTermId,
     u32
 );
 trace_handle!(
     /// Frontend-assigned identity of a logical sort used to type replay terms and endpoints.
-    ReplaySortId,
+    pub ReplaySortId,
     u32
 );
 trace_handle!(
     /// Frontend-assigned identity of a structural operation or constructor.
-    ReplayOpId,
+    pub ReplayOpId,
     u32
 );
 trace_handle!(
     /// Dense one-based identity of an effective native union edge, including alias joins.
-    AppliedEqualityId,
+    pub AppliedEqualityId,
     u64
 );
 trace_handle!(
     /// Dense count of applied equality edges visible at an event; zero is the pre-edge boundary.
-    EdgeHorizon,
+    pub EdgeHorizon,
     u64
 );
 trace_handle!(
     /// Synchronous execution or rebuild wave whose effects share a pre-wave state.
     ///
     /// A wave groups concurrent semantics; it does not totally order events within or across streams.
-    Wave,
+    pub Wave,
     u64
 );
 trace_handle!(
@@ -80,27 +80,27 @@ trace_handle!(
     /// current inclusive high-water mark. Unlike [`EdgeHorizon`], this
     /// coordinate also bounds zero-edge dependencies and row lifetimes; zero
     /// is the boundary before all retained events.
-    HistoryPosition,
+    pub HistoryPosition,
     u64
 );
 trace_handle!(
     /// Identity of a static recipe that reconstructs all replay-typed cells of a row.
-    RowOriginSiteId,
+    pub RowOriginSiteId,
     u32
 );
 trace_handle!(
     /// Identity of a static recipe that reconstructs one structural replay term.
-    TermOriginSiteId,
+    pub(crate) TermOriginSiteId,
     u32
 );
 trace_handle!(
     /// Capture-time identity of a non-rule cause before publication.
-    CauseDraftId,
+    pub CauseDraftId,
     u64
 );
 trace_handle!(
     /// Stable published identity of a shared non-rule cause node.
-    CauseId,
+    pub CauseId,
     u32
 );
 
@@ -558,18 +558,6 @@ pub enum EqualityReason {
     },
 }
 
-impl EqualityReason {
-    /// Returns the direct firing only for an explicit rule-union edge.
-    pub fn firing(&self) -> Option<FiringId> {
-        match self {
-            EqualityReason::RuleUnion(id) => Some(*id),
-            EqualityReason::SourceUnion { .. } => None,
-            EqualityReason::MergeFn { .. } => None,
-            EqualityReason::Congruence { .. } => None,
-        }
-    }
-}
-
 /// A typed native endpoint with an optional projected structural spelling.
 ///
 /// A non-missing `term` names replay syntax, while [`ReplayTermId::MISSING`]
@@ -597,6 +585,17 @@ pub enum CriterionEndpointOccurrence {
     Current,
 }
 
+/// One typed equality observed in a successful check, paired with the exact
+/// historical occurrence (if any) that supplied each endpoint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CriterionEquality {
+    /// Left and right typed structural endpoints observed by the check.
+    pub endpoints: (EqualityEndpoint, EqualityEndpoint),
+    /// Historical origins aligned with `endpoints`; source constants use
+    /// [`CriterionEndpointOccurrence::Current`].
+    pub occurrences: (CriterionEndpointOccurrence, CriterionEndpointOccurrence),
+}
+
 /// Exact native support retained for the first successful match of one check.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Criterion {
@@ -608,10 +607,8 @@ pub struct Criterion {
     pub position: HistoryPosition,
     /// Exact premise facts of the selected successful match, in source order.
     pub premises: Box<[FactId]>,
-    /// Typed projected equality endpoints needed to reproduce the success.
-    pub equalities: Box<[(EqualityEndpoint, EqualityEndpoint)]>,
-    /// Occurrence origins parallel to `equalities` for historical support lookup.
-    pub equality_occurrences: Box<[(CriterionEndpointOccurrence, CriterionEndpointOccurrence)]>,
+    /// Typed endpoint pairs and their aligned historical occurrence origins.
+    pub equalities: Box<[CriterionEquality]>,
     /// Applied-equality prefix visible when the check succeeded.
     pub as_of_edges: EdgeHorizon,
 }
@@ -658,8 +655,6 @@ pub struct TraceTotals {
     pub facts: u64,
     /// Published effective firing records.
     pub firings: u64,
-    /// Published shared non-rule cause nodes.
-    pub causes: u64,
     /// Published effective native equality edges.
     pub applied_equalities: u64,
     /// Retained logical-row relocation records.
@@ -822,9 +817,9 @@ pub struct Firing<'a> {
 /// Borrowed non-rule cause whose dependencies a consumer can unfold lazily.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RawCause<'a> {
-    /// An original input action owns the resulting event.
+    /// A source command or physical input row owns the resulting event.
     Source(
-        /// Stable identity of the original input fact.
+        /// Stable identity of that command or input row.
         &'a SourceRef,
     ),
     /// Ordinary row rebuild changed typed cells of an existing fact.

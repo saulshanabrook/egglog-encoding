@@ -653,12 +653,9 @@ fn seed_check_root(
     slice.checks.insert(root.check);
     work.extend(root.premises.iter().copied().map(Work::Fact));
 
-    for ((left_endpoint, right_endpoint), (left_occurrence, right_occurrence)) in root
-        .equalities
-        .iter()
-        .copied()
-        .zip(root.equality_occurrences.iter().copied())
-    {
+    for equality in root.equalities.iter().copied() {
+        let ((left_endpoint, right_endpoint), (left_occurrence, right_occurrence)) =
+            (equality.endpoints, equality.occurrences);
         let left_cell = check_occurrence_cell(left_occurrence);
         let right_cell = check_occurrence_cell(right_occurrence);
         let support = match (left_cell, right_cell) {

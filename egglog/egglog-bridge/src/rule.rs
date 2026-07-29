@@ -148,9 +148,7 @@ pub(crate) struct Query {
     /// looks like the high-level rule, passing along an environment that keeps
     /// track of the mappings between low and high-level variables.
     add_rule: Vec<BuildRuleCallback>,
-    /// Boundary between body computations/guards and head actions. Deferred
-    /// replay promotions are inserted here so failed body guards allocate no
-    /// structural terms while heads can consume promoted values.
+    /// Boundary between body computations/guards and head actions.
     head_start: Option<usize>,
     /// If set, execute a single rule (rather than O(atoms.len()) rules) during
     /// seminaive, with the given atom as the focus.
@@ -531,7 +529,7 @@ impl RuleBuilder<'_> {
             // after lowering the ordinary fallback instruction; generic
             // value-producing fallbacks deliberately have no such recipe.
             let var = rb.call_external_with_fallback(func, &args, panic_fn, &[])?;
-            rb.promote_replay_call(&args, var, replay.clone());
+            rb.register_replay_call(&args, var, replay.clone());
             inner.mapping.insert(res.id, var.into());
             Ok(())
         }));
@@ -589,9 +587,8 @@ impl RuleBuilder<'_> {
         self.query_prim_with_replay(func, entries, _ret_ty, None)
     }
 
-    /// Add a primitive query atom and promote its result only when the atom
-    /// binds a new value. Guard-only calls whose output was already known do
-    /// not grow the replay DAG.
+    /// Add a primitive query atom and register its structural result recipe.
+    /// Guard-only calls alias that recipe to the already-known output.
     pub fn query_prim_with_replay(
         &mut self,
         func: ExternalFunctionId,
@@ -622,34 +619,21 @@ impl RuleBuilder<'_> {
             let var = if anchor_on_primitive_return {
                 rb.call_external_with_replay(func, &dst_vars, replay.clone())?
             } else {
-                rb.call_external(func, &dst_vars)?
+                let var = rb.call_external(func, &dst_vars)?;
+                rb.register_replay_call(&dst_vars, var, replay.clone());
+                var
             };
             match entries.last().unwrap() {
                 QueryEntry::Var(Variable { id, .. }) if !inner.grounded.contains(id) => {
                     inner.mapping.insert(*id, var.into());
                     inner.grounded.insert(*id);
-                    if !anchor_on_primitive_return && let Some(replay) = replay.clone() {
-                        inner.replay_promotions.push(DeferredReplayCall {
-                            args: dst_vars,
-                            dst: var,
-                            replay,
-                            alias: None,
-                        });
-                    }
                 }
                 _ => {
                     rb.assert_eq(var.into(), expected);
-                    if let (Some(replay), DstVar::Var(alias)) = (replay.clone(), expected) {
-                        if anchor_on_primitive_return {
-                            rb.alias_replay_recipe(var, alias);
-                        } else {
-                            inner.replay_promotions.push(DeferredReplayCall {
-                                args: dst_vars,
-                                dst: var,
-                                replay,
-                                alias: Some(alias),
-                            });
-                        }
+                    if replay.is_some()
+                        && let DstVar::Var(alias) = expected
+                    {
+                        rb.alias_replay_recipe(var, alias);
                     }
                 }
             }
@@ -952,7 +936,6 @@ impl Query {
             next_ts: None,
             mapping: Default::default(),
             grounded: Default::default(),
-            replay_promotions: Default::default(),
             grounded_execution: false,
         };
         for (var, info) in self.vars.iter() {
@@ -978,12 +961,6 @@ impl Query {
         self.add_rule[..head_start]
             .iter()
             .try_for_each(|f| f(&mut inner, &mut rb))?;
-        for promotion in std::mem::take(&mut inner.replay_promotions) {
-            rb.promote_replay_call(&promotion.args, promotion.dst, Some(promotion.replay));
-            if let Some(alias) = promotion.alias {
-                rb.alias_replay_recipe(promotion.dst, alias);
-            }
-        }
         self.add_rule[head_start..]
             .iter()
             .try_for_each(|f| f(&mut inner, &mut rb))?;
@@ -1099,12 +1076,6 @@ impl Query {
         self.add_rule[..head_start]
             .iter()
             .try_for_each(|callback| callback(&mut inner, &mut rb))?;
-        for promotion in std::mem::take(&mut inner.replay_promotions) {
-            rb.promote_replay_call(&promotion.args, promotion.dst, Some(promotion.replay));
-            if let Some(alias) = promotion.alias {
-                rb.alias_replay_recipe(promotion.dst, alias);
-            }
-        }
         let probes = self
             .atoms
             .iter()
@@ -1232,15 +1203,7 @@ pub(crate) struct Bindings {
     next_ts: Option<DstVar>,
     pub(crate) mapping: DenseIdMap<VariableId, DstVar>,
     grounded: HashSet<VariableId>,
-    replay_promotions: Vec<DeferredReplayCall>,
     grounded_execution: bool,
-}
-
-struct DeferredReplayCall {
-    args: SmallVec<[DstVar; 4]>,
-    dst: core_relations::Variable,
-    replay: ReplayConstructorSpec,
-    alias: Option<core_relations::Variable>,
 }
 
 impl Bindings {
