@@ -20,7 +20,8 @@
 //! Owner closure, equality-denotation closure, maintenance equalities, and
 //! interference removals are iterated until no new support is discovered.
 //!
-//! The result is one sound historical support cone. It is neither a claim of
+//! The result is intended to capture one historical support cone. Tests provide
+//! regression evidence for that contract; the result is neither a claim of
 //! global minimality nor a reconstructed proof.
 
 use std::collections::VecDeque;
@@ -154,6 +155,8 @@ impl SelectedEqualityDsu {
 pub(super) enum SliceError {
     #[error(transparent)]
     Trace(#[from] TraceViewError),
+    #[error("causal slicing is unavailable without exact trace capture")]
+    Disabled,
     #[error("causal slicing requires the concrete main bridge backend")]
     UnsupportedBackend,
     #[error("causal slicing cannot use a poisoned capture: {0}")]
@@ -902,7 +905,7 @@ pub(super) fn select_all_checks(egraph: &EGraph) -> Result<Slice, SliceError> {
     egraph
         .capture_catalog
         .as_ref()
-        .ok_or(SliceError::UnsupportedBackend)?
+        .ok_or(SliceError::Disabled)?
         .ensure_healthy()
         .map_err(|error| SliceError::Poisoned(error.to_string()))?;
     let bridge = egraph

@@ -24,6 +24,19 @@ fn replay_slice(egraph: EGraph, slice: &Slice) -> EGraph {
 }
 
 #[test]
+fn slicing_disabled_has_a_distinct_error() {
+    let error = match select_all_checks(&EGraph::default()) {
+        Err(error) => error,
+        Ok(_) => panic!("slicing without trace capture unexpectedly succeeded"),
+    };
+    assert!(matches!(error, SliceError::Disabled));
+    assert_eq!(
+        error.to_string(),
+        "causal slicing is unavailable without exact trace capture"
+    );
+}
+
+#[test]
 fn repeated_variable_slice_keeps_exact_equality_support() {
     let mut egraph = EGraph::default();
     serial_trace_pool()

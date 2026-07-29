@@ -239,5 +239,42 @@ fn slice_rejects_parallel_capture() {
     let directory = TestDir::new();
     let output = run(directory.path(), &["--slice", "--threads", "2"]);
     assert_eq!(output.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("--slice requires --threads 1"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("slicing requires --threads 1"));
+}
+
+#[test]
+fn slice_output_rejects_parallel_capture_with_accurate_flag_neutral_diagnostic() {
+    let directory = TestDir::new();
+    let artifact = directory.path().join("slice-replay.egg");
+    let output = run(
+        directory.path(),
+        &[
+            "--slice-output",
+            artifact.to_str().unwrap(),
+            "--threads",
+            "2",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("slicing requires --threads 1"));
+}
+
+#[test]
+fn slicing_flags_require_an_input_with_accurate_flag_neutral_diagnostic() {
+    let directory = TestDir::new();
+    let artifact = directory.path().join("slice-replay.egg");
+    for output in [
+        egglog().arg("--slice").output().unwrap(),
+        egglog()
+            .arg("--slice-output")
+            .arg(artifact)
+            .output()
+            .unwrap(),
+    ] {
+        assert_eq!(output.status.code(), Some(2));
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("slicing requires at least one input file")
+        );
+    }
 }

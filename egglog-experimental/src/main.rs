@@ -18,11 +18,10 @@ fn main() {
             Some("--proofs" | "--proof-testing" | "--proof-extraction" | "--term-encoding")
         )
     });
-    let slice_requested = requests_slice(&args);
-    if slice_requested && !matches!(backend, Backend::Main) {
-        eprintln!("error: --slice supports only --backend main");
+    let slice_requested = slice_request_for_backend(backend, &args).unwrap_or_else(|err| {
+        eprintln!("error: {err}");
         std::process::exit(2);
-    }
+    });
     #[cfg(feature = "dd-backend")]
     let args = if matches!(backend, Backend::Dd) {
         strip_term_encoding_arg(args)
@@ -52,6 +51,15 @@ fn requests_slice(args: &[OsString]) -> bool {
         };
         matches!(arg, "--slice" | "--slice-output") || arg.starts_with("--slice-output=")
     })
+}
+
+fn slice_request_for_backend(backend: Backend, args: &[OsString]) -> Result<bool, &'static str> {
+    let requested = requests_slice(args);
+    if requested && !matches!(backend, Backend::Main) {
+        Err("slicing is supported only with --backend main")
+    } else {
+        Ok(requested)
+    }
 }
 
 fn extract_backend_arg<I>(args: I) -> Result<(Backend, Vec<OsString>), String>
@@ -122,9 +130,6 @@ mod tests {
         assert_eq!(parse_backend(Some("main")), Ok(Backend::Main));
     }
 
-    #[path = "../causal_slice_tests.rs"]
-    mod causal_slice;
-
     #[cfg(not(feature = "dd-backend"))]
     #[test]
     fn explains_how_to_enable_dd_backend() {
@@ -157,3 +162,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "causal_slice_tests.rs"]
+mod causal_slice_tests;

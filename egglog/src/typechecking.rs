@@ -229,7 +229,6 @@ impl Debug for PrimitiveWithId {
     }
 }
 
-/// Stores resolved typechecking information.
 #[derive(Clone)]
 struct NamedRuleTypeInfo {
     declaration_span: Span,
@@ -259,6 +258,7 @@ impl NamedRuleTypeInfo {
     }
 }
 
+/// Stores resolved typechecking information.
 #[derive(Clone, Default)]
 pub struct TypeInfo {
     mksorts: HashMap<String, MkSort>,

@@ -79,13 +79,15 @@ term encoding, proof extraction, naive execution, and graph serialization.
 
 `--slice-output` is the rendering path and writes the program directly; the CLI
 does not run a second validation pass or publish through an atomic
-temporary-file rename. The test corpus and CI strictly replay supported
-artifacts, while unsupported capture boundaries still fail before an artifact
-is produced. There is no fallback to the original program.
+temporary-file rename. The causal corpus tests execute each artifact they
+classify as supported under `--proof-testing`; that is regression coverage for
+those fixtures, not exhaustive validation of every supported program.
+Unsupported capture boundaries still fail before an artifact is produced.
+There is no fallback to the original program.
 
 Slicing currently supports sequential input files, one execution thread, and
-the main backend. A selected execution that reaches an unsupported scheduler, source,
-container, or mutation shape fails closed with a diagnostic.
+the main backend. A selected execution that reaches an unsupported scheduler,
+source, container, or mutation shape fails closed with a diagnostic.
 Source-authored `run-rule` schedules are currently unsupported; generated
 replay uses `run-rule` only for ordinary firings whose exact premises were
 captured at commit.
@@ -97,6 +99,13 @@ construct the replay program, not itself a proof.
 
 Retained source `rewrite` and `birewrite` commands preserve their source form
 and receive deterministic names so grounded replay can select them exactly.
+
+One can also use `egglog` as a Rust library by adding the following to your `Cargo.toml`:
+
+```
+[dependencies]
+egglog = "2.0.0"
+```
 
 See also the [Python binding](https://github.com/egraphs-good/egglog-python) for using `egglog` in Python.
 

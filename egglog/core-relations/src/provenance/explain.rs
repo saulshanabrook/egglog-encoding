@@ -200,6 +200,10 @@ impl<'a> TraceView<'a> {
             .expect("initialized raw equality index disappeared"))
     }
 
+    /// Return the applied equality edges connecting two raw endpoints at the
+    /// inclusive historical position.
+    ///
+    /// Returns an error when the trace is invalid or no path existed then.
     pub fn explain_raw_equality_support_at(
         &mut self,
         left: RawEqualityEndpoint,
@@ -453,6 +457,10 @@ impl<'a> TraceView<'a> {
         Ok(cursor)
     }
 
+    /// Return the fact, rekey, and applied-edge support establishing two
+    /// structural endpoints at the inclusive historical position.
+    ///
+    /// Both endpoints must have actual historical occurrences.
     pub fn explain_equality_support_at(
         &mut self,
         left: EqualityEndpoint,
@@ -670,6 +678,11 @@ impl<'a> TraceView<'a> {
         }
     }
 
+    /// Return support connecting two exact fact-cell occurrences at the
+    /// inclusive historical position.
+    ///
+    /// The result retains the occurrence facts and any rekeys needed to
+    /// recover their historical cells.
     pub fn explain_fact_cell_support_at(
         &mut self,
         left: FactCellRef,
@@ -744,6 +757,10 @@ impl<'a> TraceView<'a> {
         })
     }
 
+    /// Return support connecting an exact fact-cell occurrence to a structural
+    /// endpoint at the inclusive historical position.
+    ///
+    /// The result retains witnesses for both occurrences.
     pub fn explain_fact_endpoint_support_at(
         &mut self,
         fact: FactCellRef,

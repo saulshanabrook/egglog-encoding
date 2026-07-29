@@ -62,6 +62,7 @@ const RESERVED_KEYWORDS: &[&str] = &[
     "run-rule",
     "run-schedule",
     "check",
+    "let-check",
     "extract",
     "push",
     "pop",

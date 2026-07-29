@@ -121,9 +121,9 @@ where
     let slice_requested = args.slice || args.slice_output.is_some();
     if slice_requested {
         let invalid = if args.threads != 1 {
-            Some("--slice requires --threads 1")
+            Some("slicing requires --threads 1")
         } else if args.inputs.is_empty() {
-            Some("--slice requires at least one input file")
+            Some("slicing requires at least one input file")
         } else {
             None
         };

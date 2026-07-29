@@ -18,7 +18,8 @@
 //! validate replay, write a file, or claim that the selected support is globally
 //! minimal or is itself a proof. It requires a healthy capture on the concrete
 //! main backend and fails closed when selected history cannot be represented as
-//! ordinary commands.
+//! ordinary commands: it returns an error rather than a partial slice or the
+//! original program.
 //!
 //! Its error surface is the crate's existing [`enum@crate::Error`]. Internal trace,
 //! selection, catalog, input, and lowering failures are reported as

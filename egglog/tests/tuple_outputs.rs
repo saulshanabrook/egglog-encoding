@@ -175,6 +175,7 @@ fn builtin_keywords_are_reserved() {
         // a sampling of command/action/schedule keywords
         "(function set (i64) i64 :merge new)",
         "(relation union (i64))",
+        "(relation let-check (i64))",
         "(sort run)",
         "(datatype D (function i64))",
         "(relation r (i64)) (rule ((r let)) ())",

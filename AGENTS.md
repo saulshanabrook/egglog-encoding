@@ -57,7 +57,7 @@ The Make target writes the one-round machine-readable report to
 nonempty. Override `BENCHMARK_SMOKE_REPORT` to use another temporary path.
 
 For benchmark-report UI changes, inspect both a focused one-file report and the
-default five-file report in Rich and Markdown form. Exercise terminal widths 80,
+default six-file report in Rich and Markdown form. Exercise terminal widths 80,
 119, 120, 160, and 200 using copies of the report cache under `/tmp`; do not read
 from or append to the repository cache during UI validation. Confirm that the
 cumulative `--detail` levels add files, phases, and top rulesets in that order,

@@ -35,8 +35,9 @@ The implementation follows the same boundaries as this explanation:
    `slicing/replay.rs` for the graph-neutral replay program, chronological
    scheduling, command lowering, and optional source rendering.
 5. Finish with [`slice_all_checks`] and `cli.rs`, then use the sibling
-   `*_tests.rs` files and `test-support/causal_corpus.rs` as the falsifying
-   examples for each supported or fail-closed boundary.
+   `*_tests.rs` files and `test-support/causal_corpus.rs` as representative
+   examples that exercise supported behavior and fail-closed boundaries. The
+   examples are regression evidence, not an exhaustive capability inventory.
 
 Capture, selection, and replay are intentionally separate review units. A
 change that crosses one of those units should state which new semantic
@@ -84,10 +85,9 @@ recipes are shared rather than copied into every event.
 
 Capture is intentionally not eager explanation production. It does not store
 one proof tree per equality, elaborate every rule match into a source tree, or
-record a conservative prefix of the run. The expensive part of earlier
-designs was materializing and repeatedly projecting those representations,
-not observing native events. The current trace keeps a shared causal DAG and
-enough typed history to recover one actual witness on demand.
+record a conservative prefix of the run. The current trace keeps a shared
+causal DAG and enough typed history to recover one actual witness on demand
+instead of materializing and repeatedly projecting those representations.
 
 Only replay-observable events become durable. A no-op proposal does not become
 causal support. Conversely, when a selected source command or firing owns one
@@ -117,10 +117,11 @@ evidence for the check:
   its source-level endpoints denote the native edge that was actually applied.
 
 These passes iterate until they add no support. Typed work items make each
-dependency rule explicit, while strict-replay and permutation tests exercise
-the resulting closure invariant. The result is a sound support cone for the
-observed execution. It deliberately makes no claim of global minimality, and
-it is not a proof object.
+dependency rule explicit, while strict-replay and permutation tests provide
+regression evidence for the intended closure contract. The result is intended
+to be a support cone for the observed execution; the tests are not a formal
+proof of soundness. The slice makes no claim of global minimality, and it is
+not a proof object.
 
 ### Grounded replay checks the account
 
@@ -334,18 +335,22 @@ Capture always runs on an ordinary, non-proof graph. The generated source can
 then run normally or on a fresh graph configured for proofs, proof testing,
 term encoding, or proof extraction. Proof mode therefore consumes the replay
 program exactly as it consumes any other egglog program; it does not interpret
-recording-graph values or trust the trace as a certificate. Successful proof
-replay is strong validation of the artifact, but it does not turn the slice
-into a minimal proof.
+recording-graph values or trust the trace as a certificate. Normal replay checks
+that the generated commands execute successfully. `--proof-testing`
+additionally extracts and verifies proofs for the replayed checks. Either result
+is evidence only for the exercised program; it does not establish global
+minimality or completeness.
 
-## Where recording cost comes from
+## Where recording work and storage occur
+
+This section identifies retained work and storage, not a measured attribution.
+Actual overhead is workload-dependent and must be established by benchmarks.
 
 The exact replay contract records an observed firing together with its ordered
-premise facts and source-order bindings. Most capture work therefore comes from
-carrying witnesses through matching and commit, not from later explanation or
-rendering. Backward closure and replay are cold operations whose cost follows
-the retained cone; capture pays for every observed firing whether or not that
-firing eventually supports a check.
+premise facts and source-order bindings. The capture path carries those
+witnesses through matching and commit and pays for every observed firing,
+whether or not that firing eventually supports a check. Backward closure and
+replay run after capture and work over retained and selected state.
 
 Capture also retains the exact literals of nonempty input rows so a later slice
 does not depend on external files. Only selected rows are copied into the replay
@@ -380,14 +385,17 @@ the replay program, so a fresh replay factory must install the same
 declarations. Successful `check` commands are the replay roots. `extract` and
 `multi-extract` output are not retained.
 
-Unsupported behavior remains fail-closed. Some constructs, such as push/pop
-state and nested `fail`, are rejected before that command is resolved or can
-mutate captured state. Static typed `Unsupported` structural-origin selectors
-are allowed to remain dormant, but an effective merge or rebuild that reaches
-one is rejected while the capture transaction is still abortable. Unsupported
+Slicing fails closed with respect to artifacts: an unsupported path returns an
+error and is never replaced by a prefix or the original program. This is not a
+general native transaction-rollback guarantee. Some constructs, such as
+push/pop state and nested `fail`, are rejected before that command is resolved
+or can mutate captured state. Static typed `Unsupported` structural-origin
+selectors may remain dormant, but an effective merge or rebuild that reaches
+one is rejected while its capture transaction is still abortable. Unsupported
 scheduler, source, literal, container, or mutation shapes similarly produce an
-error at the relevant capture or selection boundary. An unsupported path is
-never replaced by a prefix or by the original program.
+error at the relevant capture or selection boundary. If native effects may
+already exist when capture fails, the trace is poisoned and later slicing
+refuses to publish an artifact from it.
 
 Source-authored `run-rule` schedules are one deliberate current boundary.
 Replay uses grounded `run-rule` for already-recorded ordinary firings, but
@@ -409,9 +417,10 @@ so proof and other execution-mode flags can be combined with slicing. If
 output and replay are both requested, rendering and writing still precede
 direct command replay and are not made transactional by it.
 
-Strict replay is instead a corpus and CI invariant: supported generated
-artifacts are executed there, and a replay failure fails the test. Code that
-publishes an artifact outside that workflow must therefore decide whether to
+The causal corpus executes each artifact it classifies as supported under
+`--proof-testing`; a failure fails that fixture. This is regression evidence for
+the exercised corpus, not proof that every supported program shape replays.
+Code that publishes an artifact outside that workflow must decide whether to
 run its own validation and atomic-publication protocol. The existence of an
 output file alone is not a validation claim.
 
@@ -442,9 +451,9 @@ than from a desired output shape:
    A missing capability should end in a precise error, never a conservative
    prefix.
 
-This discipline keeps capture bounded and its costs explicit, keeps historical
-queries exact, and makes the fresh engine an independent oracle for the final
-artifact.
+This discipline keeps capture bounded, exposes retained work and storage,
+states the intended historical-query contract, and exercises the final artifact
+through fresh engine state.
 
 ## Research lineage
 

@@ -447,11 +447,7 @@ impl ContainerValues {
     }
 }
 
-/// A trait implemented by container types.
-///
-/// Containers behave a lot like base values, but they include extra trait methods to support
-/// rebuilding of container contents and merging containers that become equal after a rebuild pass
-/// has taken place.
+/// Positional container shapes supported by exact causal rebuild capture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CausalContainerKind {
     Pair,
@@ -471,6 +467,11 @@ impl CausalContainerKind {
     }
 }
 
+/// A trait implemented by container types.
+///
+/// Containers behave a lot like base values, but they include extra trait methods to support
+/// rebuilding of container contents and merging containers that become equal after a rebuild pass
+/// has taken place.
 pub trait ContainerValue: Hash + Eq + Clone + Send + Sync + 'static {
     /// The positional container shape supported by exact causal rebuild
     /// capture. Unlisted container semantics fail closed only if rebuild

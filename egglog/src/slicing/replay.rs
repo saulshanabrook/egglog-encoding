@@ -358,12 +358,6 @@ fn split_global_symbol(symbol: &str) -> (&str, &str) {
         .unwrap_or(("", symbol))
 }
 
-/// Alpha-renames replay-owned and parser-reserved internal symbols across the
-/// complete candidate program. This is deliberately cold: capture keeps exact
-/// provenance-marked names, then one occupied-name-aware map makes aliases,
-/// declarations, rule references, grounded binding keys, and direction suffixes
-/// agree without conflating user symbols. Observation precedes declaration
-/// pruning so an unused declaration cannot change a generated replay name.
 fn observed_source_symbols(commands: &[Command]) -> Vec<String> {
     let mut observed = Vec::new();
     for command in commands {
@@ -395,6 +389,12 @@ fn observed_source_symbols(commands: &[Command]) -> Vec<String> {
     observed
 }
 
+/// Alpha-renames replay-owned and parser-reserved internal symbols across the
+/// complete candidate program. This is deliberately cold: capture keeps exact
+/// provenance-marked names, then one occupied-name-aware map makes aliases,
+/// declarations, rule references, grounded binding keys, and direction suffixes
+/// agree without conflating user symbols. Observation precedes declaration
+/// pruning so an unused declaration cannot change a generated replay name.
 fn hygienic_source_commands(commands: Vec<Command>, observed: Vec<String>) -> Vec<Command> {
     let mut occupied = HashSet::default();
     let mut internal_bases = Vec::new();

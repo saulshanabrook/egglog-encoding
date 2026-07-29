@@ -1515,12 +1515,18 @@ impl EGraph {
         self
     }
 
-    /// Enable native trace capture before loading facts or compiling
-    /// rule plans.
+    /// Enable exact causal trace capture for later [`slicing::slice_all_checks`].
     ///
-    /// Structural replay identities are owned by this frontend and registered
-    /// side-band with the backend. Ordinary execution has no catalog and keeps
-    /// its existing instruction tape unchanged.
+    /// Call this before registering rules or inserting facts or input rows.
+    /// Empty declarations may precede capture, but a fresh replay graph must
+    /// provide them again. Repeated calls after successful activation are
+    /// no-ops.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a proof- or term-encoded graph, push/pop state,
+    /// existing rows or rules, parallel capture, an unsupported backend, or a
+    /// backend registration failure.
     pub fn enable_trace(&mut self) -> Result<(), Error> {
         if self.capture_catalog.is_some() {
             return Ok(());

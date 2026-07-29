@@ -128,8 +128,8 @@ where
     },
     CoreAction(GenericAction<Head, Leaf>),
     /// A block of actions run once, immediately, with a shared *local* scope:
-    /// `let`s bind local variables rather than global functions. A user-written
-    /// block is unsupported under the term/proof encoding.
+    /// `let`s bind local variables rather than global functions. Proof checking
+    /// preserves that local scope and does not export those bindings.
     CoreActions(GenericActions<Head, Leaf>),
     /// `(let <var> (begin <action>* <expr>))`: run the block with a shared local
     /// scope, then bind the *global* `<var>` to the trailing `<expr>`. The last
@@ -1383,13 +1383,20 @@ impl Display for IdentSort {
 pub type RunConfig = GenericRunConfig<String, String>;
 pub(crate) type ResolvedRunConfig = GenericRunConfig<ResolvedCall, ResolvedVar>;
 
+/// A parsed `run-rule` invocation awaiting resolution and typechecking.
 pub type RunRuleConfig = GenericRunRuleConfig<String, String>;
 pub(crate) type ResolvedRunRuleConfig = GenericRunRuleConfig<ResolvedCall, ResolvedVar>;
 
-/// One fully grounded invocation in an atomic `run-rule` list.
+/// One configured invocation in an atomic `run-rule` list.
+///
+/// For parsed configurations, typechecking resolves the named rule and requires
+/// one closed, well-typed expression for every user variable. All invocations
+/// in the list observe the same pre-wave state when executed.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct GenericRunRuleConfig<Head, Leaf> {
+    /// The named source rule to invoke.
     pub rule: String,
+    /// Expressions keyed by the source rule's variables.
     pub bindings: Vec<(Leaf, GenericExpr<Head, Leaf>)>,
 }
 
