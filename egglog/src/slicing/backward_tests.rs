@@ -43,7 +43,7 @@ fn repeated_variable_slice_keeps_exact_equality_support() {
     assert_eq!(slice.equalities.len(), 1);
     assert_eq!(slice.sources.len(), 2);
     assert!(slice.firings.iter().all(|firing| {
-        let record = slice.firing_terms.get(firing).unwrap();
+        let record = slice.firing_bindings.get(firing).unwrap();
         record.len() <= 1
     }));
 }
@@ -347,17 +347,17 @@ fn parent_alias_waits_for_child_key_bridge_without_borrowing_parent_anchor() {
 
     let slice = slice_check(&egraph, 0).unwrap();
     assert_eq!(slice.equalities.len(), 1, "retain the child key bridge");
-    let consume_windows = slice
-        .firing_term_windows
+    let consume_bindings = slice
+        .firing_bindings
         .values()
-        .find(|bindings| bindings.len() == 1 && bindings[0].len() == 2)
-        .expect("consume must retain the child and parent call windows");
-    let [child, parent] = consume_windows[0].as_ref() else {
-        unreachable!("window count was checked above")
+        .find(|bindings| bindings.len() == 1 && bindings[0].aliases.len() == 2)
+        .expect("consume must retain the child and parent alias plans");
+    let [child, parent] = consume_bindings[0].aliases.as_ref() else {
+        unreachable!("alias plan count was checked above")
     };
     assert!(
         parent.ready_after > child.ready_after,
-        "the parent must wait for the child denotation bridge, not merely child creation: {consume_windows:?}"
+        "the parent must wait for the child denotation bridge, not merely child creation: {consume_bindings:?}"
     );
 
     let replay = crate::slicing::replay::build_replay_program(&egraph, &slice).unwrap();
@@ -450,22 +450,22 @@ fn post_deletion_equality_cannot_select_stale_child_producer() {
     // that addressed H's key while H was still live.
     assert_eq!(slice.equality_records.len(), 1);
     assert_eq!(slice.replay_removals.len(), 2);
-    let h_windows = slice
-        .firing_term_windows
+    let h_plans = slice
+        .firing_bindings
         .values()
         .flat_map(|bindings| bindings.iter())
-        .filter(|windows| windows.len() == 2)
-        .map(|windows| windows[1])
+        .filter(|binding| binding.aliases.len() == 2)
+        .map(|binding| binding.aliases[1])
         .collect::<Vec<_>>();
     assert_eq!(
-        h_windows.len(),
+        h_plans.len(),
         2,
-        "delete-live and consume must each retain child and H windows"
+        "delete-live and consume must each retain child and H alias plans"
     );
-    for h_window in h_windows {
+    for h_plan in h_plans {
         assert!(
-            h_window.producer.is_some(),
-            "the H alias must retain its exact producer: {h_window:?}"
+            h_plan.producer.is_some(),
+            "the H alias must retain its exact producer: {h_plan:?}"
         );
     }
 
@@ -530,18 +530,18 @@ fn duplicate_syntax_in_one_binding_keeps_distinct_occurrence_windows() {
         .unwrap();
 
     let slice = slice_check(&egraph, 0).unwrap();
-    let consume_windows = slice
-        .firing_term_windows
+    let consume_bindings = slice
+        .firing_bindings
         .values()
-        .find(|bindings| bindings.len() == 1 && bindings[0].len() == 3)
+        .find(|bindings| bindings.len() == 1 && bindings[0].aliases.len() == 3)
         .expect("consume must retain two child occurrences and their parent");
-    let [old_child, recreated_child, parent] = consume_windows[0].as_ref() else {
-        unreachable!("window count was checked above")
+    let [old_child, recreated_child, parent] = consume_bindings[0].aliases.as_ref() else {
+        unreachable!("alias plan count was checked above")
     };
     assert!(
         old_child.ready_after < recreated_child.ready_after
             && recreated_child.ready_after < parent.ready_after,
-        "old child, recreated child, and parent need distinct occurrence-local readiness bounds: {consume_windows:?}"
+        "old child, recreated child, and parent need distinct occurrence-local readiness bounds: {consume_bindings:?}"
     );
     let replay = crate::slicing::replay::build_replay_program(&egraph, &slice).unwrap();
     let commands = replay.to_commands().unwrap();

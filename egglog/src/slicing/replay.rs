@@ -1066,41 +1066,22 @@ fn build_owned(
     let mut next_alias = 0usize;
     for (id, rule, wave, _) in firings {
         let rule_entry = &catalog.rule_catalog[rule as usize];
-        let binding_terms = slice.firing_terms.get(&id).ok_or_else(|| {
+        let binding_plans = slice.firing_bindings.get(&id).ok_or_else(|| {
             ReplayError::Invalid(format!(
                 "selected firing {} has no projected bindings",
                 id.get()
             ))
         })?;
-        if binding_terms.len() != rule_entry.variables.len() {
+        if binding_plans.len() != rule_entry.variables.len() {
             return Err(ReplayError::Invalid(format!(
-                "selected firing {} has {} terms for {} rule variables",
+                "selected firing {} has {} bindings for {} rule variables",
                 id.get(),
-                binding_terms.len(),
+                binding_plans.len(),
                 rule_entry.variables.len()
             )));
         }
-        let binding_windows = slice.firing_term_windows.get(&id).ok_or_else(|| {
-            ReplayError::Invalid(format!(
-                "selected firing {} has no checked-alias availability plan",
-                id.get()
-            ))
-        })?;
-        if binding_windows.len() != binding_terms.len() {
-            return Err(ReplayError::Invalid(format!(
-                "selected firing {} has {} alias windows for {} bindings",
-                id.get(),
-                binding_windows.len(),
-                binding_terms.len()
-            )));
-        }
-        let mut bindings = Vec::with_capacity(binding_terms.len());
-        for ((variable, source_term), alias_windows) in rule_entry
-            .variables
-            .iter()
-            .zip(binding_terms.iter().copied())
-            .zip(binding_windows.iter())
-        {
+        let mut bindings = Vec::with_capacity(binding_plans.len());
+        for (variable, binding_plan) in rule_entry.variables.iter().zip(binding_plans.iter()) {
             let variable_name = &variable.name;
             let expected_sort = &variable.sort;
             match (&rule_entry.surface, &variable.role) {
@@ -1131,7 +1112,7 @@ fn build_owned(
                 }
                 _ => {}
             }
-            let term = terms.intern(source_term)?;
+            let term = terms.intern(binding_plan.term)?;
             let actual_sort = terms.nodes[term.index()].sort();
             if actual_sort != expected_sort {
                 return Err(ReplayError::Invalid(format!(
@@ -1140,15 +1121,17 @@ fn build_owned(
                 )));
             }
             let new_calls = terms.take_new_calls();
-            if new_calls.len() != alias_windows.len() {
+            if new_calls.len() != binding_plan.aliases.len() {
                 return Err(ReplayError::Invalid(format!(
-                    "firing {} binding `{variable_name}` owns {} structural call occurrences but has {} availability windows",
+                    "firing {} binding `{variable_name}` owns {} structural call occurrences but has {} alias plans",
                     id.get(),
                     new_calls.len(),
-                    alias_windows.len()
+                    binding_plan.aliases.len()
                 )));
             }
-            for ((source_call, call), plan) in new_calls.into_iter().zip(alias_windows.iter()) {
+            for ((source_call, call), plan) in
+                new_calls.into_iter().zip(binding_plan.aliases.iter())
+            {
                 let plan = *plan;
                 let canonical_children = match &terms.nodes[call.index()] {
                     OwnedReplayTerm::Literal { .. } => unreachable!("Call queue contained literal"),

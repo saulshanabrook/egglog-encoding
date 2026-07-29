@@ -28,14 +28,15 @@ pub(crate) struct Slice {
     pub(crate) rekeys: HashSet<HistoryPosition>,
     pub(crate) causes: HashSet<CauseRef>,
     pub(crate) sources: HashSet<SourceRef>,
-    pub(crate) firing_terms: HashMap<FiringId, Box<[ReplayTermId]>>,
-    /// Occurrence-local availability, key-readiness, and producer-liveness
-    /// windows for every call in a firing binding's structural `let-check`
-    /// recipe. Aliases may be captured before a selected deletion and then
-    /// reused by later grounded waves.
-    pub(crate) firing_term_windows: HashMap<FiringId, Box<[Box<[ReplayAliasPlan]>]>>,
+    pub(crate) firing_bindings: HashMap<FiringId, Box<[FiringBindingPlan]>>,
     pub(crate) equality_records: HashMap<AppliedEqualityId, ProjectedAppliedEquality>,
     denotation_equalities: HashSet<AppliedEqualityId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FiringBindingPlan {
+    pub(crate) term: ReplayTermId,
+    pub(crate) aliases: Box<[ReplayAliasPlan]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -651,16 +652,18 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                     work.extend(premises.iter().copied().map(Work::Fact));
                     work.extend(merge_reads.into_iter().map(Work::Fact));
                     let terms = view.firing_terms(id)?;
-                    let mut windows = Vec::with_capacity(terms.len());
-                    for binding in 0..terms.len() {
+                    let mut bindings = Vec::with_capacity(terms.len());
+                    for (binding, term) in terms.iter().copied().enumerate() {
                         let availability = view.explain_firing_term_availability(id, binding)?;
-                        windows.push(availability.aliases);
                         enqueue_support(&mut work, availability.support);
+                        bindings.push(FiringBindingPlan {
+                            term,
+                            aliases: availability.aliases,
+                        });
                     }
-                    slice.firing_terms.insert(id, terms);
                     slice
-                        .firing_term_windows
-                        .insert(id, windows.into_boxed_slice());
+                        .firing_bindings
+                        .insert(id, bindings.into_boxed_slice());
                     for (left, right) in view.rule_equality_layout(rule)?.iter().copied() {
                         let support = explain_rule_equality(
                             view,
