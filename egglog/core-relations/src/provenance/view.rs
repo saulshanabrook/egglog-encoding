@@ -1,4 +1,4 @@
-//! Borrowed historical views over one finalized trace.
+//! Borrowed historical views over one publication-complete trace.
 
 use super::*;
 
@@ -505,10 +505,15 @@ impl<'a> TermProjector<'a> {
     }
 }
 
-/// Borrowed, non-escaping view of one finalized raw trace arena.
+/// Borrowed, non-escaping view of quiescent, publication-complete history.
 ///
 /// Accessors project structural terms only for explicitly selected facts,
-/// firings, or equality events.
+/// firings, or equality events. Historical explanation indexes and occurrence
+/// caches are likewise constructed only when an `explain_*` query needs them.
+/// A view can be obtained only through [`Trace::with_view`], whose closure
+/// prevents references into the arena from escaping. The view check does not
+/// freeze independent term/catalog writers; callers needing a stable catalog
+/// must quiesce them before entry.
 pub struct TraceView<'a> {
     pub(super) arena: &'a TraceArena,
     pub(super) binding_recipes: &'a HashMap<u32, Arc<[ReplayBindingSource]>>,
@@ -633,6 +638,10 @@ impl<'a> TraceView<'a> {
         Ok(CauseRef::Cause(CauseId::new(id)))
     }
 
+    /// Return point-in-time cardinalities of the checked trace view.
+    ///
+    /// The fields count facts, firings, shared causes, applied equalities,
+    /// rekeys, retained removals, and check roots.
     pub fn totals(&self) -> TraceTotals {
         TraceTotals {
             facts: self.arena.published_facts,
@@ -645,6 +654,11 @@ impl<'a> TraceView<'a> {
         }
     }
 
+    /// Borrow one immutable fact-creation record by its stable id.
+    ///
+    /// The returned raw values are the row at creation time. Later rekeys do
+    /// not mutate them; use [`TraceView::fact_cell_at`] for a historical
+    /// post-rekey cell value.
     pub fn fact(&self, id: FactId) -> Result<RawFactRecord<'a>, TraceViewError> {
         if id.is_missing() {
             return Err(TraceViewError::UnknownFact(id));
@@ -686,6 +700,12 @@ impl<'a> TraceView<'a> {
         self.rekey_index.as_ref().unwrap()
     }
 
+    /// Borrow one observed rule firing and its exact grounded dependencies.
+    ///
+    /// `premises` are the matched fact occurrences in the rule's premise
+    /// order. `merge_reads` are additional prior rows consulted by effective
+    /// merge callbacks. The recorded history and edge cutoffs bound every
+    /// explanation of what the firing observed.
     pub fn firing(&self, id: FiringId) -> Result<Firing<'a>, TraceViewError> {
         if id.get() == 0 {
             return Err(TraceViewError::UnknownFiring(id));
@@ -712,6 +732,11 @@ impl<'a> TraceView<'a> {
         })
     }
 
+    /// Borrow one shared non-rule cause node without recursively expanding it.
+    ///
+    /// Source, rebuild, container, and merge causes expose only their immediate
+    /// dependencies. Consumers can follow returned [`CauseRef`] and [`FactId`]
+    /// handles lazily, so inspecting one node does not walk the causal graph.
     pub fn cause(&self, id: CauseId) -> Result<RawCause<'a>, TraceViewError> {
         if id.get() == 0 {
             return Err(TraceViewError::UnknownCause(id));
@@ -769,6 +794,12 @@ impl<'a> TraceView<'a> {
         })
     }
 
+    /// Return one effective equality event without projecting structural terms.
+    ///
+    /// The raw endpoints are the typed proposal values. `native_child` and
+    /// `native_parent` are the forest edge that actually changed the native
+    /// union-find, which can differ from the proposal values' representatives.
+    /// Use [`TraceView::project_applied_equality`] when replay syntax is needed.
     pub fn applied_equality(
         &self,
         id: AppliedEqualityId,
@@ -800,6 +831,12 @@ impl<'a> TraceView<'a> {
         })
     }
 
+    /// Return an applied equality with lazily reconstructed structural
+    /// endpoints.
+    ///
+    /// Projection follows the event's retained cause/origin metadata and
+    /// memoizes only the selected fact and firing terms. The native edge and
+    /// reason are identical to [`TraceView::applied_equality`].
     pub fn project_applied_equality(
         &mut self,
         id: AppliedEqualityId,
@@ -833,6 +870,11 @@ impl<'a> TraceView<'a> {
         })
     }
 
+    /// Borrow the logical rekey published at an exact global history position.
+    ///
+    /// The record includes its earlier equality landmark, changed typed cells,
+    /// and whether the same fact moved or its occurrence ended in a collision.
+    /// Positions without a retained rekey return [`TraceViewError::UnknownRekey`].
     pub fn rekey_at(
         &mut self,
         position: HistoryPosition,
@@ -856,6 +898,10 @@ impl<'a> TraceView<'a> {
         })
     }
 
+    /// Borrow a retained keyed-row tombstone by zero-based storage index.
+    ///
+    /// This index is not a [`HistoryPosition`]. Presence-relation removals have
+    /// no replay-observable merge-bearing cell and therefore no tombstone.
     pub fn removal(&self, index: usize) -> Result<&'a Tombstone, TraceViewError> {
         self.arena
             .removals
@@ -863,6 +909,7 @@ impl<'a> TraceView<'a> {
             .ok_or(TraceViewError::UnknownRemoval(index))
     }
 
+    /// Borrow the first successful retained criterion for one check id.
     pub fn check_root(&self, check: u32) -> Result<&'a Criterion, TraceViewError> {
         self.arena
             .check_roots
@@ -870,12 +917,21 @@ impl<'a> TraceView<'a> {
             .ok_or(TraceViewError::UnknownCheck(check))
     }
 
+    /// Return all retained first-success criteria in ascending check-id order.
+    ///
+    /// The vector owns only the sorted references; each [`Criterion`] remains
+    /// borrowed from the trace arena.
     pub fn check_roots(&self) -> Vec<&'a Criterion> {
         let mut roots = self.arena.check_roots.values().collect::<Vec<_>>();
         roots.sort_unstable_by_key(|root| root.check);
         roots
     }
 
+    /// Return the registered replay schema for one physical table.
+    ///
+    /// The schema combines keyed-row semantics, key arity, logical column
+    /// sorts, and optional structural constructor metadata. Missing any
+    /// required catalog component is reported as an unknown table.
     pub fn table_schema(&self, table: TableId) -> Result<ReplayTableSchema, TraceViewError> {
         let columns = self
             .replay_terms
@@ -906,6 +962,11 @@ impl<'a> TraceView<'a> {
         })
     }
 
+    /// Return the static premise/constant endpoint pairs checked by one rule.
+    ///
+    /// The shared slice is source metadata, not a record of which equalities a
+    /// particular firing required. Historical support is computed lazily at
+    /// that firing's cutoffs.
     pub fn rule_equality_layout(
         &self,
         rule: u32,
@@ -916,6 +977,11 @@ impl<'a> TraceView<'a> {
         Ok(Arc::clone(equalities))
     }
 
+    /// Project the creation-time structural term of every column in one fact.
+    ///
+    /// The result follows physical column order. Engine-only columns contain
+    /// [`ReplayTermId::MISSING`]; typed columns are recovered lazily from the
+    /// fact's static or causal origin and memoized for this view.
     pub fn fact_terms(&mut self, id: FactId) -> Result<Box<[ReplayTermId]>, TraceViewError> {
         let fact = self.fact(id)?;
         let layout = self
@@ -936,6 +1002,11 @@ impl<'a> TraceView<'a> {
             .map(Vec::into_boxed_slice)
     }
 
+    /// Project all source-order structural bindings for one firing.
+    ///
+    /// Terms are reconstructed from the rule's static binding recipe and this
+    /// firing's exact premises or residual values, then memoized for this view.
+    /// Unsupported reached `Current` recipes fail closed.
     pub fn firing_terms(&mut self, id: FiringId) -> Result<Box<[ReplayTermId]>, TraceViewError> {
         let firing = self.firing(id)?;
         let binding_count = self
@@ -955,7 +1026,7 @@ impl<'a> TraceView<'a> {
             .map(Vec::into_boxed_slice)
     }
 
-    /// Prove that one complete grounded binding can be named by `let-check`
+    /// Establish that one complete grounded binding can be named by `let-check`
     /// at the match's historical position. Unlike equality explanation this
     /// asks only for structural availability: pure calls and ordered
     /// containers are recomputed from their children, while every table
@@ -1041,6 +1112,13 @@ impl<'a> TraceView<'a> {
         Ok(availability)
     }
 
+    /// Explain when one structural endpoint can be named through an exact fact
+    /// cell at a historical landmark.
+    ///
+    /// The fact cell supplies the occurrence anchor. The result combines
+    /// structural producer support, any raw-equality bridge to the anchor, the
+    /// cell's rekey chain, and child-first [`ReplayAliasPlan`] bounds needed for
+    /// replay scheduling.
     pub fn explain_fact_endpoint_availability_at(
         &mut self,
         occurrence: FactCellRef,
@@ -1108,6 +1186,10 @@ impl<'a> TraceView<'a> {
         })
     }
 
+    /// Clone one structural replay node from the shared interner.
+    ///
+    /// Unknown ids, including a missing sentinel used where a concrete term is
+    /// required, are reported as invalid trace references.
     pub fn replay_term(&self, term: ReplayTermId) -> Result<ReplayTerm, TraceViewError> {
         self.replay_terms
             .node(term)
@@ -1146,6 +1228,13 @@ impl<'a> TraceView<'a> {
         Ok(record)
     }
 
+    /// Resolve one typed fact-cell occurrence at a global history position.
+    ///
+    /// The result distinguishes its immutable creation endpoint from the raw
+    /// endpoint current after all visible rekeys and lists those rekey
+    /// positions. The fact must be live at `position`; a removal or absorbing
+    /// collision returns [`TraceViewError::FactNoLongerLive`] with the event
+    /// that ended the occurrence.
     pub fn fact_cell_at(
         &mut self,
         occurrence: FactCellRef,

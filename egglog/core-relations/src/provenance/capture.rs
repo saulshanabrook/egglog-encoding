@@ -159,6 +159,11 @@ impl PendingFiringCause {
     }
 }
 
+/// Opaque, prevalidated description of one semantic table rekey.
+///
+/// The table layer carries this value across its native remove/insert decision.
+/// Capture publishes the retained rekey only after that decision supplies the
+/// final [`RekeyOutcome`]; a pure move therefore need not allocate a cause.
 #[doc(hidden)]
 #[derive(Clone, Debug)]
 pub struct PreparedRekey {
@@ -237,6 +242,11 @@ struct PendingMergeCause {
     cause: OnceLock<PackedCauseRef>,
 }
 
+/// Opaque cause carrier for one staged native mutation.
+///
+/// The carrier may hold an already durable cause or a rule/merge cause whose
+/// detail is promoted only if prepared equality work changes native state.
+/// Redundant work therefore need not materialize an additional shared cause.
 #[doc(hidden)]
 #[derive(Clone)]
 pub struct DeferredEqualityCause(DeferredEqualityCauseKind);
@@ -978,7 +988,15 @@ impl Drop for CaptureBatch {
     }
 }
 
-/// Shared read/finalization handle to the database's causal trace arena.
+/// Cloneable handle to the database's shared causal trace arena.
+///
+/// Native execution records observed firing contexts and effective mutations
+/// through commit-local batches, then publishes them at engine barriers.
+/// Static replay metadata and structural terms are retained independently of
+/// durable record projection; explanation is deferred to [`Trace::with_view`]
+/// once capture is quiescent. [`Trace::default`] creates an independent empty
+/// arena; cloning shares the arena, replay catalog, term interner, and view
+/// exclusion state.
 #[derive(Clone, Default)]
 pub struct Trace(Arc<TraceShared>);
 
@@ -1172,6 +1190,11 @@ impl Trace {
             wave,
         }))
     }
+    /// Register the physical ordered-container type and positional child sorts
+    /// represented by one logical replay sort.
+    ///
+    /// Repeating the same registration is idempotent. A conflicting physical
+    /// type or child-sort layout is rejected.
     pub fn register_container_sort(
         &self,
         sort: ReplaySortId,
@@ -1183,6 +1206,11 @@ impl Trace {
             .register_container_sort(sort, container_type, child_sorts)
     }
 
+    /// Register the logical replay sort of each physical table column.
+    ///
+    /// A `None` entry marks an engine-only column that has no structural replay
+    /// syntax. Repeating the same layout is idempotent; a different layout for
+    /// an already registered table is rejected.
     pub fn register_table_layout(
         &self,
         table: TableId,
@@ -1191,6 +1219,11 @@ impl Trace {
         self.0.replay_terms.register_table_layout(table, sorts)
     }
 
+    /// Register the table's replay-observable keyed-row semantics.
+    ///
+    /// The kind determines, in particular, whether removals need durable
+    /// [`Tombstone`] records. Repeating the same kind is idempotent; a
+    /// conflicting kind is rejected.
     pub fn register_table_kind(
         &self,
         table: TableId,
@@ -1199,6 +1232,11 @@ impl Trace {
         self.0.replay_terms.register_table_kind(table, kind)
     }
 
+    /// Register how many leading columns form the table's logical key.
+    ///
+    /// The replay layout must already exist, and `key_columns` must fit both
+    /// that layout and the compact `u16` catalog representation. Repeating the
+    /// same arity is idempotent.
     pub fn register_table_key_columns(
         &self,
         table: TableId,
@@ -1217,6 +1255,13 @@ impl Trace {
             .register_table_key_columns(table, key_columns)
     }
 
+    /// Associate a table with the structural constructor produced by its rows.
+    ///
+    /// The metadata lets a cold view recover constructor occurrences without
+    /// eagerly storing output terms per fact. Repeating an identical
+    /// registration is idempotent; conflicting metadata is rejected. This
+    /// method does not validate the constructor against the table's layout,
+    /// key, or kind; their agreement is a caller invariant.
     pub fn register_table_constructor(
         &self,
         table: TableId,
@@ -1227,6 +1272,14 @@ impl Trace {
             .register_table_constructor(table, constructor)
     }
 
+    /// Register the static structural origin selector for every merge-result
+    /// column.
+    ///
+    /// The table layout must already exist. The selector list must have the
+    /// same arity, every referenced source column must exist, and typed source
+    /// and destination columns must have the same replay sort. Identical
+    /// repeated registration is accepted. [`MergeOriginSelector::Unsupported`]
+    /// is valid catalog data, but a typed result that reaches it fails closed.
     pub fn register_table_merge_origins(
         &self,
         table: TableId,
@@ -1273,6 +1326,15 @@ impl Trace {
             .register_table_merge_origins(table, origins)
     }
 
+    /// Register a contiguous identity-value range used when resolving merge
+    /// cell origins.
+    ///
+    /// If incoming and prior rows agree over this range, capture assigns the
+    /// prior structural origin to every typed column at or after `start`. The
+    /// caller must guarantee that this matches the native merge's identity
+    /// semantics. The range must be nonempty, inside the registered layout,
+    /// and representable with compact `u16` offsets. Identical registration is
+    /// accepted.
     pub fn register_table_merge_identity_guard(
         &self,
         table: TableId,
@@ -2285,6 +2347,11 @@ impl Trace {
         Ok(id)
     }
 
+    /// Intern a typed structural literal and associate it with one raw value.
+    ///
+    /// Raw-value lookup is first-wins: if `(sort, value)` already has a term,
+    /// that existing term is returned, although the requested literal node is
+    /// still interned. Structurally identical nodes share one [`ReplayTermId`].
     pub fn intern_literal(
         &self,
         sort: ReplaySortId,
@@ -2301,6 +2368,13 @@ impl Trace {
             .expect("newly interned literal must have a matching sort")
     }
 
+    /// Intern a typed structural call and associate it with one raw value.
+    ///
+    /// Every child must already be interned. Call nodes are structurally
+    /// deduplicated, and the exact call id is returned. The independent
+    /// `(sort, value)` reverse mapping remains first-wins, so
+    /// [`Trace::lookup_term`] may return an earlier term for the same raw value.
+    /// Operator arity and child sorts are caller invariants.
     pub fn intern_call(
         &self,
         sort: ReplaySortId,
@@ -2326,9 +2400,15 @@ impl Trace {
         Ok(term)
     }
 
-    /// Intern one call using its complete producer metadata. Container
-    /// producers also establish the physical registry type for the result
-    /// sort, which later makes dirty-container ancestry type-safe.
+    /// Intern a call using its registered producer metadata.
+    ///
+    /// This uses the constructor's result sort, operation, and optional
+    /// container type. Every child id must exist, but this method does not
+    /// validate child arity or sorts against `constructor.child_sorts`; the
+    /// caller must supply those children in the registered order. Container
+    /// producers also retain an exact structural-version anchor for the raw id.
+    /// This method records the call immediately regardless of whether the
+    /// producer is configured to anchor on primitive return.
     pub fn intern_spec_call(
         &self,
         constructor: &ReplayConstructorSpec,
@@ -2345,6 +2425,11 @@ impl Trace {
         Ok(term)
     }
 
+    /// Return the first structural term installed for a typed raw value.
+    ///
+    /// Mutable containers can have additional exact versions in the internal
+    /// anchor index; this generic lookup intentionally returns only the stable
+    /// first-wins mapping.
     pub fn lookup_term(&self, sort: ReplaySortId, value: Value) -> Option<ReplayTermId> {
         self.0.replay_terms.lookup(sort, value)
     }
@@ -2842,10 +2927,21 @@ impl Trace {
         Ok(TypedEqualityProposal { wave, left, right })
     }
 
+    /// Clone one interned structural term, or return `None` for an unknown id,
+    /// including [`ReplayTermId::MISSING`].
     pub fn replay_term(&self, id: ReplayTermId) -> Option<ReplayTerm> {
         self.0.replay_terms.node(id)
     }
 
+    /// Read structural interner and catalog cardinalities.
+    ///
+    /// [`TermInternerCounters::interned_nodes`] counts unique DAG nodes;
+    /// [`TermInternerCounters::installed_values`] counts first-wins typed value
+    /// mappings; [`TermInternerCounters::table_layouts`] counts registered table
+    /// layouts; and the two container-anchor fields count versioned raw keys
+    /// and all structural terms retained for those keys, respectively. The
+    /// underlying stores are locked independently, so concurrent registration
+    /// can make the returned fields reflect slightly different instants.
     pub fn replay_term_counters(&self) -> TermInternerCounters {
         self.0.replay_terms.counters()
     }
@@ -2915,6 +3011,15 @@ impl Trace {
         arena.published_firings += lanes as u64;
     }
 
+    /// Install structural terms for an original input row and return its static
+    /// row-origin site.
+    ///
+    /// The row, term slice, and registered table layout must have equal arity.
+    /// Typed columns require an existing term of the declared sort; engine-only
+    /// columns require [`ReplayTermId::MISSING`]. Successful installation also
+    /// establishes the first-wins typed raw-value mappings used by later
+    /// capture, while the returned origin keeps the exact supplied terms. This
+    /// method does not publish a [`FactId`] or allocate a history event.
     pub fn install_source_row(
         &self,
         table: TableId,
@@ -2936,6 +3041,14 @@ impl Trace {
         Ok(self.register_row_origin(RowOriginSpec { table, cells }))
     }
 
+    /// Build a static source-row origin whose output is one constructor call.
+    ///
+    /// `children` must match the constructor's child sorts. The origin places
+    /// those terms in the first columns and the constructor result immediately
+    /// after them; the registered layout must declare that output slot with the
+    /// result sort. Agreement between the leading layout sorts and child sorts
+    /// is a caller invariant. The method records an origin recipe but neither
+    /// interns the result call nor publishes a fact.
     pub fn source_constructor_origin(
         &self,
         table: TableId,
@@ -3332,9 +3445,16 @@ impl Trace {
         );
     }
 
-    /// Borrow a checked view of publication-complete trace history. The
-    /// closure cannot return references tied to the arena guards, so no
-    /// capture storage or static recipe can escape its read boundary.
+    /// Borrow a checked view of quiescent, publication-complete captured
+    /// history.
+    ///
+    /// The method rejects poisoned execution, open or abandoned capture
+    /// batches, queued native mutations, and publication/history holes.
+    /// Nested or concurrent views across any clone are rejected as invalid, and
+    /// poisoned internal locks are reported separately. The higher-ranked
+    /// closure cannot return guard-borrowed data, so capture storage cannot
+    /// escape. This check does not freeze concurrent term/catalog registration;
+    /// callers that require a stable catalog must quiesce those writers too.
     pub fn with_view<R>(
         &self,
         inspect: impl for<'view> FnOnce(&mut TraceView<'view>) -> Result<R, TraceViewError>,

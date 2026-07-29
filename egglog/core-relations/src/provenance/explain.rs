@@ -1,4 +1,4 @@
-//! Lazy explanations over a finalized execution trace.
+//! Lazy explanations over a publication-complete execution trace.
 //!
 //! Equality paths and structural occurrence support are built only for cold
 //! view queries; native capture never enters this module.

@@ -5,41 +5,71 @@ use super::*;
 /// Backend-neutral payload for one structural literal.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ReplayLiteral {
+    /// The unit literal.
     Unit,
-    Bool(bool),
-    I64(i64),
-    F64(u64),
-    String(Arc<str>),
+    /// A Boolean literal.
+    Bool(
+        /// Source-level Boolean value.
+        bool,
+    ),
+    /// A signed 64-bit integer literal.
+    I64(
+        /// Source-level integer value.
+        i64,
+    ),
+    /// A 64-bit floating-point literal stored by bits to preserve exact identity.
+    F64(
+        /// [`f64::to_bits`] representation of the source-level value.
+        u64,
+    ),
+    /// An owned source-level string literal.
+    String(
+        /// Shared string contents independent of the native value arena.
+        Arc<str>,
+    ),
 }
 
 /// One compact typed node in the replay-term DAG.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ReplayTerm {
+    /// A typed leaf whose payload has a source-independent representation.
     Literal {
+        /// Logical sort of the literal.
         sort: ReplaySortId,
+        /// Backend-neutral literal payload.
         literal: ReplayLiteral,
     },
+    /// A typed structural operation applied to ordered child terms.
     Call {
+        /// Logical result sort of the call.
         sort: ReplaySortId,
+        /// Frontend-assigned operation or constructor identity.
         op: ReplayOpId,
+        /// Ordered child nodes in the shared replay-term DAG.
         children: Arc<[ReplayTermId]>,
     },
 }
 
+/// Static typing and capture policy for one structural call producer.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ReplayConstructorSpec {
+    /// Logical sort produced by the call.
     pub result_sort: ReplaySortId,
+    /// Frontend identity of the operation or constructor.
     pub op: ReplayOpId,
+    /// Logical sorts of the call arguments in evaluation order.
     pub child_sorts: Box<[ReplaySortId]>,
     /// Whether a container primitive's structural version is anchored as soon
     /// as the primitive returns, before later query guards can reject the lane.
     anchor_on_primitive_return: bool,
     /// Physical registry type for a container result. This is intentionally
-    /// absent for ordinary e-class constructors and base-value primitives.
+    /// absent for ordinary e-class constructors and base-value primitives and
+    /// does not itself imply immediate promotion.
     pub(super) container_type: Option<TypeId>,
 }
 
 impl ReplayConstructorSpec {
+    /// Creates a deferred structural call specification with no container registry type.
     pub fn new(
         result_sort: ReplaySortId,
         op: ReplayOpId,
@@ -54,6 +84,10 @@ impl ReplayConstructorSpec {
         }
     }
 
+    /// Registers the physical container registry used for versioned anchor tracking.
+    ///
+    /// This only identifies container storage; it does not request immediate
+    /// anchoring before later query guards.
     pub fn with_container_type(mut self, container_type: TypeId) -> Self {
         self.container_type = Some(container_type);
         self
@@ -80,16 +114,22 @@ impl ReplayConstructorSpec {
 /// capture stores only the resolved column references for changed facts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MergeOriginSelector {
+    /// The merged output cell preserves one cell of the incoming row.
     Incoming {
+        /// Physical incoming-row column supplying the structural origin.
         column: u16,
     },
+    /// The merged output cell preserves one cell of the previously live row.
     Prior {
+        /// Physical prior-row column supplying the structural origin.
         column: u16,
     },
     /// `UnionId` returns the lower native id, choosing the prior value when
     /// both inputs are already identical.
     NativeMin {
+        /// Incoming-row column compared by native id.
         incoming_column: u16,
+        /// Prior-row column compared by native id.
         prior_column: u16,
     },
     /// The callback result must be exactly one of its two input cells. The
@@ -97,13 +137,17 @@ pub enum MergeOriginSelector {
     /// the prior origin deterministically. This supports semantic min/max on
     /// base values without comparing their opaque runtime Value ids.
     PriorOrIncoming {
+        /// Incoming-row column that may have supplied the callback result.
         incoming_column: u16,
+        /// Prior-row column that may have supplied the callback result.
         prior_column: u16,
     },
+    /// The merge expression has no exact structural-origin rule and must fail closed if needed.
     Unsupported,
 }
 
 impl ReplayTerm {
+    /// Returns the logical result sort stored by either term variant.
     pub fn sort(&self) -> ReplaySortId {
         match self {
             Self::Literal { sort, .. } | Self::Call { sort, .. } => *sort,
@@ -111,12 +155,18 @@ impl ReplayTerm {
     }
 }
 
+/// Diagnostic snapshot of structural interner and container-anchor volume.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TermInternerCounters {
+    /// Unique literal and call nodes in the structural replay-term DAG.
     pub interned_nodes: u64,
+    /// First-wins typed native-value mappings installed for structural lookup.
     pub installed_values: u64,
+    /// Physical tables with registered replay column layouts.
     pub table_layouts: u64,
+    /// Typed native container identities with explicit structural-version anchors.
     pub container_anchor_keys: u64,
+    /// Structural-version terms retained across all container anchor keys.
     pub container_anchor_terms: u64,
 }
 
