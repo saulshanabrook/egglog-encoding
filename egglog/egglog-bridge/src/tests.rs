@@ -1,4 +1,5 @@
 use std::{
+    any::TypeId,
     fmt::Debug,
     hash::Hash,
     iter, slice,
@@ -20,9 +21,10 @@ use num_rational::Rational64;
 use once_cell::sync::Lazy;
 
 use crate::{
-    ColumnTy, DefaultVal, EGraph, FunctionConfig, FunctionId, GroundedRuleBinding, GroundedRuleRun,
-    MergeAction, MergeFn, QueryEntry, TableAction, TraceLifecycleError, Variable, add_expressions,
-    define_rule,
+    ColumnTy, DefaultVal, EGraph, FunctionConfig, FunctionId, FunctionReplaySpec,
+    GroundedRuleBinding, GroundedRuleRun, MergeAction, MergeFn, QueryEntry, ReplayCallSpec,
+    ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTableKind, SourceInputRow, TableAction,
+    TraceLifecycleError, Variable, add_expressions, define_rule,
 };
 
 #[test]
@@ -66,6 +68,181 @@ fn trace_finalization_reports_disabled_capture() {
         egraph.finalize_trace_wave(),
         Err(TraceLifecycleError::CaptureDisabled)
     );
+}
+
+#[test]
+fn conflicting_source_constructor_container_type_is_rejected_before_staging() {
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .unwrap();
+    pool.install(|| {
+        let mut egraph = EGraph::default();
+        egraph.enable_trace().unwrap();
+        let int_base = egraph.base_values_mut().register_type::<i64>();
+        let child_sort = ReplaySortId::new(0);
+        let container_sort = ReplaySortId::new(1);
+        let constructor = egraph.add_table(FunctionConfig {
+            n_vals: 1,
+            n_identity_vals: None,
+            schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
+            default: DefaultVal::FreshId,
+            merge: MergeFn::UnionId,
+            name: "container-constructor".into(),
+            can_subsume: false,
+        });
+        egraph
+            .register_container_replay_sort(
+                container_sort,
+                TypeId::of::<VecContainer>(),
+                &[child_sort],
+            )
+            .unwrap();
+        let replay = |container_type, table_kind| {
+            FunctionReplaySpec::new(
+                [child_sort, container_sort],
+                Some(
+                    ReplayCallSpec::new(container_sort, ReplayOpId::new(0), [child_sort])
+                        .with_container_type(container_type),
+                ),
+            )
+            .with_table_kind(table_kind)
+        };
+        let id_counter_before = egraph.db.read_counter(egraph.id_counter);
+
+        let error = egraph
+            .register_function_replay(
+                constructor,
+                replay(TypeId::of::<Rational64>(), ReplayTableKind::ValueFunction),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "replay sort has conflicting physical container types"
+        );
+        assert_eq!(egraph.table_size(constructor), 0);
+        assert_eq!(
+            egraph.db.read_counter(egraph.id_counter),
+            id_counter_before,
+            "rejected replay metadata must not allocate a constructor result"
+        );
+
+        let child_value = egraph.base_values_mut().get(7_i64);
+        let child_term = egraph
+            .intern_replay_literal(child_sort, ReplayLiteral::I64(7), child_value)
+            .unwrap();
+        let row = SourceInputRow::new(
+            core_relations::SourceRef::Synthetic(0),
+            [child_value],
+            [child_term],
+        );
+        let error = egraph
+            .stage_source_input_rows(constructor, std::slice::from_ref(&row))
+            .unwrap_err();
+        assert!(error.to_string().contains("has no trace replay metadata"));
+        assert_eq!(egraph.table_size(constructor), 0);
+        assert_eq!(
+            egraph.db.read_counter(egraph.id_counter),
+            id_counter_before,
+            "failed registration must leave source staging mutation-free"
+        );
+        assert!(
+            !egraph.flush_updates(),
+            "failed source staging must not leave a queued native row"
+        );
+        egraph
+            .with_trace_view(|view| {
+                let totals = view.totals();
+                assert_eq!(totals.facts, 0);
+                assert_eq!(totals.applied_equalities, 0);
+                assert_eq!(totals.removals, 0);
+                Ok(())
+            })
+            .unwrap();
+
+        egraph
+            .register_function_replay(
+                constructor,
+                replay(
+                    TypeId::of::<VecContainer>(),
+                    ReplayTableKind::PresenceRelation,
+                ),
+            )
+            .unwrap();
+        let error = egraph
+            .register_function_replay(
+                constructor,
+                FunctionReplaySpec::new([child_sort, container_sort], None)
+                    .with_table_kind(ReplayTableKind::PresenceRelation),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "function `container-constructor` already has different trace replay metadata"
+        );
+        egraph.stage_source_input_rows(constructor, &[row]).unwrap();
+        assert_eq!(
+            egraph.table_size(constructor),
+            0,
+            "source staging must not flush implicitly"
+        );
+        assert!(egraph.flush_updates());
+        assert_eq!(egraph.table_size(constructor), 1);
+        let table = egraph.funcs[constructor].table;
+        egraph
+            .with_trace_view(|view| {
+                assert_eq!(
+                    view.table_schema(table)?.kind,
+                    ReplayTableKind::PresenceRelation,
+                    "constructor source shape and replay table kind must remain independent"
+                );
+                Ok(())
+            })
+            .unwrap();
+    });
+}
+
+#[test]
+fn source_constructor_replay_rejects_tuple_outputs_before_staging() {
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .unwrap();
+    pool.install(|| {
+        let mut egraph = EGraph::default();
+        egraph.enable_trace().unwrap();
+        let int_base = egraph.base_values_mut().register_type::<i64>();
+        let constructor = egraph.add_table(FunctionConfig {
+            n_vals: 2,
+            n_identity_vals: None,
+            schema: vec![ColumnTy::Base(int_base), ColumnTy::Id, ColumnTy::Id],
+            default: DefaultVal::FreshId,
+            merge: MergeFn::Columns(vec![MergeFn::UnionId, MergeFn::UnionId]),
+            name: "tuple-constructor".into(),
+            can_subsume: false,
+        });
+        let child_sort = ReplaySortId::new(0);
+        let output_sort = ReplaySortId::new(1);
+        let error = egraph
+            .register_function_replay(
+                constructor,
+                FunctionReplaySpec::new(
+                    [child_sort, output_sort, output_sort],
+                    Some(ReplayCallSpec::new(
+                        output_sort,
+                        ReplayOpId::new(0),
+                        [child_sort],
+                    )),
+                ),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "function `tuple-constructor` has 2 outputs but constructor source replay requires exactly one"
+        );
+        assert_eq!(egraph.table_size(constructor), 0);
+        assert_eq!(egraph.db.read_counter(egraph.id_counter), 0);
+    });
 }
 
 #[test]

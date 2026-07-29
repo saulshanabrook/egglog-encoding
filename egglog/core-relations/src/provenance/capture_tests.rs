@@ -1,6 +1,32 @@
 use super::*;
 
 #[test]
+fn rejected_constructor_registration_can_be_retried_with_the_valid_container_type() {
+    let trace = Trace::default();
+    let table = TableId::new(0);
+    let result_sort = ReplaySortId::new(0);
+    trace
+        .register_container_sort(result_sort, TypeId::of::<u16>(), &[])
+        .unwrap();
+
+    let conflicting = ReplayCallSpec::new(result_sort, ReplayOpId::new(0), [])
+        .with_container_type(TypeId::of::<u8>());
+    let error = trace
+        .register_table_constructor(table, conflicting)
+        .unwrap_err();
+    assert_eq!(
+        error,
+        "replay sort has conflicting physical container types"
+    );
+
+    let valid = ReplayCallSpec::new(result_sort, ReplayOpId::new(0), [])
+        .with_container_type(TypeId::of::<u16>());
+    trace
+        .register_table_constructor(table, valid)
+        .expect("failed registration must not claim the table constructor");
+}
+
+#[test]
 fn capture_view_rejects_reentrancy_without_poisoning_capture() {
     let trace = Trace::default();
     let error = trace

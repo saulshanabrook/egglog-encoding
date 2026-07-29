@@ -580,7 +580,9 @@ pub trait Backend: Send + Sync {
     }
 
     /// Register structural replay metadata for a function already added with
-    /// [`Backend::add_table`].
+    /// [`Backend::add_table`]. Constructor container types must agree with any
+    /// physical type registered through [`Backend::register_container_replay_sort`],
+    /// and constructor source replay requires exactly one output.
     fn register_function_replay(
         &mut self,
         _func: FunctionId,

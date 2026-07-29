@@ -469,14 +469,31 @@ impl TermInterner {
         table: TableId,
         constructor: ReplayCallSpec,
     ) -> Result<(), &'static str> {
+        self.validate_table_constructor(table, &constructor)?;
         match self.table_constructors.entry(table) {
             Entry::Occupied(entry) if entry.get() == &constructor => Ok(()),
             Entry::Occupied(_) => Err("table already has different replay constructor metadata"),
             Entry::Vacant(entry) => {
+                self.register_container_type(&constructor)?;
                 entry.insert(constructor);
                 Ok(())
             }
         }
+    }
+
+    pub(super) fn validate_table_constructor(
+        &self,
+        table: TableId,
+        constructor: &ReplayCallSpec,
+    ) -> Result<(), &'static str> {
+        if self
+            .table_constructors
+            .get(&table)
+            .is_some_and(|registered| registered.value() != constructor)
+        {
+            return Err("table already has different replay constructor metadata");
+        }
+        self.validate_container_type(constructor)
     }
 
     pub(super) fn register_table_merge_origins(
@@ -498,6 +515,7 @@ impl TermInterner {
         &self,
         spec: &ReplayCallSpec,
     ) -> Result<(), &'static str> {
+        self.validate_container_type(spec)?;
         let Some(container_type) = spec.container_type else {
             return Ok(());
         };
@@ -509,6 +527,20 @@ impl TermInterner {
                 Ok(())
             }
         }
+    }
+
+    fn validate_container_type(&self, spec: &ReplayCallSpec) -> Result<(), &'static str> {
+        let Some(container_type) = spec.container_type else {
+            return Ok(());
+        };
+        if self
+            .container_type_by_sort
+            .get(&spec.result_sort)
+            .is_some_and(|registered| *registered.value() != container_type)
+        {
+            return Err("replay sort has conflicting physical container types");
+        }
+        Ok(())
     }
 
     pub(super) fn register_container_sort(

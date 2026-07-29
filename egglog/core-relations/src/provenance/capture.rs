@@ -1208,7 +1208,9 @@ impl Trace {
     ///
     /// The metadata lets a cold view recover constructor occurrences without
     /// eagerly storing output terms per fact. Repeating an identical
-    /// registration is idempotent; conflicting metadata is rejected. This
+    /// registration is idempotent; conflicting metadata is rejected. A
+    /// declared physical container type is also registered for the result sort
+    /// here, so it must agree with any prior container-sort registration. This
     /// method does not validate the constructor against the table's layout,
     /// key, or kind; their agreement is a caller invariant.
     pub fn register_table_constructor(
@@ -1219,6 +1221,20 @@ impl Trace {
         self.0
             .replay_terms
             .register_table_constructor(table, constructor)
+    }
+
+    /// Check structural constructor metadata without changing the trace.
+    ///
+    /// This lets callers preflight a multi-field table registration before
+    /// committing any of its independently stored metadata.
+    pub fn validate_table_constructor(
+        &self,
+        table: TableId,
+        constructor: &ReplayCallSpec,
+    ) -> Result<(), &'static str> {
+        self.0
+            .replay_terms
+            .validate_table_constructor(table, constructor)
     }
 
     /// Register the static structural origin selector for every merge-result

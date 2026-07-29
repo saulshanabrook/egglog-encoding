@@ -274,33 +274,54 @@ fn validate_replay_merge_origins(
 
 /// Side-band structural replay metadata for one registered function.
 ///
-/// The logical sorts cover only the user-visible key and value columns. The
-/// bridge expands this layout with ignored timestamp and subsumption columns
-/// before registering it with the native trace.
+/// [`FunctionReplaySpec::logical_sorts`] is the complete user-visible schema in
+/// key-then-output order: every key sort first, followed by every output sort.
+/// It excludes the engine-only timestamp and subsumption columns that the
+/// bridge appends to the physical trace layout.
+///
+/// [`FunctionReplaySpec::constructor`] and
+/// [`FunctionReplaySpec::table_kind`] are independent. A constructor recipe
+/// controls structural result construction and means source input rows contain
+/// keys only; the bridge creates the function's single output. Without a
+/// constructor recipe, source input rows contain the full key-then-output logical row. The table
+/// kind separately controls replay-observable table semantics, so a
+/// presence-relation table can still carry a constructor recipe.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FunctionReplaySpec {
-    /// Logical sort of each user-visible key and value column, in table order.
+    /// Logical sort of each user-visible column: keys first, then outputs.
     pub logical_sorts: Box<[ReplaySortId]>,
-    /// Structural call that constructs the result of a constructor table.
-    /// Value functions have no constructor recipe.
+    /// Structural call used to create the first output from the key columns.
+    /// Its presence, rather than [`FunctionReplaySpec::table_kind`], selects
+    /// keys-only source staging.
     pub constructor: Option<ReplayCallSpec>,
-    /// Replay semantics of the registered table.
+    /// Replay-observable table semantics, independent of the constructor
+    /// recipe and source-row shape.
     pub table_kind: ReplayTableKind,
 }
 
 /// One fully parsed source row ready for trace input staging.
+///
+/// Row shape comes from the function's registered [`FunctionReplaySpec`]. A
+/// constructor row supplies keys only; a nonconstructor row supplies the full
+/// key-then-output logical row. `values` and `terms` must have equal lengths,
+/// and each term must be the exact typed term interned for the corresponding
+/// value in the same [`Trace`] owned by the target [`EGraph`]. Construction
+/// only collects these fields; [`EGraph::stage_source_input_rows`] validates
+/// them before staging.
 #[derive(Clone, Debug)]
 pub struct SourceInputRow {
     /// Stable identity of the source command or embedded input row.
     pub source: core_relations::SourceRef,
-    /// Native values staged into the function table.
+    /// Native keys, or the full key-then-output row for a nonconstructor.
     pub values: Box<[Value]>,
-    /// Exact structural term corresponding to each native value.
+    /// Same-trace exact structural term corresponding to each native value.
     pub terms: Box<[ReplayTermId]>,
 }
 
 impl SourceInputRow {
     /// Collect a parsed source row and its exact structural terms.
+    ///
+    /// Validation is deferred to [`EGraph::stage_source_input_rows`].
     pub fn new(
         source: core_relations::SourceRef,
         values: impl IntoIterator<Item = Value>,
@@ -318,7 +339,10 @@ impl FunctionReplaySpec {
     /// Describe a constructor or value-function table.
     ///
     /// A present `constructor` selects [`ReplayTableKind::Constructor`]; an
-    /// absent constructor selects [`ReplayTableKind::ValueFunction`].
+    /// absent constructor selects [`ReplayTableKind::ValueFunction`]. This is
+    /// only a convenience default: [`FunctionReplaySpec::with_table_kind`]
+    /// changes the independently stored table kind without changing the
+    /// constructor recipe or source-row shape.
     pub fn new(
         logical_sorts: impl IntoIterator<Item = ReplaySortId>,
         constructor: Option<ReplayCallSpec>,
@@ -335,6 +359,9 @@ impl FunctionReplaySpec {
     }
 
     /// Override the table semantics inferred by [`FunctionReplaySpec::new`].
+    ///
+    /// This does not change whether source rows contain constructor keys or a
+    /// complete nonconstructor row; that is determined only by `constructor`.
     pub fn with_table_kind(mut self, table_kind: ReplayTableKind) -> Self {
         self.table_kind = table_kind;
         self
@@ -929,12 +956,27 @@ impl EGraph {
 
     /// Register the structural replay layout for a function already added with
     /// [`EGraph::add_table`].
+    ///
+    /// A constructor's physical container type must agree with any prior
+    /// [`EGraph::register_container_replay_sort`] registration for its result
+    /// sort, and constructor source replay requires exactly one function
+    /// output. Repeating the same specification is idempotent; replacing a
+    /// registered specification is rejected. Violations are returned here,
+    /// before source rows can be staged.
     pub fn register_function_replay(
         &mut self,
         func: FunctionId,
         spec: FunctionReplaySpec,
     ) -> Result<()> {
         let info = &self.funcs[func];
+        if let Some(registered) = &info.replay {
+            anyhow::ensure!(
+                registered == &spec,
+                "function `{}` already has different trace replay metadata",
+                info.name
+            );
+            return Ok(());
+        }
         if spec.logical_sorts.len() != info.schema.len() {
             anyhow::bail!(
                 "function `{}` has {} logical columns but replay metadata supplied {}",
@@ -944,6 +986,13 @@ impl EGraph {
             );
         }
         if let Some(constructor) = &spec.constructor {
+            let outputs = info.schema.len() - info.n_keys;
+            if outputs != 1 {
+                anyhow::bail!(
+                    "function `{}` has {outputs} outputs but constructor source replay requires exactly one",
+                    info.name
+                );
+            }
             if !matches!(info.default_val, DefaultVal::FreshId) {
                 anyhow::bail!(
                     "function `{}` supplied constructor replay metadata without a fresh-id default",
@@ -977,6 +1026,11 @@ impl EGraph {
             .trace
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("trace capture is not enabled"))?;
+        if let Some(constructor) = &spec.constructor {
+            trace
+                .validate_table_constructor(info.table, constructor)
+                .map_err(anyhow::Error::msg)?;
+        }
         let mut layout = spec
             .logical_sorts
             .iter()
@@ -1033,10 +1087,18 @@ impl EGraph {
             .map_err(anyhow::Error::msg)
     }
 
-    /// Stage one prevalidated TSV input batch with exact per-line source
-    /// causes. All rows share one native execution state and one bulk trace
-    /// registration; constructor prediction therefore keeps its normal
-    /// within-batch identity semantics.
+    /// Stage one TSV input batch with exact per-line source causes.
+    ///
+    /// Every row is validated before source causes or native updates are
+    /// staged. Constructor rows contain exactly the key columns; nonconstructor
+    /// rows contain the complete key-then-output logical row. Every term must
+    /// be the exact typed term for its paired value in this `EGraph`'s trace.
+    /// All rows then share one native execution state and one bulk trace
+    /// registration, so constructor prediction keeps its normal within-batch
+    /// identity semantics.
+    ///
+    /// This method only stages updates. It never calls [`EGraph::flush_updates`]
+    /// or otherwise makes the rows visible in the table.
     pub fn stage_source_input_rows(&self, func: FunctionId, rows: &[SourceInputRow]) -> Result<()> {
         let trace = self
             .trace
