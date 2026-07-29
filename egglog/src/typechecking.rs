@@ -281,8 +281,8 @@ pub struct TypeInfo {
     pub(crate) global_sorts: HashMap<String, ArcSort>,
     /// Sorts that do not allow union (e.g., from `:no-union` sorts or relations).
     pub(crate) non_unionable_sorts: HashSet<String>,
-    /// Container sort instances whose presort has an explicitly replay-safe,
-    /// idempotent registry representation for checked aliases.
+    /// Container sort instances whose canonical constructor is validator-backed
+    /// and whose pure evaluation only interns an idempotent registry value.
     pub(crate) checked_alias_container_sorts: HashSet<String>,
     /// Typechecking metadata for globally named rules. Runtime rule templates
     /// live with their compiled ruleset entries.
@@ -316,9 +316,6 @@ impl EGraph {
             return Err(TypeError::FunctionAlreadyBound(name, span));
         }
 
-        let checked_alias_container = presort_and_args.as_ref().is_some_and(|(presort, _)| {
-            matches!(presort.as_str(), "Pair" | "Vec" | "Maybe" | "Either")
-        });
         let sort = match presort_and_args {
             None => Arc::new(EqSort { name }),
             Some((presort, args)) => {
@@ -329,6 +326,19 @@ impl EGraph {
                 }
             }
         };
+        let checked_alias_container = presort_and_args.as_ref().is_some_and(|(presort, _)| {
+            match presort.as_str() {
+                "Pair" | "Vec" | "Maybe" | "Either" | "Set" | "MultiSet" => true,
+                // Equal Map keys can collapse with a different winner in the
+                // runtime registry and the proof-term normalizer. Keep that
+                // case fail-closed until both choose the same value.
+                "Map" => sort
+                    .inner_sorts()
+                    .first()
+                    .is_some_and(|key| !key.is_eq_sort() && !key.is_eq_container_sort()),
+                _ => false,
+            }
+        });
 
         let sort_name = sort.name().to_owned();
         self.add_arcsort(sort, span)?;

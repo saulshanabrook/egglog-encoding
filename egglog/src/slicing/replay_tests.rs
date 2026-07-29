@@ -43,6 +43,88 @@ fn slice_commands(program: &str) -> (Vec<Command>, String) {
     (commands, rendered)
 }
 
+#[test]
+fn slices_replay_set_multiset_and_map_bindings_in_all_modes() {
+    for (declaration, expression, constructor) in [
+        (
+            "(datatype E (A) (B))\n(sort C (Set E))",
+            "(set-of (B) (A) (B))",
+            "set-of",
+        ),
+        (
+            "(datatype E (A) (B))\n(sort C (MultiSet E))",
+            "(multiset-of (B) (A) (B))",
+            "multiset-of",
+        ),
+        (
+            "(datatype E (A) (B))\n(sort C (Map i64 E))",
+            "(map-of 2 (B) 1 (A))",
+            "map-of",
+        ),
+    ] {
+        let program = format!(
+            "{declaration}\n\
+             (relation Hold (C))\n\
+             (relation Seen (C))\n\
+             (Hold {expression})\n\
+             (rule ((Hold value)) ((Seen value)) :name \"copy\")\n\
+             (run 1)\n\
+             (check (Seen {expression}))"
+        );
+        let mut recorder = EGraph::default();
+        serial_pool().install(|| recorder.enable_trace()).unwrap();
+        recorder.parse_and_run_program(None, &program).unwrap();
+        let slice = select_all_checks(&recorder).unwrap();
+        let replay = build_replay_program(&recorder, &slice).unwrap();
+        let rendered = render_commands_as_source(&replay.to_commands().unwrap());
+        assert!(
+            rendered.lines().any(|line| {
+                line.starts_with("(let-check ") && line.contains(&format!("({constructor} "))
+            }),
+            "slice did not emit a checked {constructor} alias:\n{rendered}"
+        );
+
+        for (mode, mut replay) in [
+            ("native", EGraph::default()),
+            ("term", EGraph::default().with_term_encoding_enabled()),
+            (
+                "proof",
+                EGraph::default().with_proofs_enabled().with_proof_testing(),
+            ),
+        ] {
+            serial_pool()
+                .install(|| replay.parse_and_run_program(None, &rendered))
+                .unwrap_or_else(|error| {
+                    panic!("{mode} strict {constructor} replay failed: {error}\n{rendered}")
+                });
+        }
+    }
+}
+
+#[test]
+fn slice_rejects_checked_map_aliases_with_equality_keys_before_replay() {
+    let program = "(datatype E (A) (B))
+                   (sort C (Map E i64))
+                   (relation Hold (C))
+                   (relation Seen (C))
+                   (Hold (map-of (A) 1 (B) 2))
+                   (rule ((Hold value)) ((Seen value)) :name \"copy\")
+                   (run 1)
+                   (check (Seen (map-of (A) 1 (B) 2)))";
+    let mut recorder = EGraph::default();
+    serial_pool().install(|| recorder.enable_trace()).unwrap();
+    recorder.parse_and_run_program(None, program).unwrap();
+    let slice = select_all_checks(&recorder).unwrap();
+
+    let error = match build_replay_program(&recorder, &slice) {
+        Err(error) => error,
+        Ok(_) => panic!("slice unexpectedly accepted a Map with equality-capable keys"),
+    };
+    assert!(
+        matches!(error, ReplayError::Unsupported(message) if message == "checked aliases cannot exactly replay container sort `C`")
+    );
+}
+
 fn endpoint_normalization_program(order: [&str; 3]) -> String {
     let constructors = order
         .into_iter()

@@ -45,7 +45,7 @@ use crate::slicing::backward::Slice;
 use crate::util::{HashMap, HashSet};
 use crate::{
     CaptureCatalog, CatalogRuleSurface, EGraph, Literal, ReplayOpKey, RewriteDirection,
-    RuleBindingRole, RuleCatalogEntry,
+    RuleBindingRole, RuleCatalogEntry, TypeInfo,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -1314,6 +1314,7 @@ fn retained_rewrite_command(
 /// bound on capture.
 fn lower_slice_to_owned_program(
     catalog: &CaptureCatalog,
+    type_info: &TypeInfo,
     view: &mut TraceView<'_>,
     slice: &Slice,
 ) -> Result<ReplayProgram, ReplayError> {
@@ -1552,6 +1553,21 @@ fn lower_slice_to_owned_program_with_sources(
                 new_calls.into_iter().zip(binding_plan.aliases.iter())
             {
                 let plan = *plan;
+                let call_sort = terms.nodes[call.index()].sort();
+                let sort = type_info.get_sort_by_name(call_sort).ok_or_else(|| {
+                    ReplayError::Invalid(format!(
+                        "checked alias call owns unknown sort `{call_sort}`"
+                    ))
+                })?;
+                // Reject before rendering: the public CLI does not validate
+                // emitted artifacts, so replay-time `let-check` is too late.
+                if sort.is_container_sort()
+                    && !type_info.checked_alias_container_sorts.contains(call_sort)
+                {
+                    return Err(ReplayError::Unsupported(format!(
+                        "checked aliases cannot exactly replay container sort `{call_sort}`"
+                    )));
+                }
                 let canonical_children = match &terms.nodes[call.index()] {
                     OwnedReplayTerm::Literal { .. } => unreachable!("Call queue contained literal"),
                     OwnedReplayTerm::Call { children, .. } => children
@@ -1741,7 +1757,14 @@ pub(super) fn build_replay_program(
         .as_any()
         .downcast_ref::<egglog_bridge::EGraph>()
         .ok_or(ReplayError::UnsupportedBackend)?;
-    bridge.with_trace_view(|view| Ok(lower_slice_to_owned_program(catalog, view, slice)))?
+    bridge.with_trace_view(|view| {
+        Ok(lower_slice_to_owned_program(
+            catalog,
+            &egraph.type_info,
+            view,
+            slice,
+        ))
+    })?
 }
 
 #[cfg(test)]

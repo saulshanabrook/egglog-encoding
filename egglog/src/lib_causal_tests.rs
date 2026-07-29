@@ -1559,7 +1559,7 @@ fn let_check_rejects_non_pure_primitives_and_unprefixed_names() {
     ));
 }
 #[test]
-fn let_check_allows_only_bounded_container_interning() {
+fn let_check_supports_replay_container_terms_without_rows() {
     for mut egraph in [EGraph::default(), EGraph::new_with_proofs()] {
         egraph
             .parse_and_run_program(
@@ -1575,18 +1575,34 @@ fn let_check_allows_only_bounded_container_interning() {
             .unwrap();
     }
 
-    let mut egraph = EGraph::default();
-    let error = egraph
-        .parse_and_run_program(
-            None,
-            r#"
-            (sort S (Set i64))
-            (let-check $set (set-of 1))
-            "#,
-        )
-        .unwrap_err();
-    assert!(error.to_string().contains("unsupported container"));
-    assert!(!egraph.checked_aliases.contains_key("$set"));
+    let setup = r#"
+        (sort S (Set i64))
+        (sort M (MultiSet i64))
+        (sort D (Map i64 i64))
+        (relation ExistingSet (S))
+        (relation ExistingMultiSet (M))
+        (relation ExistingMap (D))
+        (ExistingSet (set-of 2 1 2))
+        (ExistingMultiSet (multiset-of 2 1 2))
+        (ExistingMap (map-of 2 20 1 10))
+    "#;
+    let aliases = r#"
+        (let-check $set (set-of 2 1 2) :sort S)
+        (let-check $multiset (multiset-of 2 1 2) :sort M)
+        (let-check $map (map-of 2 20 1 10) :sort D)
+    "#;
+    for (mode, mut egraph) in [
+        ("native", EGraph::default()),
+        ("term", EGraph::new_with_term_encoding()),
+        ("proof", EGraph::new_with_proofs()),
+    ] {
+        egraph.parse_and_run_program(None, setup).unwrap();
+        let tuples_before = egraph.num_tuples();
+        egraph
+            .parse_and_run_program(None, aliases)
+            .unwrap_or_else(|error| panic!("{mode} let-check rejected a container: {error}"));
+        assert_eq!(egraph.num_tuples(), tuples_before, "{mode} created a row");
+    }
 }
 
 #[test]
