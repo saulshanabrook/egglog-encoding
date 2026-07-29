@@ -1324,7 +1324,8 @@ fn lower_slice_to_owned_program(
     // exact closures until neither side contributes a new source root.
     loop {
         let sources = selected_source_closure(catalog, &source_roots)?;
-        let program = lower_slice_to_owned_program_with_sources(catalog, view, slice, &sources)?;
+        let program =
+            lower_slice_to_owned_program_with_sources(catalog, type_info, view, slice, &sources)?;
         let required_sources = program.required_static_sources(catalog)?;
         if required_sources.is_subset(&sources) {
             return Ok(program);
@@ -1335,6 +1336,7 @@ fn lower_slice_to_owned_program(
 
 fn lower_slice_to_owned_program_with_sources(
     catalog: &CaptureCatalog,
+    type_info: &TypeInfo,
     view: &mut TraceView<'_>,
     slice: &Slice,
     sources: &HashSet<SourceRef>,
