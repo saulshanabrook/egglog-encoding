@@ -273,6 +273,30 @@ recording-graph values or trust the trace as a certificate. Successful proof
 replay is strong validation of the artifact, but it does not turn the slice
 into a minimal proof.
 
+## Where recording cost comes from
+
+The exact replay contract records an observed firing together with its ordered
+premise facts and source-order bindings. Most capture work therefore comes from
+carrying witnesses through matching and commit, not from later explanation or
+rendering. Backward closure and replay are cold operations whose cost follows
+the retained cone; capture pays for every observed firing whether or not that
+firing eventually supports a check.
+
+That tradeoff is deliberate. An exact witness lets replay reconstruct the
+historical firing without searching for another derivation. A different design
+could annotate each first-produced fact with a rule identity and derivation
+wave, then re-run that rule at slice time to recover premises. Zhao, Subotić,
+and Scholz use this shape for scalable Datalog provenance in
+[*Provenance for Large-scale
+Datalog*](https://arxiv.org/abs/1907.05045).
+
+Annotation-only capture is not a drop-in storage optimization here. It changes
+the contract from replaying a recorded match to re-deriving one, so it needs a
+bounded search, a deterministic tie-break that recovers the original witness,
+and new evidence for mutable denotations, rekeys, and deletion. It is a useful
+future option if always-on recording cost becomes the priority; the current
+design chooses direct historical evidence and keeps that cost visible.
+
 ## Supported boundary and publication contract
 
 The current command-line boundary is intentionally narrow: one input file,
@@ -348,6 +372,11 @@ priority.
   Moskovitch, [*Selective Provenance for Datalog using Top-k
   Queries*](https://amirgilad.github.io/publication/vldb15/VLDB15.pdf), and
   Green, Karvounarakis, and Tannen, *Provenance Semirings*.
+- Annotation-based Datalog provenance demonstrates the alternative of retaining
+  compact rule/height labels and reconstructing derivations on demand: Zhao,
+  Subotić, and Scholz, [*Provenance for Large-scale
+  Datalog*](https://arxiv.org/abs/1907.05045) and *Debugging Large-scale
+  Datalog: A Scalable Provenance Evaluation Strategy*.
 - Dynamic slicing supplies the criterion-and-backward-reachability model and
   the limited-preprocessing point between eager graphs and repeated
   re-execution. See Zhang, Gupta, and Zhang,
