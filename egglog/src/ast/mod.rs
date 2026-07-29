@@ -1609,6 +1609,9 @@ impl Display for Variant {
         if let Some(cost) = self.cost {
             write!(f, " :cost {cost}")?;
         }
+        if self.unextractable {
+            write!(f, " :unextractable")?;
+        }
         write!(f, ")")
     }
 }
