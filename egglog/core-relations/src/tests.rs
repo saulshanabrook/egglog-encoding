@@ -532,7 +532,6 @@ fn capture_database_clone_and_clear_fail_before_mutation() {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct TestLandmark {
-    as_of_edges: crate::EdgeHorizon,
     position: crate::HistoryPosition,
     pairs: Box<[crate::TypedCellEquality]>,
 }
@@ -574,7 +573,6 @@ fn test_cause_dependencies(
                 crate::RawCause::Rebuild {
                     wave,
                     prior_fact,
-                    as_of_edges,
                     position,
                     equalities,
                 } => {
@@ -583,7 +581,6 @@ fn test_cause_dependencies(
                         wave,
                         prior_fact,
                         equalities: TestLandmark {
-                            as_of_edges,
                             position,
                             pairs: equalities.into(),
                         },
@@ -591,7 +588,6 @@ fn test_cause_dependencies(
                 }
                 crate::RawCause::ContainerCanonicalize {
                     wave,
-                    as_of_edges,
                     position,
                     equalities,
                 } => result
@@ -599,7 +595,6 @@ fn test_cause_dependencies(
                     .push(TestContainerDependency {
                         wave,
                         equalities: TestLandmark {
-                            as_of_edges,
                             position,
                             pairs: equalities.into(),
                         },
@@ -607,7 +602,6 @@ fn test_cause_dependencies(
                 crate::RawCause::ContainerRefresh {
                     wave,
                     prior_fact,
-                    as_of_edges,
                     position,
                     equalities,
                 } => {
@@ -617,7 +611,6 @@ fn test_cause_dependencies(
                         TestContainerDependency {
                             wave,
                             equalities: TestLandmark {
-                                as_of_edges,
                                 position,
                                 pairs: equalities.into(),
                             },
@@ -644,7 +637,6 @@ fn test_congruence_dependencies(
     let crate::EqualityReason::Congruence {
         cause,
         wave,
-        as_of_edges,
         position,
     } = reason
     else {
@@ -654,13 +646,12 @@ fn test_congruence_dependencies(
     let mut pairs = Vec::new();
     for rebuild in &dependencies.rebuilds {
         assert_eq!(rebuild.wave, *wave);
-        assert_eq!(rebuild.equalities.as_of_edges, *as_of_edges);
+        assert_eq!(rebuild.equalities.position, *position);
         pairs.extend_from_slice(&rebuild.equalities.pairs);
     }
     Ok((
         dependencies,
         TestLandmark {
-            as_of_edges: *as_of_edges,
             position: *position,
             pairs: pairs.into_boxed_slice(),
         },
@@ -745,7 +736,6 @@ fn causal_capture_rebuild_rekeys_with_exact_landmark_and_noop_preserves_fact() {
             assert_eq!(rekey.fact, prior_fact);
             assert_eq!(rekey.table, rebuilt);
             assert_eq!(rekey.wave, Wave::new(2));
-            assert_eq!(rekey.as_of_edges, crate::EdgeHorizon::new(1));
             assert_eq!(rekey.equality_position, applied.position);
             assert_eq!(
                 rekey.equalities,
@@ -809,9 +799,8 @@ fn causal_capture_rebuild_rekeys_with_exact_landmark_and_noop_preserves_fact() {
             let first = view.applied_equality(crate::AppliedEqualityId::new(1))?;
             let rekey = view.rekey_at(crate::HistoryPosition::new(first.position.get() + 1))?;
             assert_eq!(
-                rekey.as_of_edges,
-                crate::EdgeHorizon::new(1),
-                "a later equality edge cannot justify an earlier table rekey"
+                rekey.equality_position, first.position,
+                "a later equality event cannot move an earlier rekey landmark"
             );
             Ok(())
         })
@@ -868,7 +857,6 @@ fn trusted_exact_occurrences_extend_from_both_native_roots() {
             let first_root = view.explain_raw_equality_support_at(
                 crate::RawEqualityEndpoint { sort, raw: x },
                 crate::RawEqualityEndpoint { sort, raw: z },
-                crate::EdgeHorizon::new(3),
                 view_end_position(view),
             )?;
             assert_eq!(
@@ -878,7 +866,6 @@ fn trusted_exact_occurrences_extend_from_both_native_roots() {
             let second_root = view.explain_raw_equality_support_at(
                 crate::RawEqualityEndpoint { sort, raw: b },
                 crate::RawEqualityEndpoint { sort, raw: y },
-                crate::EdgeHorizon::new(3),
                 view_end_position(view),
             )?;
             assert_eq!(
@@ -987,7 +974,6 @@ fn causal_capture_rebuild_collision_records_exact_congruence() {
             let (dependencies, equalities) = test_congruence_dependencies(view, &equality.reason)?;
             assert_eq!(dependencies.facts, [target_fact, old_fact]);
             assert!(dependencies.rules.is_empty());
-            assert_eq!(equalities.as_of_edges, crate::EdgeHorizon::new(1));
             assert_eq!(
                 equalities.pairs.as_ref(),
                 &[crate::TypedCellEquality {
@@ -1218,7 +1204,6 @@ fn typed_union_forest_is_immutable_across_native_path_compression_and_redundancy
             .explain_equality_support_at(
                 endpoint(a_term, a),
                 endpoint(c_term, c),
-                crate::EdgeHorizon::new(2),
                 view_end_position(view),
             )?.applied.as_ref(),
         &[crate::AppliedEqualityId::new(1), crate::AppliedEqualityId::new(2)]
@@ -1228,7 +1213,6 @@ fn typed_union_forest_is_immutable_across_native_path_compression_and_redundancy
             .explain_equality_support_at(
                 endpoint(b_term, b),
                 endpoint(c_term, c),
-                crate::EdgeHorizon::new(2),
                 view_end_position(view),
             )?.applied.as_ref(),
         &[crate::AppliedEqualityId::new(2)]
@@ -1238,7 +1222,6 @@ fn typed_union_forest_is_immutable_across_native_path_compression_and_redundancy
             .explain_equality_support_at(
                 endpoint(a_term, a),
                 endpoint(c_term, c),
-                crate::EdgeHorizon::new(1),
                 view.applied_equality(crate::AppliedEqualityId::new(1))?.position,
             )
             .is_err(),
@@ -1653,7 +1636,7 @@ fn causal_trace_record_same_term_native_alias_without_equality_edge() {
 
     let wave = Wave::new(1);
     db.set_trace_wave(wave);
-    let cutoff = trace.equality_edge_count().unwrap();
+    let landmark = trace.maintenance_landmark().unwrap();
     let journal = crate::provenance::ContainerAnchorJournal::default();
     let (cause, proposal) = trace
         .container_canonicalization_cause(
@@ -1662,7 +1645,7 @@ fn causal_trace_record_same_term_native_alias_without_equality_edge() {
             wave,
             left,
             right,
-            cutoff,
+            landmark,
         )
         .unwrap();
     assert_eq!(proposal.left().sort, container_sort);
@@ -1683,18 +1666,13 @@ fn causal_trace_record_same_term_native_alias_without_equality_edge() {
         assert_eq!(alias.native_parent, native_uf_root(&db, uf, right));
         assert_ne!(alias.native_parent, alias.native_child);
         assert!([left, right].contains(&alias.native_parent) && [left, right].contains(&alias.native_child));
-        let crate::EqualityReason::Congruence { cause, wave: reason_wave, as_of_edges, position } = alias.reason else { panic!("container native alias lost its congruence cause") };
-        assert_eq!((reason_wave, as_of_edges), (wave, cutoff));
+        let crate::EqualityReason::Congruence { cause, wave: reason_wave, position } = alias.reason else { panic!("container native alias lost its congruence cause") };
+        assert_eq!((reason_wave, position), (wave, landmark));
         let dependencies = test_cause_dependencies(view, cause)?;
         assert!(dependencies.facts.is_empty() && dependencies.rules.is_empty());
-        assert!(matches!(dependencies.container_canonicalizations.as_slice(), [TestContainerDependency { wave: dependency_wave, equalities }] if *dependency_wave == wave && equalities.as_of_edges == cutoff && equalities.position == position && equalities.pairs.is_empty()));
+        assert!(matches!(dependencies.container_canonicalizations.as_slice(), [TestContainerDependency { wave: dependency_wave, equalities }] if *dependency_wave == wave && equalities.position == position && equalities.pairs.is_empty()));
         Ok(alias.native_child)
     }).unwrap();
-    assert_eq!(
-        trace.equality_edge_count().unwrap(),
-        crate::EdgeHorizon::new(cutoff.get() + 1),
-        "the historical cutoff counts every applied native union, including aliases"
-    );
 
     // The component mirror must survive the native-only alias. A later real
     // equality reached through the former child id still joins the shared
@@ -1741,7 +1719,6 @@ fn causal_trace_record_same_term_native_alias_without_equality_edge() {
                         term: other_term,
                         raw: other,
                     },
-                    crate::EdgeHorizon::new(2),
                     view_end_position(view),
                 )?
                 .applied
@@ -1877,7 +1854,6 @@ fn same_term_native_bridge_joins_distinct_historical_components() {
                     term: other_term,
                     raw: other,
                 },
-                crate::EdgeHorizon::new(1),
                 first.position,
             )?;
             assert_eq!(
@@ -1908,7 +1884,6 @@ fn same_term_native_bridge_joins_distinct_historical_components() {
                         term: other_term,
                         raw: other,
                     },
-                    crate::EdgeHorizon::new(2),
                     view_end_position(view),
                 )?
                 .applied
@@ -4617,7 +4592,6 @@ fn check_trace_keep_distinct_premise_terms_for_the_same_runtime_equality_value()
             for root in &roots {
                 assert_eq!(root.wave, Wave::new(3));
                 assert_eq!(root.premises.as_ref(), &[second_left_fact, right_fact]);
-                assert_eq!(root.as_of_edges, crate::EdgeHorizon::new(2));
                 assert_eq!(
                     root.equalities.as_ref(),
                     &[crate::CriterionEquality {
@@ -4752,7 +4726,7 @@ fn late_fact_rekey_attachment_case(reverse_equality_endpoints: bool) {
     assert!(db.apply_rebuild(uf, &[rebuilt], Value::new(2)));
     assert_eq!(committed_fact_id(&db, rebuilt, c), fact);
 
-    let cutoff = trace.equality_edge_count().unwrap();
+    let landmark = trace.maintenance_landmark().unwrap();
     let left = crate::EqualityEndpoint {
         sort,
         term: tb,
@@ -4774,10 +4748,10 @@ fn late_fact_rekey_attachment_case(reverse_equality_endpoints: bool) {
         ),
     };
     trace
-        .record_check_root(7900, wave, &[fact], &[equality], cutoff)
+        .record_check_root(7900, wave, &[fact], &[equality], landmark)
         .unwrap();
     trace
-        .record_check_root(7900, Wave::new(99), &[fact], &[equality], cutoff)
+        .record_check_root(7900, Wave::new(99), &[fact], &[equality], landmark)
         .unwrap();
     db.finalize_trace_wave();
 
@@ -4814,30 +4788,23 @@ fn late_fact_rekey_attachment_case(reverse_equality_endpoints: bool) {
             };
             let rekey_position = rekey.position;
             assert_eq!((rekey.fact, rekey.wave), (fact, wave));
-            assert_eq!(rekey.as_of_edges, cutoff);
+            assert!(
+                rekey.equality_position < landmark,
+                "the rekey must retain its pre-rebuild landmark, not the later check landmark"
+            );
             assert_eq!(rekey.equalities.len(), 1);
             assert!(fact_record.position < rekey_position && rekey_position < root.position);
             let current = view.fact_cell_at(occurrence, root.position)?;
             assert_eq!((current.endpoint.term, current.endpoint.raw), (tb, c));
             assert_eq!(current.rekeys.as_ref(), &[rekey_position]);
             let support =
-                view.explain_fact_endpoint_support_at(occurrence, right, cutoff, root.position)?;
+                view.explain_fact_endpoint_support_at(occurrence, right, root.position)?;
             assert_eq!(
                 support.applied.as_ref(),
                 &[crate::AppliedEqualityId::new(1)]
             );
             assert_eq!(support.facts.as_ref(), &[fact]);
             assert_eq!(support.rekeys.as_ref(), &[rekey_position]);
-            assert!(
-                view.explain_equality_support_at(
-                    left,
-                    right,
-                    crate::EdgeHorizon::new(0),
-                    root.position,
-                )
-                .is_err(),
-                "a mismatched applied-edge high-water mark must fail closed"
-            );
             Ok(())
         })
         .unwrap();

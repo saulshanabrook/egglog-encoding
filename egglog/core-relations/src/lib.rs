@@ -45,7 +45,7 @@ pub use pool::{Pool, PoolSet, Pooled};
 pub use provenance::{
     AppliedEqualityId, CauseDraftId, CauseId, CauseRef, Criterion, CriterionCaptureSpec,
     CriterionEndpointOccurrence, CriterionEndpointSource, CriterionEquality, DeferredEqualityCause,
-    EdgeHorizon, EqualityEndpoint, EqualityReason, FactCellRef, FactId, Firing, FiringCaptureSpec,
+    EqualityEndpoint, EqualityReason, FactCellRef, FactId, Firing, FiringCaptureSpec,
     FiringEqualitySource, FiringId, HistoricalFactCell, HistoryPosition, MergeOriginSelector,
     PremiseOccurrence, PreparedRekey, ProjectedAppliedEquality, RawAppliedEquality, RawCause,
     RawEqualityEndpoint, RawEqualitySupport, RawFactRecord, RawRekeyRecord, RawTermAvailability,

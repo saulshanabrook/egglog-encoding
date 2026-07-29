@@ -557,7 +557,6 @@ pub(super) struct StructuralOccurrenceQuery {
     term: ReplayTermId,
     sort: ReplaySortId,
     raw: Value,
-    as_of: EdgeHorizon,
     position: HistoryPosition,
     excluded_fact: FactId,
     retain_exact_producer: bool,
@@ -704,8 +703,8 @@ impl<'a> TraceView<'a> {
     ///
     /// `premises` are the matched fact occurrences in the rule's premise
     /// order. `merge_reads` are additional prior rows consulted by effective
-    /// merge callbacks. The recorded history and edge cutoffs bound every
-    /// explanation of what the firing observed.
+    /// merge callbacks. The recorded history position bounds every explanation
+    /// of what the firing observed, including its derived equality prefix.
     pub fn firing(&self, id: FiringId) -> Result<Firing<'a>, TraceViewError> {
         if id.get() == 0 {
             return Err(TraceViewError::UnknownFiring(id));
@@ -726,7 +725,6 @@ impl<'a> TraceView<'a> {
             rule: firing.rule,
             wave: firing.wave,
             position: firing.position,
-            as_of_edges: firing.as_of_edges,
             premises: &self.arena.durable_premises[firing.premises.as_range()],
             merge_reads,
         })
@@ -750,37 +748,31 @@ impl<'a> TraceView<'a> {
             DurableCause::Rebuild {
                 wave,
                 prior_fact,
-                as_of_edges,
                 position,
                 equalities,
             } => RawCause::Rebuild {
                 wave: *wave,
                 prior_fact: *prior_fact,
-                as_of_edges: *as_of_edges,
                 position: *position,
                 equalities: &self.arena.durable_rebuild_equalities[equalities.as_range()],
             },
             DurableCause::ContainerCanonicalize {
                 wave,
-                as_of_edges,
                 position,
                 equalities,
             } => RawCause::ContainerCanonicalize {
                 wave: *wave,
-                as_of_edges: *as_of_edges,
                 position: *position,
                 equalities: &self.arena.durable_rebuild_equalities[equalities.as_range()],
             },
             DurableCause::ContainerRefresh {
                 wave,
                 prior_fact,
-                as_of_edges,
                 position,
                 equalities,
             } => RawCause::ContainerRefresh {
                 wave: *wave,
                 prior_fact: *prior_fact,
-                as_of_edges: *as_of_edges,
                 position: *position,
                 equalities: &self.arena.durable_rebuild_equalities[equalities.as_range()],
             },
@@ -891,7 +883,6 @@ impl<'a> TraceView<'a> {
             table: record.table,
             wave: record.wave,
             position: record.position,
-            as_of_edges: record.equalities.as_of_edges,
             equality_position: record.equalities.position,
             equalities: &record.equalities.pairs,
             outcome: record.outcome,
@@ -966,7 +957,7 @@ impl<'a> TraceView<'a> {
     ///
     /// The shared slice is source metadata, not a record of which equalities a
     /// particular firing required. Historical support is computed lazily at
-    /// that firing's cutoffs.
+    /// that firing's history position.
     pub fn rule_equality_layout(
         &self,
         rule: u32,
@@ -1036,14 +1027,9 @@ impl<'a> TraceView<'a> {
         id: FiringId,
         binding: usize,
     ) -> Result<RawTermAvailability, TraceViewError> {
-        let (rule, position, as_of_edges, premises) = {
+        let (rule, position, premises) = {
             let firing = self.firing(id)?;
-            (
-                firing.rule,
-                firing.position,
-                firing.as_of_edges,
-                firing.premises.to_vec(),
-            )
+            (firing.rule, firing.position, firing.premises.to_vec())
         };
         let binding_source = self
             .binding_recipes
@@ -1085,7 +1071,6 @@ impl<'a> TraceView<'a> {
                 self.explain_anchored_term_availability_at(
                     endpoint,
                     anchor,
-                    as_of_edges,
                     position,
                 )
             } else {
@@ -1123,21 +1108,19 @@ impl<'a> TraceView<'a> {
         &mut self,
         occurrence: FactCellRef,
         endpoint: EqualityEndpoint,
-        as_of: EdgeHorizon,
         position: HistoryPosition,
     ) -> Result<RawTermAvailability, TraceViewError> {
         let anchor = self.fact_cell_at(occurrence, position)?;
-        self.explain_anchored_term_availability_at(endpoint, anchor, as_of, position)
+        self.explain_anchored_term_availability_at(endpoint, anchor, position)
     }
 
     fn explain_anchored_term_availability_at(
         &mut self,
         endpoint: EqualityEndpoint,
         anchor: HistoricalFactCell,
-        as_of: EdgeHorizon,
         position: HistoryPosition,
     ) -> Result<RawTermAvailability, TraceViewError> {
-        self.validate_equality_cutoff(as_of, position)?;
+        let equality_prefix = self.equality_prefix_at(position)?;
         if endpoint.sort != anchor.endpoint.sort {
             return Err(TraceViewError::Invalid(
                 "anchored structural term has the wrong logical sort".into(),
@@ -1162,7 +1145,7 @@ impl<'a> TraceView<'a> {
                 rekeys: Box::new([]),
             }
         } else {
-            self.explain_raw_equality_support_at(
+            self.explain_raw_equality_support_with_cutoff(
                 RawEqualityEndpoint {
                     sort: endpoint.sort,
                     raw: endpoint.raw,
@@ -1171,8 +1154,7 @@ impl<'a> TraceView<'a> {
                     sort: anchor.endpoint.sort,
                     raw: anchor.endpoint.raw,
                 },
-                as_of,
-                position,
+                equality_prefix,
             )?
         };
         let anchor = RawEqualitySupport {
@@ -1315,59 +1297,12 @@ impl<'a> TraceView<'a> {
         })
     }
 
-    fn validate_equality_cutoff(
-        &self,
-        as_of: EdgeHorizon,
-        position: HistoryPosition,
-    ) -> Result<usize, TraceViewError> {
-        let cutoff: usize = as_of.get().try_into().map_err(|_| {
-            TraceViewError::Invalid("equality cutoff exceeds addressable storage".into())
-        })?;
-        if cutoff > self.arena.durable_equalities.len() {
-            return Err(TraceViewError::Invalid(
-                "equality cutoff exceeds the raw applied-event history".into(),
-            ));
-        }
+    fn validate_history_position(&self, position: HistoryPosition) -> Result<(), TraceViewError> {
         if position > self.history_boundary {
             return Err(TraceViewError::Invalid(
                 "equality query exceeds the captured trace history".into(),
             ));
         }
-        let previous_visible = cutoff
-            .checked_sub(1)
-            .map(|index| {
-                self.arena.durable_equalities[index]
-                    .as_ref()
-                    .ok_or_else(|| {
-                        TraceViewError::Invalid(
-                            "raw applied-equality history has an ID hole".into(),
-                        )
-                    })
-                    .map(|event| event.position <= position)
-            })
-            .transpose()?
-            .unwrap_or(true);
-        let next_hidden = self
-            .arena
-            .durable_equalities
-            .get(cutoff)
-            .map(|event| {
-                event
-                    .as_ref()
-                    .ok_or_else(|| {
-                        TraceViewError::Invalid(
-                            "raw applied-equality history has an ID hole".into(),
-                        )
-                    })
-                    .map(|event| event.position > position)
-            })
-            .transpose()?
-            .unwrap_or(true);
-        if !previous_visible || !next_hidden {
-            return Err(TraceViewError::Invalid(
-                "equality cutoff disagrees with the global history position".into(),
-            ));
-        }
-        Ok(cutoff)
+        Ok(())
     }
 }

@@ -1399,9 +1399,9 @@ impl RuleBuilder<'_, '_> {
             equalities,
         } = spec;
         let trace = self.qb.rsb.db.trace.as_ref().unwrap();
-        let as_of_edges = trace
-            .equality_edge_count()
-            .unwrap_or_else(|error| panic!("cannot capture exact check cutoff: {error}"));
+        let landmark = trace
+            .maintenance_landmark()
+            .unwrap_or_else(|error| panic!("cannot capture exact check landmark: {error}"));
         let compile = |endpoint| {
             let CriterionEndpointSource {
                 premise,
@@ -1481,7 +1481,7 @@ impl RuleBuilder<'_, '_> {
             check,
             equalities: equalities.into_boxed_slice(),
             implicit_equalities: implicit_equalities.into_boxed_slice(),
-            as_of_edges,
+            landmark,
         });
         Ok(self
             .try_build_impl(desc, Some(CaptureBuildSpec::Check { premises }), None)?

@@ -19,8 +19,8 @@ use egglog_concurrency::NotificationList;
 use smallvec::SmallVec;
 
 use crate::{
-    BaseValues, CauseDraftId, ContainerValues, EdgeHorizon, EqualityEndpoint, ExternalFunctionId,
-    FactId, ReplayConstructorSpec, ReplaySortId, Trace, Wave, WrappedTable,
+    BaseValues, CauseDraftId, ContainerValues, EqualityEndpoint, ExternalFunctionId, FactId,
+    HistoryPosition, ReplayConstructorSpec, ReplaySortId, Trace, Wave, WrappedTable,
     common::Value,
     free_join::{CounterId, Counters, ExternalFunctions, TableId, TableInfo, Variable},
     pool::{Clear, Pooled, with_pool_set},
@@ -1965,7 +1965,7 @@ impl ExecutionState<'_> {
                 check,
                 equalities,
                 implicit_equalities,
-                as_of_edges,
+                landmark,
             } => {
                 let trace = self
                     .db
@@ -2070,7 +2070,7 @@ impl ExecutionState<'_> {
                 debug_assert!(premise_endpoints.next().is_none());
                 debug_assert!(raw_equalities.next().is_none());
                 trace
-                    .record_check_root(*check, wave, &premises, &resolved, *as_of_edges)
+                    .record_check_root(*check, wave, &premises, &resolved, *landmark)
                     .unwrap_or_else(|error| panic!("invalid exact check root: {error}"));
             }
             Instr::AssertEq(l, r) => assert_impl(bindings, mask, l, r, |l, r| l == r),
@@ -2165,7 +2165,7 @@ pub(crate) enum Instr {
         check: u32,
         equalities: Box<[(CheckEndpointSpec, CheckEndpointSpec)]>,
         implicit_equalities: Box<[(CheckEndpointSpec, CheckEndpointSpec)]>,
-        as_of_edges: EdgeHorizon,
+        landmark: HistoryPosition,
     },
 
     /// Insert `vals` into `table` if `l` and `r` are equal.

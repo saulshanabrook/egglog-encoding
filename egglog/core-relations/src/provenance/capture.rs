@@ -170,7 +170,6 @@ pub struct PreparedRekey {
     table: TableId,
     wave: Wave,
     prior_fact: FactId,
-    as_of_edges: EdgeHorizon,
     /// Inclusive global history high-water captured before the rekey mutates
     /// native state. Unlike the rekey event position, zero is valid here.
     position: HistoryPosition,
@@ -184,19 +183,11 @@ impl PreparedRekey {
 
     pub(crate) fn metadata(
         &self,
-    ) -> (
-        TableId,
-        Wave,
-        FactId,
-        EdgeHorizon,
-        HistoryPosition,
-        &[TypedCellEquality],
-    ) {
+    ) -> (TableId, Wave, FactId, HistoryPosition, &[TypedCellEquality]) {
         (
             self.table,
             self.wave,
             self.prior_fact,
-            self.as_of_edges,
             self.position,
             &self.equalities,
         )
@@ -206,7 +197,6 @@ impl PreparedRekey {
         table: TableId,
         wave: Wave,
         prior_fact: FactId,
-        as_of_edges: EdgeHorizon,
         position: HistoryPosition,
         equalities: &[TypedCellEquality],
     ) -> Self {
@@ -214,7 +204,6 @@ impl PreparedRekey {
             table,
             wave,
             prior_fact,
-            as_of_edges,
             position,
             equalities: SmallVec::from_slice(equalities),
         }
@@ -396,12 +385,10 @@ pub(crate) enum EqualityCauseSummary {
     Rule,
     Container {
         wave: Wave,
-        as_of_edges: EdgeHorizon,
         position: HistoryPosition,
     },
     Rebuild {
         wave: Wave,
-        as_of_edges: EdgeHorizon,
         position: HistoryPosition,
         complete: bool,
     },
@@ -416,14 +403,8 @@ impl EqualityCauseSummary {
         match self {
             Self::Rule => Self::Rule,
             Self::Container { .. } => Self::Invalid(EqualityCauseError::Mixed),
-            Self::Rebuild {
+            Self::Rebuild { wave, position, .. } => Self::Rebuild {
                 wave,
-                as_of_edges,
-                position,
-                ..
-            } => Self::Rebuild {
-                wave,
-                as_of_edges,
                 position,
                 complete: true,
             },
@@ -464,20 +445,17 @@ enum DurableCause {
     Rebuild {
         wave: Wave,
         prior_fact: FactId,
-        as_of_edges: EdgeHorizon,
         position: HistoryPosition,
         equalities: FlatRange,
     },
     ContainerCanonicalize {
         wave: Wave,
-        as_of_edges: EdgeHorizon,
         position: HistoryPosition,
         equalities: FlatRange,
     },
     ContainerRefresh {
         wave: Wave,
         prior_fact: FactId,
-        as_of_edges: EdgeHorizon,
         position: HistoryPosition,
         equalities: FlatRange,
     },
@@ -544,7 +522,6 @@ struct DurableFiring {
     rule: u32,
     wave: Wave,
     position: HistoryPosition,
-    as_of_edges: EdgeHorizon,
     premises: FlatRange,
 }
 
@@ -688,33 +665,18 @@ impl TraceArena {
             (_, EqualityCauseSummary::Rule) => EqualityReason::MergeFn {
                 cause: node.public(),
             },
-            (
-                _,
-                EqualityCauseSummary::Container {
-                    wave,
-                    as_of_edges,
-                    position,
-                },
-            ) => EqualityReason::Congruence {
+            (_, EqualityCauseSummary::Container { wave, position }) => EqualityReason::Congruence {
                 cause: node.public(),
                 wave,
-                as_of_edges,
                 position,
             },
-            (
-                _,
-                EqualityCauseSummary::Rebuild {
+            (_, EqualityCauseSummary::Rebuild { wave, position, .. }) => {
+                EqualityReason::Congruence {
+                    cause: node.public(),
                     wave,
-                    as_of_edges,
                     position,
-                    ..
-                },
-            ) => EqualityReason::Congruence {
-                cause: node.public(),
-                wave,
-                as_of_edges,
-                position,
-            },
+                }
+            }
             _ => unreachable!("validated equality cause has no public reason"),
         }
     }
@@ -1012,10 +974,6 @@ impl Trace {
     /// counter never allocates a history event.
     fn history_boundary(&self) -> HistoryPosition {
         HistoryPosition::new(self.0.next_history.load(Ordering::Acquire))
-    }
-
-    fn equality_boundary(&self) -> EdgeHorizon {
-        EdgeHorizon::new(self.0.next_equality.load(Ordering::Acquire))
     }
 
     pub(crate) fn register_row_origin(&self, spec: RowOriginSpec) -> RowOriginSiteId {
@@ -1628,10 +1586,10 @@ impl Trace {
         })
     }
 
-    /// Capture one complete applied-edge prefix at the native rebuild
-    /// barrier. A bare counter read is insufficient: every allocated edge up
-    /// to the cutoff must already have been published without holes.
-    pub(crate) fn equality_edge_count(&self) -> Result<EdgeHorizon, &'static str> {
+    /// Capture one history landmark at a native maintenance barrier.
+    /// Every allocated equality before the landmark must already have been
+    /// published without holes.
+    pub(crate) fn maintenance_landmark(&self) -> Result<HistoryPosition, &'static str> {
         if self.0.open_fragments.load(Ordering::Acquire) != 0 {
             return Err("cannot start rebuild with open capture fragments");
         }
@@ -1641,12 +1599,12 @@ impl Trace {
         let count = self.0.next_equality.load(Ordering::Acquire);
         let arena = self.0.arena.lock().unwrap();
         if self.0.open_fragments.load(Ordering::Acquire) != 0 {
-            return Err("capture fragment opened while capturing rebuild equality cutoff");
+            return Err("capture fragment opened while capturing a rebuild history landmark");
         }
         if count != arena.published_equalities {
-            return Err("rebuild equality cutoff is not one complete dense prefix");
+            return Err("rebuild history landmark does not contain one complete equality prefix");
         }
-        Ok(EdgeHorizon::new(count))
+        Ok(self.history_boundary())
     }
 
     pub(crate) fn validate_deferred_equality_cause(
@@ -1807,9 +1765,8 @@ impl Trace {
         old_row: &[Value],
         new_row: &[Value],
         rebuild_columns: &[crate::ColumnId],
-        as_of_edges: EdgeHorizon,
+        position: HistoryPosition,
     ) -> Result<PreparedRekey, &'static str> {
-        let position = self.history_boundary();
         if prior_fact.is_missing() {
             return Err("rebuild row has no immutable prior FactId");
         }
@@ -1872,7 +1829,6 @@ impl Trace {
             table,
             wave,
             prior_fact,
-            as_of_edges,
             position,
             equalities: pairs,
         })
@@ -1896,13 +1852,11 @@ impl Trace {
             DurableCause::Rebuild {
                 wave: rekey.wave,
                 prior_fact: rekey.prior_fact,
-                as_of_edges: rekey.as_of_edges,
                 position: rekey.position,
                 equalities,
             },
             EqualityCauseSummary::Rebuild {
                 wave: rekey.wave,
-                as_of_edges: rekey.as_of_edges,
                 position: rekey.position,
                 complete: false,
             },
@@ -1929,7 +1883,6 @@ impl Trace {
             wave: rekey.wave,
             position,
             equalities: EqualityLandmark {
-                as_of_edges: rekey.as_of_edges,
                 position: rekey.position,
                 pairs: rekey.equalities.as_slice().into(),
             },
@@ -1949,9 +1902,8 @@ impl Trace {
         wave: Wave,
         before: &[Value],
         after: &[Value],
-        as_of_edges: EdgeHorizon,
+        position: HistoryPosition,
     ) -> Result<SmallVec<[ContainerVersionDependency; 2]>, &'static str> {
-        let position = self.history_boundary();
         if before.len() != after.len() {
             return Err("positional container rebuild changed arity");
         }
@@ -2041,7 +1993,6 @@ impl Trace {
         let dependency = Arc::new(ContainerDependency {
             wave,
             equalities: EqualityLandmark {
-                as_of_edges,
                 position,
                 pairs: pairs.into_vec().into_boxed_slice(),
             },
@@ -2133,9 +2084,8 @@ impl Trace {
         wave: Wave,
         left: Value,
         right: Value,
-        as_of_edges: EdgeHorizon,
+        position: HistoryPosition,
     ) -> Result<(CauseCapability, TypedEqualityProposal), &'static str> {
-        let position = self.history_boundary();
         let anchor_pairs =
             self.0
                 .replay_terms
@@ -2252,16 +2202,11 @@ impl Trace {
         let equalities = FlatRange::new(arena.durable_rebuild_equalities.len(), pairs.len());
         arena.durable_rebuild_equalities.extend_from_slice(&pairs);
         let id = CauseDraftId::new(TraceShared::alloc_u64(&self.0.next_cause_draft, 1));
-        let summary = EqualityCauseSummary::Container {
-            wave,
-            as_of_edges,
-            position,
-        };
+        let summary = EqualityCauseSummary::Container { wave, position };
         arena.install_cause(
             id,
             DurableCause::ContainerCanonicalize {
                 wave,
-                as_of_edges,
                 position,
                 equalities,
             },
@@ -2299,8 +2244,7 @@ impl Trace {
                 match &mut selected {
                     None => selected = Some(dependency.as_ref().clone()),
                     Some(current) => {
-                        if (current.wave, current.equalities.as_of_edges)
-                            != (dependency.wave, dependency.equalities.as_of_edges)
+                        if current.wave != dependency.wave
                             || current.equalities.position != dependency.equalities.position
                         {
                             return Err(
@@ -2338,7 +2282,6 @@ impl Trace {
             DurableCause::ContainerRefresh {
                 wave: dependency.wave,
                 prior_fact,
-                as_of_edges: dependency.equalities.as_of_edges,
                 position: dependency.equalities.position,
                 equalities,
             },
@@ -2735,14 +2678,14 @@ impl Trace {
 
     /// Publish one fully-resolved check root atomically. Runtime values and
     /// their independently-selected structural terms are validated before the
-    /// applied-equality cutoff or root storage is changed.
+    /// equality history or root storage is changed.
     pub(crate) fn record_check_root(
         &self,
         check: u32,
         wave: Wave,
         premises: &[FactId],
         equalities: &[CriterionEquality],
-        as_of_edges: EdgeHorizon,
+        landmark: HistoryPosition,
     ) -> Result<(), &'static str> {
         if premises.iter().any(|fact| fact.is_missing()) {
             return Err("check root has a missing exact premise FactId");
@@ -2791,10 +2734,16 @@ impl Trace {
                 return Err("check equality occurrence has a missing premise FactId");
             }
         }
-        if self.0.next_equality.load(Ordering::Acquire) != as_of_edges.get() {
-            return Err("check equality history changed after its exact cutoff was captured");
-        }
         let mut arena = self.0.arena.lock().unwrap();
+        let equality_count = self.0.next_equality.load(Ordering::Acquire);
+        let equality_after_landmark = arena
+            .durable_equalities
+            .last()
+            .and_then(Option::as_ref)
+            .is_some_and(|equality| equality.position > landmark);
+        if arena.published_equalities != equality_count || equality_after_landmark {
+            return Err("check equality history changed after its exact landmark was captured");
+        }
         if premises.iter().any(|fact| {
             arena
                 .facts
@@ -2834,7 +2783,6 @@ impl Trace {
                 position,
                 premises: premises.into(),
                 equalities: equalities.into(),
-                as_of_edges,
             },
         );
         Ok(())
@@ -2980,7 +2928,6 @@ impl Trace {
         rule: u32,
         wave: Wave,
         position: HistoryPosition,
-        as_of_edges: EdgeHorizon,
         first_firing: FiringId,
         premise_arity: usize,
         premises: &[FactId],
@@ -3003,7 +2950,6 @@ impl Trace {
                 rule,
                 wave,
                 position,
-                as_of_edges,
                 premises: FlatRange::new(premise_start + lane * premise_arity, premise_arity),
             });
         }
@@ -3207,7 +3153,6 @@ impl Trace {
             "observed firing premises must be dense and lane-aligned"
         );
         let position = self.history_boundary();
-        let as_of_edges = self.equality_boundary();
         let premises: Box<[FactId]> = flat_premises.into();
         self.validate_pending_premises(&premises)
             .unwrap_or_else(|error| panic!("cannot observe firing batch: {error}"));
@@ -3216,7 +3161,6 @@ impl Trace {
             rule,
             wave,
             position,
-            as_of_edges,
             first_firing,
             premise_arity,
             &premises,
@@ -3251,13 +3195,11 @@ impl Trace {
         self.validate_pending_premises(&premises)
             .unwrap_or_else(|error| panic!("cannot observe firing batch: {error}"));
         let position = self.history_boundary();
-        let as_of_edges = self.equality_boundary();
         let first_firing = FiringId::new(first_native_ordinal);
         self.install_observed_firings(
             rule,
             wave,
             position,
-            as_of_edges,
             first_firing,
             premise_arity,
             &premises,
@@ -3368,7 +3310,6 @@ impl Trace {
         self.register_rule_binding_recipe(rule, binding_sources);
         let first_firing = FiringId::new(self.reserve_firing_ordinals(lanes.len()));
         let position = self.history_boundary();
-        let as_of_edges = self.equality_boundary();
         let mut selected_premises = Vec::with_capacity(lanes.len() * premise_arity);
         for lane in lanes.iter().copied() {
             let premise_start = lane * premise_arity;
@@ -3381,7 +3322,6 @@ impl Trace {
             rule,
             wave,
             position,
-            as_of_edges,
             first_firing,
             premise_arity,
             &selected_premises,

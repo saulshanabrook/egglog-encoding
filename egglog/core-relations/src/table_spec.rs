@@ -18,8 +18,8 @@ use crate::numeric_id::{DenseIdMap, NumericId, define_id};
 use smallvec::SmallVec;
 
 use crate::{
-    CauseDraftId, CauseRef, EdgeHorizon, FactId, QueryEntry, TableId, Trace, TypedEqualityProposal,
-    Variable, Wave,
+    CauseDraftId, CauseRef, FactId, HistoryPosition, QueryEntry, TableId, Trace,
+    TypedEqualityProposal, Variable, Wave,
     action::{
         Bindings, ExecutionState,
         mask::{Mask, MaskIter, ValueSource},
@@ -372,7 +372,7 @@ pub trait Table: Any + Send + Sync {
         _table: &WrappedTable,
         _next_ts: Value,
         _exec_state: &mut ExecutionState,
-        _equality_cutoff: Option<EdgeHorizon>,
+        _equality_landmark: Option<HistoryPosition>,
         _transaction: Option<&MutationTransaction>,
     ) -> bool {
         // Default implementation does nothing.

@@ -6,8 +6,8 @@ use crate::numeric_id::NumericId;
 use rayon::prelude::*;
 
 use crate::{
-    ColumnId, ContainerRebuildSummary, EdgeHorizon, ExecutionState, FactId, Offset, RowId, Subset,
-    Table, TableId, TaggedRowBuffer, Value, WrappedTable,
+    ColumnId, ContainerRebuildSummary, ExecutionState, FactId, HistoryPosition, Offset, RowId,
+    Subset, Table, TableId, TaggedRowBuffer, Value, WrappedTable,
     common::HashSet,
     hash_index::{ColumnIndex, Index},
     offsets::Offsets,
@@ -42,7 +42,7 @@ impl SortedWritesTable {
         rebuilt_row: &mut [Value],
         next_ts: Value,
         exec_state: &ExecutionState,
-        equality_cutoff: Option<EdgeHorizon>,
+        history_landmark: Option<HistoryPosition>,
     ) -> bool {
         let Some(current_row) = self.data.get_row(row_id) else {
             return false;
@@ -64,7 +64,7 @@ impl SortedWritesTable {
                     current_row,
                     rebuilt_row,
                     &self.to_rebuild,
-                    equality_cutoff.expect("capture rebuild is missing its equality landmark"),
+                    history_landmark.expect("capture rebuild is missing its history landmark"),
                 )
                 .unwrap_or_else(|error| panic!("cannot record exact table rebuild: {error}"));
             mutation_buf
@@ -150,7 +150,7 @@ impl SortedWritesTable {
         table: &WrappedTable,
         next_ts: Value,
         exec_state: &mut ExecutionState,
-        equality_cutoff: Option<EdgeHorizon>,
+        history_landmark: Option<HistoryPosition>,
         transaction: Option<&MutationTransaction>,
     ) -> bool {
         // Keep capture selection outside the changed-row loops below.
@@ -160,7 +160,7 @@ impl SortedWritesTable {
                 table,
                 next_ts,
                 exec_state,
-                equality_cutoff,
+                history_landmark,
                 transaction,
             )
         } else {
@@ -169,7 +169,7 @@ impl SortedWritesTable {
                 table,
                 next_ts,
                 exec_state,
-                equality_cutoff,
+                history_landmark,
                 transaction,
             )
         }
@@ -181,7 +181,7 @@ impl SortedWritesTable {
         table: &WrappedTable,
         next_ts: Value,
         exec_state: &mut ExecutionState,
-        equality_cutoff: Option<EdgeHorizon>,
+        history_landmark: Option<HistoryPosition>,
         transaction: Option<&MutationTransaction>,
     ) -> bool {
         if self.to_rebuild.is_empty() {
@@ -212,7 +212,7 @@ impl SortedWritesTable {
                     to_scan,
                     next_ts,
                     exec_state,
-                    equality_cutoff,
+                    history_landmark,
                     transaction,
                 )
             } else {
@@ -220,7 +220,7 @@ impl SortedWritesTable {
                     &*rebuilder,
                     next_ts,
                     exec_state,
-                    equality_cutoff,
+                    history_landmark,
                     transaction,
                 )
             };
@@ -235,7 +235,7 @@ impl SortedWritesTable {
                 &*rebuilder,
                 next_ts,
                 exec_state,
-                equality_cutoff,
+                history_landmark,
                 transaction,
             )
         }
@@ -361,7 +361,7 @@ impl SortedWritesTable {
         to_scan: Subset,
         next_ts: Value,
         exec_state: &mut ExecutionState,
-        equality_cutoff: Option<EdgeHorizon>,
+        history_landmark: Option<HistoryPosition>,
         transaction: Option<&MutationTransaction>,
     ) -> bool {
         self.refresh_rebuild_index();
@@ -404,7 +404,7 @@ impl SortedWritesTable {
                                     row,
                                     next_ts,
                                     &exec_state,
-                                    equality_cutoff,
+                                    history_landmark,
                                 );
                             }
                             (mutation_buf, exec_state, changed)
@@ -436,7 +436,7 @@ impl SortedWritesTable {
                         row,
                         next_ts,
                         exec_state,
-                        equality_cutoff,
+                        history_landmark,
                     );
                 }
             }
@@ -449,7 +449,7 @@ impl SortedWritesTable {
         rebuilder: &dyn Rebuilder,
         next_ts: Value,
         exec_state: &mut ExecutionState,
-        equality_cutoff: Option<EdgeHorizon>,
+        history_landmark: Option<HistoryPosition>,
         transaction: Option<&MutationTransaction>,
     ) -> bool {
         const STEP_SIZE: usize = 2048;
@@ -484,7 +484,7 @@ impl SortedWritesTable {
                                 row,
                                 next_ts,
                                 &exec_state,
-                                equality_cutoff,
+                                history_landmark,
                             );
                         }
                         buf.clear();
@@ -518,7 +518,7 @@ impl SortedWritesTable {
                         row,
                         next_ts,
                         exec_state,
-                        equality_cutoff,
+                        history_landmark,
                     );
                 }
             }

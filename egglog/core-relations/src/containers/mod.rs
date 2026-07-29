@@ -753,7 +753,7 @@ impl<C: ContainerValue> ContainerEnv<C> {
                         exec_state.active_cause_capability().is_none(),
                         "container rebuild inherited an unrelated active cause"
                     );
-                    let cutoff = trace.equality_edge_count().unwrap_or_else(|error| {
+                    let landmark = trace.maintenance_landmark().unwrap_or_else(|error| {
                         panic!("cannot prepare container canonicalization: {error}")
                     });
                     let prepared = trace
@@ -765,7 +765,7 @@ impl<C: ContainerValue> ContainerEnv<C> {
                             exec_state.trace_wave(),
                             *occ.get(),
                             value,
-                            cutoff,
+                            landmark,
                         )
                         .unwrap_or_else(|error| {
                             panic!("cannot record exact container canonicalization: {error}")
@@ -858,8 +858,8 @@ impl<C: ContainerValue> ContainerEnv<C> {
             .trace()
             .expect("capture container rebuild requires the trace arena")
             .clone();
-        let cutoff = trace
-            .equality_edge_count()
+        let landmark = trace
+            .maintenance_landmark()
             .unwrap_or_else(|error| panic!("cannot start exact container rebuild: {error}"));
         let wave = exec_state.trace_wave();
         let mut prepared = Vec::<Prepared<C>>::new();
@@ -889,7 +889,7 @@ impl<C: ContainerValue> ContainerEnv<C> {
                         wave,
                         &before_children,
                         &after_children,
-                        cutoff,
+                        landmark,
                     )
                     .unwrap_or_else(|error| {
                         panic!("cannot record exact positional container rebuild: {error}")
@@ -1054,8 +1054,8 @@ impl<C: ContainerValue> ContainerEnv<C> {
             .trace()
             .expect("capture container rebuild requires the trace arena")
             .clone();
-        let cutoff = trace
-            .equality_edge_count()
+        let landmark = trace
+            .maintenance_landmark()
             .unwrap_or_else(|error| panic!("cannot start exact container rebuild: {error}"));
         let wave = exec_state.trace_wave();
         let mut prepared = Vec::<Prepared<C>>::new();
@@ -1089,7 +1089,7 @@ impl<C: ContainerValue> ContainerEnv<C> {
                         wave,
                         &before_children,
                         &after_children,
-                        cutoff,
+                        landmark,
                     )
                     .unwrap_or_else(|error| {
                         panic!("cannot record exact positional container rebuild: {error}")

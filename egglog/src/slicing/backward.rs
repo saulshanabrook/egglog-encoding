@@ -4,9 +4,8 @@
 //!
 //! Selection starts from every recorded successful check and follows the exact
 //! historical fact, equality, rekey, cause, and firing dependencies that made
-//! those criteria true. All explanations are evaluated at their recorded edge
-//! horizon and history position; a later equality cannot justify an earlier
-//! read.
+//! those criteria true. All explanations are evaluated at their recorded
+//! history position; a later equality cannot justify an earlier read.
 //!
 //! The result deliberately separates *support* from *replay effects*. Support
 //! is the causal cone needed to justify criteria and grounded rule bindings.
@@ -27,11 +26,11 @@
 use std::collections::VecDeque;
 
 use crate::core_relations::{
-    AppliedEqualityId, CauseRef, Criterion, CriterionEndpointOccurrence, EdgeHorizon,
-    EqualityEndpoint, EqualityReason, FactCellRef, FactId, FiringEqualitySource, FiringId,
-    HistoryPosition, PremiseOccurrence, ProjectedAppliedEquality, RawCause, RawEqualityEndpoint,
-    RawEqualitySupport, ReplayAliasPlan, ReplayTableKind, ReplayTermId, SourceRef, TableId,
-    TraceView, TraceViewError, TypedCellEquality, Value,
+    AppliedEqualityId, CauseRef, Criterion, CriterionEndpointOccurrence, EqualityEndpoint,
+    EqualityReason, FactCellRef, FactId, FiringEqualitySource, FiringId, HistoryPosition,
+    PremiseOccurrence, ProjectedAppliedEquality, RawCause, RawEqualityEndpoint, RawEqualitySupport,
+    ReplayAliasPlan, ReplayTableKind, ReplayTermId, SourceRef, TableId, TraceView, TraceViewError,
+    TypedCellEquality, Value,
 };
 use crate::numeric_id::NumericId;
 use crate::util::{HashMap, HashSet};
@@ -203,7 +202,7 @@ fn check_occurrence_cell(occurrence: CriterionEndpointOccurrence) -> Option<Fact
     }
 }
 
-/// Explain a grounded rule equality at the firing's recorded cutoff.
+/// Explain a grounded rule equality at the firing's recorded landmark.
 ///
 /// Premise occurrences retain their fact-cell provenance; constants are
 /// resolved as typed equality endpoints. Rekeys encountered while recovering
@@ -213,7 +212,6 @@ fn explain_rule_equality(
     left: FiringEqualitySource,
     right: FiringEqualitySource,
     premises: &[FactId],
-    as_of_edges: EdgeHorizon,
     position: HistoryPosition,
 ) -> Result<RawEqualitySupport, TraceViewError> {
     let premise_cell = |occurrence: PremiseOccurrence| -> Result<FactCellRef, TraceViewError> {
@@ -233,18 +231,15 @@ fn explain_rule_equality(
         })
     };
     match (left, right) {
-        (FiringEqualitySource::Premise(left), FiringEqualitySource::Premise(right)) => view
-            .explain_fact_cell_support_at(
-                premise_cell(left)?,
-                premise_cell(right)?,
-                as_of_edges,
-                position,
-            ),
+        (FiringEqualitySource::Premise(left), FiringEqualitySource::Premise(right)) => {
+            view.explain_fact_cell_support_at(premise_cell(left)?, premise_cell(right)?, position)
+        }
         (FiringEqualitySource::Premise(fact), FiringEqualitySource::Constant(endpoint))
-        | (FiringEqualitySource::Constant(endpoint), FiringEqualitySource::Premise(fact)) => view
-            .explain_fact_endpoint_support_at(premise_cell(fact)?, endpoint, as_of_edges, position),
+        | (FiringEqualitySource::Constant(endpoint), FiringEqualitySource::Premise(fact)) => {
+            view.explain_fact_endpoint_support_at(premise_cell(fact)?, endpoint, position)
+        }
         (FiringEqualitySource::Constant(left), FiringEqualitySource::Constant(right)) => {
-            view.explain_equality_support_at(left, right, as_of_edges, position)
+            view.explain_equality_support_at(left, right, position)
         }
     }
 }
@@ -373,7 +368,6 @@ fn selected_equality_dsu(slice: &Slice) -> SelectedEqualityDsu {
 fn equality_landmark_is_replay_visible(
     view: &mut TraceView<'_>,
     slice: &Slice,
-    as_of_edges: EdgeHorizon,
     position: HistoryPosition,
     equalities: &[TypedCellEquality],
 ) -> Result<bool, TraceViewError> {
@@ -387,7 +381,6 @@ fn equality_landmark_is_replay_visible(
                 sort: pair.right.sort,
                 raw: pair.right.raw,
             },
-            as_of_edges,
             position,
         )?;
         if support
@@ -438,44 +431,35 @@ fn maintenance_cause_is_replay_visible(
             }
             RawCause::Rebuild {
                 prior_fact,
-                as_of_edges,
                 position,
                 equalities,
                 ..
             }
             | RawCause::ContainerRefresh {
                 prior_fact,
-                as_of_edges,
                 position,
                 equalities,
                 ..
             } => {
-                if as_of_edges.get() >= current_event.get() {
+                if position >= view.applied_equality(current_event)?.position {
                     return Err(TraceViewError::Invalid(format!(
-                        "maintenance equality {current_event:?} depends on non-earlier equality cutoff {as_of_edges:?}"
+                        "maintenance equality {current_event:?} depends on a non-earlier history landmark {position:?}"
                     )));
                 }
                 slice.replay_facts.contains(&prior_fact)
-                    && equality_landmark_is_replay_visible(
-                        view,
-                        slice,
-                        as_of_edges,
-                        position,
-                        equalities,
-                    )?
+                    && equality_landmark_is_replay_visible(view, slice, position, equalities)?
             }
             RawCause::ContainerCanonicalize {
-                as_of_edges,
                 position,
                 equalities,
                 ..
             } => {
-                if as_of_edges.get() >= current_event.get() {
+                if position >= view.applied_equality(current_event)?.position {
                     return Err(TraceViewError::Invalid(format!(
-                        "maintenance equality {current_event:?} depends on non-earlier equality cutoff {as_of_edges:?}"
+                        "maintenance equality {current_event:?} depends on a non-earlier history landmark {position:?}"
                     )));
                 }
-                equality_landmark_is_replay_visible(view, slice, as_of_edges, position, equalities)?
+                equality_landmark_is_replay_visible(view, slice, position, equalities)?
             }
         },
     };
@@ -660,64 +644,32 @@ fn seed_check_root(
         let right_cell = check_occurrence_cell(right_occurrence);
         let support = match (left_cell, right_cell) {
             (Some(left), Some(right)) => {
-                let exact = view.explain_fact_cell_support_at(
-                    left,
-                    right,
-                    root.as_of_edges,
-                    root.position,
-                )?;
+                let exact = view.explain_fact_cell_support_at(left, right, root.position)?;
                 enqueue_support(work, exact);
-                let left_source = view.explain_fact_endpoint_availability_at(
-                    left,
-                    left_endpoint,
-                    root.as_of_edges,
-                    root.position,
-                )?;
+                let left_source =
+                    view.explain_fact_endpoint_availability_at(left, left_endpoint, root.position)?;
                 enqueue_support(work, left_source.support);
-                view.explain_fact_endpoint_availability_at(
-                    right,
-                    right_endpoint,
-                    root.as_of_edges,
-                    root.position,
-                )?
-                .support
+                view.explain_fact_endpoint_availability_at(right, right_endpoint, root.position)?
+                    .support
             }
             (Some(fact), None) => {
-                let source = view.explain_fact_endpoint_availability_at(
-                    fact,
-                    left_endpoint,
-                    root.as_of_edges,
-                    root.position,
-                )?;
+                let source =
+                    view.explain_fact_endpoint_availability_at(fact, left_endpoint, root.position)?;
                 enqueue_support(work, source.support);
-                view.explain_fact_endpoint_support_at(
-                    fact,
-                    right_endpoint,
-                    root.as_of_edges,
-                    root.position,
-                )?
+                view.explain_fact_endpoint_support_at(fact, right_endpoint, root.position)?
             }
             (None, Some(fact)) => {
                 let source = view.explain_fact_endpoint_availability_at(
                     fact,
                     right_endpoint,
-                    root.as_of_edges,
                     root.position,
                 )?;
                 enqueue_support(work, source.support);
-                view.explain_fact_endpoint_support_at(
-                    fact,
-                    left_endpoint,
-                    root.as_of_edges,
-                    root.position,
-                )?
+                view.explain_fact_endpoint_support_at(fact, left_endpoint, root.position)?
             }
-            (None, None) => view.explain_equality_support_at(
-                left_endpoint,
-                right_endpoint,
-                root.as_of_edges,
-                root.position,
-            )?,
+            (None, None) => {
+                view.explain_equality_support_at(left_endpoint, right_endpoint, root.position)?
+            }
         };
         enqueue_support(work, support);
     }
@@ -763,7 +715,6 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                     let firing = view.firing(id)?;
                     let rule = firing.rule;
                     let position = firing.position;
-                    let as_of_edges = firing.as_of_edges;
                     let premises = firing.premises.to_vec();
                     let merge_reads = firing.merge_reads.to_vec();
                     work.extend(premises.iter().copied().map(Work::Fact));
@@ -782,14 +733,8 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                         .firing_bindings
                         .insert(id, bindings.into_boxed_slice());
                     for (left, right) in view.rule_equality_layout(rule)?.iter().copied() {
-                        let support = explain_rule_equality(
-                            view,
-                            left,
-                            right,
-                            &premises,
-                            as_of_edges,
-                            position,
-                        )?;
+                        let support =
+                            explain_rule_equality(view, left, right, &premises, position)?;
                         enqueue_support(&mut work, support);
                     }
                 }
@@ -818,14 +763,12 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                         }
                         RawCause::Rebuild {
                             prior_fact,
-                            as_of_edges,
                             position,
                             equalities,
                             ..
                         }
                         | RawCause::ContainerRefresh {
                             prior_fact,
-                            as_of_edges,
                             position,
                             equalities,
                             ..
@@ -842,14 +785,12 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                                         sort: pair.right.sort,
                                         raw: pair.right.raw,
                                     },
-                                    as_of_edges,
                                     position,
                                 )?;
                                 enqueue_support(&mut work, support);
                             }
                         }
                         RawCause::ContainerCanonicalize {
-                            as_of_edges,
                             position,
                             equalities,
                             ..
@@ -865,7 +806,6 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                                         sort: pair.right.sort,
                                         raw: pair.right.raw,
                                     },
-                                    as_of_edges,
                                     position,
                                 )?;
                                 enqueue_support(&mut work, support);
@@ -891,16 +831,10 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                         .expect("selected equality lost its projected record")
                         .clone();
                     let reason = event.reason.clone();
-                    if let EqualityReason::Congruence {
-                        as_of_edges,
-                        position,
-                        ..
-                    } = reason
-                    {
+                    if let EqualityReason::Congruence { position, .. } = reason {
                         let support = view.explain_congruence_child_support_at(
                             event.left,
                             event.right,
-                            as_of_edges,
                             position,
                         )?;
                         enqueue_support(&mut work, support);
@@ -925,7 +859,6 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                     }
                     let rekey = view.rekey_at(position)?;
                     let fact = rekey.fact;
-                    let as_of_edges = rekey.as_of_edges;
                     let equality_position = rekey.equality_position;
                     let outcome = rekey.outcome;
                     let pairs = rekey.equalities.to_vec();
@@ -947,7 +880,6 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                                 sort: pair.right.sort,
                                 raw: pair.right.raw,
                             },
-                            as_of_edges,
                             equality_position,
                         )?;
                         enqueue_support(&mut work, support);

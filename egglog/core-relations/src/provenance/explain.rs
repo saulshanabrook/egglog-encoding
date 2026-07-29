@@ -7,7 +7,7 @@ use super::*;
 
 #[derive(Clone, Copy)]
 struct StructuralOccurrenceLandmark {
-    as_of: EdgeHorizon,
+    equality_prefix: usize,
     position: HistoryPosition,
 }
 
@@ -60,30 +60,37 @@ impl<'a> TraceView<'a> {
             left_carrier_owned = true;
             right_carrier_owned = true;
         }
-        let as_of = EdgeHorizon::new(id.get().checked_sub(1).ok_or_else(|| {
-            TraceViewError::Invalid("missing applied equality has no prior horizon".into())
-        })?);
+        let equality_prefix = id
+            .get()
+            .checked_sub(1)
+            .ok_or_else(|| {
+                TraceViewError::Invalid("missing applied equality has no prior prefix".into())
+            })?
+            .try_into()
+            .map_err(|_| TraceViewError::Invalid("equality prefix exceeds storage".into()))?;
         let position =
             HistoryPosition::new(event.position.get().checked_sub(1).ok_or_else(|| {
                 TraceViewError::Invalid("applied equality has no pre-event history position".into())
             })?);
-        self.validate_equality_cutoff(as_of, position)?;
+        if equality_prefix != self.equality_prefix_at(position)? {
+            return Err(TraceViewError::Invalid(
+                "applied equality does not immediately follow its derived prefix".into(),
+            ));
+        }
         self.validate_equality_endpoints(event.left, event.right)?;
         let left_root = self.raw_representative_at(
             RawEqualityEndpoint {
                 sort: event.left.sort,
                 raw: event.left.raw,
             },
-            as_of,
-            position,
+            equality_prefix,
         )?;
         let right_root = self.raw_representative_at(
             RawEqualityEndpoint {
                 sort: event.right.sort,
                 raw: event.right.raw,
             },
-            as_of,
-            position,
+            equality_prefix,
         )?;
         let roots_match_native_edge = left_root != right_root
             && ((left_root == event.native_parent && right_root == event.native_child)
@@ -101,10 +108,10 @@ impl<'a> TraceView<'a> {
             ))
         };
         let left_occurrence = self
-            .explain_endpoint_read_at(event.left, as_of, position, left_carrier_owned)
+            .explain_endpoint_read_at(event.left, equality_prefix, position, left_carrier_owned)
             .map_err(|error| explain_error("left", error))?;
         let left_bridge = self
-            .explain_raw_equality_support_at(
+            .explain_raw_equality_support_with_cutoff(
                 RawEqualityEndpoint {
                     sort: event.left.sort,
                     raw: event.left.raw,
@@ -113,15 +120,14 @@ impl<'a> TraceView<'a> {
                     sort: event.left.sort,
                     raw: left_root,
                 },
-                as_of,
-                position,
+                equality_prefix,
             )
             .map_err(|error| explain_error("left", error))?;
         let right_occurrence = self
-            .explain_endpoint_read_at(event.right, as_of, position, right_carrier_owned)
+            .explain_endpoint_read_at(event.right, equality_prefix, position, right_carrier_owned)
             .map_err(|error| explain_error("right", error))?;
         let right_bridge = self
-            .explain_raw_equality_support_at(
+            .explain_raw_equality_support_with_cutoff(
                 RawEqualityEndpoint {
                     sort: event.right.sort,
                     raw: event.right.raw,
@@ -130,8 +136,7 @@ impl<'a> TraceView<'a> {
                     sort: event.right.sort,
                     raw: right_root,
                 },
-                as_of,
-                position,
+                equality_prefix,
             )
             .map_err(|error| explain_error("right", error))?;
         Ok(combine_raw_equality_support([
@@ -189,10 +194,19 @@ impl<'a> TraceView<'a> {
         &mut self,
         left: RawEqualityEndpoint,
         right: RawEqualityEndpoint,
-        as_of: EdgeHorizon,
         position: HistoryPosition,
     ) -> Result<RawEqualitySupport, TraceViewError> {
-        self.raw_equality_support_if_connected_at(left, right, as_of, position)?
+        let equality_prefix = self.equality_prefix_at(position)?;
+        self.explain_raw_equality_support_with_cutoff(left, right, equality_prefix)
+    }
+
+    pub(super) fn explain_raw_equality_support_with_cutoff(
+        &mut self,
+        left: RawEqualityEndpoint,
+        right: RawEqualityEndpoint,
+        equality_prefix: usize,
+    ) -> Result<RawEqualitySupport, TraceViewError> {
+        self.raw_equality_support_if_connected_at(left, right, equality_prefix)?
             .ok_or_else(|| {
                 TraceViewError::Invalid(
                     "equality endpoints were disconnected at the historical landmark".into(),
@@ -211,10 +225,9 @@ impl<'a> TraceView<'a> {
         &mut self,
         left: EqualityEndpoint,
         right: EqualityEndpoint,
-        as_of: EdgeHorizon,
         position: HistoryPosition,
     ) -> Result<RawEqualitySupport, TraceViewError> {
-        self.validate_equality_cutoff(as_of, position)?;
+        let equality_prefix = self.equality_prefix_at(position)?;
         self.validate_equality_endpoints(left, right)?;
         let (
             ReplayTerm::Call {
@@ -241,8 +254,10 @@ impl<'a> TraceView<'a> {
                 "congruence equality endpoints have incompatible structure".into(),
             ));
         }
-        let left_candidates = self.congruence_call_child_candidates(left, as_of, position)?;
-        let right_candidates = self.congruence_call_child_candidates(right, as_of, position)?;
+        let left_candidates =
+            self.congruence_call_child_candidates(left, equality_prefix, position)?;
+        let right_candidates =
+            self.congruence_call_child_candidates(right, equality_prefix, position)?;
         for left_children in &left_candidates {
             for right_children in &right_candidates {
                 if left_children.len() != right_children.len() {
@@ -258,8 +273,7 @@ impl<'a> TraceView<'a> {
                     let Some(child_support) = self.raw_equality_support_if_connected_at(
                         *left_child,
                         *right_child,
-                        as_of,
-                        position,
+                        equality_prefix,
                     )?
                     else {
                         connected = false;
@@ -281,7 +295,7 @@ impl<'a> TraceView<'a> {
     fn congruence_call_child_candidates(
         &mut self,
         endpoint: EqualityEndpoint,
-        as_of: EdgeHorizon,
+        equality_prefix: usize,
         position: HistoryPosition,
     ) -> Result<Vec<Box<[RawEqualityEndpoint]>>, TraceViewError> {
         let ReplayTerm::Call { sort, op, children } = self.replay_term(endpoint.term)? else {
@@ -327,8 +341,7 @@ impl<'a> TraceView<'a> {
                         sort,
                         raw: endpoint.raw,
                     },
-                    as_of,
-                    position,
+                    equality_prefix,
                 )?
                 .is_none()
             {
@@ -357,15 +370,14 @@ impl<'a> TraceView<'a> {
         &mut self,
         left: RawEqualityEndpoint,
         right: RawEqualityEndpoint,
-        as_of: EdgeHorizon,
-        position: HistoryPosition,
+        equality_prefix: usize,
     ) -> Result<Option<RawEqualitySupport>, TraceViewError> {
         if left.sort != right.sort {
             return Err(TraceViewError::Invalid(
                 "cannot explain equality across logical sorts".into(),
             ));
         }
-        let cutoff = self.validate_equality_cutoff(as_of, position)?;
+        let cutoff = equality_prefix;
         let parents = &self.raw_equality_index()?.parents;
         let edge_is_visible = |edge: AppliedEqualityId| edge.get() as usize <= cutoff;
         let mut left_ancestors = HashMap::<Value, usize>::default();
@@ -411,10 +423,9 @@ impl<'a> TraceView<'a> {
     fn raw_representative_at(
         &mut self,
         endpoint: RawEqualityEndpoint,
-        as_of: EdgeHorizon,
-        position: HistoryPosition,
+        equality_prefix: usize,
     ) -> Result<Value, TraceViewError> {
-        let cutoff = self.validate_equality_cutoff(as_of, position)?;
+        let cutoff = equality_prefix;
         let parents = &self.raw_equality_index()?.parents;
         let mut cursor = endpoint.raw;
         let mut steps = 0usize;
@@ -437,10 +448,10 @@ impl<'a> TraceView<'a> {
         &mut self,
         left: EqualityEndpoint,
         right: EqualityEndpoint,
-        as_of: EdgeHorizon,
         position: HistoryPosition,
     ) -> Result<RawEqualitySupport, TraceViewError> {
-        match self.observed_equality_support(left, right, as_of, position)? {
+        let equality_prefix = self.equality_prefix_at(position)?;
+        match self.observed_equality_support(left, right, equality_prefix, position)? {
             ObservedEqualitySupport::Support(support) => Ok(support),
             ObservedEqualitySupport::Missing(term) => Err(TraceViewError::Invalid(format!(
                 "endpoint term {term:?} has no supported historical native occurrence"
@@ -452,18 +463,25 @@ impl<'a> TraceView<'a> {
         &mut self,
         left: EqualityEndpoint,
         right: EqualityEndpoint,
-        as_of: EdgeHorizon,
+        equality_prefix: usize,
         position: HistoryPosition,
     ) -> Result<ObservedEqualitySupport, TraceViewError> {
-        self.validate_equality_cutoff(as_of, position)?;
         self.validate_equality_endpoints(left, right)?;
-        let Some(left_support) =
-            self.explain_endpoint_term_occurrence_if_observed(left, as_of, position, true)?
+        let Some(left_support) = self.explain_endpoint_term_occurrence_if_observed(
+            left,
+            equality_prefix,
+            position,
+            true,
+        )?
         else {
             return Ok(ObservedEqualitySupport::Missing(left.term));
         };
-        let Some(right_support) =
-            self.explain_endpoint_term_occurrence_if_observed(right, as_of, position, true)?
+        let Some(right_support) = self.explain_endpoint_term_occurrence_if_observed(
+            right,
+            equality_prefix,
+            position,
+            true,
+        )?
         else {
             return Ok(ObservedEqualitySupport::Missing(right.term));
         };
@@ -474,7 +492,7 @@ impl<'a> TraceView<'a> {
                 rekeys: Box::new([]),
             }
         } else {
-            self.explain_raw_equality_support_at(
+            self.explain_raw_equality_support_with_cutoff(
                 RawEqualityEndpoint {
                     sort: left.sort,
                     raw: left.raw,
@@ -483,8 +501,7 @@ impl<'a> TraceView<'a> {
                     sort: right.sort,
                     raw: right.raw,
                 },
-                as_of,
-                position,
+                equality_prefix,
             )?
         };
         Ok(ObservedEqualitySupport::Support(
@@ -526,22 +543,27 @@ impl<'a> TraceView<'a> {
     fn explain_endpoint_term_occurrence(
         &mut self,
         endpoint: EqualityEndpoint,
-        as_of: EdgeHorizon,
+        equality_prefix: usize,
         position: HistoryPosition,
     ) -> Result<RawEqualitySupport, TraceViewError> {
-        self.explain_endpoint_term_occurrence_if_observed(endpoint, as_of, position, true)?
-            .ok_or_else(|| {
-                TraceViewError::Invalid(format!(
-                    "endpoint term {:?} has no supported historical native occurrence",
-                    endpoint.term
-                ))
-            })
+        self.explain_endpoint_term_occurrence_if_observed(
+            endpoint,
+            equality_prefix,
+            position,
+            true,
+        )?
+        .ok_or_else(|| {
+            TraceViewError::Invalid(format!(
+                "endpoint term {:?} has no supported historical native occurrence",
+                endpoint.term
+            ))
+        })
     }
 
     fn explain_endpoint_read_at(
         &mut self,
         endpoint: EqualityEndpoint,
-        as_of: EdgeHorizon,
+        equality_prefix: usize,
         position: HistoryPosition,
         carrier_owned: bool,
     ) -> Result<RawEqualitySupport, TraceViewError> {
@@ -558,15 +580,14 @@ impl<'a> TraceView<'a> {
                     sort: endpoint.sort,
                     raw: endpoint.raw,
                 },
-                as_of,
-                position,
+                equality_prefix,
             )?
         } else {
             None
         };
         let occurrence = self.explain_endpoint_term_occurrence_if_observed(
             endpoint,
-            as_of,
+            equality_prefix,
             position,
             !carrier_owned,
         )?;
@@ -600,7 +621,7 @@ impl<'a> TraceView<'a> {
     fn explain_endpoint_term_occurrence_if_observed(
         &mut self,
         endpoint: EqualityEndpoint,
-        as_of: EdgeHorizon,
+        equality_prefix: usize,
         position: HistoryPosition,
         retain_exact_producer: bool,
     ) -> Result<Option<RawEqualitySupport>, TraceViewError> {
@@ -624,15 +645,14 @@ impl<'a> TraceView<'a> {
                         sort: endpoint.sort,
                         raw: endpoint.raw,
                     },
-                    as_of,
-                    position,
+                    equality_prefix,
                 )
             }
             ReplayTerm::Call { .. } => self.explain_term_occurrence_with_mode_at(
                 endpoint.term,
                 endpoint.sort,
                 endpoint.raw,
-                as_of,
+                equality_prefix,
                 position,
                 FactId::MISSING,
                 retain_exact_producer,
@@ -645,10 +665,9 @@ impl<'a> TraceView<'a> {
         &mut self,
         left: FactCellRef,
         right: FactCellRef,
-        as_of: EdgeHorizon,
         position: HistoryPosition,
     ) -> Result<RawEqualitySupport, TraceViewError> {
-        self.validate_equality_cutoff(as_of, position)?;
+        let equality_prefix = self.equality_prefix_at(position)?;
         let left = self.fact_cell_at(left, position)?;
         let right = self.fact_cell_at(right, position)?;
         if left.created.sort != right.created.sort {
@@ -687,7 +706,7 @@ impl<'a> TraceView<'a> {
                     self.describe_fact_cell(&right),
                 ))
             })?;
-            let raw_support = self.explain_raw_equality_support_at(
+            let raw_support = self.explain_raw_equality_support_with_cutoff(
                 RawEqualityEndpoint {
                     sort: left.created.sort,
                     raw: left.created.raw,
@@ -696,8 +715,7 @@ impl<'a> TraceView<'a> {
                     sort: right.created.sort,
                     raw: right.created.raw,
                 },
-                as_of,
-                position,
+                equality_prefix,
             )?;
             combine_raw_equality_support([left_support, right_support, raw_support])
         };
@@ -721,10 +739,9 @@ impl<'a> TraceView<'a> {
         &mut self,
         fact: FactCellRef,
         endpoint: EqualityEndpoint,
-        as_of: EdgeHorizon,
         position: HistoryPosition,
     ) -> Result<RawEqualitySupport, TraceViewError> {
-        self.validate_equality_cutoff(as_of, position)?;
+        let equality_prefix = self.equality_prefix_at(position)?;
         let fact = self.fact_cell_at(fact, position)?;
         if fact.created.sort != endpoint.sort {
             return Err(TraceViewError::Invalid(
@@ -742,7 +759,8 @@ impl<'a> TraceView<'a> {
                 self.describe_fact_cell(&fact),
             ))
         })?;
-        let endpoint_support = self.explain_endpoint_term_occurrence(endpoint, as_of, position)?;
+        let endpoint_support =
+            self.explain_endpoint_term_occurrence(endpoint, equality_prefix, position)?;
         let raw_support = if fact.created.raw == endpoint.raw {
             RawEqualitySupport {
                 applied: Box::new([]),
@@ -750,7 +768,7 @@ impl<'a> TraceView<'a> {
                 rekeys: Box::new([]),
             }
         } else {
-            self.explain_raw_equality_support_at(
+            self.explain_raw_equality_support_with_cutoff(
                 RawEqualityEndpoint {
                     sort: fact.created.sort,
                     raw: fact.created.raw,
@@ -759,8 +777,7 @@ impl<'a> TraceView<'a> {
                     sort: endpoint.sort,
                     raw: endpoint.raw,
                 },
-                as_of,
-                position,
+                equality_prefix,
             )?
         };
         let support = combine_raw_equality_support([fact_support, endpoint_support, raw_support]);
@@ -779,10 +796,11 @@ impl<'a> TraceView<'a> {
         })
     }
 
-    fn equality_edge_count_at(
+    pub(super) fn equality_prefix_at(
         &mut self,
         position: HistoryPosition,
-    ) -> Result<EdgeHorizon, TraceViewError> {
+    ) -> Result<usize, TraceViewError> {
+        self.validate_history_position(position)?;
         // Building the forest validates ID density and strictly increasing
         // positions once. Every later historical cutoff is then a binary
         // search instead of another full equality-history walk.
@@ -791,7 +809,7 @@ impl<'a> TraceView<'a> {
             .arena
             .durable_equalities
             .partition_point(|event| event.as_ref().unwrap().position <= position);
-        Ok(EdgeHorizon::new(count as u64))
+        Ok(count)
     }
 
     fn constructor_occurrence_facts(
@@ -994,12 +1012,15 @@ impl<'a> TraceView<'a> {
             }
             let mut parts = Vec::with_capacity(children.len() + usize::from(desired.is_some()));
             if equality_sort && let Some(desired) = desired {
-                let as_of = self.equality_edge_count_at(position)?;
+                let equality_prefix = self.equality_prefix_at(position)?;
                 parts.push(self.explain_pure_eqsort_call_occurrence(
                     sort,
                     &children,
                     desired.raw,
-                    StructuralOccurrenceLandmark { as_of, position },
+                    StructuralOccurrenceLandmark {
+                        equality_prefix,
+                        position,
+                    },
                     true,
                     depth,
                 )?);
@@ -1060,6 +1081,9 @@ impl<'a> TraceView<'a> {
         // row whose source recipe contains a pure expression but whose
         // committed child column stores the evaluated base value.
         let passes = if desired.is_some() { 2 } else { 1 };
+        let equality_prefix = desired
+            .map(|_| self.equality_prefix_at(position))
+            .transpose()?;
         let preferred = anchor
             .filter(|anchor| anchor.occurrence.column.index() == children.len())
             .map(|anchor| anchor.occurrence.fact)
@@ -1136,7 +1160,7 @@ impl<'a> TraceView<'a> {
                     if desired.raw == output_cell.endpoint.raw {
                         None
                     } else if exact_term || anchor.is_some() {
-                        let as_of = self.equality_edge_count_at(position)?;
+                        let equality_prefix = equality_prefix.expect("desired output has a prefix");
                         let created = anchor.map(|anchor| RawEqualityEndpoint {
                             sort: anchor.created.sort,
                             raw: anchor.created.raw,
@@ -1159,8 +1183,7 @@ impl<'a> TraceView<'a> {
                                     raw: output_cell.endpoint.raw,
                                 },
                                 target,
-                                as_of,
-                                position,
+                                equality_prefix,
                             )? {
                                 support = Some(candidate);
                                 connected = true;
@@ -1281,7 +1304,7 @@ impl<'a> TraceView<'a> {
         struct WalkContext {
             result_sort: ReplaySortId,
             desired_raw: Value,
-            as_of: EdgeHorizon,
+            equality_prefix: usize,
             position: HistoryPosition,
             retain_exact_producer: bool,
         }
@@ -1311,7 +1334,7 @@ impl<'a> TraceView<'a> {
                     term,
                     sort,
                     context.desired_raw,
-                    context.as_of,
+                    context.equality_prefix,
                     context.position,
                     FactId::MISSING,
                     context.retain_exact_producer,
@@ -1331,7 +1354,7 @@ impl<'a> TraceView<'a> {
         let context = WalkContext {
             result_sort,
             desired_raw,
-            as_of: landmark.as_of,
+            equality_prefix: landmark.equality_prefix,
             position: landmark.position,
             retain_exact_producer,
         };
@@ -1367,7 +1390,7 @@ impl<'a> TraceView<'a> {
         op: ReplayOpId,
         target_children: &[ReplayTermId],
         desired_raw: Value,
-        as_of: EdgeHorizon,
+        equality_prefix: usize,
         position: HistoryPosition,
         retain_exact_producer: bool,
         depth: usize,
@@ -1422,7 +1445,7 @@ impl<'a> TraceView<'a> {
                     target_child,
                     child_sort,
                     candidate_raw,
-                    as_of,
+                    equality_prefix,
                     position,
                     FactId::MISSING,
                     retain_exact_producer,
@@ -1438,7 +1461,7 @@ impl<'a> TraceView<'a> {
                     candidate_child,
                     child_sort,
                     candidate_raw,
-                    as_of,
+                    equality_prefix,
                     position,
                     FactId::MISSING,
                     true,
@@ -1476,7 +1499,7 @@ impl<'a> TraceView<'a> {
         output: usize,
         sort: ReplaySortId,
         desired_raw: Value,
-        as_of: EdgeHorizon,
+        equality_prefix: usize,
         position: HistoryPosition,
     ) -> Result<Option<(HistoricalFactCell, RawEqualitySupport)>, TraceViewError> {
         let output_cell = match self.fact_cell_at(
@@ -1490,7 +1513,7 @@ impl<'a> TraceView<'a> {
             Err(TraceViewError::FactNoLongerLive { .. }) => return Ok(None),
             Err(error) => return Err(error),
         };
-        let output_support = match self.explain_raw_equality_support_at(
+        let output_support = match self.explain_raw_equality_support_with_cutoff(
             RawEqualityEndpoint {
                 sort,
                 raw: output_cell.created.raw,
@@ -1499,8 +1522,7 @@ impl<'a> TraceView<'a> {
                 sort,
                 raw: desired_raw,
             },
-            as_of,
-            position,
+            equality_prefix,
         ) {
             Ok(support) => support,
             Err(TraceViewError::Invalid(message))
@@ -1524,7 +1546,7 @@ impl<'a> TraceView<'a> {
         term: ReplayTermId,
         sort: ReplaySortId,
         desired_raw: Value,
-        as_of: EdgeHorizon,
+        equality_prefix: usize,
         position: HistoryPosition,
         excluded_fact: FactId,
     ) -> Result<Option<RawEqualitySupport>, TraceViewError> {
@@ -1532,7 +1554,6 @@ impl<'a> TraceView<'a> {
             term,
             sort,
             raw: desired_raw,
-            as_of,
             position,
             excluded_fact,
             retain_exact_producer: true,
@@ -1591,7 +1612,7 @@ impl<'a> TraceView<'a> {
                     "constructor fact {producer:?} has no output column {output}"
                 ))
             })?;
-            let raw_support = match self.explain_raw_equality_support_at(
+            let raw_support = match self.explain_raw_equality_support_with_cutoff(
                 RawEqualityEndpoint {
                     sort,
                     raw: creation_raw,
@@ -1600,8 +1621,7 @@ impl<'a> TraceView<'a> {
                     sort,
                     raw: desired_raw,
                 },
-                as_of,
-                position,
+                equality_prefix,
             ) {
                 Ok(support) => support,
                 Err(TraceViewError::Invalid(message))
@@ -1666,12 +1686,12 @@ impl<'a> TraceView<'a> {
             facts: Box::new([origin]),
             rekeys: Box::new([]),
         };
-        let as_of = self.equality_edge_count_at(fact.position)?;
-        let structural = self.explain_term_occurrence_at(
+        let equality_prefix = self.equality_prefix_at(fact.position)?;
+        let structural = self.explain_term_occurrence_with_prefix_at(
             cell.created.term,
             cell.created.sort,
             cell.created.raw,
-            as_of,
+            equality_prefix,
             fact.position,
             cell.occurrence.fact,
         )?;
@@ -1752,12 +1772,32 @@ impl<'a> TraceView<'a> {
     /// against a live compatible producer row, recursively retaining the
     /// child equalities that made its canonical key hit that row. This is a
     /// cold fact-graph walk over retained terms, not rule matching or replay.
-    pub(in crate::provenance::capture) fn explain_term_occurrence_at(
+    #[cfg(test)]
+    pub(crate) fn explain_term_occurrence_at(
         &mut self,
         term: ReplayTermId,
         sort: ReplaySortId,
         desired_raw: Value,
-        as_of: EdgeHorizon,
+        position: HistoryPosition,
+        excluded_fact: FactId,
+    ) -> Result<Option<RawEqualitySupport>, TraceViewError> {
+        let equality_prefix = self.equality_prefix_at(position)?;
+        self.explain_term_occurrence_with_prefix_at(
+            term,
+            sort,
+            desired_raw,
+            equality_prefix,
+            position,
+            excluded_fact,
+        )
+    }
+
+    fn explain_term_occurrence_with_prefix_at(
+        &mut self,
+        term: ReplayTermId,
+        sort: ReplaySortId,
+        desired_raw: Value,
+        equality_prefix: usize,
         position: HistoryPosition,
         excluded_fact: FactId,
     ) -> Result<Option<RawEqualitySupport>, TraceViewError> {
@@ -1765,7 +1805,7 @@ impl<'a> TraceView<'a> {
             term,
             sort,
             desired_raw,
-            as_of,
+            equality_prefix,
             position,
             excluded_fact,
             true,
@@ -1779,13 +1819,12 @@ impl<'a> TraceView<'a> {
         term: ReplayTermId,
         sort: ReplaySortId,
         desired_raw: Value,
-        as_of: EdgeHorizon,
+        equality_prefix: usize,
         position: HistoryPosition,
         excluded_fact: FactId,
         retain_exact_producer: bool,
         depth: usize,
     ) -> Result<Option<RawEqualitySupport>, TraceViewError> {
-        self.validate_equality_cutoff(as_of, position)?;
         if depth > 256 {
             return Err(TraceViewError::Invalid(
                 "structural occurrence explanation exceeds 256 constructor levels".into(),
@@ -1808,7 +1847,6 @@ impl<'a> TraceView<'a> {
             term,
             sort,
             raw: desired_raw,
-            as_of,
             position,
             excluded_fact,
             retain_exact_producer,
@@ -1836,7 +1874,7 @@ impl<'a> TraceView<'a> {
                     op,
                     &target_children,
                     desired_raw,
-                    as_of,
+                    equality_prefix,
                     position,
                     retain_exact_producer,
                     depth,
@@ -1846,7 +1884,10 @@ impl<'a> TraceView<'a> {
                     sort,
                     &target_children,
                     desired_raw,
-                    StructuralOccurrenceLandmark { as_of, position },
+                    StructuralOccurrenceLandmark {
+                        equality_prefix,
+                        position,
+                    },
                     retain_exact_producer,
                     depth,
                 )?
@@ -1899,7 +1940,7 @@ impl<'a> TraceView<'a> {
                         "constructor fact {producer:?} has no output column {output}"
                     ))
                 })?;
-                let support = match self.explain_raw_equality_support_at(
+                let support = match self.explain_raw_equality_support_with_cutoff(
                     RawEqualityEndpoint {
                         sort,
                         raw: creation_raw,
@@ -1908,8 +1949,7 @@ impl<'a> TraceView<'a> {
                         sort,
                         raw: desired_raw,
                     },
-                    as_of,
-                    position,
+                    equality_prefix,
                 ) {
                     Ok(support) => support,
                     Err(TraceViewError::Invalid(message))
@@ -1927,7 +1967,7 @@ impl<'a> TraceView<'a> {
                     output,
                     sort,
                     desired_raw,
-                    as_of,
+                    equality_prefix,
                     position,
                 )?
                 else {
@@ -1986,8 +2026,14 @@ impl<'a> TraceView<'a> {
             {
                 continue;
             }
-            let Some((output_cell, output_support)) =
-                self.producer_output_support(producer, output, sort, desired_raw, as_of, position)?
+            let Some((output_cell, output_support)) = self.producer_output_support(
+                producer,
+                output,
+                sort,
+                desired_raw,
+                equality_prefix,
+                position,
+            )?
             else {
                 continue;
             };
@@ -2047,7 +2093,7 @@ impl<'a> TraceView<'a> {
                     target_child,
                     *child_sort,
                     child_cell.endpoint.raw,
-                    as_of,
+                    equality_prefix,
                     position,
                     producer,
                     retain_exact_producer,
@@ -2082,7 +2128,7 @@ impl<'a> TraceView<'a> {
             return Ok(None);
         };
         let position = self.fact(cell.occurrence.fact)?.position;
-        let as_of = self.equality_edge_count_at(position)?;
+        let equality_prefix = self.equality_prefix_at(position)?;
         let possible = self.constructor_occurrence_facts(sort, op);
         let mut first_projection_error = None;
         for producer in possible.iter().rev().copied() {
@@ -2112,7 +2158,7 @@ impl<'a> TraceView<'a> {
                 output,
                 sort,
                 cell.created.raw,
-                as_of,
+                equality_prefix,
                 position,
             )?
             else {
@@ -2142,7 +2188,7 @@ impl<'a> TraceView<'a> {
                     child,
                     child_sort,
                     child_cell.endpoint.raw,
-                    as_of,
+                    equality_prefix,
                     position,
                     producer,
                 )? {

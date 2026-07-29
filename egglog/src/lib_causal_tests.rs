@@ -86,7 +86,6 @@ fn find_container_canonicalization(
 ) -> Result<
     Option<(
         core_relations::Wave,
-        core_relations::EdgeHorizon,
         core_relations::HistoryPosition,
         Vec<core_relations::TypedCellEquality>,
     )>,
@@ -100,10 +99,9 @@ fn find_container_canonicalization(
         match view.cause(cause)? {
             core_relations::RawCause::ContainerCanonicalize {
                 wave,
-                as_of_edges,
                 position,
                 equalities,
-            } => return Ok(Some((wave, as_of_edges, position, equalities.to_vec()))),
+            } => return Ok(Some((wave, position, equalities.to_vec()))),
             core_relations::RawCause::Merge { incoming, .. } => {
                 pending.push(incoming);
             }
@@ -164,7 +162,7 @@ fn trace_attribute_pair_registry_congruence() {
 
         egraph
             .with_trace_view(|view| {
-                let (cause, wave, as_of_edges, position) = (1..=view.totals().applied_equalities)
+                let (cause, wave, position) = (1..=view.totals().applied_equalities)
                     .find_map(|raw| {
                         match view
                             .applied_equality(core_relations::AppliedEqualityId::new(raw))
@@ -174,29 +172,20 @@ fn trace_attribute_pair_registry_congruence() {
                             EqualityReason::Congruence {
                                 cause,
                                 wave,
-                                as_of_edges,
                                 position,
-                            } => Some((cause, wave, as_of_edges, position)),
+                            } => Some((cause, wave, position)),
                             _ => None,
                         }
                     })
                     .expect("Pair collision should retain one exact container-congruence edge");
                 let dependency = find_container_canonicalization(view, cause)?
                     .expect("Pair congruence should unfold to its container collision");
-                assert_eq!(
-                    (dependency.0, dependency.1, dependency.2),
-                    (wave, as_of_edges, position)
-                );
-                assert!(!dependency.3.is_empty());
-                for pair in dependency.3 {
+                assert_eq!((dependency.0, dependency.1), (wave, position));
+                assert!(!dependency.2.is_empty());
+                for pair in dependency.2 {
                     assert!(
                         !view
-                            .explain_equality_support_at(
-                                pair.left,
-                                pair.right,
-                                as_of_edges,
-                                position
-                            )?
+                            .explain_equality_support_at(pair.left, pair.right, position)?
                             .applied
                             .is_empty()
                     );
@@ -470,7 +459,7 @@ fn trace_refresh_parent_fact_after_stable_vec_rebuild() {
                             .filter(|firing| firing.rule == 1)
                     })
                     .expect("the post-refresh observer should fire");
-                let (fact, prior_fact, as_of_edges, position, equalities) = observed
+                let (fact, prior_fact, position, equalities) = observed
                     .premises
                     .iter()
                     .find_map(|fact| {
@@ -481,17 +470,10 @@ fn trace_refresh_parent_fact_after_stable_vec_rebuild() {
                         match view.cause(cause).ok()? {
                             core_relations::RawCause::ContainerRefresh {
                                 prior_fact,
-                                as_of_edges,
                                 position,
                                 equalities,
                                 ..
-                            } => Some((
-                                *fact,
-                                prior_fact,
-                                as_of_edges,
-                                position,
-                                equalities.to_vec(),
-                            )),
+                            } => Some((*fact, prior_fact, position, equalities.to_vec())),
                             _ => None,
                         }
                     })
@@ -511,7 +493,6 @@ fn trace_refresh_parent_fact_after_stable_vec_rebuild() {
                                     sort: pair.right.sort,
                                     raw: pair.right.raw
                                 },
-                                as_of_edges,
                                 position
                             )?
                             .applied
@@ -578,7 +559,6 @@ fn trace_chain_two_stable_vec_refreshes() {
                     let core_relations::RawCause::ContainerRefresh {
                         wave: latest_wave,
                         prior_fact: middle,
-                        as_of_edges: latest_edges,
                         position: latest_position,
                         equalities: latest_pairs,
                     } = view.cause(latest_cause)?
@@ -592,7 +572,6 @@ fn trace_chain_two_stable_vec_refreshes() {
                     let core_relations::RawCause::ContainerRefresh {
                         wave: middle_wave,
                         prior_fact: original,
-                        as_of_edges: middle_edges,
                         position: middle_position,
                         equalities: middle_pairs,
                     } = view.cause(middle_cause)?
@@ -605,8 +584,8 @@ fn trace_chain_two_stable_vec_refreshes() {
                         original,
                         latest_wave,
                         middle_wave,
-                        (latest_edges, latest_position, latest_pairs.to_vec()),
-                        (middle_edges, middle_position, middle_pairs.to_vec()),
+                        (latest_position, latest_pairs.to_vec()),
+                        (middle_position, middle_pairs.to_vec()),
                     ));
                     break;
                 }
@@ -624,7 +603,7 @@ fn trace_chain_two_stable_vec_refreshes() {
                 assert!(middle_wave < latest_wave);
                 assert_ne!(middle_landmark.0, latest_landmark.0);
                 for landmark in [middle_landmark, latest_landmark] {
-                    for pair in &landmark.2 {
+                    for pair in &landmark.1 {
                         assert!(
                             !view
                                 .explain_raw_equality_support_at(
@@ -636,8 +615,7 @@ fn trace_chain_two_stable_vec_refreshes() {
                                         sort: pair.right.sort,
                                         raw: pair.right.raw
                                     },
-                                    landmark.0,
-                                    landmark.1
+                                    landmark.0
                                 )?
                                 .applied
                                 .is_empty()
@@ -682,21 +660,21 @@ fn trace_refresh_nested_vec_parent_fact() {
         for raw in 1..=view.totals().facts {
             let fact = view.fact(core_relations::FactId::new(raw))?;
             let core_relations::CauseRef::Cause(cause) = fact.cause else { continue };
-            let core_relations::RawCause::ContainerRefresh { as_of_edges, position, equalities, .. } = view.cause(cause)? else { continue };
+            let core_relations::RawCause::ContainerRefresh { position, equalities, .. } = view.cause(cause)? else { continue };
             let terms = view.fact_terms(fact.id)?;
             if terms.iter().any(|term| matches!(egraph.replay_term(*term).unwrap(), Some(ReplayTerm::Call { op, .. }) if op == p)) {
-                parent = Some((as_of_edges, position, equalities.to_vec()));
+                parent = Some((position, equalities.to_vec()));
                 break;
             }
         }
-        let (as_of_edges, position, equalities) = parent.expect("the outer p fact should receive an exact nested-container refresh");
+        let (position, equalities) = parent.expect("the outer p fact should receive an exact nested-container refresh");
         assert!(!equalities.is_empty());
         for pair in &equalities {
             assert!(
                 !view.explain_raw_equality_support_at(
                     core_relations::RawEqualityEndpoint { sort: pair.left.sort, raw: pair.left.raw },
                     core_relations::RawEqualityEndpoint { sort: pair.right.sort, raw: pair.right.raw },
-                    as_of_edges, position)?.applied.is_empty()
+                    position)?.applied.is_empty()
             );
         }
         Ok(())
@@ -971,8 +949,7 @@ fn trace_preserve_distinct_check_equality_terms() {
                 egraph.replay_term(right.term).unwrap(),
                 Some(ReplayTerm::Call { op, .. }) if op == b
             ));
-            let explanation =
-                view.explain_equality_support_at(left, right, root.as_of_edges, root.position)?;
+            let explanation = view.explain_equality_support_at(left, right, root.position)?;
             assert_eq!(
                 explanation.applied.as_ref(),
                 [core_relations::AppliedEqualityId::new(1)]

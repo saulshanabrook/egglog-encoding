@@ -140,23 +140,28 @@ merges, and checks. If the recorded account cannot be reconstructed as an
 ordinary program, slicing fails closed instead of searching for a different
 derivation.
 
-## Three coordinates of historical time
+## Two coordinates of historical time
 
 One timestamp is not enough to describe an equality-saturation execution.
-The trace uses three related coordinates:
+The trace stores two coordinates:
 
 | Coordinate | Meaning | Why replay needs it |
 | --- | --- | --- |
 | `Wave` | A synchronous execution or rebuild unit whose effects share a pre-wave state | Groups grounded firings without introducing false within-wave dependencies |
 | `HistoryPosition` | A unique ordinal for retained fact, equality, rekey, removal, and check events; on firings, an inclusive high-water cutoff sampled from that stream | Places cross-kind mutations, bounds exact row lifetimes, and states what history a firing could observe without inventing an order between same-batch matches |
-| `EdgeHorizon` | The dense prefix of applied equality edges visible at an event | Prevents a later union from explaining an earlier read or endpoint spelling |
 
 A wave alone is too coarse: several equalities, row changes, and removals can
 occur within it. A history position orders those retained event streams, but
 firings merely sample their inclusive high-water mark and may share it within
-one batch. An equality explanation also needs an explicit edge high-water mark.
-Historical equality queries therefore use the position and equality horizon
-recorded at the observation, never the final equality relation.
+one batch. Because applied equalities themselves have strictly increasing
+history positions, the explainer derives their visible dense prefix by binary
+search. The prefix is an index over `HistoryPosition`, not a third semantic
+clock and not stored on each firing or maintenance cause.
+
+This derivation relies on the supported serial-capture contract: equality IDs
+and history positions are published in one order. If capture becomes parallel,
+the engine must publish an atomic composite landmark (or otherwise reestablish
+that ordering) rather than restore independently sampled counters.
 
 ## Syntax is not occurrence identity
 
@@ -229,7 +234,8 @@ the owner's structural proposal denote that edge.
 
 The closure law is strict and pre-event. For every replay-visible applied
 equality, both structural endpoints are resolved immediately before that
-event: at the preceding `EdgeHorizon` and preceding `HistoryPosition`. Their
+event: at the preceding `HistoryPosition`, from which the preceding equality
+prefix is derived. Their
 representatives must match the recorded native parent and child, and the
 earlier occurrence and equality support for those denotations is added to the
 slice. The equality being explained cannot justify its own precondition. This
@@ -381,8 +387,9 @@ than from a desired output shape:
 3. **Record at the effective commit point.** Persist the smallest stable cause,
    premise, endpoint, or version receipt that the engine already knows. Do not
    eagerly unfold it into a proof or replay tree.
-4. **State the temporal law.** Specify the wave, cross-stream position, equality
-   horizon, and any availability, readiness, liveness, or freshness bound.
+4. **State the temporal law.** Specify the wave, cross-stream position and its
+   derived equality prefix, plus any availability, readiness, liveness, or
+   freshness bound.
 5. **Close over executable semantics.** Include whole owner effects,
    pre-event endpoint denotation, induced maintenance, and interfering kills,
    not only the positive edge found by backward reachability.

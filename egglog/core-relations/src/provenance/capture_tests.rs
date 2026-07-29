@@ -59,7 +59,6 @@ fn physical_rekey_collision_with_same_fact_records_no_logical_transition() {
             TableId::new(4),
             Wave::new(2),
             fact,
-            EdgeHorizon::new(1),
             HistoryPosition::new(9),
             &[pair],
         )
@@ -108,7 +107,6 @@ fn structural_occurrence_rejects_uncertified_non_table_calls() {
                 certified_term,
                 sort,
                 certified_raw,
-                EdgeHorizon::new(0),
                 HistoryPosition::new(0),
                 FactId::MISSING,
             )?;
@@ -126,7 +124,6 @@ fn structural_occurrence_rejects_uncertified_non_table_calls() {
                 unknown_term,
                 sort,
                 unknown_raw,
-                EdgeHorizon::new(0),
                 HistoryPosition::new(0),
                 FactId::MISSING,
             )

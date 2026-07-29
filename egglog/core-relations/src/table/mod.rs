@@ -25,8 +25,8 @@ use rustc_hash::FxHasher;
 use sharded_hash_table::ShardedHashTable;
 
 use crate::{
-    CauseDraftId, DeferredEqualityCause, EdgeHorizon, FactId, Pooled, RowOriginSiteId, TableChange,
-    TableId, TypedCellEquality, Wave,
+    CauseDraftId, DeferredEqualityCause, FactId, HistoryPosition, Pooled, RowOriginSiteId,
+    TableChange, TableId, TypedCellEquality, Wave,
     action::ExecutionState,
     common::{HashMap, HashSet, ShardData, ShardId, SubsetTracker, Value},
     hash_index::{ColumnIndex, Index},
@@ -331,8 +331,7 @@ struct StagedRekey {
     table: TableId,
     wave: Wave,
     prior_fact: FactId,
-    as_of_edges: EdgeHorizon,
-    position: crate::provenance::HistoryPosition,
+    position: HistoryPosition,
     equality_start: u32,
     equality_len: u16,
 }
@@ -506,7 +505,7 @@ impl MutationBuffer for Buffer {
         debug_assert_eq!(causes.len(), rows);
         debug_assert_eq!(row_rekeys.len(), rows);
         debug_assert_eq!(origins.len(), rows);
-        let (table, wave, prior_fact, as_of_edges, position, equalities) = rekey.metadata();
+        let (table, wave, prior_fact, position, equalities) = rekey.metadata();
         let rekey_equalities = capture.rekey_equalities.get_or_default(shard);
         let equality_start = u32::try_from(rekey_equalities.len())
             .expect("one staged rekey batch exceeds u32 equality storage");
@@ -520,7 +519,6 @@ impl MutationBuffer for Buffer {
             table,
             wave,
             prior_fact,
-            as_of_edges,
             position,
             equality_start,
             equality_len,
@@ -807,7 +805,7 @@ impl Table for SortedWritesTable {
         table: &crate::WrappedTable,
         next_ts: Value,
         exec_state: &mut ExecutionState,
-        equality_cutoff: Option<EdgeHorizon>,
+        equality_landmark: Option<HistoryPosition>,
         transaction: Option<&MutationTransaction>,
     ) -> bool {
         self.do_rebuild(
@@ -815,7 +813,7 @@ impl Table for SortedWritesTable {
             table,
             next_ts,
             exec_state,
-            equality_cutoff,
+            equality_landmark,
             transaction,
         )
     }
@@ -2407,7 +2405,6 @@ impl PendingRowBatch {
             staged.table,
             staged.wave,
             staged.prior_fact,
-            staged.as_of_edges,
             staged.position,
             equalities
                 .get(start..end)

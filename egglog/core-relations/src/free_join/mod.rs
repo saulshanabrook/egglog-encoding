@@ -682,13 +682,13 @@ impl Database {
             return self.merge_all();
         }
         // Capture and validate the shared history boundary while every table
-        // is still installed. A cutoff failure must not structurally modify
+        // is still installed. A landmark failure must not structurally modify
         // the database before the capture-safe staging transaction begins.
-        let equality_cutoff = self
+        let history_landmark = self
             .trace
             .as_ref()
             .expect("capture rebuild requires the trace arena")
-            .equality_edge_count()
+            .maintenance_landmark()
             .unwrap_or_else(|error| panic!("cannot start exact table rebuild: {error}"));
         let func = self.tables.take(func_id).unwrap();
         // Rebuild validation is deliberately fail-closed. Restore the
@@ -704,7 +704,7 @@ impl Database {
                     &func.table,
                     next_ts,
                     &mut ExecutionState::new(*view, Default::default()),
-                    Some(equality_cutoff),
+                    Some(history_landmark),
                     Some(&transaction),
                 )
             });
