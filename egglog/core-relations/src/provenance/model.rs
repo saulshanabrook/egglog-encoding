@@ -298,24 +298,21 @@ pub enum SourceRef {
 
 /// Static recipe for resolving one endpoint of a positive check equality.
 #[derive(Clone, Copy, Debug)]
-pub enum CriterionEndpointSource {
-    /// Resolve the endpoint from one physical cell of a matched premise fact.
-    Premise {
-        /// Source-ordered premise index in the check witness.
-        premise: usize,
-        /// Physical table-column index within that premise fact.
-        column: usize,
-        /// Query entry whose runtime value is checked at this endpoint.
-        value: QueryEntry,
-        /// Structural result sort and operation when the premise row names a constructor call.
-        constructor: Option<(ReplaySortId, ReplayOpId)>,
-    },
+pub struct CriterionEndpointSource {
+    /// Source-ordered premise index in the check witness.
+    pub(crate) premise: usize,
+    /// Physical table-column index within that premise fact.
+    pub(crate) column: usize,
+    /// Query entry whose runtime value is checked at this endpoint.
+    pub(crate) value: QueryEntry,
+    /// Structural result sort and operation when the premise row names a constructor call.
+    pub(crate) constructor: Option<(ReplaySortId, ReplayOpId)>,
 }
 
 impl CriterionEndpointSource {
     /// Creates an endpoint resolved from a non-constructor premise cell.
     pub fn premise(premise: usize, column: usize, value: QueryEntry) -> Self {
-        Self::Premise {
+        Self {
             premise,
             column,
             value,
@@ -331,7 +328,7 @@ impl CriterionEndpointSource {
         sort: ReplaySortId,
         op: ReplayOpId,
     ) -> Self {
-        Self::Premise {
+        Self {
             premise,
             column,
             value,
@@ -340,9 +337,7 @@ impl CriterionEndpointSource {
     }
 
     pub(crate) fn value(&self) -> &QueryEntry {
-        match self {
-            Self::Premise { value, .. } => value,
-        }
+        &self.value
     }
 }
 

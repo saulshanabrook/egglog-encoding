@@ -1402,37 +1402,36 @@ impl RuleBuilder<'_, '_> {
         let as_of_edges = trace
             .equality_edge_count()
             .unwrap_or_else(|error| panic!("cannot capture exact check cutoff: {error}"));
-        let compile = |endpoint| match endpoint {
-            CriterionEndpointSource::Premise {
+        let compile = |endpoint| {
+            let CriterionEndpointSource {
                 premise,
                 column,
                 value,
                 constructor,
-            } => {
-                let atom = *premises
-                    .get(premise)
-                    .unwrap_or_else(|| panic!("check endpoint cites missing premise {premise}"));
-                let table = self.qb.query.atoms[atom].table;
-                let sort = trace.table_column_sort(table, column).unwrap_or_else(|| {
-                    panic!("check endpoint premise {premise} column {column} has no replay sort")
-                });
-                let term = if let Some((constructor_sort, op)) = constructor {
-                    assert_eq!(
-                        sort, constructor_sort,
-                        "check constructor result sort differs from its producer column"
-                    );
-                    CheckTermSource::Constructor {
-                        premise,
-                        atom,
-                        input_columns: column,
-                        op,
-                        origin: None,
-                    }
-                } else {
-                    CheckTermSource::Premise { premise, column }
-                };
-                CheckEndpointSpec { value, sort, term }
-            }
+            } = endpoint;
+            let atom = *premises
+                .get(premise)
+                .unwrap_or_else(|| panic!("check endpoint cites missing premise {premise}"));
+            let table = self.qb.query.atoms[atom].table;
+            let sort = trace.table_column_sort(table, column).unwrap_or_else(|| {
+                panic!("check endpoint premise {premise} column {column} has no replay sort")
+            });
+            let term = if let Some((constructor_sort, op)) = constructor {
+                assert_eq!(
+                    sort, constructor_sort,
+                    "check constructor result sort differs from its producer column"
+                );
+                CheckTermSource::Constructor {
+                    premise,
+                    atom,
+                    input_columns: column,
+                    op,
+                    origin: None,
+                }
+            } else {
+                CheckTermSource::Premise { premise, column }
+            };
+            CheckEndpointSpec { value, sort, term }
         };
         let equalities = equalities
             .into_vec()
