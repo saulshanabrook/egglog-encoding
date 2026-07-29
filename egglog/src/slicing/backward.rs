@@ -27,18 +27,15 @@ struct SupportRequirement {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Slice {
     pub(crate) checks: HashSet<u32>,
-    pub(crate) check_positions: HashMap<u32, HistoryPosition>,
     pub(crate) facts: HashSet<FactId>,
     pub(crate) firings: HashSet<FiringId>,
     pub(crate) equalities: HashSet<AppliedEqualityId>,
     pub(crate) replay_facts: HashSet<FactId>,
     pub(crate) replay_equalities: HashSet<AppliedEqualityId>,
     pub(crate) replay_removals: HashSet<usize>,
-    pub(crate) interference_removals: HashSet<usize>,
     pub(crate) rekeys: HashSet<HistoryPosition>,
     pub(crate) causes: HashSet<CauseRef>,
     pub(crate) sources: HashSet<SourceRef>,
-    pub(crate) fact_terms: HashMap<FactId, Box<[ReplayTermId]>>,
     pub(crate) firing_terms: HashMap<FiringId, Box<[ReplayTermId]>>,
     /// Occurrence-local availability, key-readiness, and producer-liveness
     /// windows for every call in a firing binding's structural `let-check`
@@ -647,7 +644,6 @@ fn select_interfering_removals(
         }
         if interferes {
             slice.replay_removals.insert(index);
-            slice.interference_removals.insert(index);
             work.push_back(Work::Firing(removal.cause));
             selected_any = true;
         }
@@ -662,7 +658,6 @@ fn seed_check_root(
     root: &Criterion,
 ) -> Result<(), TraceViewError> {
     slice.checks.insert(root.check);
-    slice.check_positions.insert(root.check, root.position);
     work.extend(root.premises.iter().copied().map(Work::Fact));
 
     for ((left_endpoint, right_endpoint), (left_occurrence, right_occurrence)) in root
@@ -756,8 +751,6 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                     }
                     slice.replay_facts.insert(id);
                     let cause = view.fact(id)?.cause;
-                    let terms = view.fact_terms(id)?;
-                    slice.fact_terms.insert(id, terms);
                     work.push_back(Work::Cause(cause));
                 }
                 Work::Firing(id) => {
@@ -1131,11 +1124,10 @@ mod tests {
         assert!(slice.equalities.is_empty());
         assert!(slice.replay_equalities.is_empty());
         assert_eq!(slice.replay_removals.len(), 1);
-        assert_eq!(slice.interference_removals.len(), 1);
     }
 
     #[test]
-    fn all_checks_union_disjoint_cones_and_preserve_positions() {
+    fn all_checks_union_disjoint_cones() {
         let mut egraph = EGraph::default();
         serial_trace_pool()
             .install(|| egraph.enable_trace())
@@ -1159,8 +1151,6 @@ mod tests {
 
         let slice = slice_all_checks(&egraph).unwrap();
         assert_eq!(slice.checks, HashSet::from_iter([0, 1]));
-        assert_eq!(slice.check_positions.len(), 2);
-        assert!(slice.check_positions[&0] < slice.check_positions[&1]);
         assert_eq!(slice.firings.len(), 2);
     }
 
@@ -1205,7 +1195,7 @@ mod tests {
 
         let slice = slice_all_checks(&egraph).unwrap();
         assert_eq!(
-            slice.interference_removals.len(),
+            slice.replay_removals.len(),
             1,
             "the selected X=Y event automatically makes F(X)=F(Y), so omitting the Parent delete makes replay congruence-collide the stale and recreated rows"
         );
@@ -1244,7 +1234,7 @@ mod tests {
             .unwrap();
         let omitted_slice = slice_all_checks(&omitted_creator).unwrap();
         assert!(
-            omitted_slice.interference_removals.is_empty(),
+            omitted_slice.replay_removals.is_empty(),
             "when the stale constructor source is absent from replay, its delete is correctly unnecessary"
         );
     }
@@ -1285,7 +1275,7 @@ mod tests {
 
         let slice = slice_all_checks(&egraph).unwrap();
         assert_eq!(
-            slice.interference_removals.len(),
+            slice.replay_removals.len(),
             1,
             "the required Leaf delete prevents old/new Leaf outputs from congruence-colliding, so Parent deletion is noninterfering"
         );
@@ -1330,7 +1320,7 @@ mod tests {
             .unwrap();
 
         let slice = slice_all_checks(&egraph).unwrap();
-        assert_eq!(slice.interference_removals.len(), 1);
+        assert_eq!(slice.replay_removals.len(), 1);
         assert_eq!(slice.firings.len(), 3, "recreate, reconcile, and delete");
         assert_eq!(slice.equalities.len(), 1);
         let equality = slice.equality_records.values().next().unwrap();
@@ -1717,7 +1707,6 @@ mod tests {
                 })
                 .unwrap();
             let slice = slice_all_checks(&egraph).unwrap();
-            assert!(slice.interference_removals.is_empty());
             assert!(slice.replay_removals.is_empty());
         }
     }
@@ -1941,7 +1930,7 @@ mod tests {
 
         let slice = slice_all_checks(&egraph).unwrap();
         assert_eq!(slice.firings.len(), 4);
-        assert_eq!(slice.interference_removals.len(), 1);
+        assert_eq!(slice.replay_removals.len(), 1);
     }
 
     #[test]

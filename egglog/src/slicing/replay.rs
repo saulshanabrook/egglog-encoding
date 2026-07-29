@@ -1093,12 +1093,7 @@ fn build_owned(
     // merge two occurrence lifetimes.
     let mut alias_reset_positions = Vec::new();
     let mut selected_removal_by_fact = HashMap::<FactId, u64>::default();
-    for index in slice
-        .replay_removals
-        .iter()
-        .chain(&slice.interference_removals)
-        .copied()
-    {
+    for index in slice.replay_removals.iter().copied() {
         let removal = view
             .removal(index)
             .map_err(|error| ReplayError::Trace(error.to_string()))?;
@@ -1372,11 +1367,6 @@ fn build_owned(
     let mut checks = slice.checks.iter().copied().collect::<Vec<_>>();
     checks.sort_unstable();
     for check in checks {
-        if !slice.check_positions.contains_key(&check) {
-            return Err(ReplayError::Invalid(format!(
-                "selected check {check} has no history position"
-            )));
-        }
         let root = view
             .check_root(check)
             .map_err(|error| ReplayError::Trace(error.to_string()))?;
