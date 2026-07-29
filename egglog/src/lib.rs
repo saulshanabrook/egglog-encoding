@@ -5371,7 +5371,7 @@ impl EGraph {
     }
 
     /// Run a pattern query: bind the variables in `vars` against
-    /// `facts` and return one [`HashMap`] per match, keyed by variable
+    /// `facts` and return one [`std::collections::HashMap`] per match, keyed by variable
     /// name. Values stay raw — convert via [`EGraph::value_to_base`].
     ///
     /// With zero vars, returns at most one empty map (so `.len()` is 1
