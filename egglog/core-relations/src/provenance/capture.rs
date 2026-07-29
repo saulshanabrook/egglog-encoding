@@ -1669,12 +1669,7 @@ impl Trace {
 
     /// Publish a prevalidated serial removal batch after native deletion and
     /// before the table's pending writes are merged.
-    pub(crate) fn record_removals(
-        &self,
-        wave: Wave,
-        removals: impl IntoIterator<Item = PreparedRemoval>,
-    ) {
-        let as_of_edges = self.equality_boundary();
+    pub(crate) fn record_removals(&self, removals: impl IntoIterator<Item = PreparedRemoval>) {
         let mut tracked = Vec::new();
         let mut relation_count = 0_u64;
         for removal in removals {
@@ -1683,9 +1678,7 @@ impl Trace {
                     removed_fact,
                     cause,
                 } => tracked.push(Tombstone {
-                    wave,
                     position: HistoryPosition::new(TraceShared::alloc_u64(&self.0.next_history, 1)),
-                    as_of_edges,
                     removed_fact,
                     cause,
                 }),

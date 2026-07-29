@@ -1251,7 +1251,6 @@ impl SortedWritesTable {
         }
         if let Some(trace) = trace {
             trace.record_removals(
-                exec_state.trace_wave(),
                 candidates
                     .iter()
                     .filter_map(|(_, _, _, prepared)| *prepared),

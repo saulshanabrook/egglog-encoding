@@ -532,9 +532,7 @@ pub struct Criterion {
 /// head staged the removal.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tombstone {
-    pub wave: Wave,
     pub position: HistoryPosition,
-    pub as_of_edges: EdgeHorizon,
     pub removed_fact: FactId,
     pub cause: FiringId,
 }
