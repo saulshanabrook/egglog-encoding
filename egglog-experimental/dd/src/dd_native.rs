@@ -858,9 +858,7 @@ mod tests {
             name: name.to_owned(),
             seminaive: true,
             no_decomp: false,
-            firing_capture: None,
-            criterion_capture: None,
-            source_capture: None,
+            capture: None,
             owned_external_funcs: Vec::new(),
             core: GenericCoreRule {
                 span: Span::Panic,

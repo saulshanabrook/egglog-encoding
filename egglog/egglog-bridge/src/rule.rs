@@ -102,6 +102,13 @@ pub struct CriterionCaptureSpec {
     pub equalities: Box<[(CriterionCapturePremise, CriterionCapturePremise)]>,
 }
 
+#[derive(Clone, Debug)]
+enum QueryCapture {
+    Firing(FiringCaptureSpec),
+    Criterion(CriterionCaptureSpec),
+    Source(SourceRef),
+}
+
 impl From<Variable> for QueryEntry {
     fn from(var: Variable) -> Self {
         QueryEntry::Var(var)
@@ -158,12 +165,8 @@ pub(crate) struct Query {
     /// If `true`, skip tree-decomposition during query planning. See
     /// [`core_relations::QueryBuilder::set_no_decomp`].
     no_decomp: bool,
-    /// Stable source identity for an empty-query top-level action.
-    source_capture: Option<SourceRef>,
-    /// Exact ordinary-rule firing metadata translated during lazy plan build.
-    firing_capture: Option<FiringCaptureSpec>,
-    /// Exact successful-criterion metadata translated during lazy plan build.
-    criterion_capture: Option<CriterionCaptureSpec>,
+    /// Optional trace-capture metadata translated during lazy plan build.
+    capture: Option<QueryCapture>,
 }
 
 pub struct RuleBuilder<'a> {
@@ -210,9 +213,7 @@ impl EGraph {
                 head_start: None,
                 plan_strategy: Default::default(),
                 no_decomp: false,
-                source_capture: None,
-                firing_capture: None,
-                criterion_capture: None,
+                capture: None,
             },
         }
     }
@@ -410,21 +411,18 @@ impl RuleBuilder<'_> {
     /// Attribute effective commits from this empty-query action directly to
     /// one stable source identity.
     pub fn set_source_capture(&mut self, source: SourceRef) {
-        assert!(self.query.firing_capture.is_none());
-        assert!(self.query.criterion_capture.is_none());
-        self.query.source_capture = Some(source);
+        assert!(self.query.capture.is_none());
+        self.query.capture = Some(QueryCapture::Source(source));
     }
 
     pub fn set_firing_capture(&mut self, capture: FiringCaptureSpec) {
-        assert!(self.query.source_capture.is_none());
-        assert!(self.query.criterion_capture.is_none());
-        self.query.firing_capture = Some(capture);
+        assert!(self.query.capture.is_none());
+        self.query.capture = Some(QueryCapture::Firing(capture));
     }
 
     pub fn set_criterion_capture(&mut self, capture: CriterionCaptureSpec) {
-        assert!(self.query.source_capture.is_none());
-        assert!(self.query.firing_capture.is_none());
-        self.query.criterion_capture = Some(capture);
+        assert!(self.query.capture.is_none());
+        self.query.capture = Some(QueryCapture::Criterion(capture));
     }
 
     /// Bind a new variable of the given type in the query.
@@ -919,9 +917,7 @@ impl Query {
     }
 
     pub(crate) fn supports_grounded_execution(&self) -> bool {
-        self.source_capture.is_none()
-            && self.firing_capture.is_none()
-            && self.criterion_capture.is_none()
+        self.capture.is_none()
     }
 
     fn query_state<'a, 'outer>(
@@ -964,73 +960,81 @@ impl Query {
         self.add_rule[head_start..]
             .iter()
             .try_for_each(|f| f(&mut inner, &mut rb))?;
-        Ok(if let Some(source) = &self.source_capture {
-            rb.try_build_source_with_capture(desc, source.clone())?
-        } else if let Some(capture) = &self.firing_capture {
-            let bindings = capture.bindings.iter().map(|binding| match binding {
-                FiringCaptureBinding::Entry {
-                    entry,
-                    current_sort,
-                } => {
-                    let DstVar::Var(variable) = inner.convert(entry) else {
-                        panic!("firing capture variable unexpectedly lowered to a constant")
-                    };
-                    RuleBindingSpec::variable(variable, *current_sort)
-                }
-                FiringCaptureBinding::Constant { term, sort } => {
-                    RuleBindingSpec::constant(*term, *sort)
-                }
-            });
-            rb.try_build_with_capture(
-                desc,
-                CoreFiringCaptureSpec::new(capture.rule, atom_mapping.iter().copied(), bindings),
-            )?
-        } else if let Some(capture) = &self.criterion_capture {
-            let endpoint = |source: CriterionCapturePremise| {
-                let (_, entries, schema) = self.atoms.get(source.premise).unwrap_or_else(|| {
-                    panic!(
-                        "criterion capture endpoint cites missing table premise {}",
-                        source.premise
-                    )
+        Ok(match &self.capture {
+            Some(QueryCapture::Source(source)) => {
+                rb.try_build_source_with_capture(desc, source.clone())?
+            }
+            Some(QueryCapture::Firing(capture)) => {
+                let bindings = capture.bindings.iter().map(|binding| match binding {
+                    FiringCaptureBinding::Entry {
+                        entry,
+                        current_sort,
+                    } => {
+                        let DstVar::Var(variable) = inner.convert(entry) else {
+                            panic!("firing capture variable unexpectedly lowered to a constant")
+                        };
+                        RuleBindingSpec::variable(variable, *current_sort)
+                    }
+                    FiringCaptureBinding::Constant { term, sort } => {
+                        RuleBindingSpec::constant(*term, *sort)
+                    }
                 });
-                assert!(
-                    source.column < schema.func_cols,
-                    "criterion capture endpoint premise {} column {} cites an engine-only column",
-                    source.premise,
-                    source.column
-                );
-                let entry = entries.get(source.column).unwrap_or_else(|| {
-                    panic!(
-                        "criterion capture endpoint premise {} has no logical column {}",
-                        source.premise, source.column
-                    )
-                });
-                match source.constructor {
-                    Some((sort, op)) => CriterionEndpointSource::premise_constructor(
-                        source.premise,
-                        source.column,
-                        inner.convert(entry),
-                        sort,
-                        op,
+                rb.try_build_with_capture(
+                    desc,
+                    CoreFiringCaptureSpec::new(
+                        capture.rule,
+                        atom_mapping.iter().copied(),
+                        bindings,
                     ),
-                    None => CriterionEndpointSource::premise(
+                )?
+            }
+            Some(QueryCapture::Criterion(capture)) => {
+                let endpoint = |source: CriterionCapturePremise| {
+                    let (_, entries, schema) =
+                        self.atoms.get(source.premise).unwrap_or_else(|| {
+                            panic!(
+                                "criterion capture endpoint cites missing table premise {}",
+                                source.premise
+                            )
+                        });
+                    assert!(
+                        source.column < schema.func_cols,
+                        "criterion capture endpoint premise {} column {} cites an engine-only column",
                         source.premise,
-                        source.column,
-                        inner.convert(entry),
-                    ),
-                }
-            };
-            let equalities = capture
-                .equalities
-                .iter()
-                .map(|(left, right)| (endpoint(*left), endpoint(*right)));
-            rb.try_build_check_with_capture(
-                desc,
-                CoreCriterionCaptureSpec::new(capture.check, atom_mapping.iter().copied())
-                    .with_equalities(equalities),
-            )?
-        } else {
-            rb.try_build_with_description(desc)?
+                        source.column
+                    );
+                    let entry = entries.get(source.column).unwrap_or_else(|| {
+                        panic!(
+                            "criterion capture endpoint premise {} has no logical column {}",
+                            source.premise, source.column
+                        )
+                    });
+                    match source.constructor {
+                        Some((sort, op)) => CriterionEndpointSource::premise_constructor(
+                            source.premise,
+                            source.column,
+                            inner.convert(entry),
+                            sort,
+                            op,
+                        ),
+                        None => CriterionEndpointSource::premise(
+                            source.premise,
+                            source.column,
+                            inner.convert(entry),
+                        ),
+                    }
+                };
+                let equalities = capture
+                    .equalities
+                    .iter()
+                    .map(|(left, right)| (endpoint(*left), endpoint(*right)));
+                rb.try_build_check_with_capture(
+                    desc,
+                    CoreCriterionCaptureSpec::new(capture.check, atom_mapping.iter().copied())
+                        .with_equalities(equalities),
+                )?
+            }
+            None => rb.try_build_with_description(desc)?,
         })
     }
 

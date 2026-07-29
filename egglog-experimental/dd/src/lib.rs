@@ -334,11 +334,7 @@ impl EGraph {
                 }
             )
         });
-        if rule.firing_capture.is_some()
-            || rule.criterion_capture.is_some()
-            || rule.source_capture.is_some()
-            || has_primitive_replay
-        {
+        if rule.capture.is_some() || has_primitive_replay {
             bail!(
                 "DD backend cannot add rule {:?}: trace capture metadata is unsupported",
                 rule.name
@@ -1191,9 +1187,7 @@ mod tests {
                     name: name.to_owned(),
                     seminaive: true,
                     no_decomp: false,
-                    firing_capture: None,
-                    criterion_capture: None,
-                    source_capture: None,
+                    capture: None,
                     owned_external_funcs: Vec::new(),
                     core: GenericCoreRule {
                         span: Span::Panic,

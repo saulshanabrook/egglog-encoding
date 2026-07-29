@@ -23,8 +23,8 @@ use crate::{
     Backend, BaseValues, ColumnTy, ContainerValues, CriterionCapturePremise, ExecutionState,
     ExternalFunction, ExternalFunctionId, FiringCaptureBinding, FunctionConfig, FunctionId,
     FunctionReplaySpec, IterationReport, ReplayLiteral, ReplaySortId, ReplayTermId, ReportLevel,
-    RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry,
-    Value,
+    RuleActionCall, RuleBodyCall, RuleCaptureSpec, RuleId, RuleSetRun, RuleSpec, RuleValue,
+    RuleVar, ScanEntry, Value,
 };
 
 fn rule_entry(
@@ -62,39 +62,23 @@ fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
         seminaive,
         no_decomp,
         core,
-        firing_capture,
-        criterion_capture,
-        source_capture,
+        capture,
         owned_external_funcs,
     } = rule;
     let mut builder = egraph.new_rule(&name, seminaive);
     for func in owned_external_funcs {
         builder.own_external_func(func);
     }
-    let capture_metadata_count = [
-        firing_capture.is_some(),
-        criterion_capture.is_some(),
-        source_capture.is_some(),
-    ]
-    .into_iter()
-    .filter(|present| *present)
-    .count();
-    if capture_metadata_count > 1 {
-        bail!("one backend rule cannot have more than one kind of capture metadata");
-    }
-    if let Some(capture) = &source_capture {
+    if let Some(RuleCaptureSpec::Source(capture)) = &capture {
         builder.set_source_capture(capture.source.clone());
     }
     builder.set_no_decomp(no_decomp);
     let mut variables = BTreeMap::new();
-    let mut union_sorts = firing_capture
-        .as_ref()
-        .map(|capture| capture.union_sorts.iter().copied())
-        .or_else(|| {
-            source_capture
-                .as_ref()
-                .map(|capture| capture.union_sorts.iter().copied())
-        });
+    let mut union_sorts = match &capture {
+        Some(RuleCaptureSpec::Firing(capture)) => Some(capture.union_sorts.iter().copied()),
+        Some(RuleCaptureSpec::Source(capture)) => Some(capture.union_sorts.iter().copied()),
+        Some(RuleCaptureSpec::Criterion(_)) | None => None,
+    };
 
     let mut body_atom_to_table_premise = vec![None; core.body.atoms.len()];
     let mut next_table_premise = 0;
@@ -196,84 +180,88 @@ fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
         bail!("capture metadata has more union sorts than union actions");
     }
 
-    if let Some(capture) = firing_capture {
-        let bindings = capture
-            .bindings
-            .iter()
-            .map(|binding| match binding {
-                FiringCaptureBinding::Variable {
-                    variable,
-                    current_sort,
-                } => {
-                    let entry = variables.get(&variable.id).cloned().ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "firing capture binding `{}` was not lowered into the native rule",
-                            variable.name
-                        )
-                    })?;
-                    Ok(BridgeFiringCaptureBinding::Entry {
-                        entry,
-                        current_sort: *current_sort,
+    match capture {
+        Some(RuleCaptureSpec::Firing(capture)) => {
+            let bindings = capture
+                .bindings
+                .iter()
+                .map(|binding| match binding {
+                    FiringCaptureBinding::Variable {
+                        variable,
+                        current_sort,
+                    } => {
+                        let entry = variables.get(&variable.id).cloned().ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "firing capture binding `{}` was not lowered into the native rule",
+                                variable.name
+                            )
+                        })?;
+                        Ok(BridgeFiringCaptureBinding::Entry {
+                            entry,
+                            current_sort: *current_sort,
+                        })
+                    }
+                    FiringCaptureBinding::Constant { term, sort } => {
+                        Ok(BridgeFiringCaptureBinding::Constant {
+                            term: *term,
+                            sort: *sort,
+                        })
+                    }
+                })
+                .collect::<Result<Vec<_>>>()?;
+            builder.set_firing_capture(BridgeFiringCaptureSpec {
+                rule: capture.rule,
+                bindings: bindings.into_boxed_slice(),
+            });
+        }
+        Some(RuleCaptureSpec::Criterion(capture)) => {
+            let premise =
+                |source: CriterionCapturePremise| -> Result<BridgeCriterionCapturePremise> {
+                    let logical_columns = core
+                        .body
+                        .atoms
+                        .get(source.body_atom)
+                        .map(|atom| atom.args.len())
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "criterion capture endpoint cites missing body atom {}",
+                                source.body_atom
+                            )
+                        })?;
+                    let premise = body_atom_to_table_premise
+                        .get(source.body_atom)
+                        .copied()
+                        .flatten()
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "criterion capture endpoint body atom {} is not a table premise",
+                                source.body_atom
+                            )
+                        })?;
+                    if source.column >= logical_columns {
+                        bail!(
+                            "criterion capture endpoint body atom {} has no logical column {}",
+                            source.body_atom,
+                            source.column
+                        );
+                    }
+                    Ok(BridgeCriterionCapturePremise {
+                        premise,
+                        column: source.column,
+                        constructor: source.constructor,
                     })
-                }
-                FiringCaptureBinding::Constant { term, sort } => {
-                    Ok(BridgeFiringCaptureBinding::Constant {
-                        term: *term,
-                        sort: *sort,
-                    })
-                }
-            })
-            .collect::<Result<Vec<_>>>()?;
-        builder.set_firing_capture(BridgeFiringCaptureSpec {
-            rule: capture.rule,
-            bindings: bindings.into_boxed_slice(),
-        });
-    }
-    if let Some(capture) = criterion_capture {
-        let premise = |source: CriterionCapturePremise| -> Result<BridgeCriterionCapturePremise> {
-            let logical_columns = core
-                .body
-                .atoms
-                .get(source.body_atom)
-                .map(|atom| atom.args.len())
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "criterion capture endpoint cites missing body atom {}",
-                        source.body_atom
-                    )
-                })?;
-            let premise = body_atom_to_table_premise
-                .get(source.body_atom)
-                .copied()
-                .flatten()
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "criterion capture endpoint body atom {} is not a table premise",
-                        source.body_atom
-                    )
-                })?;
-            if source.column >= logical_columns {
-                bail!(
-                    "criterion capture endpoint body atom {} has no logical column {}",
-                    source.body_atom,
-                    source.column
-                );
-            }
-            Ok(BridgeCriterionCapturePremise {
-                premise,
-                column: source.column,
-                constructor: source.constructor,
-            })
-        };
-        let equalities = capture
-            .equalities
-            .iter()
-            .map(|(left, right)| Ok((premise(*left)?, premise(*right)?)))
-            .collect::<Result<Vec<_>>>()?;
-        builder.set_criterion_capture(BridgeCriterionCaptureSpec {
-            check: capture.check,
-            equalities: equalities.into_boxed_slice(),
-        });
+                };
+            let equalities = capture
+                .equalities
+                .iter()
+                .map(|(left, right)| Ok((premise(*left)?, premise(*right)?)))
+                .collect::<Result<Vec<_>>>()?;
+            builder.set_criterion_capture(BridgeCriterionCaptureSpec {
+                check: capture.check,
+                equalities: equalities.into_boxed_slice(),
+            });
+        }
+        Some(RuleCaptureSpec::Source(_)) | None => {}
     }
 
     Ok(builder.build())
@@ -467,7 +455,3 @@ impl Backend for EGraph {
         self
     }
 }
-
-#[cfg(test)]
-#[path = "backend_impl_tests.rs"]
-mod tests;

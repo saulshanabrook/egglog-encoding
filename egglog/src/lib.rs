@@ -49,8 +49,8 @@ pub use egglog_backend_trait::{Backend, BackendExt};
 use egglog_backend_trait::{
     CriterionCapturePremise, CriterionCaptureSpec, FiringCaptureBinding, FiringCaptureSpec,
     FunctionReplaySpec, ReadMode, ReplayConstructorSpec, ReplayLiteral, ReplayOpId, ReplaySortId,
-    ReplayTableKind, ReplayTermId, RuleActionCall, RuleBodyCall, RuleSetRun, RuleSpec, RuleValue,
-    RuleVar, SourceCaptureSpec, SourceRef,
+    ReplayTableKind, ReplayTermId, RuleActionCall, RuleBodyCall, RuleCaptureSpec, RuleSetRun,
+    RuleSpec, RuleValue, RuleVar, SourceCaptureSpec, SourceRef,
 };
 use egglog_bridge::ColumnTy;
 use egglog_core_relations as core_relations;
@@ -2963,8 +2963,13 @@ impl EGraph {
             &mut self.unstable_fn_panic_ids,
             true, // global action: Read/Full contexts (may read the DB)
         );
-        translator.source_capture = source_capture.clone();
         translator.actions(&actions)?;
+        if let Some(source) = source_capture.clone() {
+            translator.set_capture(RuleCaptureSpec::Source(SourceCaptureSpec {
+                source,
+                union_sorts: translator.capture_union_sorts.clone().into_boxed_slice(),
+            }));
+        }
         let id = translator.try_build("eval_actions", false, false, Span::Panic)?;
         let result = self.backend.run_rules(RuleSetRun {
             name: None,
@@ -3838,10 +3843,10 @@ impl EGraph {
             egglog_bridge::ColumnTy::Id,
         );
         if let Some(check) = criterion_capture {
-            translator.criterion_capture = Some(CriterionCaptureSpec {
+            translator.set_capture(RuleCaptureSpec::Criterion(CriterionCaptureSpec {
                 check,
                 equalities: criterion_equalities.into_boxed_slice(),
-            });
+            }));
         }
         let id = translator.try_build("check_facts", false, false, span.clone())?;
         let run_result = self.backend.run_rules(RuleSetRun {
@@ -5634,9 +5639,7 @@ struct BackendRule<'a> {
     functions: &'a IndexMap<String, Function>,
     type_info: &'a TypeInfo,
     capture_catalog: Option<&'a CaptureCatalog>,
-    source_capture: Option<SourceRef>,
-    firing_capture: Option<FiringCaptureSpec>,
-    criterion_capture: Option<CriterionCaptureSpec>,
+    capture: Option<RuleCaptureSpec>,
     literal_terms: HashMap<Literal, ReplayTermId>,
     capture_union_sorts: Vec<ReplaySortId>,
     /// Whether primitives may read the database. When true the per-phase
@@ -5662,9 +5665,7 @@ impl<'a> BackendRule<'a> {
             functions,
             type_info,
             capture_catalog,
-            source_capture: None,
-            firing_capture: None,
-            criterion_capture: None,
+            capture: None,
             literal_terms: HashMap::default(),
             capture_union_sorts: Vec::new(),
             requires_read_context,
@@ -5764,12 +5765,16 @@ impl<'a> BackendRule<'a> {
                 }
             }
         }
-        self.firing_capture = Some(FiringCaptureSpec {
+        self.set_capture(RuleCaptureSpec::Firing(FiringCaptureSpec {
             rule,
             bindings: bindings.into_boxed_slice(),
             union_sorts: self.capture_union_sorts.clone().into_boxed_slice(),
-        });
+        }));
         Ok(())
+    }
+
+    fn set_capture(&mut self, capture: RuleCaptureSpec) {
+        assert!(self.capture.replace(capture).is_none());
     }
 
     fn fresh_var(&mut self, variable: &ResolvedVar) -> RuleVar {
@@ -6184,12 +6189,7 @@ impl<'a> BackendRule<'a> {
                 body: std::mem::take(&mut self.body),
                 head: std::mem::take(&mut self.head),
             },
-            firing_capture: self.firing_capture.take(),
-            criterion_capture: self.criterion_capture.take(),
-            source_capture: self.source_capture.take().map(|source| SourceCaptureSpec {
-                source,
-                union_sorts: self.capture_union_sorts.clone().into_boxed_slice(),
-            }),
+            capture: self.capture.take(),
             owned_external_funcs: std::mem::take(&mut self.rollback_external_funcs),
         };
         let result = self

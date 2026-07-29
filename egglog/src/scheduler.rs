@@ -563,9 +563,7 @@ mod test {
                         body: Default::default(),
                         head: Default::default(),
                     },
-                    firing_capture: None,
-                    criterion_capture: None,
-                    source_capture: None,
+                    capture: None,
                     owned_external_funcs: Vec::new(),
                 })
                 .unwrap()

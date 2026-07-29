@@ -1,7 +1,7 @@
 use super::*;
 use egglog_backend_trait::{
     CriterionCaptureSpec, FiringCaptureSpec, ReplayConstructorSpec, ReplayOpId, ReplaySortId,
-    SourceCaptureSpec, SourceRef,
+    RuleCaptureSpec, SourceCaptureSpec, SourceRef,
 };
 
 #[test]
@@ -14,25 +14,25 @@ fn add_rule_rejects_trace_capture_metadata_before_mutation() {
     let mut cases = Vec::new();
 
     let mut firing = TestRule::new("firing capture");
-    firing.spec.firing_capture = Some(FiringCaptureSpec {
+    firing.spec.capture = Some(RuleCaptureSpec::Firing(FiringCaptureSpec {
         rule: 0,
         bindings: Box::new([]),
         union_sorts: Box::new([]),
-    });
+    }));
     cases.push(firing.spec);
 
     let mut criterion = TestRule::new("criterion capture");
-    criterion.spec.criterion_capture = Some(CriterionCaptureSpec {
+    criterion.spec.capture = Some(RuleCaptureSpec::Criterion(CriterionCaptureSpec {
         check: 0,
         equalities: Box::new([]),
-    });
+    }));
     cases.push(criterion.spec);
 
     let mut source = TestRule::new("source capture");
-    source.spec.source_capture = Some(SourceCaptureSpec {
+    source.spec.capture = Some(RuleCaptureSpec::Source(SourceCaptureSpec {
         source: SourceRef::Synthetic(0),
         union_sorts: Box::new([]),
-    });
+    }));
     cases.push(source.spec);
 
     let mut body_replay = TestRule::new("body primitive replay");

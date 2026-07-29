@@ -192,6 +192,17 @@ pub struct CriterionCaptureSpec {
     pub equalities: Box<[(CriterionCapturePremise, CriterionCapturePremise)]>,
 }
 
+/// The one trace-capture mode attached to a backend rule.
+#[derive(Clone, Debug)]
+pub enum RuleCaptureSpec {
+    /// Record one successful ordinary-rule firing.
+    Firing(FiringCaptureSpec),
+    /// Record one successful check and its equality roots.
+    Criterion(CriterionCaptureSpec),
+    /// Attribute an empty-query action directly to a source command.
+    Source(SourceCaptureSpec),
+}
+
 /// A call in a rule body.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum RuleBodyCall {
@@ -230,24 +241,14 @@ pub type BackendCoreRule =
     egglog_ast::core::GenericCoreRule<RuleBodyCall, RuleActionCall, RuleVar, RuleValue>;
 
 /// A complete logical rule supplied to a backend.
-///
-/// At most one of [`RuleSpec::firing_capture`],
-/// [`RuleSpec::criterion_capture`], and [`RuleSpec::source_capture`] may be set.
 #[derive(Clone, Debug)]
 pub struct RuleSpec {
     pub name: String,
     pub seminaive: bool,
     pub no_decomp: bool,
     pub core: BackendCoreRule,
-    /// Exact ordinary-rule firing metadata, absent outside trace capture.
-    pub firing_capture: Option<FiringCaptureSpec>,
-    pub criterion_capture: Option<CriterionCaptureSpec>,
-    /// Stable source identity for a top-level action command.
-    ///
-    /// Source actions have an empty query and attribute every effective
-    /// commit directly to this identity rather than manufacturing a rule
-    /// match. Ordinary rules leave this unset.
-    pub source_capture: Option<SourceCaptureSpec>,
+    /// Optional trace-capture metadata.
+    pub capture: Option<RuleCaptureSpec>,
     /// External-function registrations whose lifetime is owned by this rule.
     ///
     /// [`Backend::add_rule`] takes ownership of these handles, including on
