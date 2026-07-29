@@ -87,25 +87,6 @@ pub(crate) struct ReplaySetup {
     pub(crate) command: Command,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-/// Owned provenance for a selected source command or input row.
-pub(crate) enum OwnedSourceRef {
-    Synthetic(u64),
-    InputRow { command: u64, line: u64 },
-}
-
-impl From<&SourceRef> for OwnedSourceRef {
-    fn from(source: &SourceRef) -> Self {
-        match source {
-            SourceRef::Synthetic(ordinal) => Self::Synthetic(*ordinal),
-            SourceRef::InputRow { command, line } => Self::InputRow {
-                command: *command,
-                line: *line,
-            },
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 /// The source-level action used to reconstruct selected initial state.
 ///
@@ -115,6 +96,8 @@ impl From<&SourceRef> for OwnedSourceRef {
 pub(crate) enum ReplaySourceKind {
     Command(Box<Command>),
     InputRow {
+        /// One-based physical line, used only to preserve order within one input command.
+        line: u64,
         function: String,
         literals: Box<[Literal]>,
     },
@@ -126,7 +109,6 @@ pub(crate) struct ReplaySource {
     /// Last completed trace wave before the source executed on the recorder.
     pub(crate) after_wave: u64,
     pub(crate) catalog_ordinal: usize,
-    pub(crate) source: OwnedSourceRef,
     pub(crate) kind: ReplaySourceKind,
 }
 
@@ -186,9 +168,9 @@ impl ReplayEvent {
     fn chronology_key(&self) -> (u64, u8, usize, u64) {
         match self {
             Self::Source(source) => {
-                let line = match source.source {
-                    OwnedSourceRef::Synthetic(_) => 0,
-                    OwnedSourceRef::InputRow { line, .. } => line,
+                let line = match &source.kind {
+                    ReplaySourceKind::Command(_) => 0,
+                    ReplaySourceKind::InputRow { line, .. } => *line,
                 };
                 (source.after_wave, 1, source.catalog_ordinal, line)
             }
@@ -789,8 +771,8 @@ fn selected_input_rows(
             rows.push(ReplaySource {
                 after_wave: entry.after_wave,
                 catalog_ordinal: catalog.command_catalog[entry.command].surface_command,
-                source: OwnedSourceRef::InputRow { command, line },
                 kind: ReplaySourceKind::InputRow {
+                    line,
                     function: entry.function.clone(),
                     literals: parsed.literals.into_boxed_slice(),
                 },
@@ -1104,7 +1086,6 @@ fn build_owned(
             .or_insert(ReplaySource {
                 after_wave: entry.after_wave,
                 catalog_ordinal: surface_command,
-                source: source.into(),
                 kind: ReplaySourceKind::Command(Box::new(command)),
             });
     }

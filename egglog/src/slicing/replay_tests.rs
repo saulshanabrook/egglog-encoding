@@ -775,8 +775,7 @@ fn owned_ir_rereads_only_selected_input_rows_and_checks_digest() {
     );
     let selected = ir.events.iter().find_map(|event| match event {
         ReplayEvent::Source(ReplaySource {
-            source: OwnedSourceRef::InputRow { line, .. },
-            kind: ReplaySourceKind::InputRow { literals, .. },
+            kind: ReplaySourceKind::InputRow { line, literals, .. },
             ..
         }) => Some((*line, literals.as_ref())),
         _ => None,
