@@ -477,7 +477,6 @@ enum RuleOriginKind {
 struct RuleOrigin {
     kind: RuleOriginKind,
     name: String,
-    anonymous: bool,
     surface_variables: Box<[String]>,
     rewrite_root: Option<String>,
 }
@@ -848,14 +847,15 @@ impl CaptureCatalog {
         })?;
         let surface_command = self.command_catalog[command].surface_command;
         let generated_name = format!("@__slice_replay_rule_s{surface_command}");
-        let base_name = if origin.anonymous {
+        let anonymous = origin.name.is_empty();
+        let base_name = if anonymous {
             generated_name
         } else {
             origin.name.clone()
         };
         let (replay_name, surface) = match origin.kind {
             RuleOriginKind::Rule => (
-                if origin.anonymous {
+                if anonymous {
                     base_name.clone()
                 } else {
                     name.to_owned()
@@ -1138,14 +1138,12 @@ fn catalog_rule_origins(command: &Command) -> Vec<RuleOrigin> {
         Command::Rule { rule } => vec![RuleOrigin {
             kind: RuleOriginKind::Rule,
             name: rule.name.clone(),
-            anonymous: rule.name.is_empty(),
             surface_variables: rule_variables(rule),
             rewrite_root: None,
         }],
         Command::Rewrite(_, rewrite, _) => vec![RuleOrigin {
             kind: RuleOriginKind::Rewrite,
             name: rewrite.name.clone(),
-            anonymous: rewrite.name.is_empty(),
             surface_variables: rewrite_variables(rewrite),
             rewrite_root: Some(ast::desugar::rewrite_root_name(rewrite)),
         }],
@@ -1153,7 +1151,6 @@ fn catalog_rule_origins(command: &Command) -> Vec<RuleOrigin> {
             let origin = RuleOrigin {
                 kind: RuleOriginKind::BiRewrite(RewriteDirection::Forward),
                 name: rewrite.name.clone(),
-                anonymous: rewrite.name.is_empty(),
                 surface_variables: rewrite_variables(rewrite),
                 rewrite_root: Some(ast::desugar::rewrite_root_name(rewrite)),
             };
