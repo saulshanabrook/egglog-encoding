@@ -23,30 +23,30 @@ use crate::{
 type Term = GenericAtomTerm<RuleVar, RuleValue>;
 
 #[derive(Clone, Copy)]
-enum BodyOrder {
+pub(crate) enum BodyOrder {
     ViewUfNeq,
     NeqUfView,
     UfViewNeq,
 }
 
-struct Fixture {
-    backend: EGraph,
-    unit: BaseValueId,
-    string: BaseValueId,
-    i64_ty: BaseValueId,
-    label: Value,
-    token: ExternalFunctionId,
-    sym: FunctionId,
-    trans: FunctionId,
-    congr: FunctionId,
-    uf: FunctionId,
-    output_uf: FunctionId,
-    view: FunctionId,
-    key_types: Vec<ColumnTy>,
+pub(crate) struct Fixture {
+    pub(crate) backend: EGraph,
+    pub(crate) unit: BaseValueId,
+    pub(crate) string: BaseValueId,
+    pub(crate) i64_ty: BaseValueId,
+    pub(crate) label: Value,
+    pub(crate) token: ExternalFunctionId,
+    pub(crate) sym: FunctionId,
+    pub(crate) trans: FunctionId,
+    pub(crate) congr: FunctionId,
+    pub(crate) uf: FunctionId,
+    pub(crate) output_uf: FunctionId,
+    pub(crate) view: FunctionId,
+    pub(crate) key_types: Vec<ColumnTy>,
 }
 
 impl Fixture {
-    fn new(
+    pub(crate) fn new(
         prefix: &str,
         key_layout: impl FnOnce(BaseValueId, BaseValueId) -> Vec<ColumnTy>,
     ) -> Result<Self> {
@@ -192,7 +192,7 @@ impl Fixture {
         })
     }
 
-    fn one_id(prefix: &str) -> Result<Self> {
+    pub(crate) fn one_id(prefix: &str) -> Result<Self> {
         Self::new(prefix, |_, _| vec![ColumnTy::Id])
     }
 
@@ -204,7 +204,7 @@ impl Fixture {
         Self::new(prefix, |_, _| vec![])
     }
 
-    fn eq_rule(&self, prefix: &str, child_index: usize, order: BodyOrder) -> RuleSpec {
+    pub(crate) fn eq_rule(&self, prefix: &str, child_index: usize, order: BodyOrder) -> RuleSpec {
         let mut next = 0_u32;
         let keys = self
             .key_types
@@ -412,7 +412,7 @@ impl Fixture {
         }
     }
 
-    fn insert_ids(
+    pub(crate) fn insert_ids(
         &self,
         table: FunctionId,
         values: &[u64],
@@ -436,7 +436,7 @@ impl Fixture {
         })
     }
 
-    fn insert_typed(
+    pub(crate) fn insert_typed(
         &self,
         table: FunctionId,
         values: &[Value],
@@ -467,7 +467,7 @@ impl Fixture {
         })
     }
 
-    fn run(&mut self, rules: &[RuleId]) -> Result<bool> {
+    pub(crate) fn run(&mut self, rules: &[RuleId]) -> Result<bool> {
         Ok(self
             .backend
             .run_rules(RuleSetRun {
@@ -477,7 +477,7 @@ impl Fixture {
             .changed())
     }
 
-    fn scratch_count(&self) -> Result<u64> {
+    pub(crate) fn scratch_count(&self) -> Result<u64> {
         self.backend.storage.with_connection(|connection| {
             connection
                 .query_row(
@@ -490,7 +490,7 @@ impl Fixture {
         })
     }
 
-    fn watermark(&self, rule: RuleId) -> u64 {
+    pub(crate) fn watermark(&self, rule: RuleId) -> u64 {
         self.backend.rules[rule.rep() as usize]
             .as_ref()
             .expect("test rule remains registered")
@@ -499,7 +499,7 @@ impl Fixture {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn ordered_union(
+pub(crate) fn ordered_union(
     token: ExternalFunctionId,
     label: Value,
     string: BaseValueId,
@@ -714,7 +714,7 @@ fn unit_literal(backend: &EGraph, unit: BaseValueId) -> Term {
     literal(backend.base_values().get(()), ColumnTy::Base(unit))
 }
 
-fn ids(row: Option<Vec<Value>>) -> Option<Vec<u32>> {
+pub(crate) fn ids(row: Option<Vec<Value>>) -> Option<Vec<u32>> {
     row.map(|values| values.into_iter().map(Value::rep).collect())
 }
 

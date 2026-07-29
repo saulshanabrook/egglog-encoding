@@ -911,13 +911,18 @@ impl Storage {
             .iter()
             .filter(|(rule, _)| rule.standard_rebuild().is_some())
             .count();
-        if rebuild_rules != 0 {
-            if rebuild_rules != scheduled.len() {
+        let marker_rules = scheduled
+            .iter()
+            .filter(|(rule, _)| rule.marker_rekey().is_some())
+            .count();
+        let rebuilding_rules = rebuild_rules + marker_rules;
+        if rebuilding_rules != 0 {
+            if rebuilding_rules != scheduled.len() {
                 bail!(
-                    "DuckDB cannot mix direct, path-compression, and standard-rebuild plans in one bounded ruleset"
+                    "DuckDB cannot mix direct/path-compression plans with rebuilding plans in one bounded ruleset"
                 );
             }
-            return self.execute_standard_rebuild_rules(scheduled);
+            return self.execute_rebuilding_rules(scheduled);
         }
         if path_rules != 0 {
             if path_rules != scheduled.len() {
@@ -1611,7 +1616,7 @@ impl Storage {
         })
     }
 
-    fn execute_standard_rebuild_rules(
+    fn execute_rebuilding_rules(
         &self,
         scheduled: &[(&CompiledRule, u64)],
     ) -> Result<RuleExecutionStats> {
@@ -1621,24 +1626,78 @@ impl Storage {
             queue: String,
         }
 
+        #[derive(Clone, Copy)]
+        struct OwnerCheck {
+            n_keys: usize,
+            reject_subsumed: bool,
+        }
+
         // Resolve the complete target graph before opening the transaction.
         // FunctionId order is the deterministic target order of every wave.
         let mut target_plans = BTreeMap::<u32, OrderedUnionPlan>::new();
+        let mut owner_checks = BTreeMap::<u32, OwnerCheck>::new();
         for (rule, _) in scheduled {
-            let plan = rule
-                .standard_rebuild()
-                .expect("caller checked every scheduled rebuild plan");
-            for target in [&plan.view, &plan.union_find, &plan.displaced_union_find] {
-                if let Some(existing) = target_plans.get(&target.target.rep()) {
-                    if existing != target {
-                        bail!(
-                            "DuckDB standard rebuild target {} has inconsistent ordered-union plans",
-                            target.target.rep()
-                        );
+            if let Some(plan) = rule.standard_rebuild() {
+                for target in [&plan.view, &plan.union_find, &plan.displaced_union_find] {
+                    if let Some(existing) = target_plans.get(&target.target.rep()) {
+                        if existing != target {
+                            bail!(
+                                "DuckDB rebuilding target {} has inconsistent ordered-union plans",
+                                target.target.rep()
+                            );
+                        }
+                    } else {
+                        target_plans.insert(target.target.rep(), target.clone());
                     }
-                } else {
-                    target_plans.insert(target.target.rep(), target.clone());
+                    let check = OwnerCheck {
+                        n_keys: target.n_keys,
+                        reject_subsumed: target.orientation == OrderedUnionOrientation::KeyToParent,
+                    };
+                    if let Some(existing) = owner_checks.get(&target.target.rep()) {
+                        if existing.n_keys != check.n_keys
+                            || existing.reject_subsumed != check.reject_subsumed
+                        {
+                            bail!(
+                                "DuckDB rebuilding target {} has inconsistent owner checks",
+                                target.target.rep()
+                            );
+                        }
+                    } else {
+                        owner_checks.insert(target.target.rep(), check);
+                    }
                 }
+            } else if let Some(plan) = rule.marker_rekey() {
+                for (target, check) in [
+                    (
+                        plan.marker,
+                        OwnerCheck {
+                            n_keys: plan.n_keys,
+                            reject_subsumed: false,
+                        },
+                    ),
+                    (
+                        plan.union_find.target,
+                        OwnerCheck {
+                            n_keys: plan.union_find.n_keys,
+                            reject_subsumed: true,
+                        },
+                    ),
+                ] {
+                    if let Some(existing) = owner_checks.get(&target.rep()) {
+                        if existing.n_keys != check.n_keys
+                            || existing.reject_subsumed != check.reject_subsumed
+                        {
+                            bail!(
+                                "DuckDB rebuilding target {} has inconsistent owner checks",
+                                target.rep()
+                            );
+                        }
+                    } else {
+                        owner_checks.insert(target.rep(), check);
+                    }
+                }
+            } else {
+                unreachable!("caller checked every scheduled rebuilding plan");
             }
         }
 
@@ -1691,7 +1750,7 @@ impl Storage {
                 statement_count += 1;
                 matched_rows.push(
                     usize::try_from(count)
-                        .context("DuckDB standard rebuild match count exceeds usize")?,
+                        .context("DuckDB rebuilding match count exceeds usize")?,
                 );
                 stages.push(stage);
             }
@@ -1724,11 +1783,13 @@ impl Storage {
                 });
             }
 
-            // Corrupt physical owners make a key fold ambiguous. Check every
-            // View/UF target before the first durable row/counter mutation.
-            for group in &groups {
-                let target = sql_table(group.plan.target);
-                let duplicate = duplicate_owner_sql(&target, group.plan.n_keys);
+            // Corrupt physical owners make a key fold/rekey ambiguous. Check
+            // every Standard View/UF plus every Marker/UF target before the
+            // first durable row/counter mutation.
+            for (&target_id, check) in &owner_checks {
+                let target_id = FunctionId::new(target_id);
+                let target = sql_table(target_id);
+                let duplicate = duplicate_owner_sql(&target, check.n_keys);
                 let has_duplicate =
                     transaction.query_row(&duplicate, [], |row| row.get::<_, bool>(0))?;
                 #[cfg(test)]
@@ -1736,11 +1797,11 @@ impl Storage {
                 statement_count += 1;
                 if has_duplicate {
                     bail!(
-                        "DuckDB standard rebuild executor found duplicate owners for function {}",
-                        group.plan.target.rep()
+                        "DuckDB rebuilding executor found duplicate owners for function {}",
+                        target_id.rep()
                     );
                 }
-                if group.plan.orientation == OrderedUnionOrientation::KeyToParent {
+                if check.reject_subsumed {
                     let subsumed =
                         format!("SELECT EXISTS (SELECT 1 FROM {target} WHERE __subsumed)");
                     let has_subsumed =
@@ -1750,8 +1811,8 @@ impl Storage {
                     statement_count += 1;
                     if has_subsumed {
                         bail!(
-                            "DuckDB standard rebuild executor found a subsumed UF owner for function {}",
-                            group.plan.target.rep()
+                            "DuckDB rebuilding executor found a subsumed UF owner for function {}",
+                            target_id.rep()
                         );
                     }
                 }
@@ -1762,9 +1823,7 @@ impl Storage {
                 |total, ((rule, _), &count)| {
                     let slots = rule
                         .standard_rebuild()
-                        .expect("caller checked every scheduled rebuild plan")
-                        .kind
-                        .head_fresh_slots();
+                        .map_or(0, |plan| plan.kind.head_fresh_slots());
                     let count =
                         u64::try_from(count).context("standard rebuild match count exceeds u64")?;
                     total
@@ -1792,18 +1851,25 @@ impl Storage {
             let mut physical_changed = false;
             let mut report_changed = false;
 
-            // All key-rekey Deletes precede every independent head Set.
+            // All Standard key-rekey and Marker stale-key Deletes precede
+            // every independent head Set.
             for ((rule, _), stage) in scheduled.iter().zip(&stages) {
-                let plan = rule
-                    .standard_rebuild()
-                    .expect("caller checked every scheduled rebuild plan");
-                if matches!(plan.kind, StandardRebuildKind::EqKey { .. }) {
+                if let Some(plan) = rule.standard_rebuild()
+                    && matches!(plan.kind, StandardRebuildKind::EqKey { .. })
+                {
                     let equality = key_equality("existing", "staged", plan.view.n_keys);
                     let delete = format!(
                         "DELETE FROM {} AS existing
                          WHERE EXISTS (SELECT 1 FROM {stage} AS staged WHERE {equality})",
                         sql_table(plan.view.target)
                     );
+                    let deleted = transaction.execute(&delete, [])?;
+                    physical_changed |= deleted != 0;
+                    #[cfg(test)]
+                    sql_log.push(delete);
+                    statement_count += 1;
+                } else if let Some(plan) = rule.marker_rekey() {
+                    let delete = plan.delete_sql(stage);
                     let deleted = transaction.execute(&delete, [])?;
                     physical_changed |= deleted != 0;
                     #[cfg(test)]
@@ -1817,14 +1883,50 @@ impl Storage {
             let mut head_offset = 0_u64;
             let mut head_bases = Vec::with_capacity(scheduled.len());
             for (schedule_index, ((rule, _), stage)) in scheduled.iter().zip(&stages).enumerate() {
-                let plan = rule
-                    .standard_rebuild()
-                    .expect("caller checked every scheduled rebuild plan");
-                let count = u64::try_from(matched_rows[schedule_index])?;
                 let head_base = first_head_id
                     .checked_add(head_offset)
                     .context("standard rebuild head fresh-id offset overflow")?;
                 head_bases.push(head_base);
+                if let Some(marker) = rule.marker_rekey() {
+                    let head_stage = format!("egglog_rebuild_marker_head_{run}_{schedule_index}");
+                    scratch_names.push(head_stage.clone());
+                    let create = marker.create_head_stage_sql(stage, &head_stage);
+                    transaction.execute(&create, [])?;
+                    #[cfg(test)]
+                    sql_log.push(create);
+                    statement_count += 1;
+                    let conflict = check_assert_eq_conflict(
+                        &transaction,
+                        marker.marker,
+                        marker.n_keys,
+                        &head_stage,
+                    )?;
+                    #[cfg(test)]
+                    sql_log.push(conflict);
+                    #[cfg(not(test))]
+                    drop(conflict);
+                    statement_count += 1;
+                    let insert = stage_insert_sql(
+                        marker.marker,
+                        marker.arity(),
+                        marker.n_keys,
+                        &head_stage,
+                        generation,
+                    );
+                    let inserted = transaction.execute(&insert, [])?;
+                    inserted_rows[schedule_index] = inserted;
+                    physical_changed |= inserted != 0;
+                    report_changed |= inserted != 0;
+                    #[cfg(test)]
+                    sql_log.push(insert);
+                    statement_count += 1;
+                    continue;
+                }
+
+                let plan = rule
+                    .standard_rebuild()
+                    .expect("caller checked every scheduled rebuilding plan");
+                let count = u64::try_from(matched_rows[schedule_index])?;
                 let view_arity = plan.view.arity();
                 let view_payload = plan.view.n_keys + 1;
                 let edge_payload = view_arity + 1;
@@ -1947,9 +2049,10 @@ impl Storage {
             // and independent proof Set has completed.
             let mut event_offset = 0_u64;
             for (schedule_index, ((rule, _), stage)) in scheduled.iter().zip(&stages).enumerate() {
-                let plan = rule
-                    .standard_rebuild()
-                    .expect("caller checked every scheduled rebuild plan");
+                let Some(plan) = rule.standard_rebuild() else {
+                    debug_assert!(rule.marker_rekey().is_some());
+                    continue;
+                };
                 let count = u64::try_from(matched_rows[schedule_index])?;
                 let head_slots = plan.kind.head_fresh_slots();
                 let head_base = head_bases[schedule_index];
@@ -2373,7 +2476,7 @@ impl Storage {
                 let cleanup_error = cleanup_scratch(&state.connection, &scratch_names).err();
                 if rollback_error.is_some() || cleanup_error.is_some() {
                     return Err(anyhow!(
-                        "DuckDB standard rebuild transaction failed: {error:#}; rollback: {rollback_error:?}; scratch cleanup: {cleanup_error:?}"
+                        "DuckDB rebuilding transaction failed: {error:#}; rollback: {rollback_error:?}; scratch cleanup: {cleanup_error:?}"
                     ));
                 }
                 return Err(error);

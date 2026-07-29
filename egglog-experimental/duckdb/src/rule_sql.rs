@@ -17,6 +17,7 @@ use egglog_backend_trait::{
 };
 use egglog_numeric_id::NumericId;
 
+use crate::marker_rekey::{MarkerRekeyPlan, compile_marker_rekey};
 use crate::path_compress::{
     PathCompressionPlan, compile_path_compression, looks_like_path_compression,
 };
@@ -42,6 +43,7 @@ pub(crate) struct CompiledRule {
 #[derive(Clone, Debug)]
 enum CompiledRuleKind {
     Direct(DirectRule),
+    MarkerRekey(MarkerRekeyPlan),
     PathCompression(PathCompressionPlan),
     StandardRebuild(StandardRebuildPlan),
 }
@@ -91,6 +93,9 @@ impl CompiledRule {
             return plan.materialize_sql(stage, watermark);
         }
         if let CompiledRuleKind::StandardRebuild(plan) = &self.kind {
+            return plan.materialize_sql(stage, watermark);
+        }
+        if let CompiledRuleKind::MarkerRekey(plan) = &self.kind {
             return plan.materialize_sql(stage, watermark);
         }
         let CompiledRuleKind::Direct(direct) = &self.kind else {
@@ -303,14 +308,27 @@ impl CompiledRule {
     pub(crate) fn path_compression(&self) -> Option<&PathCompressionPlan> {
         match &self.kind {
             CompiledRuleKind::PathCompression(plan) => Some(plan),
-            CompiledRuleKind::Direct(_) | CompiledRuleKind::StandardRebuild(_) => None,
+            CompiledRuleKind::Direct(_)
+            | CompiledRuleKind::MarkerRekey(_)
+            | CompiledRuleKind::StandardRebuild(_) => None,
         }
     }
 
     pub(crate) fn standard_rebuild(&self) -> Option<&StandardRebuildPlan> {
         match &self.kind {
             CompiledRuleKind::StandardRebuild(plan) => Some(plan),
-            CompiledRuleKind::Direct(_) | CompiledRuleKind::PathCompression(_) => None,
+            CompiledRuleKind::Direct(_)
+            | CompiledRuleKind::MarkerRekey(_)
+            | CompiledRuleKind::PathCompression(_) => None,
+        }
+    }
+
+    pub(crate) fn marker_rekey(&self) -> Option<&MarkerRekeyPlan> {
+        match &self.kind {
+            CompiledRuleKind::MarkerRekey(plan) => Some(plan),
+            CompiledRuleKind::Direct(_)
+            | CompiledRuleKind::PathCompression(_)
+            | CompiledRuleKind::StandardRebuild(_) => None,
         }
     }
 }
@@ -337,6 +355,12 @@ pub(crate) fn compile_rule(
         return Ok(CompiledRule {
             seminaive: rule.seminaive,
             kind: CompiledRuleKind::StandardRebuild(plan),
+        });
+    }
+    if let Some(plan) = compile_marker_rekey(storage, base_values, &rule)? {
+        return Ok(CompiledRule {
+            seminaive: rule.seminaive,
+            kind: CompiledRuleKind::MarkerRekey(plan),
         });
     }
     // A Delete-only head is already a complete direct language regardless of

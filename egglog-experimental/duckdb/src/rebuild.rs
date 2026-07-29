@@ -635,6 +635,34 @@ fn validate_union_find_table(
     Ok(())
 }
 
+/// Validate the exact self-displacing key-to-parent ordered union reached by a
+/// marker rule. The marker compiler owns the outer rule diagnostics while this
+/// helper keeps the accepted ordered-union topology single-sourced.
+pub(crate) fn validate_marker_union_find(
+    base_values: &BaseValues,
+    storage: &Storage,
+    rule_name: &str,
+    target: FunctionId,
+) -> Result<OrderedUnionPlan> {
+    let info = storage.table_info(target)?;
+    validate_union_find_table(base_values, rule_name, &info).map_err(|error| {
+        anyhow!("DuckDB marker rekey rule `{rule_name}` has an incompatible UF: {error:#}")
+    })?;
+    let validated = validate_ordered_union(
+        base_values,
+        storage,
+        rule_name,
+        target,
+        &info,
+        Some(target),
+        OrderedUnionOrientation::KeyToParent,
+    )
+    .map_err(|error| {
+        anyhow!("DuckDB marker rekey rule `{rule_name}` has an incompatible UF: {error:#}")
+    })?;
+    Ok(validated.plan)
+}
+
 struct ValidatedOrderedUnion {
     plan: OrderedUnionPlan,
     fresh_label: RuleValue,
@@ -645,7 +673,7 @@ struct ValidatedOrderedUnion {
 /// the validator below checks every primitive, type, slot, argument, target,
 /// and result. Custom View blocks with a different outer topology belong to the
 /// ordinary fail-closed compiler rather than this standard-rebuild language.
-fn ordered_union_outer(merge: &MergeFn) -> Option<FunctionId> {
+pub(crate) fn ordered_union_outer(merge: &MergeFn) -> Option<FunctionId> {
     let MergeFn::Block { actions, result } = merge else {
         return None;
     };

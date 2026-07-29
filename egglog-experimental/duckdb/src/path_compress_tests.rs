@@ -256,7 +256,7 @@ fn add_instance(
     })
 }
 
-fn path_rule(
+pub(crate) fn path_rule(
     prefix: &str,
     unit: BaseValueId,
     string: BaseValueId,

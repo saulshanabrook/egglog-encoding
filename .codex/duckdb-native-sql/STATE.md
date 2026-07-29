@@ -86,24 +86,28 @@ preserve these current SPI semantics:
 ## Steering frame
 
 - **Current frontier:** checkpoints 0 and 0.5 plus typed storage, native input,
-  path compression, and direct cleanup are committed through `21b482b`. The
-  accepted standard scalar rebuild artifact now compiles exact eq-key and
-  eclass-output `ReadMode::All` rules and executes their typed View/UF
-  ordered-union merges through DuckDB-authoritative staged queues. It passed
-  three independent reviews, one bounded repair, and fresh coordinator
-  acceptance at owned hash `4c3acea8...`. Math, Eggcc, Hardboiled, and Luminal
-  now reach marker rekey; Pointer admits its first rebuild and reaches the
-  independently identified raw-input/Block-write boundary. The next diagnostic
-  frontier is therefore two disjoint capabilities—marker rekey and typed raw
-  input—not performance tuning or container/custom merge work.
+  path compression, direct cleanup, and standard scalar rebuild are committed
+  through `2914373`. The marker-rekey slice is accepted but not yet committed:
+  its DuckDB-local compiler and mixed Standard/Marker transaction passed all
+  three independent reviews, the sole test-only repair, and fresh coordinator
+  acceptance at owned patch-stream hash
+  `fce5af5b1359614de29079f34309e57be69c9ff7264a43040ee37f615f4a21d1`.
+  Math executes 18 markers before its first ordinary unsupported rewrite,
+  Eggcc executes 77 before an empty-body action rule, Hardboiled executes 20
+  before a container rebuild, and Luminal executes 38 before its first ordinary
+  unsupported rewrite. Pointer retains the independently identified typed
+  raw-input/Block-write boundary. The next implementation frontier after the
+  local marker checkpoint is therefore complete ordered-union raw input, not
+  performance tuning, containers, or ordinary rule lowering.
 - **Scoreboard:** current-main pinned; loaded DuckDB v1.5.4; DuckDB backend
-  tests 61/61 and feature-enabled CLI 4/4 pass; both scoped Clippy lanes with
-  warnings denied, feature build, formatting, and diff checks pass. Fresh
-  public boundary timings are Math 0.256s, Eggcc 0.336s, Pointer 0.368s,
-  Hardboiled 0.312s, and Luminal 0.241s, with no timeout. The repository proof
-  gate remains green at core 204/204 plus experimental 8/8 (212/212) in 28.09s.
+  tests 73/73, focused marker tests 12/12, and feature-enabled CLI tests 4/4
+  pass; both scoped Clippy lanes with warnings denied, feature build,
+  formatting, and diff checks pass. Fresh public probes exit at the intentional
+  later boundaries in Math 0.45s, Eggcc 2.18s, Pointer 0.02s, Hardboiled 0.04s,
+  and Luminal 0.04s, with no timeout. The repository proof gate remains green
+  at core 204/204 plus experimental 8/8 (212/212) in 22.36s.
   All frozen reviews pass at owned hash
-  `4c3acea85587ff222842bcadde867c89557e7cb63959733078e7f0c6e14f175c`.
+  `fce5af5b1359614de29079f34309e57be69c9ff7264a43040ee37f615f4a21d1`.
 - **Progress signal:** a reviewable production slice plus exact capped command
   evidence that advances one checkpoint gate.
 - **No movement:** no reviewable patch, no new reproducible evidence, and no
@@ -121,10 +125,11 @@ preserve these current SPI semantics:
   the benchmark harness does not yet advertise the DuckDB endpoint; direct
   execution of the downloaded dylib needs its dependency directory added to
   `DYLD_LIBRARY_PATH` on macOS; and slow bounded proof workloads.
-- **Next decision:** seat one DuckDB-only writer for the reconciled standard
-  scalar rebuild contract below. Freeze its first reviewable artifact before
-  independent semantic, admission, and safe-SQL/test reviews; no marker,
-  container, custom-merge, or performance expansion may enter this slice. Preserve
+- **Next decision:** create one local marker-rekey checkpoint commit with no
+  push, then return to the committed raw-input audit and seat bounded read-only
+  architecture/test circles before one DuckDB-only writer. Raw input must reuse
+  the complete ordered-union semantics rather than admit a missing-only corpus
+  shortcut. Preserve
   UnstableFn as schema-only deferred: hardboiled stores only its `ColumnTy::Id`,
   while no frozen workload constructs or applies one.
 
@@ -168,6 +173,13 @@ preserve these current SPI semantics:
 | `/root/rebuild_semantics_review` | independent frozen rebuild semantic review | audit All visibility/refiring, stable pre-wave phases, split body/output UFs, merge orientations, status/generation/change, allocation, rollback, and watermarks | exact frozen owned hash only; no writes/builds/tests or writer contact | `PASS`, `REVISE`, or `REASSESS` with exact source evidence | completed `PASS`; no production semantic defect |
 | `/root/rebuild_admission_review` | independent frozen rebuild admission review | audit exact tri-state/name-independent topology, RuleId preservation, split-UF routing, and fail-closed marker/custom/container variants | exact frozen owned hash only; no writes/builds/tests or writer contact | `PASS`, `REVISE`, or `REASSESS` with exact source evidence | repaired-surface re-review completed `PASS`; tri-state ownership and negative matrix closed |
 | `/root/rebuild_sql_tests_review` | independent frozen rebuild SQL/test/API review | audit typed/nullary/wide SQL, wave/scratch lifecycle, safe public APIs, forbidden surfaces, telemetry, and canary/evidence sufficiency | exact frozen owned hash only; no writes/builds/tests or writer contact | `PASS`, `REVISE`, or `REASSESS` with exact source evidence | repaired-surface re-review completed `PASS`; all three canary-evidence gaps closed |
+| `/root/marker_rekey_census` | read-only marker-rekey frontier audit | pin the exact generated marker rules/configs, Reference semantics, smallest safe SQL lowering, next boundary, and existing-SPI verdict | clean committed `2914373`; no writes/builds/tests or other-agent contact; capped desugar/public probes only | exact distribution, structural predicate, executor reuse decision, canaries, and stop rule | completed; existing SPI passes and a combined Standard+Marker transaction is required |
+| `/root/raw_input_block_census` | read-only typed raw-input frontier audit | trace Pointer's Rust-parsed fact batch into Block-configured View writes and determine the smallest sound raw-SQL capability | clean committed `2914373`; no writes/builds/tests or other-agent contact; capped source/desugar/probe inspection only | exact batch/config/conflict/fresh/proof semantics, safe-SQL design alternatives, canaries, and stop rule | completed; existing SPI suffices, but complete ordered-union queue reuse is required rather than missing-only insertion |
+| `/root/post_frontier_dependency_census` | read-only workload dependency audit | distinguish registration blockers from executable program-order blockers after marker rekey and raw input | clean committed `2914373`; static source/config inspection only; no writes/builds/tests or other-agent contact | per-workload next-boundary table and one evidence-backed implementation priority | completed; marker rekey is first, raw-input ordered union second, ordinary proof-instrumented rules third |
+| `/root/duckdb_marker_rekey_worker` | marker-rekey implementation | compile the exact generated marker family and execute mixed Standard+Marker schedules in one stable DuckDB transaction | `egglog-experimental/duckdb/**` except this ledger; no shared APIs, raw input, container/custom rules, harness, commit, or push | source-independent canaries plus four public workloads beyond marker while Pointer retains raw-input boundary | sole repair completed test-only and frozen at owned hash `fce5af5b...`; no second repair, commit, or push |
+| `/root/marker_semantics_review` | independent frozen semantic review | audit stable mixed pre-wave, phases, one-hop behavior, generation/reporting, allocation, rollback, and watermarks | exact frozen owned hash only; no writes/builds/tests or writer contact | `PASS`, `REVISE`, or `REASSESS` with exact source evidence | completed `PASS`; no production semantic defect or counterexample |
+| `/root/marker_admission_review` | independent frozen admission review | audit name-independent tri-state ownership, exact typed roles/configs/actions, fallthrough/error boundaries, and RuleId preservation | exact frozen owned hash only; no writes/builds/tests or writer contact | `PASS`, `REVISE`, or `REASSESS` with exact source evidence | repaired-surface re-review completed `PASS`; every requested classification/config axis closes at `fce5af5b...` |
+| `/root/marker_sql_tests_review` | independent frozen SQL/test/API review | audit typed SQL safety, scratch lifecycle, forbidden surfaces, Standard regression risk, telemetry, and canary sufficiency | exact frozen owned hash only; no writes/builds/tests or writer contact | `PASS`, `REVISE`, or `REASSESS` with exact source evidence | repaired-surface re-review completed `PASS`; blocker closed test-only at `fce5af5b...` |
 
 No overlapping writing worker may be added. Read-only specialist circles may
 be seated only for disjoint evidence questions with explicit stop terms.
@@ -293,6 +305,18 @@ be seated only for disjoint evidence questions with explicit stop terms.
 | 2026-07-29 | bounded standard-rebuild repair | reproduced repaired owned hash `4c3acea85587ff222842bcadde867c89557e7cb63959733078e7f0c6e14f175c`; repair delta only in `rebuild.rs` and `rebuild_tests.rs`; storage/executor/integration unchanged | ordered-union-family membership now precedes All/interior validation; added executed mixed 27-key queue, nonzero-watermark rollback/retry, join/alias/fake-primitive/index-type/container/custom-Live RuleId canaries; focused 13/13, DuckDB 61/61, feature CLI 4/4, Clippy/build/fmt/diff green | Math/Eggcc/Hardboiled/Luminal retain marker boundary in 0.02--0.40s; Pointer retains expected raw-input boundary in 0.01s; exact repaired surface returned to the two revising reviewers; no second repair authorized |
 | 2026-07-29 | repaired standard-rebuild re-reviews at hash `4c3acea85587ff222842bcadde867c89557e7cb63959733078e7f0c6e14f175c` | admission and safe-SQL/test reviewers independently reproduced HEAD/hash at start/end; static/read-only | admission `PASS`: family discrimination precedes All/interior and both fallthrough/error sides retain RuleId; SQL/tests `PASS`: executed 27-key, nonzero-watermark retry, and complete mutation matrix are substantive; no forbidden API/scope growth | all frozen reviews pass; coordinator acceptance set authorized |
 | 2026-07-29 | coordinator final standard-rebuild acceptance | reproduced owned hash `4c3acea85587ff222842bcadde867c89557e7cb63959733078e7f0c6e14f175c`; nonbundled DuckDB lib test/Clippy, feature CLI test/build/Clippy, format/diff, five rebuilt probes, and `make proof-tests`; every process externally capped at 110 seconds | fresh PASS: DuckDB 61/61 in 0.25s; feature CLI 4/4 in 3.11s; all lint/build/format/diff gates exit 0; Math/Eggcc/Hardboiled/Luminal reach marker in 0.241--0.336s, Pointer reaches raw-input boundary in 0.368s; proof gate core 204/204 plus experimental 8/8 in 28.09s | standard scalar All/ordered-union vertical accepted for one local checkpoint commit; marker rekey and raw SQL input become separate read-only diagnostic circles before another writer |
+| 2026-07-29 | coordinator local checkpoint commit | `2914373 feat: execute native DuckDB standard rebuilds`; six expected paths; clean worktree immediately after commit; no push | accepted exact tri-state compiler, split-UF target model, typed All/ordered-union staged executor, 13 canaries, and reconciled ledger are a durable rollback point | seated disjoint marker-rekey and raw-input diagnostic circles before any next writer |
+| 2026-07-29 | post-frontier dependency census at committed `2914373` | static program-order trace of the five frozen sources and generated maintenance/config census; no edits/builds/tests/workload runs | marker support advances Math and Luminal to ordinary proof-instrumented rules, Eggcc to empty-body action evaluation, and Hardboiled to container rebuild; raw input alone advances only Pointer through 23 files/2,255 facts/13,530 rows and then to its first marker. Exact marker distribution is 866 total: 831 standard ordered-union scalar, 35 custom scalar, and 6 container-key rules. | marker rekey is the next writer front; raw input follows and must implement declared ordered-union collisions rather than a corpus-specific missing-only shortcut |
+| 2026-07-29 | typed raw-input/Block audit at committed `2914373` | static trace from Rust TSV parsing through the proof-mode heterogeneous `NativeInputValue` batch, retained configs, and current DuckDB preflight; no edits/builds/tests/workload runs | existing SPI preserves batch order, dense fresh slots, and complete merge IR. Pointer has 23 unique-key files, 2,255 facts, 13,530 direct rows, and 9,020 frontend fresh IDs, but duplicate/existing-key correctness requires Sym/Trans allocation, displaced-UF writes, subsumed-owner preservation, unbounded waves, and full rollback. | missing-only admission is rejected; later input work must generalize the accepted ordered-union queues inside the DuckDB transaction with one bounded recursive-trace fallback |
+| 2026-07-29 | marker-rekey semantic/IR/SQL census at committed `2914373` | five capped proof desugars plus committed Reference/SPI/DuckDB inspection; no edits/builds/tests/public reruns | 866 structurally identical seminaive rules over 363 marker targets, arity 1..27: two `All` tables plus typed `!=`, then canonical Unit Set and stale-key Delete. Existing SPI is complete. Stable mixed execution must materialize all Standard/Marker matches together, globally Delete before Set, keep Standard queue closure local, allocate no marker IDs, and roll back all state atomically. | select DuckDB-local `MarkerRekeyPlan` plus combined rebuilding executor; running markers as a second call or recursively closing marker chains is rejected |
+| 2026-07-29 | marker-rekey writer freeze at committed HEAD `2914373` | reproduced owned patch-stream hash `9e192f268f13af2279b0a7157eb28b60f388a7b391bd612b05ebe726cf1fd339`; seven DuckDB-only paths; every worker subprocess capped at 110 seconds and nonbundled | focused marker 11/11; DuckDB 72/72; feature CLI 4/4; DuckDB/CLI Clippy, feature build, formatting, and whitespace gates pass. Math 18, Eggcc 77, Hardboiled 20, and Luminal 38 markers execute before distinct later fail-closed boundaries; Pointer retains raw-input boundary. | freeze Design A for three independent reviews; no writer repair, commit, broad proof gate, or next-front work authorized |
+| 2026-07-29 | frozen marker admission review at owned hash `9e192f26...` | complete production compiler/config/typed-role/action and focused-test audit; reviewer reproduced HEAD/hash/status at both boundaries; no writes/builds/tests/writer contact | `REVISE` for canary evidence only: add `(Some,Some)` and explicit path/container/custom fallthrough plus naive, primitive-output, and marker default/identity/subsumability mutations with RuleId preservation. Production tri-state logic and ordering are correct. | hold repair until semantic and SQL/test reviews finish, then consolidate at most one bounded repair |
+| 2026-07-29 | frozen marker semantic review at owned hash `9e192f26...` | Reference/SPI comparison plus complete compiler/executor/canary audit; reviewer reproduced HEAD/hash/status at both boundaries; no writes/builds/tests/writer contact | `PASS`: all matches share the pre-wave; Deletes precede heads; only Standard closure recurses; Marker IDs remain zero; one-hop, convergence, cross-delete, generation/report split, nonzero-watermark rollback/retry, scratch and telemetry publication are correct | no semantic repair required; retain wide-codec and commit-failure canaries as non-blocking inherited risks |
+| 2026-07-29 | frozen marker SQL/test/API review at owned hash `9e192f26...` | complete generated-SQL, shared-executor, public-API, forbidden-surface, scope, accounting, and canary audit; reviewer reproduced HEAD/hash/status at both boundaries; no writes/builds/tests/writer contact | `REVISE` for the same canary gap: explicitly exercise marker non-ownership of path/container/custom near-shapes and add naive/wrong-primitive-output cases. Typed SQL, ranking, owner preflight, zero-ID behavior, transactions, Standard regression surface, and scope pass. | consolidate with admission feedback into the sole bounded repair; production changes only if a new canary proves a live classifier defect |
+| 2026-07-29 | sole marker repair freeze at committed HEAD `2914373` | coordinator reproduced repaired owned hash `fce5af5b1359614de29079f34309e57be69c9ff7264a43040ee37f615f4a21d1`; delta only in marker tests plus test-only visibility of the existing path fixture constructor | repair stayed test-only: direct canaries now cover `(Some,Some)`, real path/container/custom-Block/no-outer/direct/Standard fallthrough and the full requested flag/primitive/action/config/alias/UF mutation matrix. Focused 12/12, DuckDB 73/73, feature CLI 4/4, all lint/build/format/diff gates pass; five public boundaries unchanged. | return only repaired surface to admission and SQL/test reviewers; repair budget exhausted and no production semantic re-review needed |
+| 2026-07-29 | repaired marker admission re-review at owned hash `fce5af5b...` | direct initial-to-repaired test-surface review; reviewer reproduced HEAD/hash/status at both boundaries; no writes/builds/tests/writer contact | `PASS`: direct `compile_marker_rekey -> None` plus RuleId-0 canaries close both-ordered, real path, container, custom Block, no-outer, direct, and Standard fallthrough; selected flag/primitive/config/action/UF errors are complete | admission gate closed; no production correction or second repair |
+| 2026-07-29 | repaired marker SQL/test re-review at owned hash `fce5af5b...` | direct initial-to-repaired test-surface/API/scope review; reviewer reproduced HEAD/hash/status at both boundaries; no writes/builds/tests/writer contact | `PASS`: the sole blocker closes through direct classifier/RuleId canaries; repair is test-only, accounting is 12 marker plus 61 prior tests, and no forbidden API/scope drift appeared | all frozen reviews pass; coordinator acceptance set authorized |
+| 2026-07-29 | coordinator final marker-rekey acceptance | reproduced owned hash `fce5af5b1359614de29079f34309e57be69c9ff7264a43040ee37f615f4a21d1`; nonbundled DuckDB lib and focused marker tests; DuckDB and feature-CLI Clippy; feature CLI test/build; format/diff; five rebuilt proof-mode probes; `make proof-tests`; every process externally capped at 110 seconds | fresh PASS: DuckDB 73/73, marker 12/12, feature CLI 4/4, all lint/build/format/diff gates exit 0; Math/Eggcc/Hardboiled/Luminal execute 18/77/20/38 markers before distinct later fail-closed boundaries, Pointer retains raw input, and no probe times out; proof gate core 204/204 plus experimental 8/8 in 22.36s | marker rekey accepted for one local checkpoint commit; complete ordered-union raw input is the next bounded frontier |
 
 ## Review rubric
 
@@ -732,12 +756,88 @@ frontier to reassessment rather than another micro-variant.
   trace; if both designs fail the same semantic gate, exit the goal early. Reaching
   marker rekey is success for this slice and must not be absorbed opportunistically.
 
+## Worker contract: marker rekey
+
+- **Hypothesis:** the exact generated marker family can be recognized from
+  typed/config topology and executed with Standard rebuild rules inside one
+  stable DuckDB pre-wave and transaction, without shared SPI or proof-name
+  knowledge.
+- **Target artifact:** a DuckDB-local `MarkerRekeyPlan`, source-independent
+  tests, and a combined `StandardRebuild | MarkerRekey` executor. The compiler
+  is tri-state: unrelated families fall through, a selected malformed family
+  errors before RuleId allocation, and only complete marker forms are admitted.
+- **Exact family:** seminaive/decomposed; two `ReadMode::All` table atoms and
+  typed `!=(Id, Id) -> Unit`; marker config is arbitrary safe scalar/Id keys
+  plus Unit, `AssertEq`, `Fail`, no identity values, non-subsumable; the selected
+  Id key joins an exact self-displacing KeyToParent UF; head order is canonical
+  marker Set followed by stale marker Delete with no other action.
+- **Execution:** materialize and count every Standard and Marker stage before
+  mutation; reject any other mixed kind; validate owners and reserve only
+  Standard fresh IDs; globally apply Standard eq-key plus Marker stale Deletes,
+  then deterministic Standard heads plus Marker Sets, then drain only Standard
+  ordered-union queues. Marker rules allocate no IDs and do not recursively
+  close chains in the same bounded call. One physical generation bump covers
+  all changes; deletion-only remains public `changed=false`; every row, counter,
+  stage, run id, telemetry field, and watermark shares the transaction boundary.
+- **Canaries:** unary and mixed typed 27-key/index-21 forms; body permutations;
+  unfiltered `All`; converging keys; pre-existing canonical deletion-only;
+  cross-delete chain across calls; reversed marker schedule; mixed stable
+  Standard/Marker snapshot; exact Standard allocation with zero Marker slots;
+  duplicate-owner and late nonzero-watermark rollback/retry; quiescence; and a
+  complete fallthrough/error matrix for mode, flags, primitive, roles, configs,
+  actions, aliasing, containers, custom rules, path rules, and ordinary direct
+  rules with RuleId preservation.
+- **Public gate:** Math must pass all 18 markers, Eggcc 77, Hardboiled 20, and
+  Luminal 38 before stopping at their distinct next unsupported registration;
+  Pointer must remain at raw-input Block preflight. No probe may time out and no
+  timing is a completion threshold.
+- **Owned write set:** `egglog-experimental/duckdb/**` only, excluding this
+  ledger. Expected files are a new marker compiler/tests plus narrow
+  `rule_sql.rs`, `storage.rs`, `rebuild.rs`, and module-wiring changes. No
+  frontend/backend-trait/Reference/DD, manifest/lockfile, fixture/snapshot,
+  benchmark harness/cache, raw input, container/custom merge, proof-name
+  registry, unsafe/private API, UDF, host callback/mirror, performance tuning,
+  commit, or push.
+- **Verification:** focused marker tests; complete nonbundled DuckDB lib tests;
+  DuckDB and feature-CLI Clippy with warnings denied; feature CLI test/build;
+  formatting/diff checks; and five public probes. Every subprocess receives the
+  external 110-second watchdog; no bundled build. Coordinator owns the broad
+  proof gate after independent frozen-artifact review.
+- **Stop:** freeze Design A's first reviewable artifact without commit or push.
+  At most one independent-review-authorized repair may follow. If variant
+  branching cannot preserve stable-prewave/global phases/rollback without
+  shared or forbidden machinery, try one shared typed `RebuildingPlan` Design B.
+  If both designs fail the same semantic gate, exit early; do not add a second
+  `run_rules`, recursive marker closure, name special case, or third design.
+
+### Sole authorized marker repair
+
+- Add marker-specific RuleId-preserving canaries for the `(Some, Some)`
+  ordered-union fallthrough and explicit path, container, and custom-Block
+  near-shapes. The assertions must distinguish `Ok(None)` fallthrough from a
+  selected marker-family error rather than merely checking that registration
+  fails somewhere later.
+- Complete the selected-family mutation matrix for `seminaive = false`, wrong
+  primitive output/signature, and marker `DefaultVal`, identity-count, and
+  subsumability changes. Include action-target/Unit and opposite-UF-orientation
+  mutations if they can be expressed without unrelated fixture machinery.
+- This is test-only by default. A narrow production admission correction is
+  permitted only when one of the new canaries demonstrates a live classifier
+  defect, and must be reported explicitly. Executor/storage semantics are
+  frozen.
+- Rerun focused marker and complete DuckDB tests, DuckDB/feature CLI Clippy,
+  feature CLI test/build, format/whitespace, the owned hash, and five public
+  boundaries, all individually capped at 110 seconds and nonbundled. Freeze the
+  repaired artifact without commit/push and return it to both revising reviewers;
+  no second repair is authorized.
+
 ## Next action
 
-Create one local checkpoint commit for the accepted standard scalar rebuild
-artifact and this ledger, with no push. From that clean commit, seat two
-disjoint read-only circles: one must census and specify marker-rekey semantics;
-the other must specify the safe raw-SQL input path for Pointer's Rust-parsed
-facts and Block-configured missing-row insertion. Compare reach and dependency
-order before authorizing exactly one next writing circle. Do not combine either
-with container/custom merge lowering or performance tuning.
+Checkpoint `2914373` remains the committed production base with no push. The
+accepted marker-rekey artifact is frozen at owned hash
+`fce5af5b1359614de29079f34309e57be69c9ff7264a43040ee37f615f4a21d1`;
+all three independent reviews and fresh coordinator gates pass, and its repair
+budget is exhausted. Create one local checkpoint commit with no push. Then
+record the commit and seat bounded read-only ordered-union reuse and raw-input
+test-plan circles before authorizing one DuckDB-only writer. Performance work
+remains descriptive and out of this next slice.

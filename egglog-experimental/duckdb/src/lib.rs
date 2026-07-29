@@ -26,6 +26,9 @@ use egglog_numeric_id::NumericId;
 
 #[cfg(test)]
 mod cleanup_effect_tests;
+mod marker_rekey;
+#[cfg(test)]
+mod marker_rekey_tests;
 mod path_compress;
 #[cfg(test)]
 mod path_compress_tests;
