@@ -104,8 +104,8 @@ def test_pair_cli_accepts_arbitrary_explicit_endpoints() -> None:
     assert args.detail == "rulesets"
 
 
-@pytest.mark.parametrize("treatment", ("sliced-proofs",))
-def test_pair_cli_accepts_slice_treatments_on_the_main_backend(treatment: str) -> None:
+def test_pair_cli_accepts_slice_treatments_on_the_main_backend() -> None:
+    treatment = "sliced-proofs"
     args = benchmark.parse_benchmark_args(["--treatment", treatment])
     _baseline, candidate = benchmark.endpoint_requests(args)
 

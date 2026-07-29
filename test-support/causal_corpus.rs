@@ -15,7 +15,7 @@ pub struct ReplayRoots {
     pub extracts: usize,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub enum Disposition {
     StaticUnsupported { reason: &'static str },
     Unsupported { diagnostic: &'static str },
@@ -24,7 +24,6 @@ pub enum Disposition {
     ChecksOnly,
 }
 
-#[derive(Clone, Copy, Debug)]
 pub struct AllowlistGroup {
     pub paths: &'static [&'static str],
     pub disposition: Disposition,
@@ -310,7 +309,6 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
     },
 ];
 
-#[derive(Clone)]
 pub struct CausalCase {
     pub name: String,
     pub path: PathBuf,

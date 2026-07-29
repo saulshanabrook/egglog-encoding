@@ -889,14 +889,6 @@ impl<'a> TraceView<'a> {
             .ok_or(TraceViewError::UnknownRemoval(index))
     }
 
-    /// Borrow the first successful retained criterion for one check id.
-    pub fn check_root(&self, check: u32) -> Result<&'a Criterion, TraceViewError> {
-        self.arena
-            .check_roots
-            .get(&check)
-            .ok_or(TraceViewError::UnknownCheck(check))
-    }
-
     /// Return all retained first-success criteria in ascending check-id order.
     ///
     /// The vector owns only the sorted references; each [`Criterion`] remains

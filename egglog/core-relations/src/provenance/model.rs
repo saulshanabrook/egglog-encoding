@@ -18,12 +18,12 @@ macro_rules! trace_handle {
 
         impl $name {
             /// Creates a handle from its compact trace-local integer representation.
-            pub const fn new(value: $inner) -> Self {
+            $visibility const fn new(value: $inner) -> Self {
                 Self(value)
             }
 
             /// Returns the compact trace-local integer representation.
-            pub const fn get(self) -> $inner {
+            $visibility const fn get(self) -> $inner {
                 self.0
             }
         }
@@ -881,12 +881,6 @@ pub enum TraceViewError {
     UnknownRemoval(
         /// Zero-based removal-record index requested by the consumer.
         usize,
-    ),
-    /// The requested check has no retained first-success criterion.
-    #[error("unknown successful check {0}")]
-    UnknownCheck(
-        /// Frontend check identity with no captured success.
-        u32,
     ),
     /// The requested table has no registered replay schema.
     #[error("unknown replay table {0:?}")]

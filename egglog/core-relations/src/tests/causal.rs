@@ -3595,7 +3595,9 @@ fn late_fact_rekey_attachment_case(reverse_equality_endpoints: bool) {
         .with_view(|view| {
             let equality = view.applied_equality(crate::AppliedEqualityId::new(1))?;
             let fact_record = view.fact(fact)?;
-            let root = view.check_root(7900)?;
+            let roots = view.check_roots();
+            assert_eq!(roots.len(), 1);
+            let root = roots[0];
             let crate::CauseRef::Cause(source) = fact_record.cause else {
                 panic!("expected a source cause")
             };

@@ -82,9 +82,9 @@ pub(crate) trait PendingPremiseResolver: Send + Sync {
     }
 }
 
-/// A compact, cloneable cause handle carried by one staged equality proposal.
-/// the firing was already published when native head execution began, so the
-/// handle needs no batch lifetime or promotion allocation.
+/// A compact, cloneable handle for one contiguous batch of already-published
+/// firings. Native head execution can cite each lane without another promotion
+/// allocation or a pending-batch lifetime.
 #[derive(Clone)]
 pub(crate) struct ObservedFiringBatch {
     trace: Trace,
@@ -746,15 +746,6 @@ impl CaptureBatch {
         }
     }
 
-    pub(crate) fn record_fact(
-        &mut self,
-        table: TableId,
-        cause: impl Into<PackedCauseRef>,
-        row: &[Value],
-    ) -> FactId {
-        self.push_fact(table, cause.into(), row, None)
-    }
-
     /// Record one effective logical fact using only its raw creation row and
     /// compact static mutation-site origin. This is the production serial
     /// path: it performs no replay-term lookup, interning, or per-row heap
@@ -808,7 +799,7 @@ impl CaptureBatch {
             Some(RowOriginRef::Fact(prior_fact)) => {
                 self.record_fact_from_prior(table, cause, row, prior_fact)
             }
-            None => self.record_fact(table, cause, row),
+            None => self.push_fact(table, cause.into(), row, None),
         }
     }
 
@@ -2312,7 +2303,7 @@ impl Trace {
     /// `(sort, value)` reverse mapping remains first-wins, so
     /// [`Trace::lookup_term`] may return an earlier term for the same raw value.
     /// Operator arity and child sorts are caller invariants.
-    pub fn intern_call(
+    pub(crate) fn intern_call(
         &self,
         sort: ReplaySortId,
         op: ReplayOpId,
@@ -2367,7 +2358,7 @@ impl Trace {
     /// Mutable containers can have additional exact versions in the internal
     /// anchor index; this generic lookup intentionally returns only the stable
     /// first-wins mapping.
-    pub fn lookup_term(&self, sort: ReplaySortId, value: Value) -> Option<ReplayTermId> {
+    pub(crate) fn lookup_term(&self, sort: ReplaySortId, value: Value) -> Option<ReplayTermId> {
         self.0.replay_terms.lookup(sort, value)
     }
 
@@ -2880,7 +2871,7 @@ impl Trace {
 
     /// Clone one interned structural term, or return `None` for an unknown id,
     /// including [`ReplayTermId::MISSING`].
-    pub fn replay_term(&self, id: ReplayTermId) -> Option<ReplayTerm> {
+    pub(crate) fn replay_term(&self, id: ReplayTermId) -> Option<ReplayTerm> {
         self.0.replay_terms.node(id)
     }
 

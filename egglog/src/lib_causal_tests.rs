@@ -869,7 +869,9 @@ fn trace_capture_exact_rule_premise_and_wave() {
                     assert_eq!(id, firing_id);
                 }
             }
-            let root = view.check_root(0)?;
+            let roots = view.check_roots();
+            assert_eq!(roots.len(), 1);
+            let root = roots[0];
             assert_eq!(root.check, 0);
             assert_eq!(root.wave.get(), 1);
             assert!(!root.premises.is_empty());
@@ -898,7 +900,9 @@ fn trace_preserve_distinct_check_equality_terms() {
 
     egraph
         .with_trace_view(|view| {
-            let root = view.check_root(0)?;
+            let roots = view.check_roots();
+            assert_eq!(roots.len(), 1);
+            let root = roots[0];
             assert_eq!(root.premises.len(), 2);
             assert_eq!(root.equalities.len(), 1);
             let equality = root.equalities[0];
