@@ -56,6 +56,14 @@ def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Collect or reuse one egglog benchmark comparison.")
     parser.add_argument("files", nargs="*", help="egglog files to benchmark")
     parser.add_argument(
+        "--exclude-name",
+        action="append",
+        default=[],
+        dest="exclude_names",
+        metavar="NAME",
+        help="exclude one default workload by exact basename; repeatable and incompatible with positional files",
+    )
+    parser.add_argument(
         "--fact-directory",
         default=None,
         help="fact directory used by explicitly selected benchmark files",
@@ -230,7 +238,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         # ReportStore validates the complete existing artifact before target
         # materialization can build or run anything.
         store = ReportStore(report_path)
-        files = resolve_files(args.files, invocation_cwd, args.fact_directory)
+        files = resolve_files(args.files, invocation_cwd, args.fact_directory, args.exclude_names)
         resolved_targets = resolve_targets(
             group_endpoint_requests(baseline_request, candidate_request),
             store,

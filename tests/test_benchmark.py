@@ -42,7 +42,22 @@ def test_pair_cli_defaults_to_current_main_off_vs_proofs() -> None:
     assert baseline == models.EndpointRequest(targets.parse_target("."), "main", "off")
     assert candidate == models.EndpointRequest(targets.parse_target("."), "main", "proofs")
     assert args.detail == "summary"
+    assert args.exclude_names == []
     assert args.command == "benchmark"
+
+
+def test_pair_cli_parses_repeated_default_workload_exclusions() -> None:
+    args = benchmark.parse_benchmark_args(
+        [
+            "--exclude-name",
+            "math-microbenchmark.egg",
+            "--exclude-name",
+            "herbie.egg",
+        ]
+    )
+
+    assert args.exclude_names == ["math-microbenchmark.egg", "herbie.egg"]
+    assert args.files == []
 
 
 def test_compare_target_inherits_candidate_but_compare_backend_stays_main() -> None:

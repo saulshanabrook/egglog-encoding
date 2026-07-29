@@ -41,15 +41,18 @@ def resolve_files(
     raw_files: Sequence[str],
     invocation_cwd: Path,
     fact_directory: str | None = None,
+    exclude_names: Sequence[str] = (),
 ) -> tuple[FileSpec, ...]:
     """Resolve selected or default workloads relative to the invocation directory."""
 
     if raw_files:
+        if exclude_names:
+            raise ValueError("--exclude-name cannot be used with positional benchmark files")
         chosen = tuple(WorkloadConfig(file, fact_directory) for file in raw_files)
     else:
         if fact_directory is not None:
             raise ValueError("--fact-directory requires at least one explicit benchmark file")
-        chosen = DEFAULT_WORKLOADS
+        chosen = _filter_default_workloads(exclude_names)
     files: list[FileSpec] = []
     for workload in chosen:
         display_path = workload.file
@@ -82,6 +85,34 @@ def resolve_files(
     resolved = tuple(files)
     validate_workloads(resolved)
     return resolved
+
+
+def _filter_default_workloads(exclude_names: Sequence[str]) -> tuple[WorkloadConfig, ...]:
+    """Filter defaults by exact basename while preserving their full configs."""
+
+    if not exclude_names:
+        return DEFAULT_WORKLOADS
+
+    excluded: set[str] = set()
+    for name in exclude_names:
+        if name in excluded:
+            raise ValueError(f"duplicate --exclude-name: {name}")
+        excluded.add(name)
+
+    by_basename: dict[str, list[WorkloadConfig]] = {}
+    for workload in DEFAULT_WORKLOADS:
+        by_basename.setdefault(Path(workload.file).name, []).append(workload)
+    for name in exclude_names:
+        matches = by_basename.get(name, ())
+        if not matches:
+            raise ValueError(f"unknown default workload basename for --exclude-name: {name}")
+        if len(matches) > 1:
+            raise ValueError(f"ambiguous default workload basename for --exclude-name: {name}")
+
+    chosen = tuple(workload for workload in DEFAULT_WORKLOADS if Path(workload.file).name not in excluded)
+    if not chosen:
+        raise ValueError("--exclude-name cannot exclude every default workload")
+    return chosen
 
 
 def _egglog_tokens(source: str) -> Iterator[str | None]:

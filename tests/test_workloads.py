@@ -91,6 +91,75 @@ def test_default_workloads_are_the_six_research_cases() -> None:
     assert pointer.fact_directory_sha256.startswith("sha256:")
 
 
+def test_default_workload_exclusions_preserve_order_and_pointer_facts() -> None:
+    default_files = workloads.resolve_files([], ROOT)
+    filtered_files = workloads.resolve_files(
+        [],
+        ROOT,
+        exclude_names=("herbie.egg", "math-microbenchmark.egg"),
+    )
+
+    assert tuple(file.display_path for file in filtered_files) == (
+        "egglog-experimental/tests/fixtures/eggcc-2mm-pass1.egg",
+        "benchmarks/pointer-analysis-small.egg",
+        "egglog/tests/hardboiled_conv1d_32.egg",
+        "benchmarks/luminal-llama.egg",
+    )
+    default_pointer = next(
+        file for file in default_files if file.display_path == "benchmarks/pointer-analysis-small.egg"
+    )
+    filtered_pointer = next(
+        file for file in filtered_files if file.display_path == "benchmarks/pointer-analysis-small.egg"
+    )
+    assert filtered_pointer.fact_directory == default_pointer.fact_directory
+    assert filtered_pointer.fact_directory_sha256 == default_pointer.fact_directory_sha256
+
+
+@pytest.mark.parametrize(
+    ("exclude_names", "message"),
+    (
+        (("benchmarks/pointer-analysis-small.egg",), "unknown default workload basename"),
+        (("pointer-analysis-small",), "unknown default workload basename"),
+        (("herbie.egg", "herbie.egg"), "duplicate --exclude-name"),
+        (
+            tuple(Path(workload.file).name for workload in workloads.DEFAULT_WORKLOADS),
+            "cannot exclude every default workload",
+        ),
+    ),
+)
+def test_default_workload_exclusions_reject_invalid_names(
+    exclude_names: tuple[str, ...],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        workloads.resolve_files([], ROOT, exclude_names=exclude_names)
+
+
+def test_default_workload_exclusion_rejects_ambiguous_basename(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        workloads,
+        "DEFAULT_WORKLOADS",
+        (
+            workloads.WorkloadConfig("left/shared.egg"),
+            workloads.WorkloadConfig("right/shared.egg"),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="ambiguous default workload basename"):
+        workloads.resolve_files([], tmp_path, exclude_names=("shared.egg",))
+
+
+def test_default_workload_exclusion_rejects_positional_files(tmp_path: Path) -> None:
+    benchmark_file = tmp_path / "input.egg"
+    benchmark_file.write_text("(check (= 1 1))\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="cannot be used with positional benchmark files"):
+        workloads.resolve_files(["input.egg"], tmp_path, exclude_names=("herbie.egg",))
+
+
 def test_explicit_fact_directory_is_resolved_and_hashed(tmp_path: Path) -> None:
     benchmark_file = tmp_path / "input.egg"
     benchmark_file.write_text('(input Edge "edge.tsv")\n', encoding="utf-8")

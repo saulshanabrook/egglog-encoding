@@ -190,6 +190,12 @@ Paths are resolved relative to the command invocation directory, not relative
 to either target. Both endpoints therefore run the exact same file and fact
 directory contents. Their SHA-256 hashes are part of the cache identity.
 
+Without positional files, repeat `--exclude-name NAME` to omit default
+workloads by exact basename, for example
+`./bench.py --exclude-name pointer-analysis-small.egg`. Each name must identify
+exactly one default workload, names cannot be repeated, and at least one
+default workload must remain.
+
 With no positional files, the representative suite is:
 
 - `egglog/tests/math-microbenchmark.egg`
@@ -198,6 +204,7 @@ With no positional files, the representative suite is:
   `benchmarks/data/pointer-analysis-small`
 - `egglog/tests/hardboiled_conv1d_32.egg`
 - `benchmarks/luminal-llama.egg`
+- `egglog/tests/web-demo/herbie.egg`
 
 The workloads are intentionally bounded proxies rather than an undifferentiated
 corpus:
