@@ -669,7 +669,6 @@ impl Table for DisplacedTable {
                     let left_root = self.uf.find_naive(row[0]);
                     let right_root = self.uf.find_naive(row[1]);
                     if left_root == right_root {
-                        capture_batch.record_redundant_union();
                         continue;
                     }
                     let cause = cause

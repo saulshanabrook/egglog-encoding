@@ -17,7 +17,7 @@ use crate::provenance::{RowOriginSpec, TermOriginSpec, TermTemplate};
 use crate::{
     CriterionCaptureSpec, CriterionEndpointSource, FactId, FiringCaptureSpec, MergeOriginSelector,
     PlanStrategy, ReplayConstructorSpec, ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTableKind,
-    ReplayTerm, RowOriginSiteId, SourceCaptureSpec, SourceRef, Trace, Wave,
+    ReplayTerm, RowOriginSiteId, SourceRef, Trace, Wave,
     action::{ExecutionState, Instr, WriteVal},
     common::Value,
     free_join::{
@@ -250,7 +250,7 @@ fn causal_trace_record_only_effective_constructor_and_union_commits() {
     );
     let fresh = db.add_counter();
 
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     let value_sort = ReplaySortId::new(20);
     let node_sort = ReplaySortId::new(21);
     let node_op = ReplayOpId::new(20);
@@ -310,17 +310,19 @@ fn causal_trace_record_only_effective_constructor_and_union_commits() {
             node_sort,
         )
         .unwrap();
-    action.build_with_capture(
-        "derive-node",
-        FiringCaptureSpec::with_bindings(
-            0,
-            [input_atom],
-            [
-                crate::RuleBindingSpec::variable(value, None),
-                crate::RuleBindingSpec::variable(source_node, None),
-            ],
-        ),
-    );
+    action
+        .try_build_with_capture(
+            "derive-node",
+            FiringCaptureSpec::new(
+                0,
+                [input_atom],
+                [
+                    crate::RuleBindingSpec::variable(value, value_sort),
+                    crate::RuleBindingSpec::variable(source_node, node_sort),
+                ],
+            ),
+        )
+        .unwrap();
     let rule_set = rules.build();
 
     db.set_trace_wave(Wave::new(1));
@@ -373,15 +375,7 @@ fn causal_trace_record_only_effective_constructor_and_union_commits() {
                 }
             );
             assert_eq!(equality.reason, crate::EqualityReason::RuleUnion(match_id));
-            let counters = view.counters();
             assert_eq!(view.totals().firings, 1);
-            assert_eq!(
-                (
-                    counters.premise_handles,
-                    counters.logical_firing_term_handles
-                ),
-                (1, 2)
-            );
             assert_eq!(view.fact(source.id)?.values, source.values);
             Ok((source.id, derived_fact.id, node_term))
         })
@@ -431,10 +425,19 @@ fn causal_trace_record_only_effective_constructor_and_union_commits() {
             ],
         )
         .unwrap();
-    action.build_with_capture(
-        "consume-derived-node",
-        FiringCaptureSpec::new(1, [derived_atom], [consumed_value, consumed_node]),
-    );
+    action
+        .try_build_with_capture(
+            "consume-derived-node",
+            FiringCaptureSpec::new(
+                1,
+                [derived_atom],
+                [
+                    crate::RuleBindingSpec::variable(consumed_value, value_sort),
+                    crate::RuleBindingSpec::variable(consumed_node, node_sort),
+                ],
+            ),
+        )
+        .unwrap();
     let consumers = consumers.build();
     db.set_trace_wave(Wave::new(2));
     let second = db.run_rule_set(&consumers, ReportLevel::TimeOnly);
@@ -502,7 +505,7 @@ fn capture_database_clone_and_clear_fail_before_mutation() {
         iter::empty(),
         iter::empty(),
     );
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     register_test_capture_table(&trace, table, 1);
     let value = Value::new(1);
     install_test_row_terms(&trace, &[value]);
@@ -675,7 +678,7 @@ fn causal_capture_rebuild_rekeys_with_exact_landmark_and_noop_preserves_fact() {
         iter::once(uf),
         iter::empty(),
     );
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     let sort = ReplaySortId::new(79);
     trace
         .register_table_layout(rebuilt, &[Some(sort), None])
@@ -759,9 +762,7 @@ fn causal_capture_rebuild_rekeys_with_exact_landmark_and_noop_preserves_fact() {
                 (projected.left.term, projected.right.term),
                 (old_term, new_term)
             );
-            let counters = view.counters();
             assert_eq!(view.totals().rekeys, 1);
-            assert_eq!(counters.rebuild_equalities, 1);
             Ok(())
         })
         .unwrap();
@@ -777,7 +778,6 @@ fn causal_capture_rebuild_rekeys_with_exact_landmark_and_noop_preserves_fact() {
         .with_view(|view| {
             assert_eq!(view.totals().facts, 1);
             assert_eq!(view.totals().rekeys, 1);
-            assert_eq!(view.counters().rebuild_equalities, 1);
             Ok(())
         })
         .unwrap();
@@ -815,7 +815,7 @@ fn causal_capture_rebuild_rekeys_with_exact_landmark_and_noop_preserves_fact() {
 fn trusted_exact_occurrences_extend_from_both_native_roots() {
     let mut db = Database::default();
     let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     let child_sort = ReplaySortId::new(7902);
     let sort = ReplaySortId::new(7903);
     let child = trace.intern_literal(child_sort, ReplayLiteral::I64(7), Value::new(7));
@@ -902,7 +902,7 @@ fn causal_capture_rebuild_collision_records_exact_congruence() {
         iter::once(uf),
         iter::once(uf),
     );
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     trace
         .register_table_layout(rebuilt, &[Some(sort), Some(sort), None])
         .unwrap();
@@ -1028,7 +1028,7 @@ fn causal_capture_rebuild_abort_is_atomic_across_target_tables() {
     };
     let first = db.add_table(relation(), iter::once(uf), iter::empty());
     let second = db.add_table(relation(), iter::once(uf), iter::empty());
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     let table_sort = ReplaySortId::new(91);
     let uf_sort = table_sort;
     for table in [first, second] {
@@ -1143,7 +1143,6 @@ fn causal_capture_rebuild_abort_is_atomic_across_target_tables() {
     trace
         .with_view(|view| {
             assert_eq!(view.totals().rekeys, 0);
-            assert_eq!(view.counters().rebuild_equalities, 0);
             Ok(())
         })
         .unwrap();
@@ -1153,7 +1152,7 @@ fn causal_capture_rebuild_abort_is_atomic_across_target_tables() {
 fn typed_union_forest_is_immutable_across_native_path_compression_and_redundancy() {
     let mut db = Database::default();
     let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     let sort = ReplaySortId::new(80);
     let a = Value::new(30);
     let b = Value::new(20);
@@ -1204,7 +1203,6 @@ fn typed_union_forest_is_immutable_across_native_path_compression_and_redundancy
 
     trace.with_view(|view| {
     assert_eq!(view.totals().applied_equalities, 2);
-    assert_eq!(view.counters().redundant_unions, 1);
     assert!(matches!(view.applied_equality(crate::AppliedEqualityId::new(1))?.reason, crate::EqualityReason::RuleUnion(id) if view.firing(id)?.rule == 80));
     assert!(matches!(view.applied_equality(crate::AppliedEqualityId::new(2))?.reason, crate::EqualityReason::RuleUnion(id) if view.firing(id)?.rule == 81));
     let endpoint = |term, raw| crate::EqualityEndpoint { sort, term, raw };
@@ -1269,7 +1267,7 @@ fn invalid_typed_union_staging_fails_before_native_mutation() {
     ] {
         let mut db = Database::default();
         let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
-        let trace = db.enable_trace();
+        let trace = db.try_enable_trace().unwrap();
         let sort = ReplaySortId::new(90);
         let left = Value::new(4);
         let right = Value::new(5);
@@ -1352,7 +1350,7 @@ fn merge_function_union_cites_one_match_and_immutable_prior_fact() {
         iter::empty(),
         iter::empty(),
     );
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     trace
         .register_table_layout(target, &[Some(sort), Some(sort)])
         .unwrap();
@@ -1403,10 +1401,19 @@ fn merge_function_union_cites_one_match_and_immutable_prior_fact() {
     action
         .insert(target, &[matched_key.into(), matched_value.into()])
         .unwrap();
-    action.build_with_capture(
-        "merge-union",
-        FiringCaptureSpec::new(100, [atom], [matched_key, matched_value]),
-    );
+    action
+        .try_build_with_capture(
+            "merge-union",
+            FiringCaptureSpec::new(
+                100,
+                [atom],
+                [
+                    crate::RuleBindingSpec::variable(matched_key, sort),
+                    crate::RuleBindingSpec::variable(matched_value, sort),
+                ],
+            ),
+        )
+        .unwrap();
     let rules = rules.build();
 
     db.set_trace_wave(Wave::new(1));
@@ -1462,7 +1469,7 @@ fn invalid_merge_function_union_fails_before_replacing_its_parent_row() {
         iter::empty(),
         iter::once(uf),
     );
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     trace
         .register_table_layout(target, &[Some(sort), Some(sort)])
         .unwrap();
@@ -1538,7 +1545,7 @@ fn causal_trace_reject_unsupported_merge_before_callback_effects() {
         iter::empty(),
         iter::empty(),
     );
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     trace
         .register_table_layout(table, &[Some(TEST_REPLAY_SORT), Some(TEST_REPLAY_SORT)])
         .unwrap();
@@ -1609,7 +1616,7 @@ fn causal_trace_reject_unsupported_merge_before_callback_effects() {
 fn causal_trace_record_same_term_native_alias_without_equality_edge() {
     let mut db = Database::default();
     let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     let child_sort = ReplaySortId::new(109);
     let container_sort = ReplaySortId::new(110);
     let op = ReplayOpId::new(109);
@@ -1760,7 +1767,7 @@ fn same_term_native_bridge_joins_distinct_historical_components() {
         iter::empty(),
     );
     let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     let sort = ReplaySortId::new(214);
     let child_sort = ReplaySortId::new(215);
     let child = trace.intern_literal(child_sort, ReplayLiteral::I64(1), Value::new(1));
@@ -1909,7 +1916,7 @@ fn same_term_native_bridge_joins_distinct_historical_components() {
 #[test]
 fn same_batch_native_catch_up_matches_durable_component_behavior() {
     let mut db = Database::default();
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     let mut uf = DisplacedTable::default();
     uf.enable_trace();
     let child_sort = ReplaySortId::new(117);
@@ -1960,7 +1967,7 @@ fn same_batch_native_catch_up_matches_durable_component_behavior() {
 #[test]
 fn causal_wave_accepts_monotone_native_equality_timestamps() {
     let mut db = Database::default();
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     let wave = Wave::new(1);
 
     assert!(
@@ -2020,7 +2027,7 @@ fn causal_trace_capture_exact_rhs_producer_term_not_global_alias() {
         iter::empty(),
         iter::empty(),
     );
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     let child_sort = ReplaySortId::new(197);
     let result_sort = ReplaySortId::new(198);
     let op = ReplayOpId::new(197);
@@ -2058,11 +2065,16 @@ fn causal_trace_capture_exact_rhs_producer_term_not_global_alias() {
         )
         .unwrap();
     action.insert(derived, &[produced.into()]).unwrap();
-    action.build_with_capture(
-        "exact-rhs-current-term",
-        FiringCaptureSpec::new(197, iter::empty(), [produced])
-            .with_current_vars([(produced, result_sort)]),
-    );
+    action
+        .try_build_with_capture(
+            "exact-rhs-current-term",
+            FiringCaptureSpec::new(
+                197,
+                iter::empty(),
+                [crate::RuleBindingSpec::variable(produced, result_sort)],
+            ),
+        )
+        .unwrap();
     let rules = rules.build();
     db.set_trace_wave(Wave::new(1));
     assert!(db.run_rule_set(&rules, ReportLevel::TimeOnly).changed);
@@ -2081,7 +2093,6 @@ fn causal_trace_capture_exact_rhs_producer_term_not_global_alias() {
             let derived_fact = fact_for_table(view, derived);
             let matched = view.firing(cause_firing(derived_fact.cause).unwrap())?;
             assert_eq!(view.firing_terms(matched.id)?.as_ref(), &[exact_call]);
-            assert_eq!(view.counters().logical_firing_term_handles, 1);
             assert_eq!(
                 trace.replay_term(exact_call),
                 Some(crate::ReplayTerm::Call {
@@ -2100,10 +2111,9 @@ fn capture_recipe_failure_precedes_catalog_and_rule_set_mutation() {
     const RULE: u32 = 199;
 
     let mut db = Database::default();
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     let sort = ReplaySortId::new(199);
     let op = ReplayOpId::new(199);
-    let before = trace.with_view(|view| Ok(view.counters())).unwrap();
     let mut rules = RuleSetBuilder::new(&mut db);
 
     let mut query = rules.new_rule();
@@ -2130,18 +2140,16 @@ fn capture_recipe_failure_precedes_catalog_and_rule_set_mutation() {
     let error = action
         .try_build_with_capture(
             "missing-producer",
-            FiringCaptureSpec::new(RULE, iter::empty(), [destination])
-                .with_current_vars([(destination, sort)]),
+            FiringCaptureSpec::new(
+                RULE,
+                iter::empty(),
+                [crate::RuleBindingSpec::variable(destination, sort)],
+            ),
         )
         .unwrap_err();
     assert_eq!(
         error.to_string(),
         "typed equality endpoint has no structural producer"
-    );
-    assert_eq!(
-        trace.with_view(|view| Ok(view.counters())).unwrap(),
-        before,
-        "failed preflight must not register a partial rule recipe"
     );
     trace
         .with_view(|view| {
@@ -2161,16 +2169,20 @@ fn capture_recipe_failure_precedes_catalog_and_rule_set_mutation() {
                 .with_immediate_container_promotion(TypeId::of::<Vec<Value>>()),
         ),
     );
-    action
+    let rule = action
         .try_build_with_capture(
             "valid-producer",
-            FiringCaptureSpec::new(RULE, iter::empty(), [destination])
-                .with_current_vars([(destination, sort)]),
+            FiringCaptureSpec::new(
+                RULE,
+                iter::empty(),
+                [crate::RuleBindingSpec::variable(destination, sort)],
+            ),
         )
         .unwrap();
 
     let rules = rules.build();
     assert_eq!(rules.plans.len(), 1);
+    assert!(rules.plans.get(rule).is_some());
     assert_eq!(rules.actions.len(), 1);
     let action = &rules.actions.iter().next().unwrap().1;
     let Instr::PromoteReplayCall {
@@ -2181,9 +2193,6 @@ fn capture_recipe_failure_precedes_catalog_and_rule_set_mutation() {
         panic!("valid rule lost its replay promotion origin")
     };
     assert_eq!(origin.get(), 1, "failed preflight consumed an origin id");
-    let after = trace.with_view(|view| Ok(view.counters())).unwrap();
-    assert_eq!(after.supported_current_recipe_roots, 1);
-    assert_eq!(after.missing_current_recipe_roots, 0);
 }
 
 #[test]
@@ -2205,7 +2214,7 @@ fn captureless_static_constructor_miss_fails_before_counter_or_rule_mutation() {
         iter::empty(),
     );
     let fresh = db.add_counter();
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     let sort = ReplaySortId::new(200);
     let op = ReplayOpId::new(200);
     let replay = ReplayConstructorSpec::new(sort, op, iter::empty::<ReplaySortId>());
@@ -2271,75 +2280,6 @@ fn captureless_static_constructor_miss_fails_before_counter_or_rule_mutation() {
 }
 
 #[test]
-fn causal_capture_binding_recipe_keeps_every_premise_occurrence() {
-    let mut db = Database::default();
-    let repeated = db.add_table(
-        SortedWritesTable::new(
-            2,
-            2,
-            None,
-            vec![],
-            Box::new(|_, left, right, _| {
-                assert_eq!(left, right);
-                false
-            }),
-        ),
-        iter::empty(),
-        iter::empty(),
-    );
-    let later = db.add_table(
-        SortedWritesTable::new(
-            1,
-            1,
-            None,
-            vec![],
-            Box::new(|_, left, right, _| {
-                assert_eq!(left, right);
-                false
-            }),
-        ),
-        iter::empty(),
-        iter::empty(),
-    );
-    let trace = db.enable_trace();
-    let sort = ReplaySortId::new(212);
-    trace
-        .register_table_layout(repeated, &[Some(sort), Some(sort)])
-        .unwrap();
-    trace.register_table_layout(later, &[Some(sort)]).unwrap();
-
-    let mut rules = RuleSetBuilder::new(&mut db);
-    let mut query = rules.new_rule();
-    let x = query.new_var_named("x");
-    let repeated_atom = query
-        .add_atom(repeated, &[x.into(), x.into()], &[])
-        .unwrap();
-    let later_atom = query.add_atom(later, &[x.into()], &[]).unwrap();
-    query.build().build_with_capture(
-        "all-premise-occurrences",
-        FiringCaptureSpec::new(212, [repeated_atom, later_atom], [x]),
-    );
-    let rules = rules.build();
-    let capture = rules
-        .actions
-        .iter()
-        .next()
-        .and_then(|(_, action)| action.capture.as_ref())
-        .expect("rule action must retain its capture recipe");
-    let occurrences = capture.binding_sources[0]
-        .premise_occurrences()
-        .expect("body-bound variable must have premise occurrences");
-    assert_eq!(
-        occurrences
-            .iter()
-            .map(|occurrence| (occurrence.premise, occurrence.column))
-            .collect::<Vec<_>>(),
-        [(0, 0), (0, 1), (1, 0)],
-        "duplicate columns and later atoms are all part of the static recipe"
-    );
-}
-
-#[test]
 fn prior_or_incoming_uses_callback_result_not_opaque_value_order() {
     let mut db = Database::default();
     let table = db.add_table(
@@ -2356,7 +2296,7 @@ fn prior_or_incoming_uses_callback_result_not_opaque_value_order() {
         iter::empty(),
         iter::empty(),
     );
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     let sort = ReplaySortId::new(216);
     trace
         .register_table_layout(table, &[Some(sort), Some(sort)])
@@ -2506,7 +2446,7 @@ fn serial_compaction_preserves_live_and_historical_fact_ids() {
         iter::empty(),
         iter::empty(),
     );
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     register_test_capture_table(&trace, table, 2);
     let zero = trace.intern_test_term("zero");
     for key in 0..20 {
@@ -2586,7 +2526,7 @@ fn decomposed_projected_capture_case(retain_existential: bool) {
         iter::empty(),
         iter::empty(),
     );
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     for (table, columns) in [
         (r, 3),
         (s, 3),
@@ -2659,10 +2599,18 @@ fn decomposed_projected_capture_case(retain_existential: bool) {
         ordinary_vars.push(existential);
     }
     action.insert(derived, &outputs).unwrap();
-    action.build_with_capture(
-        "existential-rectangle",
-        FiringCaptureSpec::new(51, [r_atom, s_atom, t_atom, u_atom], ordinary_vars),
-    );
+    action
+        .try_build_with_capture(
+            "existential-rectangle",
+            FiringCaptureSpec::new(
+                51,
+                [r_atom, s_atom, t_atom, u_atom],
+                ordinary_vars
+                    .into_iter()
+                    .map(|variable| crate::RuleBindingSpec::variable(variable, TEST_REPLAY_SORT)),
+            ),
+        )
+        .unwrap();
     let rule_set = rules.build();
     let (plan, _, _) = rule_set.plans.values().next().unwrap();
     let Plan::DecomposedPlan(plan) = plan else {
@@ -2890,8 +2838,10 @@ fn causal_capture_activation_is_all_or_nothing_across_tables() {
         buffer.stage_insert(&[Value::new(1), Value::new(0)]);
     }
 
-    let failed = catch_unwind(AssertUnwindSafe(|| db.enable_trace()));
-    assert!(failed.is_err());
+    assert_eq!(
+        db.try_enable_trace().err().unwrap(),
+        "table has queued capture-disabled mutations"
+    );
     assert!(
         db.trace.is_none(),
         "the database mode must remain disabled after any table fails preflight"
@@ -2907,14 +2857,14 @@ fn causal_capture_activation_is_all_or_nothing_across_tables() {
 }
 
 #[test]
-fn causal_presence_relation_remove_is_diagnostics_only() {
+fn causal_presence_relation_remove_is_not_retained() {
     let mut db = Database::default();
     let relation = db.add_table(
         SortedWritesTable::new(1, 1, None, vec![], Box::new(|_, _, _, _| false)),
         iter::empty(),
         iter::empty(),
     );
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     register_test_capture_table_kind(&trace, relation, 1, ReplayTableKind::PresenceRelation);
     let key = Value::new(7420);
     install_test_row_terms(&trace, &[key]);
@@ -2934,10 +2884,16 @@ fn causal_presence_relation_remove_is_diagnostics_only() {
     let atom = query.add_atom(relation, &[matched.into()], &[]).unwrap();
     let mut action = query.build();
     action.remove(relation, &[matched.into()]).unwrap();
-    action.build_with_capture(
-        "relation-delete",
-        FiringCaptureSpec::new(742, [atom], [matched]),
-    );
+    action
+        .try_build_with_capture(
+            "relation-delete",
+            FiringCaptureSpec::new(
+                742,
+                [atom],
+                [crate::RuleBindingSpec::variable(matched, TEST_REPLAY_SORT)],
+            ),
+        )
+        .unwrap();
     let rules = rules.build();
 
     db.set_trace_wave(Wave::new(1));
@@ -2947,7 +2903,6 @@ fn causal_presence_relation_remove_is_diagnostics_only() {
     trace
         .with_view(|view| {
             assert_eq!(view.totals().removals, 0);
-            assert_eq!(view.counters().relation_removals, 1);
             Ok(())
         })
         .unwrap();
@@ -2961,7 +2916,7 @@ fn causal_remove_batch_preflights_all_causes_before_native_mutation() {
         iter::empty(),
         iter::empty(),
     );
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     register_test_capture_table(&trace, table, 1);
     let first = Value::new(7430);
     let second = Value::new(7431);
@@ -3018,7 +2973,7 @@ fn causal_same_wave_remove_precedes_replacement_write() {
         iter::empty(),
         iter::empty(),
     );
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     register_test_capture_table(&trace, table, 2);
     let key = Value::new(7450);
     trace.register_table_key_columns(table, 1).unwrap();
@@ -3053,10 +3008,19 @@ fn causal_same_wave_remove_precedes_replacement_write() {
         .insert(table, &[matched_key.into(), new_value.into()])
         .unwrap();
     action.remove(table, &[matched_key.into()]).unwrap();
-    action.build_with_capture(
-        "replace-after-delete",
-        FiringCaptureSpec::new(745, [atom], [matched_key, matched_value]),
-    );
+    action
+        .try_build_with_capture(
+            "replace-after-delete",
+            FiringCaptureSpec::new(
+                745,
+                [atom],
+                [
+                    crate::RuleBindingSpec::variable(matched_key, TEST_REPLAY_SORT),
+                    crate::RuleBindingSpec::variable(matched_value, TEST_REPLAY_SORT),
+                ],
+            ),
+        )
+        .unwrap();
     let rules = rules.build();
 
     db.set_trace_wave(Wave::new(1));
@@ -4504,15 +4468,15 @@ fn source_capture_actions_reject_query_derived_facts() {
         iter::empty(),
         iter::empty(),
     );
-    db.enable_trace();
+    db.try_enable_trace().unwrap();
     let mut rules = RuleSetBuilder::new(&mut db);
     let mut query = rules.new_rule();
     let value = query.new_var_named("value");
     query.add_atom(table, &[value.into()], &[]).unwrap();
-    query.build().build_source_with_capture(
-        "invalid-query-source",
-        SourceCaptureSpec::new(SourceRef::Synthetic(402)),
-    );
+    query
+        .build()
+        .try_build_source_with_capture("invalid-query-source", SourceRef::Synthetic(402))
+        .unwrap();
 }
 
 #[test]
@@ -4533,7 +4497,7 @@ fn check_trace_keep_distinct_premise_terms_for_the_same_runtime_equality_value()
     let left_table = db.add_table(relation(), iter::empty(), iter::empty());
     let right_table = db.add_table(relation(), iter::empty(), iter::empty());
     let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     let sort = ReplaySortId::new(401);
     trace
         .register_table_layout(left_table, &[Some(sort), Some(sort)])
@@ -4621,13 +4585,15 @@ fn check_trace_keep_distinct_premise_terms_for_the_same_runtime_equality_value()
             .unwrap();
         let mut action = query.build();
         action.assert_eq(left.into(), left.into());
-        action.build_check_with_capture(
-            format!("check-{check}"),
-            CriterionCaptureSpec::new(check, [left_atom, right_atom]).with_equalities([(
-                CriterionEndpointSource::premise(0, 0, right.into()),
-                CriterionEndpointSource::premise(1, 1, right.into()),
-            )]),
-        );
+        action
+            .try_build_check_with_capture(
+                format!("check-{check}"),
+                CriterionCaptureSpec::new(check, [left_atom, right_atom]).with_equalities([(
+                    CriterionEndpointSource::premise(0, 0, right.into()),
+                    CriterionEndpointSource::premise(1, 1, right.into()),
+                )]),
+            )
+            .unwrap();
     }
     let rules = rules.build();
     assert!(!db.run_rule_set(&rules, ReportLevel::TimeOnly).changed);
@@ -4681,71 +4647,6 @@ fn check_trace_keep_distinct_premise_terms_for_the_same_runtime_equality_value()
 }
 
 #[test]
-fn check_capture_missing_equality_term_publishes_no_root() {
-    let mut db = Database::default();
-    let premise = db.add_table(
-        SortedWritesTable::new(
-            1,
-            1,
-            None,
-            vec![],
-            Box::new(|_, left, right, _| {
-                assert_eq!(left, right, "check premise rows are immutable");
-                false
-            }),
-        ),
-        iter::empty(),
-        iter::empty(),
-    );
-    let trace = db.enable_trace();
-    let sort = ReplaySortId::new(402);
-    trace.register_table_layout(premise, &[Some(sort)]).unwrap();
-    let present = Value::new(7);
-    let present_term = trace.intern_literal(sort, ReplayLiteral::I64(7), present);
-    db.stage_source_row(
-        premise,
-        &[present],
-        &[present_term],
-        SourceRef::Synthetic(420),
-    )
-    .unwrap();
-    assert!(db.merge_all());
-    db.finalize_trace_wave();
-
-    let missing = Value::new(99);
-    let mut rules = RuleSetBuilder::new(&mut db);
-    let mut query = rules.new_rule();
-    let value = query.new_var_named("value");
-    let atom = query.add_atom(premise, &[value.into()], &[]).unwrap();
-    query.build().build_check_with_capture(
-        "missing-check-term",
-        CriterionCaptureSpec::new(77, [atom]).with_equalities([(
-            CriterionEndpointSource::premise(0, 0, value.into()),
-            CriterionEndpointSource::current(crate::QueryEntry::Const(missing), sort),
-        )]),
-    );
-    let rules = rules.build();
-
-    db.set_trace_wave(Wave::new(1));
-    let failed = catch_unwind(AssertUnwindSafe(|| {
-        db.run_rule_set(&rules, ReportLevel::TimeOnly)
-    }));
-    assert!(
-        failed.is_err(),
-        "a check equality without both producer-installed terms must fail"
-    );
-    db.finalize_trace_wave();
-    trace
-        .with_view(|view| {
-            assert!(
-                view.check_roots().is_empty(),
-                "term resolution must complete before any check root is published"
-            );
-            Ok(())
-        })
-        .unwrap();
-}
-#[test]
 fn late_fact_rekey_attachment_is_visible_only_at_the_check_position() {
     late_fact_rekey_attachment_case(false);
 }
@@ -4772,7 +4673,7 @@ fn late_fact_rekey_attachment_case(reverse_equality_endpoints: bool) {
         iter::once(uf),
         iter::empty(),
     );
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     let sort = ReplaySortId::new(7900);
     trace
         .register_table_layout(rebuilt, &[Some(sort), None])
@@ -4944,7 +4845,7 @@ fn effective_constructor_rebuild_inherits_prior_terms_over_competing_alias() {
         iter::once(uf),
         iter::empty(),
     );
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     let child_sort = ReplaySortId::new(791);
     let result_sort = ReplaySortId::new(792);
     let op = ReplayOpId::new(791);
@@ -5036,7 +4937,7 @@ fn effective_constructor_rebuild_inherits_prior_terms_over_competing_alias() {
 fn forged_direct_rule_match_fails_before_native_union() {
     let mut db = Database::default();
     let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     let sort = ReplaySortId::new(901);
     let left = Value::new(9010);
     let right = Value::new(9011);
@@ -5070,7 +4971,7 @@ fn forged_direct_rule_match_fails_before_native_union() {
 fn direct_rule_match_cannot_cross_a_causal_wave() {
     let mut db = Database::default();
     let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     let sort = ReplaySortId::new(902);
     let left = Value::new(9020);
     let right = Value::new(9021);
@@ -5111,7 +5012,7 @@ fn pending_rule_cause_cannot_cross_capture_arenas() {
 
     let mut db = Database::default();
     let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     let sort = ReplaySortId::new(903);
     let left = Value::new(9030);
     let right = Value::new(9031);
@@ -5139,7 +5040,7 @@ fn pending_rule_cause_cannot_cross_capture_arenas() {
 fn pending_rule_cause_rejects_a_missing_same_arena_match() {
     let mut db = Database::default();
     let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     let wave = Wave::new(1);
     let sort = ReplaySortId::new(904);
     let left = Value::new(9040);
@@ -5161,7 +5062,7 @@ fn pending_rule_cause_rejects_a_missing_same_arena_match() {
 fn pending_rule_cause_rejects_a_lane_outside_its_observed_batch() {
     let mut db = Database::default();
     let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     let wave = Wave::new(1);
     let first = trace.pending_firing_batch(905, wave, 0, &[], &[], 1);
     let _adjacent = trace.pending_firing_batch(906, wave, 0, &[], &[], 1);
@@ -5183,7 +5084,7 @@ fn pending_rule_cause_rejects_a_lane_outside_its_observed_batch() {
 fn observed_match_ids_are_dense_before_effect_reachability() {
     let mut db = Database::default();
     let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     let sort = ReplaySortId::new(200);
     let left = Value::new(2000);
     let right = Value::new(2001);
@@ -5228,7 +5129,7 @@ fn observed_match_ids_are_dense_before_effect_reachability() {
 fn promoted_match_ids_follow_native_batch_order_not_union_order() {
     let mut db = Database::default();
     let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     let sort = ReplaySortId::new(194);
     let values = [
         Value::new(1940),
@@ -5308,7 +5209,7 @@ fn promoted_match_order_follows_full_batch_then_tail_execution() {
         iter::empty(),
     );
     let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     for table in [tail_input, full_input] {
         trace
             .register_table_layout(table, &[Some(TEST_REPLAY_SORT)])
@@ -5379,10 +5280,12 @@ fn promoted_match_order_follows_full_batch_then_tail_execution() {
                 TEST_REPLAY_SORT,
             )
             .unwrap();
-        action.build_with_capture(
-            description,
-            FiringCaptureSpec::new(rule, [atom], iter::empty::<crate::Variable>()),
-        );
+        action
+            .try_build_with_capture(
+                description,
+                FiringCaptureSpec::new(rule, [atom], iter::empty::<crate::RuleBindingSpec>()),
+            )
+            .unwrap();
     }
     let rules = rules.build();
     db.set_trace_wave(Wave::new(1));
@@ -5391,8 +5294,8 @@ fn promoted_match_order_follows_full_batch_then_tail_execution() {
 
     trace
         .with_view(|view| {
+            assert_eq!(view.totals().firings, (FULL_BATCH + 1) as u64);
             assert_eq!(view.totals().applied_equalities, 2);
-            assert_eq!(view.counters().redundant_unions, (FULL_BATCH - 1) as u64);
             let effective = (1..=view.totals().applied_equalities)
                 .map(|id| view.applied_equality(crate::AppliedEqualityId::new(id)))
                 .map(|event| event.and_then(|event| view.firing(event.reason.firing().unwrap())))
@@ -5426,7 +5329,7 @@ fn causal_capture_metadata_rejects_binding_an_ignored_column() {
         iter::empty(),
         iter::empty(),
     );
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     trace
         .register_table_layout(table, &[Some(ReplaySortId::new(12)), None])
         .unwrap();
@@ -5438,10 +5341,19 @@ fn causal_capture_metadata_rejects_binding_an_ignored_column() {
         .add_atom(table, &[value.into(), ignored.into()], &[])
         .unwrap();
     let action = query.build();
-    action.build_with_capture(
-        "ignored-column",
-        FiringCaptureSpec::new(61, [atom], [ignored]),
-    );
+    action
+        .try_build_with_capture(
+            "ignored-column",
+            FiringCaptureSpec::new(
+                61,
+                [atom],
+                [crate::RuleBindingSpec::variable(
+                    ignored,
+                    ReplaySortId::new(12),
+                )],
+            ),
+        )
+        .unwrap();
 }
 #[test]
 fn causal_trace_merge_origin_selects_each_cell_without_value_alias_lookup() {
@@ -5460,7 +5372,7 @@ fn causal_trace_merge_origin_selects_each_cell_without_value_alias_lookup() {
         iter::empty(),
         iter::empty(),
     );
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     let value_sort = ReplaySortId::new(198);
     let alias_sort = ReplaySortId::new(199);
     let alias_op = ReplayOpId::new(198);
@@ -5588,7 +5500,7 @@ fn merge_origin_catalog_rejects_out_of_range_and_cross_sort_sources() {
 fn transactional_native_lease_blocks_wave_finalization_until_queue_drain() {
     let mut db = Database::default();
     let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     let sort = ReplaySortId::new(143);
     let left = Value::new(1430);
     let right = Value::new(1431);
@@ -5635,7 +5547,7 @@ fn transactional_table_lease_survives_buffer_publication_until_queue_drain() {
         iter::empty(),
         iter::empty(),
     );
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     register_test_capture_table(&trace, table, 1);
     let value = Value::new(1432);
     install_test_row_terms(&trace, &[value]);
@@ -5672,7 +5584,6 @@ fn transactional_table_lease_survives_buffer_publication_until_queue_drain() {
         .unwrap();
 }
 #[test]
-#[should_panic(expected = "cannot enable causal trace: table already contains rows")]
 fn causal_trace_reject_activation_after_rows_exist() {
     let mut db = Database::default();
     let table = db.add_table_named(
@@ -5694,7 +5605,10 @@ fn causal_trace_reject_activation_after_rows_exist() {
     source.stage_insert(&[Value::new(1), Value::new(0)]);
     drop(source);
     assert!(db.merge_all());
-    db.enable_trace();
+    assert_eq!(
+        db.try_enable_trace().err().unwrap(),
+        "table already contains rows without exact source identities"
+    );
 }
 #[test]
 fn causal_trace_reject_dropped_unmerged_relation_and_uf_buffers() {
@@ -5714,9 +5628,9 @@ fn causal_trace_reject_dropped_unmerged_relation_and_uf_buffers() {
             }
         }
 
-        let failed = catch_unwind(AssertUnwindSafe(|| db.enable_trace()));
+        let error = db.try_enable_trace().err().unwrap();
         assert!(
-            failed.is_err(),
+            error.contains("queued capture-disabled mutations"),
             "dropped, unmerged {} mutations must reject capture activation",
             if is_uf { "UF" } else { "relation" }
         );
@@ -5735,9 +5649,9 @@ fn causal_trace_reject_outstanding_relation_and_uf_buffers() {
         };
         let outstanding = db.new_buffer(table);
 
-        let failed = catch_unwind(AssertUnwindSafe(|| db.enable_trace()));
+        let error = db.try_enable_trace().err().unwrap();
         assert!(
-            failed.is_err(),
+            error.contains("outstanding capture-disabled mutation buffer"),
             "an outstanding {} buffer must reject capture activation even before it stages a row",
             if is_uf { "UF" } else { "relation" }
         );
@@ -5763,7 +5677,7 @@ fn capture_database_rejects_a_preloaded_table_before_adding_it() {
         .clone();
 
     let mut trace_db = Database::default();
-    trace_db.enable_trace();
+    trace_db.try_enable_trace().unwrap();
     let next_table = trace_db.next_table_id();
     let failed = catch_unwind(AssertUnwindSafe(|| {
         trace_db.add_table(preloaded, iter::empty(), iter::empty())
@@ -5793,7 +5707,7 @@ fn low_level_remove_fails_before_staging_when_trace_are_enabled() {
         iter::empty(),
         iter::empty(),
     );
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     register_test_capture_table(&trace, table, 2);
     let mut raw_buffer = db.new_buffer(table);
     let one = trace.intern_test_term("one");

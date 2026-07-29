@@ -411,7 +411,6 @@ impl Bindings {
         let rule = *rule;
         let wave = state.wave;
         let premise_arity = state.premises.arity();
-        let binding_sources = state.binding_sources.clone();
         let first_native_ordinal = trace.reserve_firing_ordinals(self.matches);
         let observed = match &state.premises {
             CapturePremises::Flat { facts, .. } => trace.observe_firing_batch_at(
@@ -419,7 +418,6 @@ impl Bindings {
                 wave,
                 first_native_ordinal,
                 premise_arity,
-                Arc::clone(&binding_sources),
                 facts,
                 self.matches,
             ),
@@ -430,7 +428,6 @@ impl Bindings {
                 wave,
                 first_native_ordinal,
                 premise_arity,
-                Arc::clone(&binding_sources),
                 Arc::clone(resolver),
                 lanes,
             ),
@@ -1981,7 +1978,7 @@ impl ExecutionState<'_> {
                     .filter_map(|endpoint| match endpoint.term {
                         source @ (CheckTermSource::Premise { .. }
                         | CheckTermSource::Constructor { .. }) => Some((source, endpoint.sort)),
-                        CheckTermSource::Constant { .. } | CheckTermSource::Current => None,
+                        CheckTermSource::Constant { .. } => None,
                     })
                     .collect::<SmallVec<[(CheckTermSource, ReplaySortId); 8]>>();
                 let mut winner =
@@ -2023,9 +2020,6 @@ impl ExecutionState<'_> {
                         term,
                         raw,
                     },
-                    CheckTermSource::Current => trace
-                        .equality_endpoint(endpoint.sort, raw)
-                        .unwrap_or_else(|error| panic!("invalid exact check root: {error}")),
                 };
                 let occurrence = |endpoint: CheckEndpointSpec| match endpoint.term {
                     CheckTermSource::Premise { premise, column } => {
@@ -2042,9 +2036,7 @@ impl ExecutionState<'_> {
                         fact: premises[premise],
                         column: ColumnId::from_usize(input_columns),
                     }),
-                    CheckTermSource::Constant { .. } | CheckTermSource::Current => {
-                        CriterionEndpointOccurrence::Current
-                    }
+                    CheckTermSource::Constant { .. } => CriterionEndpointOccurrence::Current,
                 };
                 let mut resolved = SmallVec::<[(EqualityEndpoint, EqualityEndpoint); 4]>::new();
                 let mut equality_occurrences = SmallVec::<

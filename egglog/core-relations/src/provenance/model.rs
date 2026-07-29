@@ -211,19 +211,6 @@ pub enum SourceRef {
     },
 }
 
-/// Static source identity attached to every effective lane of one source
-/// action. Source actions do not manufacture firings.
-#[derive(Clone, Debug)]
-pub struct SourceCaptureSpec {
-    pub(crate) source: SourceRef,
-}
-
-impl SourceCaptureSpec {
-    pub fn new(source: SourceRef) -> Self {
-        Self { source }
-    }
-}
-
 /// Static witness and typed-equality layout for one positive check.
 #[derive(Clone, Copy, Debug)]
 pub enum CriterionEndpointSource {
@@ -232,10 +219,6 @@ pub enum CriterionEndpointSource {
         column: usize,
         value: QueryEntry,
         constructor: Option<(ReplaySortId, ReplayOpId)>,
-    },
-    Current {
-        value: QueryEntry,
-        sort: ReplaySortId,
     },
 }
 
@@ -264,13 +247,9 @@ impl CriterionEndpointSource {
         }
     }
 
-    pub fn current(value: QueryEntry, sort: ReplaySortId) -> Self {
-        Self::Current { value, sort }
-    }
-
     pub(crate) fn value(&self) -> &QueryEntry {
         match self {
-            Self::Premise { value, .. } | Self::Current { value, .. } => value,
+            Self::Premise { value, .. } => value,
         }
     }
 }
@@ -314,7 +293,7 @@ pub struct FiringCaptureSpec {
 pub enum RuleBindingSpec {
     Variable {
         variable: Variable,
-        current_sort: Option<ReplaySortId>,
+        current_sort: ReplaySortId,
     },
     Constant {
         term: ReplayTermId,
@@ -323,7 +302,7 @@ pub enum RuleBindingSpec {
 }
 
 impl RuleBindingSpec {
-    pub fn variable(variable: Variable, current_sort: Option<ReplaySortId>) -> Self {
+    pub fn variable(variable: Variable, current_sort: ReplaySortId) -> Self {
         Self::Variable {
             variable,
             current_sort,
@@ -336,23 +315,7 @@ impl RuleBindingSpec {
 }
 
 impl FiringCaptureSpec {
-    #[cfg(test)]
     pub fn new(
-        rule: u32,
-        premises: impl IntoIterator<Item = AtomId>,
-        ordinary_vars: impl IntoIterator<Item = Variable>,
-    ) -> Self {
-        Self {
-            rule,
-            premises: premises.into_iter().collect(),
-            bindings: ordinary_vars
-                .into_iter()
-                .map(|variable| RuleBindingSpec::variable(variable, None))
-                .collect(),
-        }
-    }
-
-    pub fn with_bindings(
         rule: u32,
         premises: impl IntoIterator<Item = AtomId>,
         bindings: impl IntoIterator<Item = RuleBindingSpec>,
@@ -362,25 +325,6 @@ impl FiringCaptureSpec {
             premises: premises.into_iter().collect(),
             bindings: bindings.into_iter().collect(),
         }
-    }
-
-    #[cfg(test)]
-    pub fn with_current_vars(
-        mut self,
-        vars: impl IntoIterator<Item = (Variable, ReplaySortId)>,
-    ) -> Self {
-        let current_vars = vars.into_iter().collect::<HashMap<_, _>>();
-        for binding in &mut self.bindings {
-            if let RuleBindingSpec::Variable {
-                variable,
-                current_sort,
-            } = binding
-                && let Some(sort) = current_vars.get(variable)
-            {
-                *current_sort = Some(*sort);
-            }
-        }
-        self
     }
 }
 
@@ -551,24 +495,6 @@ pub(crate) struct EqualityLandmark {
     /// Cross-stream cutoff for zero-edge fact/rekey/alias attachments.
     pub(crate) position: HistoryPosition,
     pub(crate) pairs: Box<[TypedCellEquality]>,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct CaptureCounters {
-    pub premise_handles: u64,
-    /// Logical firing-term handles exposed by [`TraceView::firing_terms`].
-    pub logical_firing_term_handles: u64,
-    pub redundant_unions: u64,
-    /// Effective presence-relation removals observed but not retained.
-    pub relation_removals: u64,
-    /// Changed typed cells stored across those rebuild causes.
-    pub rebuild_equalities: u64,
-    /// `Current` binding slots with a complete replay-safe structural recipe.
-    pub supported_current_recipe_roots: u64,
-    /// `Current` binding slots whose structural producer remains unsupported.
-    /// Reached slots fail closed during slicing; this counter makes cohort
-    /// coverage visible before replay is wired.
-    pub missing_current_recipe_roots: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

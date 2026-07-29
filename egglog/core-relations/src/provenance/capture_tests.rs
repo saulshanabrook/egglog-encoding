@@ -171,22 +171,12 @@ fn derived_fact_owns_the_terms_for_its_committed_row() {
                 premise: 0,
                 column: 0,
             },
-            occurrences: [PremiseOccurrence {
-                premise: 0,
-                column: 0,
-            }]
-            .into(),
         },
         ReplayBindingSource::Premise {
             representative: PremiseOccurrence {
                 premise: 0,
                 column: 1,
             },
-            occurrences: [PremiseOccurrence {
-                premise: 0,
-                column: 1,
-            }]
-            .into(),
         },
     ];
     let [(lane, rule_cause)] = trace
@@ -270,11 +260,6 @@ fn promoted_firings_reconstruct_current_terms_from_static_recipes() {
                 premise: 0,
                 column: 0,
             },
-            occurrences: [PremiseOccurrence {
-                premise: 0,
-                column: 0,
-            }]
-            .into(),
         },
         ReplayBindingSource::Constant {
             term: constant_term,
@@ -307,8 +292,6 @@ fn promoted_firings_reconstruct_current_terms_from_static_recipes() {
                 &[source_term, constant_term, current_term],
                 "lazy expansion must preserve the complete binding layout"
             );
-            let counters = view.counters();
-            assert_eq!(counters.logical_firing_term_handles, 3);
             Ok(())
         })
         .unwrap();
@@ -360,22 +343,12 @@ fn container_anchor_projects_only_referenced_bindings_and_memoizes_repeated_leav
                 premise: 0,
                 column: 0,
             },
-            occurrences: [PremiseOccurrence {
-                premise: 0,
-                column: 0,
-            }]
-            .into(),
         },
         ReplayBindingSource::Premise {
             representative: PremiseOccurrence {
                 premise: 1,
                 column: 0,
             },
-            occurrences: [PremiseOccurrence {
-                premise: 1,
-                column: 0,
-            }]
-            .into(),
         },
         // Production lowering expands this pure Current producer into the
         // nested template below. Keeping the binding here proves that the

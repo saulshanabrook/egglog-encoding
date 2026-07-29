@@ -557,7 +557,6 @@ struct TraceArena {
     published_firings: u64,
     published_causes: u64,
     published_equalities: u64,
-    counters: CaptureCounters,
 }
 
 impl TraceArena {
@@ -777,7 +776,6 @@ pub(crate) struct CaptureBatch {
     fact_values: Vec<Value>,
     merge_cell_origins: Vec<MergeCellOrigin>,
     equalities: Vec<(AppliedEqualityId, EqualityRecord)>,
-    redundant_unions: u64,
     published: bool,
 }
 
@@ -790,7 +788,6 @@ impl CaptureBatch {
             fact_values: Vec::new(),
             merge_cell_origins: Vec::new(),
             equalities: Vec::new(),
-            redundant_unions: 0,
             published: false,
         }
     }
@@ -912,10 +909,6 @@ impl CaptureBatch {
         id
     }
 
-    pub(crate) fn record_redundant_union(&mut self) {
-        self.redundant_unions += 1;
-    }
-
     pub(crate) fn record_applied_union(
         &mut self,
         proposal: AppliedEqualityProposal,
@@ -961,7 +954,6 @@ impl CaptureBatch {
             for (id, equality) in self.equalities.drain(..) {
                 arena.install_equality(id, equality);
             }
-            arena.counters.redundant_unions += self.redundant_unions;
         }
         self.published = true;
         self.shared.open_fragments.fetch_sub(1, Ordering::Release);
@@ -977,7 +969,6 @@ impl Drop for CaptureBatch {
             || !self.fact_values.is_empty()
             || !self.merge_cell_origins.is_empty()
             || !self.equalities.is_empty()
-            || self.redundant_unions != 0
         {
             self.shared
                 .abandoned_fragments
@@ -1096,18 +1087,8 @@ impl Trace {
             );
             return Arc::clone(existing);
         }
-        let supported = recipe
-            .current_roots
-            .iter()
-            .filter(|root| root.is_some())
-            .count() as u64;
-        let missing = recipe.current_roots.len() as u64 - supported;
         let recipe = Arc::new(recipe);
         store.rules.insert(rule, Arc::clone(&recipe));
-        drop(store);
-        let mut arena = self.0.arena.lock().unwrap();
-        arena.counters.supported_current_recipe_roots += supported;
-        arena.counters.missing_current_recipe_roots += missing;
         recipe
     }
 
@@ -1131,19 +1112,7 @@ impl Trace {
                 ReplayBindingSource::Constant { term } => {
                     assert!(!term.is_missing(), "rule capture constant term is missing");
                 }
-                ReplayBindingSource::Premise {
-                    representative,
-                    occurrences,
-                } => {
-                    assert!(
-                        !occurrences.is_empty(),
-                        "rule capture premise binding has no occurrences"
-                    );
-                    assert!(
-                        occurrences.contains(representative),
-                        "rule capture representative is not one of its premise occurrences"
-                    );
-                }
+                ReplayBindingSource::Premise { .. } => {}
             }
         }
 
@@ -1671,7 +1640,6 @@ impl Trace {
     /// before the table's pending writes are merged.
     pub(crate) fn record_removals(&self, removals: impl IntoIterator<Item = PreparedRemoval>) {
         let mut tracked = Vec::new();
-        let mut relation_count = 0_u64;
         for removal in removals {
             match removal {
                 PreparedRemoval::Tracked {
@@ -1682,14 +1650,13 @@ impl Trace {
                     removed_fact,
                     cause,
                 }),
-                PreparedRemoval::PresenceRelation => relation_count += 1,
+                PreparedRemoval::PresenceRelation => {}
             }
         }
-        if tracked.is_empty() && relation_count == 0 {
+        if tracked.is_empty() {
             return;
         }
         let mut arena = self.0.arena.lock().unwrap();
-        arena.counters.relation_removals += relation_count;
         arena.removals.extend(tracked);
     }
 
@@ -1906,7 +1873,6 @@ impl Trace {
             },
             outcome,
         });
-        arena.counters.rebuild_equalities += rekey.equalities.len() as u64;
     }
 
     /// Resolve the positional equality dependencies of one ordered container
@@ -2493,7 +2459,7 @@ impl Trace {
                             op,
                         });
                     }
-                    CheckTermSource::Constant { .. } | CheckTermSource::Current => {
+                    CheckTermSource::Constant { .. } => {
                         return Err(
                             "non-premise check endpoint was requested as a premise term".into()
                         );
@@ -2924,7 +2890,6 @@ impl Trace {
         premise_arity: usize,
         premises: &[FactId],
         lanes: usize,
-        binding_arity: usize,
     ) {
         let mut arena = self.0.arena.lock().unwrap();
         let premise_start = arena.durable_premises.len();
@@ -2948,8 +2913,6 @@ impl Trace {
             });
         }
         arena.published_firings += lanes as u64;
-        arena.counters.premise_handles += premises.len() as u64;
-        arena.counters.logical_firing_term_handles += (lanes * binding_arity) as u64;
     }
 
     pub fn install_source_row(
@@ -3102,13 +3065,12 @@ impl Trace {
         self.validate_pending_premises(flat_premises)
             .unwrap_or_else(|error| panic!("cannot observe test rule batch: {error}"));
         let first_native_ordinal = self.reserve_firing_ordinals(lanes);
-        let binding_sources = self.register_rule_binding_recipe(rule, binding_sources);
+        self.register_rule_binding_recipe(rule, binding_sources);
         self.observe_firing_batch_at(
             rule,
             wave,
             first_native_ordinal,
             premise_arity,
-            binding_sources,
             flat_premises,
             lanes,
         )
@@ -3121,7 +3083,6 @@ impl Trace {
         wave: Wave,
         first_native_ordinal: u64,
         premise_arity: usize,
-        binding_sources: Arc<[ReplayBindingSource]>,
         flat_premises: &[FactId],
         lanes: usize,
     ) -> ObservedFiringBatch {
@@ -3148,7 +3109,6 @@ impl Trace {
             premise_arity,
             &premises,
             lanes,
-            binding_sources.len(),
         );
         ObservedFiringBatch {
             trace: self.clone(),
@@ -3169,7 +3129,6 @@ impl Trace {
         wave: Wave,
         first_native_ordinal: u64,
         premise_arity: usize,
-        binding_sources: Arc<[ReplayBindingSource]>,
         resolver: Arc<dyn PendingPremiseResolver>,
         witness_lanes: &[u32],
     ) -> ObservedFiringBatch {
@@ -3191,7 +3150,6 @@ impl Trace {
             premise_arity,
             &premises,
             lanes,
-            binding_sources.len(),
         );
         ObservedFiringBatch {
             trace: self.clone(),
@@ -3295,7 +3253,7 @@ impl Trace {
         if lanes.is_empty() {
             return Vec::new();
         }
-        let binding_sources = self.register_rule_binding_recipe(rule, binding_sources);
+        self.register_rule_binding_recipe(rule, binding_sources);
         let first_firing = FiringId::new(self.reserve_firing_ordinals(lanes.len()));
         let position = self.history_boundary();
         let as_of_edges = self.equality_boundary();
@@ -3316,7 +3274,6 @@ impl Trace {
             premise_arity,
             &selected_premises,
             lanes.len(),
-            binding_sources.len(),
         );
         lanes
             .iter()

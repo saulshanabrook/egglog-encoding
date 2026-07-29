@@ -52,7 +52,7 @@ fn capture_witness_rejects_first_row_decoy_and_accepts_bound_row() {
         std::iter::empty(),
         std::iter::empty(),
     );
-    let trace = db.enable_trace();
+    let trace = db.try_enable_trace().unwrap();
     let test_sort = crate::ReplaySortId::new(0);
     trace
         .register_table_layout(selected, &[Some(test_sort), Some(test_sort)])

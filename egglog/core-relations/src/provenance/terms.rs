@@ -605,11 +605,7 @@ pub(crate) struct TermOriginSpec {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ReplayBindingSource {
     Premise {
-        /// Every source-ordered body cell containing this variable. The first
-        /// premise containing the variable remains the public binding source;
-        /// all occurrences are historical equality obligations for slicing.
         representative: PremiseOccurrence,
-        occurrences: Arc<[PremiseOccurrence]>,
     },
     Current {
         variable: Variable,
@@ -620,16 +616,6 @@ pub(crate) enum ReplayBindingSource {
     Constant {
         term: ReplayTermId,
     },
-}
-
-impl ReplayBindingSource {
-    #[cfg(test)]
-    pub(crate) fn premise_occurrences(&self) -> Option<&[PremiseOccurrence]> {
-        match self {
-            Self::Premise { occurrences, .. } => Some(occurrences),
-            Self::Current { .. } | Self::Constant { .. } => None,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -655,7 +641,6 @@ pub(crate) enum CheckTermSource {
     Constant {
         term: ReplayTermId,
     },
-    Current,
 }
 
 #[derive(Clone, Copy, Debug)]

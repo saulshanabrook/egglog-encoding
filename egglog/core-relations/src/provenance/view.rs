@@ -645,10 +645,6 @@ impl<'a> TraceView<'a> {
         }
     }
 
-    pub fn counters(&self) -> CaptureCounters {
-        self.arena.counters
-    }
-
     pub fn fact(&self, id: FactId) -> Result<RawFactRecord<'a>, TraceViewError> {
         if id.is_missing() {
             return Err(TraceViewError::UnknownFact(id));

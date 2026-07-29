@@ -476,13 +476,6 @@ impl Database {
     /// Enable compact native trace capture and return a read handle to the
     /// shared arena. Capture must be enabled before any source rows are loaded:
     /// existing rows have no exact source identity and are never backfilled.
-    pub fn enable_trace(&mut self) -> Trace {
-        self.try_enable_trace()
-            .unwrap_or_else(|error| panic!("cannot enable causal trace: {error}"))
-    }
-
-    /// Fallible counterpart to [`Database::enable_trace`] for
-    /// embedding APIs that report unsupported late activation as an error.
     pub fn try_enable_trace(&mut self) -> Result<Trace, &'static str> {
         if let Some(trace) = &self.trace {
             return Ok(trace.clone());

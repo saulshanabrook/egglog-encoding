@@ -39,16 +39,15 @@ pub use hash_index::TupleIndex;
 pub use offsets::{OffsetRange, RowId, Subset, SubsetRef};
 pub use pool::{Pool, PoolSet, Pooled};
 pub use provenance::{
-    AppliedEqualityId, CaptureCounters, CauseDraftId, CauseId, CauseRef, Criterion,
-    CriterionCaptureSpec, CriterionEndpointOccurrence, CriterionEndpointSource,
-    DeferredEqualityCause, EdgeHorizon, EqualityEndpoint, EqualityReason, FactCellRef, FactId,
-    Firing, FiringCaptureSpec, FiringEqualitySource, FiringId, HistoricalFactCell, HistoryPosition,
-    MergeOriginSelector, PremiseOccurrence, PreparedRekey, ProjectedAppliedEquality,
-    RawAppliedEquality, RawCause, RawEqualityEndpoint, RawEqualitySupport, RawFactRecord,
-    RawRekeyRecord, RawTermAvailability, RekeyOutcome, ReplayAliasPlan, ReplayConstructorSpec,
-    ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTableKind, ReplayTableSchema, ReplayTerm,
-    ReplayTermId, RowOriginSiteId, RuleBindingSpec, SourceCaptureSpec, SourceRef,
-    TermInternerCounters, Tombstone, Trace, TraceTotals, TraceView, TraceViewError,
+    AppliedEqualityId, CauseDraftId, CauseId, CauseRef, Criterion, CriterionCaptureSpec,
+    CriterionEndpointOccurrence, CriterionEndpointSource, DeferredEqualityCause, EdgeHorizon,
+    EqualityEndpoint, EqualityReason, FactCellRef, FactId, Firing, FiringCaptureSpec,
+    FiringEqualitySource, FiringId, HistoricalFactCell, HistoryPosition, MergeOriginSelector,
+    PremiseOccurrence, PreparedRekey, ProjectedAppliedEquality, RawAppliedEquality, RawCause,
+    RawEqualityEndpoint, RawEqualitySupport, RawFactRecord, RawRekeyRecord, RawTermAvailability,
+    RekeyOutcome, ReplayAliasPlan, ReplayConstructorSpec, ReplayLiteral, ReplayOpId, ReplaySortId,
+    ReplayTableKind, ReplayTableSchema, ReplayTerm, ReplayTermId, RowOriginSiteId, RuleBindingSpec,
+    SourceRef, TermInternerCounters, Tombstone, Trace, TraceTotals, TraceView, TraceViewError,
     TypedCellEquality, TypedEqualityProposal, Wave,
 };
 pub use query::{

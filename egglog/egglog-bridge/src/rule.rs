@@ -11,8 +11,7 @@ use crate::core_relations::{
     ColumnId, Constraint, CounterId, CriterionCaptureSpec as CoreCriterionCaptureSpec,
     CriterionEndpointSource, ExternalFunctionId, FiringCaptureSpec as CoreFiringCaptureSpec,
     PlanStrategy, QueryBuilder, ReplayConstructorSpec, ReplaySortId, ReplayTermId, RuleBindingSpec,
-    RuleBuilder as CoreRuleBuilder, RuleSetBuilder, SourceCaptureSpec as CoreSourceCaptureSpec,
-    SourceRef, TableId, Value, WriteVal,
+    RuleBuilder as CoreRuleBuilder, RuleSetBuilder, SourceRef, TableId, Value, WriteVal,
 };
 use crate::numeric_id::{DenseIdMap, NumericId, define_id};
 use anyhow::Context;
@@ -989,7 +988,7 @@ impl Query {
             .iter()
             .try_for_each(|f| f(&mut inner, &mut rb))?;
         Ok(if let Some(source) = &self.source_capture {
-            rb.try_build_source_with_capture(desc, CoreSourceCaptureSpec::new(source.clone()))?
+            rb.try_build_source_with_capture(desc, source.clone())?
         } else if let Some(capture) = &self.firing_capture {
             let bindings = capture.bindings.iter().map(|binding| match binding {
                 FiringCaptureBinding::Entry {
@@ -999,7 +998,7 @@ impl Query {
                     let DstVar::Var(variable) = inner.convert(entry) else {
                         panic!("firing capture variable unexpectedly lowered to a constant")
                     };
-                    RuleBindingSpec::variable(variable, Some(*current_sort))
+                    RuleBindingSpec::variable(variable, *current_sort)
                 }
                 FiringCaptureBinding::Constant { term, sort } => {
                     RuleBindingSpec::constant(*term, *sort)
@@ -1007,11 +1006,7 @@ impl Query {
             });
             rb.try_build_with_capture(
                 desc,
-                CoreFiringCaptureSpec::with_bindings(
-                    capture.rule,
-                    atom_mapping.iter().copied(),
-                    bindings,
-                ),
+                CoreFiringCaptureSpec::new(capture.rule, atom_mapping.iter().copied(), bindings),
             )?
         } else if let Some(capture) = &self.criterion_capture {
             let endpoint = |source: CriterionCapturePremise| {

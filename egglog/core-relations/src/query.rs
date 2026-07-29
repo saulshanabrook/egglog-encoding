@@ -17,7 +17,7 @@ use crate::provenance::{
 use crate::{
     BaseValueId, CounterId, CriterionCaptureSpec, CriterionEndpointSource, EqualityEndpoint,
     ExternalFunctionId, FiringCaptureSpec, PoolSet, ReplayConstructorSpec, ReplaySortId,
-    RuleBindingSpec, SourceCaptureSpec,
+    RuleBindingSpec, SourceRef,
     action::{Instr, QueryEntry, WriteVal},
     common::HashMap,
     free_join::{
@@ -597,7 +597,7 @@ pub struct RuleBuilder<'outer, 'a> {
 
 enum CaptureBuildSpec {
     Rule(FiringCaptureSpec),
-    Source(SourceCaptureSpec),
+    Source(SourceRef),
     Check { premises: Box<[AtomId]> },
 }
 
@@ -1348,11 +1348,6 @@ impl RuleBuilder<'_, '_> {
     /// source-level rule. Runtime capture stores exact premise [`FactId`]
     /// occurrences; structural bindings are reconstructed lazily from the
     /// static recipe.
-    pub fn build_with_capture(self, desc: impl Into<String>, spec: FiringCaptureSpec) -> RuleId {
-        self.try_build_with_capture(desc, spec)
-            .unwrap_or_else(|error| panic!("{error}"))
-    }
-
     pub fn try_build_with_capture(
         self,
         desc: impl Into<String>,
@@ -1365,19 +1360,10 @@ impl RuleBuilder<'_, '_> {
 
     /// Build a source action whose effective lanes cite one stable source
     /// identity directly, without allocating synthetic rule matches.
-    pub fn build_source_with_capture(
-        self,
-        desc: impl Into<String>,
-        spec: SourceCaptureSpec,
-    ) -> RuleId {
-        self.try_build_source_with_capture(desc, spec)
-            .unwrap_or_else(|error| panic!("{error}"))
-    }
-
     pub fn try_build_source_with_capture(
         self,
         desc: impl Into<String>,
-        spec: SourceCaptureSpec,
+        source: SourceRef,
     ) -> Result<RuleId, CaptureBuildError> {
         assert!(
             self.qb.rsb.db.trace.is_some(),
@@ -1388,21 +1374,12 @@ impl RuleBuilder<'_, '_> {
             "source capture actions require an empty query"
         );
         Ok(self
-            .try_build_impl(desc, Some(CaptureBuildSpec::Source(spec)), None)?
+            .try_build_impl(desc, Some(CaptureBuildSpec::Source(source)), None)?
             .planned())
     }
 
     /// Append an exact positive-check root action and build its native premise
     /// witness layout. The recorder runs after every previously-added guard.
-    pub fn build_check_with_capture(
-        self,
-        desc: impl Into<String>,
-        spec: CriterionCaptureSpec,
-    ) -> RuleId {
-        self.try_build_check_with_capture(desc, spec)
-            .unwrap_or_else(|error| panic!("{error}"))
-    }
-
     pub fn try_build_check_with_capture(
         mut self,
         desc: impl Into<String>,
@@ -1456,11 +1433,6 @@ impl RuleBuilder<'_, '_> {
                 };
                 CheckEndpointSpec { value, sort, term }
             }
-            CriterionEndpointSource::Current { value, sort } => CheckEndpointSpec {
-                value,
-                sort,
-                term: CheckTermSource::Current,
-            },
         };
         let equalities = equalities
             .into_vec()
@@ -1625,58 +1597,55 @@ impl RuleBuilder<'_, '_> {
                         binding_sorts.push(*sort);
                         continue;
                     };
-                    let mut occurrences = Vec::new();
-                    let mut occurrence_sort = None;
-                    for (premise, atom) in spec.premises.iter().copied().enumerate() {
+                    let premise_source = spec
+                        .premises
+                        .iter()
+                        .copied()
+                        .enumerate()
+                        .find_map(|(premise, atom)| {
                         let Some(subatom) = var_info[*var]
                             .occurrences
                             .iter()
                             .find(|occurrence| occurrence.atom == atom)
                         else {
-                            continue;
+                            return None;
                         };
+                        let column = subatom.vars.last().copied()?;
                         let table = self.qb.query.atoms[atom].table;
-                        for column in subatom.vars.iter().copied() {
-                            let sort = self.qb.rsb.db.trace.as_ref().and_then(|trace| {
+                        let sort = self
+                            .qb
+                            .rsb
+                            .db
+                            .trace
+                            .as_ref()
+                            .and_then(|trace| {
                                 trace.table_column_sort(table, column.index())
-                            }).unwrap_or_else(|| {
+                            })
+                            .unwrap_or_else(|| {
                                 panic!(
                                     "capture variable {var:?} selects non-replayable table column {}",
                                     column.index()
                                 )
                             });
-                            if let Some(prior) = occurrence_sort {
-                                assert_eq!(prior, sort, "one capture variable crosses replay sorts");
-                            } else {
-                                occurrence_sort = Some(sort);
-                            }
-                            occurrences.push(PremiseOccurrence {
+                        assert_eq!(
+                            *current_sort, sort,
+                            "capture variable {var:?} has inconsistent replay sorts"
+                        );
+                        Some((
+                            PremiseOccurrence {
                                 premise,
                                 column: column.index(),
-                            });
-                        }
-                    }
-                    let (source, sort) = if !occurrences.is_empty() {
-                        let first_premise = occurrences[0].premise;
-                        let representative = occurrences
-                            .iter()
-                            .copied()
-                            .take_while(|occurrence| occurrence.premise == first_premise)
-                            .last()
-                            .expect("nonempty premise occurrences have a representative");
-                        (
-                            ReplayBindingSource::Premise {
-                                representative,
-                                occurrences: occurrences.into(),
                             },
-                            occurrence_sort.unwrap(),
+                            sort,
+                        ))
+                    });
+                    let (source, sort) = if let Some((representative, sort)) = premise_source {
+                        (
+                            ReplayBindingSource::Premise { representative },
+                            sort,
                         )
                     } else {
-                        let sort = current_sort.unwrap_or_else(|| {
-                                panic!(
-                                    "capture variable {var:?} has neither a retained premise nor a typed current-value producer"
-                                )
-                            });
+                        let sort = *current_sort;
                         (
                             ReplayBindingSource::Current {
                                 variable: *var,
@@ -1770,8 +1739,8 @@ impl RuleBuilder<'_, '_> {
                     binding_sources,
                 }
             }
-            CaptureBuildSpec::Source(spec) => ActionCaptureSpec {
-                kind: ActionCaptureKind::Source(spec.source),
+            CaptureBuildSpec::Source(source) => ActionCaptureSpec {
+                kind: ActionCaptureKind::Source(source),
                 premise_count: 0,
                 premise_slots: Arc::new(DenseIdMap::new()),
                 binding_sources: Arc::from([]),
