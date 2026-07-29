@@ -513,8 +513,7 @@ pub(crate) enum PreparedFactOrigin {
     },
 }
 
-#[derive(Clone, Debug)]
-struct PendingFact {
+struct FactRecord {
     table: TableId,
     position: HistoryPosition,
     cause: PackedCauseRef,
@@ -522,25 +521,7 @@ struct PendingFact {
     origin: Option<FactOrigin>,
 }
 
-#[derive(Clone, Debug)]
-struct DurableFact {
-    table: TableId,
-    position: HistoryPosition,
-    cause: PackedCauseRef,
-    values: FlatRange,
-    origin: Option<FactOrigin>,
-}
-
-#[derive(Clone, Debug)]
-struct PendingEquality {
-    position: HistoryPosition,
-    proposal: AppliedEqualityProposal,
-    native_parent: crate::Value,
-    native_child: crate::Value,
-    cause: PackedCauseRef,
-}
-
-struct DurableEquality {
+struct EqualityRecord {
     position: HistoryPosition,
     proposal: AppliedEqualityProposal,
     native_parent: crate::Value,
@@ -559,7 +540,7 @@ struct DurableFiring {
 
 #[derive(Default)]
 struct TraceArena {
-    facts: Vec<Option<DurableFact>>,
+    facts: Vec<Option<FactRecord>>,
     durable_firings: Vec<Option<DurableFiring>>,
     durable_premises: Vec<FactId>,
     /// Sparse because ordinary firings never invoke a merge callback.
@@ -568,7 +549,7 @@ struct TraceArena {
     durable_merge_cell_origins: Vec<MergeCellOrigin>,
     durable_rebuild_equalities: Vec<TypedCellEquality>,
     durable_causes: Vec<Option<(DurableCause, EqualityCauseSummary)>>,
-    durable_equalities: Vec<Option<DurableEquality>>,
+    durable_equalities: Vec<Option<EqualityRecord>>,
     rekeys: Vec<RekeyRecord>,
     removals: Vec<Tombstone>,
     check_roots: HashMap<u32, Criterion>,
@@ -580,7 +561,7 @@ struct TraceArena {
 }
 
 impl TraceArena {
-    fn install_fact(&mut self, id: FactId, fact: DurableFact) {
+    fn install_fact(&mut self, id: FactId, fact: FactRecord) {
         let index: usize = (id.get() - 1).try_into().expect("FactId overflow");
         if self.facts.len() <= index {
             self.facts.resize_with(index + 1, || None);
@@ -618,7 +599,7 @@ impl TraceArena {
             .map(|(cause, _)| cause)
     }
 
-    fn install_equality(&mut self, id: AppliedEqualityId, equality: DurableEquality) {
+    fn install_equality(&mut self, id: AppliedEqualityId, equality: EqualityRecord) {
         let index = (id.get() - 1) as usize;
         if self.durable_equalities.len() <= index {
             self.durable_equalities.resize_with(index + 1, || None);
@@ -802,10 +783,10 @@ impl TraceShared {
 /// rows are merged and publishes once at the surrounding engine barrier.
 pub(crate) struct CaptureBatch {
     shared: Arc<TraceShared>,
-    facts: Vec<(FactId, PendingFact)>,
+    facts: Vec<(FactId, FactRecord)>,
     fact_values: Vec<Value>,
     merge_cell_origins: Vec<MergeCellOrigin>,
-    equalities: Vec<(AppliedEqualityId, PendingEquality)>,
+    equalities: Vec<(AppliedEqualityId, EqualityRecord)>,
     redundant_unions: u64,
     unattributed_commits: u64,
     published: bool,
@@ -932,7 +913,7 @@ impl CaptureBatch {
         self.fact_values.extend_from_slice(row);
         self.facts.push((
             id,
-            PendingFact {
+            FactRecord {
                 table,
                 position,
                 cause,
@@ -962,7 +943,7 @@ impl CaptureBatch {
         let position = HistoryPosition::new(TraceShared::alloc_u64(&self.shared.next_history, 1));
         self.equalities.push((
             id,
-            PendingEquality {
+            EqualityRecord {
                 position,
                 proposal,
                 native_parent,
@@ -987,28 +968,10 @@ impl CaptureBatch {
                 if let Some(FactOrigin::Merge { cells, .. }) = &mut fact.origin {
                     *cells = cells.shifted(merge_origin_base);
                 }
-                arena.install_fact(
-                    id,
-                    DurableFact {
-                        table: fact.table,
-                        position: fact.position,
-                        cause: fact.cause,
-                        values: fact.values,
-                        origin: fact.origin,
-                    },
-                );
+                arena.install_fact(id, fact);
             }
             for (id, equality) in self.equalities.drain(..) {
-                arena.install_equality(
-                    id,
-                    DurableEquality {
-                        position: equality.position,
-                        proposal: equality.proposal,
-                        native_parent: equality.native_parent,
-                        native_child: equality.native_child,
-                        cause: equality.cause,
-                    },
-                );
+                arena.install_equality(id, equality);
             }
             arena.counters.redundant_unions += self.redundant_unions;
             arena.counters.unattributed_commits += self.unattributed_commits;
