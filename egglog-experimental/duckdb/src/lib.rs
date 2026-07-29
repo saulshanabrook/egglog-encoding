@@ -6,9 +6,10 @@
 //! Live table atoms with typed variables/literals and either one table Set, a
 //! nonempty Delete-only head, or one complete-row body-bound Subsume, plus the
 //! structural two-atom union-find path rule and its typed identity-guarded
-//! merge Block. Matches, phased cleanup effects, proof constructors, fresh
-//! allocation, and recursive merge candidates execute through staged DuckDB
-//! SQL. Unsupported writes fail closed even though their complete
+//! merge Block, and the two standard scalar All-mode rebuild forms over exact
+//! ordered-union Blocks. Matches, phased cleanup effects, constructor rows,
+//! fresh allocation, and recursive merge candidates execute through staged
+//! DuckDB SQL. Unsupported writes fail closed even though their complete
 //! configurations remain registered for later lowering.
 
 use std::any::Any;
@@ -28,6 +29,9 @@ mod cleanup_effect_tests;
 mod path_compress;
 #[cfg(test)]
 mod path_compress_tests;
+mod rebuild;
+#[cfg(test)]
+mod rebuild_tests;
 mod rule_sql;
 #[cfg(test)]
 mod rule_sql_tests;
@@ -110,6 +114,8 @@ impl EGraph {
     /// Delete and Subsume rules report zero rather than laundering physical
     /// cleanup transitions into insert telemetry. Path-compression rules report
     /// only head Trans inserts, not recursive UF, Sym, or Trans effects.
+    /// Standard rebuild rules likewise report only their independent head
+    /// constructor inserts, never recursive ordered-union effects.
     pub fn last_rule_insert_counts(&self) -> &[usize] {
         &self.last_rule.inserted_rows
     }

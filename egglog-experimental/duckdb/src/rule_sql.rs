@@ -20,6 +20,7 @@ use egglog_numeric_id::NumericId;
 use crate::path_compress::{
     PathCompressionPlan, compile_path_compression, looks_like_path_compression,
 };
+use crate::rebuild::{StandardRebuildPlan, compile_standard_rebuild};
 use crate::storage::{
     ScalarSqlType, Storage, TableInfo, WriteCapability, assert_eq_conflict_sql, sql_table,
     visible_columns,
@@ -42,6 +43,7 @@ pub(crate) struct CompiledRule {
 enum CompiledRuleKind {
     Direct(DirectRule),
     PathCompression(PathCompressionPlan),
+    StandardRebuild(StandardRebuildPlan),
 }
 
 #[derive(Clone, Debug)]
@@ -86,6 +88,9 @@ struct BodyTable {
 impl CompiledRule {
     pub(crate) fn materialize_sql(&self, stage: &str, watermark: u64) -> String {
         if let CompiledRuleKind::PathCompression(plan) = &self.kind {
+            return plan.materialize_sql(stage, watermark);
+        }
+        if let CompiledRuleKind::StandardRebuild(plan) = &self.kind {
             return plan.materialize_sql(stage, watermark);
         }
         let CompiledRuleKind::Direct(direct) = &self.kind else {
@@ -135,7 +140,7 @@ impl CompiledRule {
 
     pub(crate) fn delete_sql(&self, stage: &str) -> Vec<String> {
         let CompiledRuleKind::Direct(direct) = &self.kind else {
-            unreachable!("path-compression rules use the staged queue executor");
+            unreachable!("staged-queue rules use their dedicated executor");
         };
         direct
             .effects
@@ -162,7 +167,7 @@ impl CompiledRule {
 
     pub(crate) fn insert_sql(&self, stage: &str, generation: u64) -> Option<String> {
         let CompiledRuleKind::Direct(direct) = &self.kind else {
-            unreachable!("path-compression rules use the staged queue executor");
+            unreachable!("staged-queue rules use their dedicated executor");
         };
         let DirectEffect::Set {
             target,
@@ -233,7 +238,7 @@ impl CompiledRule {
 
     pub(crate) fn subsume_sql(&self, stage: &str, generation: u64) -> Vec<String> {
         let CompiledRuleKind::Direct(direct) = &self.kind else {
-            unreachable!("path-compression rules use the staged queue executor");
+            unreachable!("staged-queue rules use their dedicated executor");
         };
         direct
             .effects
@@ -298,7 +303,14 @@ impl CompiledRule {
     pub(crate) fn path_compression(&self) -> Option<&PathCompressionPlan> {
         match &self.kind {
             CompiledRuleKind::PathCompression(plan) => Some(plan),
-            CompiledRuleKind::Direct(_) => None,
+            CompiledRuleKind::Direct(_) | CompiledRuleKind::StandardRebuild(_) => None,
+        }
+    }
+
+    pub(crate) fn standard_rebuild(&self) -> Option<&StandardRebuildPlan> {
+        match &self.kind {
+            CompiledRuleKind::StandardRebuild(plan) => Some(plan),
+            CompiledRuleKind::Direct(_) | CompiledRuleKind::PathCompression(_) => None,
         }
     }
 }
@@ -318,6 +330,15 @@ pub(crate) fn compile_rule(
     base_values: &BaseValues,
     rule: RuleSpec,
 ) -> Result<CompiledRule> {
+    // Rebuild admission is tri-state and must precede the path compiler's
+    // intentionally cheap arity discriminator. A malformed standard outer
+    // topology is an error; marker/container/custom topologies fall through.
+    if let Some(plan) = compile_standard_rebuild(storage, base_values, &rule)? {
+        return Ok(CompiledRule {
+            seminaive: rule.seminaive,
+            kind: CompiledRuleKind::StandardRebuild(plan),
+        });
+    }
     // A Delete-only head is already a complete direct language regardless of
     // body/head cardinality. Give it priority over the path compiler's cheap
     // arity discriminator so a three-body/four-Delete rule cannot be captured
