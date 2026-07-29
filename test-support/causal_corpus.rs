@@ -161,20 +161,6 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
         },
     },
     AllowlistGroup {
-        paths: &["core/causal-late-input.egg"],
-        disposition: Disposition::Unsupported {
-            diagnostic: "input command executed after a run command",
-            artifact: ArtifactExpectation::Absent,
-        },
-    },
-    AllowlistGroup {
-        paths: &["core/causal-late-source.egg"],
-        disposition: Disposition::Unsupported {
-            diagnostic: "source action executed after a run command",
-            artifact: ArtifactExpectation::Absent,
-        },
-    },
-    AllowlistGroup {
         paths: &[
             "experimental/python_array_optimize_old.egg",
             "experimental/stresstest_large_expr_old.egg",

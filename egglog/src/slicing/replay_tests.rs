@@ -506,6 +506,55 @@ fn owned_ir_preserves_pre_run_check_and_source_order() {
 }
 
 #[test]
+fn owned_ir_records_late_source_boundary_without_retaining_prefix_wave() {
+    let mut egraph = EGraph::default();
+    serial_pool().install(|| egraph.enable_trace()).unwrap();
+    egraph
+        .parse_and_run_program(
+            None,
+            "(relation Seed (i64))
+             (relation Dead (i64))
+             (relation Late (i64))
+             (relation Out (i64))
+             (Seed 1)
+             (rule ((Seed x)) ((Dead x)) :name \"prefix\")
+             (run 1)
+             (Late 1)
+             (rule ((Late x)) ((Out x)) :name \"selected\")
+             (run 1)
+             (check (Out 1))",
+        )
+        .unwrap();
+
+    let slice = slice_all_checks(&egraph).unwrap();
+    let ir = build_replay_program(&egraph, &slice).unwrap();
+    assert!(matches!(
+        ir.events.as_slice(),
+        [
+            ReplayEvent::Source(ReplaySource { after_wave: 1, .. }),
+            ReplayEvent::Wave(ReplayWave { wave: 2, .. }),
+            ReplayEvent::Check(check),
+        ] if check.after_wave == 2
+    ));
+
+    let commands = ir.to_commands().unwrap();
+    assert_eq!(
+        commands
+            .iter()
+            .filter(|command| matches!(command, Command::RunSchedule(_)))
+            .count(),
+        1,
+        "the unselected prefix wave must not be retained"
+    );
+    assert!(
+        !commands
+            .iter()
+            .any(|command| command.to_string().contains("prefix")),
+        "the unselected prefix rule must not be retained"
+    );
+}
+
+#[test]
 fn rendered_artifact_round_trips_globals_and_grounded_rules_with_proofs() {
     let mut recorder = EGraph::default();
     serial_pool().install(|| recorder.enable_trace()).unwrap();

@@ -441,7 +441,6 @@ struct CaptureCatalog {
     resolving_command: bool,
     active_rule_origin: Option<RuleOrigin>,
     immutable_globals: HashMap<String, SourceRef>,
-    has_run: bool,
     /// Once a command crosses the native execution boundary and then fails,
     /// its backend effects cannot be rolled back independently of the graph.
     /// Keep the exact history, consume every reserved identity, and make the
@@ -525,6 +524,8 @@ struct RuleCatalogEntry {
 #[derive(Clone, Debug)]
 struct InputCatalogEntry {
     command: usize,
+    /// Last native trace wave completed before this input crossed execution.
+    after_wave: u64,
     function: String,
     file: String,
     resolved_path: PathBuf,
@@ -535,6 +536,8 @@ struct InputCatalogEntry {
 #[derive(Clone, Debug)]
 struct SourceCatalogEntry {
     command: usize,
+    /// Last native trace wave completed before this action crossed execution.
+    after_wave: u64,
     dependencies: Box<[SourceRef]>,
     unsupported: Option<String>,
 }
@@ -574,7 +577,6 @@ impl Default for CaptureCatalog {
             resolving_command: false,
             active_rule_origin: None,
             immutable_globals: HashMap::default(),
-            has_run: false,
             poisoned: None,
         };
         for name in ["Unit", "String", "bool", "i64", "f64"] {
@@ -818,6 +820,7 @@ impl CaptureCatalog {
             source.clone(),
             SourceCatalogEntry {
                 command,
+                after_wave: self.completed_wave(),
                 dependencies: analysis.dependencies,
                 unsupported: analysis.unsupported,
             },
@@ -1053,6 +1056,10 @@ impl CaptureCatalog {
             .checked_add(1)
             .expect("trace wave counter overflow");
         wave
+    }
+
+    fn completed_wave(&self) -> u64 {
+        self.next_wave - 1
     }
 }
 
@@ -2688,10 +2695,6 @@ impl EGraph {
             }
             return Err(error);
         }
-        if let Some(catalog) = self.capture_catalog.as_mut() {
-            catalog.has_run = true;
-        }
-
         Ok(RunReport::singleton(ruleset, iteration_report))
     }
 
@@ -2857,9 +2860,7 @@ impl EGraph {
             .as_ref()
             .expect("source capture requires an active capture catalog");
         let mut dependencies = IndexSet::default();
-        let mut unsupported = catalog
-            .has_run
-            .then(|| "source action executed after a run command".to_owned());
+        let mut unsupported = None;
         let mut produced_global = None;
 
         for action in &actions.0 {
@@ -3944,9 +3945,6 @@ impl EGraph {
             }
             ResolvedNCommand::RunSchedule(sched) => {
                 let report = self.run_schedule(&sched)?;
-                if let Some(catalog) = self.capture_catalog.as_mut() {
-                    catalog.has_run = true;
-                }
                 log::info!("Ran schedule {sched}.");
                 log::info!("Report: {report}");
                 self.overall_run_report.union(report.clone());
@@ -4410,22 +4408,18 @@ impl EGraph {
                 source_ordinal,
                 InputCatalogEntry {
                     command,
+                    after_wave: catalog.completed_wave(),
                     function: func_name.to_owned(),
                     file: file.clone(),
                     resolved_path: resolved_input_path,
                     digest: parsed_file
                         .digest
                         .expect("input capture requires a parsed file digest"),
-                    unsupported: catalog
-                        .has_run
-                        .then(|| "input command executed after a run command".to_owned())
-                        .or_else(|| {
-                            (function_type.subtype == FunctionSubtype::Custom).then(|| {
-                                format!(
-                                    "input into value function `{func_name}` requires set/merge replay semantics"
-                                )
-                            })
-                        }),
+                    unsupported: (function_type.subtype == FunctionSubtype::Custom).then(|| {
+                        format!(
+                            "input into value function `{func_name}` requires set/merge replay semantics"
+                        )
+                    }),
                 },
             )
         });

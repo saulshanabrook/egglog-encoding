@@ -91,6 +91,8 @@ pub(crate) enum ReplaySourceKind {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ReplaySource {
+    /// Last completed trace wave before the source executed on the recorder.
+    pub(crate) after_wave: u64,
     pub(crate) catalog_ordinal: usize,
     pub(crate) source: OwnedSourceRef,
     pub(crate) kind: ReplaySourceKind,
@@ -143,11 +145,10 @@ impl ReplayEvent {
                     OwnedSourceRef::Synthetic(_) => 0,
                     OwnedSourceRef::InputRow { line, .. } => line,
                 };
-                (0, 0, source.catalog_ordinal, line)
+                (source.after_wave, 1, source.catalog_ordinal, line)
             }
             Self::Wave(wave) => (wave.wave, 0, 0, 0),
-            Self::Check(check) if check.after_wave == 0 => (0, 0, check.catalog_ordinal, u64::MAX),
-            Self::Check(check) => (check.after_wave, 1, check.catalog_ordinal, 0),
+            Self::Check(check) => (check.after_wave, 1, check.catalog_ordinal, u64::MAX),
         }
     }
 }
@@ -666,6 +667,7 @@ fn selected_input_rows(
                 })?;
             remaining.remove(&line);
             rows.push(ReplaySource {
+                after_wave: entry.after_wave,
                 catalog_ordinal: catalog.command_catalog[entry.command].surface_command,
                 source: OwnedSourceRef::InputRow { command, line },
                 kind: ReplaySourceKind::InputRow {
@@ -989,6 +991,7 @@ fn build_owned(
         source_events
             .entry(surface_command)
             .or_insert(ReplaySource {
+                after_wave: entry.after_wave,
                 catalog_ordinal: surface_command,
                 source: source.into(),
                 kind: ReplaySourceKind::Command(Box::new(command)),
