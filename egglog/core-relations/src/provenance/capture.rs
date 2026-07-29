@@ -3415,7 +3415,9 @@ impl Trace {
     ) -> Result<R, TraceViewError> {
         let _active = ActiveTraceViewGuard::enter(&self.0.view_active)?;
         if self.0.poisoned_rule_executions.load(Ordering::Acquire) != 0 {
-            return Err(TraceViewError::NotFinalized("a rule execution panicked"));
+            return Err(TraceViewError::NotFinalized(
+                "a rule execution failed before trace publication",
+            ));
         }
         if self.0.open_fragments.load(Ordering::Acquire) != 0 {
             return Err(TraceViewError::NotFinalized("capture batches remain open"));

@@ -88,15 +88,15 @@ impl SortedWritesTable {
         rebuilt: &mut TaggedRowBuffer,
         next_ts: Value,
         exec_state: &ExecutionState,
-    ) {
+    ) -> Result<(), &'static str> {
         if !CAPTURE {
-            return;
+            return Ok(());
         }
         let trace = exec_state
             .trace()
             .expect("capture rebuild mode requires an enabled arena");
         if !trace.requires_collision_preflight(self.table_id) {
-            return;
+            return Ok(());
         }
 
         if let Some(sort_by) = self.sort_by {
@@ -125,12 +125,9 @@ impl SortedWritesTable {
             }
         }
         if collision {
-            trace
-                .validate_merge_origin(self.table_id, true)
-                .unwrap_or_else(|error| {
-                    panic!("cannot record exact table rebuild collision: {error}")
-                });
+            trace.validate_merge_origin(self.table_id, true)?;
         }
+        Ok(())
     }
 
     fn refresh_rebuild_index(&mut self) {
@@ -152,7 +149,7 @@ impl SortedWritesTable {
         exec_state: &mut ExecutionState,
         history_landmark: Option<HistoryPosition>,
         transaction: Option<&MutationTransaction>,
-    ) -> bool {
+    ) -> Result<bool, &'static str> {
         // Keep capture selection outside the changed-row loops below.
         if exec_state.trace().is_none() {
             self.do_rebuild_mode::<false>(
@@ -183,12 +180,12 @@ impl SortedWritesTable {
         exec_state: &mut ExecutionState,
         history_landmark: Option<HistoryPosition>,
         transaction: Option<&MutationTransaction>,
-    ) -> bool {
+    ) -> Result<bool, &'static str> {
         if self.to_rebuild.is_empty() {
-            return false;
+            return Ok(false);
         }
         let Some(rebuilder) = table.rebuilder(&self.to_rebuild) else {
-            return false;
+            return Ok(false);
         };
         // First, decide whether to do an incremental or full rebuild.
         if let Some(hint_col) = rebuilder.hint_col() {
@@ -214,7 +211,7 @@ impl SortedWritesTable {
                     exec_state,
                     history_landmark,
                     transaction,
-                )
+                )?
             } else {
                 self.rebuild_nonincremental::<CAPTURE>(
                     &*rebuilder,
@@ -222,14 +219,14 @@ impl SortedWritesTable {
                     exec_state,
                     history_landmark,
                     transaction,
-                )
+                )?
             };
             if let Some(version) = deferred_cursor {
                 transaction
                     .expect("deferred rebuild cursor requires a transaction")
                     .defer_rebuild_cursor(self.table_id, table_id, version);
             }
-            changed
+            Ok(changed)
         } else {
             self.rebuild_nonincremental::<CAPTURE>(
                 &*rebuilder,
@@ -363,7 +360,7 @@ impl SortedWritesTable {
         exec_state: &mut ExecutionState,
         history_landmark: Option<HistoryPosition>,
         transaction: Option<&MutationTransaction>,
-    ) -> bool {
+    ) -> Result<bool, &'static str> {
         self.refresh_rebuild_index();
         let mut buf = TaggedRowBuffer::new(1);
         table.scan_project(
@@ -376,7 +373,7 @@ impl SortedWritesTable {
         );
 
         if !CAPTURE && parallelize_rebuild(to_scan.size()) {
-            WrappedTableRef::with_wrapper(self, |wrapped| {
+            Ok(WrappedTableRef::with_wrapper(self, |wrapped| {
                 buf.par_iter()
                     .fold(
                         || {
@@ -413,7 +410,7 @@ impl SortedWritesTable {
                     .map(|(_, _, changed)| changed)
                     .max()
                     .unwrap_or(false)
-            })
+            }))
         } else {
             let mut scratch = TaggedRowBuffer::new(self.n_columns);
             let mut changed = false;
@@ -427,7 +424,7 @@ impl SortedWritesTable {
                 changed |= subset.size() > 0;
             }
             if !scratch.is_empty() {
-                self.preflight_rebuild_collisions::<CAPTURE>(&mut scratch, next_ts, exec_state);
+                self.preflight_rebuild_collisions::<CAPTURE>(&mut scratch, next_ts, exec_state)?;
                 let mut write_buf = self.new_rebuild_buffer(transaction);
                 for (row_id, row) in scratch.non_stale_mut() {
                     self.stage_rebuilt_row::<CAPTURE>(
@@ -440,7 +437,7 @@ impl SortedWritesTable {
                     );
                 }
             }
-            changed
+            Ok(changed)
         }
     }
 
@@ -451,10 +448,10 @@ impl SortedWritesTable {
         exec_state: &mut ExecutionState,
         history_landmark: Option<HistoryPosition>,
         transaction: Option<&MutationTransaction>,
-    ) -> bool {
+    ) -> Result<bool, &'static str> {
         const STEP_SIZE: usize = 2048;
         if !CAPTURE && parallelize_rebuild(self.data.next_row().index()) {
-            (0..self.data.next_row().index())
+            Ok((0..self.data.next_row().index())
                 .into_par_iter()
                 .step_by(STEP_SIZE)
                 .fold(
@@ -493,7 +490,7 @@ impl SortedWritesTable {
                 )
                 .map(|(_, _, _, changed)| changed)
                 .max()
-                .unwrap_or(false)
+                .unwrap_or(false))
         } else {
             let mut buf = TaggedRowBuffer::new(self.n_columns);
             let mut changed = false;
@@ -509,7 +506,7 @@ impl SortedWritesTable {
                 );
             }
             if !buf.is_empty() {
-                self.preflight_rebuild_collisions::<CAPTURE>(&mut buf, next_ts, exec_state);
+                self.preflight_rebuild_collisions::<CAPTURE>(&mut buf, next_ts, exec_state)?;
                 let mut write_buf = self.new_rebuild_buffer(transaction);
                 for (row_id, row) in buf.non_stale_mut() {
                     changed |= self.stage_rebuilt_row::<CAPTURE>(
@@ -522,7 +519,7 @@ impl SortedWritesTable {
                     );
                 }
             }
-            changed
+            Ok(changed)
         }
     }
 }

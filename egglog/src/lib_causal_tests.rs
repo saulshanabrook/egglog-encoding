@@ -68,6 +68,138 @@ fn failed_trace_activation_leaves_ordinary_execution_usable() {
         .unwrap();
 }
 
+#[test]
+fn reached_unsupported_base_merge_fails_before_native_mutation() {
+    serial_trace_pool().install(|| {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(None, "(function total () i64 :merge (+ old new))")
+            .unwrap();
+        egraph.enable_trace().unwrap();
+        egraph
+            .parse_and_run_program(None, "(set (total) 1)")
+            .unwrap();
+
+        let error = egraph
+            .parse_and_run_program(None, "(set (total) 2)")
+            .expect_err("unsupported merge unexpectedly succeeded");
+        assert_eq!(
+            error.to_string(),
+            "function `total` merge reached an unsupported structural result expression"
+        );
+        assert_eq!(
+            egraph
+                .backend
+                .base_values()
+                .unwrap::<i64>(get_value(&egraph, "total")),
+            1,
+            "failed preflight must not publish the merged native row"
+        );
+        assert!(
+            egraph
+                .with_trace_view(|_| Ok(()))
+                .unwrap_err()
+                .to_string()
+                .contains("poisoned"),
+            "a rejected merge must not leave a publishable partial trace"
+        );
+
+        let mut ordinary = EGraph::default();
+        ordinary
+            .parse_and_run_program(
+                None,
+                "(function total () i64 :merge (+ old new))\
+                 (set (total) 1)\
+                 (set (total) 2)\
+                 (check (= (total) 3))",
+            )
+            .unwrap();
+    });
+}
+
+#[test]
+fn reached_unsupported_rule_merge_rejects_the_whole_head_batch() {
+    serial_trace_pool().install(|| {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(function total () i64 :merge (+ old new))\
+                 (relation Input (i64))\
+                 (relation Seen (i64))",
+            )
+            .unwrap();
+        egraph.enable_trace().unwrap();
+        let error = egraph
+            .parse_and_run_program(
+                None,
+                "(Input 1) (Input 2)\
+                 (rule ((Input x)) ((Seen x) (set (total) x)) :name \"sum\")\
+                 (run 1)",
+            )
+            .expect_err("unsupported rule merge unexpectedly succeeded");
+        assert_eq!(
+            error.to_string(),
+            "function `total` merge reached an unsupported structural result expression"
+        );
+        for name in ["total", "Seen"] {
+            let function = egraph.functions.get(name).unwrap();
+            let mut rows = 0;
+            egraph.backend.for_each(function.backend_id, |_| rows += 1);
+            assert_eq!(rows, 0, "failed rule head published a `{name}` row");
+        }
+        assert!(
+            egraph
+                .with_trace_view(|_| Ok(()))
+                .unwrap_err()
+                .to_string()
+                .contains("poisoned")
+        );
+    });
+}
+
+#[test]
+fn reached_unsupported_rebuild_merge_returns_the_same_typed_error() {
+    serial_trace_pool().install(|| {
+        let declarations = "(datatype E (A) (B)) (function total (E) i64 :merge (+ old new))";
+        let mut egraph = EGraph::default();
+        egraph.parse_and_run_program(None, declarations).unwrap();
+        egraph.enable_trace().unwrap();
+        egraph
+            .parse_and_run_program(None, "(set (total (A)) 1) (set (total (B)) 2)")
+            .unwrap();
+
+        let error = egraph
+            .parse_and_run_program(None, "(union (A) (B))")
+            .expect_err("unsupported rebuild merge unexpectedly succeeded");
+        assert_eq!(
+            error.to_string(),
+            "function `total` merge reached an unsupported structural result expression"
+        );
+        assert!(
+            egraph
+                .with_trace_view(|_| Ok(()))
+                .unwrap_err()
+                .to_string()
+                .contains("poisoned")
+        );
+
+        let mut ordinary = EGraph::default();
+        ordinary
+            .parse_and_run_program(
+                None,
+                &format!(
+                    "{declarations}\
+                     (set (total (A)) 1)\
+                     (set (total (B)) 2)\
+                     (union (A) (B))\
+                     (check (= (total (A)) 3))"
+                ),
+            )
+            .unwrap();
+    });
+}
+
 fn find_container_canonicalization(
     view: &core_relations::TraceView<'_>,
     root: core_relations::CauseId,

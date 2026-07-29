@@ -48,6 +48,15 @@ pub(crate) mod plan;
 
 pub use grounded::{GroundedRuleMatch, GroundedRuleRunError, GroundedRuleRunOutcome};
 
+/// A key collision reaches structural merge syntax that exact trace capture
+/// cannot represent.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("function `{function}` {reason}")]
+pub struct TraceMergeError {
+    function: String,
+    reason: &'static str,
+}
+
 define_id!(
     pub AtomId,
     u32,
@@ -318,9 +327,11 @@ impl Counters {
     }
 }
 
-/// Prevent a caught merge panic from exposing trace for native state that
-/// may already have been partially mutated. This is deliberately a
-/// fail-closed trace boundary, not native transaction rollback.
+/// Prevent a failed merge from exposing trace for native state that may have
+/// been partially mutated. Rows present at a batch preflight are rejected
+/// before that batch changes; rows staged later by callbacks are rechecked
+/// before their target table changes. Unexpected panics remain a fail-closed
+/// trace boundary rather than native transaction rollback.
 struct MergeTraceExecutionGuard {
     trace: Trace,
     completed: bool,
@@ -593,6 +604,17 @@ impl Database {
         to_rebuild: &[TableId],
         next_ts: Value,
     ) -> bool {
+        self.try_apply_rebuild(func_id, to_rebuild, next_ts)
+            .expect("ordinary table rebuild failed during trace capture")
+    }
+
+    /// Fallible trace-aware variant of [`Database::apply_rebuild`].
+    pub fn try_apply_rebuild(
+        &mut self,
+        func_id: TableId,
+        to_rebuild: &[TableId],
+        next_ts: Value,
+    ) -> Result<bool, TraceMergeError> {
         if self.trace.is_none() {
             let func = self.tables.take(func_id).unwrap();
             self.run_on_tables(to_rebuild, |_, info, view| {
@@ -606,8 +628,12 @@ impl Database {
                 )
             });
             self.tables.insert(func_id, func);
-            return self.merge_all();
+            return Ok(self.merge_all());
         }
+        let mut capture_guard = self.trace.as_ref().map(|trace| MergeTraceExecutionGuard {
+            trace: trace.clone(),
+            completed: false,
+        });
         // Capture and validate the shared history boundary while every table
         // is still installed. A landmark failure must not structurally modify
         // the database before the capture-safe staging transaction begins.
@@ -625,21 +651,33 @@ impl Database {
         let transaction =
             MutationTransaction::pending_causal(self.trace.as_ref().unwrap(), self.trace_wave);
         let rebuilt = catch_unwind(AssertUnwindSafe(|| {
-            self.run_on_tables_trace_safe(to_rebuild, &transaction, |_, info, view| {
-                info.table.apply_rebuild(
-                    func_id,
-                    &func.table,
-                    next_ts,
-                    &mut ExecutionState::new(*view, Default::default()),
-                    Some(history_landmark),
-                    Some(&transaction),
-                )
-            });
+            self.run_on_tables_trace_safe(to_rebuild, &transaction, |id, info, view| {
+                info.table
+                    .try_apply_rebuild(
+                        func_id,
+                        &func.table,
+                        next_ts,
+                        &mut ExecutionState::new(*view, Default::default()),
+                        Some(history_landmark),
+                        Some(&transaction),
+                    )
+                    .map_err(|reason| TraceMergeError {
+                        function: Self::trace_merge_function_name(id, info),
+                        reason,
+                    })
+            })
         }));
         self.tables.insert(func_id, func);
-        if let Err(payload) = rebuilt {
-            transaction.abort();
-            resume_unwind(payload);
+        match rebuilt {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                transaction.abort();
+                return Err(error);
+            }
+            Err(payload) => {
+                transaction.abort();
+                resume_unwind(payload);
+            }
         }
         let committed = transaction.commit();
         for cursor in committed.rebuild_cursors {
@@ -650,7 +688,10 @@ impl Database {
         for table in committed.changed_tables {
             self.notification_list.notify(table);
         }
-        self.merge_all()
+        if let Some(guard) = &mut capture_guard {
+            guard.complete();
+        }
+        self.try_merge_all()
     }
 
     pub fn refresh_rows_for_values(
@@ -675,13 +716,14 @@ impl Database {
             let refreshed = catch_unwind(AssertUnwindSafe(|| {
                 self.run_on_tables_trace_safe(to_refresh, &transaction, |_, info, view| {
                     let exec_state = ExecutionState::new(*view, Default::default());
-                    info.table.refresh_rows_for_values(
+                    Ok(info.table.refresh_rows_for_values(
                         summary,
                         next_ts,
                         Some(&exec_state),
                         Some(&transaction),
-                    )
-                });
+                    ))
+                })
+                .expect("container refresh callback is infallible");
             }));
             if let Err(payload) = refreshed {
                 transaction.abort();
@@ -704,50 +746,31 @@ impl Database {
         self.merge_all()
     }
 
-    /// Capture validation deliberately reports unsupported semantics by
-    /// unwinding. Restore every temporarily removed table before propagating
-    /// that diagnostic; the ordinary rebuild path keeps using the smaller
-    /// unchecked helper below.
+    /// Run a capture transaction over several temporarily removed tables,
+    /// restoring each table before propagating either a typed rejection or an
+    /// unexpected panic.
     fn run_on_tables_trace_safe(
         &mut self,
         table_ids: &[TableId],
         transaction: &MutationTransaction,
-        run: impl for<'a> Fn(TableId, &mut TableInfo, &DbView<'a>) -> bool + Sync,
-    ) {
-        if self.trace.is_none() && parallelize_db_level_op(self.total_size_estimate) {
-            let mut tables = Vec::with_capacity(table_ids.len());
-            for id in table_ids {
-                tables.push((*id, self.tables.take(*id).unwrap()));
-            }
+        run: impl for<'a> Fn(TableId, &mut TableInfo, &DbView<'a>) -> Result<bool, TraceMergeError>,
+    ) -> Result<(), TraceMergeError> {
+        debug_assert!(self.trace.is_some());
+        for id in table_ids.iter().copied() {
+            let mut info = self.tables.take(id).unwrap();
             let outcome = catch_unwind(AssertUnwindSafe(|| {
                 let view = self.read_only_view();
-                tables.par_iter_mut().for_each(|(id, info)| {
-                    if run(*id, info, &view) {
-                        transaction.defer_changed_table(*id);
-                    }
-                });
+                run(id, &mut info, &view)
             }));
-            for (id, info) in tables {
-                self.tables.insert(id, info);
-            }
-            if let Err(payload) = outcome {
-                resume_unwind(payload);
-            }
-        } else {
-            for id in table_ids {
-                let mut info = self.tables.take(*id).unwrap();
-                let outcome = catch_unwind(AssertUnwindSafe(|| {
-                    let view = self.read_only_view();
-                    run(*id, &mut info, &view)
-                }));
-                self.tables.insert(*id, info);
-                match outcome {
-                    Ok(true) => transaction.defer_changed_table(*id),
-                    Ok(false) => {}
-                    Err(payload) => resume_unwind(payload),
-                }
+            self.tables.insert(id, info);
+            match outcome {
+                Ok(Ok(true)) => transaction.defer_changed_table(id),
+                Ok(Ok(false)) => {}
+                Ok(Err(error)) => return Err(error),
+                Err(payload) => resume_unwind(payload),
             }
         }
+        Ok(())
     }
 
     fn run_on_tables(
@@ -867,6 +890,19 @@ impl Database {
     ///
     /// Useful for out-of-band insertions into the database.
     pub fn merge_all(&mut self) -> bool {
+        self.try_merge_all()
+            .expect("ordinary database merge failed during trace capture")
+    }
+
+    /// Fallible trace-aware variant of [`Database::merge_all`] for reached
+    /// structural merge selectors. Low-level capture callers must still use
+    /// origin-aware staging APIs.
+    ///
+    /// Every currently dirty table is preflighted before any table is changed.
+    /// A callback can stage more rows while that batch is being merged, so the
+    /// target table is checked again immediately before it changes. Rejection
+    /// poisons the trace; this is not rollback for earlier callback effects.
+    pub fn try_merge_all(&mut self) -> Result<bool, TraceMergeError> {
         let mut capture_guard = self.trace.as_ref().map(|trace| MergeTraceExecutionGuard {
             trace: trace.clone(),
             completed: false,
@@ -885,6 +921,13 @@ impl Database {
         loop {
             to_merge.clear();
             let to_merge_vec = self.notification_list.reset();
+            if let Err(error) = self.preflight_trace_merges(&to_merge_vec) {
+                for dirty in to_merge_vec.iter().copied() {
+                    self.notification_list.notify(dirty);
+                }
+                self.reset_touched_indexes(&touched);
+                return Err(error);
+            }
             touched.extend(to_merge_vec.iter().copied());
             // `merge_simple` is faster but ignores read/write-dependency ordering, so it is only
             // sound when no dirty table's merge reads another table (e.g. a `Construct`/`Function`
@@ -896,7 +939,13 @@ impl Database {
                     .iter()
                     .any(|table| self.deps.has_read_deps(*table))
             {
-                ever_changed |= self.merge_simple(to_merge_vec, &mut touched);
+                match self.merge_simple(to_merge_vec, &mut touched) {
+                    Ok(changed) => ever_changed |= changed,
+                    Err(error) => {
+                        self.reset_touched_indexes(&touched);
+                        return Err(error);
+                    }
+                }
                 break;
             }
             for table in to_merge_vec {
@@ -936,39 +985,46 @@ impl Database {
                     }
                     tables_merging.insert(table, (None, bufs));
                 }
-                let merge_result = catch_unwind(AssertUnwindSafe(|| {
-                    // Then initialize read dependencies (this two-phase structure is why we have
-                    // an Option in the tables_merging map).
-                    for table in stratum_tables.iter().copied() {
-                        let val = self.tables.unwrap_val(table);
-                        // Maintain `total_size_estimate` incrementally (subtract the
-                        // pre-merge length now, add the post-merge length on drain
-                        // below), so the reset loop no longer re-sums every table.
-                        self.total_size_estimate =
-                            self.total_size_estimate.wrapping_sub(val.table.len());
-                        tables_merging[table].0 = Some(val);
-                    }
-                    let db = self.read_only_view();
-                    if do_parallel {
-                        tables_merging
-                            .par_iter_mut()
-                            .map(|(_, (info, buffers))| {
+                let merge_result =
+                    catch_unwind(AssertUnwindSafe(|| -> Result<bool, TraceMergeError> {
+                        // Then initialize read dependencies (this two-phase structure is why we have
+                        // an Option in the tables_merging map).
+                        for table in stratum_tables.iter().copied() {
+                            let val = self.tables.unwrap_val(table);
+                            // Maintain `total_size_estimate` incrementally (subtract the
+                            // pre-merge length now, add the post-merge length on drain
+                            // below), so the reset loop no longer re-sums every table.
+                            self.total_size_estimate =
+                                self.total_size_estimate.wrapping_sub(val.table.len());
+                            tables_merging[table].0 = Some(val);
+                        }
+                        let db = self.read_only_view();
+                        if do_parallel {
+                            Ok(tables_merging
+                                .par_iter_mut()
+                                .map(|(_, (info, buffers))| {
+                                    let mut es = ExecutionState::new(db, mem::take(buffers));
+                                    info.as_mut().unwrap().table.merge(&mut es).added || es.changed
+                                })
+                                .max()
+                                .unwrap_or(false))
+                        } else {
+                            let mut changed = false;
+                            for (table_id, (info, buffers)) in tables_merging.iter_mut() {
+                                let info = info.as_mut().unwrap();
+                                let preflight_state = ExecutionState::new(db, Default::default());
+                                if let Err(reason) = info.table.preflight_merge(&preflight_state) {
+                                    return Err(TraceMergeError {
+                                        function: Self::trace_merge_function_name(table_id, info),
+                                        reason,
+                                    });
+                                }
                                 let mut es = ExecutionState::new(db, mem::take(buffers));
-                                info.as_mut().unwrap().table.merge(&mut es).added || es.changed
-                            })
-                            .max()
-                            .unwrap_or(false)
-                    } else {
-                        tables_merging
-                            .iter_mut()
-                            .map(|(_, (info, buffers))| {
-                                let mut es = ExecutionState::new(db, mem::take(buffers));
-                                info.as_mut().unwrap().table.merge(&mut es).added || es.changed
-                            })
-                            .max()
-                            .unwrap_or(false)
-                    }
-                }));
+                                changed |= info.table.merge(&mut es).added || es.changed;
+                            }
+                            Ok(changed)
+                        }
+                    }));
                 for (id, (table, _)) in tables_merging.drain() {
                     if let Some(table) = table {
                         self.total_size_estimate =
@@ -977,8 +1033,18 @@ impl Database {
                     }
                 }
                 match merge_result {
-                    Ok(stratum_changed) => changed |= stratum_changed,
-                    Err(payload) => resume_unwind(payload),
+                    Ok(Ok(stratum_changed)) => changed |= stratum_changed,
+                    Ok(Err(error)) => {
+                        for dirty in to_merge.iter().copied() {
+                            self.notification_list.notify(dirty);
+                        }
+                        self.reset_touched_indexes(&touched);
+                        return Err(error);
+                    }
+                    Err(payload) => {
+                        self.reset_touched_indexes(&touched);
+                        resume_unwind(payload);
+                    }
                 }
             }
             ever_changed |= changed;
@@ -987,6 +1053,14 @@ impl Database {
         // refresh on next access. Unmodified tables keep their still-valid cached
         // indexes. `total_size_estimate` was maintained incrementally at each merge
         // (above and in `merge_simple`), so we no longer re-sum every table here.
+        self.reset_touched_indexes(&touched);
+        if let Some(guard) = &mut capture_guard {
+            guard.complete();
+        }
+        Ok(ever_changed)
+    }
+
+    fn reset_touched_indexes(&mut self, touched: &IndexSet<TableId>) {
         for table in touched.iter().copied() {
             if let Some(info) = self.tables.get_mut(table) {
                 info.column_indexes.update(|_, ti| {
@@ -997,10 +1071,30 @@ impl Database {
                 });
             }
         }
-        if let Some(guard) = &mut capture_guard {
-            guard.complete();
+    }
+
+    fn preflight_trace_merges(&self, tables: &[TableId]) -> Result<(), TraceMergeError> {
+        if self.trace.is_none() {
+            return Ok(());
         }
-        ever_changed
+        let exec_state = ExecutionState::new(self.read_only_view(), Default::default());
+        for table_id in tables.iter().copied() {
+            let info = &self.tables[table_id];
+            if let Err(reason) = info.table.preflight_merge(&exec_state) {
+                return Err(TraceMergeError {
+                    function: Self::trace_merge_function_name(table_id, info),
+                    reason,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn trace_merge_function_name(table_id: TableId, info: &TableInfo) -> String {
+        info.name
+            .as_deref()
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("{table_id:?}"))
     }
 
     /// A "fast path" merge method that is not optimized for parallelism and does not respect read
@@ -1010,10 +1104,26 @@ impl Database {
         &mut self,
         mut to_merge: SmallVec<[TableId; 4]>,
         touched: &mut IndexSet<TableId>,
-    ) -> bool {
+    ) -> Result<bool, TraceMergeError> {
         let mut changed = false;
         while !to_merge.is_empty() {
+            if let Err(error) = self.preflight_trace_merges(&to_merge) {
+                for dirty in to_merge.iter().copied() {
+                    self.notification_list.notify(dirty);
+                }
+                return Err(error);
+            }
             for table_id in to_merge.iter().copied() {
+                // A preceding merge callback can enqueue additional rows into
+                // an already-dirty later table. Recheck that table at the last
+                // point before native mutation so those dynamically staged
+                // rows cannot bypass the fallible boundary.
+                if let Err(error) = self.preflight_trace_merges(std::slice::from_ref(&table_id)) {
+                    for dirty in to_merge.iter().copied() {
+                        self.notification_list.notify(dirty);
+                    }
+                    return Err(error);
+                }
                 let mut info = self.tables.unwrap_val(table_id);
                 // Maintain `total_size_estimate` incrementally (see `merge_all`'s
                 // reset loop, which no longer re-sums every table).
@@ -1042,7 +1152,7 @@ impl Database {
             to_merge = self.notification_list.reset();
             touched.extend(to_merge.iter().copied());
         }
-        changed
+        Ok(changed)
     }
 
     /// A low-level helper for merging pending updates to a particular function.
@@ -1052,10 +1162,17 @@ impl Database {
     /// elesewhere. The `merge_all` method runs merges to a fixed point to avoid
     /// surprises here.
     pub fn merge_table(&mut self, table: TableId) -> bool {
+        self.try_merge_table(table)
+            .expect("ordinary table merge failed during trace capture")
+    }
+
+    /// Fallible trace-aware variant of [`Database::merge_table`].
+    pub fn try_merge_table(&mut self, table: TableId) -> Result<bool, TraceMergeError> {
         let mut capture_guard = self.trace.as_ref().map(|trace| MergeTraceExecutionGuard {
             trace: trace.clone(),
             completed: false,
         });
+        self.preflight_trace_merges(std::slice::from_ref(&table))?;
         let mut info = self.tables.unwrap_val(table);
         self.total_size_estimate = self.total_size_estimate.wrapping_sub(info.table.len());
         let merge_result = catch_unwind(AssertUnwindSafe(|| {
@@ -1076,7 +1193,7 @@ impl Database {
         if let Some(guard) = &mut capture_guard {
             guard.complete();
         }
-        changed
+        Ok(changed)
     }
 
     /// Get id of the next table to be added to the database.

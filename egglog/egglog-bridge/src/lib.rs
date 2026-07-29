@@ -1224,7 +1224,7 @@ impl EGraph {
                 // the rules can proceed.
                 let container_rebuild = self.db.rebuild_containers(self.uf_table)?;
                 let next_ts = self.next_ts().to_value();
-                let table_rebuild = self.db.apply_rebuild(self.uf_table, &tables, next_ts);
+                let table_rebuild = self.db.try_apply_rebuild(self.uf_table, &tables, next_ts)?;
                 // Container rebuild can make a parent row newly matchable without
                 // changing the row's stored id. Re-timestamp those parents so
                 // seminaive sees the newly enabled match on the next pass.
@@ -1528,7 +1528,7 @@ impl EGraph {
     /// the ordinary convenience API above.
     pub fn try_flush_updates(&mut self) -> Result<bool> {
         let uf_size_before = self.db.get_table(self.uf_table).len();
-        let updated = self.db.merge_all();
+        let updated = self.db.try_merge_all()?;
         self.inc_ts();
         let uf_size_after = self.db.get_table(self.uf_table).len();
         if uf_size_before != uf_size_after {
@@ -2699,7 +2699,7 @@ fn run_rules_impl(
         info.last_run_at = next_ts;
     }
     let ruleset = rsb.build();
-    Ok(db.run_rule_set(&ruleset, report_level))
+    Ok(db.try_run_rule_set(&ruleset, report_level)?)
 }
 
 // These markers are just used to make it easy to distinguish time spent in

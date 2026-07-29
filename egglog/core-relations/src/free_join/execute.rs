@@ -346,16 +346,28 @@ impl Prober {
 }
 
 impl Database {
+    /// Execute a rule set, panicking if trace-only merge validation fails.
     pub fn run_rule_set(&mut self, rule_set: &RuleSet, report_level: ReportLevel) -> RuleSetReport {
+        self.try_run_rule_set(rule_set, report_level)
+            .expect("ordinary rule-set merge failed during trace capture")
+    }
+
+    /// Execute a rule set and report reached structural merge boundaries in
+    /// trace capture.
+    pub fn try_run_rule_set(
+        &mut self,
+        rule_set: &RuleSet,
+        report_level: ReportLevel,
+    ) -> Result<RuleSetReport, super::TraceMergeError> {
         if rule_set.plans.is_empty() {
-            return RuleSetReport {
+            return Ok(RuleSetReport {
                 pre_merge: PreMergeTiming::Split {
                     search: Duration::ZERO,
                     apply: Duration::ZERO,
                     unattributed: Duration::ZERO,
                 },
                 ..RuleSetReport::default()
-            };
+            });
         }
         let match_counter = Arc::new(MatchCounter::new(rule_set.actions.n_ids()));
 
@@ -668,15 +680,15 @@ impl Database {
             },
         };
         let merge_timer = Instant::now();
-        let changed = self.merge_all();
+        let changed = self.try_merge_all()?;
         let merge_time = merge_timer.elapsed();
 
-        RuleSetReport {
+        Ok(RuleSetReport {
             changed,
             rule_reports,
             pre_merge,
             merge_time,
-        }
+        })
     }
 }
 

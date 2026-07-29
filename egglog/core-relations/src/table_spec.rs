@@ -353,6 +353,13 @@ pub trait Table: Any + Send + Sync {
         }
     }
 
+    /// Validate this table's pending trace-enabled mutations before it is
+    /// changed. The database invokes this both at batch entry and immediately
+    /// before each table merge.
+    fn preflight_merge(&self, _exec_state: &ExecutionState) -> Result<(), &'static str> {
+        Ok(())
+    }
+
     /// If this table can perform a table-level rebuild, construct a [`Rebuilder`] for it.
     fn rebuilder<'a>(&'a self, _cols: &[ColumnId]) -> Option<Box<dyn Rebuilder + 'a>> {
         None
@@ -377,6 +384,26 @@ pub trait Table: Any + Send + Sync {
     ) -> bool {
         // Default implementation does nothing.
         false
+    }
+
+    /// Fallible trace-aware variant of [`Table::apply_rebuild`].
+    fn try_apply_rebuild(
+        &mut self,
+        table_id: TableId,
+        table: &WrappedTable,
+        next_ts: Value,
+        exec_state: &mut ExecutionState,
+        equality_landmark: Option<HistoryPosition>,
+        transaction: Option<&MutationTransaction>,
+    ) -> Result<bool, &'static str> {
+        Ok(self.apply_rebuild(
+            table_id,
+            table,
+            next_ts,
+            exec_state,
+            equality_landmark,
+            transaction,
+        ))
     }
 
     /// Publish an incremental-rebuild cursor returned through the shared

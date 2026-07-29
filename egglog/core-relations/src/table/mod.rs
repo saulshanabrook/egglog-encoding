@@ -692,6 +692,10 @@ impl Table for SortedWritesTable {
         }
         Ok(())
     }
+
+    fn preflight_merge(&self, exec_state: &ExecutionState) -> Result<(), &'static str> {
+        self.preflight_serial_capture_collisions(exec_state)
+    }
     fn clear(&mut self) {
         assert!(
             !self.trace_enabled,
@@ -725,6 +729,26 @@ impl Table for SortedWritesTable {
         equality_landmark: Option<HistoryPosition>,
         transaction: Option<&MutationTransaction>,
     ) -> bool {
+        self.do_rebuild(
+            table_id,
+            table,
+            next_ts,
+            exec_state,
+            equality_landmark,
+            transaction,
+        )
+        .expect("ordinary table rebuild failed during trace capture")
+    }
+
+    fn try_apply_rebuild(
+        &mut self,
+        table_id: TableId,
+        table: &crate::WrappedTable,
+        next_ts: Value,
+        exec_state: &mut ExecutionState,
+        equality_landmark: Option<HistoryPosition>,
+        transaction: Option<&MutationTransaction>,
+    ) -> Result<bool, &'static str> {
         self.do_rebuild(
             table_id,
             table,
@@ -1214,7 +1238,6 @@ impl SortedWritesTable {
     }
 
     fn serial_insert_mode<const CAPTURE: bool>(&mut self, exec_state: &mut ExecutionState) -> bool {
-        self.preflight_serial_capture_collisions::<CAPTURE>(exec_state);
         let mut changed = false;
         let n_keys = self.n_keys;
         let mut scratch = with_pool_set(|ps| ps.get::<Vec<Value>>());
@@ -1670,29 +1693,44 @@ impl SortedWritesTable {
     /// table with missing/Unsupported merge metadata pays for a keyed scan.
     /// Every queue is restored in FIFO order before reporting the error, so no
     /// native row or capture promotion becomes visible first.
-    fn preflight_serial_capture_collisions<const CAPTURE: bool>(
+    fn preflight_serial_capture_collisions(
         &self,
         exec_state: &ExecutionState,
-    ) {
-        if !CAPTURE {
-            return;
-        }
-        let trace = exec_state
-            .trace()
-            .expect("capture insert mode requires an enabled arena");
+    ) -> Result<(), &'static str> {
+        let Some(trace) = exec_state.trace() else {
+            return Ok(());
+        };
         if !trace.requires_collision_preflight(self.table_id) {
-            return;
+            return Ok(());
         }
 
         let mut collision = false;
-        for (_, queue) in self.pending_state.pending_rows.iter() {
+        for (shard, queue) in self.pending_state.pending_rows.iter() {
+            // Deletions publish before insertions in `Table::merge`, so an
+            // incoming row for a key removed by this same dirty batch does not
+            // reach the merge callback.
+            let removal_queue = &self.pending_state.pending_removals[shard];
+            let mut removal_batches = Vec::new();
+            let mut removed = HashSet::<Vec<Value>>::default();
+            while let Some(batch) = removal_queue.pop() {
+                batch.rows.for_each(|key| {
+                    removed.insert(key.to_vec());
+                });
+                removal_batches.push(batch);
+            }
+            for batch in removal_batches {
+                removal_queue.push(batch);
+            }
+
             let mut batches = Vec::new();
             let mut proposed = HashSet::<Vec<Value>>::default();
             while let Some(batch) = queue.pop() {
                 if !collision {
                     for row in batch.rows.non_stale() {
                         let key = &row[..self.n_keys];
-                        if self.get_row(key).is_some() || !proposed.insert(key.to_vec()) {
+                        if (self.get_row(key).is_some() && !removed.contains(key))
+                            || !proposed.insert(key.to_vec())
+                        {
                             collision = true;
                             break;
                         }
@@ -1705,15 +1743,9 @@ impl SortedWritesTable {
             }
         }
         if collision {
-            trace
-                .validate_merge_origin(self.table_id, true)
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "cannot execute causal merge for {:?}: {error}",
-                        self.table_id
-                    )
-                });
+            trace.validate_merge_origin(self.table_id, true)?;
         }
+        Ok(())
     }
 
     fn parallel_insert<C: OrderingChecker>(

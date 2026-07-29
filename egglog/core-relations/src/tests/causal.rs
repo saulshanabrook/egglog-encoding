@@ -1016,8 +1016,8 @@ fn causal_capture_rebuild_abort_is_atomic_across_target_tables() {
             }),
         )
     };
-    let first = db.add_table(relation(), iter::once(uf), iter::empty());
-    let second = db.add_table(relation(), iter::once(uf), iter::empty());
+    let first = db.add_table_named(relation(), "first".into(), iter::once(uf), iter::empty());
+    let second = db.add_table_named(relation(), "second".into(), iter::once(uf), iter::empty());
     let trace = db.try_enable_trace().unwrap();
     let table_sort = ReplaySortId::new(91);
     let uf_sort = table_sort;
@@ -1047,8 +1047,7 @@ fn causal_capture_rebuild_abort_is_atomic_across_target_tables() {
     let first_new = Value::new(110);
     let second_old = Value::new(90);
     let second_new = Value::new(80);
-    let recovery = Value::new(200);
-    for raw in [120, 110, 90, 80, 200] {
+    for raw in [120, 110, 90, 80] {
         trace.intern_literal(table_sort, ReplayLiteral::I64(raw), Value::new(raw as u32));
     }
     for raw in [120, 110, 90, 80] {
@@ -1104,22 +1103,13 @@ fn causal_capture_rebuild_abort_is_atomic_across_target_tables() {
     assert!(db.merge_all());
     db.set_trace_wave(Wave::new(2));
 
-    let failed = catch_unwind(AssertUnwindSafe(|| {
-        db.apply_rebuild(uf, &[first, second], Value::new(2));
-    }));
-    assert!(failed.is_err());
-
-    db.stage_source_row(
-        first,
-        &[recovery, Value::new(2)],
-        &[
-            trace.lookup_term(table_sort, recovery).unwrap(),
-            crate::ReplayTermId::MISSING,
-        ],
-        SourceRef::Synthetic(912),
-    )
-    .unwrap();
-    assert!(db.merge_all());
+    let error = db
+        .try_apply_rebuild(uf, &[first, second], Value::new(2))
+        .expect_err("unsupported rebuild collision must fail closed");
+    assert_eq!(
+        error.to_string(),
+        "function `second` merge reached an unsupported structural result expression"
+    );
     assert_eq!(committed_fact_id(&db, first, first_old), first_fact);
     assert_eq!(committed_fact_id(&db, second, second_old), second_fact);
     assert!(db.get_table(first).get_row(&[first_new]).is_none());
@@ -1127,10 +1117,12 @@ fn causal_capture_rebuild_abort_is_atomic_across_target_tables() {
         committed_fact_id(&db, second, second_new),
         second_canonical_fact
     );
-    assert!(db.get_table(first).get_row(&[recovery]).is_some());
-
-    db.finalize_trace_wave();
-    trace.with_view(|_| Ok(())).unwrap();
+    assert!(matches!(
+        trace.with_view(|_| Ok(())),
+        Err(crate::TraceViewError::NotFinalized(
+            "a rule execution failed before trace publication"
+        ))
+    ));
 }
 
 #[test]
@@ -1516,7 +1508,7 @@ fn invalid_merge_function_union_fails_before_replacing_its_parent_row() {
     assert!(matches!(
         trace.with_view(|_| Ok(())),
         Err(crate::TraceViewError::NotFinalized(
-            "a rule execution panicked"
+            "a rule execution failed before trace publication"
         ))
     ));
     assert!(
@@ -1530,7 +1522,7 @@ fn causal_trace_reject_unsupported_merge_before_callback_effects() {
     let mut db = Database::default();
     let callbacks = Arc::new(AtomicUsize::new(0));
     let callback_count = Arc::clone(&callbacks);
-    let table = db.add_table(
+    let table = db.add_table_named(
         SortedWritesTable::new(
             1,
             2,
@@ -1546,6 +1538,7 @@ fn causal_trace_reject_unsupported_merge_before_callback_effects() {
                 }
             }),
         ),
+        "unsupported".into(),
         iter::empty(),
         iter::empty(),
     );
@@ -1573,6 +1566,26 @@ fn causal_trace_reject_unsupported_merge_before_callback_effects() {
     )
     .unwrap();
     assert!(db.merge_all());
+
+    // Preflight must model Table::merge's delete-before-insert order: this
+    // replacement never reaches the unsupported callback.
+    {
+        let mut update = db.new_buffer(table);
+        update.stage_remove_maintenance(&[two], crate::table_spec::MAINTENANCE_REMOVAL);
+    }
+    db.stage_source_row(
+        table,
+        &[two, one],
+        &[term(two), term(one)],
+        SourceRef::Synthetic(92),
+    )
+    .unwrap();
+    assert!(db.try_merge_all().unwrap());
+    assert_eq!(callbacks.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        db.get_table(table).get_row(&[two]).unwrap().vals.as_slice(),
+        &[two, one]
+    );
     db.finalize_trace_wave();
 
     let wave = Wave::new(1);
@@ -1600,20 +1613,213 @@ fn causal_trace_reject_unsupported_merge_before_callback_effects() {
         }
     }
 
-    let failed = catch_unwind(AssertUnwindSafe(|| db.merge_all()));
-    assert!(failed.is_err(), "unsupported merge origin must fail closed");
+    let error = db
+        .try_merge_all()
+        .expect_err("unsupported merge origin must fail closed");
+    assert_eq!(
+        error.to_string(),
+        "function `unsupported` merge reached an unsupported structural result expression"
+    );
+    let retry = db
+        .try_merge_all()
+        .expect_err("failed preflight must restore its pending notification");
+    assert_eq!(retry, error);
     assert_eq!(callbacks.load(Ordering::SeqCst), 0);
     assert!(db.get_table(table).get_row(&[one]).is_none());
     assert_eq!(
         db.get_table(table).get_row(&[two]).unwrap().vals.as_slice(),
-        &[two, zero]
+        &[two, one]
     );
     assert!(matches!(
         trace.with_view(|_| Ok(())),
         Err(crate::TraceViewError::NotFinalized(
-            "a rule execution panicked"
+            "a rule execution failed before trace publication"
         ))
     ));
+}
+
+fn assert_dynamic_merge_preflight(extra_dirty_tables: usize) {
+    let mut db = Database::default();
+    let a_id = db.next_table_id();
+    let b_id = TableId::new(u32::try_from(a_id.index()).unwrap() + 1);
+    let b_origin = Arc::new(OnceLock::<RowOriginSiteId>::new());
+    let callback_origin = Arc::clone(&b_origin);
+    let a = db.add_table_named(
+        SortedWritesTable::new(
+            1,
+            2,
+            None,
+            vec![],
+            Box::new(move |state, _, _, _| {
+                state.stage_insert_with_origin(
+                    b_id,
+                    &[Value::new(2), Value::new(21)],
+                    *callback_origin.get().unwrap(),
+                );
+                false
+            }),
+        ),
+        "A".into(),
+        iter::empty(),
+        iter::once(b_id),
+    );
+    assert_eq!(a, a_id);
+    let b_callbacks = Arc::new(AtomicUsize::new(0));
+    let callback_count = Arc::clone(&b_callbacks);
+    let b = db.add_table_named(
+        SortedWritesTable::new(
+            1,
+            2,
+            None,
+            vec![],
+            Box::new(move |_, _, incoming, out| {
+                callback_count.fetch_add(1, Ordering::SeqCst);
+                out.extend_from_slice(incoming);
+                true
+            }),
+        ),
+        "B".into(),
+        iter::empty(),
+        iter::empty(),
+    );
+    assert_eq!(b, b_id);
+    let extras = (0..extra_dirty_tables)
+        .map(|index| {
+            db.add_table_named(
+                SortedWritesTable::new(
+                    1,
+                    1,
+                    None,
+                    vec![],
+                    Box::new(|_, left, right, _| {
+                        assert_eq!(left, right);
+                        false
+                    }),
+                ),
+                format!("extra-{index}").into(),
+                iter::empty(),
+                iter::empty(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let trace = db.try_enable_trace().unwrap();
+    let (a_key, a_prior, a_incoming) = (Value::new(1), Value::new(10), Value::new(11));
+    let (b_key, b_prior, b_incoming) = (Value::new(2), Value::new(20), Value::new(21));
+    let (fresh_key, fresh_value) = (Value::new(3), Value::new(30));
+    install_test_row_terms(
+        &trace,
+        &[
+            a_key,
+            a_prior,
+            a_incoming,
+            b_key,
+            b_prior,
+            b_incoming,
+            fresh_key,
+            fresh_value,
+        ],
+    );
+    let term = |value| trace.lookup_term(TEST_REPLAY_SORT, value).unwrap();
+    trace
+        .register_table_layout(b, &[Some(TEST_REPLAY_SORT), Some(TEST_REPLAY_SORT)])
+        .unwrap();
+    trace
+        .register_table_merge_origins(
+            b,
+            &[
+                MergeOriginSelector::Incoming { column: 0 },
+                MergeOriginSelector::Unsupported,
+            ],
+        )
+        .unwrap();
+    register_test_capture_table(&trace, a, 2);
+    for extra in &extras {
+        register_test_capture_table(&trace, *extra, 1);
+    }
+    b_origin
+        .set(
+            trace.register_row_origin(RowOriginSpec {
+                table: b,
+                cells: [b_key, b_incoming]
+                    .map(|value| Some(Arc::new(TermTemplate::Static { term: term(value) })))
+                    .into(),
+            }),
+        )
+        .unwrap();
+
+    db.stage_source_row(
+        a,
+        &[a_key, a_prior],
+        &[term(a_key), term(a_prior)],
+        SourceRef::Synthetic(1000),
+    )
+    .unwrap();
+    db.stage_source_row(
+        b,
+        &[b_key, b_prior],
+        &[term(b_key), term(b_prior)],
+        SourceRef::Synthetic(1001),
+    )
+    .unwrap();
+    assert!(db.merge_all());
+    db.finalize_trace_wave();
+    db.set_trace_wave(Wave::new(1));
+
+    // B is initially dirty only for a fresh key, so the batch-entry preflight
+    // passes. Merging A then stages B's colliding key; only the just-in-time
+    // preflight can reject it before B publishes either pending row.
+    db.stage_source_row(
+        a,
+        &[a_key, a_incoming],
+        &[term(a_key), term(a_incoming)],
+        SourceRef::Synthetic(1002),
+    )
+    .unwrap();
+    db.stage_source_row(
+        b,
+        &[fresh_key, fresh_value],
+        &[term(fresh_key), term(fresh_value)],
+        SourceRef::Synthetic(1003),
+    )
+    .unwrap();
+    for (index, extra) in extras.iter().copied().enumerate() {
+        let raw = 40 + u32::try_from(index).unwrap();
+        let value = Value::new(raw);
+        trace.intern_literal(TEST_REPLAY_SORT, ReplayLiteral::I64(i64::from(raw)), value);
+        db.stage_source_row(
+            extra,
+            &[value],
+            &[term(value)],
+            SourceRef::Synthetic(u64::from(1010 + u32::try_from(index).unwrap())),
+        )
+        .unwrap();
+    }
+    let error = catch_unwind(AssertUnwindSafe(|| db.try_merge_all()))
+        .expect("try_merge_all must return rather than panic")
+        .expect_err("dynamically staged unsupported collision must fail closed");
+    assert_eq!(
+        error.to_string(),
+        "function `B` merge reached an unsupported structural result expression"
+    );
+    assert_eq!(b_callbacks.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        db.get_table(b).get_row(&[b_key]).unwrap().vals.as_slice(),
+        &[b_key, b_prior]
+    );
+    assert!(db.get_table(b).get_row(&[fresh_key]).is_none());
+    assert!(matches!(
+        trace.with_view(|_| Ok(())),
+        Err(crate::TraceViewError::NotFinalized(
+            "a rule execution failed before trace publication"
+        ))
+    ));
+}
+
+#[test]
+fn causal_trace_rechecks_rows_staged_by_an_earlier_table_merge() {
+    // Two dirty tables use merge_simple; four use the dependency-strata path.
+    assert_dynamic_merge_preflight(0);
+    assert_dynamic_merge_preflight(2);
 }
 
 #[test]
