@@ -58,6 +58,93 @@ fn assert_success(output: &std::process::Output, description: &str) {
     );
 }
 
+fn assert_input_error(input: &Path, flags: &[&str], expected_stdout: &str, description: &str) {
+    let expected_io_error = std::fs::read_to_string(input).unwrap_err().to_string();
+    let output = egglog()
+        .env_remove("RUST_LOG")
+        .args(flags)
+        .arg(input)
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "{description} used the wrong exit status:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), expected_stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(input.to_string_lossy().as_ref()),
+        "{description} omitted its input path:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(&expected_io_error),
+        "{description} omitted its OS error:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("panicked at"),
+        "{description} panicked:\n{stderr}"
+    );
+}
+
+#[test]
+fn missing_inputs_use_the_normal_error_path() {
+    let directory = TestDir::new();
+    let missing = directory.path().join("missing.egg");
+
+    for (description, flags, expected_stdout) in [
+        ("normal input", &[][..], ""),
+        ("sliced input", &["--slice"][..], ""),
+        (
+            "interactive sliced input",
+            &["--slice", "--mode", "interactive"][..],
+            "(error)\n",
+        ),
+    ] {
+        assert_input_error(&missing, flags, expected_stdout, description);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn non_utf8_input_paths_do_not_panic() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let directory = TestDir::new();
+    let input = directory
+        .path()
+        .join(std::ffi::OsString::from_vec(b"input-\xff.egg".to_vec()));
+    let program = "(relation R (i64)) (R 1) (check (R 1))";
+
+    if std::fs::write(&input, program).is_ok() {
+        for (description, flags) in [
+            ("normal non-UTF-8 input", &[][..]),
+            ("sliced non-UTF-8 input", &["--slice"][..]),
+            (
+                "serialized non-UTF-8 input",
+                &[
+                    "--slice",
+                    "--to-json",
+                    "--serialize-split-primitive-outputs",
+                ][..],
+            ),
+        ] {
+            let output = egglog().args(flags).arg(&input).output().unwrap();
+            assert_success(&output, description);
+        }
+    } else {
+        // Some Unix filesystems reject non-UTF-8 names. The CLI must still
+        // report that path as an ordinary input error instead of panicking.
+        assert_input_error(
+            &input,
+            &["--slice", "--mode", "interactive"],
+            "(error)\n",
+            "unsupported non-UTF-8 input",
+        );
+    }
+}
+
 #[test]
 fn slice_output_writes_an_artifact_that_the_test_suite_strictly_replays() {
     let directory = TestDir::new();
@@ -122,13 +209,16 @@ fn rewrite_root_collision_strictly_replays() {
 }
 
 #[test]
-fn slice_spans_multiple_input_files() {
+fn normal_and_sliced_execution_span_multiple_input_files() {
     let directory = TestDir::new();
     let setup = directory.path().join("setup.egg");
     let criterion = directory.path().join("criterion.egg");
     let artifact = directory.path().join("slice-replay.egg");
     std::fs::write(&setup, "(relation R (i64)) (R 1)").unwrap();
     std::fs::write(&criterion, "(check (R 1))").unwrap();
+
+    let output = egglog().arg(&setup).arg(&criterion).output().unwrap();
+    assert_success(&output, "normal multi-file execution");
 
     let output = egglog()
         .arg("--slice-output")

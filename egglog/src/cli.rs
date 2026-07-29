@@ -167,11 +167,8 @@ where
 
     if slice_requested {
         for input in &args.inputs {
-            let program = std::fs::read_to_string(input).unwrap_or_else(|_| {
-                let arg = input.to_string_lossy();
-                panic!("Failed to read file {arg}")
-            });
-            let filename = Some(input.to_str().unwrap().to_owned());
+            let program = read_input(input, args.mode);
+            let filename = Some(input.to_string_lossy().into_owned());
             let parsed = egraph
                 .parse_program(filename, &program)
                 .unwrap_or_else(|error| exit_with_command_error(error, args.mode));
@@ -235,14 +232,11 @@ where
         }
     } else {
         for input in &args.inputs {
-            let program = std::fs::read_to_string(input).unwrap_or_else(|_| {
-                let arg = input.to_string_lossy();
-                panic!("Failed to read file {arg}")
-            });
+            let program = read_input(input, args.mode);
 
             match run_commands(
                 &mut egraph,
-                Some(input.to_str().unwrap().into()),
+                Some(input.to_string_lossy().into_owned()),
                 &program,
                 io::stdout(),
                 args.mode,
@@ -328,10 +322,9 @@ fn serialize_egraph(egraph: &EGraph, input: &Path, args: &Args) {
 
     // if we are splitting primitive outputs, add `-split` to the end of the file name
     let serialize_filename = if args.serialize_split_primitive_outputs {
-        input.with_file_name(format!(
-            "{}-split",
-            input.file_stem().unwrap().to_str().unwrap()
-        ))
+        let mut stem = input.file_stem().unwrap().to_os_string();
+        stem.push("-split");
+        input.with_file_name(stem)
     } else {
         input.to_owned()
     };
@@ -429,6 +422,10 @@ where
     run_command_ast(egraph, commands, output, mode)
 }
 
+fn read_input(input: &Path, mode: RunMode) -> String {
+    std::fs::read_to_string(input).unwrap_or_else(|error| exit_with_input_error(input, error, mode))
+}
+
 fn run_command_ast<W>(
     egraph: &mut EGraph,
     commands: Vec<Command>,
@@ -477,7 +474,7 @@ where
     })
 }
 
-fn command_error<W>(error: Error, mut output: W, mode: RunMode) -> io::Result<Option<Error>>
+fn report_error<W>(error: impl Display, mut output: W, mode: RunMode) -> io::Result<()>
 where
     W: Write,
 {
@@ -485,7 +482,21 @@ where
     if mode == RunMode::Interactive {
         writeln!(output, "(error)")?;
     }
+    Ok(())
+}
+
+fn command_error<W>(error: Error, output: W, mode: RunMode) -> io::Result<Option<Error>>
+where
+    W: Write,
+{
+    report_error(&error, output, mode)?;
     Ok(Some(error))
+}
+
+fn exit_with_input_error(input: &Path, error: io::Error, mode: RunMode) -> ! {
+    let message = format!("failed to read input `{}`: {error}", input.display());
+    let _ = report_error(message, io::stdout(), mode);
+    std::process::exit(1)
 }
 
 fn exit_with_command_error(error: Error, mode: RunMode) -> ! {
