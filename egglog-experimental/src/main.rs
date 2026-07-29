@@ -12,7 +12,7 @@ fn main() {
         eprintln!("error: {err}");
         std::process::exit(2);
     });
-    let proof_mode = args.iter().any(|arg| {
+    let proof_mode = option_args(&args).any(|arg| {
         matches!(
             arg.to_str(),
             Some("--proofs" | "--proof-testing" | "--proof-extraction" | "--term-encoding")
@@ -45,12 +45,16 @@ fn main() {
 }
 
 fn requests_slice(args: &[OsString]) -> bool {
-    args.iter().any(|arg| {
+    option_args(args).any(|arg| {
         let Some(arg) = arg.to_str() else {
             return false;
         };
         matches!(arg, "--slice" | "--slice-output") || arg.starts_with("--slice-output=")
     })
+}
+
+fn option_args(args: &[OsString]) -> impl Iterator<Item = &OsString> {
+    args.iter().take_while(|arg| arg.to_str() != Some("--"))
 }
 
 fn slice_request_for_backend(backend: Backend, args: &[OsString]) -> Result<bool, &'static str> {
@@ -71,6 +75,11 @@ where
     let mut filtered = Vec::new();
     let mut iter = args.into_iter();
     while let Some(arg) = iter.next() {
+        if arg.to_str() == Some("--") {
+            filtered.push(arg);
+            filtered.extend(iter);
+            break;
+        }
         match arg.to_str() {
             Some("--backend") => {
                 if saw_backend {
@@ -99,8 +108,18 @@ where
 /// redundant there; drop it before handing the arguments to the CLI.
 #[cfg(feature = "dd-backend")]
 fn strip_term_encoding_arg(args: Vec<OsString>) -> Vec<OsString> {
+    let mut after_options = false;
     args.into_iter()
-        .filter(|arg| arg.to_str() != Some("--term-encoding"))
+        .filter(|arg| {
+            if after_options {
+                return true;
+            }
+            if arg.to_str() == Some("--") {
+                after_options = true;
+                return true;
+            }
+            arg.to_str() != Some("--term-encoding")
+        })
         .collect()
 }
 
@@ -159,6 +178,36 @@ mod tests {
         assert_eq!(
             strip_term_encoding_arg(rest),
             vec![OsString::from("egglog"), OsString::from("prog.egg")]
+        );
+        assert_eq!(
+            strip_term_encoding_arg(
+                ["egglog", "--term-encoding", "--", "--term-encoding"]
+                    .into_iter()
+                    .map(OsString::from)
+                    .collect()
+            ),
+            ["egglog", "--", "--term-encoding"]
+                .into_iter()
+                .map(OsString::from)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn wrapper_options_stop_at_the_argument_terminator() {
+        let args = ["egglog", "--", "--backend=dd", "--slice", "--proofs"]
+            .into_iter()
+            .map(OsString::from);
+        let (backend, rest) = extract_backend_arg(args).unwrap();
+        assert_eq!(backend, Backend::Main);
+        assert!(!requests_slice(&rest));
+        assert!(!option_args(&rest).any(|arg| arg.to_str() == Some("--proofs")));
+        assert_eq!(
+            rest,
+            ["egglog", "--", "--backend=dd", "--slice", "--proofs"]
+                .into_iter()
+                .map(OsString::from)
+                .collect::<Vec<_>>()
         );
     }
 }
