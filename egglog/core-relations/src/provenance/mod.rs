@@ -31,16 +31,16 @@ pub use terms::*;
 
 #[cfg(test)]
 thread_local! {
-    static TERM_PROJECTOR_FACT_EXPANSIONS: std::cell::Cell<usize> =
+    static TEST_TERM_PROJECTOR_FACT_EXPANSIONS: std::cell::Cell<usize> =
         const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
 pub(crate) fn reset_term_projector_fact_expansions() {
-    TERM_PROJECTOR_FACT_EXPANSIONS.set(0);
+    TEST_TERM_PROJECTOR_FACT_EXPANSIONS.set(0);
 }
 
 #[cfg(test)]
 pub(crate) fn term_projector_fact_expansions() -> usize {
-    TERM_PROJECTOR_FACT_EXPANSIONS.get()
+    TEST_TERM_PROJECTOR_FACT_EXPANSIONS.get()
 }

@@ -60,7 +60,7 @@ impl<'a> TermProjector<'a> {
             return Ok(term);
         }
         #[cfg(test)]
-        TERM_PROJECTOR_FACT_EXPANSIONS.set(TERM_PROJECTOR_FACT_EXPANSIONS.get() + 1);
+        TEST_TERM_PROJECTOR_FACT_EXPANSIONS.set(TEST_TERM_PROJECTOR_FACT_EXPANSIONS.get() + 1);
         if !self.visiting_facts.insert((fact_id, column)) {
             return Err(format!(
                 "cyclic causal term origin at {fact_id:?} column {column}"
@@ -903,7 +903,6 @@ impl<'a> TraceView<'a> {
             .get(&table)
             .map(|constructor| constructor.clone());
         Ok(ReplayTableSchema {
-            table,
             kind,
             key_columns,
             columns,

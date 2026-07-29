@@ -584,7 +584,6 @@ pub struct TraceTotals {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReplayTableSchema {
-    pub table: TableId,
     pub kind: ReplayTableKind,
     pub key_columns: usize,
     pub columns: Arc<[Option<ReplaySortId>]>,

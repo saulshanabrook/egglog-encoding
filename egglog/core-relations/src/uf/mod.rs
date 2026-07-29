@@ -288,14 +288,17 @@ struct UfPendingBatch {
 impl Drop for UfBuffer {
     fn drop(&mut self) {
         let Some(buffered_writes) = self.buffered_writes.upgrade() else {
-            // SAFETY: If we can't write updates, manually drop to_insert
+            // SAFETY: Both `ManuallyDrop` fields are initialized. This is their final
+            // access, so each is dropped exactly once here.
             unsafe {
                 ManuallyDrop::drop(&mut self.to_insert);
                 ManuallyDrop::drop(&mut self.captures);
             }
             return;
         };
-        // SAFETY: self.to_insert will not be used again after this point.
+        // SAFETY: Both `ManuallyDrop` fields are initialized and neither is accessed
+        // again after these takes. Each is taken exactly once; the resulting locals
+        // are either dropped on the empty-buffer return or moved into `pending`.
         //
         // This avoids creating a fresh row buffer via `mem::take` or `mem::swap` and
         // dropping it immediately.
