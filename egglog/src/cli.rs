@@ -186,25 +186,10 @@ where
         let capture_time = capture_start.elapsed();
 
         let slice_start = std::time::Instant::now();
-        let slice = crate::slicing::backward::slice_all_checks(&egraph).unwrap_or_else(|error| {
+        let rendered = crate::slicing::slice_all_checks(&egraph).unwrap_or_else(|error| {
             log::error!("{error}");
             std::process::exit(1);
         });
-        let replay =
-            crate::slicing::replay::build_replay_program(&egraph, &slice).unwrap_or_else(|error| {
-                log::error!("{error}");
-                std::process::exit(1);
-            });
-        let replay_stats = replay.stats;
-        let commands = replay.to_commands().unwrap_or_else(|error| {
-            log::error!("{error}");
-            std::process::exit(1);
-        });
-        let rendered = crate::slicing::replay::ReplayProgram::render_commands(&commands)
-            .unwrap_or_else(|error| {
-                log::error!("{error}");
-                std::process::exit(1);
-            });
         let slice_time = slice_start.elapsed();
 
         if let Some(path) = &args.slice_output {
@@ -250,16 +235,7 @@ where
             std::time::Duration::ZERO
         };
 
-        log::info!(
-            "slice: capture={capture_time:?} slice={slice_time:?} replay={replay_time:?} facts={} firings={} equalities={} removals={} waves={} aliases={} replayed_firings={}",
-            slice.facts.len(),
-            slice.firings.len(),
-            slice.equalities.len(),
-            slice.replay_removals.len(),
-            replay_stats.waves,
-            replay_stats.aliases,
-            replay_stats.firings,
-        );
+        log::info!("slice: capture={capture_time:?} slice={slice_time:?} replay={replay_time:?}",);
         if args.to_json || args.to_dot || args.to_svg {
             serialize_egraph(&egraph, input, &args);
         }

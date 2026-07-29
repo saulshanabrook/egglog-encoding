@@ -10,7 +10,7 @@ mod exec_state;
 pub mod extract;
 pub mod prelude;
 mod proofs;
-mod slicing;
+pub mod slicing;
 
 pub mod scheduler;
 mod serialize;

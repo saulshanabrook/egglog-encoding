@@ -152,19 +152,11 @@ impl ReplayEvent {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct ReplayIrStats {
-    pub(crate) aliases: u64,
-    pub(crate) firings: u64,
-    pub(crate) waves: u64,
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct ReplayProgram {
     pub(crate) setup: Vec<ReplaySetup>,
     pub(crate) terms: Vec<OwnedReplayTerm>,
     pub(crate) events: Vec<ReplayEvent>,
-    pub(crate) stats: ReplayIrStats,
 }
 
 impl ReplayProgram {
@@ -1344,25 +1336,10 @@ fn build_owned(
     }
     events.sort_by_key(ReplayEvent::chronology_key);
 
-    let stats = ReplayIrStats {
-        aliases: next_alias as u64,
-        firings: events
-            .iter()
-            .map(|event| match event {
-                ReplayEvent::Wave(wave) => wave.firings.len() as u64,
-                ReplayEvent::Source(_) | ReplayEvent::Check(_) => 0,
-            })
-            .sum(),
-        waves: events
-            .iter()
-            .filter(|event| matches!(event, ReplayEvent::Wave(_)))
-            .count() as u64,
-    };
     Ok(ReplayProgram {
         setup,
         terms: term_nodes,
         events,
-        stats,
     })
 }
 
