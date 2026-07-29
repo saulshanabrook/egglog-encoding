@@ -16,6 +16,21 @@ each with its own doc comment describing the syntax and semantics.
 Whatever you can write between parentheses at the top of an egglog
 program shows up as a variant there.
 
+# Check-directed replay slicing
+
+Egglog can capture one supported ordinary execution and render the historical
+support of its successful checks as a smaller, grounded egglog program. The
+trace is causal evidence rather than a proof; the rendered source can run on a
+fresh normal or proof-enabled graph. See the [design
+explanation](https://github.com/egraphs-good/egglog/blob/main/src/slicing/check_directed_replay.md)
+for the temporal and occurrence model.
+
+Rust callers enable capture with [`EGraph::enable_trace`] before installing
+user declarations or input, run the source program normally, and then call
+[`slicing::slice_all_checks`]. That function returns source text without
+executing or validating it, so the caller chooses the replay mode and
+publication policy.
+
 # Using egglog from Rust
 We encourage using the egglog language as much as possible, even from Rust.
 In some cases, custom primitives or custom rules are necessary.

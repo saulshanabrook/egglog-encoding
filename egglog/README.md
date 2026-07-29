@@ -63,6 +63,9 @@ smaller egglog program without replaying it:
 egglog --slice-output slice-replay.egg input.egg
 ```
 
+See [Check-directed replay slicing](src/slicing/check_directed_replay.md) for
+the capture, historical-closure, and grounded-replay correctness model.
+
 The output flag implies slicing; `--slice` requests replay and is independent of
 the replay mode. For example, this records natively and replays with proofs:
 
@@ -74,17 +77,18 @@ Bare `--slice` replays normally. It can also be combined with proof testing,
 term encoding, proof extraction, naive execution, and graph serialization.
 
 `--slice-output` writes the rendered program directly; the CLI does not run a
-second validation pass before writing. The test corpus strictly replays every
-supported artifact, while unsupported capture boundaries still fail before an
-artifact is produced. There is no fallback to the original program.
+second validation pass or publish through an atomic temporary-file rename.
+The test corpus and CI strictly replay supported artifacts, while unsupported
+capture boundaries still fail before an artifact is produced. There is no
+fallback to the original program.
 
 Slicing currently supports one input file, one execution thread, and the main
-backend. Unsupported schedulers and unsupported mutation shapes fail closed
-with a diagnostic.
+backend. A selected execution that reaches an unsupported scheduler, source,
+container, or mutation shape fails closed with a diagnostic.
 Successful `check` commands are the only replay roots; `extract` and
 `multi-extract` output is not retained. The trace records effective source
-events, rule firings and their grounded premises, equality explanations,
-version changes, removals, and check positions. It is causal evidence used to
+events, rule firings and their grounded premises, applied equality history and
+causes, rekeys, removals, and check positions. It is causal evidence used to
 construct the replay program, not itself a proof.
 
 Retained source `rewrite` and `birewrite` commands preserve their source form
