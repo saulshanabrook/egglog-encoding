@@ -471,6 +471,70 @@ fn owned_ir_records_late_source_boundary_without_retaining_prefix_wave() {
 }
 
 #[test]
+fn replay_preserves_setup_chronology_across_late_global() {
+    let mut recorder = EGraph::default();
+    serial_pool().install(|| recorder.enable_trace()).unwrap();
+    recorder
+        .parse_and_run_program(
+            None,
+            "(datatype E (A i64))
+             (relation Seed (i64))
+             (relation Mid (i64))
+             (relation Out (E))
+             (Seed 1)
+             (rule ((Seed x)) ((Mid x)) :name \"first\")
+             (run 1)
+             (check (Mid 1))
+             (let $late (A 7))
+             (rule ((Mid x)) ((Out $late)) :name \"second\")
+             (run 1)
+             (check (Out (A 7)))",
+        )
+        .unwrap();
+
+    let slice = select_all_checks(&recorder).unwrap();
+    let ir = build_replay_program(&recorder, &slice).unwrap();
+    let commands = ir.to_commands().unwrap();
+    let rendered = render_commands_as_source(&commands);
+
+    let first_run = rendered
+        .find("(run-schedule (run-rule (\"first\"")
+        .unwrap_or_else(|| panic!("first selected wave is absent:\n{rendered}"));
+    let first_check = rendered
+        .find("(check (Mid 1))")
+        .unwrap_or_else(|| panic!("first selected check is absent:\n{rendered}"));
+    let late_global = rendered
+        .find("(let $late (A 7))")
+        .unwrap_or_else(|| panic!("late global is absent:\n{rendered}"));
+    let second_rule = rendered
+        .find(":name \"second\"")
+        .unwrap_or_else(|| panic!("second selected rule is absent:\n{rendered}"));
+    let second_run = rendered
+        .find("(run-schedule (run-rule (\"second\"")
+        .unwrap_or_else(|| panic!("second selected wave is absent:\n{rendered}"));
+    assert!(
+        first_run < first_check
+            && first_check < late_global
+            && late_global < second_rule
+            && second_rule < second_run,
+        "late setup crossed its source chronology:\n{rendered}"
+    );
+
+    for (mode, mut replay) in [
+        ("native", EGraph::default()),
+        ("term", EGraph::default().with_term_encoding_enabled()),
+        (
+            "proof",
+            EGraph::default().with_proofs_enabled().with_proof_testing(),
+        ),
+    ] {
+        serial_pool()
+            .install(|| replay.parse_and_run_program(None, &rendered))
+            .unwrap_or_else(|error| panic!("{mode} strict replay failed: {error}\n{rendered}"));
+    }
+}
+
+#[test]
 fn rendered_artifact_round_trips_globals_and_grounded_rules_with_proofs() {
     let mut recorder = EGraph::default();
     serial_pool().install(|| recorder.enable_trace()).unwrap();

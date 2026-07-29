@@ -139,6 +139,8 @@ struct ReplayFiring {
 /// firings then execute through one ordinary `run-rule` schedule.
 struct ReplayWave {
     wave: u64,
+    /// Largest catalog ordinal among selected firings in this wave.
+    setup_bound: usize,
     aliases: Box<[ReplayAlias]>,
     firings: Box<[ReplayFiring]>,
 }
@@ -204,13 +206,13 @@ impl ReplayProgram {
         let mut aliases = HashMap::<ReplayTermRef, String>::default();
         for event in &self.events {
             let setup_bound = match event {
-                ReplayEvent::Source(source) => Some(source.catalog_ordinal),
-                ReplayEvent::Check(check) if check.after_wave == 0 => Some(check.catalog_ordinal),
-                ReplayEvent::Wave(_) | ReplayEvent::Check(_) => None,
+                ReplayEvent::Source(source) => source.catalog_ordinal,
+                ReplayEvent::Wave(wave) => wave.setup_bound,
+                ReplayEvent::Check(check) => check.catalog_ordinal,
             };
             while setup
                 .peek()
-                .is_some_and(|entry| setup_bound.is_none_or(|bound| entry.catalog_ordinal <= bound))
+                .is_some_and(|entry| entry.catalog_ordinal <= setup_bound)
             {
                 let entry = setup.next().expect("peeked replay setup disappeared");
                 commands.push(entry.command.clone());
@@ -1355,6 +1357,7 @@ fn lower_slice_to_owned_program(
 
     let mut terms = OwnedTermBuilder::new(view, catalog)?;
     let mut waves = BTreeMap::<u64, Vec<ReplayFiring>>::new();
+    let mut wave_setup_bounds = BTreeMap::<u64, usize>::new();
     let mut aliases_by_wave = BTreeMap::<u64, Vec<ReplayAlias>>::new();
     let mut alias_wave_by_term = HashMap::<ReplayTermRef, u64>::default();
     let mut alias_ordinal_by_term = HashMap::<ReplayTermRef, usize>::default();
@@ -1376,6 +1379,11 @@ fn lower_slice_to_owned_program(
     let mut next_alias = 0usize;
     for (id, rule, wave, _) in firings {
         let rule_entry = &catalog.rule_catalog[rule as usize];
+        let catalog_ordinal = catalog.command_catalog[rule_entry.command].surface_command;
+        wave_setup_bounds
+            .entry(wave)
+            .and_modify(|bound| *bound = (*bound).max(catalog_ordinal))
+            .or_insert(catalog_ordinal);
         let binding_plans = slice.firing_bindings.get(&id).ok_or_else(|| {
             ReplayError::Invalid(format!(
                 "selected firing {} has no projected bindings",
@@ -1560,6 +1568,9 @@ fn lower_slice_to_owned_program(
     for (wave, firings) in waves {
         events.push(ReplayEvent::Wave(ReplayWave {
             wave,
+            setup_bound: wave_setup_bounds
+                .remove(&wave)
+                .expect("selected replay wave has no setup bound"),
             aliases: aliases_by_wave
                 .remove(&wave)
                 .unwrap_or_default()
