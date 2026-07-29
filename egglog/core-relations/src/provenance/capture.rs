@@ -741,7 +741,7 @@ struct TraceShared {
     /// Every exact premise-cell/constant equality enforced by the lowered
     /// native query, including compiler-generated variables.
     rule_equality_recipes:
-        RwLock<HashMap<u32, Arc<[(ReplayEqualitySource, ReplayEqualitySource)]>>>,
+        RwLock<HashMap<u32, Arc<[(FiringEqualitySource, FiringEqualitySource)]>>>,
     /// Cold compile-time recipes shared by every seminaive/decomposed variant.
     static_term_recipes: Mutex<StaticTermRecipeStore>,
     arena: Mutex<TraceArena>,
@@ -1178,11 +1178,11 @@ impl Trace {
     pub(crate) fn register_rule_equality_recipe(
         &self,
         rule: u32,
-        equalities: &[(ReplayEqualitySource, ReplayEqualitySource)],
-    ) -> Arc<[(ReplayEqualitySource, ReplayEqualitySource)]> {
+        equalities: &[(FiringEqualitySource, FiringEqualitySource)],
+    ) -> Arc<[(FiringEqualitySource, FiringEqualitySource)]> {
         for (left, right) in equalities {
             for source in [left, right] {
-                if let ReplayEqualitySource::Constant(endpoint) = source {
+                if let FiringEqualitySource::Constant(endpoint) = source {
                     assert!(
                         !endpoint.term.is_missing(),
                         "rule equality constant term is missing"
@@ -1205,7 +1205,7 @@ impl Trace {
             );
             return Arc::clone(existing);
         }
-        let recipe: Arc<[(ReplayEqualitySource, ReplayEqualitySource)]> = equalities.into();
+        let recipe: Arc<[(FiringEqualitySource, FiringEqualitySource)]> = equalities.into();
         recipes.insert(rule, Arc::clone(&recipe));
         recipe
     }

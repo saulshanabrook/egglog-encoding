@@ -388,12 +388,6 @@ pub struct PremiseOccurrence {
     pub column: usize,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ReplayEqualitySource {
-    Premise(PremiseOccurrence),
-    Constant(EqualityEndpoint),
-}
-
 /// One node in the static source-to-action term recipe. Nodes share producer
 /// subgraphs while a rule is compiled and instantiate only for promoted
 /// observations.

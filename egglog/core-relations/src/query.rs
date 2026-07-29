@@ -10,9 +10,9 @@ use smallvec::SmallVec;
 use thiserror::Error;
 
 use crate::provenance::{
-    ActionCaptureKind, ActionCaptureSpec, CheckEndpointSpec, CheckTermSource, PremiseOccurrence,
-    PremiseSlot, ReplayBindingSource, ReplayEqualitySource, ReplayTerm, RowOriginSpec,
-    TermOriginSpec, TermRecipe, TermTemplate,
+    ActionCaptureKind, ActionCaptureSpec, CheckEndpointSpec, CheckTermSource, FiringEqualitySource,
+    PremiseOccurrence, PremiseSlot, ReplayBindingSource, ReplayTerm, RowOriginSpec, TermOriginSpec,
+    TermRecipe, TermTemplate,
 };
 use crate::{
     BaseValueId, CounterId, CriterionCaptureSpec, CriterionEndpointSource, EqualityEndpoint,
@@ -611,7 +611,7 @@ enum CaptureBuildSpec {
 struct PendingRuleRecipes {
     rule: u32,
     binding_sources: Arc<[ReplayBindingSource]>,
-    equality_obligations: Vec<(ReplayEqualitySource, ReplayEqualitySource)>,
+    equality_obligations: Vec<(FiringEqualitySource, FiringEqualitySource)>,
     term_recipe: TermRecipe,
 }
 
@@ -1214,7 +1214,7 @@ impl RuleBuilder<'_, '_> {
     fn capture_equality_obligations(
         &self,
         premises: &[AtomId],
-    ) -> Vec<(ReplayEqualitySource, ReplayEqualitySource)> {
+    ) -> Vec<(FiringEqualitySource, FiringEqualitySource)> {
         let trace = self
             .qb
             .rsb
@@ -1260,8 +1260,8 @@ impl RuleBuilder<'_, '_> {
                 assert_eq!(sort, other_sort, "one query variable crosses replay sorts");
                 if occurrence != representative {
                     push((
-                        ReplayEqualitySource::Premise(representative),
-                        ReplayEqualitySource::Premise(occurrence),
+                        FiringEqualitySource::Premise(representative),
+                        FiringEqualitySource::Premise(occurrence),
                     ));
                 }
             }
@@ -1289,11 +1289,11 @@ impl RuleBuilder<'_, '_> {
                     )
                 });
                 push((
-                    ReplayEqualitySource::Premise(PremiseOccurrence {
+                    FiringEqualitySource::Premise(PremiseOccurrence {
                         premise,
                         column: col.index(),
                     }),
-                    ReplayEqualitySource::Constant(EqualityEndpoint {
+                    FiringEqualitySource::Constant(EqualityEndpoint {
                         sort,
                         term,
                         raw: *val,
@@ -1482,7 +1482,7 @@ impl RuleBuilder<'_, '_> {
             })
             .collect::<Vec<_>>();
         let compile_implicit = |source| match source {
-            ReplayEqualitySource::Premise(occurrence) => {
+            FiringEqualitySource::Premise(occurrence) => {
                 let atom = premises[occurrence.premise];
                 let table = self.qb.query.atoms[atom].table;
                 let sort = trace
@@ -1497,7 +1497,7 @@ impl RuleBuilder<'_, '_> {
                     },
                 }
             }
-            ReplayEqualitySource::Constant(endpoint) => CheckEndpointSpec {
+            FiringEqualitySource::Constant(endpoint) => CheckEndpointSpec {
                 value: QueryEntry::Const(endpoint.raw),
                 sort: endpoint.sort,
                 term: CheckTermSource::Constant {

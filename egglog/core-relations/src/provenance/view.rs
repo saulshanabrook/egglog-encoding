@@ -513,7 +513,7 @@ pub struct TraceView<'a> {
     pub(super) arena: &'a TraceArena,
     pub(super) binding_recipes: &'a HashMap<u32, Arc<[ReplayBindingSource]>>,
     pub(super) equality_recipes:
-        &'a HashMap<u32, Arc<[(ReplayEqualitySource, ReplayEqualitySource)]>>,
+        &'a HashMap<u32, Arc<[(FiringEqualitySource, FiringEqualitySource)]>>,
     pub(super) term_recipes: &'a StaticTermRecipeStore,
     pub(super) replay_terms: &'a TermInterner,
     pub(super) projector: TermProjector<'a>,
@@ -985,24 +985,7 @@ impl<'a> TraceView<'a> {
         let equalities = self.equality_recipes.get(&rule).ok_or_else(|| {
             TraceViewError::Invalid(format!("rule {rule} has no equality-obligation recipe"))
         })?;
-        Ok(equalities
-            .iter()
-            .map(|&(left, right)| {
-                let public = |source| match source {
-                    ReplayEqualitySource::Premise(occurrence) => {
-                        FiringEqualitySource::Premise(PremiseOccurrence {
-                            premise: occurrence.premise,
-                            column: occurrence.column,
-                        })
-                    }
-                    ReplayEqualitySource::Constant(endpoint) => {
-                        FiringEqualitySource::Constant(endpoint)
-                    }
-                };
-                (public(left), public(right))
-            })
-            .collect::<Vec<_>>()
-            .into_boxed_slice())
+        Ok(equalities.to_vec().into_boxed_slice())
     }
 
     pub fn fact_terms(&mut self, id: FactId) -> Result<Box<[ReplayTermId]>, TraceViewError> {
