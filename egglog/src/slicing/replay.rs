@@ -27,7 +27,9 @@ use std::sync::Arc;
 
 use thiserror::Error;
 
-use crate::ast::{Action, Command, Expr, RunRuleConfig, RustSpan, Schedule, Span};
+use crate::ast::{
+    Action, Command, Expr, RunRuleConfig, RustSpan, Schedule, Schema, Span, Subdatatypes,
+};
 use crate::core_relations::{
     FactId, ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTerm, ReplayTermId, SourceRef,
     TraceView, TraceViewError,
@@ -182,9 +184,10 @@ impl ReplayEvent {
 #[derive(Clone, Debug)]
 /// An owned, graph-neutral replay intermediate representation.
 ///
-/// `setup` preserves catalog-level declarations and retained rules, `terms`
-/// owns structural binding recipes, and `events` preserves source/wave/check
-/// chronology. No field is a handle into the recording graph.
+/// `setup` holds candidate catalog declarations plus retained rules. Lowering
+/// keeps only the transitive declaration closure needed by the emitted roots.
+/// `terms` owns structural binding recipes, and `events` preserves
+/// source/wave/check chronology. No field is a handle into the recording graph.
 pub(crate) struct ReplayProgram {
     pub(crate) setup: Vec<ReplaySetup>,
     pub(crate) terms: Vec<OwnedReplayTerm>,
@@ -296,7 +299,9 @@ impl ReplayProgram {
             }
         }
         commands.extend(setup.map(|entry| entry.command.clone()));
-        Ok(hygienic_source_commands(commands))
+        let observed = observed_source_symbols(&commands);
+        let commands = retain_required_declarations(commands);
+        Ok(hygienic_source_commands(commands, observed))
     }
 
     /// Render ordinary commands as a standalone source program.
@@ -361,13 +366,14 @@ fn split_global_symbol(symbol: &str) -> (&str, &str) {
 }
 
 /// Alpha-renames replay-owned and parser-reserved internal symbols across the
-/// complete retained program. This is deliberately cold: capture keeps exact
+/// complete candidate program. This is deliberately cold: capture keeps exact
 /// provenance-marked names, then one occupied-name-aware map makes aliases,
 /// declarations, rule references, grounded binding keys, and direction suffixes
-/// agree without conflating user symbols.
-fn hygienic_source_commands(commands: Vec<Command>) -> Vec<Command> {
+/// agree without conflating user symbols. Observation precedes declaration
+/// pruning so an unused declaration cannot change a generated replay name.
+fn observed_source_symbols(commands: &[Command]) -> Vec<String> {
     let mut observed = Vec::new();
-    for command in &commands {
+    for command in commands {
         let mut heads = Vec::new();
         let mut leaves = Vec::new();
         let mut record_head = |head: String| {
@@ -393,7 +399,10 @@ fn hygienic_source_commands(commands: Vec<Command>) -> Vec<Command> {
         });
         observed.extend(strings);
     }
+    observed
+}
 
+fn hygienic_source_commands(commands: Vec<Command>, observed: Vec<String>) -> Vec<Command> {
     let mut occupied = HashSet::default();
     let mut internal_bases = Vec::new();
     let mut seen_internal = HashSet::default();
@@ -644,6 +653,259 @@ fn is_static_declaration(command: &Command) -> bool {
             | Command::AddRuleset(..)
             | Command::UnstableCombinedRuleset(..)
     )
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum DefinitionKey {
+    Sort(String),
+    Function(String),
+    Ruleset(String),
+}
+
+#[derive(Default)]
+struct CommandFootprint {
+    provides: HashSet<DefinitionKey>,
+    requires: HashSet<DefinitionKey>,
+    opaque: bool,
+}
+
+impl CommandFootprint {
+    fn require_sort(&mut self, name: &str) {
+        self.requires.insert(DefinitionKey::Sort(name.to_owned()));
+    }
+
+    fn require_function(&mut self, name: &str) {
+        self.requires
+            .insert(DefinitionKey::Function(name.to_owned()));
+    }
+
+    fn require_ruleset(&mut self, name: &str) {
+        if !name.is_empty() {
+            self.requires
+                .insert(DefinitionKey::Ruleset(name.to_owned()));
+        }
+    }
+
+    fn require_schema(&mut self, schema: &Schema) {
+        for sort in schema.input.iter().chain(&schema.outputs) {
+            self.require_sort(sort);
+        }
+    }
+
+    fn require_sort_expr(&mut self, expr: &Expr) {
+        match expr {
+            Expr::Var(_, name) => self.require_sort(name),
+            Expr::Call(_, name, children) => {
+                self.require_sort(name);
+                for child in children {
+                    self.require_sort_expr(child);
+                }
+            }
+            Expr::Lit(..) => {}
+        }
+    }
+}
+
+fn command_footprint(command: &Command) -> CommandFootprint {
+    let mut footprint = CommandFootprint::default();
+    {
+        let mut record_head = |head: String| {
+            footprint.require_function(&head);
+            head
+        };
+        let mut keep_leaf = |leaf: String| leaf;
+        let _ = command
+            .clone()
+            .map_symbols(&mut record_head, &mut keep_leaf);
+    }
+
+    match command {
+        Command::Sort {
+            name,
+            presort_and_args,
+            uf,
+            proof_func,
+            container_rebuild,
+            proof_constructors,
+            ..
+        } => {
+            footprint.provides.insert(DefinitionKey::Sort(name.clone()));
+            if let Some((presort, args)) = presort_and_args {
+                footprint.require_sort(presort);
+                for arg in args {
+                    footprint.require_sort_expr(arg);
+                }
+            }
+            if let Some((constructor, index)) = uf {
+                footprint.require_function(constructor);
+                if let Some(index) = index {
+                    footprint.require_function(index);
+                }
+            }
+            if let Some(proof_func) = proof_func {
+                footprint.require_function(proof_func);
+            }
+            if let Some(spec) = container_rebuild {
+                footprint.require_function(&spec.internal_rebuild_prim);
+                if let Some(proof_prim) = &spec.internal_rebuild_proof_prim {
+                    footprint.require_function(proof_prim);
+                }
+            }
+            if let Some(names) = proof_constructors {
+                for name in [
+                    &names.congr,
+                    &names.congr_all,
+                    &names.trans,
+                    &names.sym,
+                    &names.normalize,
+                    &names.fiat,
+                ] {
+                    footprint.require_function(name);
+                }
+            }
+        }
+        Command::Datatype { name, variants, .. } => {
+            footprint.provides.insert(DefinitionKey::Sort(name.clone()));
+            for variant in variants {
+                footprint
+                    .provides
+                    .insert(DefinitionKey::Function(variant.name.clone()));
+                for sort in &variant.types {
+                    footprint.require_sort(sort);
+                }
+            }
+        }
+        Command::Datatypes { datatypes, .. } => {
+            for (_, name, body) in datatypes {
+                footprint.provides.insert(DefinitionKey::Sort(name.clone()));
+                match body {
+                    Subdatatypes::Variants(variants) => {
+                        for variant in variants {
+                            footprint
+                                .provides
+                                .insert(DefinitionKey::Function(variant.name.clone()));
+                            for sort in &variant.types {
+                                footprint.require_sort(sort);
+                            }
+                        }
+                    }
+                    Subdatatypes::NewSort(presort, args) => {
+                        footprint.require_sort(presort);
+                        for arg in args {
+                            footprint.require_sort_expr(arg);
+                        }
+                    }
+                }
+            }
+        }
+        Command::Constructor {
+            name,
+            schema,
+            term_constructor,
+            ..
+        }
+        | Command::Function {
+            name,
+            schema,
+            term_constructor,
+            ..
+        } => {
+            footprint
+                .provides
+                .insert(DefinitionKey::Function(name.clone()));
+            footprint.require_schema(schema);
+            if let Some(constructor) = term_constructor {
+                footprint.require_function(constructor);
+            }
+        }
+        Command::Relation { name, inputs, .. } => {
+            footprint
+                .provides
+                .insert(DefinitionKey::Function(name.clone()));
+            for sort in inputs {
+                footprint.require_sort(sort);
+            }
+        }
+        Command::AddRuleset(_, name) => {
+            footprint
+                .provides
+                .insert(DefinitionKey::Ruleset(name.clone()));
+        }
+        Command::UnstableCombinedRuleset(_, name, members) => {
+            footprint
+                .provides
+                .insert(DefinitionKey::Ruleset(name.clone()));
+            for member in members {
+                footprint.require_ruleset(member);
+            }
+        }
+        Command::Rule { rule } => footprint.require_ruleset(&rule.ruleset),
+        Command::Rewrite(ruleset, ..) | Command::BiRewrite(ruleset, ..) => {
+            footprint.require_ruleset(ruleset)
+        }
+        Command::LetCheck {
+            expected_sort: Some(sort),
+            ..
+        } => footprint.require_sort(sort),
+        Command::Action(..)
+        | Command::Actions(..)
+        | Command::LetBegin(..)
+        | Command::LetCheck {
+            expected_sort: None,
+            ..
+        }
+        | Command::Check(..)
+        | Command::RunSchedule(Schedule::RunRule(..)) => {}
+        _ => footprint.opaque = true,
+    }
+    footprint
+}
+
+/// Retain the transitive static-definition closure of the actual replay roots.
+///
+/// Source dependencies are already closed exactly in [`selected_source_closure`].
+/// This second, graph-neutral pass handles only declaration dependencies. An
+/// opaque retained command conservatively keeps every declaration, while a
+/// missing provider denotes a builtin or a declaration supplied by the replay
+/// factory before trace capture.
+fn retain_required_declarations(commands: Vec<Command>) -> Vec<Command> {
+    let footprints = commands.iter().map(command_footprint).collect::<Vec<_>>();
+    if footprints.iter().any(|footprint| footprint.opaque) {
+        return commands;
+    }
+
+    let mut providers = HashMap::<DefinitionKey, usize>::default();
+    for (index, (command, footprint)) in commands.iter().zip(&footprints).enumerate() {
+        if is_static_declaration(command) {
+            for definition in &footprint.provides {
+                providers.entry(definition.clone()).or_insert(index);
+            }
+        }
+    }
+
+    let mut pending = Vec::new();
+    for (command, footprint) in commands.iter().zip(&footprints) {
+        if !is_static_declaration(command) {
+            pending.extend(footprint.requires.iter().cloned());
+        }
+    }
+    let mut selected = HashSet::<usize>::default();
+    while let Some(requirement) = pending.pop() {
+        let Some(provider) = providers.get(&requirement).copied() else {
+            continue;
+        };
+        if selected.insert(provider) {
+            pending.extend(footprints[provider].requires.iter().cloned());
+        }
+    }
+
+    commands
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, command)| {
+            (!is_static_declaration(&command) || selected.contains(&index)).then_some(command)
+        })
+        .collect()
 }
 
 /// Close selected source roots over catalog-recorded source dependencies.

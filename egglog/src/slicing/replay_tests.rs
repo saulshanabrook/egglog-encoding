@@ -545,6 +545,7 @@ fn rendered_artifact_round_trips_globals_and_grounded_rules_with_proofs() {
             None,
             "(datatype E (A i64) (B E) (C E))
                  (relation Seed (E))
+                 (relation __slice_replay_0 (i64))
                  (Seed (A 1))
                  (let $dead (A 2))
                  (let $seed (A 1))
@@ -581,7 +582,8 @@ fn rendered_artifact_round_trips_globals_and_grounded_rules_with_proofs() {
     assert!(rendered.contains("(relation Seed"));
     assert!(rendered.contains("(let $seed (A 1))"));
     assert!(!rendered.contains(":internal-let"));
-    assert!(rendered.contains("(let-check $__slice_replay_0 (A 1) :sort E)"));
+    assert!(!rendered.contains("(relation __slice_replay_0"));
+    assert!(rendered.contains("(let-check $__slice_replay_0_1 (A 1) :sort E)"));
     assert!(
         !rendered.contains('@'),
         "rendered replay leaked a parser-reserved internal symbol:\n{rendered}"
@@ -602,6 +604,106 @@ fn rendered_artifact_round_trips_globals_and_grounded_rules_with_proofs() {
     serial_pool()
         .install(|| proof.parse_and_run_program(None, &rendered))
         .unwrap();
+}
+
+#[test]
+fn replay_keeps_only_required_static_declarations() {
+    let (commands, rendered) = slice_commands(
+        "(datatype Used (U i64))
+             (datatype Unused (Z))
+             (relation Seed (i64))
+             (relation Out (Used))
+             (relation Dead (i64))
+             (function dead-f (i64) i64 :no-merge)
+             (ruleset live)
+             (ruleset dead)
+             (Seed 1)
+             (rule ((Seed x)) ((Out (U x))) :ruleset live :name \"selected\")
+             (rule ((Dead x)) ((Dead x)) :ruleset dead :name \"unselected\")
+             (run live 1)
+             (check (Out (U 1)))",
+    );
+
+    assert!(
+        commands
+            .iter()
+            .any(|command| matches!(command, Command::Datatype { name, .. } if name == "Used"))
+    );
+    assert!(
+        !commands
+            .iter()
+            .any(|command| matches!(command, Command::Datatype { name, .. } if name == "Unused"))
+    );
+    assert!(
+        !commands
+            .iter()
+            .any(|command| matches!(command, Command::Relation { name, .. } if name == "Dead"))
+    );
+    assert!(
+        !commands
+            .iter()
+            .any(|command| matches!(command, Command::Function { name, .. } if name == "dead-f"))
+    );
+    assert!(
+        commands
+            .iter()
+            .any(|command| matches!(command, Command::AddRuleset(_, name) if name == "live"))
+    );
+    assert!(
+        !commands
+            .iter()
+            .any(|command| matches!(command, Command::AddRuleset(_, name) if name == "dead"))
+    );
+    assert!(!rendered.contains("unselected"));
+}
+
+#[test]
+fn replay_retains_declarations_used_only_by_a_merge() {
+    let mut egraph = EGraph::default();
+    let commands = egraph
+        .parse_program(
+            None,
+            "(datatype E (V i64))
+             (function merge-helper (E) i64 :no-merge)
+             (function kept (i64) E
+               :merge ((set (merge-helper old) 1) new))
+             (function dead-helper (E) i64 :no-merge)
+             (set (kept 0) (V 1))",
+        )
+        .unwrap();
+    let commands = retain_required_declarations(commands);
+
+    assert!(commands.iter().any(
+        |command| matches!(command, Command::Function { name, .. } if name == "merge-helper")
+    ));
+    assert!(
+        commands
+            .iter()
+            .any(|command| matches!(command, Command::Function { name, .. } if name == "kept"))
+    );
+    assert!(
+        !commands.iter().any(
+            |command| matches!(command, Command::Function { name, .. } if name == "dead-helper")
+        )
+    );
+}
+
+#[test]
+fn replay_keeps_datatype_groups_atomic() {
+    let (commands, _) = slice_commands(
+        "(datatype*
+               (Used (U i64))
+               (Sibling (S i64)))
+             (relation Goal (Used))
+             (Goal (U 1))
+             (check (Goal (U 1)))",
+    );
+    assert!(commands.iter().any(|command| matches!(
+        command,
+        Command::Datatypes { datatypes, .. }
+            if datatypes.iter().any(|(_, name, _)| name == "Used")
+                && datatypes.iter().any(|(_, name, _)| name == "Sibling")
+    )));
 }
 
 #[test]
