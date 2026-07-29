@@ -14,7 +14,9 @@
 //! selected source commands, normalized rule identities, and exact input-row
 //! literals. Candidate static setup is interleaved by catalog ordinal, then
 //! pruned to the transitive `Sort`/`Function`/`Ruleset` closure of the replay
-//! roots. Source rows, grounded firing waves, and checks are ordered by their
+//! roots. An immutable global read reached through that static DAG pulls its
+//! exact [`SourceRef`] and transitive source dependencies back into the same
+//! closure. Source rows, grounded firing waves, and checks are ordered by their
 //! recorded chronology. Only selected input rows are materialized, so lowering
 //! never rereads their source files. A selected rewrite is reconstructed as a
 //! rewrite, and a selected direction of a birewrite preserves the original
@@ -192,14 +194,15 @@ pub(super) struct ReplayProgram {
 }
 
 impl ReplayProgram {
-    /// Lower the owned IR into ordinary commands for a fresh graph.
+    /// Lower the owned IR into commands and report immutable source reads from
+    /// the exact retained static-definition DAG.
     ///
-    /// Setup commands are emitted no later than the first chronological event
-    /// that needs them. Structural call values are re-established by `let-check`,
-    /// grounded firings use ordinary `run-rule` schedules, and literals remain
-    /// source literals. The final hygiene pass alpha-renames retained internal
-    /// symbols consistently across declarations, rules, bindings, and sorts.
-    pub(super) fn to_commands(&self) -> Result<Vec<Command>, ReplayError> {
+    /// `immutable_globals` is present only during the source/static joint
+    /// closure. Ordinary lowering needs only the returned commands.
+    fn commands_and_required_sources(
+        &self,
+        immutable_globals: Option<&HashMap<String, SourceRef>>,
+    ) -> Result<(Vec<Command>, HashSet<SourceRef>), ReplayError> {
         let mut commands = Vec::new();
         let mut setup = self.setup.iter().peekable();
 
@@ -297,8 +300,31 @@ impl ReplayProgram {
         }
         commands.extend(setup.map(|entry| entry.command.clone()));
         let observed = observed_source_symbols(&commands);
-        let commands = retain_required_declarations(commands);
-        Ok(hygienic_source_commands(commands, observed))
+        let closure = required_declaration_closure(&commands, immutable_globals);
+        let sources = closure.sources;
+        let commands = retain_declaration_indices(commands, &closure.declarations);
+        Ok((hygienic_source_commands(commands, observed), sources))
+    }
+
+    /// Return immutable source globals read by the exact retained command DAG.
+    fn required_static_sources(
+        &self,
+        catalog: &CaptureCatalog,
+    ) -> Result<HashSet<SourceRef>, ReplayError> {
+        Ok(self
+            .commands_and_required_sources(Some(&catalog.immutable_globals))?
+            .1)
+    }
+
+    /// Lower the owned IR into ordinary commands for a fresh graph.
+    ///
+    /// Setup commands are emitted no later than the first chronological event
+    /// that needs them. Structural call values are re-established by `let-check`,
+    /// grounded firings use ordinary `run-rule` schedules, and literals remain
+    /// source literals. The final hygiene pass alpha-renames retained internal
+    /// symbols consistently across declarations, rules, bindings, and sorts.
+    pub(super) fn to_commands(&self) -> Result<Vec<Command>, ReplayError> {
+        Ok(self.commands_and_required_sources(None)?.0)
     }
 
     fn term(&self, term: ReplayTermRef) -> Result<&OwnedReplayTerm, ReplayError> {
@@ -656,6 +682,8 @@ enum DefinitionKey {
     Sort(String),
     Function(String),
     Ruleset(String),
+    /// The exact captured source action that established an immutable global.
+    Source(SourceRef),
 }
 
 #[derive(Default)]
@@ -702,17 +730,37 @@ impl CommandFootprint {
     }
 }
 
-fn command_footprint(command: &Command) -> CommandFootprint {
+fn command_footprint(
+    command: &Command,
+    immutable_globals: Option<&HashMap<String, SourceRef>>,
+) -> CommandFootprint {
     let mut footprint = CommandFootprint::default();
     {
+        let mut heads = Vec::new();
+        let mut leaves = Vec::new();
         let mut record_head = |head: String| {
-            footprint.require_function(&head);
+            heads.push(head.clone());
             head
         };
-        let mut keep_leaf = |leaf: String| leaf;
+        let mut record_leaf = |leaf: String| {
+            leaves.push(leaf.clone());
+            leaf
+        };
         let _ = command
             .clone()
-            .map_symbols(&mut record_head, &mut keep_leaf);
+            .map_symbols(&mut record_head, &mut record_leaf);
+        for head in heads {
+            footprint.require_function(&head);
+        }
+        if let Some(immutable_globals) = immutable_globals {
+            for leaf in leaves {
+                if let Some(source) = immutable_globals.get(&leaf) {
+                    footprint
+                        .requires
+                        .insert(DefinitionKey::Source(source.clone()));
+                }
+            }
+        }
     }
 
     match command {
@@ -857,19 +905,28 @@ fn command_footprint(command: &Command) -> CommandFootprint {
     footprint
 }
 
-/// Retain the transitive static-definition closure of the actual replay roots.
-///
-/// Source dependencies are already closed exactly in [`selected_source_closure`].
-/// This second, graph-neutral pass handles only declaration dependencies. An
-/// opaque retained command conservatively keeps every declaration, while a
-/// missing provider denotes a builtin or a declaration supplied by the replay
-/// factory before trace capture.
-fn retain_required_declarations(commands: Vec<Command>) -> Vec<Command> {
-    let footprints = commands.iter().map(command_footprint).collect::<Vec<_>>();
-    if footprints.iter().any(|footprint| footprint.opaque) {
-        return commands;
-    }
+struct RequiredDeclarationClosure {
+    declarations: HashSet<usize>,
+    sources: HashSet<SourceRef>,
+}
 
+/// Close static definitions and collect the source reads reached along the way.
+///
+/// A surface global is state, not a static provider: its [`SourceRef`] is
+/// returned to the existing chronological source-closure pass. Only leaves in
+/// a retained declaration or an already-retained dynamic command are reached.
+/// An opaque root conservatively retains every declaration; a missing static
+/// provider denotes a builtin or setup supplied by the replay factory.
+fn required_declaration_closure(
+    commands: &[Command],
+    immutable_globals: Option<&HashMap<String, SourceRef>>,
+) -> RequiredDeclarationClosure {
+    let footprints = commands
+        .iter()
+        .map(|command| command_footprint(command, immutable_globals))
+        .collect::<Vec<_>>();
+
+    let retain_all = footprints.iter().any(|footprint| footprint.opaque);
     let mut providers = HashMap::<DefinitionKey, usize>::default();
     for (index, (command, footprint)) in commands.iter().zip(&footprints).enumerate() {
         if is_static_declaration(command) {
@@ -881,25 +938,49 @@ fn retain_required_declarations(commands: Vec<Command>) -> Vec<Command> {
 
     let mut pending = Vec::new();
     for (command, footprint) in commands.iter().zip(&footprints) {
-        if !is_static_declaration(command) {
+        if retain_all || !is_static_declaration(command) {
             pending.extend(footprint.requires.iter().cloned());
         }
     }
-    let mut selected = HashSet::<usize>::default();
+
+    let mut declarations = if retain_all {
+        commands
+            .iter()
+            .enumerate()
+            .filter_map(|(index, command)| is_static_declaration(command).then_some(index))
+            .collect()
+    } else {
+        HashSet::default()
+    };
+    let mut sources = HashSet::default();
     while let Some(requirement) = pending.pop() {
+        if let DefinitionKey::Source(source) = requirement {
+            sources.insert(source);
+            continue;
+        }
         let Some(provider) = providers.get(&requirement).copied() else {
             continue;
         };
-        if selected.insert(provider) {
+        if declarations.insert(provider) {
             pending.extend(footprints[provider].requires.iter().cloned());
         }
     }
 
+    RequiredDeclarationClosure {
+        declarations,
+        sources,
+    }
+}
+
+fn retain_declaration_indices(
+    commands: Vec<Command>,
+    declarations: &HashSet<usize>,
+) -> Vec<Command> {
     commands
         .into_iter()
         .enumerate()
         .filter_map(|(index, command)| {
-            (!is_static_declaration(&command) || selected.contains(&index)).then_some(command)
+            (!is_static_declaration(&command) || declarations.contains(&index)).then_some(command)
         })
         .collect()
 }
@@ -1236,7 +1317,27 @@ fn lower_slice_to_owned_program(
     view: &mut TraceView<'_>,
     slice: &Slice,
 ) -> Result<ReplayProgram, ReplayError> {
-    let sources = selected_source_closure(catalog, &slice.source_roots)?;
+    let mut source_roots = slice.source_roots.clone();
+    // Static declarations may read immutable globals, while those source
+    // commands may in turn require more declarations. Alternate the existing
+    // exact closures until neither side contributes a new source root.
+    loop {
+        let sources = selected_source_closure(catalog, &source_roots)?;
+        let program = lower_slice_to_owned_program_with_sources(catalog, view, slice, &sources)?;
+        let required_sources = program.required_static_sources(catalog)?;
+        if required_sources.is_subset(&sources) {
+            return Ok(program);
+        }
+        source_roots.extend(required_sources);
+    }
+}
+
+fn lower_slice_to_owned_program_with_sources(
+    catalog: &CaptureCatalog,
+    view: &mut TraceView<'_>,
+    slice: &Slice,
+    sources: &HashSet<SourceRef>,
+) -> Result<ReplayProgram, ReplayError> {
     let mut retained_rules = BTreeSet::new();
     let mut firings = Vec::with_capacity(slice.firing_bindings.len());
     let mut firing_ids = slice.firing_bindings.keys().copied().collect::<Vec<_>>();
@@ -1264,7 +1365,7 @@ fn lower_slice_to_owned_program(
         }
     }
     let mut source_events = BTreeMap::new();
-    for source in &sources {
+    for source in sources {
         let SourceRef::Synthetic(_) = source else {
             continue;
         };
@@ -1306,7 +1407,7 @@ fn lower_slice_to_owned_program(
             });
     }
     let mut source_events = source_events.into_values().collect::<Vec<_>>();
-    source_events.extend(selected_input_rows(view, catalog, &sources)?);
+    source_events.extend(selected_input_rows(view, catalog, sources)?);
     let mut rewrite_groups = BTreeMap::<usize, Vec<u32>>::new();
     for rule in &retained_rules {
         let entry = catalog.rule_catalog.get(*rule as usize).ok_or_else(|| {
@@ -1316,7 +1417,7 @@ fn lower_slice_to_owned_program(
             CatalogRuleSurface::Normalized => {
                 setup.push(ReplaySetup {
                     catalog_ordinal: catalog.command_catalog[entry.command].surface_command,
-                    command: normalized_rule_command(catalog, &sources, *rule, entry)?,
+                    command: normalized_rule_command(catalog, sources, *rule, entry)?,
                 });
             }
             CatalogRuleSurface::Rewrite {
@@ -1330,7 +1431,7 @@ fn lower_slice_to_owned_program(
     for (surface_command, rules) in rewrite_groups {
         setup.push(ReplaySetup {
             catalog_ordinal: surface_command,
-            command: retained_rewrite_command(catalog, &sources, surface_command, &rules)?,
+            command: retained_rewrite_command(catalog, sources, surface_command, &rules)?,
         });
     }
     setup.sort_by_key(|entry| entry.catalog_ordinal);

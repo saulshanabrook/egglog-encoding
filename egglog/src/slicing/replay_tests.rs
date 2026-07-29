@@ -535,7 +535,7 @@ fn replay_preserves_setup_chronology_across_late_global() {
 }
 
 #[test]
-fn rendered_artifact_round_trips_globals_and_grounded_rules_with_proofs() {
+fn rendered_artifact_round_trips_globals_and_grounded_rules_in_all_modes() {
     let mut recorder = EGraph::default();
     serial_pool().install(|| recorder.enable_trace()).unwrap();
     recorder
@@ -598,10 +598,18 @@ fn rendered_artifact_round_trips_globals_and_grounded_rules_with_proofs() {
         .install(|| direct_proof.run_program(commands))
         .unwrap();
 
-    let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
-    serial_pool()
-        .install(|| proof.parse_and_run_program(None, &rendered))
-        .unwrap();
+    for (mode, mut replay) in [
+        ("native", EGraph::default()),
+        ("term", EGraph::default().with_term_encoding_enabled()),
+        (
+            "proof",
+            EGraph::default().with_proofs_enabled().with_proof_testing(),
+        ),
+    ] {
+        serial_pool()
+            .install(|| replay.parse_and_run_program(None, &rendered))
+            .unwrap_or_else(|error| panic!("{mode} strict replay failed: {error}\n{rendered}"));
+    }
 }
 
 #[test]
@@ -669,7 +677,8 @@ fn replay_retains_declarations_used_only_by_a_merge() {
              (set (kept 0) (V 1))",
         )
         .unwrap();
-    let commands = retain_required_declarations(commands);
+    let closure = required_declaration_closure(&commands, None);
+    let commands = retain_declaration_indices(commands, &closure.declarations);
 
     assert!(commands.iter().any(
         |command| matches!(command, Command::Function { name, .. } if name == "merge-helper")
@@ -684,6 +693,47 @@ fn replay_retains_declarations_used_only_by_a_merge() {
             |command| matches!(command, Command::Function { name, .. } if name == "dead-helper")
         )
     );
+}
+
+#[test]
+fn replay_retains_global_read_only_by_a_selected_merge() {
+    let program = "(let $base 2)
+                   (let $bias (min $base 3))
+                   (let $unrelated 99)
+                   (function best (i64) i64 :merge (min old $bias))
+                   (relation Goal ())
+                   (set (best 0) 4)
+                   (rule ((= (best 0) 4)) ((Goal)) :name \"observe-best\")
+                   (run 1)
+                   (check (Goal))";
+    let mut recorder = EGraph::default();
+    serial_pool().install(|| recorder.enable_trace()).unwrap();
+    recorder.parse_and_run_program(None, program).unwrap();
+    let slice = select_all_checks(&recorder).unwrap();
+    let ir = build_replay_program(&recorder, &slice).unwrap();
+    let commands = ir.to_commands().unwrap();
+    let rendered = render_commands_as_source(&commands);
+
+    assert!(commands.iter().any(
+        |command| matches!(command, Command::Action(Action::Let(_, name, _)) if name == "$bias")
+    ));
+    assert!(commands.iter().any(
+        |command| matches!(command, Command::Action(Action::Let(_, name, _)) if name == "$base")
+    ));
+    assert!(!commands.iter().any(
+        |command| matches!(command, Command::Action(Action::Let(_, name, _)) if name == "$unrelated")
+    ));
+    let base = rendered.find("(let $base").unwrap();
+    let bias = rendered.find("(let $bias").unwrap();
+    let function = rendered.find("(function best").unwrap();
+    assert!(base < bias && bias < function);
+
+    // Primitive-valued globals are outside the term/proof command contract;
+    // the all-mode test above covers supported EqSort globals. This case
+    // targets the source/static closure link itself on the native semantics
+    // that accept the declaration.
+    let mut replay = EGraph::default();
+    replay.parse_and_run_program(None, &rendered).unwrap();
 }
 
 #[test]
