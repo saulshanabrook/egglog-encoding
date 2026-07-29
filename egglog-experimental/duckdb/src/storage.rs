@@ -12,6 +12,7 @@ use egglog_numeric_id::NumericId;
 use num::{BigInt, BigRational, ToPrimitive, Zero, rational::Rational64};
 use ordered_float::OrderedFloat;
 
+use crate::path_compress::PathCompressionPlan;
 use crate::rule_sql::{CompiledRule, RuleExecutionStats};
 
 const COUNTERS_TABLE: &str = "egglog_backend_counters";
@@ -901,6 +902,19 @@ impl Storage {
             return Ok(RuleExecutionStats::default());
         }
 
+        let path_rules = scheduled
+            .iter()
+            .filter(|(rule, _)| rule.path_compression().is_some())
+            .count();
+        if path_rules != 0 {
+            if path_rules != scheduled.len() {
+                bail!(
+                    "DuckDB cannot yet mix direct-Set and staged path-compression plans in one bounded ruleset"
+                );
+            }
+            return self.execute_path_compression_rules(scheduled);
+        }
+
         let mut state = self.state.lock().expect("DuckDB storage mutex poisoned");
         let run = state.next_rule_run;
         let next_rule_run = state
@@ -990,6 +1004,544 @@ impl Storage {
                 if let Err(rollback) = transaction.rollback() {
                     return Err(anyhow!(
                         "DuckDB rule transaction failed: {error:#}; rollback also failed: {rollback}"
+                    ));
+                }
+                return Err(error);
+            }
+        };
+        transaction.commit()?;
+        state.next_rule_run = next_rule_run;
+        #[cfg(test)]
+        {
+            state.latest_rule_sql = sql_log;
+        }
+        Ok(RuleExecutionStats {
+            changed,
+            watermark,
+            matched_rows,
+            inserted_rows,
+            statement_count,
+        })
+    }
+
+    fn execute_path_compression_rules(
+        &self,
+        scheduled: &[(&CompiledRule, u64)],
+    ) -> Result<RuleExecutionStats> {
+        #[derive(Clone)]
+        struct QueueGroup {
+            plan: PathCompressionPlan,
+            queue: String,
+        }
+
+        let mut state = self.state.lock().expect("DuckDB storage mutex poisoned");
+        let run = state.next_rule_run;
+        let next_rule_run = state
+            .next_rule_run
+            .checked_add(1)
+            .context("DuckDB rule-stage identifier overflow")?;
+        let transaction = state.connection.transaction()?;
+        #[cfg(test)]
+        let mut sql_log = Vec::new();
+        let mut scratch_names = Vec::<String>::new();
+        let mut matched_rows = Vec::with_capacity(scheduled.len());
+        let mut inserted_rows = vec![0; scheduled.len()];
+        let mut statement_count = 0;
+
+        let execute = (|| -> Result<(u64, bool)> {
+            let generation = transaction.query_row(
+                &format!("SELECT value FROM {COUNTERS_TABLE} WHERE name = 'generation'"),
+                [],
+                |row| row.get::<_, u64>(0),
+            )?;
+            statement_count += 1;
+            let first_head_id = transaction.query_row(
+                &format!("SELECT value FROM {COUNTERS_TABLE} WHERE name = 'fresh_id'"),
+                [],
+                |row| row.get::<_, u64>(0),
+            )?;
+            statement_count += 1;
+
+            // The stable pre-wave contract applies to every scheduled rule,
+            // including different union-find targets.  No effect statement is
+            // issued until every match relation exists.
+            let mut stages = Vec::with_capacity(scheduled.len());
+            for (schedule_index, (rule, watermark)) in scheduled.iter().enumerate() {
+                let stage = format!("egglog_path_stage_{run}_{schedule_index}");
+                scratch_names.push(stage.clone());
+                let create = rule.materialize_sql(&stage, *watermark);
+                transaction.execute(&create, [])?;
+                #[cfg(test)]
+                sql_log.push(create);
+                statement_count += 1;
+                let count_sql = format!("SELECT count(*) FROM {stage}");
+                let count = transaction.query_row(&count_sql, [], |row| row.get::<_, u64>(0))?;
+                #[cfg(test)]
+                sql_log.push(count_sql);
+                statement_count += 1;
+                matched_rows
+                    .push(usize::try_from(count).context("DuckDB path match count exceeds usize")?);
+                stages.push(stage);
+            }
+
+            let head_count = matched_rows.iter().try_fold(0_u64, |total, &count| {
+                total
+                    .checked_add(u64::try_from(count).context("path match count exceeds u64")?)
+                    .context("path head fresh-id count overflow")
+            })?;
+            let after_heads = checked_fresh_end(first_head_id, head_count, "path rule heads")?;
+            if head_count != 0 {
+                let update = format!(
+                    "UPDATE {COUNTERS_TABLE} SET value = CAST('{after_heads}' AS UBIGINT) WHERE name = 'fresh_id'"
+                );
+                transaction.execute(&update, [])?;
+                #[cfg(test)]
+                sql_log.push(update);
+                statement_count += 1;
+            }
+
+            let mut groups = Vec::<QueueGroup>::new();
+            let mut group_indices = BTreeMap::<(u32, u32, u32), usize>::new();
+            for (rule, _) in scheduled {
+                let plan = rule
+                    .path_compression()
+                    .expect("caller checked every scheduled plan");
+                if group_indices.contains_key(&plan.group_key()) {
+                    continue;
+                }
+                let index = groups.len();
+                let queue = format!("egglog_path_queue_{run}_{index}");
+                scratch_names.push(queue.clone());
+                let create = format!(
+                    "CREATE TEMP TABLE {queue} (
+                         __wave UBIGINT NOT NULL,
+                         __event_ordinal UBIGINT NOT NULL,
+                         c0 UBIGINT NOT NULL,
+                         c1 UBIGINT NOT NULL,
+                         c2 UBIGINT NOT NULL
+                     )"
+                );
+                transaction.execute(&create, [])?;
+                #[cfg(test)]
+                sql_log.push(create);
+                statement_count += 1;
+                group_indices.insert(plan.group_key(), index);
+                groups.push(QueueGroup {
+                    plan: plan.clone(),
+                    queue,
+                });
+            }
+
+            // Reserve and assign all rule-head ids before any collision can
+            // reserve a Sym/Trans pair.  IDs and event ordinals follow schedule
+            // order, then the canonical match ordinal inside each stage.
+            let mut head_offset = 0_u64;
+            let mut event_offset = 0_u64;
+            let mut changed = false;
+            for (schedule_index, ((rule, _), stage)) in scheduled.iter().zip(&stages).enumerate() {
+                let plan = rule
+                    .path_compression()
+                    .expect("caller checked every scheduled plan");
+                let count = u64::try_from(matched_rows[schedule_index])?;
+                let head_base = first_head_id
+                    .checked_add(head_offset)
+                    .context("path head fresh-id offset overflow")?;
+                let proof_stage = format!("egglog_path_head_proof_{run}_{schedule_index}");
+                scratch_names.push(proof_stage.clone());
+                let create = format!(
+                    "CREATE TEMP TABLE {proof_stage} AS
+                     SELECT c2 AS c0,
+                            c4 AS c1,
+                            CAST('{head_base}' AS UBIGINT) + __match_ordinal - 1 AS c2,
+                            CAST(TRUE AS BOOLEAN) AS c3,
+                            __match_ordinal AS __ordinal
+                     FROM {stage}"
+                );
+                transaction.execute(&create, [])?;
+                #[cfg(test)]
+                sql_log.push(create);
+                statement_count += 1;
+                let conflict_sql =
+                    check_assert_eq_conflict(&transaction, plan.trans, 3, &proof_stage)?;
+                #[cfg(test)]
+                sql_log.push(conflict_sql);
+                #[cfg(not(test))]
+                drop(conflict_sql);
+                statement_count += 1;
+                let insert = stage_insert_sql(plan.trans, 4, 3, &proof_stage, generation);
+                let inserted = transaction.execute(&insert, [])?;
+                inserted_rows[schedule_index] = inserted;
+                changed |= inserted != 0;
+                #[cfg(test)]
+                sql_log.push(insert);
+                statement_count += 1;
+
+                let group = &groups[group_indices[&plan.group_key()]];
+                let enqueue = format!(
+                    "INSERT INTO {} (__wave, __event_ordinal, c0, c1, c2)
+                     SELECT CAST('0' AS UBIGINT),
+                            CAST('{event_offset}' AS UBIGINT) + __match_ordinal,
+                            c0,
+                            c3,
+                            CAST('{head_base}' AS UBIGINT) + __match_ordinal - 1
+                     FROM {stage}
+                     ORDER BY __match_ordinal",
+                    group.queue
+                );
+                let enqueued = transaction.execute(&enqueue, [])?;
+                ensure_count(enqueued, count, "path head candidate enqueue")?;
+                #[cfg(test)]
+                sql_log.push(enqueue);
+                statement_count += 1;
+                head_offset = head_offset
+                    .checked_add(count)
+                    .context("path head offset overflow")?;
+                event_offset = event_offset
+                    .checked_add(count)
+                    .context("path event ordinal overflow")?;
+            }
+
+            // Corrupt duplicate owners would make a set-wise fold ambiguous.
+            // Reject before the first candidate mutation rather than choosing
+            // an incidental physical row.
+            for group in &groups {
+                let uf = sql_table(group.plan.union_find);
+                let check = format!(
+                    "SELECT EXISTS (
+                         SELECT 1 FROM {uf} GROUP BY c0 HAVING count(*) > 1
+                     ) OR EXISTS (
+                         SELECT 1 FROM {uf} WHERE __subsumed
+                     )"
+                );
+                let invalid = transaction.query_row(&check, [], |row| row.get::<_, bool>(0))?;
+                #[cfg(test)]
+                sql_log.push(check);
+                statement_count += 1;
+                if invalid {
+                    bail!("DuckDB path executor found duplicate or subsumed union-find owners");
+                }
+            }
+
+            let mut wave = 0_u64;
+            let mut next_event = event_offset;
+            let mut pass = 0_u64;
+            loop {
+                // Globally drain wave w for every independent UF target before
+                // any generated w+1 candidate becomes eligible.
+                for group in &groups {
+                    loop {
+                        let count_sql = format!(
+                            "SELECT count(*) FROM {} WHERE __wave = CAST('{wave}' AS UBIGINT)",
+                            group.queue
+                        );
+                        let pending =
+                            transaction.query_row(&count_sql, [], |row| row.get::<_, u64>(0))?;
+                        #[cfg(test)]
+                        sql_log.push(count_sql);
+                        statement_count += 1;
+                        if pending == 0 {
+                            break;
+                        }
+
+                        let outcome = format!("egglog_path_outcome_{run}_{pass}");
+                        let collision = format!("egglog_path_collision_{run}_{pass}");
+                        let sym_stage = format!("egglog_path_sym_{run}_{pass}");
+                        let trans_stage = format!("egglog_path_trans_{run}_{pass}");
+                        scratch_names.extend([
+                            outcome.clone(),
+                            collision.clone(),
+                            sym_stage.clone(),
+                            trans_stage.clone(),
+                        ]);
+                        let uf = sql_table(group.plan.union_find);
+                        let create_outcome = format!(
+                            "CREATE TEMP TABLE {outcome} AS
+                             WITH selected AS (
+                                 SELECT __wave, __event_ordinal, c0, c1, c2
+                                 FROM (
+                                     SELECT queued.*,
+                                            row_number() OVER (
+                                                PARTITION BY c0
+                                                ORDER BY __event_ordinal, c1, c2
+                                            ) AS __key_rank
+                                     FROM {} AS queued
+                                     WHERE __wave = CAST('{wave}' AS UBIGINT)
+                                 )
+                                 WHERE __key_rank = 1
+                             )
+                             SELECT selected.__wave,
+                                    selected.__event_ordinal,
+                                    selected.c0 AS candidate_key,
+                                    selected.c1 AS new_parent,
+                                    selected.c2 AS new_proof,
+                                    existing.c1 AS old_parent,
+                                    existing.c2 AS old_proof,
+                                    existing.__generation AS old_generation,
+                                    existing.__subsumed AS old_subsumed
+                             FROM selected
+                             LEFT JOIN {uf} AS existing
+                               ON existing.c0 IS NOT DISTINCT FROM selected.c0",
+                            group.queue
+                        );
+                        transaction.execute(&create_outcome, [])?;
+                        #[cfg(test)]
+                        sql_log.push(create_outcome);
+                        statement_count += 1;
+
+                        let delete = format!(
+                            "DELETE FROM {} AS queued
+                             USING {outcome} AS selected
+                             WHERE queued.__wave = selected.__wave
+                               AND queued.__event_ordinal = selected.__event_ordinal",
+                            group.queue
+                        );
+                        transaction.execute(&delete, [])?;
+                        #[cfg(test)]
+                        sql_log.push(delete);
+                        statement_count += 1;
+
+                        let insert_missing = format!(
+                            "INSERT INTO {uf} (c0, c1, c2, __generation, __subsumed)
+                             SELECT candidate_key,
+                                    new_parent,
+                                    new_proof,
+                                    CAST('{generation}' AS UBIGINT),
+                                    FALSE
+                             FROM {outcome}
+                             WHERE old_parent IS NULL
+                             ORDER BY __event_ordinal"
+                        );
+                        let inserted = transaction.execute(&insert_missing, [])?;
+                        changed |= inserted != 0;
+                        #[cfg(test)]
+                        sql_log.push(insert_missing);
+                        statement_count += 1;
+
+                        let create_collision = format!(
+                            "CREATE TEMP TABLE {collision} AS
+                             SELECT outcome.*,
+                                    CASE WHEN old_parent < new_parent
+                                         THEN old_parent ELSE new_parent END AS min_parent,
+                                    CASE WHEN old_parent > new_parent
+                                         THEN old_parent ELSE new_parent END AS max_parent,
+                                    CASE WHEN old_parent < new_parent
+                                         THEN old_proof ELSE new_proof END AS lo_proof,
+                                    CASE WHEN old_parent > new_parent
+                                         THEN old_proof ELSE new_proof END AS hi_proof,
+                                    row_number() OVER (
+                                        ORDER BY __event_ordinal, candidate_key,
+                                                 new_parent, new_proof
+                                    ) AS __collision_ordinal
+                             FROM {outcome} AS outcome
+                             WHERE old_parent IS NOT NULL
+                               AND old_parent IS DISTINCT FROM new_parent"
+                        );
+                        transaction.execute(&create_collision, [])?;
+                        #[cfg(test)]
+                        sql_log.push(create_collision);
+                        statement_count += 1;
+                        let collision_count_sql = format!("SELECT count(*) FROM {collision}");
+                        let collision_count =
+                            transaction
+                                .query_row(&collision_count_sql, [], |row| row.get::<_, u64>(0))?;
+                        #[cfg(test)]
+                        sql_log.push(collision_count_sql);
+                        statement_count += 1;
+
+                        if collision_count != 0 {
+                            let first_collision_id = transaction.query_row(
+                                &format!(
+                                    "SELECT value FROM {COUNTERS_TABLE} WHERE name = 'fresh_id'"
+                                ),
+                                [],
+                                |row| row.get::<_, u64>(0),
+                            )?;
+                            statement_count += 1;
+                            let collision_ids = collision_count
+                                .checked_mul(2)
+                                .context("path collision fresh-id count overflow")?;
+                            let after_collisions = checked_fresh_end(
+                                first_collision_id,
+                                collision_ids,
+                                "path merge collisions",
+                            )?;
+                            let reserve = format!(
+                                "UPDATE {COUNTERS_TABLE} SET value = CAST('{after_collisions}' AS UBIGINT) WHERE name = 'fresh_id'"
+                            );
+                            transaction.execute(&reserve, [])?;
+                            #[cfg(test)]
+                            sql_log.push(reserve);
+                            statement_count += 1;
+
+                            let create_sym = format!(
+                                "CREATE TEMP TABLE {sym_stage} AS
+                                 SELECT hi_proof AS c0,
+                                        CAST('{first_collision_id}' AS UBIGINT)
+                                            + 2 * (__collision_ordinal - 1) AS c1,
+                                        CAST(TRUE AS BOOLEAN) AS c2,
+                                        __collision_ordinal AS __ordinal
+                                 FROM {collision}"
+                            );
+                            transaction.execute(&create_sym, [])?;
+                            #[cfg(test)]
+                            sql_log.push(create_sym);
+                            statement_count += 1;
+                            let conflict_sql = check_assert_eq_conflict(
+                                &transaction,
+                                group.plan.sym,
+                                2,
+                                &sym_stage,
+                            )?;
+                            #[cfg(test)]
+                            sql_log.push(conflict_sql);
+                            #[cfg(not(test))]
+                            drop(conflict_sql);
+                            statement_count += 1;
+                            let insert_sym =
+                                stage_insert_sql(group.plan.sym, 3, 2, &sym_stage, generation);
+                            let sym_inserted = transaction.execute(&insert_sym, [])?;
+                            changed |= sym_inserted != 0;
+                            #[cfg(test)]
+                            sql_log.push(insert_sym);
+                            statement_count += 1;
+
+                            let create_trans = format!(
+                                "CREATE TEMP TABLE {trans_stage} AS
+                                 SELECT CAST('{first_collision_id}' AS UBIGINT)
+                                            + 2 * (__collision_ordinal - 1) AS c0,
+                                        lo_proof AS c1,
+                                        CAST('{first_collision_id}' AS UBIGINT)
+                                            + 2 * (__collision_ordinal - 1) + 1 AS c2,
+                                        CAST(TRUE AS BOOLEAN) AS c3,
+                                        __collision_ordinal AS __ordinal
+                                 FROM {collision}"
+                            );
+                            transaction.execute(&create_trans, [])?;
+                            #[cfg(test)]
+                            sql_log.push(create_trans);
+                            statement_count += 1;
+                            let conflict_sql = check_assert_eq_conflict(
+                                &transaction,
+                                group.plan.trans,
+                                3,
+                                &trans_stage,
+                            )?;
+                            #[cfg(test)]
+                            sql_log.push(conflict_sql);
+                            #[cfg(not(test))]
+                            drop(conflict_sql);
+                            statement_count += 1;
+                            let insert_trans =
+                                stage_insert_sql(group.plan.trans, 4, 3, &trans_stage, generation);
+                            let trans_inserted = transaction.execute(&insert_trans, [])?;
+                            changed |= trans_inserted != 0;
+                            #[cfg(test)]
+                            sql_log.push(insert_trans);
+                            statement_count += 1;
+
+                            let update_owner = format!(
+                                "UPDATE {uf} AS existing
+                                 SET c1 = collision.min_parent,
+                                     c2 = collision.lo_proof,
+                                     __generation = CAST('{generation}' AS UBIGINT)
+                                 FROM {collision} AS collision
+                                 WHERE existing.c0 IS NOT DISTINCT FROM collision.candidate_key
+                                   AND (existing.c1 IS DISTINCT FROM collision.min_parent
+                                        OR existing.c2 IS DISTINCT FROM collision.lo_proof)"
+                            );
+                            let updated = transaction.execute(&update_owner, [])?;
+                            changed |= updated != 0;
+                            #[cfg(test)]
+                            sql_log.push(update_owner);
+                            statement_count += 1;
+
+                            let next_wave =
+                                wave.checked_add(1).context("path logical wave overflow")?;
+                            let enqueue_generated = format!(
+                                "INSERT INTO {} (__wave, __event_ordinal, c0, c1, c2)
+                                 SELECT CAST('{next_wave}' AS UBIGINT),
+                                        CAST('{next_event}' AS UBIGINT) + __collision_ordinal,
+                                        max_parent,
+                                        min_parent,
+                                        CAST('{first_collision_id}' AS UBIGINT)
+                                            + 2 * (__collision_ordinal - 1) + 1
+                                 FROM {collision}
+                                 ORDER BY __collision_ordinal",
+                                group.queue
+                            );
+                            let generated = transaction.execute(&enqueue_generated, [])?;
+                            ensure_count(
+                                generated,
+                                collision_count,
+                                "path generated candidate enqueue",
+                            )?;
+                            #[cfg(test)]
+                            sql_log.push(enqueue_generated);
+                            statement_count += 1;
+                            next_event = next_event
+                                .checked_add(collision_count)
+                                .context("path generated event ordinal overflow")?;
+                        }
+
+                        for scratch in [&sym_stage, &trans_stage, &collision, &outcome] {
+                            let drop = format!("DROP TABLE IF EXISTS {scratch}");
+                            transaction.execute(&drop, [])?;
+                            #[cfg(test)]
+                            sql_log.push(drop);
+                            statement_count += 1;
+                        }
+                        pass = pass
+                            .checked_add(1)
+                            .context("path fold-pass identifier overflow")?;
+                    }
+                }
+
+                let mut remaining = 0_u64;
+                for group in &groups {
+                    let count_sql = format!("SELECT count(*) FROM {}", group.queue);
+                    let count =
+                        transaction.query_row(&count_sql, [], |row| row.get::<_, u64>(0))?;
+                    #[cfg(test)]
+                    sql_log.push(count_sql);
+                    statement_count += 1;
+                    remaining = remaining
+                        .checked_add(count)
+                        .context("path queue row count overflow")?;
+                }
+                if remaining == 0 {
+                    break;
+                }
+                wave = wave.checked_add(1).context("path logical wave overflow")?;
+            }
+
+            if changed {
+                let update = format!(
+                    "UPDATE {COUNTERS_TABLE} SET value = value + 1 WHERE name = 'generation'"
+                );
+                transaction.execute(&update, [])?;
+                #[cfg(test)]
+                sql_log.push(update);
+                statement_count += 1;
+            }
+
+            for scratch in scratch_names.iter().rev() {
+                let drop = format!("DROP TABLE IF EXISTS {scratch}");
+                transaction.execute(&drop, [])?;
+                #[cfg(test)]
+                sql_log.push(drop);
+                statement_count += 1;
+            }
+            Ok((generation, changed))
+        })();
+
+        let (watermark, changed) = match execute {
+            Ok(result) => result,
+            Err(error) => {
+                let rollback_error = transaction.rollback().err();
+                let cleanup_error = cleanup_scratch(&state.connection, &scratch_names).err();
+                if rollback_error.is_some() || cleanup_error.is_some() {
+                    return Err(anyhow!(
+                        "DuckDB path transaction failed: {error:#}; rollback: {rollback_error:?}; scratch cleanup: {cleanup_error:?}"
                     ));
                 }
                 return Err(error);
@@ -1142,6 +1694,93 @@ impl Storage {
             .latest_rule_sql
             .clone()
     }
+}
+
+fn checked_fresh_end(first: u64, count: u64, context: &str) -> Result<u64> {
+    first
+        .checked_add(count)
+        .filter(|&end| end <= u32::MAX as u64)
+        .with_context(|| format!("{context} exceed the usable Value domain"))
+}
+
+fn ensure_count(actual: usize, expected: u64, context: &str) -> Result<()> {
+    if u64::try_from(actual)? != expected {
+        bail!("{context} changed {actual} rows, expected {expected}");
+    }
+    Ok(())
+}
+
+fn check_assert_eq_conflict(
+    transaction: &duckdb::Transaction<'_>,
+    target: FunctionId,
+    n_keys: usize,
+    stage: &str,
+) -> Result<String> {
+    let sql = assert_eq_conflict_sql(target, n_keys, stage);
+    let conflict = transaction.query_row(&sql, [], |row| row.get::<_, bool>(0))?;
+    if conflict {
+        bail!(
+            "illegal MergeFn::AssertEq conflict in staged path effect for function {}",
+            target.rep()
+        );
+    }
+    Ok(sql)
+}
+
+fn stage_insert_sql(
+    target: FunctionId,
+    arity: usize,
+    n_keys: usize,
+    stage: &str,
+    generation: u64,
+) -> String {
+    debug_assert!(
+        stage
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    );
+    let partition = if n_keys == 0 {
+        "ORDER BY staged.__ordinal".to_string()
+    } else {
+        format!(
+            "PARTITION BY {} ORDER BY staged.__ordinal",
+            qualified_columns("staged", n_keys)
+        )
+    };
+    let no_existing = if n_keys == 0 {
+        format!("NOT EXISTS (SELECT 1 FROM {})", sql_table(target))
+    } else {
+        let equality = key_equality("existing", "ranked", n_keys);
+        format!(
+            "NOT EXISTS (SELECT 1 FROM {} AS existing WHERE {equality})",
+            sql_table(target)
+        )
+    };
+    format!(
+        "INSERT INTO {} ({}, __generation, __subsumed)
+         SELECT {}, CAST('{generation}' AS UBIGINT), FALSE
+         FROM (
+             SELECT staged.*,
+                    row_number() OVER ({partition}) AS __key_rank
+             FROM {stage} AS staged
+         ) AS ranked
+         WHERE ranked.__key_rank = 1 AND {no_existing}",
+        sql_table(target),
+        visible_columns(arity),
+        qualified_columns("ranked", arity),
+    )
+}
+
+fn cleanup_scratch(connection: &Connection, scratch_names: &[String]) -> Result<()> {
+    for scratch in scratch_names.iter().rev() {
+        debug_assert!(
+            scratch
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        );
+        connection.execute(&format!("DROP TABLE IF EXISTS {scratch}"), [])?;
+    }
+    Ok(())
 }
 
 fn create_table(connection: &Connection, id: FunctionId, info: &TableInfo) -> Result<()> {

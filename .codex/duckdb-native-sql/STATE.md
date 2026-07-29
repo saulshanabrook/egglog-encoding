@@ -85,27 +85,29 @@ preserve these current SPI semantics:
 
 ## Steering frame
 
-- **Current frontier:** checkpoints 0 and 0.5 are implemented on current main,
-  and the first bounded checkpoint-1 slice is committed and independently reviewed.
-  The backend now retains complete recursively validated `FunctionConfig`s,
-  executes one-output `MergeFn::AssertEq` natively for input and one-Set rules,
-  and stores proof-reached BigInt, BigRat, and Rational values in typed exact
-  DuckDB columns. All five frozen proof-mode workloads register the shared
-  23-table prefix and fail closed at the same next compiler boundary:
-  `@uf_path_compress` has a primitive body atom and a four-action head. Three
-  independent read-only audits now pin its exact backend IR and tuple-output
-  union-find merge. The rule itself fits the existing `RuleSpec`; the real
-  shared boundary is that `MergeFn::Primitive` and `MergeFn::Const` discard the
-  call-site type/semantic information a native SQL compiler needs. This is
-  progress through the prefix, not complete checkpoint-1 or program support.
+- **Current frontier:** checkpoints 0 and 0.5 plus the typed proof-prefix and
+  typed-merge/fresh-input prerequisites are committed on current main. A
+  DuckDB-local compiler now admits the exact path-compression IR structurally
+  and executes its body, ordered head, tuple-output UF Block, recursive merge
+  effects, and fresh allocation through staged SQL work queues. All five frozen
+  proof-mode workloads advance through `@uf_path_compress` and fail closed at
+  the same later generated two-Delete cleanup rule. The first frozen artifact
+  received an executor-semantics `PASS`; its one bounded admission/test/doc
+  repair is frozen at `774c919a...`, has received all three independent
+  `PASS` verdicts, and has passed the coordinator-owned acceptance gates. This
+  is production-path progress, not complete checkpoint 1 or complete-program
+  support.
 - **Scoreboard:** current-main pinned; proof gate green (212/212); loaded runtime
-  DuckDB v1.5.4; DuckDB backend tests 27/27 and feature-enabled CLI 4/4 pass;
+  DuckDB v1.5.4; repaired DuckDB backend tests 38/38 and feature-enabled CLI
+  4/4 pass;
   scoped clippy with warnings denied, formatting, build, and diff checks pass.
   Reduced Pointer five-way and Math Add-swap differentials still agree with main
-  across initial, fresh-delta, and no-delta transcripts. Five public boundary
-  probes all reach `@uf_path_compress` in less than one second. Independent code,
-  reference, transaction, codec, and test reviews found no implementation defect;
-  the documentation-only reconciliation received final `PASS`.
+  across initial, fresh-delta, and no-delta transcripts. Five rebuilt public
+  probes all reach the later `@delete_rule` boundary in less than one second
+  without a timeout. The repaired owned artifact hash is
+  `774c919ad247ffd59cacf39c216c8296af022662be16900ea8148f56b6f10275`;
+  all three bounded independent reviews are final `PASS`, and the repository
+  proof gate remains green at 212/212.
 - **Progress signal:** a reviewable production slice plus exact capped command
   evidence that advances one checkpoint gate.
 - **No movement:** no reviewable patch, no new reproducible evidence, and no
@@ -126,14 +128,11 @@ preserve these current SPI semantics:
   the benchmark harness does not yet advertise the DuckDB endpoint; direct
   execution of the downloaded dylib needs its dependency directory added to
   `DYLD_LIBRARY_PATH` on macOS; and slow bounded proof workloads.
-- **Next decision:** implement and independently gate one bounded shared-SPI
-  prerequisite: call-site typed/named merge primitives, typed merge constants,
-  and atomic fresh-slot native input backed by one DuckDB counter. Only after
-  that passes may a DuckDB writer compile `@uf_path_compress` through staged SQL
-  work queues and fixed-point merge-effect waves. Merely relaxing admission,
-  invoking opaque callbacks, or recognizing proof/table names is prohibited.
-  Preserve UnstableFn as schema-only deferred: hardboiled stores only its
-  `ColumnTy::Id`, while no frozen workload constructs or applies one.
+- **Next decision:** make one local path-compression checkpoint commit with no
+  push, then begin one fresh read-only census of the common generated
+  two-Delete cleanup rule before authorizing its SQL-native lowering. Preserve
+  UnstableFn as schema-only deferred: hardboiled stores only its `ColumnTy::Id`,
+  while no frozen workload constructs or applies one.
 
 ## Roster
 
@@ -154,6 +153,13 @@ preserve these current SPI semantics:
 | `/root/sql_artifact` | independent SQL architecture | compare multi-statement work queues with a tagged recursive CTE for the exact frontier | safe public DuckDB 1.5.4 SQL/source only; no writes/builds/tests | two materially different designs and bounded recommendation | completed; staged work queues recommended first, recursive CTE retained as the second design |
 | `/root/typed_merge_input_spi_worker` | checkpoint 1 shared prerequisite | preserve reference/DD behavior while making merge calls typed and native input fresh allocation atomic | recorded bounded write set plus the allocator-boundary and direct-DD amendments below | independently reviewable typed merge IR plus fresh-slot batch boundary | completed at code hash `514583114d774461886f81f899bf1ad775a2f1973a957bbedfb0ee5dbcf457cd`; focused and broad gates pass |
 | `/root/spi_prereq_final_reviewer` and allocator/direct-path subreviews | independent prerequisite final review | audit the frozen code diff against the typed-merge, transaction, counter, proof-registration, and public-API contracts | read-only frozen diffs; no builds/tests/writes or writer contact | `PASS`, `REVISE`, or `REASSESS` with live defects separated from later SQL/container work | final `PASS` after allocator-boundary reassessment and one narrow DD direct-primitive parity repair |
+| `/root/duckdb_path_compress_worker` | DuckDB-local path-compression implementation | compile the exact reached structural rule and typed UF Block into native staged SQL | `egglog-experimental/duckdb/**` only; no shared SPI, frontend, DD, harness, manifest, fixture, or snapshot edits | source-independent canaries plus all five public probes beyond `@uf_path_compress` | bounded repair completed and frozen at owned artifact hash `774c919ad247ffd59cacf39c216c8296af022662be16900ea8148f56b6f10275`; no commit or push |
+| `/root/path_compress_ir_audit` | read-only exact IR audit | freeze the backend-facing rule/config/merge shape and next likely frontier | committed HEAD `14a2d5d`; no writes/builds or writer contact | structural admission predicate, typed action/merge order, canaries | completed; all five graphs agree and the next frontier is the generated two-Delete cleanup rule |
+| `/root/staged_wave_sql_audit` | read-only SQL architecture audit | adversarially specify transaction/work-queue semantics using safe public DuckDB 1.5.4 | committed HEAD `14a2d5d`; no writes/builds or writer contact | scratch schemas, SQL phases, wave/fold/allocation/rollback risks | completed; staged typed queues are feasible without another SPI change |
+| `/root/path_primitive_lowering_audit` | read-only primitive audit | pin every primitive reached by the path rule/UF Block and its exact typed SQL semantics | committed HEAD `14a2d5d`; no writes/builds or writer contact | stable names, types, tie/failure behavior, lowering requirements | completed; six stable typed signatures suffice and unknown calls remain fail closed |
+| `/root/path_semantics_review` | independent frozen semantic review | audit stable pre-wave, global folds, identity, fresh ordering, rollback, generation, and absence of host enumeration | exact frozen owned artifact only; no writes/builds/tests or writer contact | `PASS`, `REVISE`, or `REASSESS` with exact source evidence | completed `PASS`; executor unchanged by the bounded repair |
+| `/root/path_admission_review` | independent frozen admission review | audit name-independent typed topology validation and pre-mutation failure boundaries | exact frozen owned artifact only; no writes/builds/tests or writer contact | `PASS`, `REVISE`, or `REASSESS` with exact source evidence | repaired-surface re-review completed `PASS`; exact eight-role/config/canary/RuleId findings closed |
+| `/root/path_api_tests_review` | independent frozen API/test review | audit public API, forbidden shortcuts, scratch lifecycle, literal SQL, and canary sufficiency | exact frozen owned artifact only; no writes/builds/tests or writer contact | `PASS`, `REVISE`, or `REASSESS` with exact source evidence | repaired-surface re-review completed `PASS`; telemetry wording and 38-test accounting reconciled |
 
 No overlapping writing worker may be added. Read-only specialist circles may
 be seated only for disjoint evidence questions with explicit stop terms.
@@ -196,7 +202,7 @@ be seated only for disjoint evidence questions with explicit stop terms.
 |---|---|---|---|
 | 0 provenance/integration/census | exact refs and primary surface census; plausible safe-native lowering for every reached primary surface | **passed** | worktree/base and frozen corpus pinned; census complete; safe crates.io client and loaded v1.5.4 runtime verified; typed literal/no-ART/transaction/input/CLI surfaces passed focused gates; final independent review PASS |
 | 0.5 API/literal/kernel spike | typed input/API probes and two real kernels agree with main on reduced data | **passed** | 19/19 DuckDB tests pass against loaded DuckDB v1.5.4; reduced source-pinned Pointer and Math fixtures use production `add_rule`/`run_rules` on independently constructed main and DuckDB state and agree across initial/fresh/no-delta transcripts; independent implementation review found no live defect |
-| 1 typed IR/storage/input | primary schemas and input commands install; deterministic SQL manifest | **in progress; shared prerequisite passed** | full config retention, typed BigInt/BigRat/Rational storage, native AssertEq, typed merge primitive/constants, atomic dense fresh slots, one SQL-authoritative DuckDB counter, and bounded host-counter allocation are accepted. All five advance through 23 tables to `@uf_path_compress`; native staged Block/rule lowering and the deterministic SQL manifest remain open. |
+| 1 typed IR/storage/input | primary schemas and input commands install; deterministic SQL manifest | **in progress; path-compression vertical passed** | full config retention, typed BigInt/BigRat/Rational storage, native AssertEq, typed merge primitive/constants, atomic dense fresh slots, one SQL-authoritative DuckDB counter, bounded host-counter allocation, and structural path-compression lowering through native staged SQL are accepted. All five now advance to the common generated two-Delete cleanup rule; the general deterministic manifest remains open. |
 | 2 SQL matching/transcripts | bounded primary proxies match main without Rust match enumeration | pending | |
 | 3 primitives/containers | all five statically compile with deny fallback and run bounded first iteration | pending | |
 | 4 native merges/effects/fixed point | canaries and bounded proxies agree; complete rollback; host oracle removed | pending | |
@@ -254,6 +260,13 @@ be seated only for disjoint evidence questions with explicit stop terms.
 | 2026-07-29 | coordinator focused acceptance gates, repository root, same frozen code diff | capped `cargo test`: core-relations 58/58, bridge 30/30, DD 42/42, egglog lib 69/69, proof-mode regression 12/12, nonbundled DuckDB 28/28, feature CLI 4/4; scoped non-DuckDB, DuckDB, and feature-CLI Clippy with warnings denied; format and diff checks | every fresh command exited 0 under the 110-second watchdog; production feature build completed in 39.27s; no report artifact, bundled build, push, or external write | prerequisite compiles and preserves all focused reference/DD/DuckDB contracts |
 | 2026-07-29 | coordinator broad proof gate | `/opt/homebrew/bin/timeout --signal=TERM --kill-after=5s 110s make proof-tests`, repository root, same frozen code diff | fresh PASS: core 204/204 plus experimental 8/8, 212 total, zero failures; Cargo test execution completed under the cap | current proof conformance remains green after shared SPI and allocator changes |
 | 2026-07-29 | coordinator five public DuckDB probes | feature-built `target/debug/egglog-experimental --backend duckdb --proofs --mode no-messages`, `DYLD_LIBRARY_PATH=target/debug/deps`, frozen sources and Pointer fact directory | all five exit 1 at the intentional next boundary `@uf_path_compress ... found 4 actions`; tool wall times Math 0.325s, Eggcc 0.246s, Pointer 0.238s, Hardboiled 0.272s, Luminal 0.318s; no timeout or report artifact | confirms the prerequisite changes no public boundary and authorizes the DuckDB-local staged path-compression writer |
+| 2026-07-29 | coordinator local checkpoint commit | `14a2d5d05675b9217171f15b5ae136faaf5ba754 feat: add typed merge and fresh input SPI`; clean worktree immediately after commit; no push | accepted shared prerequisite has a durable rollback point | path-compression work begins from a source-controlled state |
+| 2026-07-29 | three committed-source path audits | exact first-rule/config graph, typed primitive semantics, and staged typed-queue design at `14a2d5d`; no moving-diff reads or writes | all five workloads share the same name-independent graph; six stable primitive signatures suffice; staged queues can preserve global wave drain, identity guards, fresh order, rollback, and scratch cleanup with safe public DuckDB 1.5.4 | froze the implementation contract and predicted the next two-Delete cleanup frontier |
+| 2026-07-29 | DuckDB-local path-compression worker | frozen owned artifact `38cab3be89ed16c6178e3df12f52bac83c3255b3e5fe10e1bfd4c78fe9a04334` at HEAD `14a2d5d`; only `egglog-experimental/duckdb/**` changed outside this ledger | native structural admission and set-wise staged execution implemented; DuckDB lib 36/36, feature CLI 4/4, DuckDB and feature-CLI Clippy with warnings denied, production feature build, format, and diff checks all pass under the 110-second cap | candidate is frozen for independent review; no commit or push |
+| 2026-07-29 | worker five public proof-mode probes | freshly built feature binary, downloaded DuckDB 1.5.4 dylib, frozen inputs, Pointer fact directory, and one external watchdog per invocation | Math 0.286s, Eggcc 0.292s, Pointer 0.251s, Hardboiled 0.317s, Luminal 0.245s; all exit 1 at `@delete_rule ... found 2 actions`, with no timeout | every primary workload now executes through native path compression; the common generated two-Delete cleanup rule is the next bounded compiler frontier |
+| 2026-07-29 | three independent frozen path reviews | owned artifact `38cab3be89ed16c6178e3df12f52bac83c3255b3e5fe10e1bfd4c78fe9a04334`; committed Reference/DD source plus complete DuckDB diff; no reviewer writes/builds/tests | semantic executor review `PASS`; admission review `REVISE` because fresh/alias/inequality roles were not proven distinct and proof targets omitted `DefaultVal::Fail`/`n_identity_vals=None`; API/test review `REVISE` only for two telemetry wording inaccuracies | authorize one bounded admission/test/documentation repair, then frozen-surface re-review; no executor redesign or next-slice work |
+| 2026-07-29 | bounded path-compression repair and two independent re-reviews | repaired owned artifact `774c919ad247ffd59cacf39c216c8296af022662be16900ea8148f56b6f10275`; executor unchanged; no reviewer writes/builds/tests | worker gates pass: focused path 10/10, DuckDB lib 38/38, feature CLI 4/4, scoped Clippy/build/fmt/diff; admission reviewer `PASS` for exact eight-role distinctness, proof config, rejection canaries, and RuleId nonconsumption; API/test reviewer `PASS` for precise telemetry and coherent 38-test accounting | repair loop closes successfully; coordinator-owned final acceptance gates are authorized |
+| 2026-07-29 | coordinator final path-compression acceptance | reproduced owned hash `774c919ad247ffd59cacf39c216c8296af022662be16900ea8148f56b6f10275`; nonbundled DuckDB lib test and Clippy; feature CLI test/build/Clippy; format/diff; five rebuilt proof-mode probes; `make proof-tests`, every process externally capped at 110 seconds | fresh PASS: DuckDB 38/38; feature CLI 4/4; all Clippy/build/format/diff gates exit 0; all five probes exit at the same later `@delete_rule ... found 2 actions` boundary with no timeout; proof gate core 204/204 plus experimental 8/8 | path-compression vertical accepted for one local checkpoint commit; generated two-Delete cleanup is the next bounded compiler frontier |
 
 ## Review rubric
 
@@ -548,13 +561,9 @@ frontier to reassessment rather than another micro-variant.
 
 ## Next action
 
-Commit the accepted prerequisite locally as one checkpoint, without pushing.
-Then seat one DuckDB-local staged path-compression writer using the contract
-above. Its first gate is structural rather than performance-based: compile the
-exact reached two-UF-atom/`!=`/fresh/ordered-Set vocabulary and the typed UF
-Block without inspecting proof names, preserve stable pre-wave and allocation
-order, pass the source-independent merge/wave/rollback canaries, and move all
-five public probes beyond `@uf_path_compress` to one freshly recorded later
-boundary. If the staged work-queue design fails the same semantic gate after
-one bounded repair, test the tagged `USING KEY` design; if both fail, stop the
-goal early with exact evidence rather than adding host match/merge fallback.
+The repaired path-compression artifact at owned hash `774c919a...` has received
+all required independent `PASS` verdicts and passed the fresh coordinator-owned
+acceptance set. Make one local checkpoint commit with no push. From that clean
+rollback point, seat a bounded read-only census of the common generated
+two-Delete cleanup rule; do not begin lowering until its typed topology,
+read modes, action order, failure boundary, and semantic canaries are pinned.

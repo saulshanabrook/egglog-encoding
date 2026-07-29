@@ -245,3 +245,36 @@ actions`. No case failed during the common table prefix.
 | Pointer | 0.465s |
 | Hardboiled | 0.467s |
 | Luminal | 0.408s |
+
+### Native path-compression slice
+
+The next vertical slice compiles the shared path rule by typed topology rather
+than by any generated rule, table, proof-sort, or variable name. Admission
+requires two Live reads of the same one-key/two-value identity-guarded table,
+typed `!= (Id, Id) -> Unit`, the ordered head fresh/alias/Trans/UF actions, and
+the exact typed merge vocabulary (`proof-of-min/max`, `ordering-min/max`, two
+fresh requests, Sym, Trans, and the recursive displaced-parent Set). Opaque
+external-function IDs are never executed or used for dispatch.
+
+Execution materializes all scheduled matches before effects, assigns canonical
+match ordinals after binding deduplication, reserves every head ID before any
+collision ID, and uses per-target temporary queues. Each SQL fold pass selects
+at most one candidate per logical key. Every target drains logical wave `w`
+before Block-generated UF candidates at `w + 1` become eligible. Equal identity
+keeps the complete old tuple and skips all Block effects; an effective old-min
+collision still emits Sym/Trans and a displaced edge even when the owner row
+remains byte-identical. Rust schedules statements and reads scalar counters,
+counts, and booleans only; it never enumerates matches, effects, or merge rows.
+
+The focused nonbundled library gate passes 38/38 tests, including renamed
+non-proof IR, new-min and old-min folds, equal-identity payload retention,
+same-key candidate ordering, multi-target/global wave draining, multi-wave
+self-writes, deterministic allocation, late AssertEq rollback and ID reuse,
+head/collision exhaustion, corrupt-owner rejection, and scratch cleanup.
+
+After a fresh feature build, all five capped public proof-mode probes moved to
+the same later fail-closed boundary:
+`DuckDB rule @delete_rule must contain exactly one Set action, found 2 actions`.
+Fresh wall times were Math 0.286s, Eggcc 0.292s, Pointer 0.251s, Hardboiled
+0.317s, and Luminal 0.245s. These are boundary-probe times, not workload
+benchmarks or a performance claim.

@@ -16,6 +16,9 @@ use egglog_backend_trait::{
 };
 use egglog_numeric_id::NumericId;
 
+use crate::path_compress::{
+    PathCompressionPlan, compile_path_compression, looks_like_path_compression,
+};
 use crate::storage::{
     ScalarSqlType, Storage, TableInfo, WriteCapability, assert_eq_conflict_sql, qualified_columns,
     sql_table, visible_columns,
@@ -31,6 +34,17 @@ struct VariableBinding {
 #[derive(Clone, Debug)]
 pub(crate) struct CompiledRule {
     pub(crate) seminaive: bool,
+    kind: CompiledRuleKind,
+}
+
+#[derive(Clone, Debug)]
+enum CompiledRuleKind {
+    Direct(DirectRule),
+    PathCompression(PathCompressionPlan),
+}
+
+#[derive(Clone, Debug)]
+struct DirectRule {
     target: FunctionId,
     target_arity: usize,
     target_n_keys: usize,
@@ -44,16 +58,23 @@ pub(crate) struct CompiledRule {
 
 impl CompiledRule {
     pub(crate) fn materialize_sql(&self, stage: &str, watermark: u64) -> String {
+        if let CompiledRuleKind::PathCompression(plan) = &self.kind {
+            return plan.materialize_sql(stage, watermark);
+        }
+        let CompiledRuleKind::Direct(direct) = &self.kind else {
+            unreachable!();
+        };
         debug_assert!(
             stage
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
         );
-        let mut predicates = self.predicates.clone();
+        let mut predicates = direct.predicates.clone();
         if self.seminaive {
             predicates.push(format!(
                 "({})",
-                self.freshness_columns
+                direct
+                    .freshness_columns
                     .iter()
                     .map(|column| { format!("{column} >= CAST('{watermark}' AS UBIGINT)") })
                     .collect::<Vec<_>>()
@@ -65,7 +86,7 @@ impl CompiledRule {
         } else {
             predicates.join(" AND ")
         };
-        let projection = self
+        let projection = direct
             .select_expressions
             .iter()
             .enumerate()
@@ -78,35 +99,38 @@ impl CompiledRule {
                     row_number() OVER (ORDER BY {}) AS __match_ordinal
              FROM {}
              WHERE {predicate}",
-            self.order_columns.join(", "),
-            self.from.join(" CROSS JOIN ")
+            direct.order_columns.join(", "),
+            direct.from.join(" CROSS JOIN ")
         )
     }
 
     pub(crate) fn insert_sql(&self, stage: &str, generation: u64) -> String {
+        let CompiledRuleKind::Direct(direct) = &self.kind else {
+            unreachable!("path-compression rules use the staged queue executor");
+        };
         debug_assert!(
             stage
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
         );
-        let partition = if self.target_n_keys == 0 {
+        let partition = if direct.target_n_keys == 0 {
             "ORDER BY staged.__match_ordinal".to_string()
         } else {
             format!(
                 "PARTITION BY {} ORDER BY staged.__match_ordinal",
-                qualified_columns("staged", self.target_n_keys)
+                qualified_columns("staged", direct.target_n_keys)
             )
         };
-        let no_existing = if self.target_n_keys == 0 {
-            format!("NOT EXISTS (SELECT 1 FROM {})", sql_table(self.target))
+        let no_existing = if direct.target_n_keys == 0 {
+            format!("NOT EXISTS (SELECT 1 FROM {})", sql_table(direct.target))
         } else {
-            let equality = (0..self.target_n_keys)
+            let equality = (0..direct.target_n_keys)
                 .map(|column| format!("existing.c{column} IS NOT DISTINCT FROM ranked.c{column}"))
                 .collect::<Vec<_>>()
                 .join(" AND ");
             format!(
                 "NOT EXISTS (SELECT 1 FROM {} AS existing WHERE {equality})",
-                sql_table(self.target)
+                sql_table(direct.target)
             )
         };
 
@@ -119,15 +143,25 @@ impl CompiledRule {
                  FROM {stage} AS staged
              ) AS ranked
              WHERE ranked.__key_rank = 1 AND {no_existing}",
-            sql_table(self.target),
-            visible_columns(self.target_arity),
-            qualified_columns("ranked", self.target_arity),
+            sql_table(direct.target),
+            visible_columns(direct.target_arity),
+            qualified_columns("ranked", direct.target_arity),
         )
     }
 
     pub(crate) fn conflict_sql(&self, stage: &str) -> Option<String> {
-        (self.target_write_capability == WriteCapability::AssertEq)
-            .then(|| assert_eq_conflict_sql(self.target, self.target_n_keys, stage))
+        let CompiledRuleKind::Direct(direct) = &self.kind else {
+            return None;
+        };
+        (direct.target_write_capability == WriteCapability::AssertEq)
+            .then(|| assert_eq_conflict_sql(direct.target, direct.target_n_keys, stage))
+    }
+
+    pub(crate) fn path_compression(&self) -> Option<&PathCompressionPlan> {
+        match &self.kind {
+            CompiledRuleKind::PathCompression(plan) => Some(plan),
+            CompiledRuleKind::Direct(_) => None,
+        }
     }
 }
 
@@ -146,6 +180,14 @@ pub(crate) fn compile_rule(
     base_values: &BaseValues,
     rule: RuleSpec,
 ) -> Result<CompiledRule> {
+    if looks_like_path_compression(&rule) {
+        let seminaive = rule.seminaive;
+        let plan = compile_path_compression(storage, base_values, &rule)?;
+        return Ok(CompiledRule {
+            seminaive,
+            kind: CompiledRuleKind::PathCompression(plan),
+        });
+    }
     if rule.core.body.atoms.is_empty() {
         bail!("DuckDB rule `{}` has an empty body", rule.name);
     }
@@ -280,15 +322,17 @@ pub(crate) fn compile_rule(
 
     Ok(CompiledRule {
         seminaive: rule.seminaive,
-        target: *target,
-        target_arity: target_info.arity(),
-        target_n_keys: target_info.n_keys,
-        target_write_capability: target_info.write_capability,
-        select_expressions,
-        from,
-        predicates,
-        freshness_columns,
-        order_columns,
+        kind: CompiledRuleKind::Direct(DirectRule {
+            target: *target,
+            target_arity: target_info.arity(),
+            target_n_keys: target_info.n_keys,
+            target_write_capability: target_info.write_capability,
+            select_expressions,
+            from,
+            predicates,
+            freshness_columns,
+            order_columns,
+        }),
     })
 }
 

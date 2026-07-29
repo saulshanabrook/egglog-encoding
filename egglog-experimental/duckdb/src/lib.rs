@@ -1,12 +1,15 @@
 #![forbid(unsafe_code)]
-//! Checkpoint 0/0.5 of a DuckDB-authoritative egglog backend.
+//! A typed, DuckDB-authoritative egglog backend under incremental lowering.
 //!
-//! Function rows live only in typed DuckDB tables. This storage scaffold
-//! implements a deliberately narrow first production [`RuleSpec`] subset:
+//! Function rows live only in typed DuckDB tables. The backend implements a
+//! deliberately closed production [`RuleSpec`] subset:
 //! Live table atoms with typed variables/literals and one table Set into a
-//! one-output `MergeFn::Old` or `MergeFn::AssertEq` target. Unsupported writes
-//! fail closed during preflight even though their full configurations remain
-//! registered for later lowering.
+//! one-output `MergeFn::Old` or `MergeFn::AssertEq` target, plus the structural
+//! two-atom union-find path rule and its typed identity-guarded merge Block.
+//! Path matches, effects, proof constructors, fresh allocation, and recursive
+//! merge candidates execute through staged DuckDB SQL. Unsupported writes fail
+//! closed even though their complete configurations remain registered for
+//! later lowering.
 
 use std::any::Any;
 use std::sync::{Arc, Mutex};
@@ -20,6 +23,9 @@ use egglog_backend_trait::{
 use egglog_core_relations::Database;
 use egglog_numeric_id::NumericId;
 
+mod path_compress;
+#[cfg(test)]
+mod path_compress_tests;
 mod rule_sql;
 #[cfg(test)]
 mod rule_sql_tests;
@@ -99,6 +105,8 @@ impl EGraph {
     }
 
     /// Rows installed per scheduled rule in the most recent bounded run.
+    /// Direct rules report target-table inserts. Path-compression rules report
+    /// only head Trans inserts, not recursive UF, Sym, or Trans effects.
     pub fn last_rule_insert_counts(&self) -> &[usize] {
         &self.last_rule.inserted_rows
     }
