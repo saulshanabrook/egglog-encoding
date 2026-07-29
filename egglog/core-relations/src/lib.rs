@@ -64,6 +64,11 @@ pub use table_spec::{
     ColumnId, Constraint, MutationBuffer, Offset, Rebuilder, Row, Table, TableChange, TableSpec,
     TableVersion, ValueRebuilder, WrappedTable,
 };
+// These capability types occur in public table extension traits. Their
+// constructors remain private, but downstream implementations must be able to
+// name the types in method signatures.
+#[doc(hidden)]
+pub use table_spec::{MaintenanceRemoval, MutationTransaction};
 pub use uf::DisplacedTable;
 
 use egglog_numeric_id as numeric_id;
