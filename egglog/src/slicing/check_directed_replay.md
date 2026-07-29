@@ -147,12 +147,13 @@ The trace uses three related coordinates:
 | Coordinate | Meaning | Why replay needs it |
 | --- | --- | --- |
 | `Wave` | A synchronous execution or rebuild unit whose effects share a pre-wave state | Groups grounded firings without introducing false within-wave dependencies |
-| `HistoryPosition` | A total order across facts, firings, equalities, rekeys, removals, and checks | Places cross-kind events and bounds exact row lifetimes |
+| `HistoryPosition` | A unique ordinal for retained fact, equality, rekey, removal, and check events; on firings, an inclusive high-water cutoff sampled from that stream | Places cross-kind mutations, bounds exact row lifetimes, and states what history a firing could observe without inventing an order between same-batch matches |
 | `EdgeHorizon` | The dense prefix of applied equality edges visible at an event | Prevents a later union from explaining an earlier read or endpoint spelling |
 
 A wave alone is too coarse: several equalities, row changes, and removals can
-occur within it. A history position orders those different event streams, but
-an equality explanation also needs an explicit edge high-water mark.
+occur within it. A history position orders those retained event streams, but
+firings merely sample their inclusive high-water mark and may share it within
+one batch. An equality explanation also needs an explicit edge high-water mark.
 Historical equality queries therefore use the position and equality horizon
 recorded at the observation, never the final equality relation.
 

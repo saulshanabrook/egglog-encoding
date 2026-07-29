@@ -73,10 +73,13 @@ trace_handle!(
     u64
 );
 trace_handle!(
-    /// Total cross-stream event ordinal used for liveness and zero-edge dependencies.
+    /// Cross-stream mutation/check ordinal or an inclusive sampled history cutoff.
     ///
-    /// Unlike [`EdgeHorizon`], it orders facts, firings, rekeys, removals, and checks as well as
-    /// applied equalities; zero is the boundary before all events.
+    /// Facts, applied equalities, rekeys, removals, and checks receive unique
+    /// positions. Firings do not: all lanes in one observed batch carry the
+    /// current inclusive high-water mark. Unlike [`EdgeHorizon`], this
+    /// coordinate also bounds zero-edge dependencies and row lifetimes; zero
+    /// is the boundary before all retained events.
     HistoryPosition,
     u64
 );
@@ -276,12 +279,12 @@ impl From<FiringId> for CauseRef {
     }
 }
 
-/// Stable reference back to one original input fact.
+/// Stable reference back to one source command or original input row.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SourceRef {
-    /// Test and embedding callers may provide their own stable input ordinal.
+    /// Source commands, tests, and embedding callers use a stable ordinal.
     Synthetic(
-        /// Embedding-defined ordinal that remains stable within the captured input.
+        /// Frontend- or embedding-defined ordinal stable within the captured execution.
         u64,
     ),
     /// One physical row of an original `(input ...)` command.
@@ -293,7 +296,7 @@ pub enum SourceRef {
     },
 }
 
-/// Static witness and typed-equality layout for one positive check.
+/// Static recipe for resolving one endpoint of a positive check equality.
 #[derive(Clone, Copy, Debug)]
 pub enum CriterionEndpointSource {
     /// Resolve the endpoint from one physical cell of a matched premise fact.
@@ -805,7 +808,8 @@ pub struct Firing<'a> {
     pub rule: u32,
     /// Execution wave in which the match became effective.
     pub wave: Wave,
-    /// Cross-stream position of the firing record.
+    /// Inclusive high-water mark of retained history visible to this firing.
+    /// All lanes observed in one batch may share this value.
     pub position: HistoryPosition,
     /// Applied-equality prefix visible to the grounded match.
     pub as_of_edges: EdgeHorizon,
