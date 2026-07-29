@@ -1553,23 +1553,15 @@ impl EGraph {
                 "trace capture cannot be enabled inside push/pop state".into(),
             ));
         }
-        // `Rational` is installed by the standard experimental graph factory
-        // before trace capture is enabled, and the fresh proof factory
-        // installs the identical extension again for replay.
-        let builtin_sorts = [
-            "Unit", "String", "bool", "i64", "f64", "BigInt", "BigRat", "Rational",
-        ];
-        if !self.functions.is_empty()
-            || self
-                .type_info
-                .sorts
-                .keys()
-                .any(|name| !builtin_sorts.contains(&name.as_str()))
+        if let Some(function) = self
+            .functions
+            .values()
+            .find(|function| self.backend.table_size(function.backend_id) != 0)
         {
-            return Err(Error::BackendError(
-                "trace capture must be enabled before user declarations so the replay catalog is complete"
-                    .into(),
-            ));
+            return Err(Error::BackendError(format!(
+                "trace capture must be enabled before inserting facts; `{}` is already nonempty",
+                function.name()
+            )));
         }
         if self
             .rulesets

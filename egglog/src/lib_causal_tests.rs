@@ -18,6 +18,29 @@ fn enable_serial_trace(egraph: &mut EGraph) -> Result<(), Error> {
     serial_trace_pool().install(|| egraph.enable_trace())
 }
 
+#[test]
+fn trace_accepts_empty_declarations_installed_by_a_matching_replay_factory() {
+    serial_trace_pool().install(|| {
+        let declaration = "(datatype E (A) (B))";
+        let mut recorder = EGraph::default();
+        recorder.parse_and_run_program(None, declaration).unwrap();
+        recorder.enable_trace().unwrap();
+        recorder
+            .parse_and_run_program(None, "(A) (B) (union (A) (B)) (check (= (A) (B)))")
+            .unwrap();
+
+        let rendered = crate::slicing::slice_all_checks(&recorder).unwrap();
+        assert!(
+            !rendered.contains("(datatype E"),
+            "factory-owned declarations should not be copied into the artifact"
+        );
+
+        let mut replay = EGraph::default().with_proofs_enabled().with_proof_testing();
+        replay.parse_and_run_program(None, declaration).unwrap();
+        replay.parse_and_run_program(None, &rendered).unwrap();
+    });
+}
+
 fn find_container_canonicalization(
     view: &core_relations::TraceView<'_>,
     root: core_relations::CauseId,
