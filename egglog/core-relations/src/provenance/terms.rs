@@ -58,7 +58,7 @@ pub struct ReplayConstructorSpec {
     /// Frontend identity of the operation or constructor.
     pub op: ReplayOpId,
     /// Logical sorts of the call arguments in evaluation order.
-    pub child_sorts: Box<[ReplaySortId]>,
+    pub child_sorts: Arc<[ReplaySortId]>,
     /// Whether a container primitive's structural version is anchored as soon
     /// as the primitive returns, before later query guards can reject the lane.
     anchor_on_primitive_return: bool,

@@ -77,10 +77,11 @@ impl<'a> TermProjector<'a> {
                 .originating_rule(fact.cause)
                 .map(TemplateOwner::Durable)
                 .unwrap_or(TemplateOwner::Fact(fact_id));
-            let merge_cells = match fact.origin {
-                Some(FactOrigin::Merge { cells, .. }) => {
-                    Some(self.arena.durable_merge_cell_origins[cells.as_range()].to_vec())
-                }
+            let merge_cell = match fact.origin {
+                Some(FactOrigin::Merge { cells, .. }) => self.arena.durable_merge_cell_origins
+                    [cells.as_range()]
+                .get(column)
+                .copied(),
                 _ => None,
             };
             let (table, origin) = (fact.table, fact.origin);
@@ -90,12 +91,9 @@ impl<'a> TermProjector<'a> {
                 Some(FactOrigin::Merge {
                     incoming, prior, ..
                 }) => {
-                    let cell = *merge_cells
-                        .as_deref()
-                        .and_then(|cells| cells.get(column))
-                        .ok_or_else(|| {
-                            format!("merge origin for {fact_id:?} has no column {column}")
-                        })?;
+                    let cell = merge_cell.ok_or_else(|| {
+                        format!("merge origin for {fact_id:?} has no column {column}")
+                    })?;
                     let incoming_term = |this: &mut Self| match incoming {
                         Some(RowOriginRef::Site(site)) => {
                             this.site_term(site, table, column, Some(&owner))
@@ -170,16 +168,15 @@ impl<'a> TermProjector<'a> {
             ));
         }
         let result = (|| {
-            let record = self
-                .arena
+            let arena = self.arena;
+            let record = arena
                 .durable_firings
                 .get((firing_id.get().checked_sub(1).ok_or("missing FiringId")?) as usize)
                 .and_then(Option::as_ref)
                 .ok_or_else(|| format!("unknown firing {firing_id:?}"))?;
             let rule = record.rule;
-            let premises: Arc<[FactId]> =
-                self.arena.durable_premises[record.premises.as_range()].into();
-            self.binding_term(rule, &premises, binding, &TemplateOwner::Durable(firing_id))
+            let premises = &arena.durable_premises[record.premises.as_range()];
+            self.binding_term(rule, premises, binding, &TemplateOwner::Durable(firing_id))
         })();
         self.visiting_firings.remove(&(firing_id, binding));
         let term = result?;
@@ -543,6 +540,7 @@ pub(super) struct VersionChain {
 pub(super) struct ConstructorOccurrenceIndex {
     facts: HashMap<(ReplaySortId, ReplayOpId), Arc<[FactId]>>,
     registered: HashSet<(ReplaySortId, ReplayOpId)>,
+    equality_sorts: HashSet<ReplaySortId>,
     /// Non-table calls that were emitted by a frontend-certified static term
     /// recipe. Only these calls may be recomputed by `let-check` without a
     /// constructor FactId. Building this set is deliberately cold: capture
@@ -676,6 +674,7 @@ impl<'a> TraceView<'a> {
         if self.rekey_index.is_none() {
             let mut by_fact = HashMap::<FactId, Vec<usize>>::default();
             let mut by_position = HashMap::default();
+            by_position.reserve(self.arena.rekeys.len());
             for (index, rekey) in self.arena.rekeys.iter().enumerate() {
                 by_fact.entry(rekey.fact).or_default().push(index);
                 assert!(

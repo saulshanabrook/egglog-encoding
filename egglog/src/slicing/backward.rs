@@ -579,6 +579,9 @@ fn select_interfering_removals(
     selection: &mut SelectionState,
     work: &mut VecDeque<Work>,
 ) -> Result<bool, TraceViewError> {
+    if view.totals().removals == 0 {
+        return Ok(false);
+    }
     let mut dsu = selected_equality_dsu(selection);
     let replay_facts = selection.replay_facts.iter().copied().collect::<Vec<_>>();
     let mut selected_any = false;

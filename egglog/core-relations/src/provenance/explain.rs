@@ -159,6 +159,7 @@ impl<'a> TraceView<'a> {
     fn raw_equality_index(&mut self) -> Result<&ExplanationForest, TraceViewError> {
         if self.equality_index.is_none() {
             let mut parents = HashMap::default();
+            parents.reserve(self.arena.durable_equalities.len());
             let mut previous_position = None;
             for (index, event) in self.arena.durable_equalities.iter().enumerate() {
                 let event = event.as_ref().ok_or_else(|| {
@@ -320,7 +321,6 @@ impl<'a> TraceView<'a> {
                 continue;
             }
             let table = fact.table;
-            let values = fact.values.to_vec();
             let constructor = self
                 .replay_terms
                 .table_constructors
@@ -328,7 +328,7 @@ impl<'a> TraceView<'a> {
                 .map(|entry| entry.clone())
                 .ok_or(TraceViewError::UnknownTable(table))?;
             let output = constructor.child_sorts.len();
-            if output != children.len() || values.len() <= output {
+            if output != children.len() || fact.values.len() <= output {
                 return Err(TraceViewError::Invalid(format!(
                     "constructor fact {producer:?} has an invalid replay arity"
                 )));
@@ -344,7 +344,7 @@ impl<'a> TraceView<'a> {
                 .raw_equality_support_if_connected_at(
                     RawEqualityEndpoint {
                         sort,
-                        raw: values[output],
+                        raw: fact.values[output],
                     },
                     RawEqualityEndpoint {
                         sort,
@@ -361,7 +361,7 @@ impl<'a> TraceView<'a> {
                     .child_sorts
                     .iter()
                     .copied()
-                    .zip(values.into_iter())
+                    .zip(fact.values.iter().copied())
                     .map(|(sort, raw)| RawEqualityEndpoint { sort, raw })
                     .collect(),
             );
@@ -828,12 +828,14 @@ impl<'a> TraceView<'a> {
     ) -> Arc<[FactId]> {
         if self.constructor_occurrence_index.is_none() {
             let mut facts = HashMap::<(ReplaySortId, ReplayOpId), Vec<FactId>>::default();
+            facts.reserve(self.replay_terms.table_constructors.len());
             let registered = self
                 .replay_terms
                 .table_constructors
                 .iter()
                 .map(|entry| (entry.value().result_sort, entry.value().op))
-                .collect();
+                .collect::<HashSet<_>>();
+            let equality_sorts = registered.iter().map(|(sort, _)| *sort).collect();
             let mut certified_calls = HashSet::default();
             let mut visited_terms = HashSet::default();
             for recipe in self.term_recipes.rules.values() {
@@ -884,6 +886,7 @@ impl<'a> TraceView<'a> {
                     .map(|(key, facts)| (key, Arc::from(facts)))
                     .collect(),
                 registered,
+                equality_sorts,
                 certified_calls,
             });
         }
@@ -919,9 +922,8 @@ impl<'a> TraceView<'a> {
         self.constructor_occurrence_index
             .as_ref()
             .expect("initialized constructor occurrence index disappeared")
-            .registered
-            .iter()
-            .any(|(constructor_sort, _)| *constructor_sort == sort)
+            .equality_sorts
+            .contains(&sort)
     }
 
     pub(super) fn explain_structural_term_availability_at(
