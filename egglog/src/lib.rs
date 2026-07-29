@@ -1527,7 +1527,8 @@ impl EGraph {
     /// Call this before registering rules or inserting facts or input rows.
     /// Empty declarations may precede capture, but a fresh replay graph must
     /// provide them again. Repeated calls after successful activation are
-    /// no-ops.
+    /// no-ops. The active Rayon pool must contain exactly one thread; this is
+    /// an API requirement as well as the command-line `--threads 1` boundary.
     ///
     /// # Errors
     ///

@@ -140,6 +140,13 @@ no Fiat insertion, relational write, equality, or global binding. Replay always
 supplies the recorded expected sort so nominal container aliases cannot be
 confused even when they share one physical Rust representation.
 
+Exact aliases support Pair, Vec, Maybe, Either, Set, MultiSet, and Map values
+whose keys cannot later collapse through equality. A Map with equality-capable
+keys fails before rendering because the runtime registry and proof-term
+normalizer do not yet specify the same collision survivor. A fresh supported
+alias may intern one idempotent container-registry value, but it still creates
+no table row, equality, Fiat row, proof fact, or global binding.
+
 Selected firings are emitted as grounded `run-rule` configurations. Firings
 from the same captured wave are placed in one list-form schedule, so they see
 the same pre-wave state instead of being accidentally enabled by one another's

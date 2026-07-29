@@ -69,22 +69,32 @@ pub enum QueryEntry {
 
 #[derive(Clone, Debug)]
 pub enum FiringCaptureBinding {
+    /// Project a source query entry at firing commit time.
     Entry {
+        /// Variable or typed constant in the compiled bridge query.
         entry: QueryEntry,
+        /// Logical sort used to interpret its committed raw value.
         current_sort: ReplaySortId,
     },
+    /// Reuse an already-interned source constant term.
     Constant {
+        /// Stable structural term for the constant.
         term: ReplayTermId,
+        /// Logical sort of the constant term.
         sort: ReplaySortId,
     },
 }
 
+/// Bridge-local recipe for recording one successful ordinary-rule firing.
 #[derive(Clone, Debug)]
 pub struct FiringCaptureSpec {
+    /// Frontend catalog identity of the source rule.
     pub rule: u32,
+    /// Source-ordered values needed to ground the firing during replay.
     pub bindings: Box<[FiringCaptureBinding]>,
 }
 
+/// One relational cell supplying an endpoint of a successful check.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CriterionCapturePremise {
     /// Source-ordered table-premise ordinal in this bridge query.
@@ -96,9 +106,12 @@ pub struct CriterionCapturePremise {
     pub constructor: Option<(ReplaySortId, egglog_core_relations::ReplayOpId)>,
 }
 
+/// Bridge-local recipe for recording the first successful witness of a check.
 #[derive(Clone, Debug)]
 pub struct CriterionCaptureSpec {
+    /// Frontend catalog identity of the source check.
     pub check: u32,
+    /// Source-ordered pairs of cells supplying checked equality endpoints.
     pub equalities: Box<[(CriterionCapturePremise, CriterionCapturePremise)]>,
 }
 
@@ -415,11 +428,13 @@ impl RuleBuilder<'_> {
         self.query.capture = Some(QueryCapture::Source(source));
     }
 
+    /// Attribute this query's committed matches to one ordinary-rule recipe.
     pub fn set_firing_capture(&mut self, capture: FiringCaptureSpec) {
         assert!(self.query.capture.is_none());
         self.query.capture = Some(QueryCapture::Firing(capture));
     }
 
+    /// Record the first successful witness of this positive-check query.
     pub fn set_criterion_capture(&mut self, capture: CriterionCaptureSpec) {
         assert!(self.query.capture.is_none());
         self.query.capture = Some(QueryCapture::Criterion(capture));
@@ -508,6 +523,9 @@ impl RuleBuilder<'_> {
         self.call_external_func_with_replay(func, args, ret_ty, None, panic_msg)
     }
 
+    /// Add a fallible external call and optionally attach its typed structural
+    /// recipe for a capture-enabled rule. The recipe describes only the
+    /// primary result; the panic fallback cannot produce a replay value.
     pub fn call_external_func_with_replay(
         &mut self,
         func: ExternalFunctionId,
