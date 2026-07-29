@@ -27,7 +27,7 @@ fn multiset_term_children(termdag: &TermDag, term: TermId) -> Option<Vec<TermId>
 }
 
 impl ContainerValue for MultiSetContainer {
-    fn causal_child_sort_slots(&self) -> Option<Box<[usize]>> {
+    fn trace_child_sort_slots(&self) -> Option<Box<[usize]>> {
         Some(vec![0; self.data.len()].into_boxed_slice())
     }
 

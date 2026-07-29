@@ -106,8 +106,12 @@ pub struct ContainerRebuildSummary {
 /// capture. Ordinary container execution does not use this error path.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum TraceCaptureError {
+    /// Rebuild reached a container type without an exact trace representation.
     #[error("trace capture does not support rebuilding container type `{container}`")]
-    UnsupportedContainerRebuild { container: &'static str },
+    UnsupportedContainerRebuild {
+        /// Rust type name of the unsupported container implementation.
+        container: &'static str,
+    },
 }
 
 impl TraceCaptureError {
@@ -447,21 +451,25 @@ impl ContainerValues {
     }
 }
 
-/// Positional container shapes supported by exact causal rebuild capture.
+/// Positional container shapes supported by exact trace rebuild capture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CausalContainerKind {
+pub enum TraceContainerKind {
+    /// A fixed pair whose iterator yields its two logical child slots.
     Pair,
+    /// A homogeneous ordered sequence whose elements share one child sort.
     Vec,
+    /// An optional homogeneous child whose empty form yields no value.
     Maybe,
+    /// One active child whose logical sort depends on the selected variant.
     Either,
 }
 
-impl CausalContainerKind {
+impl TraceContainerKind {
     fn validate_arity(self, arity: usize) -> Result<(), &'static str> {
         match self {
-            Self::Pair if arity != 2 => Err("causal Pair container does not have two children"),
-            Self::Maybe if arity > 1 => Err("causal Maybe container has more than one child"),
-            Self::Either if arity != 1 => Err("causal Either container does not have one child"),
+            Self::Pair if arity != 2 => Err("trace Pair container does not have two children"),
+            Self::Maybe if arity > 1 => Err("trace Maybe container has more than one child"),
+            Self::Either if arity != 1 => Err("trace Either container does not have one child"),
             Self::Vec | Self::Pair | Self::Maybe | Self::Either => Ok(()),
         }
     }
@@ -473,24 +481,24 @@ impl CausalContainerKind {
 /// rebuilding of container contents and merging containers that become equal after a rebuild pass
 /// has taken place.
 pub trait ContainerValue: Hash + Eq + Clone + Send + Sync + 'static {
-    /// The positional container shape supported by exact causal rebuild
+    /// The positional container shape supported by exact trace rebuild
     /// capture. Unlisted container semantics fail closed only if rebuild
     /// actually changes the container; ordinary execution is unaffected.
-    fn capture_kind() -> Option<CausalContainerKind> {
+    fn capture_kind() -> Option<TraceContainerKind> {
         None
     }
 
     /// Map each value yielded by [`ContainerValue::iter`] to its logical
     /// child-sort slot. Ordered supported containers have a compact default;
     /// variant containers such as Either override it.
-    fn causal_child_sort_slots(&self) -> Option<Box<[usize]>> {
+    fn trace_child_sort_slots(&self) -> Option<Box<[usize]>> {
         let len = self.iter().count();
         match Self::capture_kind()? {
-            CausalContainerKind::Pair => Some((0..len).collect()),
-            CausalContainerKind::Vec | CausalContainerKind::Maybe => {
+            TraceContainerKind::Pair => Some((0..len).collect()),
+            TraceContainerKind::Vec | TraceContainerKind::Maybe => {
                 Some(std::iter::repeat_n(0, len).collect())
             }
-            CausalContainerKind::Either => None,
+            TraceContainerKind::Either => None,
         }
     }
 
@@ -512,7 +520,7 @@ pub trait ContainerValue: Hash + Eq + Clone + Send + Sync + 'static {
 pub(crate) trait DynamicContainerEnv: Any + dyn_clone::DynClone + Send + Sync {
     fn as_any(&self) -> &dyn Any;
     fn container_type_id(&self) -> TypeId;
-    fn capture_kind(&self) -> Option<CausalContainerKind>;
+    fn capture_kind(&self) -> Option<TraceContainerKind>;
     fn container_type_name(&self) -> &'static str;
     fn contains_typed_child(
         &self,
@@ -574,7 +582,7 @@ impl<C: ContainerValue> DynamicContainerEnv for ContainerEnv<C> {
         TypeId::of::<C>()
     }
 
-    fn capture_kind(&self) -> Option<CausalContainerKind> {
+    fn capture_kind(&self) -> Option<TraceContainerKind> {
         C::capture_kind()
     }
 
@@ -593,7 +601,7 @@ impl<C: ContainerValue> DynamicContainerEnv for ContainerEnv<C> {
             return false;
         };
         let values = container.iter().collect::<SmallVec<[Value; 4]>>();
-        if let Some(slots) = container.causal_child_sort_slots() {
+        if let Some(slots) = container.trace_child_sort_slots() {
             return values
                 .iter()
                 .copied()

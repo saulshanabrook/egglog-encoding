@@ -32,7 +32,7 @@ use core::{CoreActionContext, ResolvedAtomTerm};
 pub use core::{ResolvedCall, SpecializedPrimitive};
 #[cfg(test)]
 use core_relations::ReplayTerm;
-pub use core_relations::{BaseValue, CausalContainerKind, ContainerValue, Value};
+pub use core_relations::{BaseValue, ContainerValue, TraceContainerKind, Value};
 use core_relations::{ExecutionState, ExternalFunctionId, make_external_func};
 #[cfg(test)]
 use core_relations::{TraceView, TraceViewError};

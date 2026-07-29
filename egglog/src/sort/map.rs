@@ -9,7 +9,7 @@ pub struct MapContainer {
 }
 
 impl ContainerValue for MapContainer {
-    fn causal_child_sort_slots(&self) -> Option<Box<[usize]>> {
+    fn trace_child_sort_slots(&self) -> Option<Box<[usize]>> {
         Some(
             (0..self.data.len() * 2)
                 .map(|position| position % 2)

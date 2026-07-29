@@ -11,8 +11,8 @@ pub struct VecContainer {
 }
 
 impl ContainerValue for VecContainer {
-    fn capture_kind() -> Option<CausalContainerKind> {
-        Some(CausalContainerKind::Vec)
+    fn capture_kind() -> Option<TraceContainerKind> {
+        Some(TraceContainerKind::Vec)
     }
 
     fn rebuild_contents(&mut self, rebuilder: &dyn ValueRebuilder) -> bool {

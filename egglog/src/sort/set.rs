@@ -8,7 +8,7 @@ pub struct SetContainer {
 }
 
 impl ContainerValue for SetContainer {
-    fn causal_child_sort_slots(&self) -> Option<Box<[usize]>> {
+    fn trace_child_sort_slots(&self) -> Option<Box<[usize]>> {
         Some(vec![0; self.data.len()].into_boxed_slice())
     }
 

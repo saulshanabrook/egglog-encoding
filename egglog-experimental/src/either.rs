@@ -2,7 +2,7 @@ use egglog::ast::Expr;
 use egglog::prelude::ContainerSort;
 use egglog::sort::{ContainerValues, Presort, ValueRebuilder};
 use egglog::{
-    ArcSort, CausalContainerKind, ContainerValue, EGraph, TermDag, TermId, TypeError, TypeInfo,
+    ArcSort, ContainerValue, EGraph, TermDag, TermId, TraceContainerKind, TypeError, TypeInfo,
     Value, add_primitive_with_validator,
 };
 use std::any::TypeId;
@@ -21,11 +21,11 @@ pub struct EitherContainer {
 }
 
 impl ContainerValue for EitherContainer {
-    fn capture_kind() -> Option<CausalContainerKind> {
-        Some(CausalContainerKind::Either)
+    fn capture_kind() -> Option<TraceContainerKind> {
+        Some(TraceContainerKind::Either)
     }
 
-    fn causal_child_sort_slots(&self) -> Option<Box<[usize]>> {
+    fn trace_child_sort_slots(&self) -> Option<Box<[usize]>> {
         Some(
             vec![match self.data {
                 EitherData::Left(_) => 0,

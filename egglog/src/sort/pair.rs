@@ -9,8 +9,8 @@ pub struct PairContainer {
 }
 
 impl ContainerValue for PairContainer {
-    fn capture_kind() -> Option<CausalContainerKind> {
-        Some(CausalContainerKind::Pair)
+    fn capture_kind() -> Option<TraceContainerKind> {
+        Some(TraceContainerKind::Pair)
     }
 
     fn rebuild_contents(&mut self, rebuilder: &dyn ValueRebuilder) -> bool {
