@@ -57,7 +57,7 @@ cargo run --release [-f fact-directory] [--to-dot] [--to-svg] [-j --threads <THR
 
 `--slice-output` records one supported serial execution, retains the dynamic
 support needed by its successful `check` commands, and, by itself, writes a
-smaller egglog program without replaying it:
+focused egglog program without replaying it:
 
 ```bash
 egglog --slice-output slice-replay.egg input.egg
@@ -66,8 +66,9 @@ egglog --slice-output slice-replay.egg input.egg
 See [Check-directed replay slicing](src/slicing/check_directed_replay.md) for
 the capture, historical-closure, and grounded-replay correctness model.
 
-The output flag implies slicing; `--slice` requests replay and is independent of
-the replay mode. For example, this records natively and replays with proofs:
+The output flag implies slicing; `--slice` requests direct execution of the
+generated in-memory commands on a fresh graph and is independent of the replay
+mode. For example, this records natively and replays with proofs:
 
 ```bash
 egglog --slice --proofs input.egg
@@ -76,11 +77,11 @@ egglog --slice --proofs input.egg
 Bare `--slice` replays normally. It can also be combined with proof testing,
 term encoding, proof extraction, naive execution, and graph serialization.
 
-`--slice-output` writes the rendered program directly; the CLI does not run a
-second validation pass or publish through an atomic temporary-file rename.
-The test corpus and CI strictly replay supported artifacts, while unsupported
-capture boundaries still fail before an artifact is produced. There is no
-fallback to the original program.
+`--slice-output` is the rendering path and writes the program directly; the CLI
+does not run a second validation pass or publish through an atomic
+temporary-file rename. The test corpus and CI strictly replay supported
+artifacts, while unsupported capture boundaries still fail before an artifact
+is produced. There is no fallback to the original program.
 
 Slicing currently supports sequential input files, one execution thread, and
 the main backend. A selected execution that reaches an unsupported scheduler, source,

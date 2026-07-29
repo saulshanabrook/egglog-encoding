@@ -5,15 +5,20 @@
 //! Lowering copies the selected trace projection into an owned intermediate
 //! representation. The result contains source names, source literals, catalog
 //! ordinals, and structural term recipes, but no backend ids, runtime values,
-//! trace handles, or borrows from the recording graph. It can therefore be
-//! rendered and executed on a fresh graph, including under ordinary proof mode.
+//! trace handles, or borrows from the recording graph. [`ReplayProgram::to_commands`]
+//! turns that representation into the ordinary owned [`Command`] values used
+//! for fresh-graph execution, including under proof mode. Source rendering is
+//! an export and parser-round-trip helper, not the in-process replay boundary.
 //!
 //! The capture catalog is the source of truth for surface declarations,
-//! selected source commands, normalized rule identities, and input provenance.
-//! Static setup is interleaved by catalog ordinal; source rows, grounded firing
-//! waves, and checks are then ordered by their recorded chronology. A selected
-//! rewrite is reconstructed as a rewrite, and a selected direction of a
-//! birewrite preserves the original birewrite form and orientation.
+//! selected source commands, normalized rule identities, and exact input-row
+//! literals. Candidate static setup is interleaved by catalog ordinal, then
+//! pruned to the transitive `Sort`/`Function`/`Ruleset` closure of the replay
+//! roots. Source rows, grounded firing waves, and checks are ordered by their
+//! recorded chronology. Only selected input rows are materialized, so lowering
+//! never rereads their source files. A selected rewrite is reconstructed as a
+//! rewrite, and a selected direction of a birewrite preserves the original
+//! birewrite form and orientation.
 //!
 //! Constructor-valued bindings cross into the fresh graph only through checked
 //! aliases. Each alias is scheduled at a retained pre-wave boundary after its

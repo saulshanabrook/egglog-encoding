@@ -18,18 +18,22 @@ program shows up as a variant there.
 
 # Check-directed replay slicing
 
-Egglog can capture one supported ordinary execution and render the historical
-support of its successful checks as a smaller, grounded egglog program. The
-trace is causal evidence rather than a proof; the rendered source can run on a
-fresh normal or proof-enabled graph. See the [design
+Egglog can capture one supported ordinary execution and construct the
+historical support of its successful checks as a focused, grounded egglog
+program. The trace is causal evidence rather than a proof; the owned commands
+can run on a fresh normal or proof-enabled graph and can separately be rendered
+as source. See the [design
 explanation](https://github.com/egraphs-good/egglog/blob/main/src/slicing/check_directed_replay.md)
 for the temporal and occurrence model.
 
-Rust callers enable capture with [`EGraph::enable_trace`] before installing
-user declarations or input, run the source program normally, and then call
-[`slicing::slice_all_checks`]. That function returns owned commands suitable
-for [`EGraph::run_program`] without executing, rendering, or validating them,
-so the caller chooses the replay mode and publication policy.
+Rust callers enable capture with [`EGraph::enable_trace`] before registering
+rules or inserting facts or input, run the source program normally, and then
+call [`slicing::slice_all_checks`]. Empty declarations may precede capture when
+the fresh replay graph supplies them too. The function returns owned commands
+suitable for [`EGraph::run_program`] without executing, rendering, or
+validating them, so the caller chooses the replay mode and publication policy.
+Selected input rows are embedded from captured literals, and a transitive
+dependency pass prunes captured declarations for the selected roots.
 
 # Using egglog from Rust
 We encourage using the egglog language as much as possible, even from Rust.

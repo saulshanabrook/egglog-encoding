@@ -32,8 +32,8 @@ The implementation follows the same boundaries as this explanation:
    in `lib.rs`; this is where source syntax and typed producer recipes join the
    backend trace.
 4. Read `slicing/backward.rs` as the executable dependency model, followed by
-   `slicing/replay.rs` for the graph-neutral IR, chronological scheduling, and
-   surface rendering.
+   `slicing/replay.rs` for the graph-neutral replay program, chronological
+   scheduling, command lowering, and optional source rendering.
 5. Finish with [`slice_all_checks`] and `cli.rs`, then use the sibling
    `*_tests.rs` files and `test-support/causal_corpus.rs` as the falsifying
    examples for each supported or fail-closed boundary.
@@ -55,12 +55,14 @@ ordinary execution
 successful checks -- backward closure --> closed historical support
                                                 |
                                                 v
-                                     graph-neutral grounded replay
+                                  graph-neutral replay program
                                                 |
                                                 v
-                                      ordinary egglog source
-                                         /              \
-                                  normal replay       proof replay
+                                      Vec<Command>
+                                      /          \
+                           fresh-graph replay    render for output
+                              /          \       and round-trip tests
+                         normal          proof
 ```
 
 Each stage exists because the next one cannot safely reconstruct its input
@@ -122,11 +124,11 @@ it is not a proof object.
 
 ### Grounded replay checks the account
 
-Replay lowering copies the selection into an owned, graph-neutral
-intermediate representation. Backend IDs, recording-graph values, trace
-handles, and borrows do not cross into the fresh graph. Literal values remain
-source literals; constructor-valued bindings are re-established through
-checked `let-check` aliases.
+Replay lowering copies the selection into an owned, graph-neutral program and
+then lowers that program to ordinary [`Command`] values. Backend IDs,
+recording-graph values, trace handles, and borrows do not cross into the fresh
+graph. Literal values remain source literals; constructor-valued bindings are
+re-established through checked `let-check` aliases.
 
 Selected firings are emitted as grounded `run-rule` configurations. Firings
 from the same captured wave are placed in one list-form schedule, so they see
@@ -134,13 +136,16 @@ the same pre-wave state instead of being accidentally enabled by one another's
 replay effects. The original checks are then placed after the waves whose
 state they observed.
 
-This use of ordinary syntax avoids a second evaluator for historical events.
-The egglog engine remains the authority for rule execution, rebuilding,
-merges, and checks. If the recorded account cannot be reconstructed as an
-ordinary program, slicing fails closed instead of searching for a different
-derivation.
+This use of ordinary commands avoids a second evaluator for historical events.
+In-process replay passes the owned commands directly to [`EGraph::run_program`]
+on a fresh graph. Rendering is a separate export boundary used by
+`--slice-output` and by parser round-trip tests; it is not an internal relay for
+`--slice`. The egglog engine remains the authority for rule execution,
+rebuilding, merges, and checks. If the recorded account cannot be reconstructed
+as ordinary commands, slicing fails closed instead of searching for a
+different derivation.
 
-## Two coordinates of historical time
+## Two stored coordinates plus one derived prefix
 
 One timestamp is not enough to describe an equality-saturation execution.
 The trace stores two coordinates:
@@ -274,7 +279,7 @@ bridge, and why liveness is an exclusive upper bound rather than another
 causal dependency. If no retained pre-wave point lies between readiness and
 the selected kill, replay construction reports an error.
 
-## Preserving source carriers
+## Preserving source carriers and their dependencies
 
 The capture engine normalizes rewrites into rules, but the replay artifact
 preserves retained `rewrite` and `birewrite` commands as those source forms.
@@ -287,8 +292,36 @@ the program being replayed and can lose source-level dependencies.
 The same principle governs all lowering: declarations and selected sources
 come from the capture catalog, runtime values are reconstructed from typed
 structural recipes, and whole action bundles retain their ordinary semantics.
-The replay artifact is a smaller egglog program, not a serialization of
+The replay artifact is a focused egglog program, not a serialization of
 backend operations.
+
+Two different closure problems meet at this boundary and remain deliberately
+separate:
+
+- **Dynamic source closure** follows the capture catalog from each selected
+  source effect to the earlier source actions and immutable globals that the
+  action actually read. This is execution history and belongs to backward
+  slicing.
+- **Static declaration closure** starts from the already-retained commands and
+  follows their `Sort`, `Function`, and `Ruleset` requirements through the
+  captured surface declarations. This is a cold, graph-neutral reachability
+  pass after lowering. It removes unrelated declarations without teaching the
+  trace about frontend syntax.
+
+The declaration pass preserves source order and treats one `datatype*` group
+as an atomic declaration. If a retained command has an opaque dependency
+shape, it conservatively keeps all captured declarations. A required name with
+no captured provider denotes either a builtin or a replay-factory-supplied
+pre-capture capability, such as an empty declaration, custom primitive, or
+extension. The fresh factory remains responsible for installing it.
+
+Input rows follow the same self-contained-carrier rule. Capture stores the
+exact literal terms of every nonempty row that entered through an `input`
+command, including raw floating-point bits. Backward closure still selects
+individual `SourceRef::InputRow` occurrences, and lowering materializes only
+those selected rows as ordinary actions. Replay never opens or hashes the
+original input file, so changing or deleting that file cannot change an
+already-built replay program.
 
 ## Trace evidence and proof are independent
 
@@ -314,6 +347,12 @@ rendering. Backward closure and replay are cold operations whose cost follows
 the retained cone; capture pays for every observed firing whether or not that
 firing eventually supports a check.
 
+Capture also retains the exact literals of nonempty input rows so a later slice
+does not depend on external files. Only selected rows are copied into the replay
+program, but the recording graph pays the storage cost for every row that could
+later become selected. This is intentional certificate data, not a replay-time
+file cache.
+
 That tradeoff is deliberate. An exact witness lets replay reconstruct the
 historical firing without searching for another derivation. A different design
 could annotate each first-produced fact with a rule identity and derivation
@@ -333,11 +372,12 @@ design chooses direct historical evidence and keeps that cost visible.
 
 The current command-line boundary is intentionally narrow: sequential input
 files, one execution thread, the main backend, and trace capture enabled on an
-ordinary graph before rules, facts, or input are installed. Embedding callers
-may enable capture after installing empty declarations. Those declarations are
-owned by the graph factory and omitted from the artifact, so replay requires a
-fresh factory that installs the same declarations before running the slice.
-Successful `check` commands are the replay roots. `extract` and
+ordinary graph before rules, facts, or input are installed. Captured
+declarations are candidates for the transitive static closure described above.
+Embedding callers may enable capture after installing empty declarations;
+those pre-capture declarations are owned by the graph factory and omitted from
+the replay program, so a fresh replay factory must install the same
+declarations. Successful `check` commands are the replay roots. `extract` and
 `multi-extract` output are not retained.
 
 Unsupported behavior remains fail-closed. Some constructs, such as push/pop
@@ -357,16 +397,17 @@ existing grounded executor does not expose that commit-time carrier, so trace
 capture rejects the schedule instead of synthesizing premise identities or
 recording its effects as source facts.
 
-`--slice-output PATH` captures and slices, then writes the rendered source
-directly to `PATH`. By itself it does not replay the artifact. The write is an
-ordinary direct filesystem write: there is no production replay-validation
-pass and no atomic temporary-file-and-rename publication protocol.
+`--slice-output PATH` captures and slices, renders the returned commands, then
+writes that source directly to `PATH`. By itself it does not replay the
+artifact. The write is an ordinary direct filesystem write: there is no
+production replay-validation pass and no atomic temporary-file-and-rename
+publication protocol.
 
-`--slice` requests execution of the generated program on a fresh, equivalently
-configured graph supplied by the replay factory. Replay
-mode is independent, so proof and other execution-mode flags can be combined
-with slicing. If output and replay are both requested, writing still precedes
-replay and is not made transactional by it.
+`--slice` passes the generated commands directly to a fresh, equivalently
+configured graph supplied by the replay factory. Replay mode is independent,
+so proof and other execution-mode flags can be combined with slicing. If
+output and replay are both requested, rendering and writing still precede
+direct command replay and are not made transactional by it.
 
 Strict replay is instead a corpus and CI invariant: supported generated
 artifacts are executed there, and a replay failure fails the test. Code that
@@ -393,9 +434,9 @@ than from a desired output shape:
 5. **Close over executable semantics.** Include whole owner effects,
    pre-event endpoint denotation, induced maintenance, and interfering kills,
    not only the positive edge found by backward reachability.
-6. **Choose an ordinary source carrier.** The owned replay form must reconstruct
-   typed values and execute through the normal engine without recording-graph
-   handles or a second evaluator.
+6. **Choose an ordinary command carrier.** The owned replay form must
+   reconstruct typed values as ordinary [`Command`] values and execute through
+   the normal engine without recording-graph handles or a second evaluator.
 7. **Falsify with strict replay.** Test allocation-order changes, same-syntax
    delete/recreate cases, same-wave effects, container refresh, and proof replay.
    A missing capability should end in a precise error, never a conservative
