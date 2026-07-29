@@ -1148,16 +1148,8 @@ fn build_owned(
                     alias_windows.len()
                 )));
             }
-            for ((source_call, call), window) in new_calls.into_iter().zip(alias_windows.iter()) {
-                if source_call != window.term {
-                    return Err(ReplayError::Invalid(format!(
-                        "firing {} binding `{variable_name}` availability order expected call {} but projected call {}",
-                        id.get(),
-                        source_call.get(),
-                        window.term.get()
-                    )));
-                }
-                let window = *window;
+            for ((source_call, call), plan) in new_calls.into_iter().zip(alias_windows.iter()) {
+                let plan = *plan;
                 let canonical_children = match &terms.nodes[call.index()] {
                     OwnedReplayTerm::Literal { .. } => unreachable!("Call queue contained literal"),
                     OwnedReplayTerm::Call { children, .. } => children
@@ -1179,20 +1171,10 @@ fn build_owned(
                 // become visible only at a later retained boundary. A selected
                 // tombstone for this exact producer is the exclusive upper
                 // bound: the alias must be checked before replay deletes it.
-                let history_ready_after =
-                    window.available_after.max(window.support_ready_after).get();
-                let live_before = window
+                let history_ready_after = plan.ready_after.get();
+                let live_before = plan
                     .producer
                     .and_then(|producer| selected_removal_by_fact.get(&producer).copied());
-                if let Some(live_before) = live_before
-                    && window.live_before.map(|position| position.get()) != Some(live_before)
-                {
-                    return Err(ReplayError::Invalid(format!(
-                        "firing {} binding `{variable_name}` call {} has inconsistent producer liveness",
-                        id.get(),
-                        source_call.get()
-                    )));
-                }
                 let alias_wave = wave_positions
                     .iter()
                     .find_map(|(candidate_wave, candidate_position)| {
@@ -1209,7 +1191,7 @@ fn build_owned(
                             source_call.get()
                         ))
                     })?;
-                let fresh_after = window.fresh_after.map(|position| position.get());
+                let fresh_after = plan.fresh_after.map(|position| position.get());
                 if let Some(previous) = source_call_by_boundary
                     .get(&(alias_wave, fresh_after, source_call))
                     .copied()

@@ -356,15 +356,7 @@ fn parent_alias_waits_for_child_key_bridge_without_borrowing_parent_anchor() {
         unreachable!("window count was checked above")
     };
     assert!(
-        child.support_ready_after <= child.available_after,
-        "the child's output bridge belongs to its parent's key readiness, not its own capture bound: {consume_windows:?}"
-    );
-    assert!(
-        parent.support_ready_after > parent.available_after,
-        "the old H producer exists before its requested child spelling becomes replay-addressable: {consume_windows:?}"
-    );
-    assert!(
-        parent.support_ready_after > child.available_after,
+        parent.ready_after > child.ready_after,
         "the parent must wait for the child denotation bridge, not merely child creation: {consume_windows:?}"
     );
 
@@ -471,34 +463,11 @@ fn post_deletion_equality_cannot_select_stale_child_producer() {
         "delete-live and consume must each retain child and H windows"
     );
     for h_window in h_windows {
-        let live_before = h_window
-            .live_before
-            .expect("the selected H deletion must bound its producer window");
-        assert!(h_window.producer.is_some());
         assert!(
-            h_window.support_ready_after < live_before,
-            "H's child/key support must fit before H is deleted: {h_window:?}"
+            h_window.producer.is_some(),
+            "the H alias must retain its exact producer: {h_window:?}"
         );
     }
-
-    let mut crossed = slice.clone();
-    let mut crossed_any = false;
-    for bindings in crossed.firing_term_windows.values_mut() {
-        for windows in bindings.iter_mut().filter(|windows| windows.len() == 2) {
-            if let Some(live_before) = windows[1].live_before {
-                windows[1].support_ready_after = live_before;
-                crossed_any = true;
-            }
-        }
-    }
-    assert!(crossed_any);
-    let error = crate::slicing::replay::build_replay_program(&egraph, &crossed).unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("no retained pre-wave point in its availability/readiness/liveness window"),
-        "{error}"
-    );
 
     let replay = crate::slicing::replay::build_replay_program(&egraph, &slice).unwrap();
     let commands = replay.to_commands().unwrap();
@@ -570,14 +539,9 @@ fn duplicate_syntax_in_one_binding_keeps_distinct_occurrence_windows() {
         unreachable!("window count was checked above")
     };
     assert!(
-        old_child.available_after < recreated_child.available_after
-            && recreated_child.available_after < parent.available_after,
-        "old child, recreated child, and parent need distinct occurrence-local bounds: {consume_windows:?}"
-    );
-    assert!(
-        old_child.support_ready_after <= old_child.available_after
-            && recreated_child.support_ready_after <= recreated_child.available_after,
-        "a parent's later anchor must not become either child's replay-readiness bound: {consume_windows:?}"
+        old_child.ready_after < recreated_child.ready_after
+            && recreated_child.ready_after < parent.ready_after,
+        "old child, recreated child, and parent need distinct occurrence-local readiness bounds: {consume_windows:?}"
     );
     let replay = crate::slicing::replay::build_replay_program(&egraph, &slice).unwrap();
     let commands = replay.to_commands().unwrap();

@@ -902,7 +902,7 @@ impl<'a> TraceView<'a> {
         term: ReplayTermId,
         position: HistoryPosition,
         depth: usize,
-        aliases: &mut Vec<RawAliasWindow>,
+        aliases: &mut Vec<ReplayAliasPlan>,
         desired: Option<RawEqualityEndpoint>,
         anchor: Option<&HistoricalFactCell>,
     ) -> Result<RawEqualitySupport, TraceViewError> {
@@ -951,7 +951,7 @@ impl<'a> TraceView<'a> {
         term: ReplayTermId,
         position: HistoryPosition,
         depth: usize,
-        aliases: &mut Vec<RawAliasWindow>,
+        aliases: &mut Vec<ReplayAliasPlan>,
         context: StructuralAvailabilityContext<'_>,
     ) -> Result<Option<RawEqualitySupport>, TraceViewError> {
         let StructuralAvailabilityContext {
@@ -1042,12 +1042,11 @@ impl<'a> TraceView<'a> {
             // Pure calls and the allowed ordered containers can be evaluated
             // once their child aliases and child denotation bridges are
             // available. The replay scheduler enforces both separately.
-            aliases.push(RawAliasWindow {
-                term,
+            aliases.push(ReplayAliasPlan {
                 producer: None,
-                available_after: fresh_after.unwrap_or(HistoryPosition::new(0)),
-                support_ready_after,
-                live_before: None,
+                ready_after: fresh_after
+                    .unwrap_or(HistoryPosition::new(0))
+                    .max(support_ready_after),
                 fresh_after,
             });
             return Ok(Some(combine_raw_equality_support(parts)));
@@ -1111,13 +1110,6 @@ impl<'a> TraceView<'a> {
                     fact: producer,
                     column: crate::ColumnId::from_usize(output),
                 };
-                let live_before = self
-                    .arena
-                    .removals
-                    .iter()
-                    .filter(|removal| removal.removed_fact == producer)
-                    .map(|removal| removal.position)
-                    .min();
                 let (output_cell, occurrence_position) =
                     match self.fact_cell_at(occurrence, position) {
                         Ok(cell) => (cell, position),
@@ -1259,13 +1251,11 @@ impl<'a> TraceView<'a> {
                 // waits for every child alias and key-support frontier before
                 // constructing the parent.
                 let available_after = fact_position;
-                aliases.push(RawAliasWindow {
-                    term,
+                aliases.push(ReplayAliasPlan {
                     producer: Some(producer),
-                    available_after: inherited_fresh_after
-                        .map_or(available_after, |fresh| fresh.max(available_after)),
-                    support_ready_after,
-                    live_before,
+                    ready_after: inherited_fresh_after
+                        .map_or(available_after, |fresh| fresh.max(available_after))
+                        .max(support_ready_after),
                     fresh_after: inherited_fresh_after,
                 });
                 parts.push(RawEqualitySupport {

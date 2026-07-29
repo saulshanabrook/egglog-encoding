@@ -8,8 +8,8 @@ use std::collections::VecDeque;
 use crate::core_relations::{
     AppliedEqualityId, CauseRef, Criterion, CriterionEndpointOccurrence, EdgeHorizon,
     EqualityEndpoint, EqualityReason, FactCellRef, FactId, FiringEqualitySource, FiringId,
-    HistoryPosition, PremiseOccurrence, ProjectedAppliedEquality, RawAliasWindow, RawCause,
-    RawEqualityEndpoint, RawEqualitySupport, ReplayTableKind, ReplayTermId, SourceRef, TableId,
+    HistoryPosition, PremiseOccurrence, ProjectedAppliedEquality, RawCause, RawEqualityEndpoint,
+    RawEqualitySupport, ReplayAliasPlan, ReplayTableKind, ReplayTermId, SourceRef, TableId,
     TraceView, TraceViewError, TypedCellEquality, Value,
 };
 use crate::numeric_id::NumericId;
@@ -33,7 +33,7 @@ pub(crate) struct Slice {
     /// windows for every call in a firing binding's structural `let-check`
     /// recipe. Aliases may be captured before a selected deletion and then
     /// reused by later grounded waves.
-    pub(crate) firing_term_windows: HashMap<FiringId, Box<[Box<[RawAliasWindow]>]>>,
+    pub(crate) firing_term_windows: HashMap<FiringId, Box<[Box<[ReplayAliasPlan]>]>>,
     pub(crate) equality_records: HashMap<AppliedEqualityId, ProjectedAppliedEquality>,
     denotation_equalities: HashSet<AppliedEqualityId>,
 }
