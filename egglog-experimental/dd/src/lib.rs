@@ -2329,8 +2329,9 @@ mod tests {
         assert!(!eg.mirror[&view].contains(&row(&[10, 0])));
     }
 
-    #[path = "../rule_lifecycle_tests.rs"]
-    mod rule_lifecycle;
+    mod rule_lifecycle {
+        include!("rule_lifecycle_tests.rs");
+    }
 }
 
 // impl Backend
