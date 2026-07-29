@@ -1479,25 +1479,12 @@ impl SortedWritesTable {
                                     .map(DeferredEqualityCause::promote)
                                     .unwrap_or(PackedCauseRef::UNATTRIBUTED);
                                 capture_batch.as_mut().map_or(FactId::MISSING, |batch| {
-                                    match buf.capture_origin(proposal_index) {
-                                        Some(RowOriginRef::Site(origin)) => batch
-                                            .record_fact_with_origin(
-                                                self.table_id,
-                                                incoming_cause,
-                                                query,
-                                                origin,
-                                            ),
-                                        Some(RowOriginRef::Fact(prior_fact)) => batch
-                                            .record_fact_from_prior(
-                                                self.table_id,
-                                                incoming_cause,
-                                                query,
-                                                prior_fact,
-                                            ),
-                                        None => {
-                                            batch.record_fact(self.table_id, incoming_cause, query)
-                                        }
-                                    }
+                                    batch.record_fact_from_origin(
+                                        self.table_id,
+                                        incoming_cause,
+                                        query,
+                                        buf.capture_origin(proposal_index),
+                                    )
                                 })
                             };
                             let new = if CAPTURE {
@@ -1701,25 +1688,12 @@ impl SortedWritesTable {
                                     .map(DeferredEqualityCause::promote)
                                     .unwrap_or(PackedCauseRef::UNATTRIBUTED);
                                 capture_batch.as_mut().map_or(FactId::MISSING, |batch| {
-                                    match buf.capture_origin(proposal_index) {
-                                        Some(RowOriginRef::Site(origin)) => batch
-                                            .record_fact_with_origin(
-                                                self.table_id,
-                                                incoming_cause,
-                                                query,
-                                                origin,
-                                            ),
-                                        Some(RowOriginRef::Fact(prior_fact)) => batch
-                                            .record_fact_from_prior(
-                                                self.table_id,
-                                                incoming_cause,
-                                                query,
-                                                prior_fact,
-                                            ),
-                                        None => {
-                                            batch.record_fact(self.table_id, incoming_cause, query)
-                                        }
-                                    }
+                                    batch.record_fact_from_origin(
+                                        self.table_id,
+                                        incoming_cause,
+                                        query,
+                                        buf.capture_origin(proposal_index),
+                                    )
                                 })
                             };
                             let new = if CAPTURE {

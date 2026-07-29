@@ -787,6 +787,24 @@ impl CaptureBatch {
         self.push_fact(table, cause, row, Some(FactOrigin::Fact(prior_fact)))
     }
 
+    pub(crate) fn record_fact_from_origin(
+        &mut self,
+        table: TableId,
+        cause: impl Into<PackedCauseRef>,
+        row: &[Value],
+        origin: Option<RowOriginRef>,
+    ) -> FactId {
+        match origin {
+            Some(RowOriginRef::Site(origin)) => {
+                self.record_fact_with_origin(table, cause, row, origin)
+            }
+            Some(RowOriginRef::Fact(prior_fact)) => {
+                self.record_fact_from_prior(table, cause, row, prior_fact)
+            }
+            None => self.record_fact(table, cause, row),
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn record_merged_fact(
         &mut self,
