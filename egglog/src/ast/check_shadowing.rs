@@ -8,6 +8,7 @@ pub(crate) struct Names {
 }
 
 impl Names {
+    #[cfg(test)]
     pub(crate) fn contains_canonical(&self, canonical: &str) -> bool {
         self.seen.contains_key(canonical)
             || self.seen.contains_key(&format!("${canonical}"))

@@ -364,10 +364,26 @@ impl ReplayProgram {
     }
 }
 
-/// Alpha-renames parser-reserved internal symbols across the complete retained
-/// program. This is deliberately cold: capture keeps exact native names, then
-/// one occupied-name-aware map makes declarations, rule references, grounded
-/// binding keys, and expected sorts agree without conflating user symbols.
+fn split_replay_direction(symbol: &str) -> (&str, &str) {
+    symbol
+        .strip_suffix("=>")
+        .map(|base| (base, "=>"))
+        .or_else(|| symbol.strip_suffix("<=").map(|base| (base, "<=")))
+        .unwrap_or((symbol, ""))
+}
+
+fn split_global_symbol(symbol: &str) -> (&str, &str) {
+    symbol
+        .strip_prefix(crate::GLOBAL_NAME_PREFIX)
+        .map(|symbol| (crate::GLOBAL_NAME_PREFIX, symbol))
+        .unwrap_or(("", symbol))
+}
+
+/// Alpha-renames replay-owned and parser-reserved internal symbols across the
+/// complete retained program. This is deliberately cold: capture keeps exact
+/// provenance-marked names, then one occupied-name-aware map makes aliases,
+/// declarations, rule references, grounded binding keys, and direction suffixes
+/// agree without conflating user symbols.
 fn hygienic_source_commands(commands: Vec<Command>) -> Vec<Command> {
     let mut observed = Vec::new();
     for command in &commands {
@@ -386,6 +402,9 @@ fn hygienic_source_commands(commands: Vec<Command>) -> Vec<Command> {
             .map_symbols(&mut record_head, &mut record_leaf);
         observed.extend(heads);
         observed.extend(leaves);
+        if let Command::Rewrite(_, rewrite, _) | Command::BiRewrite(_, rewrite) = &command {
+            observed.push(rewrite.name.clone());
+        }
         let mut strings = Vec::new();
         let _ = command.map_string_symbols(&mut |symbol: String| {
             strings.push(symbol.clone());
@@ -395,41 +414,67 @@ fn hygienic_source_commands(commands: Vec<Command>) -> Vec<Command> {
     }
 
     let mut occupied = HashSet::default();
-    let mut internal = Vec::new();
+    let mut internal_bases = Vec::new();
     let mut seen_internal = HashSet::default();
     for symbol in observed {
-        if symbol.starts_with(crate::util::INTERNAL_SYMBOL_PREFIX) {
-            if seen_internal.insert(symbol.clone()) {
-                internal.push(symbol);
+        let (_, canonical) = split_global_symbol(&symbol);
+        if let Some(internal) = canonical.strip_prefix(crate::util::INTERNAL_SYMBOL_PREFIX) {
+            let (base, _) = split_replay_direction(internal);
+            if seen_internal.insert(base.to_owned()) {
+                internal_bases.push(base.to_owned());
             }
         } else {
-            occupied.insert(symbol);
+            occupied.insert(canonical.to_owned());
         }
     }
 
     let mut renames = HashMap::default();
-    for (slot, original) in internal.into_iter().enumerate() {
+    for base in internal_bases {
         let mut suffix = 0usize;
         let replacement = loop {
-            let candidate = format!("__slice_replay_internal_{slot}_{suffix}");
-            if occupied.insert(candidate.clone()) {
+            let candidate = if suffix == 0 {
+                base.clone()
+            } else {
+                format!("{base}_{suffix}")
+            };
+            let spellings = [
+                candidate.clone(),
+                format!("{candidate}=>"),
+                format!("{candidate}<="),
+            ];
+            if spellings.iter().all(|name| !occupied.contains(name)) {
+                occupied.extend(spellings);
                 break candidate;
             }
             suffix += 1;
         };
-        renames.insert(original, replacement);
+        renames.insert(base, replacement);
     }
+
+    let rename = |symbol: String| {
+        let (global, canonical) = split_global_symbol(&symbol);
+        let Some(internal) = canonical.strip_prefix(crate::util::INTERNAL_SYMBOL_PREFIX) else {
+            return symbol;
+        };
+        let (base, direction) = split_replay_direction(internal);
+        let replacement = renames
+            .get(base)
+            .expect("observed internal symbol lost its allocated base");
+        format!("{global}{replacement}{direction}")
+    };
 
     commands
         .into_iter()
         .map(|command| {
-            let mut rename_head = |head: String| renames.get(&head).cloned().unwrap_or(head);
-            let mut rename_leaf = |leaf: String| renames.get(&leaf).cloned().unwrap_or(leaf);
-            command
+            let mut rename_head = |head: String| rename(head);
+            let mut rename_leaf = |leaf: String| rename(leaf);
+            let mut command = command
                 .map_symbols(&mut rename_head, &mut rename_leaf)
-                .map_string_symbols(&mut |symbol: String| {
-                    renames.get(&symbol).cloned().unwrap_or(symbol)
-                })
+                .map_string_symbols(&mut |symbol: String| rename(symbol));
+            if let Command::Rewrite(_, rewrite, _) | Command::BiRewrite(_, rewrite) = &mut command {
+                rewrite.name = rename(std::mem::take(&mut rewrite.name));
+            }
+            command
         })
         .collect()
 }
@@ -761,10 +806,6 @@ fn selected_input_rows(
     Ok(rows)
 }
 
-fn canonical_symbol(name: &str) -> &str {
-    name.strip_prefix(crate::GLOBAL_NAME_PREFIX).unwrap_or(name)
-}
-
 /// Restore selected immutable globals at their surface variable occurrences.
 ///
 /// Normalization lowers a global read to a private zero-argument lookup. Replay
@@ -978,38 +1019,6 @@ fn retained_rewrite_command(
     }
 }
 
-/// Prove that generated checked-alias names cannot collide with user symbols.
-fn validate_alias_namespace(
-    egraph: &EGraph,
-    catalog: &CaptureCatalog,
-    max_aliases: usize,
-) -> Result<(), ReplayError> {
-    let mut occupied = HashSet::default();
-    occupied.extend(
-        catalog
-            .immutable_globals
-            .keys()
-            .map(|name| canonical_symbol(name).to_owned()),
-    );
-    for entry in &catalog.rule_catalog {
-        occupied.extend(
-            entry
-                .variables
-                .iter()
-                .map(|variable| canonical_symbol(&variable.name).to_owned()),
-        );
-    }
-    for index in 0..max_aliases {
-        let canonical = format!("__slice_replay_{index}");
-        if occupied.contains(&canonical) || egraph.names.contains_canonical(&canonical) {
-            return Err(ReplayError::Invalid(format!(
-                "generated checked alias `${canonical}` collides with a user symbol"
-            )));
-        }
-    }
-    Ok(())
-}
-
 /// Lower a closed [`Slice`] and its capture catalog into owned replay IR.
 ///
 /// The lowering proceeds in four coupled phases:
@@ -1032,10 +1041,6 @@ fn build_owned(
     view: &mut TraceView<'_>,
     slice: &Slice,
 ) -> Result<ReplayProgram, ReplayError> {
-    catalog
-        .validate_replay_rule_names()
-        .map_err(ReplayError::Invalid)?;
-
     let sources = selected_source_closure(catalog, &slice.sources)?;
     let mut retained_rules = BTreeSet::new();
     let mut firings = Vec::with_capacity(slice.firings.len());
@@ -1332,7 +1337,7 @@ fn build_owned(
                     .entry(alias_wave)
                     .or_default()
                     .push(ReplayAlias {
-                        name: format!("$__slice_replay_{next_alias}"),
+                        name: format!("$@__slice_replay_{next_alias}"),
                         term: call,
                     });
                 alias_wave_by_term.insert(call, alias_wave);
@@ -1349,7 +1354,6 @@ fn build_owned(
             bindings: bindings.into_boxed_slice(),
         });
     }
-    validate_alias_namespace(egraph, catalog, next_alias)?;
     let term_nodes = std::mem::take(&mut terms.nodes);
     drop(terms);
     for aliases in aliases_by_wave.values_mut() {

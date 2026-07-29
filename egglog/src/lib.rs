@@ -847,7 +847,7 @@ impl CaptureCatalog {
             ))
         })?;
         let surface_command = self.command_catalog[command].surface_command;
-        let generated_name = format!("__slice_replay_rule_s{surface_command}");
+        let generated_name = format!("@__slice_replay_rule_s{surface_command}");
         let base_name = if origin.anonymous {
             generated_name
         } else {
@@ -1034,19 +1034,6 @@ impl CaptureCatalog {
             ))),
             None => Ok(()),
         }
-    }
-
-    fn validate_replay_rule_names(&self) -> Result<(), String> {
-        let mut names = HashMap::default();
-        for (ordinal, rule) in self.rule_catalog.iter().enumerate() {
-            if let Some(previous) = names.insert(rule.replay_name.as_str(), ordinal) {
-                return Err(format!(
-                    "slice replay rule name `{}` collides between rule ordinals {previous} and {ordinal}",
-                    rule.replay_name
-                ));
-            }
-        }
-        Ok(())
     }
 
     fn begin_wave(&mut self) -> u64 {

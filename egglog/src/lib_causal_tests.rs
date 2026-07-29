@@ -1154,7 +1154,7 @@ fn capture_catalog_tracks_expanded_order_and_anonymous_rule_identity() {
     ));
     assert_eq!(catalog.rule_catalog.len(), 1);
     let generated_name = format!(
-        "__slice_replay_rule_s{}",
+        "@__slice_replay_rule_s{}",
         catalog.command_catalog[catalog.rule_catalog[0].command].surface_command
     );
     assert_eq!(catalog.rule_catalog[0].replay_name, generated_name);
@@ -1177,34 +1177,50 @@ fn capture_catalog_tracks_expanded_order_and_anonymous_rule_identity() {
 }
 
 #[test]
-fn capture_catalog_detects_generated_rule_name_collision() {
+fn replay_alpha_renames_anonymous_rule_around_user_name_collision() {
     let mut egraph = EGraph::default();
     enable_serial_trace(&mut egraph).unwrap();
     egraph
         .parse_and_run_program(
             None,
             r#"
-                (relation R (i64))
-                (rule ((R x)) ((R x)))
+                (relation Seed (i64))
+                (relation Anonymous (i64))
+                (relation Named (i64))
+                (Seed 1)
+                (rule ((Seed x)) ((Anonymous x)))
             "#,
         )
         .unwrap();
-    let generated_name = egraph.capture_catalog.as_ref().unwrap().rule_catalog[0]
+    let internal_name = egraph.capture_catalog.as_ref().unwrap().rule_catalog[0]
         .replay_name
         .clone();
+    let generated_name = internal_name
+        .strip_prefix(crate::util::INTERNAL_SYMBOL_PREFIX)
+        .unwrap()
+        .to_owned();
     egraph
         .parse_and_run_program(
             None,
-            &format!(r#"(rule ((R x)) ((R x)) :name "{generated_name}")"#),
+            &format!(
+                r#"
+                    (rule ((Seed x)) ((Named x)) :name "{generated_name}")
+                    (run 1)
+                    (check (Anonymous 1))
+                    (check (Named 1))
+                "#
+            ),
         )
         .unwrap();
-    let error = egraph
-        .capture_catalog
-        .as_ref()
-        .unwrap()
-        .validate_replay_rule_names()
-        .unwrap_err();
-    assert!(error.contains("collides between rule ordinals 0 and 1"));
+
+    let rendered = crate::slicing::slice_all_checks(&egraph).unwrap();
+    assert!(rendered.contains(&format!(r#":name "{generated_name}""#)));
+    assert!(rendered.contains(&format!(r#":name "{generated_name}_1""#)));
+
+    let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
+    serial_trace_pool()
+        .install(|| proof.parse_and_run_program(None, &rendered))
+        .unwrap();
 }
 
 #[test]

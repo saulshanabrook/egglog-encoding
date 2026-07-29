@@ -154,13 +154,6 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
         },
     },
     AllowlistGroup {
-        paths: &["core/causal-checked-alias-collision.egg"],
-        disposition: Disposition::Unsupported {
-            diagnostic: "collides with a user symbol",
-            artifact: ArtifactExpectation::Absent,
-        },
-    },
-    AllowlistGroup {
         paths: &[
             "experimental/python_array_optimize_old.egg",
             "experimental/stresstest_large_expr_old.egg",
