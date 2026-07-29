@@ -432,8 +432,8 @@ struct CaptureCatalog {
     /// Exact normalized command for each successful recorded check.
     check_commands: HashMap<u32, usize>,
     /// Command currently crossing the execution boundary. It is set only by
-    /// `process_program_internal` and consumed synchronously by capture ids.
-    active_command: Option<ActiveCatalogCommand>,
+    /// `process_program_internal` and stores an index into `command_catalog`.
+    active_command: Option<usize>,
     /// Typechecking is stateful in the current frontend (sort declarations and
     /// primitive registration mutate the graph). This bit grants that mutation
     /// only to the normalized `run_program` resolution seam; public
@@ -453,11 +453,6 @@ struct CaptureCatalog {
 struct CatalogCommand {
     command: Command,
     surface_command: usize,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct ActiveCatalogCommand {
-    command: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -813,8 +808,7 @@ impl CaptureCatalog {
     fn register_source(&mut self, source: SourceRef, analysis: SourceCaptureAnalysis) {
         let command = self
             .active_command
-            .expect("source capture requires an active catalog command")
-            .command;
+            .expect("source capture requires an active catalog command");
         self.source_commands.insert(
             source.clone(),
             SourceCatalogEntry {
@@ -838,8 +832,7 @@ impl CaptureCatalog {
         let id = u32::try_from(self.rule_catalog.len()).expect("too many captured rules");
         let command = self
             .active_command
-            .expect("firing capture requires an active catalog command")
-            .command;
+            .expect("firing capture requires an active catalog command");
         let origin = self.active_rule_origin.as_ref().ok_or_else(|| {
             Error::BackendError(format!(
                 "trace capture cannot classify normalized rule `{name}` without a surface origin"
@@ -950,8 +943,7 @@ impl CaptureCatalog {
         self.next_check = self.next_check.checked_add(1).expect("too many criteria");
         let command = self
             .active_command
-            .expect("criterion capture requires an active catalog command")
-            .command;
+            .expect("criterion capture requires an active catalog command");
         self.check_commands.insert(check, command);
         check
     }
@@ -974,7 +966,7 @@ impl CaptureCatalog {
             command,
             surface_command,
         });
-        self.active_command = Some(ActiveCatalogCommand { command: id });
+        self.active_command = Some(id);
         self.active_rule_origin = rule_origin;
         Ok(())
     }
@@ -1015,7 +1007,7 @@ impl CaptureCatalog {
         if !succeeded {
             self.poison(format!(
                 "normalized command {} failed after entering trace capture; its native effects and reserved trace identities cannot be rolled back",
-                active.command
+                active
             ));
         }
         self.active_rule_origin = None;
@@ -4388,8 +4380,7 @@ impl EGraph {
             let source_ordinal = catalog.next_source_ordinal();
             let command = catalog
                 .active_command
-                .expect("input capture requires an active catalog command")
-                .command;
+                .expect("input capture requires an active catalog command");
             (
                 source_ordinal,
                 InputCatalogEntry {
