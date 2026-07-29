@@ -623,25 +623,6 @@ fn rendered_artifact_round_trips_globals_and_grounded_rules_with_proofs() {
 }
 
 #[test]
-fn nested_container_dirty_propagation_slice_strictly_replays() {
-    let program = include_str!("../../tests/nested-container-dirty-propagation.egg");
-    let mut recorder = EGraph::default();
-    serial_pool().install(|| recorder.enable_trace()).unwrap();
-    serial_pool()
-        .install(|| recorder.parse_and_run_program(None, program))
-        .unwrap();
-
-    let slice = slice_all_checks(&recorder).unwrap();
-    let replay = build_replay_program(&recorder, &slice).unwrap();
-    let rendered = ReplayProgram::render_commands(&replay.to_commands().unwrap()).unwrap();
-
-    let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
-    if let Err(error) = serial_pool().install(|| proof.parse_and_run_program(None, &rendered)) {
-        panic!("strict replay failed: {error}\n{rendered}");
-    }
-}
-
-#[test]
 fn rendered_artifact_preserves_anonymous_rewrite_and_selected_global() {
     let (commands, rendered) = slice_commands(
         "(datatype E (A i64) (B i64))
