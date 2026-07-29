@@ -18,8 +18,8 @@ use crate::numeric_id::{DenseIdMap, NumericId, define_id};
 use smallvec::SmallVec;
 
 use crate::{
-    CauseDraftId, CauseRef, FactId, HistoryPosition, QueryEntry, TableId, Trace,
-    TypedEqualityProposal, Variable, Wave,
+    CauseDraftId, FactId, HistoryPosition, QueryEntry, TableId, Trace, TypedEqualityProposal,
+    Variable, Wave,
     action::{
         Bindings, ExecutionState,
         mask::{Mask, MaskIter, ValueSource},
@@ -644,17 +644,6 @@ pub trait MutationBuffer: Any + Send + Sync {
     /// replaced by an effective merge.
     fn stage_rekey(&mut self, _row: &[Value], _rekey: crate::PreparedRekey) {
         panic!("prepared rekey staged into a table without capture support")
-    }
-
-    /// Stage a typed equality proposal. Only the native equality table
-    /// implements this capture-only operation.
-    fn stage_typed_union(
-        &mut self,
-        _row: &[Value],
-        _cause: CauseRef,
-        _proposal: TypedEqualityProposal,
-    ) {
-        panic!("typed union staged into a non-equality table")
     }
 
     /// Stage a typed equality whose rule match stays compact until union

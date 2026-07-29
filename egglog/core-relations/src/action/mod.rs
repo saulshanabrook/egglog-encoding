@@ -632,8 +632,6 @@ impl PredictedVals {
 #[derive(Clone)]
 pub(crate) enum ActiveCause {
     Ready(CauseCapability),
-    #[cfg(test)]
-    Direct(PackedCauseRef),
     DeferredMerge {
         incoming: DeferredEqualityCause,
         prior_fact: FactId,
@@ -647,8 +645,6 @@ impl ActiveCause {
     fn deferred(&mut self, trace: &Trace) -> DeferredEqualityCause {
         match self {
             Self::Ready(cause) => DeferredEqualityCause::capability(*cause),
-            #[cfg(test)]
-            Self::Direct(cause) => DeferredEqualityCause::ready(*cause),
             Self::DeferredMerge {
                 incoming,
                 prior_fact,
@@ -663,8 +659,6 @@ impl ActiveCause {
     fn ready_capability(&self) -> Option<CauseCapability> {
         match self {
             Self::Ready(cause) => Some(*cause),
-            #[cfg(test)]
-            Self::Direct(_) => None,
             Self::DeferredMerge { .. } => None,
         }
     }
@@ -915,54 +909,6 @@ impl<'a> ExecutionState<'a> {
         self.changed = true;
     }
 
-    /// Stage one equality proposal with an explicit logical sort. Direct rule
-    /// endpoints already own exact terms; merge callbacks use the structural
-    /// cell-reference variant below.
-    pub fn stage_union_with_replay(
-        &mut self,
-        table: TableId,
-        left: Value,
-        right: Value,
-        timestamp: Value,
-        sort: ReplaySortId,
-    ) {
-        let trace = self
-            .db
-            .trace
-            .expect("typed union staging requires causal trace");
-        let cause = self
-            .active_cause
-            .as_mut()
-            .expect("capture-enabled union reached an uninstrumented action")
-            .deferred(trace);
-        self.stage_union_with_deferred_cause(table, left, right, timestamp, sort, cause);
-    }
-
-    fn stage_union_with_deferred_cause(
-        &mut self,
-        table: TableId,
-        left: Value,
-        right: Value,
-        timestamp: Value,
-        sort: ReplaySortId,
-        cause: DeferredEqualityCause,
-    ) {
-        let trace = self
-            .db
-            .trace
-            .expect("typed union staging requires causal trace");
-        trace
-            .validate_deferred_equality_cause(&cause)
-            .unwrap_or_else(|error| panic!("invalid equality cause: {error}"));
-        trace
-            .validate_equality_wave_timestamp(self.db.trace_wave, timestamp)
-            .unwrap_or_else(|error| panic!("invalid equality timestamp: {error}"));
-        let proposal = trace
-            .typed_equality_proposal(self.db.trace_wave, sort, left, right)
-            .unwrap_or_else(|error| panic!("invalid typed union proposal: {error}"));
-        self.stage_typed_union_proposal(table, left, right, timestamp, cause, proposal);
-    }
-
     #[doc(hidden)]
     #[allow(clippy::too_many_arguments)]
     pub fn stage_merge_union_with_replay(
@@ -1058,11 +1004,6 @@ impl<'a> ExecutionState<'a> {
                     .cause_capability(cause),
             )
         });
-    }
-
-    #[cfg(test)]
-    pub(crate) fn set_active_cause_ref(&mut self, cause: Option<crate::CauseRef>) {
-        self.active_cause = cause.map(|cause| ActiveCause::Direct(cause.into()));
     }
 
     pub(crate) fn active_cause_capability(&self) -> Option<CauseCapability> {

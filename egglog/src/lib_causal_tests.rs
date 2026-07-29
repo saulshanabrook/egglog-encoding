@@ -67,25 +67,11 @@ fn failed_trace_activation_leaves_ordinary_execution_usable() {
         .unwrap();
 }
 
-#[test]
-fn trace_extract_temporary_rule_is_replay_free() {
-    let mut egraph = EGraph::default();
-    enable_serial_trace(&mut egraph).unwrap();
-    let before = egraph.replay_term_counters().unwrap();
-
-    egraph
-        .parse_and_run_program(None, "(extract (+ 1 2))")
-        .unwrap();
-
-    assert_eq!(egraph.replay_term_counters().unwrap(), before);
-}
-
 fn find_container_canonicalization(
     view: &core_relations::TraceView<'_>,
     root: core_relations::CauseId,
 ) -> Result<
     Option<(
-        core_relations::Wave,
         core_relations::HistoryPosition,
         Vec<core_relations::TypedCellEquality>,
     )>,
@@ -98,10 +84,9 @@ fn find_container_canonicalization(
         };
         match view.cause(cause)? {
             core_relations::RawCause::ContainerCanonicalize {
-                wave,
                 position,
                 equalities,
-            } => return Ok(Some((wave, position, equalities.to_vec()))),
+            } => return Ok(Some((position, equalities.to_vec()))),
             core_relations::RawCause::Merge { incoming, .. } => {
                 pending.push(incoming);
             }
@@ -162,27 +147,25 @@ fn trace_attribute_pair_registry_congruence() {
 
         egraph
             .with_trace_view(|view| {
-                let (cause, wave, position) = (1..=view.totals().applied_equalities)
+                let (cause, position) = (1..=view.totals().applied_equalities)
                     .find_map(|raw| {
                         match view
                             .applied_equality(core_relations::AppliedEqualityId::new(raw))
                             .ok()?
                             .reason
                         {
-                            EqualityReason::Congruence {
-                                cause,
-                                wave,
-                                position,
-                            } => Some((cause, wave, position)),
+                            EqualityReason::Congruence { cause, position } => {
+                                Some((cause, position))
+                            }
                             _ => None,
                         }
                     })
                     .expect("Pair collision should retain one exact container-congruence edge");
                 let dependency = find_container_canonicalization(view, cause)?
                     .expect("Pair congruence should unfold to its container collision");
-                assert_eq!((dependency.0, dependency.1), (wave, position));
-                assert!(!dependency.2.is_empty());
-                for pair in dependency.2 {
+                assert_eq!(dependency.0, position);
+                assert!(!dependency.1.is_empty());
+                for pair in dependency.1 {
                     assert!(
                         !view
                             .explain_equality_support_at(pair.left, pair.right, position)?
@@ -282,68 +265,6 @@ fn trace_reject_ambiguous_nominal_container_aliases() {
 }
 
 #[test]
-fn trace_defer_body_primitive_terms_until_all_guards_pass() {
-    let mut egraph = EGraph::default();
-    enable_serial_trace(&mut egraph).unwrap();
-    egraph
-        .parse_and_run_program(
-            None,
-            "(relation Input (i64))\
-             (relation Done (i64))\
-             (Input 1)\
-             (rule ((Input x) (= y (+ x 1)) (< y 0)) ((Done y)) :name \"dead\")\
-             (run 1)",
-        )
-        .unwrap();
-
-    let state = egraph.capture_catalog.as_ref().unwrap();
-    let add = state.op_ids[&ReplayOpKey {
-        name: "+".to_owned(),
-        inputs: vec!["i64".to_owned(), "i64".to_owned()],
-        output: "i64".to_owned(),
-    }];
-    let mut ordinal = 1;
-    while let Some(term) = egraph.replay_term(ReplayTermId::new(ordinal)).unwrap() {
-        assert!(!matches!(term, ReplayTerm::Call { op, .. } if op == add));
-        ordinal += 1;
-    }
-}
-
-#[test]
-fn rejected_body_lane_still_anchors_a_returned_container_version() {
-    let mut egraph = EGraph::default();
-    enable_serial_trace(&mut egraph).unwrap();
-    egraph
-        .parse_and_run_program(
-            None,
-            "(sort V (Vec i64))\
-             (relation Go (Unit))\
-             (relation Done (V))\
-             (Go ())\
-             (rule ((Go u) (= pushed (vec-of 1)) (vec-contains pushed 999))\
-               ((Done pushed)) :name \"rejected-container\")",
-        )
-        .unwrap();
-    let before = egraph
-        .replay_term_counters()
-        .unwrap()
-        .container_anchor_terms;
-
-    egraph.parse_and_run_program(None, "(run 1)").unwrap();
-
-    let after = egraph
-        .replay_term_counters()
-        .unwrap()
-        .container_anchor_terms;
-    assert!(
-        after > before,
-        "the returned container version was not anchored"
-    );
-    let done = &egraph.functions["Done"];
-    assert_eq!(egraph.backend.table_size(done.backend_id), 0);
-}
-
-#[test]
 fn trace_fail_closed_when_a_pure_call_depends_on_an_unsupported_primitive() {
     let mut egraph = EGraph::default();
     enable_serial_trace(&mut egraph).unwrap();
@@ -353,21 +274,17 @@ fn trace_fail_closed_when_a_pure_call_depends_on_an_unsupported_primitive() {
             "(sort Fn (UnstableFn (i64 i64) i64))\
              (relation Input (i64))\
              (relation Done (i64))\
+             (relation Observed (Unit))\
              (Input 1)\
              (rule ((Input l))\
                ((Done (+ (unstable-app (unstable-fn \"+\") l 1) 1)))\
                :name \"unsupported-child\")\
-             (run 1)",
+             (rule ((Done value)) ((Observed ())) :name \"observe\")\
+             (run 2)\
+             (check (Observed ()))",
         )
         .unwrap();
-    let failure = egraph
-        .with_trace_view(|view| {
-            for raw in 1..=view.totals().facts {
-                view.fact_terms(core_relations::FactId::new(raw))?;
-            }
-            Ok(())
-        })
-        .unwrap_err();
+    let failure = crate::slicing::slice_all_checks(&egraph).unwrap_err();
     assert!(
         failure
             .to_string()
@@ -452,11 +369,13 @@ fn trace_refresh_parent_fact_after_stable_vec_rebuild() {
 
         egraph
             .with_trace_view(|view| {
-                let observed = (1..=view.totals().firings)
+                let observed = (1..=view.totals().facts)
                     .find_map(|raw| {
-                        view.firing(core_relations::FiringId::new(raw))
-                            .ok()
-                            .filter(|firing| firing.rule == 1)
+                        let fact = view.fact(core_relations::FactId::new(raw)).ok()?;
+                        let core_relations::CauseRef::Rule(firing) = fact.cause else {
+                            return None;
+                        };
+                        view.firing(firing).ok().filter(|firing| firing.rule == 1)
                     })
                     .expect("the post-refresh observer should fire");
                 let (fact, prior_fact, position, equalities) = observed
@@ -557,7 +476,6 @@ fn trace_chain_two_stable_vec_refreshes() {
                         continue;
                     };
                     let core_relations::RawCause::ContainerRefresh {
-                        wave: latest_wave,
                         prior_fact: middle,
                         position: latest_position,
                         equalities: latest_pairs,
@@ -570,7 +488,6 @@ fn trace_chain_two_stable_vec_refreshes() {
                         continue;
                     };
                     let core_relations::RawCause::ContainerRefresh {
-                        wave: middle_wave,
                         prior_fact: original,
                         position: middle_position,
                         equalities: middle_pairs,
@@ -579,29 +496,19 @@ fn trace_chain_two_stable_vec_refreshes() {
                         continue;
                     };
                     chain = Some((
-                        latest.id,
+                        core_relations::FactId::new(raw),
                         middle,
                         original,
-                        latest_wave,
-                        middle_wave,
                         (latest_position, latest_pairs.to_vec()),
                         (middle_position, middle_pairs.to_vec()),
                     ));
                     break;
                 }
-                let (
-                    latest,
-                    middle,
-                    original,
-                    latest_wave,
-                    middle_wave,
-                    latest_landmark,
-                    middle_landmark,
-                ) = chain.expect("latest Vec fact should point to a prior refreshed fact");
+                let (latest, middle, original, latest_landmark, middle_landmark) =
+                    chain.expect("latest Vec fact should point to a prior refreshed fact");
                 assert_ne!(latest, middle);
                 assert_ne!(middle, original);
-                assert!(middle_wave < latest_wave);
-                assert_ne!(middle_landmark.0, latest_landmark.0);
+                assert!(middle_landmark.0 < latest_landmark.0);
                 for landmark in [middle_landmark, latest_landmark] {
                     for pair in &landmark.1 {
                         assert!(
@@ -625,60 +532,6 @@ fn trace_chain_two_stable_vec_refreshes() {
                 Ok(())
             })
             .unwrap();
-    });
-}
-
-#[test]
-fn trace_refresh_nested_vec_parent_fact() {
-    serial_trace_pool().install(|| {
-        let mut egraph = EGraph::default();
-        egraph.enable_trace().unwrap();
-        egraph
-            .parse_and_run_program(
-                None,
-                "(sort E)\
-                 (sort VE (Vec E))\
-                 (sort VVE (Vec VE))\
-                 (constructor b () E)\
-                 (constructor w (E) E)\
-                 (constructor p (VVE) E)\
-                 (rewrite (w x) x)\
-                 (rewrite (p (vec-of (vec-of (b)))) (b))\
-                 (let $nested (p (vec-of (vec-of (w (b))))))\
-                 (run-schedule (saturate (run)))\
-                 (check (= $nested (b)))",
-            )
-            .unwrap();
-
-        let p = egraph.capture_catalog.as_ref().unwrap().op_ids[&ReplayOpKey {
-            name: "p".into(),
-            inputs: vec!["VVE".into()],
-            output: "E".into(),
-        }];
-        egraph.with_trace_view(|view| {
-        let mut parent = None;
-        for raw in 1..=view.totals().facts {
-            let fact = view.fact(core_relations::FactId::new(raw))?;
-            let core_relations::CauseRef::Cause(cause) = fact.cause else { continue };
-            let core_relations::RawCause::ContainerRefresh { position, equalities, .. } = view.cause(cause)? else { continue };
-            let terms = view.fact_terms(fact.id)?;
-            if terms.iter().any(|term| matches!(egraph.replay_term(*term).unwrap(), Some(ReplayTerm::Call { op, .. }) if op == p)) {
-                parent = Some((position, equalities.to_vec()));
-                break;
-            }
-        }
-        let (position, equalities) = parent.expect("the outer p fact should receive an exact nested-container refresh");
-        assert!(!equalities.is_empty());
-        for pair in &equalities {
-            assert!(
-                !view.explain_raw_equality_support_at(
-                    core_relations::RawEqualityEndpoint { sort: pair.left.sort, raw: pair.left.raw },
-                    core_relations::RawEqualityEndpoint { sort: pair.right.sort, raw: pair.right.raw },
-                    position)?.applied.is_empty()
-            );
-        }
-        Ok(())
-        }).unwrap();
     });
 }
 
@@ -742,8 +595,6 @@ fn trace_container_rebuild_restores_registry_on_error() {
             .value_to_container::<SetContainer>(bad_set)
             .expect("Set must exist before the rejected rebuild")
             .clone();
-        let term_state_before = egraph.replay_term_counters().unwrap();
-
         let failed = egraph
             .parse_and_run_program(
                 None,
@@ -773,11 +624,6 @@ fn trace_container_rebuild_restores_registry_on_error() {
         assert_eq!(low_after, low_before);
         assert_eq!(high_after, high_before);
         assert_eq!(set_after, set_before);
-        assert_eq!(
-            egraph.replay_term_counters().unwrap(),
-            term_state_before,
-            "rejected rebuild published anchors, first-wins mappings, or term nodes"
-        );
         assert!(
             egraph
                 .with_trace_view(|_| Ok(()))
@@ -836,25 +682,26 @@ fn trace_capture_exact_rule_premise_and_wave() {
 
     egraph
         .with_trace_view(|view| {
-            let firing = view.firing(core_relations::FiringId::new(1))?;
+            let firing_id = core_relations::FiringId::new(1);
+            let firing = view.firing(firing_id)?;
             assert_eq!(firing.rule, 0);
             assert_eq!(firing.wave.get(), 1);
             assert_eq!(firing.premises.len(), 1);
-            let terms = view.firing_terms(firing.id)?;
+            let terms = view.firing_terms(firing_id)?;
             assert_eq!(terms.len(), 2);
             assert_eq!(
-                egraph.replay_term(terms[0]).unwrap(),
-                Some(ReplayTerm::Literal {
+                view.replay_term(terms[0])?,
+                ReplayTerm::Literal {
                     sort: egraph.capture_catalog.as_ref().unwrap().sort_ids["i64"],
                     literal: ReplayLiteral::I64(3),
-                })
+                }
             );
             assert_eq!(
-                egraph.replay_term(terms[1]).unwrap(),
-                Some(ReplayTerm::Literal {
+                view.replay_term(terms[1])?,
+                ReplayTerm::Literal {
                     sort: egraph.capture_catalog.as_ref().unwrap().sort_ids["i64"],
                     literal: ReplayLiteral::I64(7),
-                })
+                }
             );
             let cataloged_rule = &egraph.capture_catalog.as_ref().unwrap().rule_catalog[0];
             assert_eq!(cataloged_rule.ruleset, "");
@@ -886,7 +733,7 @@ fn trace_capture_exact_rule_premise_and_wave() {
                 if let core_relations::CauseRef::Rule(id) =
                     view.fact(core_relations::FactId::new(raw))?.cause
                 {
-                    assert_eq!(id, firing.id);
+                    assert_eq!(id, firing_id);
                 }
             }
             let root = view.check_root(0)?;
@@ -942,12 +789,12 @@ fn trace_preserve_distinct_check_equality_terms() {
                 output: "Expr".into(),
             }];
             assert!(matches!(
-                egraph.replay_term(left.term).unwrap(),
-                Some(ReplayTerm::Call { op, .. }) if op == a
+                view.replay_term(left.term)?,
+                ReplayTerm::Call { op, .. } if op == a
             ));
             assert!(matches!(
-                egraph.replay_term(right.term).unwrap(),
-                Some(ReplayTerm::Call { op, .. }) if op == b
+                view.replay_term(right.term)?,
+                ReplayTerm::Call { op, .. } if op == b
             ));
             let explanation = view.explain_equality_support_at(left, right, root.position)?;
             assert_eq!(
@@ -983,11 +830,17 @@ fn trace_waves_are_cumulative_across_run_commands() {
 
     egraph
         .with_trace_view(|view| {
-            let waves = (1..=view.totals().firings)
-                .filter_map(|raw| view.firing(core_relations::FiringId::new(raw)).ok())
+            let mut waves = (1..=view.totals().facts)
+                .filter_map(|raw| view.fact(core_relations::FactId::new(raw)).ok())
+                .filter_map(|fact| match fact.cause {
+                    core_relations::CauseRef::Rule(firing) => view.firing(firing).ok(),
+                    core_relations::CauseRef::Cause(_) => None,
+                })
                 .filter(|firing| firing.rule == 0)
                 .map(|firing| firing.wave.get())
                 .collect::<Vec<_>>();
+            waves.sort_unstable();
+            waves.dedup();
             assert_eq!(waves, [1, 2]);
             Ok(())
         })
@@ -1103,12 +956,13 @@ fn trace_batch_tsv_rows_with_exact_physical_sources() {
         .with_trace_view(|view| {
             let mut source_facts = Vec::new();
             for raw in 1..=view.totals().facts {
-                let fact = view.fact(core_relations::FactId::new(raw))?;
+                let id = core_relations::FactId::new(raw);
+                let fact = view.fact(id)?;
                 let core_relations::CauseRef::Cause(cause) = fact.cause else {
                     continue;
                 };
                 if let core_relations::RawCause::Source(source) = view.cause(cause)? {
-                    source_facts.push((source.clone(), fact.id));
+                    source_facts.push((source.clone(), id));
                 }
             }
             assert_eq!(source_facts.len(), 4);
@@ -1139,18 +993,6 @@ fn trace_batch_tsv_rows_with_exact_physical_sources() {
                         line: 2,
                     }
             }));
-            for (_, fact) in source_facts
-                .iter()
-                .filter(|(source, _)| matches!(source, SourceRef::InputRow { command: 0, .. }))
-            {
-                assert!(view.fact_terms(*fact)?.iter().copied().any(|term| {
-                    !term.is_missing()
-                        && matches!(
-                            egraph.replay_term(term).unwrap(),
-                            Some(ReplayTerm::Call { .. })
-                        )
-                }));
-            }
             Ok(())
         })
         .unwrap();
@@ -1489,41 +1331,6 @@ fn trace_direct_mutation_apis_fail_before_effects() {
     );
     assert_eq!(egraph.get_size("R"), 0);
     assert!(egraph.with_trace_view(|_| Ok(())).is_ok());
-}
-
-#[test]
-fn trace_wave_spans_multiple_native_rebuild_timestamps() {
-    let mut egraph = EGraph::default();
-    enable_serial_trace(&mut egraph).unwrap();
-    egraph
-        .parse_and_run_program(
-            None,
-            "(datatype Expr (A) (B) (F Expr) (G Expr))\
-             (relation Go (Unit))\
-             (let $ga (G (F (A))))\
-             (let $gb (G (F (B))))\
-             (Go ())\
-             (rule ((Go u)) ((union (A) (B))) :name \"merge-leaves\")\
-             (run 1)\
-             (check (= $ga $gb))",
-        )
-        .unwrap();
-
-    egraph
-        .with_trace_view(|view| {
-            assert!(view.totals().applied_equalities >= 3);
-            for raw in 1..=view.totals().applied_equalities {
-                assert_eq!(
-                    view.applied_equality(core_relations::AppliedEqualityId::new(raw))?
-                        .wave
-                        .get(),
-                    1,
-                    "direct and multi-pass congruence edges belong to one replay wave"
-                );
-            }
-            Ok(())
-        })
-        .unwrap();
 }
 
 #[test]

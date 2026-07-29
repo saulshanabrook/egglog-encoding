@@ -10,7 +10,7 @@ use crate::numeric_id::{DenseIdMap, NumericId};
 use crossbeam_queue::SegQueue;
 
 use crate::{
-    CauseDraftId, CauseRef, TableChange, TaggedRowBuffer,
+    CauseDraftId, TableChange, TaggedRowBuffer,
     action::ExecutionState,
     common::{HashMap, Value},
     offsets::{OffsetRange, RowId, Subset, SubsetRef},
@@ -351,14 +351,6 @@ impl MutationBuffer for UfBuffer {
         );
         self.to_insert.add_row(row);
     }
-    fn stage_typed_union(
-        &mut self,
-        row: &[Value],
-        cause: CauseRef,
-        proposal: TypedEqualityProposal,
-    ) {
-        self.stage_typed_union_deferred(row, DeferredEqualityCause::ready(cause), proposal);
-    }
     fn stage_typed_union_deferred(
         &mut self,
         row: &[Value],
@@ -674,7 +666,7 @@ impl Table for DisplacedTable {
                     let cause = cause
                         .ready_id()
                         .expect("union preflight did not promote an effective cause");
-                    let proposal = AppliedEqualityProposal { wave, left, right };
+                    let proposal = AppliedEqualityProposal { left, right };
                     let (parent, child) = self.uf.union(row[0], row[1]);
                     assert!(
                         (parent == left_root && child == right_root)

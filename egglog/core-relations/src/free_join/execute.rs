@@ -20,21 +20,6 @@ use egglog_reports::{PreMergeTiming, ReportLevel, RuleReport, RuleSetReport};
 use smallvec::SmallVec;
 use web_time::{Duration, Instant};
 
-#[cfg(test)]
-thread_local! {
-    static PENDING_WITNESS_RESOLUTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-#[cfg(test)]
-pub(crate) fn reset_pending_witness_resolution_count() {
-    PENDING_WITNESS_RESOLUTIONS.set(0);
-}
-
-#[cfg(test)]
-pub(crate) fn pending_witness_resolution_count() -> usize {
-    PENDING_WITNESS_RESOLUTIONS.get()
-}
-
 use crate::{
     Constraint, OffsetRange, Pool, SubsetRef,
     action::{Bindings, ExecutionState},
@@ -1106,8 +1091,6 @@ fn visit_materialized_witness_facts(
 
 impl PendingPremiseResolver for PendingWitnessBatch {
     fn resolve(&self, lane: u32) -> SmallVec<[crate::FactId; 4]> {
-        #[cfg(test)]
-        PENDING_WITNESS_RESOLUTIONS.set(PENDING_WITNESS_RESOLUTIONS.get() + 1);
         let witness = self
             .witnesses
             .lock()

@@ -31,7 +31,6 @@ impl Drop for ActiveTraceViewGuard<'_> {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct AppliedEqualityProposal {
-    pub(crate) wave: Wave,
     pub(crate) left: PendingEqualityEndpoint,
     pub(crate) right: PendingEqualityEndpoint,
 }
@@ -360,7 +359,6 @@ pub(crate) enum PreparedRemoval {
 pub(crate) enum EqualityCauseError {
     Source,
     Mixed,
-    MissingFact,
 }
 
 impl EqualityCauseError {
@@ -372,9 +370,6 @@ impl EqualityCauseError {
             EqualityCauseError::Mixed => {
                 "unsupported equality cause: merge DAG mixes rule and rebuild proposals"
             }
-            EqualityCauseError::MissingFact => {
-                "equality cause references a missing immutable FactId"
-            }
         }
     }
 }
@@ -384,11 +379,9 @@ pub(crate) enum EqualityCauseSummary {
     Source,
     Rule,
     Container {
-        wave: Wave,
         position: HistoryPosition,
     },
     Rebuild {
-        wave: Wave,
         position: HistoryPosition,
         complete: bool,
     },
@@ -396,15 +389,11 @@ pub(crate) enum EqualityCauseSummary {
 }
 
 impl EqualityCauseSummary {
-    fn with_prior_fact(self, fact: FactId) -> Self {
-        if fact.is_missing() {
-            return Self::Invalid(EqualityCauseError::MissingFact);
-        }
+    fn through_merge(self) -> Self {
         match self {
             Self::Rule => Self::Rule,
             Self::Container { .. } => Self::Invalid(EqualityCauseError::Mixed),
-            Self::Rebuild { wave, position, .. } => Self::Rebuild {
-                wave,
+            Self::Rebuild { position, .. } => Self::Rebuild {
                 position,
                 complete: true,
             },
@@ -432,29 +421,19 @@ pub(crate) struct CauseCapability {
     equality: EqualityCauseSummary,
 }
 
-impl CauseCapability {
-    #[cfg(test)]
-    pub(crate) fn id(self) -> CauseDraftId {
-        self.id
-    }
-}
-
 #[derive(Clone, Debug)]
 enum DurableCause {
     Source(SourceRef),
     Rebuild {
-        wave: Wave,
         prior_fact: FactId,
         position: HistoryPosition,
         equalities: FlatRange,
     },
     ContainerCanonicalize {
-        wave: Wave,
         position: HistoryPosition,
         equalities: FlatRange,
     },
     ContainerRefresh {
-        wave: Wave,
         prior_fact: FactId,
         position: HistoryPosition,
         equalities: FlatRange,
@@ -665,18 +644,14 @@ impl TraceArena {
             (_, EqualityCauseSummary::Rule) => EqualityReason::MergeFn {
                 cause: node.public(),
             },
-            (_, EqualityCauseSummary::Container { wave, position }) => EqualityReason::Congruence {
+            (_, EqualityCauseSummary::Container { position }) => EqualityReason::Congruence {
                 cause: node.public(),
-                wave,
                 position,
             },
-            (_, EqualityCauseSummary::Rebuild { wave, position, .. }) => {
-                EqualityReason::Congruence {
-                    cause: node.public(),
-                    wave,
-                    position,
-                }
-            }
+            (_, EqualityCauseSummary::Rebuild { position, .. }) => EqualityReason::Congruence {
+                cause: node.public(),
+                position,
+            },
             _ => unreachable!("validated equality cause has no public reason"),
         }
     }
@@ -1689,7 +1664,7 @@ impl Trace {
             !prior_fact.is_missing(),
             "deferred merge capture is missing its prior FactId"
         );
-        let equality = incoming.equality_summary(self).with_prior_fact(prior_fact);
+        let equality = incoming.equality_summary(self).through_merge();
         DeferredEqualityCause(DeferredEqualityCauseKind::Merge(Arc::new(
             PendingMergeCause {
                 trace: self.clone(),
@@ -1850,13 +1825,11 @@ impl Trace {
         arena.install_cause(
             id,
             DurableCause::Rebuild {
-                wave: rekey.wave,
                 prior_fact: rekey.prior_fact,
                 position: rekey.position,
                 equalities,
             },
             EqualityCauseSummary::Rebuild {
-                wave: rekey.wave,
                 position: rekey.position,
                 complete: false,
             },
@@ -1879,8 +1852,6 @@ impl Trace {
         let mut arena = self.0.arena.lock().unwrap();
         arena.rekeys.push(RekeyRecord {
             fact: rekey.prior_fact,
-            table: rekey.table,
-            wave: rekey.wave,
             position,
             equalities: EqualityLandmark {
                 position: rekey.position,
@@ -2202,11 +2173,10 @@ impl Trace {
         let equalities = FlatRange::new(arena.durable_rebuild_equalities.len(), pairs.len());
         arena.durable_rebuild_equalities.extend_from_slice(&pairs);
         let id = CauseDraftId::new(TraceShared::alloc_u64(&self.0.next_cause_draft, 1));
-        let summary = EqualityCauseSummary::Container { wave, position };
+        let summary = EqualityCauseSummary::Container { position };
         arena.install_cause(
             id,
             DurableCause::ContainerCanonicalize {
-                wave,
                 position,
                 equalities,
             },
@@ -2280,7 +2250,6 @@ impl Trace {
         arena.install_cause(
             id,
             DurableCause::ContainerRefresh {
-                wave: dependency.wave,
                 prior_fact,
                 position: dependency.equalities.position,
                 equalities,
@@ -2377,6 +2346,7 @@ impl Trace {
         self.0.replay_terms.lookup(sort, value)
     }
 
+    #[cfg(test)]
     pub(crate) fn equality_endpoint(
         &self,
         sort: ReplaySortId,
@@ -2788,6 +2758,7 @@ impl Trace {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn typed_equality_proposal(
         &self,
         wave: Wave,
@@ -2878,19 +2849,6 @@ impl Trace {
     /// including [`ReplayTermId::MISSING`].
     pub fn replay_term(&self, id: ReplayTermId) -> Option<ReplayTerm> {
         self.0.replay_terms.node(id)
-    }
-
-    /// Read structural interner and catalog cardinalities.
-    ///
-    /// [`TermInternerCounters::interned_nodes`] counts unique DAG nodes;
-    /// [`TermInternerCounters::installed_values`] counts first-wins typed value
-    /// mappings; [`TermInternerCounters::table_layouts`] counts registered table
-    /// layouts; and the two container-anchor fields count versioned raw keys
-    /// and all structural terms retained for those keys, respectively. The
-    /// underlying stores are locked independently, so concurrent registration
-    /// can make the returned fields reflect slightly different instants.
-    pub fn replay_term_counters(&self) -> TermInternerCounters {
-        self.0.replay_terms.counters()
     }
 
     /// A compact test-only structural node. Real producers install equivalent

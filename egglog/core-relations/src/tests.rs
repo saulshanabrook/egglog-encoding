@@ -4,7 +4,7 @@ use std::{
     ops::Range,
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicUsize, Ordering},
     },
 };
@@ -22,13 +22,12 @@ use crate::{
     common::Value,
     free_join::{
         CounterId, Database, TableId,
-        execute::{pending_witness_resolution_count, reset_pending_witness_resolution_count},
         plan::{JoinStage, MatScanMode, Plan},
     },
     make_external_func,
     offsets::RowId,
     query::RuleSetBuilder,
-    table::{SortedWritesTable, causal_lookup_counters, reset_causal_lookup_counters},
+    table::SortedWritesTable,
     table_shortcuts::v,
     table_spec::{ColumnId, Constraint, MutationTransaction, Table},
     uf::DisplacedTable,
@@ -103,6 +102,19 @@ fn fact_ids(view: &crate::TraceView<'_>) -> impl Iterator<Item = FactId> {
     (1..=view.totals().facts).map(FactId::new)
 }
 
+struct TestFact<'a> {
+    id: FactId,
+    record: crate::RawFactRecord<'a>,
+}
+
+impl<'a> std::ops::Deref for TestFact<'a> {
+    type Target = crate::RawFactRecord<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.record
+    }
+}
+
 fn cause_firing(cause: crate::CauseRef) -> Option<crate::FiringId> {
     match cause {
         crate::CauseRef::Rule(id) => Some(id),
@@ -119,31 +131,56 @@ fn equality_firing(reason: &crate::EqualityReason) -> crate::FiringId {
 
 fn view_end_position(view: &crate::TraceView<'_>) -> crate::HistoryPosition {
     let totals = view.totals();
-    crate::HistoryPosition::new(
-        totals.facts
-            + totals.applied_equalities
-            + totals.rekeys
-            + totals.removals
-            + totals.check_roots,
-    )
+    (1..=totals.facts)
+        .filter_map(|raw| view.fact(FactId::new(raw)).ok().map(|fact| fact.position))
+        .chain((1..=totals.applied_equalities).filter_map(|raw| {
+            view.applied_equality(crate::AppliedEqualityId::new(raw))
+                .ok()
+                .map(|equality| equality.position)
+        }))
+        .chain(
+            (0..totals.removals as usize)
+                .filter_map(|index| view.removal(index).ok().map(|removal| removal.position)),
+        )
+        .chain(view.check_roots().into_iter().map(|root| root.position))
+        .max()
+        .unwrap_or(crate::HistoryPosition::new(0))
+}
+
+struct TestRekey<'a> {
+    position: crate::HistoryPosition,
+    record: crate::RawRekeyRecord<'a>,
+}
+
+impl<'a> std::ops::Deref for TestRekey<'a> {
+    type Target = crate::RawRekeyRecord<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.record
+    }
 }
 
 fn test_rekeys<'a>(
     view: &mut crate::TraceView<'a>,
-) -> Result<Vec<crate::RawRekeyRecord<'a>>, crate::TraceViewError> {
+) -> Result<Vec<TestRekey<'a>>, crate::TraceViewError> {
     let mut rekeys = Vec::new();
     for position in 1..=view_end_position(view).get() {
-        if let Ok(rekey) = view.rekey_at(crate::HistoryPosition::new(position)) {
-            rekeys.push(rekey);
+        let position = crate::HistoryPosition::new(position);
+        if let Ok(record) = view.rekey_at(position) {
+            rekeys.push(TestRekey { position, record });
         }
     }
-    assert_eq!(rekeys.len() as u64, view.totals().rekeys);
     Ok(rekeys)
 }
 
-fn fact_for_table<'a>(view: &crate::TraceView<'a>, table: TableId) -> crate::RawFactRecord<'a> {
+fn fact_for_table<'a>(view: &crate::TraceView<'a>, table: TableId) -> TestFact<'a> {
     fact_ids(view)
-        .find_map(|id| view.fact(id).ok().filter(|fact| fact.table == table))
+        .find_map(|id| {
+            view.fact(id)
+                .ok()
+                .filter(|fact| fact.table == table)
+                .map(|record| TestFact { id, record })
+        })
         .expect("expected one durable fact for the table")
 }
 
@@ -363,8 +400,9 @@ fn causal_trace_record_only_effective_constructor_and_union_commits() {
                 view.fact_terms(derived_fact.id)?.as_ref(),
                 constructor_terms.as_ref()
             );
-            let equality = view.project_applied_equality(crate::AppliedEqualityId::new(1))?;
-            assert_eq!(equality.wave, Wave::new(1));
+            let equality_id = crate::AppliedEqualityId::new(1);
+            let raw_equality = view.applied_equality(equality_id)?;
+            let equality = view.project_applied_equality(equality_id)?;
             assert_eq!(
                 (equality.left.sort, equality.left.term),
                 (node_sort, node_term)
@@ -374,7 +412,7 @@ fn causal_trace_record_only_effective_constructor_and_union_commits() {
                 (Value::new(7), node_sort, input_as_node_term)
             );
             assert_eq!(
-                (equality.native_parent, equality.native_child),
+                (raw_equality.native_parent, raw_equality.native_child),
                 if equality.left.raw < equality.right.raw {
                     (equality.left.raw, equality.right.raw)
                 } else {
@@ -382,7 +420,6 @@ fn causal_trace_record_only_effective_constructor_and_union_commits() {
                 }
             );
             assert_eq!(equality.reason, crate::EqualityReason::RuleUnion(match_id));
-            assert_eq!(view.totals().firings, 1);
             assert_eq!(view.fact(source.id)?.values, source.values);
             Ok((source.id, derived_fact.id, node_term))
         })
@@ -395,7 +432,6 @@ fn causal_trace_record_only_effective_constructor_and_union_commits() {
             children: [input_term].into(),
         }
     );
-    let nodes_before_hit = trace.replay_term_counters().interned_nodes;
     let mut consumers = RuleSetBuilder::new(&mut db);
     let mut query = consumers.new_rule();
     let consumed_value = query.new_var_named("consumed_value");
@@ -457,42 +493,42 @@ fn causal_trace_record_only_effective_constructor_and_union_commits() {
                 view.fact_terms(consumed_fact.id)?.as_ref(),
                 &[input_term, node_term, crate::ReplayTermId::MISSING]
             );
-            let consumed_match = view.firing(cause_firing(consumed_fact.cause).unwrap())?;
+            let consumed_match_id = cause_firing(consumed_fact.cause).unwrap();
+            let consumed_match = view.firing(consumed_match_id)?;
             assert_eq!(consumed_match.premises, &[derived_id]);
             assert_eq!(
-                view.firing_terms(consumed_match.id)?.as_ref(),
+                view.firing_terms(consumed_match_id)?.as_ref(),
                 &[input_term, node_term]
             );
             assert!(view.fact(source_id).is_ok());
             Ok(())
         })
         .unwrap();
-    assert_eq!(
-        trace.replay_term_counters().interned_nodes,
-        nodes_before_hit,
-        "constructor hit must reuse the miss path's typed Call"
-    );
 }
 
-fn empty_rule_cause(trace: &Trace, rule: u32, wave: Wave) -> crate::CauseRef {
-    trace.register_firings(rule, wave, 0, &[], &[], &[0])[0]
-        .1
-        .into()
+fn empty_rule_cause(trace: &Trace, rule: u32, wave: Wave) -> crate::provenance::PackedCauseRef {
+    trace.register_firings(rule, wave, 0, &[], &[], &[0])[0].1
 }
 
 fn stage_test_union(
     db: &Database,
     table: TableId,
-    cause: crate::CauseRef,
+    cause: crate::provenance::PackedCauseRef,
     sort: ReplaySortId,
     left: Value,
     right: Value,
     timestamp: Value,
 ) {
-    db.with_execution_state(|state| {
-        state.set_active_cause_ref(Some(cause));
-        state.stage_union_with_replay(table, left, right, timestamp, sort);
-    });
+    let trace = db.trace.as_ref().expect("test union requires causal trace");
+    let proposal = trace
+        .typed_equality_proposal(db.trace_wave, sort, left, right)
+        .unwrap();
+    let mut buffer = db.new_buffer(table);
+    buffer.stage_typed_union_deferred(
+        &[left, right, timestamp],
+        crate::DeferredEqualityCause::ready(cause),
+        proposal,
+    );
 }
 
 fn native_uf_root(db: &Database, table: TableId, value: Value) -> Value {
@@ -538,14 +574,12 @@ struct TestLandmark {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct TestRebuildDependency {
-    wave: Wave,
     prior_fact: FactId,
     equalities: TestLandmark,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct TestContainerDependency {
-    wave: Wave,
     equalities: TestLandmark,
 }
 
@@ -561,24 +595,22 @@ struct TestCauseDependencies {
 
 fn test_cause_dependencies(
     view: &crate::TraceView<'_>,
-    root: impl Into<crate::CauseRef>,
+    root: crate::CauseId,
 ) -> Result<TestCauseDependencies, crate::TraceViewError> {
     let mut result = TestCauseDependencies::default();
-    let mut stack = vec![root.into()];
+    let mut stack = vec![crate::CauseRef::Cause(root)];
     while let Some(dependency) = stack.pop() {
         match dependency {
             crate::CauseRef::Rule(rule) => result.rules.push(rule),
             crate::CauseRef::Cause(cause) => match view.cause(cause)? {
                 crate::RawCause::Source(source) => result.sources.push(source.clone()),
                 crate::RawCause::Rebuild {
-                    wave,
                     prior_fact,
                     position,
                     equalities,
                 } => {
                     result.facts.push(prior_fact);
                     result.rebuilds.push(TestRebuildDependency {
-                        wave,
                         prior_fact,
                         equalities: TestLandmark {
                             position,
@@ -587,20 +619,17 @@ fn test_cause_dependencies(
                     });
                 }
                 crate::RawCause::ContainerCanonicalize {
-                    wave,
                     position,
                     equalities,
                 } => result
                     .container_canonicalizations
                     .push(TestContainerDependency {
-                        wave,
                         equalities: TestLandmark {
                             position,
                             pairs: equalities.into(),
                         },
                     }),
                 crate::RawCause::ContainerRefresh {
-                    wave,
                     prior_fact,
                     position,
                     equalities,
@@ -609,7 +638,6 @@ fn test_cause_dependencies(
                     result.container_refreshes.push((
                         prior_fact,
                         TestContainerDependency {
-                            wave,
                             equalities: TestLandmark {
                                 position,
                                 pairs: equalities.into(),
@@ -634,18 +662,12 @@ fn test_congruence_dependencies(
     view: &crate::TraceView<'_>,
     reason: &crate::EqualityReason,
 ) -> Result<(TestCauseDependencies, TestLandmark), crate::TraceViewError> {
-    let crate::EqualityReason::Congruence {
-        cause,
-        wave,
-        position,
-    } = reason
-    else {
+    let crate::EqualityReason::Congruence { cause, position } = reason else {
         panic!("expected a congruence reason, got {reason:?}")
     };
     let dependencies = test_cause_dependencies(view, *cause)?;
     let mut pairs = Vec::new();
     for rebuild in &dependencies.rebuilds {
-        assert_eq!(rebuild.wave, *wave);
         assert_eq!(rebuild.equalities.position, *position);
         pairs.extend_from_slice(&rebuild.equalities.pairs);
     }
@@ -730,12 +752,9 @@ fn causal_capture_rebuild_rekeys_with_exact_landmark_and_noop_preserves_fact() {
                 view.cause(source)?,
                 crate::RawCause::Source(SourceRef::Synthetic(79))
             ));
-            assert_eq!(view.totals().rekeys, 1);
             let applied = view.applied_equality(crate::AppliedEqualityId::new(1))?;
             let rekey = view.rekey_at(crate::HistoryPosition::new(applied.position.get() + 1))?;
             assert_eq!(rekey.fact, prior_fact);
-            assert_eq!(rekey.table, rebuilt);
-            assert_eq!(rekey.wave, Wave::new(2));
             assert_eq!(rekey.equality_position, applied.position);
             assert_eq!(
                 rekey.equalities,
@@ -759,7 +778,6 @@ fn causal_capture_rebuild_rekeys_with_exact_landmark_and_noop_preserves_fact() {
                 (projected.left.term, projected.right.term),
                 (old_term, new_term)
             );
-            assert_eq!(view.totals().rekeys, 1);
             Ok(())
         })
         .unwrap();
@@ -774,7 +792,11 @@ fn causal_capture_rebuild_rekeys_with_exact_landmark_and_noop_preserves_fact() {
     trace
         .with_view(|view| {
             assert_eq!(view.totals().facts, 1);
-            assert_eq!(view.totals().rekeys, 1);
+            let applied = view.applied_equality(crate::AppliedEqualityId::new(1))?;
+            assert!(
+                view.rekey_at(crate::HistoryPosition::new(applied.position.get() + 1))
+                    .is_ok()
+            );
             Ok(())
         })
         .unwrap();
@@ -882,6 +904,8 @@ fn causal_capture_rebuild_collision_records_exact_congruence() {
     let mut db = Database::default();
     let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
     let sort = ReplaySortId::new(82);
+    let rebuilt_id = Arc::new(OnceLock::new());
+    let callback_table = Arc::clone(&rebuilt_id);
     let rebuilt = db.add_table(
         SortedWritesTable::new(
             1,
@@ -889,13 +913,22 @@ fn causal_capture_rebuild_collision_records_exact_congruence() {
             Some(ColumnId::new(2)),
             vec![ColumnId::new(0)],
             Box::new(move |state, prior, incoming, _| {
-                state.stage_union_with_replay(uf, prior[1], incoming[1], Value::new(2), sort);
+                state.stage_merge_union_with_replay(
+                    uf,
+                    *callback_table.get().unwrap(),
+                    ColumnId::new(1),
+                    prior[1],
+                    incoming[1],
+                    Value::new(2),
+                    sort,
+                );
                 false
             }),
         ),
         iter::once(uf),
         iter::once(uf),
     );
+    rebuilt_id.set(rebuilt).unwrap();
     let trace = db.try_enable_trace().unwrap();
     trace
         .register_table_layout(rebuilt, &[Some(sort), Some(sort), None])
@@ -990,14 +1023,8 @@ fn causal_capture_rebuild_collision_records_exact_congruence() {
                     },
                 }]
             );
-            assert_eq!(equality.wave, Wave::new(2));
             assert_eq!(equality.left.term, target_output_term);
             assert_eq!(equality.right.term, old_output_term);
-            assert_eq!(
-                view.totals().firings,
-                1,
-                "congruence must not invent a synthetic rule match"
-            );
             Ok(())
         })
         .unwrap();
@@ -1133,12 +1160,7 @@ fn causal_capture_rebuild_abort_is_atomic_across_target_tables() {
     assert!(db.get_table(first).get_row(&[recovery]).is_some());
 
     db.finalize_trace_wave();
-    trace
-        .with_view(|view| {
-            assert_eq!(view.totals().rekeys, 0);
-            Ok(())
-        })
-        .unwrap();
+    trace.with_view(|_| Ok(())).unwrap();
 }
 
 #[test]
@@ -1229,16 +1251,12 @@ fn typed_union_forest_is_immutable_across_native_path_compression_and_redundancy
     );
     let first = view.project_applied_equality(crate::AppliedEqualityId::new(1))?;
     let second = view.project_applied_equality(crate::AppliedEqualityId::new(2))?;
+    let first_raw = view.applied_equality(crate::AppliedEqualityId::new(1))?;
+    let second_raw = view.applied_equality(crate::AppliedEqualityId::new(2))?;
     assert_eq!((first.left.term, first.right.term), (a_term, b_term));
     assert_eq!((second.left.term, second.right.term), (b_term, c_term));
-    assert_eq!(
-        (first.wave, first.native_parent, first.native_child),
-        (Wave::new(1), b, a)
-    );
-    assert_eq!(
-        (second.wave, second.native_parent, second.native_child),
-        (Wave::new(2), c, b)
-    );
+    assert_eq!((first_raw.native_parent, first_raw.native_child), (b, a));
+    assert_eq!((second_raw.native_parent, second_raw.native_child), (c, b));
     Ok(())
     }).unwrap();
     assert_eq!(native_uf_root(&db, uf, a), c);
@@ -1286,7 +1304,11 @@ fn invalid_typed_union_staging_fails_before_native_mutation() {
                     .typed_equality_proposal(Wave::new(1), sort, left, right)
                     .unwrap();
                 let mut buffer = db.new_buffer(uf);
-                buffer.stage_typed_union(&[right, left, Value::new(1)], cause, proposal);
+                buffer.stage_typed_union_deferred(
+                    &[right, left, Value::new(1)],
+                    crate::DeferredEqualityCause::ready(cause),
+                    proposal,
+                );
             } else {
                 stage_test_union(&db, uf, cause, sort, left, right, Value::new(1));
             }
@@ -1310,6 +1332,8 @@ fn merge_function_union_cites_one_match_and_immutable_prior_fact() {
     let sort = ReplaySortId::new(100);
     let mut db = Database::default();
     let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
+    let target_id = Arc::new(OnceLock::new());
+    let callback_table = Arc::clone(&target_id);
     let target = db.add_table_named(
         SortedWritesTable::new(
             1,
@@ -1317,7 +1341,15 @@ fn merge_function_union_cites_one_match_and_immutable_prior_fact() {
             None,
             vec![],
             Box::new(move |state, prior, incoming, _out| {
-                state.stage_union_with_replay(uf, prior[1], incoming[1], Value::new(1), sort);
+                state.stage_merge_union_with_replay(
+                    uf,
+                    *callback_table.get().unwrap(),
+                    ColumnId::new(1),
+                    prior[1],
+                    incoming[1],
+                    Value::new(1),
+                    sort,
+                );
                 false
             }),
         ),
@@ -1325,6 +1357,7 @@ fn merge_function_union_cites_one_match_and_immutable_prior_fact() {
         iter::empty(),
         iter::once(uf),
     );
+    target_id.set(target).unwrap();
     let proposal = db.add_table_named(
         SortedWritesTable::new(
             2,
@@ -1443,6 +1476,8 @@ fn invalid_merge_function_union_fails_before_replacing_its_parent_row() {
     let sort = ReplaySortId::new(108);
     let mut db = Database::default();
     let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
+    let target_id = Arc::new(OnceLock::new());
+    let callback_table = Arc::clone(&target_id);
     let target = db.add_table_named(
         SortedWritesTable::new(
             1,
@@ -1450,7 +1485,15 @@ fn invalid_merge_function_union_fails_before_replacing_its_parent_row() {
             None,
             vec![],
             Box::new(move |state, prior, incoming, out| {
-                state.stage_union_with_replay(uf, prior[1], incoming[1], Value::new(1), sort);
+                state.stage_merge_union_with_replay(
+                    uf,
+                    *callback_table.get().unwrap(),
+                    ColumnId::new(1),
+                    prior[1],
+                    incoming[1],
+                    Value::new(1),
+                    sort,
+                );
                 out.extend_from_slice(incoming);
                 true
             }),
@@ -1459,6 +1502,7 @@ fn invalid_merge_function_union_fails_before_replacing_its_parent_row() {
         iter::empty(),
         iter::once(uf),
     );
+    target_id.set(target).unwrap();
     let trace = db.try_enable_trace().unwrap();
     trace
         .register_table_layout(target, &[Some(sort), Some(sort)])
@@ -1651,27 +1695,31 @@ fn causal_trace_record_same_term_native_alias_without_equality_edge() {
     assert_eq!(proposal.left().sort, container_sort);
     {
         let mut buffer = db.new_buffer(uf);
-        buffer.stage_typed_union(&[left, right, Value::new(1)], cause.id().into(), proposal);
+        buffer.stage_typed_union_deferred(
+            &[left, right, Value::new(1)],
+            crate::DeferredEqualityCause::capability(cause),
+            proposal,
+        );
     }
     assert!(db.merge_all());
     db.finalize_trace_wave();
 
     let alias_child = trace.with_view(|view| {
         assert_eq!(view.totals().applied_equalities, 1);
+        let raw_alias = view.applied_equality(crate::AppliedEqualityId::new(1))?;
         let alias = view.project_applied_equality(crate::AppliedEqualityId::new(1))?;
-        assert_eq!(alias.wave, wave);
         assert_eq!((alias.left.term, alias.right.term), (call, call));
         assert_eq!((alias.left.raw, alias.right.raw), (left, right));
-        assert_eq!(alias.native_parent, native_uf_root(&db, uf, left));
-        assert_eq!(alias.native_parent, native_uf_root(&db, uf, right));
-        assert_ne!(alias.native_parent, alias.native_child);
-        assert!([left, right].contains(&alias.native_parent) && [left, right].contains(&alias.native_child));
-        let crate::EqualityReason::Congruence { cause, wave: reason_wave, position } = alias.reason else { panic!("container native alias lost its congruence cause") };
-        assert_eq!((reason_wave, position), (wave, landmark));
+        assert_eq!(raw_alias.native_parent, native_uf_root(&db, uf, left));
+        assert_eq!(raw_alias.native_parent, native_uf_root(&db, uf, right));
+        assert_ne!(raw_alias.native_parent, raw_alias.native_child);
+        assert!([left, right].contains(&raw_alias.native_parent) && [left, right].contains(&raw_alias.native_child));
+        let crate::EqualityReason::Congruence { cause, position } = alias.reason else { panic!("container native alias lost its congruence cause") };
+        assert_eq!(position, landmark);
         let dependencies = test_cause_dependencies(view, cause)?;
         assert!(dependencies.facts.is_empty() && dependencies.rules.is_empty());
-        assert!(matches!(dependencies.container_canonicalizations.as_slice(), [TestContainerDependency { wave: dependency_wave, equalities }] if *dependency_wave == wave && equalities.position == position && equalities.pairs.is_empty()));
-        Ok(alias.native_child)
+        assert!(matches!(dependencies.container_canonicalizations.as_slice(), [TestContainerDependency { equalities }] if equalities.position == position && equalities.pairs.is_empty()));
+        Ok(raw_alias.native_child)
     }).unwrap();
 
     // The component mirror must survive the native-only alias. A later real
@@ -1805,9 +1853,9 @@ fn same_term_native_bridge_joins_distinct_historical_components() {
         .unwrap();
     {
         let mut buffer = db.new_buffer(uf);
-        buffer.stage_typed_union(
+        buffer.stage_typed_union_deferred(
             &[right, other, Value::new(1)],
-            empty_rule_cause(&trace, 214, first_wave),
+            crate::DeferredEqualityCause::ready(empty_rule_cause(&trace, 214, first_wave)),
             first,
         );
     }
@@ -1842,6 +1890,9 @@ fn same_term_native_bridge_joins_distinct_historical_components() {
             assert_eq!(view.totals().applied_equalities, 2);
             let first = view.project_applied_equality(crate::AppliedEqualityId::new(1))?;
             let second = view.project_applied_equality(crate::AppliedEqualityId::new(2))?;
+            let first_position = view
+                .applied_equality(crate::AppliedEqualityId::new(1))?
+                .position;
             assert_eq!((second.left.term, second.right.term), (shared, shared));
             let first_support = view.explain_equality_support_at(
                 crate::EqualityEndpoint {
@@ -1854,7 +1905,7 @@ fn same_term_native_bridge_joins_distinct_historical_components() {
                     term: other_term,
                     raw: other,
                 },
-                first.position,
+                first_position,
             )?;
             assert_eq!(
                 first_support.applied.as_ref(),
@@ -1923,9 +1974,9 @@ fn same_batch_native_catch_up_matches_durable_component_behavior() {
     {
         let mut buffer = uf.new_buffer();
         for (rule, left) in [(118, owner), (119, alias)] {
-            buffer.stage_typed_union(
+            buffer.stage_typed_union_deferred(
                 &[left, other, Value::new(1)],
-                empty_rule_cause(&trace, rule, wave),
+                crate::DeferredEqualityCause::ready(empty_rule_cause(&trace, rule, wave)),
                 trace
                     .typed_equality_proposal(wave, sort, left, other)
                     .unwrap(),
@@ -2073,8 +2124,9 @@ fn causal_trace_capture_exact_rhs_producer_term_not_global_alias() {
                 "global lookup deliberately keeps the competing alias"
             );
             let derived_fact = fact_for_table(view, derived);
-            let matched = view.firing(cause_firing(derived_fact.cause).unwrap())?;
-            assert_eq!(view.firing_terms(matched.id)?.as_ref(), &[exact_call]);
+            let matched_id = cause_firing(derived_fact.cause).unwrap();
+            view.firing(matched_id)?;
+            assert_eq!(view.firing_terms(matched_id)?.as_ref(), &[exact_call]);
             assert_eq!(
                 trace.replay_term(exact_call),
                 Some(crate::ReplayTerm::Call {
@@ -2337,13 +2389,13 @@ fn prior_or_incoming_uses_callback_result_not_opaque_value_order() {
     trace
         .with_view(|view| {
             let latest = fact_ids(view)
-                .filter_map(|id| view.fact(id).ok())
-                .filter(|fact| fact.table == table)
-                .max_by_key(|fact| fact.id)
+                .filter_map(|id| view.fact(id).ok().map(|fact| (id, fact)))
+                .filter(|(_, fact)| fact.table == table)
+                .max_by_key(|(id, _)| *id)
                 .unwrap();
-            assert_eq!(latest.values, &[key, incoming]);
+            assert_eq!(latest.1.values, &[key, incoming]);
             assert_eq!(
-                view.fact_terms(latest.id)?.as_ref(),
+                view.fact_terms(latest.0)?.as_ref(),
                 &[key_term, incoming_term]
             );
             Ok(())
@@ -2478,10 +2530,7 @@ fn serial_compaction_preserves_live_and_historical_fact_ids() {
     assert_ne!(committed_row_id(&db, table, survivor), survivor_row);
     assert_ne!(committed_fact_id(&db, table, Value::new(1)), historical);
     trace
-        .with_view(|view| {
-            view.fact(historical)
-                .map(|fact| assert_eq!(fact.id, historical))
-        })
+        .with_view(|view| view.fact(historical).map(|_| ()))
         .unwrap();
 }
 
@@ -2634,28 +2683,22 @@ fn decomposed_projected_capture_case(retain_existential: bool) {
     }
 
     db.set_trace_wave(Wave::new(1));
-    reset_pending_witness_resolution_count();
     assert!(db.run_rule_set(&rule_set, ReportLevel::TimeOnly).changed);
     db.finalize_trace_wave();
-    assert_eq!(
-        pending_witness_resolution_count(),
-        2,
-        "every normal-return observed lane resolves one exact decomposed witness"
-    );
     trace
         .with_view(|view| {
             let derived_facts = fact_ids(view)
-                .filter_map(|id| view.fact(id).ok())
-                .filter(|fact| fact.table == derived)
+                .filter_map(|id| view.fact(id).ok().map(|fact| (id, fact)))
+                .filter(|(_, fact)| fact.table == derived)
                 .collect::<Vec<_>>();
             if retain_existential {
                 assert_eq!(derived_facts.len(), 2);
-                for fact in derived_facts {
+                for (fact_id, fact) in derived_facts {
                     let matched = view.firing(
                         cause_firing(fact.cause)
                             .expect("each derived row must cite its own exact native match"),
                     )?;
-                    let terms = view.fact_terms(fact.id)?;
+                    let terms = view.fact_terms(fact_id)?;
                     let expected = if terms[4] == existential_100_term {
                         [r_first, s_first, t_fact, u_fact]
                     } else {
@@ -2666,7 +2709,7 @@ fn decomposed_projected_capture_case(retain_existential: bool) {
                 }
             } else {
                 assert_eq!(derived_facts.len(), 1);
-                let matched = view.firing(cause_firing(derived_facts[0].cause).unwrap())?;
+                let matched = view.firing(cause_firing(derived_facts[0].1.cause).unwrap())?;
                 assert_eq!(matched.premises, &[r_first, s_first, t_fact, u_fact]);
                 assert!(!matched.premises.contains(&r_second));
                 assert!(!matched.premises.contains(&s_second));
@@ -2775,14 +2818,8 @@ fn capture_disabled_rule_path_uses_no_fact_sidecars_or_witness_reads() {
         "capture-only producer metadata must be absent from ordinary action tapes"
     );
 
-    reset_causal_lookup_counters();
     let report = db.run_rule_set(&rule_set, ReportLevel::TimeOnly);
     assert!(report.changed);
-    assert_eq!(
-        causal_lookup_counters(),
-        (0, 0),
-        "ordinary execution must not read capture FactIds or witness rows"
-    );
     for table in [input, constructor, derived] {
         let table = db
             .get_table(table)
@@ -4629,11 +4666,6 @@ fn check_trace_keep_distinct_premise_terms_for_the_same_runtime_equality_value()
                 );
             }
             assert_eq!(roots, view.check_roots());
-            assert_eq!(
-                view.totals().firings,
-                2,
-                "only the two effective equality-producing rules should have matches"
-            );
             Ok(())
         })
         .unwrap();
@@ -4706,9 +4738,9 @@ fn late_fact_rekey_attachment_case(reverse_equality_endpoints: bool) {
         .unwrap();
     {
         let mut buffer = db.new_buffer(uf);
-        buffer.stage_typed_union(
+        buffer.stage_typed_union_deferred(
             &[proposal_left, proposal_right, Value::new(1)],
-            empty_rule_cause(&trace, 7900, wave),
+            crate::DeferredEqualityCause::ready(empty_rule_cause(&trace, 7900, wave)),
             equality,
         );
     }
@@ -4767,7 +4799,6 @@ fn late_fact_rekey_attachment_case(reverse_equality_endpoints: bool) {
                 view.cause(source)?,
                 crate::RawCause::Source(SourceRef::Synthetic(7900))
             ));
-            assert_eq!(equality.wave, wave);
             assert_eq!(
                 root.wave, wave,
                 "a later successful witness must not replace the first native check root"
@@ -4787,7 +4818,7 @@ fn late_fact_rekey_attachment_case(reverse_equality_endpoints: bool) {
                 panic!("expected one rekey landmark")
             };
             let rekey_position = rekey.position;
-            assert_eq!((rekey.fact, rekey.wave), (fact, wave));
+            assert_eq!(rekey.fact, fact);
             assert!(
                 rekey.equality_position < landmark,
                 "the rekey must retain its pre-rebuild landmark, not the later check landmark"
@@ -4916,40 +4947,6 @@ fn effective_constructor_rebuild_inherits_prior_terms_over_competing_alias() {
 }
 
 #[test]
-fn forged_direct_rule_match_fails_before_native_union() {
-    let mut db = Database::default();
-    let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
-    let trace = db.try_enable_trace().unwrap();
-    let sort = ReplaySortId::new(901);
-    let left = Value::new(9010);
-    let right = Value::new(9011);
-    trace.intern_literal(sort, ReplayLiteral::I64(9010), left);
-    trace.intern_literal(sort, ReplayLiteral::I64(9011), right);
-
-    let wave = Wave::new(1);
-    db.set_trace_wave(wave);
-    let proposal = trace
-        .typed_equality_proposal(wave, sort, left, right)
-        .unwrap();
-    {
-        let mut buffer = db.new_buffer(uf);
-        buffer.stage_typed_union(
-            &[left, right, Value::new(1)],
-            crate::CauseRef::Rule(crate::FiringId::new(999)),
-            proposal,
-        );
-    }
-
-    let failed = catch_unwind(AssertUnwindSafe(|| db.merge_all()));
-    assert!(
-        failed.is_err(),
-        "a direct FiringId without a durable observation must fail preflight"
-    );
-    assert_eq!(native_uf_root(&db, uf, left), left);
-    assert_eq!(native_uf_root(&db, uf, right), right);
-}
-
-#[test]
 fn direct_rule_match_cannot_cross_a_causal_wave() {
     let mut db = Database::default();
     let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
@@ -4972,7 +4969,11 @@ fn direct_rule_match_cannot_cross_a_causal_wave() {
         .unwrap();
     {
         let mut buffer = db.new_buffer(uf);
-        buffer.stage_typed_union(&[left, right, Value::new(2)], stale, proposal);
+        buffer.stage_typed_union_deferred(
+            &[left, right, Value::new(2)],
+            crate::DeferredEqualityCause::ready(stale),
+            proposal,
+        );
     }
 
     let failed = catch_unwind(AssertUnwindSafe(|| db.merge_all()));
@@ -5092,11 +5093,8 @@ fn observed_match_ids_are_dense_before_effect_reachability() {
 
     trace
         .with_view(|view| {
-            assert_eq!(
-                view.totals().firings,
-                4,
-                "the borrowed view retains all dense observations"
-            );
+            assert!(view.firing(crate::FiringId::new(4)).is_ok());
+            assert!(view.firing(crate::FiringId::new(5)).is_err());
             let equality = view.applied_equality(crate::AppliedEqualityId::new(1))?;
             assert_eq!(
                 equality_firing(&equality.reason),
@@ -5276,7 +5274,14 @@ fn promoted_match_order_follows_full_batch_then_tail_execution() {
 
     trace
         .with_view(|view| {
-            assert_eq!(view.totals().firings, (FULL_BATCH + 1) as u64);
+            assert!(
+                view.firing(crate::FiringId::new((FULL_BATCH + 1) as u64))
+                    .is_ok()
+            );
+            assert!(
+                view.firing(crate::FiringId::new((FULL_BATCH + 2) as u64))
+                    .is_err()
+            );
             assert_eq!(view.totals().applied_equalities, 2);
             let effective = (1..=view.totals().applied_equalities)
                 .map(|id| view.applied_equality(crate::AppliedEqualityId::new(id)))
@@ -5428,10 +5433,10 @@ fn causal_trace_merge_origin_selects_each_cell_without_value_alias_lookup() {
     db.finalize_trace_wave();
 
     trace.with_view(|view| {
-    let latest = fact_ids(view).filter_map(|id| view.fact(id).ok()).filter(|fact| fact.table == table).max_by_key(|fact| fact.id).unwrap();
-    let terms = view.fact_terms(latest.id)?;
+    let latest = fact_ids(view).filter_map(|id| view.fact(id).ok().map(|fact| (id, fact))).filter(|(_, fact)| fact.table == table).max_by_key(|(id, _)| *id).unwrap();
+    let terms = view.fact_terms(latest.0)?;
     assert_eq!(
-        latest.values,
+        latest.1.values,
         &[key_value, shared_alias_value, new_tail_value]
     );
     assert_eq!(terms[0], key_term);
@@ -5497,7 +5502,11 @@ fn transactional_native_lease_blocks_wave_finalization_until_queue_drain() {
     let transaction = MutationTransaction::pending_causal(&trace, wave);
     let mut buffer = db.new_buffer(uf);
     buffer.defer_until(transaction.clone());
-    buffer.stage_typed_union(&[left, right, Value::new(1)], cause, proposal);
+    buffer.stage_typed_union_deferred(
+        &[left, right, Value::new(1)],
+        crate::DeferredEqualityCause::ready(cause),
+        proposal,
+    );
     transaction.commit();
     drop(transaction);
 

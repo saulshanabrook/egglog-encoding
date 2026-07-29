@@ -12,6 +12,17 @@ fn serial_trace_pool() -> &'static rayon::ThreadPool {
     })
 }
 
+fn replay_slice(egraph: EGraph, slice: &Slice) -> EGraph {
+    let replay = crate::slicing::replay::build_replay_program(&egraph, slice).unwrap();
+    let commands = replay.to_commands().unwrap();
+    drop(egraph);
+    let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
+    serial_trace_pool()
+        .install(|| proof.run_program(commands))
+        .unwrap();
+    proof
+}
+
 #[test]
 fn repeated_variable_slice_keeps_exact_equality_support() {
     let mut egraph = EGraph::default();
@@ -38,14 +49,16 @@ fn repeated_variable_slice_keeps_exact_equality_support() {
         )
         .unwrap();
 
-    let slice = slice_check(&egraph, 0).unwrap();
-    assert_eq!(slice.firings.len(), 2);
-    assert_eq!(slice.equalities.len(), 1);
+    let slice = slice_all_checks(&egraph).unwrap();
+    assert_eq!(slice.firing_bindings.len(), 2);
     assert_eq!(slice.sources.len(), 2);
-    assert!(slice.firings.iter().all(|firing| {
-        let record = slice.firing_bindings.get(firing).unwrap();
-        record.len() <= 1
-    }));
+    assert!(
+        slice
+            .firing_bindings
+            .values()
+            .all(|bindings| bindings.len() <= 1)
+    );
+    replay_slice(egraph, &slice);
 }
 
 #[test]
@@ -86,15 +99,13 @@ fn interfering_same_wave_delete_retains_its_independent_firing() {
             Ok(())
         })
         .unwrap();
-    let slice = slice_check(&egraph, 0).unwrap();
+    let slice = slice_all_checks(&egraph).unwrap();
     assert_eq!(
-        slice.firings.len(),
+        slice.firing_bindings.len(),
         4,
         "the independent delete must be rooted"
     );
     assert_eq!(slice.checks.len(), 1);
-    assert!(slice.equalities.is_empty());
-    assert!(slice.equality_records.is_empty());
     assert_eq!(slice.replay_removals.len(), 1);
 }
 
@@ -123,7 +134,7 @@ fn all_checks_union_disjoint_cones() {
 
     let slice = slice_all_checks(&egraph).unwrap();
     assert_eq!(slice.checks, HashSet::from_iter([0, 1]));
-    assert_eq!(slice.firings.len(), 2);
+    assert_eq!(slice.firing_bindings.len(), 2);
 }
 
 #[test]
@@ -252,7 +263,7 @@ fn selected_child_delete_prevents_spurious_parent_delete_interference() {
         "the required Leaf delete prevents old/new Leaf outputs from congruence-colliding, so Parent deletion is noninterfering"
     );
     assert_eq!(
-        slice.firings.len(),
+        slice.firing_bindings.len(),
         2,
         "only recreate and the required Leaf delete should replay"
     );
@@ -293,11 +304,11 @@ fn same_syntax_constructor_recreation_retains_raw_reconciliation() {
 
     let slice = slice_all_checks(&egraph).unwrap();
     assert_eq!(slice.replay_removals.len(), 1);
-    assert_eq!(slice.firings.len(), 3, "recreate, reconcile, and delete");
-    assert_eq!(slice.equalities.len(), 1);
-    let equality = slice.equality_records.values().next().unwrap();
-    assert_eq!(equality.left.term, equality.right.term);
-    assert_ne!(equality.left.raw, equality.right.raw);
+    assert_eq!(
+        slice.firing_bindings.len(),
+        3,
+        "recreate, reconcile, and delete"
+    );
     let replay = crate::slicing::replay::build_replay_program(&egraph, &slice).unwrap();
     let commands = replay.to_commands().unwrap();
     drop(egraph);
@@ -345,8 +356,7 @@ fn parent_alias_waits_for_child_key_bridge_without_borrowing_parent_anchor() {
         )
         .unwrap();
 
-    let slice = slice_check(&egraph, 0).unwrap();
-    assert_eq!(slice.equalities.len(), 1, "retain the child key bridge");
+    let slice = slice_all_checks(&egraph).unwrap();
     let consume_bindings = slice
         .firing_bindings
         .values()
@@ -444,11 +454,10 @@ fn post_deletion_equality_cannot_select_stale_child_producer() {
         )
         .unwrap();
 
-    let slice = slice_check(&egraph, 0).unwrap();
+    let slice = slice_all_checks(&egraph).unwrap();
     // The late old-A=B equality is irrelevant. In particular, it must not
     // make the dead old A occurrence win over the recreated A occurrence
     // that addressed H's key while H was still live.
-    assert_eq!(slice.equality_records.len(), 1);
     assert_eq!(slice.replay_removals.len(), 2);
     let h_plans = slice
         .firing_bindings
@@ -529,7 +538,7 @@ fn duplicate_syntax_in_one_binding_keeps_distinct_occurrence_windows() {
         )
         .unwrap();
 
-    let slice = slice_check(&egraph, 0).unwrap();
+    let slice = slice_all_checks(&egraph).unwrap();
     let consume_bindings = slice
         .firing_bindings
         .values()
@@ -665,20 +674,10 @@ fn merge_old_noop_is_retained_only_with_an_effective_sibling() {
         )
         .unwrap();
     let slice = slice_all_checks(&effective_sibling).unwrap();
-    assert_eq!(slice.firings.len(), 1);
-    let firing = *slice.firings.iter().next().unwrap();
-    let bridge = effective_sibling
-        .backend
-        .as_any()
-        .downcast_ref::<egglog_bridge::EGraph>()
-        .unwrap();
-    bridge
-        .with_trace_view(|view| {
-            let reads = view.firing(firing)?.merge_reads;
-            assert_eq!(reads.len(), 1);
-            assert!(slice.facts.contains(&reads[0]));
-            Ok(())
-        })
+    assert_eq!(slice.firing_bindings.len(), 1);
+    let mut replay = replay_slice(effective_sibling, &slice);
+    replay
+        .parse_and_run_program(None, "(check (= value (f 1)) (= value 5))")
         .unwrap();
 
     let mut noop_only = EGraph::default();
@@ -700,7 +699,7 @@ fn merge_old_noop_is_retained_only_with_an_effective_sibling() {
         )
         .unwrap();
     let slice = slice_all_checks(&noop_only).unwrap();
-    assert!(slice.firings.is_empty());
+    assert!(slice.firing_bindings.is_empty());
     // The lower-level recorder contract (including zero durable promotion)
     // is covered by `unchanged_merge_without_effective_sibling_promotes_nothing`.
     // Here the frontend contract is that an unrelated check never selects
@@ -760,8 +759,7 @@ fn same_term_child_occurrences_keep_their_native_bridge() {
         )
         .unwrap();
 
-    let slice = slice_check(&egraph, 0).unwrap();
-    assert_eq!(slice.equalities.len(), 1, "retain the A occurrence bridge");
+    let slice = slice_all_checks(&egraph).unwrap();
     let replay = crate::slicing::replay::build_replay_program(&egraph, &slice).unwrap();
     let commands = replay.to_commands().unwrap();
     drop(egraph);
@@ -792,9 +790,9 @@ fn relational_check_shared_variable_equality_is_retained() {
         )
         .unwrap();
 
-    let slice = slice_check(&egraph, 0).unwrap();
-    assert_eq!(slice.firings.len(), 1);
-    assert_eq!(slice.equalities.len(), 1);
+    let slice = slice_all_checks(&egraph).unwrap();
+    assert_eq!(slice.firing_bindings.len(), 1);
+    replay_slice(egraph, &slice);
 }
 
 #[test]
@@ -817,13 +815,18 @@ fn selected_firing_exposes_whole_head_without_causal_closing_sibling() {
         .unwrap();
 
     let slice = slice_all_checks(&egraph).unwrap();
-    assert_eq!(slice.firings.len(), 1);
-    assert_eq!(slice.facts.len(), 2, "only the check cone is causal");
-    assert_eq!(
-        slice.replay_facts.len(),
-        3,
-        "the sibling head effect is visible"
-    );
+    assert_eq!(slice.firing_bindings.len(), 1);
+    let replay = crate::slicing::replay::build_replay_program(&egraph, &slice).unwrap();
+    let commands = replay.to_commands().unwrap();
+    drop(egraph);
+
+    let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
+    serial_trace_pool()
+        .install(|| proof.run_program(commands))
+        .unwrap();
+    proof
+        .parse_and_run_program(None, "(check (Sibling ()))")
+        .unwrap();
 }
 
 #[test]
@@ -854,7 +857,7 @@ fn no_merge_rewrite_retains_the_interfering_delete() {
         .unwrap();
 
     let slice = slice_all_checks(&egraph).unwrap();
-    assert_eq!(slice.firings.len(), 4);
+    assert_eq!(slice.firing_bindings.len(), 4);
     assert_eq!(slice.replay_removals.len(), 1);
 }
 
@@ -885,9 +888,9 @@ fn direct_check_retains_nested_child_equality_used_by_a_head_term() {
         )
         .unwrap();
 
-    let slice = slice_check(&egraph, 0).unwrap();
+    let slice = slice_all_checks(&egraph).unwrap();
     assert_eq!(
-        slice.firings.len(),
+        slice.firing_bindings.len(),
         2,
         "the parent union and nested A/Alias equality are both required"
     );
@@ -924,8 +927,8 @@ fn eqsort_result_of_replay_safe_primitive_is_structurally_available() {
         )
         .unwrap();
 
-    let slice = slice_check(&egraph, 0).unwrap();
-    assert_eq!(slice.firings.len(), 1);
+    let slice = slice_all_checks(&egraph).unwrap();
+    assert_eq!(slice.firing_bindings.len(), 1);
     let replay = crate::slicing::replay::build_replay_program(&egraph, &slice).unwrap();
     let commands = replay.to_commands().unwrap();
     drop(egraph);
@@ -958,8 +961,8 @@ fn repeated_pure_result_guards_share_one_naming_recipe() {
         )
         .unwrap();
 
-    let slice = slice_check(&egraph, 0).unwrap();
-    assert_eq!(slice.firings.len(), 1);
+    let slice = slice_all_checks(&egraph).unwrap();
+    assert_eq!(slice.firing_bindings.len(), 1);
     let replay = crate::slicing::replay::build_replay_program(&egraph, &slice).unwrap();
     let commands = replay.to_commands().unwrap();
     drop(egraph);
@@ -1003,9 +1006,8 @@ fn eqsort_projection_retains_the_child_equality_it_observed() {
         })
         .unwrap();
 
-    let slice = slice_check(&egraph, 0).unwrap();
-    assert_eq!(slice.firings.len(), 3);
-    assert_eq!(slice.equalities.len(), 1);
+    let slice = slice_all_checks(&egraph).unwrap();
+    assert_eq!(slice.firing_bindings.len(), 3);
     let replay = crate::slicing::replay::build_replay_program(&egraph, &slice).unwrap();
     let commands = replay.to_commands().unwrap();
     drop(egraph);

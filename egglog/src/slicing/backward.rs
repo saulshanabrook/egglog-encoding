@@ -37,41 +37,36 @@ use crate::util::{HashMap, HashSet};
 
 use crate::EGraph;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 /// The closed selection consumed by replay lowering.
 ///
-/// `facts`, `firings`, `equalities`, `rekeys`, `causes`, and `sources` record
-/// causal support. The replay-effect fields record what the fresh graph must
-/// observe after whole-owner and interference closure; they can therefore be
-/// strict supersets of the facts and equalities that directly justify a check.
+/// This contains only the reconstruction set read by replay lowering. The
+/// visited sets and projected equality records used while closing the trace
+/// remain private to [`SelectionState`].
 pub(crate) struct Slice {
     /// Successful check criteria reproduced by the slice.
     pub(crate) checks: HashSet<u32>,
-    /// Facts used as causal support.
-    pub(crate) facts: HashSet<FactId>,
-    /// Grounded rule firings used as causal support or retained for an effect.
-    pub(crate) firings: HashSet<FiringId>,
-    /// Applied equalities used as causal support.
-    pub(crate) equalities: HashSet<AppliedEqualityId>,
-    /// Facts made visible by selected sources and firings.
-    pub(crate) replay_facts: HashSet<FactId>,
     /// Removal effects needed by an owner or to prevent stale-row interference.
     pub(crate) replay_removals: HashSet<usize>,
-    /// Historical rekeys required by retained support explanations.
-    pub(crate) rekeys: HashSet<HistoryPosition>,
-    /// Recorded cause nodes traversed by backward closure.
-    pub(crate) causes: HashSet<CauseRef>,
     /// Source commands and input rows needed by the selection.
     pub(crate) sources: HashSet<SourceRef>,
     /// Structural terms paired with checked-alias schedules for each selected firing.
     pub(crate) firing_bindings: HashMap<FiringId, Box<[FiringBindingPlan]>>,
-    /// Owned projections of equality effects, indexed by recorded event id.
-    pub(crate) equality_records: HashMap<AppliedEqualityId, ProjectedAppliedEquality>,
-    /// Equality effects whose endpoint denotations have already been closed.
-    denotation_equalities: HashSet<AppliedEqualityId>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Default)]
+/// Mutable closure state discarded once replay's reconstruction set is closed.
+struct SelectionState {
+    slice: Slice,
+    facts: HashSet<FactId>,
+    equalities: HashSet<AppliedEqualityId>,
+    replay_facts: HashSet<FactId>,
+    rekeys: HashSet<HistoryPosition>,
+    causes: HashSet<CauseRef>,
+    equality_records: HashMap<AppliedEqualityId, ProjectedAppliedEquality>,
+}
+
+#[derive(Clone, Debug)]
 /// One grounded binding term and its child-first checked-alias schedule.
 pub(crate) struct FiringBindingPlan {
     /// Graph-neutral structural term bound by the firing.
@@ -105,7 +100,7 @@ struct OwnerEffects {
 
 type OwnerIndex = HashMap<ReplayOwner, OwnerEffects>;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug)]
 enum KeyCell {
     Base(Value),
     Equality(EqualityEndpoint),
@@ -116,7 +111,7 @@ enum KeyCell {
 ///
 /// Interference analysis must not borrow equalities from the unselected
 /// execution, so this disjoint-set contains exactly the projected equality
-/// effects in `Slice::equality_records`.
+/// effects in `SelectionState::equality_records`.
 struct SelectedEqualityDsu {
     parent: HashMap<EqualityEndpoint, EqualityEndpoint>,
 }
@@ -153,7 +148,7 @@ impl SelectedEqualityDsu {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 /// Failures detected while selecting an internal [`Slice`].
 ///
 /// The public facade does not expose this implementation type; it maps these
@@ -318,13 +313,13 @@ fn build_owner_index(view: &TraceView<'_>) -> Result<OwnerIndex, TraceViewError>
 /// Select an equality effect and enqueue closure of its endpoint denotations.
 fn mark_replay_equality(
     view: &mut TraceView<'_>,
-    slice: &mut Slice,
+    selection: &mut SelectionState,
     work: &mut VecDeque<Work>,
     id: AppliedEqualityId,
 ) -> Result<(), TraceViewError> {
-    if !slice.equality_records.contains_key(&id) {
+    if !selection.equality_records.contains_key(&id) {
         let event = view.project_applied_equality(id)?;
-        slice.equality_records.insert(id, event);
+        selection.equality_records.insert(id, event);
         work.push_back(Work::EqualityDenotation(id));
     }
     Ok(())
@@ -338,27 +333,28 @@ fn mark_replay_equality(
 fn mark_owner_visible(
     view: &mut TraceView<'_>,
     index: &OwnerIndex,
-    slice: &mut Slice,
+    selection: &mut SelectionState,
     work: &mut VecDeque<Work>,
     owner: &ReplayOwner,
 ) -> Result<(), TraceViewError> {
     let Some(effects) = index.get(owner) else {
         return Ok(());
     };
-    slice.replay_facts.extend(effects.facts.iter().copied());
+    selection.replay_facts.extend(effects.facts.iter().copied());
     for id in effects.equalities.iter().copied() {
-        mark_replay_equality(view, slice, work, id)?;
+        mark_replay_equality(view, selection, work, id)?;
     }
-    slice
+    selection
+        .slice
         .replay_removals
         .extend(effects.removals.iter().copied());
     Ok(())
 }
 
 /// Build the equality relation that the generated replay will actually see.
-fn selected_equality_dsu(slice: &Slice) -> SelectedEqualityDsu {
+fn selected_equality_dsu(selection: &SelectionState) -> SelectedEqualityDsu {
     let mut dsu = SelectedEqualityDsu::default();
-    for event in slice.equality_records.values() {
+    for event in selection.equality_records.values() {
         dsu.union(event.left, event.right);
     }
     dsu
@@ -367,7 +363,7 @@ fn selected_equality_dsu(slice: &Slice) -> SelectedEqualityDsu {
 /// Test whether every equality landmark is derivable from selected effects.
 fn equality_landmark_is_replay_visible(
     view: &mut TraceView<'_>,
-    slice: &Slice,
+    selection: &SelectionState,
     position: HistoryPosition,
     equalities: &[TypedCellEquality],
 ) -> Result<bool, TraceViewError> {
@@ -386,7 +382,7 @@ fn equality_landmark_is_replay_visible(
         if support
             .applied
             .iter()
-            .any(|edge| !slice.equality_records.contains_key(edge))
+            .any(|edge| !selection.equality_records.contains_key(edge))
         {
             return Ok(false);
         }
@@ -401,7 +397,7 @@ fn equality_landmark_is_replay_visible(
 /// equality relation.
 fn maintenance_cause_is_replay_visible(
     view: &mut TraceView<'_>,
-    slice: &Slice,
+    selection: &SelectionState,
     cause: CauseRef,
     current_event: AppliedEqualityId,
     active: &mut HashSet<CauseRef>,
@@ -412,21 +408,21 @@ fn maintenance_cause_is_replay_visible(
         )));
     }
     let visible = match cause {
-        CauseRef::Rule(rule) => slice.firings.contains(&rule),
+        CauseRef::Rule(rule) => selection.slice.firing_bindings.contains_key(&rule),
         CauseRef::Cause(id) => match view.cause(id)? {
-            RawCause::Source(source) => slice.sources.contains(source),
+            RawCause::Source(source) => selection.slice.sources.contains(source),
             RawCause::Merge {
                 incoming,
                 prior_fact,
             } => {
                 let incoming = maintenance_cause_is_replay_visible(
                     view,
-                    slice,
+                    selection,
                     incoming,
                     current_event,
                     active,
                 )?;
-                let prior = slice.replay_facts.contains(&prior_fact);
+                let prior = selection.replay_facts.contains(&prior_fact);
                 incoming && prior
             }
             RawCause::Rebuild {
@@ -446,8 +442,8 @@ fn maintenance_cause_is_replay_visible(
                         "maintenance equality {current_event:?} depends on a non-earlier history landmark {position:?}"
                     )));
                 }
-                slice.replay_facts.contains(&prior_fact)
-                    && equality_landmark_is_replay_visible(view, slice, position, equalities)?
+                selection.replay_facts.contains(&prior_fact)
+                    && equality_landmark_is_replay_visible(view, selection, position, equalities)?
             }
             RawCause::ContainerCanonicalize {
                 position,
@@ -459,7 +455,7 @@ fn maintenance_cause_is_replay_visible(
                         "maintenance equality {current_event:?} depends on a non-earlier history landmark {position:?}"
                     )));
                 }
-                equality_landmark_is_replay_visible(view, slice, position, equalities)?
+                equality_landmark_is_replay_visible(view, selection, position, equalities)?
             }
         },
     };
@@ -476,7 +472,7 @@ fn maintenance_cause_is_replay_visible(
 /// equality log.
 fn select_replay_maintenance_equalities(
     view: &mut TraceView<'_>,
-    slice: &mut Slice,
+    selection: &mut SelectionState,
     work: &mut VecDeque<Work>,
 ) -> Result<bool, TraceViewError> {
     if view.totals().removals == 0 {
@@ -492,7 +488,7 @@ fn select_replay_maintenance_equalities(
     // necessary; a fixpoint would turn a dense event log into quadratic work.
     for raw in 1..=view.totals().applied_equalities {
         let id = AppliedEqualityId::new(raw);
-        if slice.equality_records.contains_key(&id) {
+        if selection.equality_records.contains_key(&id) {
             continue;
         }
         let event = view.applied_equality(id)?;
@@ -503,10 +499,10 @@ fn select_replay_maintenance_equalities(
             }
         };
         debug_assert!(active.is_empty());
-        if !maintenance_cause_is_replay_visible(view, slice, cause, id, &mut active)? {
+        if !maintenance_cause_is_replay_visible(view, selection, cause, id, &mut active)? {
             continue;
         }
-        mark_replay_equality(view, slice, work, id)?;
+        mark_replay_equality(view, selection, work, id)?;
         selected_any = true;
     }
     Ok(selected_any)
@@ -581,18 +577,18 @@ fn keys_equivalent(dsu: &mut SelectedEqualityDsu, left: &[KeyCell], right: &[Key
 /// Presence relations are monotone for this purpose and need no such deletion.
 fn select_interfering_removals(
     view: &mut TraceView<'_>,
-    slice: &mut Slice,
+    selection: &mut SelectionState,
     work: &mut VecDeque<Work>,
 ) -> Result<bool, TraceViewError> {
-    let mut dsu = selected_equality_dsu(slice);
-    let replay_facts = slice.replay_facts.iter().copied().collect::<Vec<_>>();
+    let mut dsu = selected_equality_dsu(selection);
+    let replay_facts = selection.replay_facts.iter().copied().collect::<Vec<_>>();
     let mut selected_any = false;
     for index in 0..view.totals().removals as usize {
-        if slice.replay_removals.contains(&index) {
+        if selection.slice.replay_removals.contains(&index) {
             continue;
         }
         let removal = view.removal(index)?.clone();
-        if !slice.replay_facts.contains(&removal.removed_fact) {
+        if !selection.replay_facts.contains(&removal.removed_fact) {
             continue;
         }
         let removed_record = view.fact(removal.removed_fact)?;
@@ -615,7 +611,7 @@ fn select_interfering_removals(
             }
         }
         if interferes {
-            slice.replay_removals.insert(index);
+            selection.slice.replay_removals.insert(index);
             work.push_back(Work::Firing(removal.cause));
             selected_any = true;
         }
@@ -630,11 +626,11 @@ fn select_interfering_removals(
 /// endpoint spelling available at the check.
 fn seed_check_root(
     view: &mut TraceView<'_>,
-    slice: &mut Slice,
+    selection: &mut SelectionState,
     work: &mut VecDeque<Work>,
     root: &Criterion,
 ) -> Result<(), TraceViewError> {
-    slice.checks.insert(root.check);
+    selection.slice.checks.insert(root.check);
     work.extend(root.premises.iter().copied().map(Work::Fact));
 
     for equality in root.equalities.iter().copied() {
@@ -684,31 +680,31 @@ fn seed_check_root(
 /// until both passes are stable, then validates every saved exact explanation.
 fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice, TraceViewError> {
     let owner_index = build_owner_index(view)?;
-    let mut slice = Slice::default();
+    let mut selection = SelectionState::default();
     let mut work = VecDeque::new();
     for root in &roots {
-        seed_check_root(view, &mut slice, &mut work, root)?;
+        seed_check_root(view, &mut selection, &mut work, root)?;
     }
 
     loop {
         while let Some(item) = work.pop_front() {
             match item {
                 Work::Fact(id) => {
-                    if !slice.facts.insert(id) {
+                    if !selection.facts.insert(id) {
                         continue;
                     }
-                    slice.replay_facts.insert(id);
+                    selection.replay_facts.insert(id);
                     let cause = view.fact(id)?.cause;
                     work.push_back(Work::Cause(cause));
                 }
                 Work::Firing(id) => {
-                    if !slice.firings.insert(id) {
+                    if selection.slice.firing_bindings.contains_key(&id) {
                         continue;
                     }
                     mark_owner_visible(
                         view,
                         &owner_index,
-                        &mut slice,
+                        &mut selection,
                         &mut work,
                         &ReplayOwner::Firing(id),
                     )?;
@@ -729,7 +725,8 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                             aliases: availability.aliases,
                         });
                     }
-                    slice
+                    selection
+                        .slice
                         .firing_bindings
                         .insert(id, bindings.into_boxed_slice());
                     for (left, right) in view.rule_equality_layout(rule)?.iter().copied() {
@@ -739,7 +736,7 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                     }
                 }
                 Work::Cause(cause) => {
-                    if !slice.causes.insert(cause) {
+                    if !selection.causes.insert(cause) {
                         continue;
                     }
                     let CauseRef::Cause(id) = cause else {
@@ -752,11 +749,11 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                     match view.cause(id)? {
                         RawCause::Source(source) => {
                             let source = source.clone();
-                            slice.sources.insert(source.clone());
+                            selection.slice.sources.insert(source.clone());
                             mark_owner_visible(
                                 view,
                                 &owner_index,
-                                &mut slice,
+                                &mut selection,
                                 &mut work,
                                 &ReplayOwner::Source(source),
                             )?;
@@ -821,11 +818,11 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                     }
                 }
                 Work::Equality(id) => {
-                    if !slice.equalities.insert(id) {
+                    if !selection.equalities.insert(id) {
                         continue;
                     }
-                    mark_replay_equality(view, &mut slice, &mut work, id)?;
-                    let event = slice
+                    mark_replay_equality(view, &mut selection, &mut work, id)?;
+                    let event = selection
                         .equality_records
                         .get(&id)
                         .expect("selected equality lost its projected record")
@@ -847,14 +844,11 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                     }));
                 }
                 Work::EqualityDenotation(id) => {
-                    if !slice.denotation_equalities.insert(id) {
-                        continue;
-                    }
                     let support = view.explain_equality_denotation_before(id)?;
                     enqueue_support(&mut work, support);
                 }
                 Work::Rekey(position) => {
-                    if !slice.rekeys.insert(position) {
+                    if !selection.rekeys.insert(position) {
                         continue;
                     }
                     let rekey = view.rekey_at(position)?;
@@ -887,42 +881,19 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                 }
             }
         }
-        select_replay_maintenance_equalities(view, &mut slice, &mut work)?;
-        let selected_removal = select_interfering_removals(view, &mut slice, &mut work)?;
+        select_replay_maintenance_equalities(view, &mut selection, &mut work)?;
+        let selected_removal = select_interfering_removals(view, &mut selection, &mut work)?;
         if work.is_empty() && !selected_removal {
             break;
         }
     }
-    Ok(slice)
-}
-
-#[cfg(test)]
-fn slice_view(view: &mut TraceView<'_>, check: u32) -> Result<Slice, TraceViewError> {
-    slice_roots(view, vec![view.check_root(check)?.clone()])
+    Ok(selection.slice)
 }
 
 /// Select the union of the support cones for all recorded successful checks.
 fn slice_all_view(view: &mut TraceView<'_>) -> Result<Slice, TraceViewError> {
     let roots = view.check_roots().into_iter().cloned().collect();
     slice_roots(view, roots)
-}
-
-#[cfg(test)]
-pub(crate) fn slice_check(egraph: &EGraph, check: u32) -> Result<Slice, SliceError> {
-    egraph
-        .capture_catalog
-        .as_ref()
-        .ok_or(SliceError::UnsupportedBackend)?
-        .ensure_healthy()
-        .map_err(|error| SliceError::Poisoned(error.to_string()))?;
-    let bridge = egraph
-        .backend
-        .as_any()
-        .downcast_ref::<egglog_bridge::EGraph>()
-        .ok_or(SliceError::UnsupportedBackend)?;
-    bridge
-        .with_trace_view(|view| slice_view(view, check))
-        .map_err(SliceError::Trace)
 }
 
 /// Select all successful checks from a healthy concrete-backend capture.

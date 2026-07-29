@@ -60,8 +60,6 @@ impl<'a> TermProjector<'a> {
         if let Some(term) = self.fact_memo.get(&(fact_id, column)).copied() {
             return Ok(term);
         }
-        #[cfg(test)]
-        TEST_TERM_PROJECTOR_FACT_EXPANSIONS.set(TEST_TERM_PROJECTOR_FACT_EXPANSIONS.get() + 1);
         if !self.visiting_facts.insert((fact_id, column)) {
             return Err(format!(
                 "cyclic causal term origin at {fact_id:?} column {column}"
@@ -640,16 +638,14 @@ impl<'a> TraceView<'a> {
 
     /// Return point-in-time cardinalities of the checked trace view.
     ///
-    /// The fields count facts, firings, applied equalities, rekeys, retained
-    /// removals, and check roots.
+    /// The fields count the dense record families traversed by backward
+    /// selection. Firings, rekeys, and criteria are reached from their owning
+    /// records or dedicated indexes instead of duplicated here.
     pub fn totals(&self) -> TraceTotals {
         TraceTotals {
             facts: self.arena.published_facts,
-            firings: self.arena.published_firings,
             applied_equalities: self.arena.published_equalities,
-            rekeys: self.arena.rekeys.len() as u64,
             removals: self.arena.removals.len() as u64,
-            check_roots: self.arena.check_roots.len() as u64,
         }
     }
 
@@ -669,7 +665,6 @@ impl<'a> TraceView<'a> {
             .and_then(Option::as_ref)
             .ok_or(TraceViewError::UnknownFact(id))?;
         Ok(RawFactRecord {
-            id,
             table: fact.table,
             position: fact.position,
             cause: Self::public_cause(fact.cause)?,
@@ -721,7 +716,6 @@ impl<'a> TraceView<'a> {
             .get(&id)
             .map_or(&[][..], SmallVec::as_slice);
         Ok(Firing {
-            id,
             rule: firing.rule,
             wave: firing.wave,
             position: firing.position,
@@ -746,32 +740,26 @@ impl<'a> TraceView<'a> {
         Ok(match cause {
             DurableCause::Source(source) => RawCause::Source(source),
             DurableCause::Rebuild {
-                wave,
                 prior_fact,
                 position,
                 equalities,
             } => RawCause::Rebuild {
-                wave: *wave,
                 prior_fact: *prior_fact,
                 position: *position,
                 equalities: &self.arena.durable_rebuild_equalities[equalities.as_range()],
             },
             DurableCause::ContainerCanonicalize {
-                wave,
                 position,
                 equalities,
             } => RawCause::ContainerCanonicalize {
-                wave: *wave,
                 position: *position,
                 equalities: &self.arena.durable_rebuild_equalities[equalities.as_range()],
             },
             DurableCause::ContainerRefresh {
-                wave,
                 prior_fact,
                 position,
                 equalities,
             } => RawCause::ContainerRefresh {
-                wave: *wave,
                 prior_fact: *prior_fact,
                 position: *position,
                 equalities: &self.arena.durable_rebuild_equalities[equalities.as_range()],
@@ -806,8 +794,6 @@ impl<'a> TraceView<'a> {
             .and_then(Option::as_ref)
             .ok_or(TraceViewError::UnknownEquality(id))?;
         Ok(RawAppliedEquality {
-            id,
-            wave: event.proposal.wave,
             position: event.position,
             left: RawEqualityEndpoint {
                 sort: event.proposal.left.sort,
@@ -851,13 +837,8 @@ impl<'a> TraceView<'a> {
             .equality_endpoint(event.proposal.right, event.cause, event.position)
             .map_err(TraceViewError::Invalid)?;
         Ok(ProjectedAppliedEquality {
-            id,
-            wave: event.proposal.wave,
-            position: event.position,
             left,
             right,
-            native_parent: event.native_parent,
-            native_child: event.native_child,
             reason: self.arena.equality_reason(event.cause),
         })
     }
@@ -880,9 +861,6 @@ impl<'a> TraceView<'a> {
         let record = &self.arena.rekeys[index];
         Ok(RawRekeyRecord {
             fact: record.fact,
-            table: record.table,
-            wave: record.wave,
-            position: record.position,
             equality_position: record.equalities.position,
             equalities: &record.equalities.pairs,
             outcome: record.outcome,
@@ -940,16 +918,10 @@ impl<'a> TraceView<'a> {
             .get(&table)
             .map(|columns| *columns as usize)
             .ok_or(TraceViewError::UnknownTable(table))?;
-        let constructor = self
-            .replay_terms
-            .table_constructors
-            .get(&table)
-            .map(|constructor| constructor.clone());
         Ok(ReplayTableSchema {
             kind,
             key_columns,
             columns,
-            constructor,
         })
     }
 
@@ -973,7 +945,8 @@ impl<'a> TraceView<'a> {
     /// The result follows physical column order. Engine-only columns contain
     /// [`ReplayTermId::MISSING`]; typed columns are recovered lazily from the
     /// fact's static or causal origin and memoized for this view.
-    pub fn fact_terms(&mut self, id: FactId) -> Result<Box<[ReplayTermId]>, TraceViewError> {
+    #[cfg(test)]
+    pub(crate) fn fact_terms(&mut self, id: FactId) -> Result<Box<[ReplayTermId]>, TraceViewError> {
         let fact = self.fact(id)?;
         let layout = self
             .replay_terms

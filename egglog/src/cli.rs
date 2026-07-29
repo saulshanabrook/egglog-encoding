@@ -166,7 +166,6 @@ where
     }
 
     if slice_requested {
-        let capture_start = std::time::Instant::now();
         for input in &args.inputs {
             let program = std::fs::read_to_string(input).unwrap_or_else(|_| {
                 let arg = input.to_string_lossy();
@@ -184,15 +183,10 @@ where
                 std::process::exit(1);
             }
         }
-        let capture_time = capture_start.elapsed();
-
-        let slice_start = std::time::Instant::now();
         let rendered = crate::slicing::slice_all_checks(&egraph).unwrap_or_else(|error| {
             log::error!("{error}");
             std::process::exit(1);
         });
-        let slice_time = slice_start.elapsed();
-
         if let Some(path) = &args.slice_output {
             std::fs::write(path, &rendered).unwrap_or_else(|error| {
                 log::error!(
@@ -215,12 +209,11 @@ where
                 args.mode,
                 RunMode::Interactive | RunMode::ShowDesugaredEgglog
             );
-        let replay_time = if replay_requested {
+        if replay_requested {
             // The rendered program is the phase boundary: no captured runtime
             // value or trace allocation can leak into replay.
             drop(egraph);
             egraph = configure_requested_mode(replay_factory(), &args);
-            let replay_start = std::time::Instant::now();
             match run_commands(
                 &mut egraph,
                 Some("generated slice replay".into()),
@@ -231,12 +224,7 @@ where
                 Ok(None) => {}
                 _ => std::process::exit(1),
             }
-            replay_start.elapsed()
-        } else {
-            std::time::Duration::ZERO
-        };
-
-        log::info!("slice: capture={capture_time:?} slice={slice_time:?} replay={replay_time:?}",);
+        }
         if args.to_json || args.to_dot || args.to_svg {
             serialize_egraph(
                 &egraph,

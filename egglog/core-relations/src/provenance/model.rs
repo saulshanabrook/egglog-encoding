@@ -214,63 +214,11 @@ impl PackedCauseRef {
     pub(super) fn is_unattributed(self) -> bool {
         self == Self::UNATTRIBUTED
     }
-
-    #[cfg(test)]
-    pub(super) fn into_public(self) -> CauseRef {
-        match self.firing() {
-            Some(rule) => CauseRef::Rule(rule),
-            None => CauseRef::Cause(
-                self.cause_node()
-                    .expect("unattributed cause cannot be published")
-                    .public(),
-            ),
-        }
-    }
-}
-
-#[cfg(test)]
-impl From<PackedCauseRef> for CauseRef {
-    fn from(value: PackedCauseRef) -> Self {
-        value.into_public()
-    }
 }
 
 impl From<CauseDraftId> for PackedCauseRef {
     fn from(value: CauseDraftId) -> Self {
         Self::node(value)
-    }
-}
-
-impl From<FiringId> for PackedCauseRef {
-    fn from(value: FiringId) -> Self {
-        Self::rule(value)
-    }
-}
-
-impl From<CauseRef> for PackedCauseRef {
-    fn from(value: CauseRef) -> Self {
-        match value {
-            CauseRef::Rule(rule) => Self::rule(rule),
-            CauseRef::Cause(cause) => Self::node(CauseDraftId::new(cause.get() as u64)),
-        }
-    }
-}
-
-impl From<CauseDraftId> for CauseRef {
-    fn from(value: CauseDraftId) -> Self {
-        Self::Cause(value.public())
-    }
-}
-
-impl From<CauseId> for CauseRef {
-    fn from(value: CauseId) -> Self {
-        Self::Cause(value)
-    }
-}
-
-impl From<FiringId> for CauseRef {
-    fn from(value: FiringId) -> Self {
-        Self::Rule(value)
     }
 }
 
@@ -453,8 +401,6 @@ pub enum RekeyOutcome {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RekeyRecord {
     pub(crate) fact: FactId,
-    pub(crate) table: TableId,
-    pub(crate) wave: Wave,
     pub(crate) position: HistoryPosition,
     pub(crate) equalities: EqualityLandmark,
     pub(crate) outcome: RekeyOutcome,
@@ -539,8 +485,6 @@ pub enum EqualityReason {
     Congruence {
         /// Shared exact cause root; no growing prefix is copied per edge.
         cause: CauseId,
-        /// Maintenance wave in which the derived edge was applied.
-        wave: Wave,
         /// Pre-maintenance history landmark from which the edge was derived.
         position: HistoryPosition,
     },
@@ -633,20 +577,14 @@ pub(crate) struct EqualityLandmark {
 }
 
 /// Point-in-time counts of externally addressable trace records.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub struct TraceTotals {
     /// Published immutable fact records.
     pub facts: u64,
-    /// Published effective firing records.
-    pub firings: u64,
     /// Published effective native equality edges.
     pub applied_equalities: u64,
-    /// Retained logical-row relocation records.
-    pub rekeys: u64,
     /// Retained keyed-row tombstones.
     pub removals: u64,
-    /// Retained first-success criteria.
-    pub check_roots: u64,
 }
 
 /// Replay-relevant interpretation of one physical native table.
@@ -658,8 +596,6 @@ pub struct ReplayTableSchema {
     pub key_columns: usize,
     /// Logical sort per physical column, or `None` for engine-only columns.
     pub columns: Arc<[Option<ReplaySortId>]>,
-    /// Structural constructor metadata when a row denotes a replay call.
-    pub constructor: Option<ReplayConstructorSpec>,
 }
 
 /// One immutable fact occurrence and physical column within its row.
@@ -766,8 +702,6 @@ pub enum FiringEqualitySource {
 /// Borrowed immutable row record exposed by a publication-complete [`TraceView`].
 #[derive(Clone, Copy, Debug)]
 pub struct RawFactRecord<'a> {
-    /// Stable identity of this exact logical-row occurrence.
-    pub id: FactId,
     /// Native table in which the occurrence was created.
     pub table: TableId,
     /// Cross-stream creation position used by liveness and replay scheduling.
@@ -781,8 +715,6 @@ pub struct RawFactRecord<'a> {
 /// Borrowed record for one effective grounded rule match.
 #[derive(Clone, Copy, Debug)]
 pub struct Firing<'a> {
-    /// Stable identity shared by every effect of this match lane.
-    pub id: FiringId,
     /// Frontend identity of the rule that matched.
     pub rule: u32,
     /// Execution wave in which the match became effective.
@@ -806,8 +738,6 @@ pub enum RawCause<'a> {
     ),
     /// Ordinary row rebuild changed typed cells of an existing fact.
     Rebuild {
-        /// Rebuild wave in which the transition was computed.
-        wave: Wave,
         /// Fact whose pre-rebuild row supplies the maintenance dependency.
         prior_fact: FactId,
         /// Pre-rebuild history landmark for equality and occurrence support.
@@ -817,8 +747,6 @@ pub enum RawCause<'a> {
     },
     /// Native container interning equated structural versions without a prior row fact.
     ContainerCanonicalize {
-        /// Container-maintenance wave in which canonicalization occurred.
-        wave: Wave,
         /// Pre-canonicalization history landmark for equality and occurrence support.
         position: HistoryPosition,
         /// Positional child equalities that justify the native container alias.
@@ -826,8 +754,6 @@ pub enum RawCause<'a> {
     },
     /// Ordered-container mutation refreshed a structurally versioned prior fact.
     ContainerRefresh {
-        /// Container-maintenance wave in which the refresh occurred.
-        wave: Wave,
         /// Fact whose earlier container version must already be replay-visible.
         prior_fact: FactId,
         /// Pre-refresh history landmark for equality and occurrence support.
@@ -863,10 +789,6 @@ pub struct RawEqualityEndpoint {
 /// canonicalization, so neither pair can be reconstructed from the other.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RawAppliedEquality {
-    /// Dense identity and prefix position of this effective edge.
-    pub id: AppliedEqualityId,
-    /// Execution or maintenance wave in which the union was applied.
-    pub wave: Wave,
     /// Cross-stream position of the applied-union event.
     pub position: HistoryPosition,
     /// Raw typed left operand of the union proposal.
@@ -888,20 +810,10 @@ pub struct RawAppliedEquality {
 /// edge actually applied by union-find.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProjectedAppliedEquality {
-    /// Dense identity and prefix position of this effective edge.
-    pub id: AppliedEqualityId,
-    /// Execution or maintenance wave in which the union was applied.
-    pub wave: Wave,
-    /// Cross-stream position of the applied-union event.
-    pub position: HistoryPosition,
     /// Typed structural spelling of the proposal's left occurrence.
     pub left: EqualityEndpoint,
     /// Typed structural spelling of the proposal's right occurrence.
     pub right: EqualityEndpoint,
-    /// Native representative that remained the union-find parent.
-    pub native_parent: Value,
-    /// Native representative attached beneath `native_parent` by this edge.
-    pub native_child: Value,
     /// Exact causal classification of the applied edge.
     pub reason: EqualityReason,
 }
@@ -911,12 +823,6 @@ pub struct ProjectedAppliedEquality {
 pub struct RawRekeyRecord<'a> {
     /// Immutable fact occurrence whose raw row moved or ended.
     pub fact: FactId,
-    /// Native keyed table whose row was relocated.
-    pub table: TableId,
-    /// Rebuild wave that computed the new key.
-    pub wave: Wave,
-    /// Cross-stream event position of the committed relocation.
-    pub position: HistoryPosition,
     /// Pre-rebuild history landmark, which can precede the rekey event position.
     pub equality_position: HistoryPosition,
     /// Typed cell transitions from the fact's prior row to its rebuilt row.

@@ -4,8 +4,6 @@
 //! in egglog is that high level concepts like "timestamp" and "merge function"
 //! are abstracted away from the core functionality of the table.
 
-#[cfg(test)]
-use std::cell::Cell;
 use std::{
     any::Any,
     cmp,
@@ -55,23 +53,6 @@ mod tests;
 // hashcodes because it uses both the high and low bits of a 64-bit code.
 
 type HashCode = u64;
-
-#[cfg(test)]
-thread_local! {
-    static TEST_FACT_ID_LOOKUPS: Cell<usize> = const { Cell::new(0) };
-    static TEST_WITNESS_ROW_READS: Cell<usize> = const { Cell::new(0) };
-}
-
-#[cfg(test)]
-pub(crate) fn reset_causal_lookup_counters() {
-    TEST_FACT_ID_LOOKUPS.set(0);
-    TEST_WITNESS_ROW_READS.set(0);
-}
-
-#[cfg(test)]
-pub(crate) fn causal_lookup_counters() -> (usize, usize) {
-    (TEST_FACT_ID_LOOKUPS.get(), TEST_WITNESS_ROW_READS.get())
-}
 
 /// A pointer to a row in the table.
 #[derive(Clone, Debug)]
@@ -1058,14 +1039,10 @@ impl Table for SortedWritesTable {
     }
 
     fn fact_id(&self, row: RowId) -> Option<FactId> {
-        #[cfg(test)]
-        TEST_FACT_ID_LOOKUPS.set(TEST_FACT_ID_LOOKUPS.get() + 1);
         self.data.fact_id(row)
     }
 
     fn row_at(&self, row: RowId) -> Option<Row> {
-        #[cfg(test)]
-        TEST_WITNESS_ROW_READS.set(TEST_WITNESS_ROW_READS.get() + 1);
         let values = self.data.get_row(row)?;
         let mut vals = with_pool_set(|ps| ps.get::<Vec<Value>>());
         vals.extend_from_slice(values);

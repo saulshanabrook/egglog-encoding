@@ -1628,30 +1628,6 @@ impl EGraph {
             .map_err(|error| Error::BackendError(error.to_string()))
     }
 
-    #[cfg(test)]
-    fn replay_term_counters(&self) -> Result<core_relations::TermInternerCounters, Error> {
-        self.backend
-            .as_any()
-            .downcast_ref::<egglog_bridge::EGraph>()
-            .ok_or_else(|| Error::BackendError("test backend has no native trace capture".into()))?
-            .replay_term_counters()
-            .map_err(|error| Error::BackendError(error.to_string()))
-    }
-
-    #[cfg(test)]
-    fn replay_term(&self, id: ReplayTermId) -> Result<Option<ReplayTerm>, Error> {
-        self.capture_catalog
-            .as_ref()
-            .ok_or_else(|| Error::BackendError("trace capture is not enabled".into()))?
-            .ensure_healthy()?;
-        self.backend
-            .as_any()
-            .downcast_ref::<egglog_bridge::EGraph>()
-            .ok_or_else(|| Error::BackendError("test backend has no native trace capture".into()))?
-            .replay_term(id)
-            .map_err(|error| Error::BackendError(error.to_string()))
-    }
-
     fn begin_trace_wave(&mut self) -> Result<(), Error> {
         let Some(catalog) = self.capture_catalog.as_mut() else {
             return Ok(());
@@ -2510,13 +2486,13 @@ impl EGraph {
             });
         }
 
-        let names = configs
-            .iter()
-            .enumerate()
-            .map(|(index, config)| format!("{index}:{}", config.rule))
-            .collect::<Vec<_>>()
-            .join(", ");
         let report = bridge.run_grounded_wave(&firings).map_err(|error| {
+            let names = configs
+                .iter()
+                .enumerate()
+                .map(|(index, config)| format!("{index}:{}", config.rule))
+                .collect::<Vec<_>>()
+                .join(", ");
             Error::BackendError(format!(
                 "{span}: grounded run-rule wave [{names}] failed: {error}"
             ))
@@ -3991,7 +3967,6 @@ impl EGraph {
                     },
                 );
                 self.names.record_checked_alias(&alias, &span);
-                log::info!("Checked replay alias {alias}.");
             }
             ResolvedNCommand::CoreAction(action) => match &action {
                 ResolvedAction::Let(_, name, contents) => {

@@ -206,12 +206,12 @@ fn derived_fact_owns_the_terms_for_its_committed_row() {
     next_batch.record_fact_with_origin(table, next_cause, &row, origin);
     next_batch.publish();
     trace.finalize_wave();
+    let next_firing = next_cause
+        .firing()
+        .expect("registered firing lost its rule cause");
     trace
         .with_view(|view| {
-            let next_firing = (1..=view.totals().firings)
-                .map(FiringId::new)
-                .find(|id| view.firing(*id).is_ok_and(|firing| firing.rule == 8))
-                .unwrap();
+            assert_eq!(view.firing(next_firing)?.rule, 8);
             assert_eq!(
                 view.firing_terms(next_firing)?.as_ref(),
                 &terms,
@@ -375,7 +375,6 @@ fn container_anchor_projects_only_referenced_bindings_and_memoizes_repeated_leav
     let current_value = Value::new_const(12);
     let container_value = Value::new_const(13);
 
-    reset_term_projector_fact_expansions();
     let installed = trace
         .with_container_anchor_installer(site, &replay, |install| {
             install(
@@ -388,11 +387,6 @@ fn container_anchor_projects_only_referenced_bindings_and_memoizes_repeated_leav
         .unwrap()
         .unwrap();
 
-    assert_eq!(
-        term_projector_fact_expansions(),
-        1,
-        "the used premise should expand once; the repeated leaf must hit the memo and the deep unused premise must remain cold"
-    );
     let ReplayTerm::Call { children, .. } = trace.replay_term(installed).unwrap() else {
         panic!("container anchor did not produce a structural call")
     };

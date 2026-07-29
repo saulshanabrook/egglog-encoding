@@ -27,7 +27,7 @@ use crate::numeric_id::{DenseIdMap, DenseIdMapWithReuse, NumericId, define_id};
 use egglog_core_relations as core_relations;
 pub use egglog_core_relations::{
     ReplayConstructorSpec, ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTableKind, ReplayTermId,
-    TermInternerCounters, Trace, TraceView, TraceViewError, Wave,
+    Trace, TraceView, TraceViewError, Wave,
 };
 use egglog_numeric_id as numeric_id;
 use egglog_reports::{IterationReport, PreMergeTiming, ReportLevel, RuleReport, RuleSetReport};
@@ -1138,17 +1138,6 @@ impl EGraph {
         trace.with_view(inspect)
     }
 
-    /// Inspect live replay-term and container-anchor cardinalities. Unlike a
-    /// finalized trace view, this remains valid while a rejected trace wave is
-    /// being diagnosed.
-    pub fn replay_term_counters(&self) -> Result<TermInternerCounters> {
-        let trace = self
-            .trace
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("trace capture is not enabled"))?;
-        Ok(trace.replay_term_counters())
-    }
-
     /// Promote the current trace wave after a synchronous native barrier.
     pub fn finalize_trace_wave(&mut self) -> Result<()> {
         if self.trace.is_none() {
@@ -1164,14 +1153,6 @@ impl EGraph {
         }
         self.db.set_trace_wave(Wave::new(wave));
         Ok(())
-    }
-
-    pub fn replay_term(&self, id: ReplayTermId) -> Result<Option<core_relations::ReplayTerm>> {
-        let trace = self
-            .trace
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("trace capture is not enabled"))?;
-        Ok(trace.replay_term(id))
     }
 
     /// A handle to the live [`ActionRegistry`] for this EGraph.

@@ -87,7 +87,6 @@ pub struct GroundedRuleMatch {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[doc(hidden)]
 pub struct GroundedRuleRunOutcome {
-    pub applied: usize,
     pub changed: bool,
     pub pre_merge_time: Duration,
     pub merge_time: Duration,
@@ -1087,10 +1086,10 @@ impl Database {
             }
             let changed = state.changed;
             drop(state);
-            Ok((firings.len(), changed))
+            Ok(changed)
         }));
 
-        let (applied, staged_change) = match executed {
+        let staged_change = match executed {
             Ok(Ok(outcome)) => outcome,
             Ok(Err(error)) => {
                 transaction.abort();
@@ -1127,7 +1126,6 @@ impl Database {
         let merged_change = self.merge_all();
         let merge_time = merge_timer.elapsed();
         Ok(GroundedRuleRunOutcome {
-            applied,
             changed: staged_change || merged_change,
             pre_merge_time,
             merge_time,

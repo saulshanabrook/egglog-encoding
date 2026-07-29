@@ -36,7 +36,13 @@ impl<'a> TraceView<'a> {
         &mut self,
         id: AppliedEqualityId,
     ) -> Result<RawEqualitySupport, TraceViewError> {
-        let (mut left_carrier_owned, mut right_carrier_owned) = {
+        let (
+            mut left_carrier_owned,
+            mut right_carrier_owned,
+            event_position,
+            native_parent,
+            native_child,
+        ) = {
             let raw = self
                 .arena
                 .durable_equalities
@@ -50,6 +56,9 @@ impl<'a> TraceView<'a> {
             (
                 equality_endpoint_is_carrier_owned(raw.proposal.left.term),
                 equality_endpoint_is_carrier_owned(raw.proposal.right.term),
+                raw.position,
+                raw.native_parent,
+                raw.native_child,
             )
         };
         let event = self.project_applied_equality(id)?;
@@ -69,7 +78,7 @@ impl<'a> TraceView<'a> {
             .try_into()
             .map_err(|_| TraceViewError::Invalid("equality prefix exceeds storage".into()))?;
         let position =
-            HistoryPosition::new(event.position.get().checked_sub(1).ok_or_else(|| {
+            HistoryPosition::new(event_position.get().checked_sub(1).ok_or_else(|| {
                 TraceViewError::Invalid("applied equality has no pre-event history position".into())
             })?);
         if equality_prefix != self.equality_prefix_at(position)? {
@@ -93,12 +102,12 @@ impl<'a> TraceView<'a> {
             equality_prefix,
         )?;
         let roots_match_native_edge = left_root != right_root
-            && ((left_root == event.native_parent && right_root == event.native_child)
-                || (left_root == event.native_child && right_root == event.native_parent));
+            && ((left_root == native_parent && right_root == native_child)
+                || (left_root == native_child && right_root == native_parent));
         if !roots_match_native_edge {
             return Err(TraceViewError::Invalid(format!(
                 "applied equality {id:?} proposal roots {left_root:?} and {right_root:?} do not match native edge {:?} -> {:?}",
-                event.native_child, event.native_parent
+                native_child, native_parent
             )));
         }
         let explain_error = |side: &str, error: TraceViewError| {
@@ -2214,9 +2223,8 @@ impl<'a> TraceView<'a> {
         let left_support = match self.explain_fact_term_occurrence(left)? {
             Some(support) => support,
             None => {
-                let producers = self.exact_term_producer_diagnostics(left.created.term);
                 return Err(TraceViewError::Invalid(format!(
-                    "left {} has no supported historical native occurrence; exact producers: {producers:?}",
+                    "left {} has no supported historical native occurrence",
                     self.describe_fact_cell(left),
                 )));
             }
@@ -2224,9 +2232,8 @@ impl<'a> TraceView<'a> {
         let right_support = match self.explain_fact_term_occurrence(right)? {
             Some(support) => support,
             None => {
-                let producers = self.exact_term_producer_diagnostics(right.created.term);
                 return Err(TraceViewError::Invalid(format!(
-                    "right {} has no supported historical native occurrence; exact producers: {producers:?}",
+                    "right {} has no supported historical native occurrence",
                     self.describe_fact_cell(right),
                 )));
             }
@@ -2241,37 +2248,6 @@ impl<'a> TraceView<'a> {
             }
         }
         Ok(combine_raw_equality_support(parts))
-    }
-
-    fn exact_term_producer_diagnostics(&mut self, term: ReplayTermId) -> Vec<String> {
-        let Ok(ReplayTerm::Call { sort, op, .. }) = self.replay_term(term) else {
-            return Vec::new();
-        };
-        let mut result = Vec::new();
-        for producer in self.constructor_occurrence_facts(sort, op).iter().copied() {
-            let Ok(fact) = self.fact(producer) else {
-                continue;
-            };
-            let Some(constructor) = self
-                .replay_terms
-                .table_constructors
-                .get(&fact.table)
-                .map(|entry| entry.clone())
-            else {
-                continue;
-            };
-            let output = constructor.child_sorts.len();
-            if self.projector.fact_term(producer, output).ok() == Some(term) {
-                result.push(format!(
-                    "{producer:?}@{:?} cause={:?}",
-                    fact.position, fact.cause
-                ));
-                if result.len() == 16 {
-                    break;
-                }
-            }
-        }
-        result
     }
 
     fn describe_fact_cell(&self, cell: &HistoricalFactCell) -> String {

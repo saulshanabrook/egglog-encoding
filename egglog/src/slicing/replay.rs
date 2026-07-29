@@ -40,7 +40,7 @@ use crate::{
     RuleBindingRole, RuleCatalogEntry,
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 /// Arena-local reference to an owned replay term.
 ///
 /// Unlike the trace's replay-term ids, this reference is meaningful only in a
@@ -113,28 +113,28 @@ pub(crate) struct ReplaySource {
     pub(crate) kind: ReplaySourceKind,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 /// A checked source-level name established for a structural call before a wave.
 pub(crate) struct ReplayAlias {
     pub(crate) name: String,
     pub(crate) term: ReplayTermRef,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 /// One grounded rule variable and its owned literal-or-alias term.
 pub(crate) struct ReplayBinding {
     pub(crate) variable: String,
     pub(crate) term: ReplayTermRef,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 /// A selected rule firing lowered to its stable replay name and bindings.
 pub(crate) struct ReplayFiring {
     pub(crate) replay_name: String,
     pub(crate) bindings: Box<[ReplayBinding]>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 /// All checked aliases and grounded firings executed at one retained wave.
 ///
 /// Aliases run first against the immutable pre-wave database; the grouped
@@ -984,7 +984,6 @@ fn retained_rewrite_command(
                     "bidirectional rewrite surface command {surface_command} disagrees with its ruleset"
                 )));
             }
-            debug_assert!(forward.is_some() || reverse.is_some());
             rewrite.name = base_name;
             Ok(Command::BiRewrite(surface_ruleset, rewrite))
         }
@@ -1021,8 +1020,8 @@ fn build_owned(
 ) -> Result<ReplayProgram, ReplayError> {
     let sources = selected_source_closure(catalog, &slice.sources)?;
     let mut retained_rules = BTreeSet::new();
-    let mut firings = Vec::with_capacity(slice.firings.len());
-    let mut firing_ids = slice.firings.iter().copied().collect::<Vec<_>>();
+    let mut firings = Vec::with_capacity(slice.firing_bindings.len());
+    let mut firing_ids = slice.firing_bindings.keys().copied().collect::<Vec<_>>();
     firing_ids.sort_unstable();
     for id in firing_ids {
         let firing = view.firing(id)?;

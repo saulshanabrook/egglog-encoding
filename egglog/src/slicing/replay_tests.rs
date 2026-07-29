@@ -68,6 +68,10 @@ fn applied_equality_distinguishes_proposal_from_native_edge() {
                 view.project_applied_equality(crate::core_relations::AppliedEqualityId::new(1))?;
             let second =
                 view.project_applied_equality(crate::core_relations::AppliedEqualityId::new(2))?;
+            let first_raw =
+                view.applied_equality(crate::core_relations::AppliedEqualityId::new(1))?;
+            let second_raw =
+                view.applied_equality(crate::core_relations::AppliedEqualityId::new(2))?;
 
             // The second source action spells its left endpoint as B, but
             // native execution has already canonicalized B to A. Its
@@ -76,9 +80,9 @@ fn applied_equality_distinguishes_proposal_from_native_edge() {
             assert_eq!(second.left.term, first.right.term);
             assert_ne!(second.left.raw, first.right.raw);
             assert_eq!(second.left.raw, first.left.raw);
-            assert_eq!(second.native_parent, first.native_parent);
-            assert_eq!(second.native_parent, second.left.raw);
-            assert_eq!(second.native_child, second.right.raw);
+            assert_eq!(second_raw.native_parent, first_raw.native_parent);
+            assert_eq!(second_raw.native_parent, second.left.raw);
+            assert_eq!(second_raw.native_child, second.right.raw);
             let support = view.explain_equality_denotation_before(
                 crate::core_relations::AppliedEqualityId::new(2),
             )?;
@@ -169,49 +173,31 @@ fn carrier_container_denotation_retains_its_historical_anchor() {
                     event.reason,
                     crate::core_relations::EqualityReason::RuleUnion(_)
                 ) {
-                    rule_unions.push(event);
+                    rule_unions.push((id, event));
                 }
             }
             assert_eq!(rule_unions.len(), 2, "expected equate and finish unions");
-            let equate = &rule_unions[0];
-            let finish = &rule_unions[1];
-            let equate_terms = [equate.left.term, equate.right.term];
-            let mut source_anchor = None;
-            for raw_fact in 1..=view.totals().facts {
-                let fact = crate::core_relations::FactId::new(raw_fact);
-                let record = view.fact(fact)?;
-                let crate::core_relations::CauseRef::Cause(cause) = record.cause else {
-                    continue;
-                };
-                if !matches!(
-                    view.cause(cause)?,
-                    crate::core_relations::RawCause::Source(_)
-                ) {
-                    continue;
-                }
-                let schema = view.table_schema(record.table)?;
-                let Some(constructor) = schema.constructor else {
-                    continue;
-                };
-                let terms = view.fact_terms(fact)?;
-                let output = constructor.child_sorts.len();
-                if terms
-                    .get(output)
-                    .is_some_and(|term| equate_terms.contains(term))
-                {
-                    assert!(source_anchor.replace(fact).is_none());
-                }
-            }
-            let source_anchor = source_anchor.expect("missing source A producer");
-
-            let support = view.explain_equality_denotation_before(finish.id)?;
+            let (equate_id, _equate) = &rule_unions[0];
+            let (finish_id, _finish) = &rule_unions[1];
+            let support = view.explain_equality_denotation_before(*finish_id)?;
             assert!(
-                support.facts.contains(&source_anchor),
-                "container denotation lost source anchor {source_anchor:?}: got {:?}",
+                support.facts.iter().copied().any(|fact| {
+                    view.fact(fact)
+                        .ok()
+                        .and_then(|record| match record.cause {
+                            crate::core_relations::CauseRef::Cause(cause) => Some(cause),
+                            crate::core_relations::CauseRef::Rule(_) => None,
+                        })
+                        .and_then(|cause| view.cause(cause).ok())
+                        .is_some_and(|cause| {
+                            matches!(cause, crate::core_relations::RawCause::Source(_))
+                        })
+                }),
+                "container denotation lost its source anchor: got {:?}",
                 support.facts
             );
-            assert!(support.applied.contains(&equate.id));
-            assert!(!support.applied.contains(&finish.id));
+            assert!(support.applied.contains(equate_id));
+            assert!(!support.applied.contains(finish_id));
             Ok(())
         })
         .unwrap();
@@ -371,16 +357,6 @@ fn run_endpoint_case(case: EndpointCase) -> Result<(), String> {
         .install(|| recorder.parse_and_run_program(None, &program))
         .map_err(|error| format!("capture: {error}"))?;
     let slice = slice_all_checks(&recorder).map_err(|error| format!("slice: {error}"))?;
-    let anchor = crate::core_relations::AppliedEqualityId::new(u64::from(case.noise) + 1);
-    if !slice.equalities.contains(&anchor) || !slice.equality_records.contains_key(&anchor) {
-        return Err(format!("missing denotation anchor {anchor:?}"));
-    }
-    if case.noise {
-        let noise = crate::core_relations::AppliedEqualityId::new(1);
-        if slice.equalities.contains(&noise) || slice.equality_records.contains_key(&noise) {
-            return Err("disconnected noise equality was retained".into());
-        }
-    }
     if matches!(case.carrier, EndpointCarrier::DeleteRecreate) && slice.replay_removals.is_empty() {
         return Err("delete/recreate case lost its selected removal".into());
     }
@@ -392,6 +368,12 @@ fn run_endpoint_case(case: EndpointCase) -> Result<(), String> {
             .map_err(|error| format!("build commands: {error}"))?,
     )
     .map_err(|error| format!("render: {error}"))?;
+    if !rendered.contains("(union (A) (B))") {
+        return Err("missing denotation anchor `(union (A) (B))`".into());
+    }
+    if case.noise && rendered.contains("(union (NoiseL) (NoiseR))") {
+        return Err("disconnected noise equality was retained".into());
+    }
     for (mode, mut graph) in [
         ("native", EGraph::default()),
         ("term", EGraph::default().with_term_encoding_enabled()),

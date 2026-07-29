@@ -155,21 +155,6 @@ impl ReplayTerm {
     }
 }
 
-/// Diagnostic snapshot of structural interner and container-anchor volume.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct TermInternerCounters {
-    /// Unique literal and call nodes in the structural replay-term DAG.
-    pub interned_nodes: u64,
-    /// First-wins typed native-value mappings installed for structural lookup.
-    pub installed_values: u64,
-    /// Physical tables with registered replay column layouts.
-    pub table_layouts: u64,
-    /// Typed native container identities with explicit structural-version anchors.
-    pub container_anchor_keys: u64,
-    /// Structural-version terms retained across all container anchor keys.
-    pub container_anchor_terms: u64,
-}
-
 #[derive(Default)]
 pub(super) struct TermInterner {
     by_node: RwLock<HashMap<ReplayTerm, ReplayTermId>>,
@@ -581,20 +566,6 @@ impl TermInterner {
             }
         }
         Ok(())
-    }
-
-    pub(super) fn counters(&self) -> TermInternerCounters {
-        let container_anchors = self.container_anchors.read().unwrap();
-        TermInternerCounters {
-            interned_nodes: self.nodes.read().unwrap().len() as u64,
-            installed_values: self.by_value.read().unwrap().len() as u64,
-            table_layouts: self.table_layouts.len() as u64,
-            container_anchor_keys: container_anchors.len() as u64,
-            container_anchor_terms: container_anchors
-                .values()
-                .map(|terms| terms.len() as u64)
-                .sum(),
-        }
     }
 }
 
