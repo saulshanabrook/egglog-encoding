@@ -67,7 +67,43 @@ impl PathCompressionPlan {
 }
 
 pub(crate) fn looks_like_path_compression(rule: &RuleSpec) -> bool {
-    rule.core.body.atoms.len() == 3 && rule.core.head.0.len() == 4
+    let [first, second, guard] = rule.core.body.atoms.as_slice() else {
+        return false;
+    };
+    let (
+        RuleBodyCall::Table {
+            id: first_id,
+            read: ReadMode::Live,
+        },
+        RuleBodyCall::Table {
+            id: second_id,
+            read: ReadMode::Live,
+        },
+        RuleBodyCall::Primitive { .. },
+    ) = (&first.head, &second.head, &guard.head)
+    else {
+        return false;
+    };
+    if first_id != second_id {
+        return false;
+    }
+    let [fresh, alias, proof, update] = rule.core.head.0.as_slice() else {
+        return false;
+    };
+    matches!(
+        (fresh, alias, proof, update),
+        (
+            GenericCoreAction::Let(_, _, RuleActionCall::Primitive { .. }, _),
+            GenericCoreAction::LetAtomTerm(..),
+            GenericCoreAction::Set(_, RuleActionCall::Table { .. }, _, _),
+            GenericCoreAction::Set(
+                _,
+                RuleActionCall::Table { id, .. },
+                _,
+                _
+            )
+        ) if id == first_id
+    )
 }
 
 /// Compile the exact reached typed shape.  A mismatch is an admission error;

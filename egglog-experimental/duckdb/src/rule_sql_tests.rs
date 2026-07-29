@@ -720,7 +720,7 @@ fn unsupported_rule_ir_fails_closed_before_allocating_an_id() -> Result<()> {
             .add_rule(empty_body)
             .unwrap_err()
             .to_string()
-            .contains("empty body")
+            .contains("before binding")
     );
 
     let mut non_live = valid.clone();
@@ -768,13 +768,17 @@ fn unsupported_rule_ir_fails_closed_before_allocating_an_id() -> Result<()> {
 
     let mut multiple = valid.clone();
     multiple.name = "multiple-actions".to_string();
-    multiple.core.head.0.push(multiple.core.head.0[0].clone());
+    let mut invalid_second = multiple.core.head.0[0].clone();
+    if let GenericCoreAction::Set(_, _, keys, _) = &mut invalid_second {
+        keys[0] = var(999, "unbound-multi", ColumnTy::Id);
+    }
+    multiple.core.head.0.push(invalid_second);
     assert!(
         backend
             .add_rule(multiple)
             .unwrap_err()
             .to_string()
-            .contains("unsupported action language")
+            .contains("before binding")
     );
 
     let mut non_set_actions = Vec::new();
@@ -810,13 +814,12 @@ fn unsupported_rule_ir_fails_closed_before_allocating_an_id() -> Result<()> {
         let mut spec = valid.clone();
         spec.name = format!("non-set-{index}");
         spec.core.head.0 = vec![action];
-        assert!(
-            backend
-                .add_rule(spec)
-                .unwrap_err()
-                .to_string()
-                .contains("unsupported action")
-        );
+        let error = backend.add_rule(spec).unwrap_err().to_string();
+        if index < 2 {
+            assert!(error.contains("no durable Set effect"), "{error}");
+        } else {
+            assert!(error.contains("unsupported action"), "{error}");
+        }
     }
 
     let mut wrong_arity = valid.clone();
@@ -898,7 +901,7 @@ fn unsupported_rule_ir_fails_closed_before_allocating_an_id() -> Result<()> {
             .add_rule(deferred)
             .unwrap_err()
             .to_string()
-            .contains("registered but deferred")
+            .contains("incompatible ordered-union target")
     );
 
     let id = backend.add_rule(valid)?;

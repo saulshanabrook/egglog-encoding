@@ -17,7 +17,7 @@ use egglog_backend_trait::{
 };
 use egglog_numeric_id::NumericId;
 
-use crate::action_rule::{ScalarMixedPlan, compile_scalar_mixed};
+use crate::action_rule::{FdDescriptor, ScalarActionPlan, ScalarMixedPlan, compile_scalar_action};
 use crate::marker_rekey::{MarkerRekeyPlan, compile_marker_rekey};
 use crate::path_compress::{
     PathCompressionPlan, compile_path_compression, looks_like_path_compression,
@@ -29,10 +29,11 @@ use crate::storage::{
 };
 
 #[derive(Clone, Debug)]
-struct VariableBinding {
-    expression: String,
-    ty: ColumnTy,
-    name: Box<str>,
+pub(crate) struct VariableBinding {
+    pub(crate) expression: String,
+    pub(crate) stage_column: usize,
+    pub(crate) ty: ColumnTy,
+    pub(crate) name: Box<str>,
 }
 
 #[derive(Clone, Debug)]
@@ -46,7 +47,7 @@ enum CompiledRuleKind {
     Direct(DirectRule),
     MarkerRekey(MarkerRekeyPlan),
     PathCompression(PathCompressionPlan),
-    ScalarMixed(ScalarMixedPlan),
+    ScalarAction(ScalarActionPlan),
     StandardRebuild(StandardRebuildPlan),
 }
 
@@ -83,10 +84,20 @@ enum DirectEffect {
 }
 
 #[derive(Clone, Debug)]
-struct BodyTable {
+pub(crate) struct BodyTable {
     id: FunctionId,
     alias: String,
     args: Vec<GenericAtomTerm<RuleVar, RuleValue>>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CompiledBody {
+    pub(crate) bindings: BTreeMap<u32, VariableBinding>,
+    pub(crate) from: Vec<String>,
+    pub(crate) predicates: Vec<String>,
+    pub(crate) freshness_columns: Vec<String>,
+    pub(crate) order_columns: Vec<String>,
+    pub(crate) body_tables: Vec<BodyTable>,
 }
 
 impl CompiledRule {
@@ -100,7 +111,7 @@ impl CompiledRule {
         if let CompiledRuleKind::MarkerRekey(plan) = &self.kind {
             return plan.materialize_sql(stage, watermark);
         }
-        if let CompiledRuleKind::ScalarMixed(plan) = &self.kind {
+        if let CompiledRuleKind::ScalarAction(plan) = &self.kind {
             return plan.materialize_match_sql(stage, watermark);
         }
         let CompiledRuleKind::Direct(direct) = &self.kind else {
@@ -315,7 +326,7 @@ impl CompiledRule {
             CompiledRuleKind::PathCompression(plan) => Some(plan),
             CompiledRuleKind::Direct(_)
             | CompiledRuleKind::MarkerRekey(_)
-            | CompiledRuleKind::ScalarMixed(_)
+            | CompiledRuleKind::ScalarAction(_)
             | CompiledRuleKind::StandardRebuild(_) => None,
         }
     }
@@ -326,7 +337,7 @@ impl CompiledRule {
             CompiledRuleKind::Direct(_)
             | CompiledRuleKind::MarkerRekey(_)
             | CompiledRuleKind::PathCompression(_) => None,
-            CompiledRuleKind::ScalarMixed(_) => None,
+            CompiledRuleKind::ScalarAction(_) => None,
         }
     }
 
@@ -335,19 +346,26 @@ impl CompiledRule {
             CompiledRuleKind::MarkerRekey(plan) => Some(plan),
             CompiledRuleKind::Direct(_)
             | CompiledRuleKind::PathCompression(_)
-            | CompiledRuleKind::ScalarMixed(_)
+            | CompiledRuleKind::ScalarAction(_)
             | CompiledRuleKind::StandardRebuild(_) => None,
         }
     }
 
-    pub(crate) fn scalar_mixed(&self) -> Option<&ScalarMixedPlan> {
+    pub(crate) fn scalar_action(&self) -> Option<&ScalarActionPlan> {
         match &self.kind {
-            CompiledRuleKind::ScalarMixed(plan) => Some(plan),
+            CompiledRuleKind::ScalarAction(plan) => Some(plan),
             CompiledRuleKind::Direct(_)
             | CompiledRuleKind::MarkerRekey(_)
             | CompiledRuleKind::PathCompression(_)
             | CompiledRuleKind::StandardRebuild(_) => None,
         }
+    }
+
+    /// Retained only to keep the exact 50-action compiler/executor available as
+    /// a checkpoint oracle. Production admission always returns ScalarAction.
+    #[allow(dead_code)]
+    pub(crate) fn scalar_mixed(&self) -> Option<&ScalarMixedPlan> {
+        None
     }
 }
 
@@ -366,6 +384,7 @@ pub(crate) fn compile_rule(
     base_values: &BaseValues,
     native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
     fresh_tokens: &BTreeSet<ExternalFunctionId>,
+    fd_descriptors: &BTreeMap<ExternalFunctionId, FdDescriptor>,
     rule: RuleSpec,
 ) -> Result<CompiledRule> {
     // Rebuild admission is tri-state and must precede the path compiler's
@@ -400,17 +419,49 @@ pub(crate) fn compile_rule(
             kind: CompiledRuleKind::PathCompression(plan),
         });
     }
-    if let Some(plan) =
-        compile_scalar_mixed(storage, base_values, native_primitives, fresh_tokens, &rule)?
-    {
+    if let Some(plan) = compile_scalar_action(
+        storage,
+        base_values,
+        native_primitives,
+        fresh_tokens,
+        fd_descriptors,
+        &rule,
+    )? {
         return Ok(CompiledRule {
             seminaive: rule.seminaive,
-            kind: CompiledRuleKind::ScalarMixed(plan),
+            kind: CompiledRuleKind::ScalarAction(plan),
         });
     }
     if rule.core.body.atoms.is_empty() {
         bail!("DuckDB rule `{}` has an empty body", rule.name);
     }
+    let body = compile_live_body(storage, base_values, &rule)?;
+    let (effects, select_expressions) = compile_direct_effects(
+        storage,
+        base_values,
+        &rule,
+        &body.bindings,
+        &body.body_tables,
+    )?;
+
+    Ok(CompiledRule {
+        seminaive: rule.seminaive,
+        kind: CompiledRuleKind::Direct(DirectRule {
+            effects,
+            select_expressions,
+            from: body.from,
+            predicates: body.predicates,
+            freshness_columns: body.freshness_columns,
+            order_columns: body.order_columns,
+        }),
+    })
+}
+
+pub(crate) fn compile_live_body(
+    storage: &Storage,
+    base_values: &BaseValues,
+    rule: &RuleSpec,
+) -> Result<CompiledBody> {
     let mut bindings = BTreeMap::<u32, VariableBinding>::new();
     let mut from = Vec::with_capacity(rule.core.body.atoms.len());
     let mut predicates = Vec::new();
@@ -478,10 +529,12 @@ pub(crate) fn compile_rule(
                             binding.expression
                         ));
                     } else {
+                        let stage_column = bindings.len();
                         bindings.insert(
                             variable.id,
                             VariableBinding {
                                 expression: column_expression,
+                                stage_column,
                                 ty: variable.ty,
                                 name: variable.name.clone(),
                             },
@@ -506,19 +559,13 @@ pub(crate) fn compile_rule(
         }
     }
 
-    let (effects, select_expressions) =
-        compile_direct_effects(storage, base_values, &rule, &bindings, &body_tables)?;
-
-    Ok(CompiledRule {
-        seminaive: rule.seminaive,
-        kind: CompiledRuleKind::Direct(DirectRule {
-            effects,
-            select_expressions,
-            from,
-            predicates,
-            freshness_columns,
-            order_columns,
-        }),
+    Ok(CompiledBody {
+        bindings,
+        from,
+        predicates,
+        freshness_columns,
+        order_columns,
+        body_tables,
     })
 }
 

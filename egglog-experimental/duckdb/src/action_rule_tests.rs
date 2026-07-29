@@ -656,6 +656,34 @@ fn set_action(target: FunctionId, keys: Vec<Term>, values: Vec<Term>) -> Action 
     )
 }
 
+fn single_deferred_view_rule(old: FunctionId, view: FunctionId, name: &str) -> RuleSpec {
+    let key = binding(910, "deferred key", ColumnTy::Id);
+    let value = binding(911, "deferred value", ColumnTy::Id);
+    RuleSpec {
+        name: name.to_string(),
+        seminaive: true,
+        no_decomp: false,
+        core: GenericCoreRule {
+            span: Span::Panic,
+            body: Query {
+                atoms: vec![GenericAtom {
+                    span: Span::Panic,
+                    head: RuleBodyCall::Table {
+                        id: old,
+                        read: ReadMode::Live,
+                    },
+                    args: vec![variable(key.clone()), variable(value.clone())],
+                }],
+            },
+            head: GenericCoreActions::new(vec![set_action(
+                view,
+                vec![variable(key.clone()), variable(value.clone())],
+                vec![variable(key), variable(value)],
+            )]),
+        },
+    }
+}
+
 fn fresh_action(
     token: ExternalFunctionId,
     string: BaseValueId,
@@ -1429,9 +1457,6 @@ fn selected_mutation_matrix_preserves_rule_id_zero() -> Result<()> {
         };
         *read = ReadMode::All;
     })?;
-    unselected_rejection("second body", |_, rule| {
-        rule.core.body.atoms.push(rule.core.body.atoms[0].clone());
-    })?;
     selected_rejection("short action stream", |_, rule| {
         rule.core.head.0.pop();
     })?;
@@ -1609,7 +1634,7 @@ fn freed_fresh_token_reused_by_ordinary_callback_loses_authority() -> Result<()>
 }
 
 #[test]
-fn non_subsumable_self_displacing_uf_falls_through_scalar_ownership() -> Result<()> {
+fn non_subsumable_self_displacing_uf_continues_through_general_admission() -> Result<()> {
     let mut fixture = Fixture::new_with_key_count(EGraph::new()?, "duckdb non-subsume owner", 1)?;
     let mut rule = fixture.scalar_rule("non-subsume self-displacing near shape");
     let RuleBodyCall::Table { id, .. } = &mut rule.core.body.atoms[0].head else {
@@ -1624,10 +1649,9 @@ fn non_subsumable_self_displacing_uf_falls_through_scalar_ownership() -> Result<
     *id = fixture.uf;
 
     let error = fixture.backend.add_rule(rule).unwrap_err().to_string();
+    assert!(error.contains("DuckDB scalar rule"), "{error}");
     assert!(
-        error.contains(
-            "unsupported action language; expected exactly one Set, a nonempty Delete-only head, or exactly one body-bound Subsume"
-        ),
+        error.contains("incompatible ordered-union target"),
         "{error}"
     );
     assert!(!error.contains("scalar-mixed"), "{error}");
@@ -1946,41 +1970,145 @@ fn unrelated_shapes_preserve_existing_fallthrough_diagnostics() -> Result<()> {
             .add_rule(empty.scalar_rule("valid after empty body"))?,
         RuleId::new(0)
     );
+    Ok(())
+}
 
-    let mut deferred = Fixture::new(EGraph::new()?, "duckdb deferred direct View")?;
-    let key = binding(910, "deferred key", ColumnTy::Id);
-    let value = binding(911, "deferred value", ColumnTy::Id);
-    let direct_view = RuleSpec {
-        name: "ordinary direct View Set remains deferred".to_string(),
-        seminaive: true,
-        no_decomp: false,
-        core: GenericCoreRule {
-            span: Span::Panic,
-            body: Query {
-                atoms: vec![GenericAtom {
-                    span: Span::Panic,
-                    head: RuleBodyCall::Table {
-                        id: deferred.old,
-                        read: ReadMode::Live,
-                    },
-                    args: vec![variable(key.clone()), variable(value.clone())],
-                }],
-            },
-            head: GenericCoreActions::new(vec![set_action(
-                deferred.view,
-                vec![variable(key.clone()), variable(value.clone())],
-                vec![variable(key), variable(value)],
-            )]),
-        },
-    };
-    let error = deferred.backend.add_rule(direct_view).unwrap_err();
-    assert!(error.to_string().contains("deferred"));
-    assert!(!error.to_string().contains("scalar-mixed"));
-    assert_eq!(
-        deferred
+fn execute_single_deferred_set<B: Backend>(fixture: &mut Fixture<B>) -> Result<Vec<Vec<Value>>> {
+    fixture
+        .backend
+        .add_values(vec![(fixture.old, vec![Value::new(7), Value::new(70)])])?;
+    let rule = fixture.backend.add_rule(single_deferred_view_rule(
+        fixture.old,
+        fixture.view,
+        "single Set deferred ordered-union rule",
+    ))?;
+    assert!(
+        fixture
             .backend
-            .add_rule(deferred.scalar_rule("valid after deferred direct"))?,
-        RuleId::new(0)
+            .run_rules(RuleSetRun {
+                name: Some("single Set deferred ordered-union schedule"),
+                rules: &[rule],
+            })?
+            .changed()
     );
+    Ok(scan_values(&fixture.backend, fixture.view))
+}
+
+#[test]
+fn single_set_deferred_ordered_union_matches_reference() -> Result<()> {
+    let mut reference = Fixture::new(
+        egglog_bridge::EGraph::default(),
+        "reference single deferred Set",
+    )?;
+    let mut duckdb = Fixture::new(EGraph::new()?, "duckdb single deferred Set")?;
+    let expected = vec![vec![
+        Value::new(7),
+        Value::new(70),
+        Value::new(7),
+        Value::new(70),
+    ]];
+    assert_eq!(execute_single_deferred_set(&mut reference)?, expected);
+    assert_eq!(execute_single_deferred_set(&mut duckdb)?, expected);
+    assert_eq!(duckdb.backend.last_rule_match_counts(), &[1]);
+    Ok(())
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct TwoGraphTranscript {
+    first_sym: Vec<Vec<u32>>,
+    first_trans: Vec<Vec<u32>>,
+    first_view: Vec<Vec<u32>>,
+    first_uf: Vec<Vec<u32>>,
+    second_sym: Vec<Vec<u32>>,
+    second_trans: Vec<Vec<u32>>,
+    second_view: Vec<Vec<u32>>,
+    second_uf: Vec<Vec<u32>>,
+    next_fresh: u32,
+}
+
+fn execute_two_independent_graphs<B: Backend>(
+    backend: B,
+    prefix: &str,
+) -> Result<TwoGraphTranscript> {
+    let mut first = Fixture::new(backend, &format!("{prefix} first graph"))?;
+    first.advance_fresh_to_100();
+    let first_old = first.old;
+    let first_view = first.view;
+    let first_sym = first.sym;
+    let first_trans = first.trans;
+    let first_uf = first.uf;
+    let first_unit = first.unit_value;
+    let first_rule = single_deferred_view_rule(first_old, first_view, "first deferred graph");
+
+    let mut second = Fixture::new(first.backend, &format!("{prefix} second graph"))?;
+    second.backend.add_values(vec![
+        (first_old, vec![Value::new(1), Value::new(10)]),
+        (
+            first_view,
+            vec![
+                Value::new(1),
+                Value::new(10),
+                Value::new(30),
+                Value::new(70),
+            ],
+        ),
+        (second.old, vec![Value::new(2), Value::new(20)]),
+        (
+            second.view,
+            vec![
+                Value::new(2),
+                Value::new(20),
+                Value::new(40),
+                Value::new(80),
+            ],
+        ),
+    ])?;
+    let first_rule = second.backend.add_rule(first_rule)?;
+    let second_rule = second.backend.add_rule(single_deferred_view_rule(
+        second.old,
+        second.view,
+        "second deferred graph",
+    ))?;
+    assert!(
+        second
+            .backend
+            .run_rules(RuleSetRun {
+                name: Some("two independent ordered-union graphs"),
+                rules: &[second_rule, first_rule],
+            })?
+            .changed()
+    );
+
+    Ok(TwoGraphTranscript {
+        first_sym: id_rows(&second.backend, first_sym, true, first_unit),
+        first_trans: id_rows(&second.backend, first_trans, true, first_unit),
+        first_view: id_rows(&second.backend, first_view, false, first_unit),
+        first_uf: id_rows(&second.backend, first_uf, false, first_unit),
+        second_sym: id_rows(&second.backend, second.sym, true, second.unit_value),
+        second_trans: id_rows(&second.backend, second.trans, true, second.unit_value),
+        second_view: id_rows(&second.backend, second.view, false, second.unit_value),
+        second_uf: id_rows(&second.backend, second.uf, false, second.unit_value),
+        next_fresh: second.backend.fresh_id().rep(),
+    })
+}
+
+#[test]
+fn two_independent_ordered_union_graphs_share_one_scalar_schedule() -> Result<()> {
+    let reference = execute_two_independent_graphs(
+        egglog_bridge::EGraph::default(),
+        "reference two-graph schedule",
+    )?;
+    let duckdb = execute_two_independent_graphs(EGraph::new()?, "duckdb two-graph schedule")?;
+    assert_eq!(duckdb, reference);
+
+    // The higher FunctionIds were deliberately scheduled first, so collision
+    // fresh ids prove queue order follows the scalar schedule, not target ids.
+    assert_eq!(duckdb.second_sym, vec![vec![20, 100]]);
+    assert_eq!(duckdb.second_trans, vec![vec![80, 100, 101]]);
+    assert_eq!(duckdb.second_uf, vec![vec![40, 2, 101]]);
+    assert_eq!(duckdb.first_sym, vec![vec![10, 102]]);
+    assert_eq!(duckdb.first_trans, vec![vec![70, 102, 103]]);
+    assert_eq!(duckdb.first_uf, vec![vec![30, 1, 103]]);
+    assert_eq!(duckdb.next_fresh, 104);
     Ok(())
 }

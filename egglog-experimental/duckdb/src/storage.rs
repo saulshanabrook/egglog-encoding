@@ -1147,6 +1147,24 @@ impl Storage {
         table_info(&state, id).cloned()
     }
 
+    /// Resolve a frontend-registered semantic table name exactly once at rule
+    /// admission. Call-site diagnostic names never enter this lookup or SQL.
+    pub(crate) fn table_by_exact_name(&self, name: &str) -> Result<(FunctionId, TableInfo)> {
+        let state = self.state.lock().expect("DuckDB storage mutex poisoned");
+        let mut matches = state
+            .tables
+            .iter()
+            .enumerate()
+            .filter(|(_, info)| info.name == name);
+        let Some((index, info)) = matches.next() else {
+            bail!("DuckDB has no table with the registered name `{name}`");
+        };
+        if matches.next().is_some() {
+            bail!("DuckDB table name `{name}` is not unique");
+        }
+        Ok((FunctionId::new(u32::try_from(index)?), info.clone()))
+    }
+
     pub(crate) fn execute_rules(
         &self,
         scheduled: &[(&CompiledRule, u64)],
@@ -1169,15 +1187,15 @@ impl Storage {
             .count();
         let scalar_rules = scheduled
             .iter()
-            .filter(|(rule, _)| rule.scalar_mixed().is_some())
+            .filter(|(rule, _)| rule.scalar_action().is_some())
             .count();
         if scalar_rules != 0 {
             if scalar_rules != scheduled.len() {
                 bail!(
-                    "DuckDB cannot mix scalar-mixed plans with other plan kinds in one bounded ruleset"
+                    "DuckDB cannot mix scalar-mixed/scalar-action plans with other plan kinds in one bounded ruleset"
                 );
             }
-            return self.execute_scalar_mixed_rules(scheduled);
+            return self.execute_scalar_action_rules(scheduled);
         }
         let rebuilding_rules = rebuild_rules + marker_rules;
         if rebuilding_rules != 0 {
@@ -1342,6 +1360,443 @@ impl Storage {
         })
     }
 
+    fn execute_scalar_action_rules(
+        &self,
+        scheduled: &[(&CompiledRule, u64)],
+    ) -> Result<RuleExecutionStats> {
+        // Queue order is derived from the first scheduled source effect, with
+        // each graph's generated-write target immediately following its root.
+        // FunctionId is used only for target lookup and duplicate detection.
+        let mut target_plans = BTreeMap::<u32, OrderedUnionPlan>::new();
+        let mut target_by_id = BTreeMap::<u32, OrderedUnionPlan>::new();
+        let mut owner_checks = BTreeMap::<u32, (usize, bool)>::new();
+        for (rule, _) in scheduled {
+            let plan = rule
+                .scalar_action()
+                .expect("caller checked every scheduled scalar-action plan");
+            for graph in plan.graphs() {
+                for target in [&graph.root, &graph.displaced] {
+                    if let Some(existing) = target_by_id.get(&target.target.rep()) {
+                        if existing != target {
+                            bail!(
+                                "DuckDB scalar-action target {} has inconsistent ordered-union plans",
+                                target.target.rep()
+                            );
+                        }
+                        continue;
+                    }
+                    let order = u32::try_from(target_plans.len())?;
+                    target_plans.insert(order, target.clone());
+                    target_by_id.insert(target.target.rep(), target.clone());
+                }
+            }
+            for (target, n_keys, reject_subsumed) in plan.owner_checks() {
+                if let Some(&(old_keys, old_reject)) = owner_checks.get(&target.rep()) {
+                    if old_keys != n_keys || old_reject != reject_subsumed {
+                        bail!(
+                            "DuckDB scalar-action target {} has inconsistent owner checks",
+                            target.rep()
+                        );
+                    }
+                } else {
+                    owner_checks.insert(target.rep(), (n_keys, reject_subsumed));
+                }
+            }
+        }
+
+        let mut state = self.state.lock().expect("DuckDB storage mutex poisoned");
+        let run = state.next_rule_run;
+        let next_rule_run = run
+            .checked_add(1)
+            .context("DuckDB rule-stage identifier overflow")?;
+        let transaction = state.connection.transaction()?;
+        #[cfg(test)]
+        let mut sql_log = Vec::new();
+        let mut scratch_names = Vec::<String>::new();
+        let mut matched_rows = Vec::with_capacity(scheduled.len());
+        let mut inserted_rows = vec![0_usize; scheduled.len()];
+        let mut statement_count = 0;
+
+        let execute = (|| -> Result<(u64, bool)> {
+            let generation = transaction.query_row(
+                &format!("SELECT value FROM {COUNTERS_TABLE} WHERE name = 'generation'"),
+                [],
+                |row| row.get::<_, u64>(0),
+            )?;
+            statement_count += 1;
+            let first_head_id = transaction.query_row(
+                &format!("SELECT value FROM {COUNTERS_TABLE} WHERE name = 'fresh_id'"),
+                [],
+                |row| row.get::<_, u64>(0),
+            )?;
+            statement_count += 1;
+
+            // Freeze every body's pre-wave match relation first.
+            let mut match_stages = Vec::with_capacity(scheduled.len());
+            for (schedule_index, (rule, watermark)) in scheduled.iter().enumerate() {
+                let stage = format!("egglog_scalar_match_{run}_{schedule_index}");
+                scratch_names.push(stage.clone());
+                let create = rule.materialize_sql(&stage, *watermark);
+                transaction.execute(&create, [])?;
+                #[cfg(test)]
+                sql_log.push(create);
+                statement_count += 1;
+                let count_sql = format!("SELECT count(*) FROM {stage}");
+                let count = transaction.query_row(&count_sql, [], |row| row.get::<_, u64>(0))?;
+                #[cfg(test)]
+                sql_log.push(count_sql);
+                statement_count += 1;
+                matched_rows.push(
+                    usize::try_from(count)
+                        .context("DuckDB scalar-action match count exceeds usize")?,
+                );
+                match_stages.push(stage);
+            }
+
+            let mut head_count = 0_u64;
+            let mut event_highwater = 0_u64;
+            for ((rule, _), &count) in scheduled.iter().zip(&matched_rows) {
+                let plan = rule
+                    .scalar_action()
+                    .expect("caller checked every scheduled scalar-action plan");
+                let count = u64::try_from(count)?;
+                head_count = head_count
+                    .checked_add(
+                        count
+                            .checked_mul(plan.fresh_slots())
+                            .context("DuckDB scalar-action fresh-id count overflow")?,
+                    )
+                    .context("DuckDB scalar-action fresh-id count overflow")?;
+                event_highwater = event_highwater
+                    .checked_add(
+                        count
+                            .checked_mul(plan.action_count())
+                            .context("DuckDB scalar-action event ordinal overflow")?,
+                    )
+                    .context("DuckDB scalar-action event ordinal overflow")?;
+            }
+            let after_heads = checked_fresh_end(
+                first_head_id,
+                head_count,
+                "scalar-action explicit fresh ids",
+            )?;
+
+            // Execute Let stages in source order against durable pre-wave
+            // tables, then materialize every effect before any mutation.
+            let mut effect_stages = Vec::with_capacity(scheduled.len());
+            let mut head_offset = 0_u64;
+            let mut event_offset = 0_u64;
+            for (schedule_index, (((rule, _), match_stage), &count)) in scheduled
+                .iter()
+                .zip(&match_stages)
+                .zip(&matched_rows)
+                .enumerate()
+            {
+                let plan = rule
+                    .scalar_action()
+                    .expect("caller checked every scheduled scalar-action plan");
+                let count = u64::try_from(count)?;
+                let head_base = first_head_id
+                    .checked_add(head_offset)
+                    .context("DuckDB scalar-action fresh-id offset overflow")?;
+                let mut head_stage = match_stage.clone();
+                for slot_index in 0..plan.slots().len() {
+                    if let Some(preflight_sql) = plan.slot_preflight_sql(&head_stage, slot_index) {
+                        let invalid =
+                            transaction.query_row(&preflight_sql, [], |row| row.get(0))?;
+                        #[cfg(test)]
+                        sql_log.push(preflight_sql);
+                        statement_count += 1;
+                        if invalid {
+                            bail!("{}", plan.slot_error(slot_index));
+                        }
+                    }
+                    let slot_stage =
+                        format!("egglog_scalar_slot_{run}_{schedule_index}_{slot_index}");
+                    scratch_names.push(slot_stage.clone());
+                    let create = plan.materialize_slot_sql(
+                        &head_stage,
+                        &slot_stage,
+                        slot_index,
+                        head_base,
+                        count,
+                    );
+                    transaction.execute(&create, [])?;
+                    #[cfg(test)]
+                    sql_log.push(create);
+                    statement_count += 1;
+                    if let Some(invalid_sql) = plan.slot_invalid_sql(&slot_stage, slot_index) {
+                        let invalid = transaction.query_row(&invalid_sql, [], |row| row.get(0))?;
+                        #[cfg(test)]
+                        sql_log.push(invalid_sql);
+                        statement_count += 1;
+                        if invalid {
+                            bail!("{}", plan.slot_error(slot_index));
+                        }
+                    }
+                    head_stage = slot_stage;
+                }
+
+                let mut stages = Vec::with_capacity(plan.effects().len());
+                for (effect_index, effect) in plan.effects().iter().enumerate() {
+                    let action_offset = effect
+                        .event_ordinal
+                        .checked_mul(count)
+                        .context("DuckDB scalar-action event ordinal overflow")?;
+                    let first_event = event_offset
+                        .checked_add(action_offset)
+                        .and_then(|value| value.checked_add(1))
+                        .context("DuckDB scalar-action event ordinal overflow")?;
+                    let effect_stage =
+                        format!("egglog_scalar_effect_{run}_{schedule_index}_{effect_index}");
+                    scratch_names.push(effect_stage.clone());
+                    let create = plan.materialize_effect_sql(
+                        &head_stage,
+                        &effect_stage,
+                        effect,
+                        first_event,
+                    );
+                    transaction.execute(&create, [])?;
+                    #[cfg(test)]
+                    sql_log.push(create);
+                    statement_count += 1;
+                    stages.push(effect_stage);
+                }
+                effect_stages.push(stages);
+                head_offset = head_offset
+                    .checked_add(
+                        count
+                            .checked_mul(plan.fresh_slots())
+                            .context("DuckDB scalar-action fresh-id offset overflow")?,
+                    )
+                    .context("DuckDB scalar-action fresh-id offset overflow")?;
+                event_offset = event_offset
+                    .checked_add(
+                        count
+                            .checked_mul(plan.action_count())
+                            .context("DuckDB scalar-action event ordinal overflow")?,
+                    )
+                    .context("DuckDB scalar-action event ordinal overflow")?;
+            }
+            debug_assert_eq!(head_offset, head_count);
+            debug_assert_eq!(event_offset, event_highwater);
+
+            let (groups, group_indices) = {
+                #[cfg(test)]
+                let mut queue_trace = Some(&mut sql_log);
+                #[cfg(not(test))]
+                let mut queue_trace = None;
+                create_ordered_union_queues(
+                    &transaction,
+                    &target_plans,
+                    "egglog_scalar",
+                    run,
+                    &mut scratch_names,
+                    &mut queue_trace,
+                    &mut statement_count,
+                )?
+            };
+
+            // Corrupt physical ownership is rejected before the first counter
+            // or durable-table mutation.
+            for (&target_id, &(n_keys, reject_subsumed)) in &owner_checks {
+                let target = sql_table(FunctionId::new(target_id));
+                let duplicate = duplicate_owner_sql(&target, n_keys);
+                let has_duplicate =
+                    transaction.query_row(&duplicate, [], |row| row.get::<_, bool>(0))?;
+                #[cfg(test)]
+                sql_log.push(duplicate);
+                statement_count += 1;
+                if has_duplicate {
+                    bail!(
+                        "DuckDB scalar-action executor found duplicate owners for function {target_id}"
+                    );
+                }
+                if reject_subsumed {
+                    let subsumed =
+                        format!("SELECT EXISTS (SELECT 1 FROM {target} WHERE __subsumed)");
+                    let has_subsumed =
+                        transaction.query_row(&subsumed, [], |row| row.get::<_, bool>(0))?;
+                    #[cfg(test)]
+                    sql_log.push(subsumed);
+                    statement_count += 1;
+                    if has_subsumed {
+                        bail!(
+                            "DuckDB scalar-action executor found a subsumed UF owner for function {target_id}"
+                        );
+                    }
+                }
+            }
+
+            if head_count != 0 {
+                let reserve = format!(
+                    "UPDATE {COUNTERS_TABLE} SET value = CAST('{after_heads}' AS UBIGINT) WHERE name = 'fresh_id'"
+                );
+                transaction.execute(&reserve, [])?;
+                #[cfg(test)]
+                sql_log.push(reserve);
+                statement_count += 1;
+            }
+
+            let mut physical_changed = false;
+            for (schedule_index, ((rule, _), stages)) in
+                scheduled.iter().zip(&effect_stages).enumerate()
+            {
+                let plan = rule
+                    .scalar_action()
+                    .expect("caller checked every scheduled scalar-action plan");
+                for (effect, stage) in plan.effects().iter().zip(stages) {
+                    match effect.kind {
+                        ScalarEffectKind::AssertEq => {
+                            let conflict = check_assert_eq_conflict(
+                                &transaction,
+                                effect.target,
+                                effect.n_keys,
+                                stage,
+                            )?;
+                            #[cfg(test)]
+                            sql_log.push(conflict);
+                            #[cfg(not(test))]
+                            drop(conflict);
+                            statement_count += 1;
+                            let insert = stage_insert_sql(
+                                effect.target,
+                                effect.arity,
+                                effect.n_keys,
+                                stage,
+                                generation,
+                            );
+                            let inserted = transaction.execute(&insert, [])?;
+                            inserted_rows[schedule_index] = inserted_rows[schedule_index]
+                                .checked_add(inserted)
+                                .context("DuckDB scalar-action insert telemetry overflow")?;
+                            physical_changed |= inserted != 0;
+                            #[cfg(test)]
+                            sql_log.push(insert);
+                            statement_count += 1;
+                        }
+                        ScalarEffectKind::KeepOld => {
+                            let insert = stage_insert_sql(
+                                effect.target,
+                                effect.arity,
+                                effect.n_keys,
+                                stage,
+                                generation,
+                            );
+                            let inserted = transaction.execute(&insert, [])?;
+                            inserted_rows[schedule_index] = inserted_rows[schedule_index]
+                                .checked_add(inserted)
+                                .context("DuckDB scalar-action insert telemetry overflow")?;
+                            physical_changed |= inserted != 0;
+                            #[cfg(test)]
+                            sql_log.push(insert);
+                            statement_count += 1;
+                        }
+                        ScalarEffectKind::OrderedUnion => {
+                            let group_index = group_indices
+                                .get(&effect.target.rep())
+                                .copied()
+                                .ok_or_else(|| {
+                                    anyhow!(
+                                        "DuckDB scalar-action target {} has no ordered-union queue",
+                                        effect.target.rep()
+                                    )
+                                })?;
+                            let count_sql = format!("SELECT count(*) FROM {stage}");
+                            let count = transaction
+                                .query_row(&count_sql, [], |row| row.get::<_, u64>(0))?;
+                            #[cfg(test)]
+                            sql_log.push(count_sql);
+                            statement_count += 1;
+                            let queue = &groups[group_index].queue;
+                            let enqueue = format!(
+                                "INSERT INTO {queue} (__wave, __event_ordinal, {})
+                                 SELECT CAST('0' AS UBIGINT), __ordinal, {}
+                                 FROM {stage} AS staged
+                                 ORDER BY __ordinal",
+                                visible_columns(effect.arity),
+                                qualified_columns("staged", effect.arity)
+                            );
+                            let enqueued = transaction.execute(&enqueue, [])?;
+                            ensure_count(enqueued, count, "scalar-action candidate enqueue")?;
+                            #[cfg(test)]
+                            sql_log.push(enqueue);
+                            statement_count += 1;
+                        }
+                    }
+                }
+            }
+
+            let drain = {
+                #[cfg(test)]
+                let mut drain_trace = Some(&mut sql_log);
+                #[cfg(not(test))]
+                let mut drain_trace = None;
+                drain_ordered_union_queues(
+                    &transaction,
+                    &groups,
+                    &group_indices,
+                    generation,
+                    after_heads,
+                    event_highwater,
+                    "egglog_scalar",
+                    run,
+                    "scalar-action rule",
+                    &mut scratch_names,
+                    &mut drain_trace,
+                    &mut statement_count,
+                )?
+            };
+            physical_changed |= drain.physical_changed;
+
+            if physical_changed {
+                let update = format!(
+                    "UPDATE {COUNTERS_TABLE} SET value = value + 1 WHERE name = 'generation'"
+                );
+                transaction.execute(&update, [])?;
+                #[cfg(test)]
+                sql_log.push(update);
+                statement_count += 1;
+            }
+            for scratch in scratch_names.iter().rev() {
+                let drop = format!("DROP TABLE IF EXISTS {scratch}");
+                transaction.execute(&drop, [])?;
+                #[cfg(test)]
+                sql_log.push(drop);
+                statement_count += 1;
+            }
+            Ok((generation, physical_changed))
+        })();
+
+        let (watermark, changed) = match execute {
+            Ok(result) => result,
+            Err(error) => {
+                let rollback_error = transaction.rollback().err();
+                let cleanup_error = cleanup_scratch(&state.connection, &scratch_names).err();
+                if rollback_error.is_some() || cleanup_error.is_some() {
+                    return Err(anyhow!(
+                        "DuckDB scalar-action transaction failed: {error:#}; rollback: {rollback_error:?}; scratch cleanup: {cleanup_error:?}"
+                    ));
+                }
+                return Err(error);
+            }
+        };
+        transaction.commit()?;
+        state.next_rule_run = next_rule_run;
+        #[cfg(test)]
+        {
+            state.latest_rule_sql = sql_log;
+        }
+        Ok(RuleExecutionStats {
+            changed,
+            watermark,
+            matched_rows,
+            inserted_rows,
+            statement_count,
+        })
+    }
+
+    #[allow(dead_code)]
     fn execute_scalar_mixed_rules(
         &self,
         scheduled: &[(&CompiledRule, u64)],

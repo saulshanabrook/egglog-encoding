@@ -1678,3 +1678,427 @@ The final source hash remained exactly
 Status remained exactly this ledger, the 13 reviewed tracked source/test files,
 and the two reviewed untracked action files. The scalar/native-primitive
 checkpoint is accepted for one local commit. Do not push.
+
+## Post-scalar frontier census
+
+The accepted checkpoint was committed locally as
+`8f0520b` (`feat: execute authenticated DuckDB scalar actions`). The source
+worktree was clean immediately after the commit. No push occurred.
+
+Fresh accepted public frontiers are Math associativity, Luminal scalar
+primitive bodies, Eggcc atomless `eval_actions`, Pointer ordinary relation
+insertion, and Hardboiled `ReadMode::All`/container rebuild. Performance remains
+descriptive; this is a semantic-coverage decision.
+
+### Census roster
+
+| Agent | Circle/domain | Aim | Authority | Expected output | Stop |
+| --- | --- | --- | --- | --- | --- |
+| Math scout | proof-instrumented associativity | Recover exact lowered topology and smallest native extension | Read-only HEAD `8f0520b`; no edits/builds/workloads/contact | Shape, gap, tests, next frontier, stop condition | Stop after exact ownership decision or one prerequisite blocker |
+| Luminal scout | table plus pure scalar primitive bodies | Decide whether authenticated SQL scalar evaluation is a bounded next slice | Read-only HEAD `8f0520b`; no edits/builds/workloads/contact | Primitive surface, public-provenance requirement, tests, coverage | Stop if callbacks/UDFs/host rows or an unbounded primitive compiler are required |
+| Pointer scout | ordinary relation insert actions | Recover proof-lowered insert topology and projected workload gain | Read-only HEAD `8f0520b`; no edits/builds/workloads/contact | Shape, reusable executor path, next boundaries, tests | Stop if the first rule requires unsupported merge/container/global behavior |
+| Eggcc scout | atomless/global action semantics | Determine whether `eval_actions` is a bounded native rule or deferred surface | Read-only HEAD `8f0520b`; no edits/builds/workloads/contact | Exact semantics, UnstableFn/container dependencies, next boundary | Stop if the rule dynamically reaches deferred UnstableFn or host-only state |
+| Coordinator | Hardboiled plus cross-workload decision | Analyze `All`/container rebuild and select one evidence-backed next slice | Read-only analysis until a new contract is frozen | Ranked scoreboard, accepted no-go facts, one bounded writer contract or early exit | Stop rather than authorize overlapping premises or a slice without a correctness oracle |
+
+No implementation writer is authorized during this census. Active risks are
+mistaking the first diagnostic for the true prerequisite, adding unauthenticated
+primitive semantics, and implementing a one-workload special case instead of a
+closed typed IR family. The progress signal is an exact lowered shape plus a
+bounded native compiler/executor and differential oracle; source-line count or
+registration count is not progress by itself.
+
+### Design-audit roster
+
+The coordinator reused three completed read-only circles because the agent
+thread limit prevented new spawns. Reuse does not expand their authority.
+
+| Agent | Circle/domain | Aim | Authority | Expected output | Stop |
+| --- | --- | --- | --- | --- | --- |
+| semantic auditor | Reference action semantics and observability | Recover exact 0..N-body/action/lookup/fresh/effect/merge ordering and the smallest sufficient typed plan IR | Read-only HEAD `8f0520b`; no edits/builds/workloads/contact | Invariant table, code evidence, plan fields, PASS/STOP | Stop after every listed invariant is decided or one no-host blocker is proven |
+| SQL architecture auditor | generalized action staging | Compare per-rule typed stages with normalized shared effect staging, including multiple lookups and ordered-union graphs | Read-only HEAD `8f0520b`; no edits/builds/workloads/contact | Two-design comparison, recommendation, code seams, bounded migration and stop rule | Stop after both architectures are evaluated or one blocker is proven |
+| admission/test auditor | ownership and differential gates | Define fail-closed compiler precedence plus minimal blocking conformance matrix for Math, Pointer, and Eggcc | Read-only HEAD `8f0520b`; no edits/builds/workloads/contact | Admission predicate, blocking/nonblocking gates, PASS/STOP | Stop after ownership and every requested oracle are decided |
+
+### Coordinator Hardboiled finding
+
+The first Hardboiled diagnostic is not an isolated `ReadMode::All` gap. The
+exact desugared `@rebuild_rule64` reads `__CallView` in All mode, then calls
+`__container_rebuild1` before `!=` and a proof-instrumented multi-effect head.
+Its source constructor contains core `Vec Expr`. The DuckDB backend still
+advertises no container support and owns none of the container registry,
+counter, merge, or rebuild callbacks. Allowing All alone would only move the
+diagnostic to the native-container boundary, so Hardboiled is not a candidate
+for this scalar-action slice. Its prerequisite is a separately reviewed typed
+container design.
+
+### Completed scout evidence
+
+- Math associativity is two chained Live `AddView` body atoms, 89 raw backend
+  actions collapsed to 60 semantic actions, 25 authenticated fresh calls, one
+  Fail/Old table lookup, 29 Sets, one set-if-empty call, and one view-column
+  read. It is scalar-only but requires authenticated FD-view operations and a
+  multi-body match relation. Mul associativity has the same name-independent
+  topology. A Math-only 89-position recognizer is rejected as churn: Pointer,
+  Eggcc, and Luminal need the same typed action vocabulary with different
+  cardinalities.
+- Luminal's first constant fold is three Live table atoms plus a checked i64
+  addition body primitive and 151 raw head actions. The immediately following
+  rules use checked subtraction, multiplication, remainder, division, signed
+  min/max, bit-and, and comparisons in body or action positions. A one-op or
+  fixed-151-position patch is rejected. The durable direction is a separately
+  authenticated closed scalar-expression IR layered onto the general action
+  trace; arbitrary Rust primitive callbacks and UDFs remain out of scope.
+- Eggcc's first `eval_actions` command is a transient non-seminaive singleton
+  match with 69 raw actions: 19 fresh calls, two set-if-empty calls, two view
+  reads, 23 aliases, and 23 Sets. It dynamically reaches no container or
+  UnstableFn surface. The 24 isomorphic seeds should share one body-empty
+  scalar compiler. Registration of the FD-view operations precedes table
+  creation, so DuckDB must retain their public-SPI descriptors and resolve the
+  target lazily at rule admission. Persistent seminaive atomless rules fire
+  once even if unchanged; the existing zero-to-nonzero per-rule watermark can
+  encode that lifecycle without durable proof metadata.
+- Pointer's first rule is one Live body atom and 41 raw actions collapsed to 28
+  semantic actions: 11 fresh calls, one set-if-empty, one view read, and 13
+  Sets. Its second rule is the same vocabulary with nested constructors and
+  113 raw/76 semantic actions. The first source union is a larger but still
+  typed target-directed View Set; it is a valid later boundary rather than a
+  reason to add a relation-insert-only recognizer.
+
+The cross-workload accepted premise is therefore a closed, typed, general
+scalar action plan with 0..N table bodies, 0..N prewave table/FD-view reads,
+authenticated fresh calls, ordered typed effects, and multiple independent
+ordered-union graphs. It must replace or subsume the committed exact scalar
+plan before mixed rulesets are accepted. Primitive expressions and containers
+remain separate layers. This premise is not yet a writer contract; the three
+independent design audits remain outstanding.
+
+## General scalar-action checkpoint
+
+All three independent read-only design audits passed at unchanged source HEAD
+`8f0520b`. They found no need for a shared public-IR change, host execution, a
+DuckDB extension API, or a second merge strategy. Architecture A—per-rule wide
+typed SQL stages plus one global dependency-respecting ordered-union
+fixed-point—is the accepted first design. The normalized shared-lane design is
+the sole fallback architecture and is not authorized unless A fails a reduced
+differential witness.
+
+### Locked semantics and scope
+
+- Body matching supports zero or more scalar-typed `ReadMode::Live` table
+  atoms. Repeated variables and literals remain typed equality predicates. A
+  seminaive N-body match fires exactly once iff at least one source row is at
+  or beyond that rule's watermark. A non-seminaive empty body yields one lane
+  on every invocation; a seminaive empty body yields one lane only at its zero
+  watermark. Primitive, All, and Subsumed body atoms remain unowned.
+- `LetAtomTerm` is compile-time SSA only. Typed literals and aliases fold into
+  `ValueRef`; they retain raw source ordinals for diagnostics but consume no
+  executable event or fresh ordinal. Runtime ops retain source order and may
+  reference any prior binding.
+- Table action calls initially admit exactly one-output `DefaultVal::Fail`
+  lookups. They read the durable prewave, include a subsumed owner, require
+  exactly one owner per lane, and publish no row to Rust. Const/Fresh-default
+  prediction maps are deferred because their batching scope is a separate
+  semantic design.
+- DuckDB overrides the existing public `register_set_if_empty` and
+  `register_view_column_read` methods. It creates fail-closed tokens and stores
+  backend-private descriptors keyed by token. Registration precedes table
+  creation, so admission resolves the descriptor's exact view name lazily,
+  requires one catalog match plus exact arity/schema/output type, and never
+  treats the diagnostic call name as authority or interpolates the view name
+  into SQL. Freeing a token removes its descriptor before numeric ID reuse.
+- A set-if-empty miss returns that lane's supplied first default and stages the
+  complete supplied row. It does not become visible to later ordinary or
+  view-column reads in the wave. A following view read of the same missing key
+  returns its own fallback. Existing—including subsumed—owners are returned.
+- Fresh calls require a live authenticated token, String literal label, and Id
+  result. The label is opaque. All explicit successful head IDs are reserved
+  deterministically by scheduled occurrence, executable fresh site, and
+  canonical match before any collision-generated ID.
+- Table Sets admit only catalog-validated AssertEq, KeepOld, or the already
+  authenticated complete ordered-union graph. Set-if-empty candidates use the
+  same typed effect path. All effects are materialized before mutation;
+  AssertEq and KeepOld effects apply in canonical scheduled/action/match order;
+  every ordered-union candidate is enqueued before one global fixed-point
+  drain.
+- Multiple graphs are ordered by the first scheduled source effect plus their
+  validated generated-write dependency, never by `FunctionId`. Independent
+  graph/collision order is backend-canonicalizable, but generated writes may
+  not cross a dependency edge. Function IDs only locate typed tables/queues.
+- One transaction owns matches, lookup/FD stages, head/effect stages, explicit
+  and collision counters, direct effects, queue drain, generation, and scratch
+  cleanup. Rust may observe scalar counts, booleans, ordinals, and scheduler
+  selectors only. Failure rolls back all authoritative state and preserves
+  rule watermarks, run identity, telemetry, and the prior accepted SQL trace.
+- Duplicate seminaive RuleId occurrences in one schedule must not refire the
+  same prewave delta. Either assign occurrence-relative effective watermarks as
+  the Reference does or reject duplicate schedule entries before mutation;
+  silent double execution is forbidden. Normal public schedules are unique.
+- General `Change`, `Union`, `Panic`, native scalar expressions, arbitrary
+  callbacks, deferred merges, containers, and dynamic UnstableFn remain
+  fail-closed. Opaque schema-only Id values may be copied without authorizing
+  construction or application.
+
+### Compiler ownership and migration
+
+Admission order is standard rebuild tri-state, marker rekey tri-state, path
+compression tri-state, general scalar action tri-state, then Direct. Replace
+path compression's current 3-body/4-action catch-all with a structural
+tri-state owner so unrelated valid action rules fall through. General scalar
+ownership requires only supported Live table bodies (or none), a nonempty
+actionful head, and the closed action vocabulary above. Once owned, every
+token, type, SSA edge, target, descriptor, merge graph, and action fails closed
+before RuleId allocation.
+
+The committed exact 50-raw-action compiler and its 21 differential tests are
+the migration oracle, not a second final executor. Architecture A must provide
+one production scalar-action executor and one ordered-union kernel. It may
+temporarily dual-compile the exact family while developing, but the frozen
+candidate must route the accepted exact family through the generalized runtime
+or prove that both plan representations share that single runtime with no
+homogeneous-plan scheduling restriction. Do not delete the positive exact
+implementation until its full transcript suite passes through the replacement.
+
+### Writer contract
+
+One writer owns this checkpoint from source HEAD `8f0520b`; the coordinator
+alone owns this ledger. The authorized production write set is limited to
+DuckDB `lib.rs`, `rule_sql.rs`, `path_compress.rs`, `action_rule.rs`,
+`storage.rs`, and `rebuild.rs`. Existing focused DuckDB test modules may be
+edited and one new general-action test module may be added. No manifest,
+lockfile, shared backend trait/frontend, Reference/DD implementation,
+fixture/snapshot, proof storage, benchmark, loader/rpath, input codec,
+container, Appender, Arrow, UDF, unsafe/private/FFI, host row/effect/merge, or
+performance edit is authorized.
+
+Blocking focused gates are:
+
+1. Lazy FD descriptor registration, rename/spoof/free/reuse/ambiguity/schema
+   canaries with no RuleId consumption on rejection.
+2. Existing rebuild/marker/path/Direct precedence plus an unrelated
+   3-body/4-action general rule.
+3. Differential 0/1/2/N-body, atomless lifecycle, zero/one/chained reads,
+   subsumed lookup, stable-prewave fallback, action-major fresh allocation,
+   AssertEq/KeepOld, two independent ordered-union graphs, and deterministic
+   dependency-respecting collision topology.
+4. Late conflict and explicit/collision exhaustion rollback from nonzero state,
+   exact retry, scratch cleanup, hostile typed literals, and no forbidden SQL
+   boundary.
+5. Every existing scalar-action differential test through the common runtime.
+6. Static source-shape admission for Math associativity, Pointer's first rule,
+   and Eggcc's first atomless fact while Luminal primitive-body and Hardboiled
+   All/container shapes remain unowned.
+
+The writer may run only focused compile/tests/format/Clippy checks, each under
+its own 110-second watchdog. It must not run public workloads, the full
+workspace/proof suite, commit, push, or tune performance. Freeze one complete
+owned-patch hash for three independent read-only reviews.
+
+Stop this checkpoint immediately if A requires host rows/effects/merges,
+callback or UDF execution, primitive-name authority, proof-aware storage,
+type-erased SQL payloads, a public API change, or dynamic containers/UnstableFn.
+Also stop after one semantics-driven repair fails the same reduced witness; do
+not drift into micro-variants or Architecture B without a new coordinator
+decision. Runtime and statement counts are descriptive, not acceptance gates.
+
+### Frozen writer candidate
+
+The sole writer completed Architecture A at unchanged source HEAD `8f0520b`.
+The coordinator independently reproduced the complete owned-patch SHA-256 as
+`c8dd8f0e62a968872ec976bfdbe1534c6bfca0196ba709c0dacfb233719c80bb`.
+The digest is the concatenation of binary tracked diffs for the six authorized
+production files and two authorized existing test files, followed by the
+binary no-index diff for new `general_action_tests.rs`; it excludes this
+coordinator-owned ledger.
+
+The candidate adds one generalized typed scalar-action compiler/runtime, lazy
+authenticated FD descriptors, atomless and N-body matching, Fail lookups,
+fresh/FD stages, typed direct and ordered-union effects, source-derived graph
+ordering, schedule-time token reauthentication, duplicate-RuleId rejection,
+and structural path ownership. The exact 50-action compiler remains as an
+admission oracle, while its accepted rules execute through the generalized
+transaction. No commit or push occurred.
+
+Writer-reported bounded evidence on the frozen hash:
+
+- Rust test compile passed after one type-inference repair;
+- all 110 DuckDB package tests passed;
+- formatting and Clippy with warnings denied passed;
+- a plain link attempt failed because `-lduckdb` was unavailable, not because
+  of Rust/semantic errors;
+- two bundled dependency builds were timeout-censored at 110 seconds and are
+  not passes; the accepted tests used the existing pinned DuckDB 1.5.4 dylib
+  under `target/duckdb-download` with no manifest or loader edit.
+
+The writer did not run public workloads, the full workspace/proof suite,
+commit, push, or tune performance. Source status is exactly the authorized
+tracked files, one authorized untracked test module, and this ledger.
+
+### Candidate review roster
+
+| Agent | Circle/domain | Aim | Authority | Expected output | Stop |
+| --- | --- | --- | --- | --- | --- |
+| admission reviewer | compiler ownership and token authority | Verify structural precedence, SSA/type validation, FD lazy resolution/lifecycle, RuleId atomicity, and exact-oracle migration | Read-only frozen hash; no edits/builds/tests/workloads/contact | PASS/REVISE with smallest admission witness | Stop after every ownership/authority seam is traced or one blocker is proven |
+| semantic reviewer | generalized transaction | Verify stable prewave, atomless/N-body seminaive behavior, lookup/FD visibility, fresh/effect ordering, multi-graph dependencies, rollback, watermarks, and duplicate schedules | Read-only frozen hash; no edits/builds/tests/workloads/contact | PASS/REVISE with exact semantic witness | Stop after every locked invariant is decided or one blocker is proven |
+| safe-SQL/test reviewer | forbidden boundary and evidence quality | Prove typed public SQL only, no host/name/proof fallback, scope fidelity, test discrimination, and static frontier claims | Read-only frozen hash; no edits/builds/tests/workloads/contact | PASS/REVISE, residual gaps, coordinator gate recommendation | Stop after full shortcut/scope/test audit |
+
+No source edit is authorized during review. If all reviews pass, the
+coordinator independently reruns focused/package/feature/format/Clippy gates,
+static source-shape admission, one fresh capped public probe per workload, and
+`make proof-tests`. Any live correctness blocker returns to one bounded repair;
+performance measurements cannot trigger a repair in this checkpoint.
+
+### Frozen-candidate review decision and bounded repair
+
+All three independent reviewers reproduced source HEAD `8f0520b` and owned
+patch SHA-256
+`c8dd8f0e62a968872ec976bfdbe1534c6bfca0196ba709c0dacfb233719c80bb`.
+The candidate is **REVISE**, not rejected: Architecture A's transaction,
+ordering, authority, public-SQL boundary, and exact-family migration passed
+static inspection, but three local correctness defects block coordinator
+gates.
+
+1. The count-only exact-transcript heuristic returns `None` when its stricter
+   exact owner declines a rule, shadowing an otherwise valid generalized
+   rule. Exact-oracle validation may run only when both predicates accept;
+   owner `None` must continue through general admission.
+2. A supported one-Live-body/one-Set rule targeting an authenticated deferred
+   ordered-union graph falls through to Direct, which cannot execute it. The
+   general compiler must own this shape. Direct may retain only shapes it can
+   actually execute; diagnostic or fixture names cannot make a negative test
+   pass accidentally.
+3. A missing `DefaultVal::Fail` lookup currently creates a scratch slot whose
+   semantic value is SQL `NULL` and rejects it afterward. The executor must
+   check per-lane owner cardinality against the input stage before creating the
+   output slot, then materialize the value through an exactly-one inner lookup.
+   Neither durable nor scratch value columns may use SQL `NULL` as absence.
+
+One semantics-driven Architecture-A repair is authorized. It is limited to
+the existing writer's production/test write set and may additionally replace
+the misleading deferred-view negative canary with a positive Reference versus
+DuckDB differential. It must add high-discrimination coverage for:
+
+- the exact-heuristic-shadow witness;
+- one actionful unrelated three-body/four-action generalized rule;
+- a lookup keyed by an earlier lookup result;
+- two independent ordered-union graphs in one scalar schedule;
+- the repaired single-Set deferred ordered-union shape; and
+- missing/duplicate Fail-owner preflight proving no value slot is created
+  before rejection.
+
+Source-shape canaries for Math associativity, Pointer's first proof-mode rule,
+Eggcc's first atomless fact, and fail-closed Luminal/Hardboiled frontiers remain
+coordinator gates after the repair; they are not permission to edit fixtures
+or widen production scope. The writer may run only separately capped focused
+compile/tests/format/Clippy checks and must freeze a new owned-patch digest.
+No public workload, proof suite, commit, push, benchmark, performance tuning,
+host fallback, callback/UDF, container, frontend/shared-trait, manifest,
+loader, or proof-storage edit is authorized.
+
+If this one repair does not make the reduced witnesses pass, stop the
+checkpoint and return to proposal formation. Do not attempt a second
+Architecture-A micro-variant or silently fall back to Architecture B.
+
+### Frozen repaired candidate
+
+The sole repair writer completed the authorized repair at unchanged source
+HEAD `8f0520b`. The coordinator independently reproduced the complete DuckDB
+source patch SHA-256 as
+`27c185023fdfe3fd3ffc0699d4f948f275741120981049af619ef3cfc3f11c71`
+using the binary tracked diff for `egglog-experimental/duckdb/src` followed by
+the binary no-index diff for new `general_action_tests.rs`; this ledger is
+excluded.
+
+The repaired candidate makes exact-oracle decline continue to general
+admission, routes authenticated deferred single-Set rules through
+`ScalarAction`, and preflights every Fail-lookup input lane before creating an
+exact-owner value slot. It adds the six required discriminating witnesses,
+including positive Reference differentials for the single deferred Set and
+two independently ordered union graphs. The writer did not run public
+workloads, proofs, the full workspace, commit, push, or widen production
+scope.
+
+Writer-reported capped gates on this exact digest:
+
+- DuckDB library: 116 passed, 0 failed;
+- focused action-rule module: 23 passed, 0 failed;
+- generalized action module: 8 passed, 0 failed;
+- formatting, Clippy with warnings denied, and `git diff --check`: passed.
+
+These are writer evidence, not coordinator evidence. The three review circles
+now re-review only the repaired seams plus their prior residual test concerns.
+They must reproduce the new digest, remain read-only, and return PASS/REVISE
+with a smallest witness. No coordinator compile, public workload, proof gate,
+or commit occurs until all three verdicts are recorded.
+
+A separate read-only runner audit established that the feature CLI accepts
+`--backend duckdb --proofs`, but current `bench.py` still exposes only `main`
+and `dd`. Current-checkpoint public probes therefore use the feature CLI with
+fresh `/tmp` reports; adding DuckDB to the benchmark runner remains an explicit
+later integration deliverable, not something to smuggle into this repair.
+
+### Repaired-candidate review outcome
+
+All three read-only circles independently reproduced HEAD `8f0520b` and source
+digest `27c185023fdfe3fd3ffc0699d4f948f275741120981049af619ef3cfc3f11c71`.
+All three verdicts are **PASS**.
+
+- Admission/authority: exact-oracle decline falls through; structural
+  precedence remains intact; only deferred single Sets move ahead of Direct;
+  SSA, token, descriptor, RuleId, and exact-migration boundaries pass.
+- Transaction/semantics: single deferred Sets still receive complete graph
+  validation; prewave visibility, action-major IDs, source/dependency graph
+  order, one fixed-point drain, rollback/retry, and scalar-only observations
+  remain correct.
+- Safe SQL/tests: Fail preflight creates no value slot and the succeeding inner
+  join reads a durable non-null value; no forbidden interface or scope change
+  appeared; all six repair witnesses discriminate the old failure modes.
+
+One nonblocking suggestion remains: add a compiled-rule fresh-token revocation
+canary in a later focused maintenance pass. FD revocation is directly tested,
+fresh reuse is tested at admission, and the shared schedule-time authorization
+loop statically covers both, so this does not block coordinator gates.
+
+The repaired source is now accepted for independent coordinator validation.
+Any coordinator correctness failure returns to proposal formation under the
+existing one-repair stop rule; timeout or performance alone remains censored
+data rather than a correctness failure.
+
+### General scalar-action checkpoint accepted
+
+Coordinator validation passed on unchanged source digest
+`27c185023fdfe3fd3ffc0699d4f948f275741120981049af619ef3cfc3f11c71`:
+
+- tracked and new-file whitespace checks passed;
+- `cargo test -p egglog-experimental-duckdb --no-default-features --lib`:
+  116 passed, 0 failed in 0.63 seconds;
+- `cargo fmt --all -- --check`: passed;
+- DuckDB package Clippy over all targets with warnings denied: passed;
+- feature-selected `egglog-experimental` binary tests: 4 passed, 0 failed;
+- `make proof-tests`: 204 core proof tests and 8 experimental proof tests
+  passed within the 110-second watchdog;
+- the final `bin,duckdb-backend` CLI built and its loader/help preflight passed
+  in 0.51 seconds at 13,221,888 bytes maximum RSS.
+
+One fresh feature-CLI DuckDB/proofs probe was then run for each frozen
+non-Herbie workload with a separate external 110-second watchdog and a unique
+`/tmp` report path. No probe timed out or crashed, every unsupported surface
+failed closed, and no report was published because none completed:
+
+| workload | exit / wall / max RSS | first unsupported frontier |
+| --- | --- | --- |
+| Math | 1 / 0.08 s / 38,256,640 B | native scalar expression at action 22 of `(rewrite (Add a (Const 0)) a)` |
+| Pointer | 1 / 5.29 s / 353,353,728 B | final `check_facts` rule requests `All` |
+| Eggcc | 1 / 2.87 s / 100,974,592 B | generated `@rebuild_rule166` requests `All` |
+| Hardboiled | 1 / 0.04 s / 44,826,624 B | generated `@rebuild_rule64` requests `All` |
+| Luminal | 1 / 0.09 s / 60,506,112 B | checked i64-add primitive body atom |
+
+This is positive frontier movement: Math now clears the associativity family;
+Pointer clears its proof-mode analysis rules and native input before the final
+check; Eggcc clears its atomless fact and many later rules. The checkpoint is
+accepted even though no full workload completes, because performance and
+coverage gaps are reported rather than laundered into correctness results.
+
+Evidence changes the next implementation order. Native `All` table-body
+matching is now the common first blocker for three workloads, so it precedes
+the closed native scalar-expression layer for Math/Luminal; typed containers
+remain after those unless a fresh census shows otherwise. `bench.py` DuckDB
+endpoint support remains required before final benchmark collection.

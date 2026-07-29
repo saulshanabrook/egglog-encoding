@@ -1025,7 +1025,7 @@ fn assert_input_rejection_preserves_state(
 }
 
 #[test]
-fn native_input_admission_is_exact_and_ordinary_direct_set_stays_deferred() -> Result<()> {
+fn native_input_admission_is_exact_and_supported_deferred_set_is_scalar() -> Result<()> {
     let mut fixture = Fixture::new(EGraph::new()?, "admission-opaque")?;
     let original_generation = fixture.backend.storage.generation()?;
     let original_fresh = fixture.backend.storage.next_fresh_id()?;
@@ -1161,10 +1161,9 @@ fn native_input_admission_is_exact_and_ordinary_direct_set_stays_deferred() -> R
         name: "direct-source".into(),
         can_subsume: false,
     });
-    let direct_error = fixture
+    let deferred_rule = fixture
         .backend
-        .add_rule(direct_set_rule(source, fixture.view, true))
-        .unwrap_err();
+        .add_rule(direct_set_rule(source, fixture.view, true))?;
     assert_eq!(
         fixture
             .backend
@@ -1174,9 +1173,13 @@ fn native_input_admission_is_exact_and_ordinary_direct_set_stays_deferred() -> R
         WriteCapability::Deferred
     );
     assert!(
-        direct_error.to_string().contains("one value term")
-            || direct_error.to_string().contains("deferred"),
-        "unexpected direct-set error: {direct_error:#}"
+        fixture.backend.rules[deferred_rule.rep() as usize]
+            .as_ref()
+            .expect("deferred rule remains registered")
+            .plan
+            .scalar_action()
+            .is_some(),
+        "authenticated deferred ordered-union Set must use ScalarAction"
     );
     let sink = fixture.backend.add_table(FunctionConfig {
         schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
@@ -1190,7 +1193,11 @@ fn native_input_admission_is_exact_and_ordinary_direct_set_stays_deferred() -> R
     let first_rule = fixture
         .backend
         .add_rule(direct_set_rule(source, sink, false))?;
-    assert_eq!(first_rule.rep(), 0, "rejected Direct Set consumed a RuleId");
+    assert_eq!(
+        first_rule.rep(),
+        1,
+        "supported deferred ScalarAction should consume exactly one RuleId"
+    );
 
     let minted_not_stored = fixture.backend.fresh_id();
     fixture.backend.add_values(vec![(

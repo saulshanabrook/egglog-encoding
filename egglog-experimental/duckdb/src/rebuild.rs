@@ -979,6 +979,33 @@ pub(crate) fn validate_scalar_mixed_ordered_union(
     })
 }
 
+/// Validate an ordered-union target admitted from the general scalar action
+/// language. This is intentionally the same closed structural graph as the
+/// exact transcript, with a distinct diagnostic boundary.
+pub(crate) fn validate_scalar_action_ordered_union(
+    base_values: &BaseValues,
+    storage: &Storage,
+    native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
+    fresh_tokens: &BTreeSet<ExternalFunctionId>,
+    rule_name: &str,
+    target: FunctionId,
+) -> Result<OrderedUnionGraph> {
+    validate_view_ordered_union_graph(
+        base_values,
+        storage,
+        native_primitives,
+        fresh_tokens,
+        rule_name,
+        target,
+    )
+    .map_err(|error| {
+        anyhow!(
+            "DuckDB scalar rule `{rule_name}` has an incompatible ordered-union target {}: {error:#}",
+            target.rep()
+        )
+    })
+}
+
 /// Tri-state native-input admission for the ordered-union family. A View owns
 /// this branch only when both its root and displaced target have the generated
 /// outer topology; unrelated custom Blocks then retain generic `Deferred`

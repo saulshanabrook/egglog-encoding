@@ -7,7 +7,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::rebuild::{OrderedUnionGraph, ordered_union_outer, validate_scalar_mixed_ordered_union};
+use crate::rebuild::{
+    OrderedUnionGraph, ordered_union_outer, validate_scalar_action_ordered_union,
+    validate_scalar_mixed_ordered_union,
+};
+use crate::rule_sql::compile_live_body;
 use crate::storage::{ScalarSqlType, Storage, TableInfo, WriteCapability, sql_table};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
@@ -15,11 +19,29 @@ use egglog_backend_trait::{
     BaseValues, ColumnTy, DefaultVal, ExternalFunctionId, FunctionId, MergeFn, NativePrimitive,
     ReadMode, RuleActionCall, RuleBodyCall, RuleSpec, RuleValue, RuleVar,
 };
+use egglog_numeric_id::NumericId;
 
 const ACTION_COUNT: usize = 34;
 const RAW_ACTION_COUNT: usize = 50;
 const FRESH_COUNT: u64 = 14;
 const DIRECT_EFFECT_COUNT: u64 = 15;
+
+/// Backend-minted authority for proof FD operations. The primitive's display
+/// name is diagnostic only; admission resolves this descriptor's exact table
+/// name once and retains the resulting FunctionId in the immutable plan.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum FdDescriptor {
+    SetIfEmpty {
+        view_name: String,
+        n_keys: usize,
+        out_arity: usize,
+    },
+    ViewColumnRead {
+        view_name: String,
+        n_keys: usize,
+        col_idx: usize,
+    },
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ScalarLiteral {
@@ -64,12 +86,14 @@ pub(crate) enum ScalarEffectKind {
 #[derive(Clone, Debug)]
 pub(crate) struct ScalarEffectPlan {
     pub(crate) action_ordinal: usize,
+    pub(crate) event_ordinal: u64,
     pub(crate) target: FunctionId,
     pub(crate) arity: usize,
     pub(crate) n_keys: usize,
     pub(crate) kind: ScalarEffectKind,
     arguments: Vec<ScalarValueRef>,
     values: Vec<ScalarValueRef>,
+    condition_slot: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -727,12 +751,14 @@ impl<'a> ScalarCompiler<'a> {
         Ok((
             ScalarEffectPlan {
                 action_ordinal,
+                event_ordinal: u64::try_from(action_ordinal)?,
                 target: *target,
                 arity: info.arity(),
                 n_keys: info.n_keys,
                 kind,
                 arguments,
                 values,
+                condition_slot: None,
             },
             info,
         ))
@@ -1316,4 +1342,958 @@ fn assert_scratch_name(name: &str) {
         name.bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
     );
+}
+
+// -------------------------------------------------------------------------
+// General scalar action-stream lowering.
+
+#[derive(Clone, Debug)]
+enum ScalarActionRead {
+    Table {
+        target: FunctionId,
+        n_keys: usize,
+        result_column: usize,
+        keys: Vec<ScalarValueRef>,
+    },
+    SetIfEmpty {
+        target: FunctionId,
+        n_keys: usize,
+        keys: Vec<ScalarValueRef>,
+        defaults: Vec<ScalarValueRef>,
+    },
+    ViewColumn {
+        target: FunctionId,
+        n_keys: usize,
+        result_column: usize,
+        keys: Vec<ScalarValueRef>,
+        fallback: ScalarValueRef,
+    },
+}
+
+#[derive(Clone, Debug)]
+enum ScalarActionSlotSource {
+    Fresh { rank: u64 },
+    Read(ScalarActionRead),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ScalarActionSlot {
+    raw_action_ordinal: usize,
+    runtime_ordinal: u64,
+    ty: ColumnTy,
+    source: ScalarActionSlotSource,
+}
+
+/// A closed typed scalar program. Rows remain in DuckDB scratch relations;
+/// Rust retains only immutable schema-level expressions and scheduling data.
+#[derive(Clone, Debug)]
+pub(crate) struct ScalarActionPlan {
+    seminaive: bool,
+    match_projection: Vec<String>,
+    match_from: Vec<String>,
+    match_predicates: Vec<String>,
+    freshness_columns: Vec<String>,
+    order_columns: Vec<String>,
+    slots: Vec<ScalarActionSlot>,
+    effects: Vec<ScalarEffectPlan>,
+    graphs: Vec<OrderedUnionGraph>,
+    fresh_slots: u64,
+    action_count: u64,
+    required_fresh_tokens: BTreeSet<ExternalFunctionId>,
+    required_fd_descriptors: BTreeMap<ExternalFunctionId, FdDescriptor>,
+}
+
+impl ScalarActionPlan {
+    pub(crate) fn authorize(
+        &self,
+        fresh_tokens: &BTreeSet<ExternalFunctionId>,
+        fd_descriptors: &BTreeMap<ExternalFunctionId, FdDescriptor>,
+    ) -> Result<()> {
+        for token in &self.required_fresh_tokens {
+            ensure!(
+                fresh_tokens.contains(token),
+                "DuckDB scalar action plan references a freed or reused get-fresh token {}",
+                token.rep()
+            );
+        }
+        for (token, descriptor) in &self.required_fd_descriptors {
+            ensure!(
+                fd_descriptors.get(token) == Some(descriptor),
+                "DuckDB scalar action plan references a freed or reused FD token {}",
+                token.rep()
+            );
+        }
+        Ok(())
+    }
+
+    pub(crate) fn fresh_slots(&self) -> u64 {
+        self.fresh_slots
+    }
+
+    pub(crate) fn action_count(&self) -> u64 {
+        self.action_count
+    }
+
+    pub(crate) fn slots(&self) -> &[ScalarActionSlot] {
+        &self.slots
+    }
+
+    pub(crate) fn effects(&self) -> &[ScalarEffectPlan] {
+        &self.effects
+    }
+
+    pub(crate) fn graphs(&self) -> &[OrderedUnionGraph] {
+        &self.graphs
+    }
+
+    pub(crate) fn owner_checks(&self) -> Vec<(FunctionId, usize, bool)> {
+        let mut checks = Vec::new();
+        for slot in &self.slots {
+            if let ScalarActionSlotSource::Read(read) = &slot.source {
+                let (target, n_keys) = match read {
+                    ScalarActionRead::Table { target, n_keys, .. }
+                    | ScalarActionRead::SetIfEmpty { target, n_keys, .. }
+                    | ScalarActionRead::ViewColumn { target, n_keys, .. } => (*target, *n_keys),
+                };
+                checks.push((target, n_keys, false));
+            }
+        }
+        checks.extend(
+            self.effects
+                .iter()
+                .map(|effect| (effect.target, effect.n_keys, false)),
+        );
+        checks.extend(
+            self.graphs
+                .iter()
+                .map(|graph| (graph.displaced.target, graph.displaced.n_keys, true)),
+        );
+        checks
+    }
+
+    pub(crate) fn materialize_match_sql(&self, stage: &str, watermark: u64) -> String {
+        assert_scratch_name(stage);
+        if self.match_from.is_empty() {
+            let run = !self.seminaive || watermark == 0;
+            return format!(
+                "CREATE TEMP TABLE {stage} AS
+                 SELECT CAST('1' AS UBIGINT) AS __match_ordinal
+                 WHERE {}",
+                if run { "TRUE" } else { "FALSE" }
+            );
+        }
+
+        let mut predicates = self.match_predicates.clone();
+        if self.seminaive {
+            predicates.push(format!(
+                "({})",
+                self.freshness_columns
+                    .iter()
+                    .map(|column| format!("{column} >= CAST('{watermark}' AS UBIGINT)"))
+                    .collect::<Vec<_>>()
+                    .join(" OR ")
+            ));
+        }
+        let mut projection = self
+            .match_projection
+            .iter()
+            .enumerate()
+            .map(|(column, expression)| format!("{expression} AS b{column}"))
+            .collect::<Vec<_>>();
+        projection.push(format!(
+            "row_number() OVER (ORDER BY {}) AS __match_ordinal",
+            self.order_columns.join(", ")
+        ));
+        format!(
+            "CREATE TEMP TABLE {stage} AS
+             SELECT {}
+             FROM {}
+             WHERE {}",
+            projection.join(", "),
+            self.match_from.join(" CROSS JOIN "),
+            predicates.join(" AND ")
+        )
+    }
+
+    pub(crate) fn materialize_slot_sql(
+        &self,
+        input_stage: &str,
+        output_stage: &str,
+        slot_index: usize,
+        first_fresh: u64,
+        match_count: u64,
+    ) -> String {
+        assert_scratch_name(input_stage);
+        assert_scratch_name(output_stage);
+        let slot = &self.slots[slot_index];
+        match &slot.source {
+            ScalarActionSlotSource::Fresh { rank, .. } => format!(
+                "CREATE TEMP TABLE {output_stage} AS
+                 SELECT prior.*,
+                        CAST('{first_fresh}' AS UBIGINT)
+                            + CAST('{rank}' AS UBIGINT) * CAST('{match_count}' AS UBIGINT)
+                            + prior.__match_ordinal - 1 AS s{slot_index}
+                 FROM {input_stage} AS prior"
+            ),
+            ScalarActionSlotSource::Read(ScalarActionRead::Table {
+                target,
+                n_keys,
+                result_column,
+                keys,
+            }) => {
+                debug_assert_eq!(keys.len(), *n_keys);
+                let equality = render_read_equality(keys, *n_keys, "prior");
+                format!(
+                    "CREATE TEMP TABLE {output_stage} AS
+                     SELECT prior.*,
+                            existing.c{result_column} AS s{slot_index}
+                     FROM {input_stage} AS prior
+                     JOIN {} AS existing ON {equality}",
+                    sql_table(*target)
+                )
+            }
+            ScalarActionSlotSource::Read(read) => {
+                let (target, n_keys, keys, result_column, fallback, invalid, missing) = match read {
+                    ScalarActionRead::SetIfEmpty {
+                        target,
+                        n_keys,
+                        keys,
+                        defaults,
+                    } => (
+                        *target,
+                        *n_keys,
+                        keys,
+                        *n_keys,
+                        Some(&defaults[0]),
+                        "lookup.__owners > 1",
+                        true,
+                    ),
+                    ScalarActionRead::ViewColumn {
+                        target,
+                        n_keys,
+                        result_column,
+                        keys,
+                        fallback,
+                    } => (
+                        *target,
+                        *n_keys,
+                        keys,
+                        *result_column,
+                        Some(fallback),
+                        "lookup.__owners > 1",
+                        false,
+                    ),
+                    ScalarActionRead::Table { .. } => unreachable!("handled above"),
+                };
+                debug_assert_eq!(keys.len(), n_keys);
+                let equality = render_read_equality(keys, n_keys, "prior");
+                let value = fallback.map_or_else(
+                    || "lookup.__value".to_string(),
+                    |fallback| {
+                        format!(
+                            "CASE WHEN lookup.__owners = 0 THEN {} ELSE lookup.__value END",
+                            render_general_ref(fallback, "prior")
+                        )
+                    },
+                );
+                let missing_projection =
+                    missing.then(|| format!(", lookup.__owners = 0 AS __missing_s{slot_index}"));
+                format!(
+                    "CREATE TEMP TABLE {output_stage} AS
+                     SELECT prior.*,
+                            {value} AS s{slot_index},
+                            {invalid} AS __invalid_s{slot_index}{}
+                     FROM {input_stage} AS prior
+                     LEFT JOIN LATERAL (
+                         SELECT count(existing.__generation) AS __owners,
+                                first(existing.c{result_column} ORDER BY existing.__generation)
+                                    AS __value
+                         FROM {} AS existing
+                         WHERE {equality}
+                     ) AS lookup ON TRUE",
+                    missing_projection.unwrap_or_default(),
+                    sql_table(target)
+                )
+            }
+        }
+    }
+
+    /// Fail lookups validate every input lane against the durable pre-wave
+    /// table before a result-bearing scratch relation can be created.
+    pub(crate) fn slot_preflight_sql(
+        &self,
+        input_stage: &str,
+        slot_index: usize,
+    ) -> Option<String> {
+        assert_scratch_name(input_stage);
+        let ScalarActionSlotSource::Read(ScalarActionRead::Table {
+            target,
+            n_keys,
+            keys,
+            ..
+        }) = &self.slots[slot_index].source
+        else {
+            return None;
+        };
+        debug_assert_eq!(keys.len(), *n_keys);
+        let equality = render_read_equality(keys, *n_keys, "prior");
+        Some(format!(
+            "SELECT EXISTS (
+                 SELECT 1
+                 FROM {input_stage} AS prior
+                 LEFT JOIN LATERAL (
+                     SELECT count(existing.__generation) AS __owners
+                     FROM {} AS existing
+                     WHERE {equality}
+                 ) AS lookup ON TRUE
+                 WHERE lookup.__owners <> 1
+             )",
+            sql_table(*target)
+        ))
+    }
+
+    pub(crate) fn slot_invalid_sql(&self, stage: &str, slot_index: usize) -> Option<String> {
+        assert_scratch_name(stage);
+        matches!(
+            self.slots[slot_index].source,
+            ScalarActionSlotSource::Read(
+                ScalarActionRead::SetIfEmpty { .. } | ScalarActionRead::ViewColumn { .. }
+            )
+        )
+        .then(|| format!("SELECT EXISTS (SELECT 1 FROM {stage} WHERE __invalid_s{slot_index})"))
+    }
+
+    pub(crate) fn slot_error(&self, slot_index: usize) -> String {
+        let slot = &self.slots[slot_index];
+        match &slot.source {
+            ScalarActionSlotSource::Read(ScalarActionRead::Table { target, .. }) => format!(
+                "DuckDB scalar action {} (runtime {}, result {:?}) Fail lookup for function {} did not have exactly one pre-wave owner",
+                slot.raw_action_ordinal,
+                slot.runtime_ordinal,
+                slot.ty,
+                target.rep()
+            ),
+            ScalarActionSlotSource::Read(_) => format!(
+                "DuckDB scalar action {} (runtime {}, result {:?}) has duplicate durable pre-wave owners",
+                slot.raw_action_ordinal, slot.runtime_ordinal, slot.ty
+            ),
+            ScalarActionSlotSource::Fresh { .. } => {
+                unreachable!("fresh slots have no ownership check")
+            }
+        }
+    }
+
+    pub(crate) fn materialize_effect_sql(
+        &self,
+        head_stage: &str,
+        effect_stage: &str,
+        effect: &ScalarEffectPlan,
+        first_event: u64,
+    ) -> String {
+        assert_scratch_name(head_stage);
+        assert_scratch_name(effect_stage);
+        let mut projection = effect
+            .arguments
+            .iter()
+            .chain(&effect.values)
+            .enumerate()
+            .map(|(column, value)| format!("{} AS c{column}", render_general_ref(value, "head")))
+            .collect::<Vec<_>>();
+        projection.push(format!(
+            "CAST('{first_event}' AS UBIGINT) + head.__match_ordinal - 1 AS __ordinal"
+        ));
+        let predicate = effect
+            .condition_slot
+            .map_or("TRUE".to_string(), |slot| format!("head.__missing_s{slot}"));
+        format!(
+            "CREATE TEMP TABLE {effect_stage} AS
+             SELECT {}
+             FROM {head_stage} AS head
+             WHERE {predicate}
+             ORDER BY head.__match_ordinal",
+            projection.join(", ")
+        )
+    }
+}
+
+struct GeneralScalarCompiler<'a> {
+    storage: &'a Storage,
+    base_values: &'a BaseValues,
+    native_primitives: &'a BTreeMap<ExternalFunctionId, NativePrimitive>,
+    fresh_tokens: &'a BTreeSet<ExternalFunctionId>,
+    fd_descriptors: &'a BTreeMap<ExternalFunctionId, FdDescriptor>,
+    rule_name: &'a str,
+    bindings: BTreeMap<u32, BoundValue>,
+    slots: Vec<ScalarActionSlot>,
+    effects: Vec<ScalarEffectPlan>,
+    graphs: Vec<OrderedUnionGraph>,
+    fresh_rank: u64,
+    runtime_ordinal: u64,
+    required_fresh_tokens: BTreeSet<ExternalFunctionId>,
+    required_fd_descriptors: BTreeMap<ExternalFunctionId, FdDescriptor>,
+}
+
+impl<'a> GeneralScalarCompiler<'a> {
+    fn compile_term(
+        &self,
+        term: &GenericAtomTerm<RuleVar, RuleValue>,
+        expected: ColumnTy,
+        context: &str,
+    ) -> Result<ScalarValueRef> {
+        match term {
+            GenericAtomTerm::Var(_, variable) => {
+                ensure!(
+                    variable.ty == expected,
+                    "DuckDB scalar rule `{}` {context} has a mistyped variable",
+                    self.rule_name
+                );
+                let binding = self.bindings.get(&variable.id).ok_or_else(|| {
+                    anyhow!(
+                        "DuckDB scalar rule `{}` {context} uses variable id {} before binding",
+                        self.rule_name,
+                        variable.id
+                    )
+                })?;
+                ensure!(
+                    binding.ty == variable.ty,
+                    "DuckDB scalar rule `{}` reuses variable id {} with an inconsistent type",
+                    self.rule_name,
+                    variable.id
+                );
+                Ok(binding.value.clone())
+            }
+            GenericAtomTerm::Literal(_, literal) => {
+                ensure!(
+                    literal.ty == expected,
+                    "DuckDB scalar rule `{}` {context} has a mistyped literal",
+                    self.rule_name
+                );
+                let scalar = ScalarSqlType::from_column(self.base_values, expected)?;
+                Ok(ScalarValueRef::Literal(ScalarLiteral {
+                    value: *literal,
+                    scalar,
+                    sql: scalar.sql_literal(self.base_values, literal.value)?,
+                }))
+            }
+            GenericAtomTerm::Global(..) => bail!(
+                "DuckDB scalar rule `{}` {context} contains an unsupported global",
+                self.rule_name
+            ),
+        }
+    }
+
+    fn bind_value(
+        &mut self,
+        variable: &RuleVar,
+        value: ScalarValueRef,
+        context: &str,
+    ) -> Result<()> {
+        ensure!(
+            !self.bindings.contains_key(&variable.id),
+            "DuckDB scalar rule `{}` {context} rebinds SSA variable id {}",
+            self.rule_name,
+            variable.id
+        );
+        self.bindings.insert(
+            variable.id,
+            BoundValue {
+                ty: variable.ty,
+                value,
+            },
+        );
+        Ok(())
+    }
+
+    fn bind_slot(
+        &mut self,
+        raw_action_ordinal: usize,
+        variable: &RuleVar,
+        source: ScalarActionSlotSource,
+    ) -> Result<usize> {
+        let slot = self.slots.len();
+        self.bind_value(variable, ScalarValueRef::Slot(slot), "Let")?;
+        self.slots.push(ScalarActionSlot {
+            raw_action_ordinal,
+            runtime_ordinal: self.runtime_ordinal,
+            ty: variable.ty,
+            source,
+        });
+        Ok(slot)
+    }
+
+    fn classify_effect(
+        &mut self,
+        target: FunctionId,
+        info: &TableInfo,
+    ) -> Result<ScalarEffectKind> {
+        Ok(match info.write_capability {
+            WriteCapability::AssertEq => ScalarEffectKind::AssertEq,
+            WriteCapability::KeepOld => ScalarEffectKind::KeepOld,
+            WriteCapability::Deferred => {
+                let graph = validate_scalar_action_ordered_union(
+                    self.base_values,
+                    self.storage,
+                    self.native_primitives,
+                    self.fresh_tokens,
+                    self.rule_name,
+                    target,
+                )?;
+                self.required_fresh_tokens.insert(graph.fresh_token);
+                if let Some(existing) = self
+                    .graphs
+                    .iter()
+                    .find(|existing| existing.root.target == graph.root.target)
+                {
+                    ensure!(
+                        existing == &graph,
+                        "DuckDB scalar rule `{}` has inconsistent ordered-union graphs for target {}",
+                        self.rule_name,
+                        target.rep()
+                    );
+                } else {
+                    self.graphs.push(graph);
+                }
+                ScalarEffectKind::OrderedUnion
+            }
+        })
+    }
+
+    fn compile_set(
+        &mut self,
+        raw_action_ordinal: usize,
+        call: &RuleActionCall,
+        arguments: &[GenericAtomTerm<RuleVar, RuleValue>],
+        values: &[GenericAtomTerm<RuleVar, RuleValue>],
+        condition_slot: Option<usize>,
+    ) -> Result<()> {
+        let RuleActionCall::Table { id: target, .. } = call else {
+            bail!(
+                "DuckDB scalar rule `{}` action {raw_action_ordinal} cannot Set a primitive",
+                self.rule_name
+            );
+        };
+        let info = self.storage.table_info(*target).with_context(|| {
+            format!(
+                "DuckDB scalar rule `{}` action {raw_action_ordinal} has an invalid target",
+                self.rule_name
+            )
+        })?;
+        ensure!(
+            arguments.len() == info.n_keys && values.len() == info.n_vals,
+            "DuckDB scalar rule `{}` action {raw_action_ordinal} has the wrong complete-row Set arity",
+            self.rule_name
+        );
+        let arguments = arguments
+            .iter()
+            .zip(&info.schema[..info.n_keys])
+            .map(|(term, &ty)| self.compile_term(term, ty, "Set key"))
+            .collect::<Result<Vec<_>>>()?;
+        let values = values
+            .iter()
+            .zip(&info.schema[info.n_keys..])
+            .map(|(term, &ty)| self.compile_term(term, ty, "Set value"))
+            .collect::<Result<Vec<_>>>()?;
+        let kind = self.classify_effect(*target, &info)?;
+        self.effects.push(ScalarEffectPlan {
+            action_ordinal: raw_action_ordinal,
+            event_ordinal: self.runtime_ordinal,
+            target: *target,
+            arity: info.arity(),
+            n_keys: info.n_keys,
+            kind,
+            arguments,
+            values,
+            condition_slot,
+        });
+        Ok(())
+    }
+
+    fn resolve_fd_view(&self, descriptor: &FdDescriptor) -> Result<(FunctionId, TableInfo)> {
+        let name = match descriptor {
+            FdDescriptor::SetIfEmpty { view_name, .. }
+            | FdDescriptor::ViewColumnRead { view_name, .. } => view_name,
+        };
+        self.storage.table_by_exact_name(name).with_context(|| {
+            format!(
+                "DuckDB scalar rule `{}` cannot resolve FD view",
+                self.rule_name
+            )
+        })
+    }
+
+    fn compile_let(
+        &mut self,
+        raw_action_ordinal: usize,
+        variable: &RuleVar,
+        call: &RuleActionCall,
+        arguments: &[GenericAtomTerm<RuleVar, RuleValue>],
+    ) -> Result<()> {
+        match call {
+            RuleActionCall::Table { id: target, .. } => {
+                let info = self.storage.table_info(*target)?;
+                ensure!(
+                    info.n_vals == 1 && matches!(info.default, DefaultVal::Fail),
+                    "DuckDB scalar rule `{}` action {raw_action_ordinal} table Let requires exactly one output and DefaultVal::Fail",
+                    self.rule_name
+                );
+                ensure!(
+                    arguments.len() == info.n_keys && variable.ty == info.schema[info.n_keys],
+                    "DuckDB scalar rule `{}` action {raw_action_ordinal} table Let has the wrong signature",
+                    self.rule_name
+                );
+                let keys = arguments
+                    .iter()
+                    .zip(&info.schema[..info.n_keys])
+                    .map(|(term, &ty)| self.compile_term(term, ty, "table Let key"))
+                    .collect::<Result<Vec<_>>>()?;
+                self.bind_slot(
+                    raw_action_ordinal,
+                    variable,
+                    ScalarActionSlotSource::Read(ScalarActionRead::Table {
+                        target: *target,
+                        n_keys: info.n_keys,
+                        result_column: info.n_keys,
+                        keys,
+                    }),
+                )?;
+            }
+            RuleActionCall::Primitive { id, output, .. } => {
+                ensure!(
+                    *output == variable.ty,
+                    "DuckDB scalar rule `{}` action {raw_action_ordinal} primitive result type disagrees with its binding",
+                    self.rule_name
+                );
+                if self.fresh_tokens.contains(id) {
+                    ensure!(
+                        *output == ColumnTy::Id && variable.ty == ColumnTy::Id,
+                        "DuckDB scalar rule `{}` action {raw_action_ordinal} get-fresh result must be Id",
+                        self.rule_name
+                    );
+                    let [label] = arguments else {
+                        bail!(
+                            "DuckDB scalar rule `{}` action {raw_action_ordinal} get-fresh requires one String literal",
+                            self.rule_name
+                        );
+                    };
+                    let ScalarValueRef::Literal(label) =
+                        self.compile_term(label, argument_ty(label), "fresh label")?
+                    else {
+                        bail!(
+                            "DuckDB scalar rule `{}` action {raw_action_ordinal} fresh label must be a literal",
+                            self.rule_name
+                        );
+                    };
+                    ensure!(
+                        label.scalar == ScalarSqlType::String,
+                        "DuckDB scalar rule `{}` action {raw_action_ordinal} fresh label must be String",
+                        self.rule_name
+                    );
+                    self.required_fresh_tokens.insert(*id);
+                    let rank = self.fresh_rank;
+                    self.fresh_rank = self
+                        .fresh_rank
+                        .checked_add(1)
+                        .context("DuckDB scalar fresh-site count overflow")?;
+                    self.bind_slot(
+                        raw_action_ordinal,
+                        variable,
+                        ScalarActionSlotSource::Fresh { rank },
+                    )?;
+                } else if let Some(descriptor) = self.fd_descriptors.get(id).cloned() {
+                    let (target, info) = self.resolve_fd_view(&descriptor)?;
+                    ensure!(
+                        matches!(info.default, DefaultVal::Fail),
+                        "DuckDB scalar rule `{}` action {raw_action_ordinal} FD view must use DefaultVal::Fail",
+                        self.rule_name
+                    );
+                    self.required_fd_descriptors.insert(*id, descriptor.clone());
+                    match descriptor {
+                        FdDescriptor::SetIfEmpty {
+                            n_keys, out_arity, ..
+                        } => {
+                            ensure!(
+                                info.n_keys == n_keys
+                                    && info.n_vals == out_arity
+                                    && arguments.len() == n_keys + out_arity
+                                    && variable.ty == info.schema[n_keys],
+                                "DuckDB scalar rule `{}` action {raw_action_ordinal} set-if-empty descriptor disagrees with the resolved view schema",
+                                self.rule_name
+                            );
+                            let keys = arguments[..n_keys]
+                                .iter()
+                                .zip(&info.schema[..n_keys])
+                                .map(|(term, &ty)| self.compile_term(term, ty, "set-if-empty key"))
+                                .collect::<Result<Vec<_>>>()?;
+                            let defaults = arguments[n_keys..]
+                                .iter()
+                                .zip(&info.schema[n_keys..])
+                                .map(|(term, &ty)| {
+                                    self.compile_term(term, ty, "set-if-empty default")
+                                })
+                                .collect::<Result<Vec<_>>>()?;
+                            let slot = self.bind_slot(
+                                raw_action_ordinal,
+                                variable,
+                                ScalarActionSlotSource::Read(ScalarActionRead::SetIfEmpty {
+                                    target,
+                                    n_keys,
+                                    keys: keys.clone(),
+                                    defaults: defaults.clone(),
+                                }),
+                            )?;
+                            let kind = self.classify_effect(target, &info)?;
+                            self.effects.push(ScalarEffectPlan {
+                                action_ordinal: raw_action_ordinal,
+                                event_ordinal: self.runtime_ordinal,
+                                target,
+                                arity: info.arity(),
+                                n_keys,
+                                kind,
+                                arguments: keys,
+                                values: defaults,
+                                condition_slot: Some(slot),
+                            });
+                        }
+                        FdDescriptor::ViewColumnRead {
+                            n_keys, col_idx, ..
+                        } => {
+                            ensure!(
+                                info.n_keys == n_keys
+                                    && col_idx < info.n_vals
+                                    && arguments.len() == n_keys + 1
+                                    && variable.ty == info.schema[n_keys + col_idx],
+                                "DuckDB scalar rule `{}` action {raw_action_ordinal} view-column descriptor disagrees with the resolved view schema",
+                                self.rule_name
+                            );
+                            let keys = arguments[..n_keys]
+                                .iter()
+                                .zip(&info.schema[..n_keys])
+                                .map(|(term, &ty)| self.compile_term(term, ty, "view-column key"))
+                                .collect::<Result<Vec<_>>>()?;
+                            let fallback = self.compile_term(
+                                &arguments[n_keys],
+                                info.schema[n_keys + col_idx],
+                                "view-column fallback",
+                            )?;
+                            self.bind_slot(
+                                raw_action_ordinal,
+                                variable,
+                                ScalarActionSlotSource::Read(ScalarActionRead::ViewColumn {
+                                    target,
+                                    n_keys,
+                                    result_column: n_keys + col_idx,
+                                    keys,
+                                    fallback,
+                                }),
+                            )?;
+                        }
+                    }
+                } else if self.native_primitives.contains_key(id) {
+                    bail!(
+                        "DuckDB scalar rule `{}` action {raw_action_ordinal} contains a deferred native scalar expression",
+                        self.rule_name
+                    );
+                } else {
+                    bail!(
+                        "DuckDB scalar rule `{}` action {raw_action_ordinal} uses an unauthenticated or callback primitive token {}",
+                        self.rule_name,
+                        id.rep()
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Tri-state admission for the general scalar action stream. Direct cleanup
+/// rules and a single directly executable Set retain their existing compiler;
+/// once this branch owns a supported Live-table body and Let/Set vocabulary,
+/// every interior operation is validated before a RuleId can be allocated.
+pub(crate) fn compile_scalar_action(
+    storage: &Storage,
+    base_values: &BaseValues,
+    native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
+    fresh_tokens: &BTreeSet<ExternalFunctionId>,
+    fd_descriptors: &BTreeMap<ExternalFunctionId, FdDescriptor>,
+    rule: &RuleSpec,
+) -> Result<Option<ScalarActionPlan>> {
+    let exact_transcript = looks_like_exact_scalar_transcript(rule);
+    if exact_transcript && scalar_mixed_owner(storage, rule)?.is_some() {
+        compile_scalar_mixed(storage, base_values, native_primitives, fresh_tokens, rule)?
+            .context("DuckDB exact scalar transcript was not owned by its oracle")?;
+    }
+    if rule.core.head.0.is_empty()
+        || !rule.core.body.atoms.iter().all(|atom| {
+            matches!(
+                atom.head,
+                RuleBodyCall::Table {
+                    read: ReadMode::Live,
+                    ..
+                }
+            )
+        })
+        || !rule.core.head.0.iter().all(|action| {
+            matches!(
+                action,
+                GenericCoreAction::Let(..)
+                    | GenericCoreAction::LetAtomTerm(..)
+                    | GenericCoreAction::Set(..)
+            )
+        })
+    {
+        return Ok(None);
+    }
+    let owns_deferred_single_set = match rule.core.head.0.as_slice() {
+        [GenericCoreAction::Set(_, RuleActionCall::Table { id: target, .. }, _, _)] => {
+            storage.table_info(*target)?.write_capability == WriteCapability::Deferred
+        }
+        _ => false,
+    };
+    let owns = rule.core.body.atoms.is_empty()
+        || rule.core.head.0.len() > 1
+        || owns_deferred_single_set
+        || rule.core.head.0.iter().any(|action| {
+            matches!(
+                action,
+                GenericCoreAction::Let(..) | GenericCoreAction::LetAtomTerm(..)
+            )
+        });
+    if !owns {
+        return Ok(None);
+    }
+
+    // Preserve the reached 50-action compiler as a strict oracle for that
+    // generated family, while executing its accepted transcript through the
+    // general plan below.
+    let body = compile_live_body(storage, base_values, rule)?;
+    let mut match_projection = vec![String::new(); body.bindings.len()];
+    let mut bindings = BTreeMap::new();
+    for (&id, binding) in &body.bindings {
+        match_projection[binding.stage_column] = binding.expression.clone();
+        bindings.insert(
+            id,
+            BoundValue {
+                ty: binding.ty,
+                value: ScalarValueRef::Body(binding.stage_column),
+            },
+        );
+    }
+    let mut compiler = GeneralScalarCompiler {
+        storage,
+        base_values,
+        native_primitives,
+        fresh_tokens,
+        fd_descriptors,
+        rule_name: &rule.name,
+        bindings,
+        slots: Vec::new(),
+        effects: Vec::new(),
+        graphs: Vec::new(),
+        fresh_rank: 0,
+        runtime_ordinal: 0,
+        required_fresh_tokens: BTreeSet::new(),
+        required_fd_descriptors: BTreeMap::new(),
+    };
+
+    for (raw_action_ordinal, action) in rule.core.head.0.iter().enumerate() {
+        match action {
+            GenericCoreAction::Let(_, variable, call, arguments) => {
+                compiler.compile_let(raw_action_ordinal, variable, call, arguments)?;
+                compiler.runtime_ordinal = compiler
+                    .runtime_ordinal
+                    .checked_add(1)
+                    .context("DuckDB scalar runtime action count overflow")?;
+            }
+            GenericCoreAction::LetAtomTerm(_, variable, source) => {
+                let context = format!("action {raw_action_ordinal} LetAtomTerm");
+                let source = compiler.compile_term(source, variable.ty, &context)?;
+                compiler.bind_value(variable, source, &context)?;
+            }
+            GenericCoreAction::Set(_, call, arguments, values) => {
+                compiler.compile_set(raw_action_ordinal, call, arguments, values, None)?;
+                compiler.runtime_ordinal = compiler
+                    .runtime_ordinal
+                    .checked_add(1)
+                    .context("DuckDB scalar runtime action count overflow")?;
+            }
+            GenericCoreAction::Change(..)
+            | GenericCoreAction::Union(..)
+            | GenericCoreAction::Panic(..) => unreachable!("owner vocabulary checked above"),
+        }
+    }
+    ensure!(
+        !compiler.effects.is_empty(),
+        "DuckDB scalar rule `{}` has no durable Set effect",
+        rule.name
+    );
+
+    Ok(Some(ScalarActionPlan {
+        seminaive: rule.seminaive,
+        match_projection,
+        match_from: body.from,
+        match_predicates: body.predicates,
+        freshness_columns: body.freshness_columns,
+        order_columns: body.order_columns,
+        slots: compiler.slots,
+        effects: compiler.effects,
+        graphs: compiler.graphs,
+        fresh_slots: compiler.fresh_rank,
+        action_count: compiler.runtime_ordinal,
+        required_fresh_tokens: compiler.required_fresh_tokens,
+        required_fd_descriptors: compiler.required_fd_descriptors,
+    }))
+}
+
+fn render_general_ref(value: &ScalarValueRef, alias: &str) -> String {
+    match value {
+        ScalarValueRef::Body(column) => format!("{alias}.b{column}"),
+        ScalarValueRef::Slot(slot) => format!("{alias}.s{slot}"),
+        ScalarValueRef::Literal(literal) => literal.sql.clone(),
+    }
+}
+
+fn render_read_equality(keys: &[ScalarValueRef], n_keys: usize, alias: &str) -> String {
+    if n_keys == 0 {
+        "TRUE".to_string()
+    } else {
+        keys.iter()
+            .enumerate()
+            .map(|(column, value)| {
+                format!(
+                    "existing.c{column} IS NOT DISTINCT FROM {}",
+                    render_general_ref(value, alias)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" AND ")
+    }
+}
+
+fn looks_like_exact_scalar_transcript(rule: &RuleSpec) -> bool {
+    (RAW_ACTION_COUNT - 1..=RAW_ACTION_COUNT).contains(&rule.core.head.0.len())
+        && rule
+            .core
+            .head
+            .0
+            .iter()
+            .filter(|action| matches!(action, GenericCoreAction::LetAtomTerm(..)))
+            .count()
+            >= 14
+        && rule
+            .core
+            .head
+            .0
+            .iter()
+            .filter(|action| matches!(action, GenericCoreAction::Let(..)))
+            .count()
+            >= 14
+        && rule
+            .core
+            .head
+            .0
+            .iter()
+            .filter(|action| matches!(action, GenericCoreAction::Set(..)))
+            .count()
+            >= 14
 }

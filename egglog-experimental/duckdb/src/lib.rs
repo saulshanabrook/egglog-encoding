@@ -32,6 +32,8 @@ mod action_rule_tests;
 #[cfg(test)]
 mod cleanup_effect_tests;
 #[cfg(test)]
+mod general_action_tests;
+#[cfg(test)]
 mod input_tests;
 mod marker_rekey;
 #[cfg(test)]
@@ -47,6 +49,7 @@ mod rule_sql;
 mod rule_sql_tests;
 mod storage;
 
+use action_rule::FdDescriptor;
 use rule_sql::{CompiledRule, RuleExecutionStats, compile_rule};
 use storage::{InsertStats, Storage, for_each_scan_entry};
 
@@ -66,6 +69,7 @@ pub struct EGraph {
     registries: Database,
     deferred_panic: Arc<Mutex<Option<String>>>,
     fresh_tokens: BTreeSet<ExternalFunctionId>,
+    fd_descriptors: BTreeMap<ExternalFunctionId, FdDescriptor>,
     native_primitives: BTreeMap<ExternalFunctionId, NativePrimitive>,
     rules: Vec<Option<RegisteredRule>>,
     last_insert: InsertStats,
@@ -82,6 +86,7 @@ impl EGraph {
             registries,
             deferred_panic: Arc::new(Mutex::new(None)),
             fresh_tokens: BTreeSet::new(),
+            fd_descriptors: BTreeMap::new(),
             native_primitives: BTreeMap::new(),
             rules: Vec::new(),
             last_insert: InsertStats::default(),
@@ -311,6 +316,7 @@ impl Backend for EGraph {
             self.registries.base_values(),
             &self.native_primitives,
             &self.fresh_tokens,
+            &self.fd_descriptors,
             rule,
         )?;
         let id = RuleId::new(self.rules.len() as u32);
@@ -331,6 +337,16 @@ impl Backend for EGraph {
             return Ok(IterationReport::default());
         }
 
+        let mut unique = BTreeSet::new();
+        for id in run.rules {
+            if !unique.insert(id.rep()) {
+                bail!(
+                    "DuckDB bounded ruleset contains duplicate RuleId {}",
+                    id.rep()
+                );
+            }
+        }
+
         let scheduled = run
             .rules
             .iter()
@@ -338,7 +354,16 @@ impl Backend for EGraph {
                 self.rules
                     .get(id.rep() as usize)
                     .and_then(Option::as_ref)
-                    .map(|registered| (&registered.plan, registered.watermark))
+                    .map(|registered| {
+                        if let Some(plan) = registered.plan.scalar_action() {
+                            plan.authorize(&self.fresh_tokens, &self.fd_descriptors)?;
+                        }
+                        Ok::<(&CompiledRule, u64), anyhow::Error>((
+                            &registered.plan,
+                            registered.watermark,
+                        ))
+                    })
+                    .transpose()?
                     .ok_or_else(|| anyhow!("DuckDB cannot run freed or unknown rule {}", id.rep()))
             })
             .collect::<Result<Vec<_>>>()?;
@@ -390,7 +415,48 @@ impl Backend for EGraph {
         token
     }
 
+    fn register_set_if_empty(
+        &mut self,
+        view_name: String,
+        n_keys: usize,
+        out_arity: usize,
+    ) -> ExternalFunctionId {
+        let token = self.new_panic(format!(
+            "DuckDB set-if-empty for `{view_name}` requires native SQL lowering"
+        ));
+        self.fd_descriptors.insert(
+            token,
+            FdDescriptor::SetIfEmpty {
+                view_name,
+                n_keys,
+                out_arity,
+            },
+        );
+        token
+    }
+
+    fn register_view_column_read(
+        &mut self,
+        view_name: String,
+        n_keys: usize,
+        col_idx: usize,
+    ) -> ExternalFunctionId {
+        let token = self.new_panic(format!(
+            "DuckDB view-column read for `{view_name}` requires native SQL lowering"
+        ));
+        self.fd_descriptors.insert(
+            token,
+            FdDescriptor::ViewColumnRead {
+                view_name,
+                n_keys,
+                col_idx,
+            },
+        );
+        token
+    }
+
     fn free_external_func(&mut self, func: ExternalFunctionId) {
+        self.fd_descriptors.remove(&func);
         self.native_primitives.remove(&func);
         self.fresh_tokens.remove(&func);
         self.registries.free_external_function(func);

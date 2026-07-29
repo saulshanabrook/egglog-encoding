@@ -531,7 +531,10 @@ fn duplicate_same_key_candidates_fold_one_at_a_time_after_all_head_ids() -> Resu
     fixture.backend.storage.set_next_fresh_id(100)?;
     fixture.seed_uf(&[(30, 20, 70), (20, 10, 80)])?;
     let rule = fixture.rule;
-    assert!(fixture.run(&[rule, rule])?);
+    let second = fixture
+        .backend
+        .add_rule(fixture.rule_spec("duplicate-second-rule-id"))?;
+    assert!(fixture.run(&[rule, second])?);
     assert_eq!(fixture.backend.last_rule_match_counts(), [1, 1]);
     assert_eq!(fixture.backend.storage.next_fresh_id()?, 104);
     assert_eq!(
