@@ -961,11 +961,11 @@ impl<'a> TraceView<'a> {
     pub fn rule_equality_layout(
         &self,
         rule: u32,
-    ) -> Result<Box<[(FiringEqualitySource, FiringEqualitySource)]>, TraceViewError> {
+    ) -> Result<Arc<[(FiringEqualitySource, FiringEqualitySource)]>, TraceViewError> {
         let equalities = self.equality_recipes.get(&rule).ok_or_else(|| {
             TraceViewError::Invalid(format!("rule {rule} has no equality-obligation recipe"))
         })?;
-        Ok(equalities.to_vec().into_boxed_slice())
+        Ok(Arc::clone(equalities))
     }
 
     pub fn fact_terms(&mut self, id: FactId) -> Result<Box<[ReplayTermId]>, TraceViewError> {

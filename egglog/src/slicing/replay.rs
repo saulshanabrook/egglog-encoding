@@ -36,13 +36,6 @@ impl ReplayTermRef {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct OwnedReplayOp {
-    pub(crate) name: String,
-    pub(crate) inputs: Box<[String]>,
-    pub(crate) output: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum OwnedReplayTerm {
     Literal {
         sort: String,
@@ -50,7 +43,7 @@ pub(crate) enum OwnedReplayTerm {
     },
     Call {
         sort: String,
-        op: OwnedReplayOp,
+        op: String,
         children: Box<[ReplayTermRef]>,
     },
 }
@@ -61,11 +54,6 @@ impl OwnedReplayTerm {
             Self::Literal { sort, .. } | Self::Call { sort, .. } => sort,
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ReplayTermArena {
-    pub(crate) nodes: Vec<OwnedReplayTerm>,
 }
 
 #[derive(Clone, Debug)]
@@ -174,7 +162,7 @@ pub(crate) struct ReplayIrStats {
 #[derive(Clone, Debug)]
 pub(crate) struct ReplayProgram {
     pub(crate) setup: Vec<ReplaySetup>,
-    pub(crate) terms: ReplayTermArena,
+    pub(crate) terms: Vec<OwnedReplayTerm>,
     pub(crate) events: Vec<ReplayEvent>,
     pub(crate) stats: ReplayIrStats,
 }
@@ -242,7 +230,7 @@ impl ReplayProgram {
                         commands.push(Command::LetCheck {
                             span: span.clone(),
                             name: alias.name.clone(),
-                            expr: Expr::Call(span, op.name.clone(), args),
+                            expr: Expr::Call(span, op.clone(), args),
                             expected_sort: Some(sort.clone()),
                         });
                         aliases.insert(alias.term, alias.name.clone());
@@ -297,7 +285,7 @@ impl ReplayProgram {
     }
 
     fn term(&self, term: ReplayTermRef) -> Result<&OwnedReplayTerm, ReplayError> {
-        self.terms.nodes.get(term.index()).ok_or_else(|| {
+        self.terms.get(term.index()).ok_or_else(|| {
             ReplayError::Invalid(format!(
                 "replay term reference {} is out of range",
                 term.index()
@@ -426,7 +414,7 @@ pub(crate) enum ReplayError {
 struct OwnedTermBuilder<'a, 'view> {
     view: &'a mut TraceView<'view>,
     sorts: HashMap<ReplaySortId, String>,
-    ops: HashMap<ReplayOpId, OwnedReplayOp>,
+    ops: HashMap<ReplayOpId, ReplayOpKey>,
     literal_memo: HashMap<ReplayTermId, ReplayTermRef>,
     visiting: HashSet<ReplayTermId>,
     nodes: Vec<OwnedReplayTerm>,
@@ -446,17 +434,7 @@ impl<'a, 'view> OwnedTermBuilder<'a, 'view> {
         }
         let mut ops = HashMap::default();
         for (key, id) in &catalog.op_ids {
-            let ReplayOpKey {
-                name,
-                inputs,
-                output,
-            } = key;
-            let op = OwnedReplayOp {
-                name: name.clone(),
-                inputs: inputs.clone().into_boxed_slice(),
-                output: output.clone(),
-            };
-            if ops.insert(*id, op).is_some() {
+            if ops.insert(*id, key.clone()).is_some() {
                 return Err(ReplayError::Invalid(format!(
                     "replay operation id {} has multiple signatures",
                     id.get()
@@ -534,7 +512,7 @@ impl<'a, 'view> OwnedTermBuilder<'a, 'view> {
                 }
                 OwnedReplayTerm::Call {
                     sort: sort_name,
-                    op,
+                    op: op.name,
                     children: owned_children.into_boxed_slice(),
                 }
             }
@@ -1382,7 +1360,7 @@ fn build_owned(
     };
     Ok(ReplayProgram {
         setup,
-        terms: ReplayTermArena { nodes: term_nodes },
+        terms: term_nodes,
         events,
         stats,
     })
