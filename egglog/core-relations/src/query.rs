@@ -1501,18 +1501,9 @@ impl RuleBuilder<'_, '_> {
         body_end: usize,
         probes: impl Into<Arc<[GroundedProbe]>>,
     ) -> GroundedRule {
-        self.build_impl("", None, Some((body_end, probes.into())))
-            .grounded()
-    }
-
-    fn build_impl(
-        self,
-        desc: impl Into<String>,
-        capture: Option<CaptureBuildSpec>,
-        grounded: Option<(usize, Arc<[GroundedProbe]>)>,
-    ) -> RuleBuildOutput {
-        self.try_build_impl(desc, capture, grounded)
+        self.try_build_impl("", None, Some((body_end, probes.into())))
             .unwrap_or_else(|error| panic!("{error}"))
+            .grounded()
     }
 
     fn try_build_impl(

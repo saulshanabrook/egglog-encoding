@@ -231,7 +231,6 @@ struct UfBuffer {
     transaction: Option<crate::table_spec::MutationTransaction>,
 }
 
-#[derive(Clone)]
 struct UfProposalCapture {
     cause: DeferredEqualityCause,
     left: crate::provenance::PendingEqualityEndpoint,
@@ -277,7 +276,6 @@ impl UnionPreflight {
     }
 }
 
-#[derive(Clone)]
 struct UfPendingBatch {
     rows: RowBuffer,
     captures: Option<Vec<UfProposalCapture>>,
