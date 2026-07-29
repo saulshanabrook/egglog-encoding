@@ -351,12 +351,53 @@ fn mark_owner_visible(
 }
 
 /// Build the equality relation that the generated replay will actually see.
-fn selected_equality_dsu(selection: &SelectionState) -> SelectedEqualityDsu {
+///
+/// Projected equality proposals relate the structural endpoints named by the
+/// carrier. A selected rekey additionally changes the raw representative of
+/// one *particular structural occurrence*. Preserve that occurrence-local
+/// bridge here: a historical key such as `(term=A, raw=B)` must compare equal
+/// to the carrier endpoints `(A, A)` and `(B, B)`, without globally treating
+/// every endpoint with raw value `B` or spelling `A` as interchangeable.
+fn selected_equality_dsu(
+    view: &mut TraceView<'_>,
+    selection: &SelectionState,
+) -> Result<SelectedEqualityDsu, TraceViewError> {
     let mut dsu = SelectedEqualityDsu::default();
     for event in selection.equality_records.values() {
         dsu.union(event.left, event.right);
     }
-    dsu
+    for position in selection.rekeys.iter().copied() {
+        let rekey = view.rekey_at(position)?;
+        let fact = rekey.fact;
+        let landmark = rekey.equality_position;
+        let pairs = rekey.equalities.to_vec();
+        for pair in pairs {
+            let cell = view.fact_cell_at(
+                FactCellRef {
+                    fact,
+                    column: pair.column,
+                },
+                landmark,
+            )?;
+            if cell.endpoint.sort != pair.left.sort
+                || pair.left.sort != pair.right.sort
+                || cell.endpoint.raw != pair.left.raw
+            {
+                return Err(TraceViewError::Invalid(format!(
+                    "rekey {position:?} does not bridge the historical endpoint of fact {fact:?}: expected {:?}, observed {:?}",
+                    cell.endpoint, pair
+                )));
+            }
+            dsu.union(
+                cell.endpoint,
+                EqualityEndpoint {
+                    raw: pair.right.raw,
+                    ..cell.endpoint
+                },
+            );
+        }
+    }
+    Ok(dsu)
 }
 
 /// Test whether every equality landmark is derivable from selected effects.
@@ -567,13 +608,15 @@ fn keys_equivalent(dsu: &mut SelectedEqualityDsu, left: &[KeyCell], right: &[Key
             .all(|(left, right)| dsu.equivalent(left, right))
 }
 
-/// Retain deletions whose omission could change a later selected insertion.
+/// Retain deletions whose omission could change another selected row.
 ///
 /// For each unselected removal of a replay-visible keyed fact, this compares
-/// the victim's pre-removal key with later replay facts in the same table using
-/// only selected equalities. A collision keeps both the removal and its owning
-/// firing, preventing a stale row from absorbing or merging with the later row.
-/// Presence relations are monotone for this purpose and need no such deletion.
+/// the victim's pre-removal key with replay facts in the same table using only
+/// selected equalities. A candidate can be either a later insertion or a row
+/// that is already live and only becomes equivalent after a selected rekey.
+/// A collision keeps both the removal and its owning firing, preventing a
+/// stale row from absorbing or merging with the other row. Presence relations
+/// are monotone for this purpose and need no such deletion.
 fn select_interfering_removals(
     view: &mut TraceView<'_>,
     selection: &mut SelectionState,
@@ -582,7 +625,7 @@ fn select_interfering_removals(
     if view.totals().removals == 0 {
         return Ok(false);
     }
-    let mut dsu = selected_equality_dsu(selection);
+    let mut dsu = selected_equality_dsu(view, selection)?;
     let replay_facts = selection.replay_facts.iter().copied().collect::<Vec<_>>();
     let mut selected_any = false;
     for index in 0..view.totals().removals as usize {
@@ -601,13 +644,22 @@ fn select_interfering_removals(
         let victim_position = position_before_event(removal.position)?;
         let (table, victim_key) = replay_key_at(view, removal.removed_fact, victim_position)?;
         let mut interferes = false;
-        for later in replay_facts.iter().copied() {
-            let record = view.fact(later)?;
-            if record.table != table || record.position <= removal.position {
+        for candidate in replay_facts.iter().copied() {
+            let record = view.fact(candidate)?;
+            if candidate == removal.removed_fact || record.table != table {
                 continue;
             }
-            let (_, later_key) = replay_key_at(view, later, record.position)?;
-            if keys_equivalent(&mut dsu, &victim_key, &later_key) {
+            // For a preexisting candidate, compare the key that is live when
+            // the victim disappears. For a later insertion, creation is the
+            // first point at which it can collide. A fact whose occurrence
+            // ended before that point cannot interfere.
+            let candidate_position = record.position.max(removal.position);
+            let candidate_key = match replay_key_at(view, candidate, candidate_position) {
+                Ok((_, key)) => key,
+                Err(TraceViewError::FactNoLongerLive { .. }) => continue,
+                Err(error) => return Err(error),
+            };
+            if keys_equivalent(&mut dsu, &victim_key, &candidate_key) {
                 interferes = true;
                 break;
             }

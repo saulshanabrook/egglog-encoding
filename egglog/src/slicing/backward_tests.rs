@@ -23,6 +23,25 @@ fn replay_slice(egraph: EGraph, slice: &Slice) -> EGraph {
     proof
 }
 
+fn assert_strict_replay_in_all_modes(egraph: EGraph, slice: &Slice) {
+    let replay = crate::slicing::replay::build_replay_program(&egraph, slice).unwrap();
+    let commands = replay.to_commands().unwrap();
+    drop(egraph);
+
+    for (mode, mut replay) in [
+        ("native", EGraph::default()),
+        ("term", EGraph::default().with_term_encoding_enabled()),
+        (
+            "proof",
+            EGraph::default().with_proofs_enabled().with_proof_testing(),
+        ),
+    ] {
+        serial_trace_pool()
+            .install(|| replay.run_program(commands.clone()))
+            .unwrap_or_else(|error| panic!("{mode} replay failed: {error}"));
+    }
+}
+
 #[test]
 fn slicing_disabled_has_a_distinct_error() {
     let error = match select_all_checks(&EGraph::default()) {
@@ -119,6 +138,100 @@ fn interfering_same_wave_delete_retains_its_independent_firing() {
         "the independent delete must be rooted"
     );
     assert_eq!(slice.replay_removals.len(), 1);
+}
+
+#[test]
+fn rekeyed_victim_key_retains_interfering_delete() {
+    let mut egraph = EGraph::default();
+    serial_trace_pool()
+        .install(|| egraph.enable_trace())
+        .unwrap();
+    egraph
+        .parse_and_run_program(
+            None,
+            "(datatype E (A) (B))
+             (function tag (E) i64 :no-merge)
+             (relation Keep (E))
+             (relation Before (i64))
+             (relation Delete (Unit))
+             (relation Recreate (i64))
+             (relation After (i64))
+             (ruleset observe-before)
+             (ruleset cleanup)
+             (ruleset recreate)
+             (ruleset observe-after)
+             (Keep (B))
+             (set (tag (A)) 1)
+             (union (A) (B))
+             (Delete ())
+             (Recreate 2)
+             (rule ((= value (tag (A)))) ((Before value))
+                   :ruleset observe-before :name \"observe-before\")
+             (rule ((Delete u)) ((delete (tag (A))))
+                   :ruleset cleanup :name \"delete-old\")
+             (rule ((Recreate value)) ((set (tag (B)) value))
+                   :ruleset recreate :name \"recreate\")
+             (rule ((= value (tag (B)))) ((After value))
+                   :ruleset observe-after :name \"observe-after\")
+             (run observe-before 1)
+             (run cleanup 1)
+             (run recreate 1)
+             (run observe-after 1)
+             (check (Keep (B)) (Before 1) (After 2))",
+        )
+        .unwrap();
+
+    let slice = select_all_checks(&egraph).unwrap();
+    assert_eq!(
+        slice.replay_removals.len(),
+        1,
+        "the victim's post-rekey key must still collide with the recreation"
+    );
+    assert_strict_replay_in_all_modes(egraph, &slice);
+}
+
+#[test]
+fn preexisting_survivor_rekey_retains_interfering_delete() {
+    let mut egraph = EGraph::default();
+    serial_trace_pool()
+        .install(|| egraph.enable_trace())
+        .unwrap();
+    egraph
+        .parse_and_run_program(
+            None,
+            "(datatype E (A) (B))
+             (function f (E) i64 :merge (max old new))
+             (relation Before (i64))
+             (relation Delete (Unit))
+             (relation Equate (Unit))
+             (relation After (i64))
+             (ruleset cleanup)
+             (ruleset equate)
+             (ruleset observe)
+             (begin (set (f (A)) 9) (Before 9))
+             (set (f (B)) 2)
+             (Delete ())
+             (Equate ())
+             (rule ((Delete u)) ((delete (f (A))))
+                   :ruleset cleanup :name \"delete-a\")
+             (rule ((Equate u)) ((union (A) (B)))
+                   :ruleset equate :name \"equate-ab\")
+             (rule ((= value (f (B)))) ((After value))
+                   :ruleset observe :name \"observe-after\")
+             (run cleanup 1)
+             (run equate 1)
+             (run observe 1)
+             (check (Before 9) (After 2))",
+        )
+        .unwrap();
+
+    let slice = select_all_checks(&egraph).unwrap();
+    assert_eq!(
+        slice.replay_removals.len(),
+        1,
+        "a preexisting row that survives the delete can collide after a later selected rekey"
+    );
+    assert_strict_replay_in_all_modes(egraph, &slice);
 }
 
 #[test]
