@@ -26,7 +26,7 @@
 use std::collections::VecDeque;
 
 use crate::core_relations::{
-    AppliedEqualityId, CauseRef, Criterion, CriterionEndpointOccurrence, EqualityEndpoint,
+    AppliedEqualityId, CauseId, CauseRef, Criterion, CriterionEndpointOccurrence, EqualityEndpoint,
     EqualityReason, FactCellRef, FactId, FiringEqualitySource, FiringId, HistoryPosition,
     PremiseOccurrence, ProjectedAppliedEquality, RawCause, RawEqualityEndpoint, RawEqualitySupport,
     ReplayAliasPlan, ReplayTableKind, ReplayTermId, SourceRef, TableId, TraceView, TraceViewError,
@@ -247,31 +247,30 @@ fn explain_rule_equality(
 fn replay_owner_for_cause(
     view: &TraceView<'_>,
     cause: CauseRef,
-    memo: &mut HashMap<CauseRef, Option<ReplayOwner>>,
-    active: &mut HashSet<CauseRef>,
+    memo: &mut HashMap<CauseId, Option<ReplayOwner>>,
+    active: &mut HashSet<CauseId>,
 ) -> Result<Option<ReplayOwner>, TraceViewError> {
-    if let Some(owner) = memo.get(&cause) {
+    let id = match cause {
+        CauseRef::Rule(rule) => return Ok(Some(ReplayOwner::Firing(rule))),
+        CauseRef::Cause(id) => id,
+    };
+    if let Some(owner) = memo.get(&id) {
         return Ok(owner.clone());
     }
-    if !active.insert(cause) {
+    if !active.insert(id) {
         return Err(TraceViewError::Invalid(format!(
             "trace cause cycle reaches {cause:?}"
         )));
     }
-    let owner = match cause {
-        CauseRef::Rule(rule) => Some(ReplayOwner::Firing(rule)),
-        CauseRef::Cause(id) => match view.cause(id)? {
-            RawCause::Source(source) => Some(ReplayOwner::Source(source.clone())),
-            RawCause::Merge { incoming, .. } => {
-                replay_owner_for_cause(view, incoming, memo, active)?
-            }
-            RawCause::Rebuild { .. }
-            | RawCause::ContainerCanonicalize { .. }
-            | RawCause::ContainerRefresh { .. } => None,
-        },
+    let owner = match view.cause(id)? {
+        RawCause::Source(source) => Some(ReplayOwner::Source(source.clone())),
+        RawCause::Merge { incoming, .. } => replay_owner_for_cause(view, incoming, memo, active)?,
+        RawCause::Rebuild { .. }
+        | RawCause::ContainerCanonicalize { .. }
+        | RawCause::ContainerRefresh { .. } => None,
     };
-    active.remove(&cause);
-    memo.insert(cause, owner.clone());
+    active.remove(&id);
+    memo.insert(id, owner.clone());
     Ok(owner)
 }
 
