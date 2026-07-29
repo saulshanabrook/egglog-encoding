@@ -122,8 +122,8 @@ where
     if slice_requested {
         let invalid = if args.threads != 1 {
             Some("--slice requires --threads 1")
-        } else if args.inputs.len() != 1 {
-            Some("--slice requires exactly one input file")
+        } else if args.inputs.is_empty() {
+            Some("--slice requires at least one input file")
         } else {
             None
         };
@@ -166,22 +166,23 @@ where
     }
 
     if slice_requested {
-        let input = &args.inputs[0];
-        let program = std::fs::read_to_string(input).unwrap_or_else(|_| {
-            let arg = input.to_string_lossy();
-            panic!("Failed to read file {arg}")
-        });
-        let filename = Some(input.to_str().unwrap().to_owned());
         let capture_start = std::time::Instant::now();
-        let parsed = egraph
-            .parse_program(filename, &program)
-            .unwrap_or_else(|error| {
+        for input in &args.inputs {
+            let program = std::fs::read_to_string(input).unwrap_or_else(|_| {
+                let arg = input.to_string_lossy();
+                panic!("Failed to read file {arg}")
+            });
+            let filename = Some(input.to_str().unwrap().to_owned());
+            let parsed = egraph
+                .parse_program(filename, &program)
+                .unwrap_or_else(|error| {
+                    log::error!("{error}");
+                    std::process::exit(1);
+                });
+            if let Err(error) = egraph.run_program(parsed) {
                 log::error!("{error}");
                 std::process::exit(1);
-            });
-        if let Err(error) = egraph.run_program(parsed) {
-            log::error!("{error}");
-            std::process::exit(1);
+            }
         }
         let capture_time = capture_start.elapsed();
 
@@ -237,7 +238,13 @@ where
 
         log::info!("slice: capture={capture_time:?} slice={slice_time:?} replay={replay_time:?}",);
         if args.to_json || args.to_dot || args.to_svg {
-            serialize_egraph(&egraph, input, &args);
+            serialize_egraph(
+                &egraph,
+                args.inputs
+                    .last()
+                    .expect("nonempty slice input disappeared"),
+                &args,
+            );
         }
     } else if args.inputs.is_empty() {
         match egraph.repl(args.mode) {

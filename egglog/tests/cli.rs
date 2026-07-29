@@ -107,6 +107,13 @@ fn rewrite_root_collision_strictly_replays() {
         .output()
         .unwrap();
     assert_success(&output, "rewrite-root slice");
+    let replay = egglog()
+        .arg("--proof-testing")
+        .arg(&artifact)
+        .output()
+        .unwrap();
+    assert_success(&replay, "strict rewrite-root replay");
+
     let artifact = std::fs::read_to_string(artifact).unwrap();
     assert!(
         artifact.contains(r#"(rewrite (A __rewrite_root) (B __rewrite_root) :name "colliding")"#)
@@ -115,15 +122,36 @@ fn rewrite_root_collision_strictly_replays() {
 }
 
 #[test]
-fn bare_slice_replays_in_normal_mode() {
+fn slice_spans_multiple_input_files() {
     let directory = TestDir::new();
-    assert_success(&run(directory.path(), &["--slice"]), "normal slice replay");
+    let setup = directory.path().join("setup.egg");
+    let criterion = directory.path().join("criterion.egg");
+    let artifact = directory.path().join("slice-replay.egg");
+    std::fs::write(&setup, "(relation R (i64)) (R 1)").unwrap();
+    std::fs::write(&criterion, "(check (R 1))").unwrap();
+
+    let output = egglog()
+        .arg("--slice-output")
+        .arg(&artifact)
+        .arg(&setup)
+        .arg(&criterion)
+        .output()
+        .unwrap();
+    assert_success(&output, "multi-file slice output");
+
+    let replay = egglog()
+        .arg("--proof-testing")
+        .arg(&artifact)
+        .output()
+        .unwrap();
+    assert_success(&replay, "strict multi-file replay");
 }
 
 #[test]
 fn slice_composes_with_execution_modes() {
     let directory = TestDir::new();
     for (name, flags) in [
+        ("normal", &["--slice"][..]),
         ("proofs", &["--slice", "--proofs"][..]),
         ("term encoding", &["--slice", "--term-encoding"]),
         ("proof extraction", &["--slice", "--proof-extraction"]),

@@ -323,8 +323,8 @@ design chooses direct historical evidence and keeps that cost visible.
 
 ## Supported boundary and publication contract
 
-The current command-line boundary is intentionally narrow: one input file,
-one execution thread, the main backend, and trace capture enabled on an
+The current command-line boundary is intentionally narrow: sequential input
+files, one execution thread, the main backend, and trace capture enabled on an
 ordinary graph before user declarations, rules, or input are installed.
 Successful `check` commands are the replay roots. `extract` and
 `multi-extract` output are not retained.

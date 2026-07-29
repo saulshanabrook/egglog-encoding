@@ -82,8 +82,8 @@ The test corpus and CI strictly replay supported artifacts, while unsupported
 capture boundaries still fail before an artifact is produced. There is no
 fallback to the original program.
 
-Slicing currently supports one input file, one execution thread, and the main
-backend. A selected execution that reaches an unsupported scheduler, source,
+Slicing currently supports sequential input files, one execution thread, and
+the main backend. A selected execution that reaches an unsupported scheduler, source,
 container, or mutation shape fails closed with a diagnostic.
 Source-authored `run-rule` schedules are currently unsupported; generated
 replay uses `run-rule` only for ordinary firings whose exact premises were
