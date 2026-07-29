@@ -49,20 +49,6 @@ pub(crate) struct ActionContext {
     pub propositions: HashSet<Proposition>,
 }
 
-/// Gathers all global CoreActions from a program.
-/// This extracts all actions that occur at the top level, filtering out NormRule and other commands.
-pub(crate) fn gather_global_actions(
-    prog: &[ResolvedNCommand],
-) -> impl Iterator<Item = &GenericAction<ResolvedCall, crate::ast::ResolvedVar>> {
-    prog.iter().filter_map(|cmd| {
-        if let GenericNCommand::CoreAction(action) = cmd {
-            Some(action)
-        } else {
-            None
-        }
-    })
-}
-
 /// Run a merge function and return the resulting term, as well as a set of propositions learned.
 pub(crate) fn run_merge(
     term_dag: &mut TermDag,
@@ -265,9 +251,72 @@ pub(crate) fn gather_globals(
     prog: &[ResolvedNCommand],
     term_dag: &mut TermDag,
 ) -> Result<HashMap<String, TermId>, ProofCheckError> {
-    let actions: Vec<_> = gather_global_actions(prog).collect();
-    let ctx = process_actions("global_action", HashMap::default(), &actions, term_dag)?;
-    Ok(ctx.var_bindings)
+    Ok(process_program_actions(prog, term_dag)?.var_bindings)
+}
+
+/// Evaluate every top-level action scope for proof checking.
+///
+/// Plain [`ResolvedNCommand::CoreAction`] commands share the global binding
+/// scope. A [`ResolvedNCommand::CoreActions`] block may read those globals, but
+/// its local `let` bindings do not escape. [`ResolvedNCommand::LetBegin`] has
+/// the same local scope and exports only the value of its trailing expression.
+/// Equalities established while evaluating either kind of block remain valid
+/// propositions, because the block's actions did execute.
+fn process_program_actions(
+    prog: &[ResolvedNCommand],
+    term_dag: &mut TermDag,
+) -> Result<ActionContext, ProofCheckError> {
+    let mut global_bindings = HashMap::default();
+    let mut propositions = HashSet::default();
+
+    for command in prog {
+        match command {
+            ResolvedNCommand::CoreAction(action) => {
+                let action_ctx =
+                    process_actions("global_action", global_bindings, &[action], term_dag)?;
+                global_bindings = action_ctx.var_bindings;
+                propositions.extend(action_ctx.propositions);
+            }
+            ResolvedNCommand::CoreActions(actions) => {
+                let action_refs: Vec<_> = actions.iter().collect();
+                let action_ctx = process_actions(
+                    "global_action_block",
+                    global_bindings.clone(),
+                    &action_refs,
+                    term_dag,
+                )?;
+                propositions.extend(action_ctx.propositions);
+            }
+            ResolvedNCommand::LetBegin(_, name, actions) => {
+                let (last, prefix) = actions.0.split_last().expect("let-begin has a value");
+                let prefix_refs: Vec<_> = prefix.iter().collect();
+                let action_ctx = process_actions(
+                    "global_let_block",
+                    global_bindings.clone(),
+                    &prefix_refs,
+                    term_dag,
+                )?;
+                propositions.extend(action_ctx.propositions);
+                let GenericAction::Expr(_, value) = last else {
+                    unreachable!("let-begin ends with an expression")
+                };
+                let (value, value_props) = eval_expr_with_subst(
+                    "global_let_block",
+                    value,
+                    term_dag,
+                    &action_ctx.var_bindings,
+                )?;
+                propositions.extend(value_props);
+                global_bindings.insert(name.name.clone(), value);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(ActionContext {
+        var_bindings: global_bindings,
+        propositions,
+    })
 }
 
 /// Errors that can occur during proof checking.
@@ -543,9 +592,7 @@ impl ProofCheckContext {
             }
         }
 
-        // Use the new refactored functions
-        let actions: Vec<_> = gather_global_actions(prog).collect();
-        let action_ctx = process_actions("global_actions", HashMap::default(), &actions, term_dag)?;
+        let action_ctx = process_program_actions(prog, term_dag)?;
 
         Ok(ProofCheckContext {
             global_equalities: action_ctx.propositions,

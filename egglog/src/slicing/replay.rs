@@ -978,9 +978,12 @@ fn build_owned(
         // internal function and set bypasses ordinary proof-global lowering
         // and can manufacture unbound tuple values on the fresh proof graph.
         let command = surface.clone();
-        if !matches!(command, Command::Action(_)) {
+        if !matches!(
+            command,
+            Command::Action(_) | Command::Actions(_) | Command::LetBegin(..)
+        ) {
             return Err(ReplayError::Invalid(format!(
-                "source {source:?} does not map to an action command"
+                "source {source:?} does not map to an atomic action command"
             )));
         }
         source_events

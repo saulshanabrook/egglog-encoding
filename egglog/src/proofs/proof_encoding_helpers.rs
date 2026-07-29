@@ -534,10 +534,6 @@ pub enum ProofEncodingUnsupportedReason {
     #[error("tuple-output functions are not supported by the term/proof encoding.")]
     TupleOutputFunction,
     #[error(
-        "a user-written `begin` block (or `(let <var> (begin ...))`) is not supported by the term/proof encoding, which models top-level actions individually. Write the actions at the top level instead."
-    )]
-    UserWrittenBeginBlock,
-    #[error(
         "a `:merge` action block (actions before the result value) is not supported by the term/proof encoding."
     )]
     MergeActionBlock,
@@ -755,18 +751,6 @@ fn command_supports_proof_encoding_impl(
         && schema.is_tuple_output()
     {
         return Err(ProofEncodingUnsupportedReason::TupleOutputFunction);
-    }
-
-    // A user-written `begin` block keeps its bindings local, but proof checking
-    // models top-level actions one at a time, so those locals have no checkable
-    // representation. The encoding's own generated blocks are unaffected: they are
-    // produced after this check, and proof checking runs against the pre-encoding
-    // program.
-    if matches!(
-        command,
-        crate::ast::GenericCommand::Actions(..) | crate::ast::GenericCommand::LetBegin(..)
-    ) {
-        return Err(ProofEncodingUnsupportedReason::UserWrittenBeginBlock);
     }
 
     // The conflict check for an eq-sort output needs union-find leaders (raw id

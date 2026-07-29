@@ -2864,11 +2864,12 @@ impl EGraph {
 
         for action in &actions.0 {
             match action {
-                GenericAction::Let(_, _, _) => {
-                    unsupported.get_or_insert_with(|| {
-                        "top-level let reached source execution without global lowering".into()
-                    });
-                }
+                GenericAction::Let(_, _, expr) => self.visit_source_capture_expr(
+                    catalog,
+                    expr,
+                    &mut dependencies,
+                    &mut unsupported,
+                ),
                 GenericAction::Set(_, function, keys, value) => {
                     for key in keys {
                         self.visit_source_capture_expr(
@@ -4913,6 +4914,8 @@ impl EGraph {
                                 | Command::Rewrite(..)
                                 | Command::BiRewrite(..)
                                 | Command::Action(_)
+                                | Command::Actions(_)
+                                | Command::LetBegin(..)
                                 | Command::Check(..)
                         )
                         .then(|| command.clone())

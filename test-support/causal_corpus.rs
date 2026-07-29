@@ -117,7 +117,6 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
     AllowlistGroup {
         paths: &[
             "core/before-proofs.egg",
-            "core/begin-block.egg",
             "core/container-rebuild.egg",
             "core/cykjson.egg",
             "core/interval.egg",
