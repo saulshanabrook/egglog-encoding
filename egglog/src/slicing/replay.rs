@@ -30,7 +30,8 @@ use thiserror::Error;
 
 use crate::ast::{Action, Command, Expr, FunctionSubtype, RunRuleConfig, RustSpan, Schedule, Span};
 use crate::core_relations::{
-    FactId, ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTerm, ReplayTermId, SourceRef, TraceView,
+    FactId, ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTerm, ReplayTermId, SourceRef,
+    TraceView, TraceViewError,
 };
 use crate::slicing::backward::Slice;
 use crate::util::{HashMap, HashSet};
@@ -481,7 +482,7 @@ pub(crate) enum ReplayError {
     #[error("slice replay requires the main native backend")]
     UnsupportedBackend,
     #[error("slice replay trace error: {0}")]
-    Trace(String),
+    Trace(#[from] TraceViewError),
     #[error("slice replay input error: {0}")]
     Input(String),
     #[error("invalid slice replay: {0}")]
@@ -549,10 +550,7 @@ impl<'a, 'view> OwnedTermBuilder<'a, 'view> {
                 source.get()
             )));
         }
-        let node = self
-            .view
-            .replay_term(source)
-            .map_err(|error| ReplayError::Trace(error.to_string()))?;
+        let node = self.view.replay_term(source)?;
         if matches!(node, ReplayTerm::Literal { .. })
             && let Some(term) = self.literal_memo.get(&source)
         {
@@ -562,7 +560,7 @@ impl<'a, 'view> OwnedTermBuilder<'a, 'view> {
         let owned = match node {
             ReplayTerm::Literal { sort, literal } => OwnedReplayTerm::Literal {
                 sort: self.sort_name(sort)?.to_owned(),
-                literal: replay_literal(literal)?,
+                literal: replay_literal(literal),
             },
             ReplayTerm::Call { sort, op, children } => {
                 let sort_name = self.sort_name(sort)?.to_owned();
@@ -626,8 +624,8 @@ impl<'a, 'view> OwnedTermBuilder<'a, 'view> {
     }
 }
 
-fn replay_literal(literal: ReplayLiteral) -> Result<Literal, ReplayError> {
-    Ok(match literal {
+fn replay_literal(literal: ReplayLiteral) -> Literal {
+    match literal {
         ReplayLiteral::Unit => Literal::Unit,
         ReplayLiteral::Bool(value) => Literal::Bool(value),
         ReplayLiteral::I64(value) => Literal::Int(value),
@@ -635,7 +633,7 @@ fn replay_literal(literal: ReplayLiteral) -> Result<Literal, ReplayError> {
             Literal::Float(ordered_float::OrderedFloat(f64::from_bits(bits)))
         }
         ReplayLiteral::String(value) => Literal::String(value.to_string()),
-    })
+    }
 }
 
 fn is_static_declaration(command: &Command) -> bool {
@@ -713,7 +711,7 @@ fn selected_input_rows(
         }
     }
     let mut rows = Vec::new();
-    for (command, lines) in selected {
+    for (command, mut remaining) in selected {
         let entry = catalog.input_commands.get(&command).ok_or_else(|| {
             ReplayError::Invalid(format!("input command {command} is absent from catalog"))
         })?;
@@ -752,11 +750,10 @@ fn selected_input_rows(
             ))
         })?;
         let schema = EGraph::input_row_schema(function_type);
-        let mut remaining = lines.clone();
         for (index, text) in contents.lines().enumerate() {
             let line = u64::try_from(index + 1)
                 .map_err(|_| ReplayError::Input("input has too many lines".into()))?;
-            if !lines.contains(&line) {
+            if !remaining.remove(&line) {
                 continue;
             }
             let parsed = EGraph::parse_input_line(&schema, &entry.file, line, text)
@@ -767,7 +764,6 @@ fn selected_input_rows(
                         entry.file, line
                     ))
                 })?;
-            remaining.remove(&line);
             rows.push(ReplaySource {
                 after_wave: entry.after_wave,
                 catalog_ordinal: catalog.command_catalog[entry.command].surface_command,
@@ -1029,9 +1025,7 @@ fn build_owned(
     let mut firing_ids = slice.firings.iter().copied().collect::<Vec<_>>();
     firing_ids.sort_unstable();
     for id in firing_ids {
-        let firing = view
-            .firing(id)
-            .map_err(|error| ReplayError::Trace(error.to_string()))?;
+        let firing = view.firing(id)?;
         retained_rules.insert(firing.rule);
         firings.push((id, firing.rule, firing.wave.get(), firing.position.get()));
     }
@@ -1128,9 +1122,7 @@ fn build_owned(
     let mut alias_reset_positions = Vec::new();
     let mut selected_removal_by_fact = HashMap::<FactId, u64>::default();
     for index in slice.replay_removals.iter().copied() {
-        let removal = view
-            .removal(index)
-            .map_err(|error| ReplayError::Trace(error.to_string()))?;
+        let removal = view.removal(index)?;
         let position = removal.position.get();
         alias_reset_positions.push(position);
         selected_removal_by_fact
@@ -1358,9 +1350,7 @@ fn build_owned(
     let mut checks = slice.checks.iter().copied().collect::<Vec<_>>();
     checks.sort_unstable();
     for check in checks {
-        let root = view
-            .check_root(check)
-            .map_err(|error| ReplayError::Trace(error.to_string()))?;
+        let root = view.check_root(check)?;
         let command_index = catalog.check_commands.get(&check).ok_or_else(|| {
             ReplayError::Invalid(format!("selected check {check} has no catalog command"))
         })?;
@@ -1421,9 +1411,7 @@ pub(crate) fn build_replay_program(
         .as_any()
         .downcast_ref::<egglog_bridge::EGraph>()
         .ok_or(ReplayError::UnsupportedBackend)?;
-    bridge
-        .with_trace_view(|view| Ok(build_owned(egraph, catalog, view, slice)))
-        .map_err(|error| ReplayError::Trace(error.to_string()))?
+    bridge.with_trace_view(|view| Ok(build_owned(egraph, catalog, view, slice)))?
 }
 
 #[cfg(test)]
