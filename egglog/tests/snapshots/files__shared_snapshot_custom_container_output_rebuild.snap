@@ -1,0 +1,6 @@
+---
+source: egglog/tests/files.rs
+expression: snapshot_content_across_treatments
+---
+((N 4)
+ (freer 1))

@@ -1,0 +1,46 @@
+---
+source: egglog/tests/files.rs
+assertion_line: 279
+expression: proof_snapshot
+---
+(Rule
+  (= (Add (A) (B)) (Add (B) (A)))
+  (name
+    "(rule ((Go))
+      ((let d (Add (A) (B)))
+       (let e (Add (B) (A)))
+       (union d e)
+       (Add d (C))
+       (Add e (C)))
+         )")
+  (premises (Fiat (= (Go) (Go))))
+  (substitution))
+(let t0 (Add (Add (A) (B)) (C)))
+(let t1 (premises (Fiat (= (Go) (Go)))))
+(Congr
+  (= t0 (Add (Add (B) (A)) (C)))
+  (Rule
+    (= t0 t0)
+    (name
+      "(rule ((Go))
+      ((let d (Add (A) (B)))
+       (let e (Add (B) (A)))
+       (union d e)
+       (Add d (C))
+       (Add e (C)))
+         )")
+    t1
+    (substitution))
+  (Rule
+    (= (Add (A) (B)) (Add (B) (A)))
+    (name
+      "(rule ((Go))
+      ((let d (Add (A) (B)))
+       (let e (Add (B) (A)))
+       (union d e)
+       (Add d (C))
+       (Add e (C)))
+         )")
+    t1
+    (substitution))
+  0)

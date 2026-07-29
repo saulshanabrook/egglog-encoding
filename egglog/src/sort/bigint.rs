@@ -46,6 +46,11 @@ fn bigint_compare_validator(
 pub struct BigIntSort;
 
 impl BaseSort for BigIntSort {
+    fn prim_value_constructor(&self) -> Option<String> {
+        // `bigint_term` termifies a value as `(from-string "<n>")`.
+        Some("from-string".to_owned())
+    }
+
     type Base = Z;
 
     fn name(&self) -> &str {
@@ -100,9 +105,19 @@ impl BaseSort for BigIntSort {
         add_primitive_with_validator!(eg, "max" = |a: Z, b: Z| -> Z { a.max(b) }, max_validator);
 
         add_primitive!(eg, "to-string" = |a: Z| -> S { S::new(a.to_string()) });
-        add_primitive!(eg, "from-string" = |a: S| -?> Z {
+        // `(from-string "<n>")` is also a BigInt's canonical term form
+        // (`bigint_term`), so the validator normalizes through the parsed value.
+        let from_string_validator = |termdag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
+            let [arg] = args else { return None };
+            let Term::Lit(Literal::String(value)) = termdag.get(*arg) else {
+                return None;
+            };
+            let parsed: BigInt = value.parse().ok()?;
+            Some(bigint_term(termdag, parsed))
+        };
+        add_primitive_with_validator!(eg, "from-string" = |a: S| -?> Z {
             a.as_str().parse::<BigInt>().ok().map(Z::new)
-        });
+        }, from_string_validator);
     }
 
     fn reconstruct_termdag(

@@ -3,20 +3,14 @@ source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
 (let t0 (Add (Add (Lit 1) (Lit 2)) (Lit 3)))
-(let t1 (Add (Lit 1) (Add (Lit 2) (Lit 3))))
-(Sym
-  (= t0 t1)
-  (Rule
-    (= t1 t0)
-    (name "(birewrite (Add (Add x y) z) (Add x (Add y z)))=>")
-    (premises (Fiat (= t0 t0)))
-    (substitution (z (Lit 3)) (__rewrite_root t0) (y (Lit 2)) (x (Lit 1)))))
+(Rule
+  (= t0 (Add (Lit 1) (Add (Lit 2) (Lit 3))))
+  (name "(birewrite (Add (Add x y) z) (Add x (Add y z)))=>")
+  (premises (Fiat (= t0 t0)))
+  (substitution (z (Lit 3)) (__rewrite_root t0) (y (Lit 2)) (x (Lit 1))))
 (let t0 (Add (Lit 4) (Add (Lit 5) (Lit 6))))
-(let t1 (Add (Add (Lit 4) (Lit 5)) (Lit 6)))
-(Sym
-  (= t0 t1)
-  (Rule
-    (= t1 t0)
-    (name "(birewrite (Add (Add x y) z) (Add x (Add y z)))<=")
-    (premises (Fiat (= t0 t0)))
-    (substitution (z (Lit 6)) (__rewrite_root t0) (y (Lit 5)) (x (Lit 4)))))
+(Rule
+  (= t0 (Add (Add (Lit 4) (Lit 5)) (Lit 6)))
+  (name "(birewrite (Add (Add x y) z) (Add x (Add y z)))<=")
+  (premises (Fiat (= t0 t0)))
+  (substitution (z (Lit 6)) (__rewrite_root t0) (y (Lit 5)) (x (Lit 4))))

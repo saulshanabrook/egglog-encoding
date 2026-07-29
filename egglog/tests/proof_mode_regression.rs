@@ -83,45 +83,19 @@ fn term_and_proof_modes_lower_input_rows_as_fiat_actions() {
 }
 
 #[test]
-fn term_and_proof_modes_allow_no_merge_outputs_in_the_same_eclass() {
-    for mut egraph in [
-        EGraph::new_with_term_encoding(),
-        EGraph::new_with_proofs().with_proof_testing(),
-    ] {
-        egraph
-            .parse_and_run_program(
-                None,
-                r#"
-                (sort Foo)
-                (function bar () Foo :no-merge)
-                (constructor baz () Foo)
-                (constructor qux () Foo)
-                (set (bar) (baz))
-                (union (baz) (qux))
-                (set (bar) (qux))
-                "#,
-            )
-            .unwrap();
-    }
-}
-
-#[test]
-fn term_and_proof_modes_reject_distinct_no_merge_primitive_outputs() {
+fn term_and_proof_modes_reject_eq_sort_no_merge_functions() {
+    // Eq-sort-output `:no-merge` is not modeled by the encoding (its conflict check
+    // needs union-find leaders); such a program is unsupported and runs plain only.
+    // Primitive/Unit-output `:no-merge` is supported (see the input test above).
     for mut egraph in [
         EGraph::new_with_term_encoding(),
         EGraph::new_with_proofs().with_proof_testing(),
     ] {
         let error = egraph
-            .parse_and_run_program(
-                None,
-                r#"
-                (function score () i64 :no-merge)
-                (set (score) 1)
-                (set (score) 2)
-                "#,
-            )
+            .parse_and_run_program(None, "(sort Foo) (function bar () Foo :no-merge)")
             .unwrap_err();
-        assert!(error.to_string().contains("Illegal merge attempted"));
+        assert!(matches!(error, Error::UnsupportedProofCommand { .. }));
+        assert!(error.to_string().contains("`:no-merge`"));
     }
 }
 
@@ -146,37 +120,71 @@ fn proof_mode_rejects_fail_wrapped_input() {
 }
 
 #[test]
-fn proof_mode_rejects_fail_wrapped_set() {
+fn proof_mode_allows_fail_wrapping_set() {
+    // A `(fail (set …))` is accepted by proof encoding (it used to be rejected as a
+    // non-atomic wrapped command). The set succeeds, so `fail` reports that its
+    // wrapped command did not fail.
     let error = EGraph::new_with_proofs()
         .parse_and_run_program(
             None,
             r#"
-            (function score () i64 :no-merge)
+            (function score () i64 :merge old)
             (fail (set (score) 1))
             "#,
         )
         .unwrap_err();
 
-    assert!(matches!(error, Error::UnsupportedProofCommand { .. }));
-    assert!(
-        error
-            .to_string()
-            .contains("exactly one atomic encoded command")
-    );
+    assert!(matches!(error, Error::ExpectFail(..)));
 }
 
 #[test]
-fn proof_mode_rejects_fail_wrapped_multi_operation_encoding() {
+fn proof_mode_allows_fail_wrapping_multi_operation_encoding() {
+    // A wrapped command that encodes to several commands is now accepted;
+    // declaring the function succeeds, so `fail` reports it did not fail.
     let error = EGraph::new_with_proofs()
-        .parse_and_run_program(None, "(fail (function score () i64 :no-merge))")
+        .parse_and_run_program(None, "(fail (function score () i64 :merge old))")
         .unwrap_err();
 
-    assert!(matches!(error, Error::UnsupportedProofCommand { .. }));
-    assert!(
-        error
-            .to_string()
-            .contains("exactly one atomic encoded command")
-    );
+    assert!(matches!(error, Error::ExpectFail(..)));
+}
+
+#[test]
+fn proof_mode_fail_catches_failure_among_wrapped_commands() {
+    // `fail` runs the wrapped commands in order and succeeds at the first failure:
+    // the set succeeds and the mismatched check fails, so the `fail` passes.
+    EGraph::new_with_proofs()
+        .parse_and_run_program(
+            None,
+            r#"
+            (function score () i64 :merge old)
+            (fail (set (score) 1) (check (= (score) 2)))
+            "#,
+        )
+        .unwrap();
+}
+
+/// A set element is reshaped (`(Id (N 1))` → `(N 1)`) and then collapses into
+/// another element (`(N 1)` = `(N 3)`), in a set whose value-order element
+/// list disagrees with its term form's AST order. Guards against container
+/// rebuild proofs identifying changed elements by position instead of by term.
+#[test]
+fn unordered_container_reshaped_element_collapse_proof() {
+    let program = "
+(datatype Math (N i64) (Id Math))
+(sort MSet (Set Math))
+(relation Holds (MSet))
+(relation Go ())
+(Go)
+(rewrite (Id x) x)
+(rule ((Go)) ((Holds (set-of (Id (N 1)) (Id (N 2)) (N 3)))))
+(rule ((Go)) ((union (N 1) (N 3))))
+(run 8)
+(check (Holds (set-of (N 1) (N 2))))
+";
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(None, program)
+        .unwrap();
 }
 
 #[test]

@@ -41,9 +41,10 @@ pub(crate) struct Slice {
     pub(crate) sources: HashSet<SourceRef>,
     pub(crate) fact_terms: HashMap<FactId, Box<[ReplayTermId]>>,
     pub(crate) firing_terms: HashMap<FiringId, Box<[ReplayTermId]>>,
-    /// Earliest historical capture point for each occurrence in each firing
-    /// binding's structural `let-check` recipe. Aliases may be hoisted before
-    /// a selected deletion and then reused by later grounded waves.
+    /// Occurrence-local availability, key-readiness, and producer-liveness
+    /// windows for every call in a firing binding's structural `let-check`
+    /// recipe. Aliases may be captured before a selected deletion and then
+    /// reused by later grounded waves.
     pub(crate) firing_term_windows: HashMap<FiringId, Box<[Box<[RawAliasWindow]>]>>,
     pub(crate) equality_records: HashMap<AppliedEqualityId, ProjectedAppliedEquality>,
     denotation_equalities: HashSet<AppliedEqualityId>,
@@ -1364,6 +1365,218 @@ mod tests {
     }
 
     #[test]
+    fn parent_alias_waits_for_child_key_bridge_without_borrowing_parent_anchor() {
+        let mut egraph = EGraph::default();
+        serial_trace_pool()
+            .install(|| egraph.enable_trace())
+            .unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(datatype E (A i64) (H E))
+                 (relation Seed (E))
+                 (relation New (E))
+                 (relation Trigger ())
+                 (relation R (E))
+                 (relation Out (E))
+                 (ruleset bridge_rules)
+                 (ruleset emit_rules)
+                 (ruleset consume_rules)
+                 (Seed (H (A 0)))
+                 (New (A 1))
+                 (Trigger)
+                 (rule ((Trigger))
+                       ((union (A 0) (A 1)))
+                       :ruleset bridge_rules :name \"bridge\")
+                 (rule ((New child))
+                       ((R (H child)))
+                       :ruleset emit_rules :name \"emit\")
+                 (rule ((R value))
+                       ((Out value))
+                       :ruleset consume_rules :name \"consume\")
+                 (run bridge_rules 1)
+                 (run emit_rules 1)
+                 (run consume_rules 1)
+                 (check (Out value))",
+            )
+            .unwrap();
+
+        let slice = slice_check(&egraph, 0).unwrap();
+        assert_eq!(slice.equalities.len(), 1, "retain the child key bridge");
+        let consume_windows = slice
+            .firing_term_windows
+            .values()
+            .find(|bindings| bindings.len() == 1 && bindings[0].len() == 2)
+            .expect("consume must retain the child and parent call windows");
+        let [child, parent] = consume_windows[0].as_ref() else {
+            unreachable!("window count was checked above")
+        };
+        assert!(
+            child.support_ready_after <= child.available_after,
+            "the child's output bridge belongs to its parent's key readiness, not its own capture bound: {consume_windows:?}"
+        );
+        assert!(
+            parent.support_ready_after > parent.available_after,
+            "the old H producer exists before its requested child spelling becomes replay-addressable: {consume_windows:?}"
+        );
+        assert!(
+            parent.support_ready_after > child.available_after,
+            "the parent must wait for the child denotation bridge, not merely child creation: {consume_windows:?}"
+        );
+
+        let replay = crate::slicing::replay::build_replay_program(&egraph, &slice).unwrap();
+        let commands = replay.to_commands().unwrap();
+        let rendered = crate::slicing::replay::ReplayProgram::render_commands(&commands).unwrap();
+        let bridge = rendered
+            .find("(run-schedule (run-rule (\"bridge\"")
+            .unwrap();
+        let parent_alias = rendered[bridge..]
+            .find("(H $__slice_replay_")
+            .map(|offset| bridge + offset)
+            .expect("the H alias must be captured after its child bridge");
+        let consume = rendered
+            .find("(run-schedule (run-rule (\"consume\"")
+            .unwrap();
+        assert!(
+            bridge < parent_alias && parent_alias < consume,
+            "{rendered}"
+        );
+
+        drop(egraph);
+        let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
+        serial_trace_pool()
+            .install(|| proof.run_program(commands))
+            .unwrap();
+    }
+
+    #[test]
+    fn post_deletion_equality_cannot_select_stale_child_producer() {
+        let mut egraph = EGraph::default();
+        serial_trace_pool()
+            .install(|| egraph.enable_trace())
+            .unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(datatype E (A i64) (B i64) (H E))
+                 (relation Old (E))
+                 (relation New (E))
+                 (relation Target (E))
+                 (relation Trigger ())
+                 (relation Held (E))
+                 (relation Deleted ())
+                 (relation Out (E))
+                 (ruleset cleanup_old)
+                 (ruleset recreate_a)
+                 (ruleset early_bridge)
+                 (ruleset make_h)
+                 (ruleset delete_live)
+                 (ruleset late_bridge)
+                 (ruleset consume)
+                 (Old (A 1))
+                 (Target (B 0))
+                 (Trigger)
+                 (rule ((Trigger))
+                       ((delete (A 1)))
+                       :ruleset cleanup_old :name \"cleanup-old\")
+                 (rule ((Trigger))
+                       ((New (A 1)))
+                       :ruleset recreate_a :name \"recreate-a\")
+                 (rule ((New new) (Target target))
+                       ((union new target))
+                       :ruleset early_bridge :name \"early-bridge\")
+                 (rule ((New child))
+                       ((Held (H child)))
+                       :ruleset make_h :name \"make-h\")
+                 (rule ((Held value))
+                       ((delete (H (A 1))) (delete (A 1)) (Deleted))
+                       :ruleset delete_live :name \"delete-live\")
+                 (rule ((Old old) (Target target) (Deleted))
+                       ((union old target))
+                       :ruleset late_bridge :name \"late-bridge\")
+                 (rule ((Held value) (Deleted))
+                       ((Out value))
+                       :ruleset consume :name \"consume\")
+                 (run cleanup_old 1)
+                 (run recreate_a 1)
+                 (run early_bridge 1)
+                 (run make_h 1)
+                 (run delete_live 1)
+                 (run late_bridge 1)
+                 (run consume 1)
+                 (check (Out value))",
+            )
+            .unwrap();
+
+        let slice = slice_check(&egraph, 0).unwrap();
+        // The late old-A=B equality is irrelevant. In particular, it must not
+        // make the dead old A occurrence win over the recreated A occurrence
+        // that addressed H's key while H was still live.
+        assert_eq!(slice.replay_equalities.len(), 1);
+        assert_eq!(slice.replay_removals.len(), 2);
+        let h_windows = slice
+            .firing_term_windows
+            .values()
+            .flat_map(|bindings| bindings.iter())
+            .filter(|windows| windows.len() == 2)
+            .map(|windows| windows[1])
+            .collect::<Vec<_>>();
+        assert_eq!(
+            h_windows.len(),
+            2,
+            "delete-live and consume must each retain child and H windows"
+        );
+        for h_window in h_windows {
+            let live_before = h_window
+                .live_before
+                .expect("the selected H deletion must bound its producer window");
+            assert!(h_window.producer.is_some());
+            assert!(
+                h_window.support_ready_after < live_before,
+                "H's child/key support must fit before H is deleted: {h_window:?}"
+            );
+        }
+
+        let mut crossed = slice.clone();
+        let mut crossed_any = false;
+        for bindings in crossed.firing_term_windows.values_mut() {
+            for windows in bindings.iter_mut().filter(|windows| windows.len() == 2) {
+                if let Some(live_before) = windows[1].live_before {
+                    windows[1].support_ready_after = live_before;
+                    crossed_any = true;
+                }
+            }
+        }
+        assert!(crossed_any);
+        let error = crate::slicing::replay::build_replay_program(&egraph, &crossed).unwrap_err();
+        assert!(
+            error.to_string().contains(
+                "no retained pre-wave point in its availability/readiness/liveness window"
+            ),
+            "{error}"
+        );
+
+        let replay = crate::slicing::replay::build_replay_program(&egraph, &slice).unwrap();
+        let commands = replay.to_commands().unwrap();
+        let rendered = crate::slicing::replay::ReplayProgram::render_commands(&commands).unwrap();
+        let h_alias = rendered
+            .lines()
+            .position(|line| line.starts_with("(let-check ") && line.contains("(H "))
+            .expect("H must be captured while its producer row is live");
+        let delete_live = rendered
+            .lines()
+            .position(|line| line.contains("(run-rule (\"delete-live\""))
+            .expect("the selected H deletion must replay");
+        assert!(h_alias < delete_live, "{rendered}");
+        drop(egraph);
+
+        let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
+        serial_trace_pool()
+            .install(|| proof.run_program(commands))
+            .unwrap();
+    }
+
+    #[test]
     fn duplicate_syntax_in_one_binding_keeps_distinct_occurrence_windows() {
         let mut egraph = EGraph::default();
         serial_trace_pool()
@@ -1404,9 +1617,39 @@ mod tests {
             .unwrap();
 
         let slice = slice_check(&egraph, 0).unwrap();
+        let consume_windows = slice
+            .firing_term_windows
+            .values()
+            .find(|bindings| bindings.len() == 1 && bindings[0].len() == 3)
+            .expect("consume must retain two child occurrences and their parent");
+        let [old_child, recreated_child, parent] = consume_windows[0].as_ref() else {
+            unreachable!("window count was checked above")
+        };
+        assert!(
+            old_child.available_after < recreated_child.available_after
+                && recreated_child.available_after < parent.available_after,
+            "old child, recreated child, and parent need distinct occurrence-local bounds: {consume_windows:?}"
+        );
+        assert!(
+            old_child.support_ready_after <= old_child.available_after
+                && recreated_child.support_ready_after <= recreated_child.available_after,
+            "a parent's later anchor must not become either child's replay-readiness bound: {consume_windows:?}"
+        );
         let replay = crate::slicing::replay::build_replay_program(&egraph, &slice).unwrap();
         let commands = replay.to_commands().unwrap();
         let rendered = crate::slicing::replay::ReplayProgram::render_commands(&commands).unwrap();
+        assert!(
+            rendered.contains(
+                "(run-schedule (run-rule (\"pair\" ((old $__slice_replay_0) (new $__slice_replay_1)))))"
+            ),
+            "the pair firing must keep the two source occurrence aliases:\n{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "(let-check $__slice_replay_2 (Pair $__slice_replay_0 $__slice_replay_1) :sort E)"
+            ),
+            "the parent recipe must preserve its old/new child occurrence windows:\n{rendered}"
+        );
         let cleanup = rendered
             .find("(run-schedule (run-rule (\"cleanup\"")
             .unwrap();

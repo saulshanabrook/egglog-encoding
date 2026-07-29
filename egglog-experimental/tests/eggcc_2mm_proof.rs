@@ -45,21 +45,14 @@ fn eggcc_2mm_bounded_export_uses_container_helpers() {
         );
     }
 
+    // `:no-merge` is unsupported by the term/proof encoding, so the bounded export
+    // rewrites its no-merge functions to `:merge old` to stay proof-supported.
     assert!(
-        non_comment_program.contains(":no-merge"),
-        "bounded eggcc export should preserve native no-merge declarations"
+        non_comment_program.contains(":merge old"),
+        "bounded eggcc export should use `:merge old` for its former no-merge functions"
     );
-
-    for removed in [
-        "ExprSet",
-        "set-intersect",
-        "set-union",
-        "set-insert",
-        "set-length",
-    ] {
-        assert!(
-            !non_comment_program.contains(removed),
-            "bounded eggcc export should not retain dead {removed} support"
-        );
-    }
+    assert!(
+        !non_comment_program.contains(":no-merge"),
+        "`:no-merge` is unsupported by the encoding; the bounded export must not use it"
+    );
 }

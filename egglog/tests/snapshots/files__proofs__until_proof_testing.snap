@@ -4,25 +4,22 @@ expression: proof_snapshot
 ---
 (let t0 (g* (g* (AConst) (AConst)) (g* (AConst) (AConst))))
 (let t1 (g* t0 t0))
-(let t2 (g* (AConst) (g* (AConst) (g* (AConst) (AConst)))))
-(let t3 (__rewrite_root t0))
+(let t2 (__rewrite_root t0))
 (let prf0
   (Rule
             (= t0 (IConst))
             (name "(rewrite (g* $A (g* $A (g* $A $A))) $I)")
             (premises
-              (Sym
-                (= t0 t2)
-                (Rule
-                  (= t2 t0)
-                  (name "(birewrite (g* (g* a b) c) (g* a (g* b c)))=>")
-                  (premises (Fiat (= t0 t0)))
-                  (substitution
-                    t3
-                    (a (AConst))
-                    (b (AConst))
-                    (c (g* (AConst) (AConst)))))))
-            (substitution t3)))
+              (Rule
+                (= t0 (g* (AConst) (g* (AConst) (g* (AConst) (AConst)))))
+                (name "(birewrite (g* (g* a b) c) (g* a (g* b c)))=>")
+                (premises (Fiat (= t0 t0)))
+                (substitution
+                  t2
+                  (a (AConst))
+                  (b (AConst))
+                  (c (g* (AConst) (AConst))))))
+            (substitution t2)))
 (Rule
   (= t1 (IConst))
   (name "(rewrite (g* $I a) a)")

@@ -11,7 +11,7 @@ use thiserror::Error;
 
 use crate::ast::{Action, Command, Expr, FunctionSubtype, RunRuleConfig, RustSpan, Schedule, Span};
 use crate::core_relations::{
-    ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTerm, ReplayTermId, SourceRef, TraceView,
+    FactId, ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTerm, ReplayTermId, SourceRef, TraceView,
 };
 use crate::slicing::backward::Slice;
 use crate::util::{HashMap, HashSet};
@@ -1100,20 +1100,28 @@ fn build_owned(
 
     // A checked alias remains a valid name for later monotone unions/rekeys,
     // but not across removal/recreation: identical syntax can then denote a
-    // fresh native occurrence. Use a conservative global removal epoch so
-    // unrelated deletions may inhibit deduplication but can never merge two
-    // occurrence lifetimes.
-    let mut alias_reset_positions = slice
+    // fresh native occurrence. Exact producer tombstones also end that call's
+    // capture window. Use a conservative global removal epoch for structural
+    // deduplication so unrelated deletions may inhibit reuse but can never
+    // merge two occurrence lifetimes.
+    let mut alias_reset_positions = Vec::new();
+    let mut selected_removal_by_fact = HashMap::<FactId, u64>::default();
+    for index in slice
         .replay_removals
         .iter()
         .chain(&slice.interference_removals)
         .copied()
-        .map(|index| {
-            view.removal(index)
-                .map(|removal| removal.position.get())
-                .map_err(|error| ReplayError::Trace(error.to_string()))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    {
+        let removal = view
+            .removal(index)
+            .map_err(|error| ReplayError::Trace(error.to_string()))?;
+        let position = removal.position.get();
+        alias_reset_positions.push(position);
+        selected_removal_by_fact
+            .entry(removal.removed_fact)
+            .and_modify(|current| *current = (*current).min(position))
+            .or_insert(position);
+    }
     alias_reset_positions.sort_unstable();
     alias_reset_positions.dedup();
 
@@ -1248,17 +1256,37 @@ fn build_owned(
                     unreachable!("Call queue contained literal")
                 };
                 *children = canonical_children.into_boxed_slice();
+                // Producer existence does not imply that the replayed child
+                // spellings address its key yet; equality/rekey support may
+                // become visible only at a later retained boundary. A selected
+                // tombstone for this exact producer is the exclusive upper
+                // bound: the alias must be checked before replay deletes it.
+                let history_ready_after =
+                    window.available_after.max(window.support_ready_after).get();
+                let live_before = window
+                    .producer
+                    .and_then(|producer| selected_removal_by_fact.get(&producer).copied());
+                if let Some(live_before) = live_before
+                    && window.live_before.map(|position| position.get()) != Some(live_before)
+                {
+                    return Err(ReplayError::Invalid(format!(
+                        "firing {} binding `{variable_name}` call {} has inconsistent producer liveness",
+                        id.get(),
+                        source_call.get()
+                    )));
+                }
                 let alias_wave = wave_positions
                     .iter()
                     .find_map(|(candidate_wave, candidate_position)| {
                         (*candidate_wave >= dependency_wave
                             && *candidate_wave <= wave
-                            && *candidate_position >= window.available_after.get())
+                            && *candidate_position >= history_ready_after
+                            && live_before.is_none_or(|end| *candidate_position < end))
                         .then_some(*candidate_wave)
                     })
                     .ok_or_else(|| {
                         ReplayError::Invalid(format!(
-                            "firing {} binding `{variable_name}` call {} has no retained pre-wave point in its availability window",
+                            "firing {} binding `{variable_name}` call {} has no retained pre-wave point in its availability/readiness/liveness window",
                             id.get(),
                             source_call.get()
                         ))
@@ -2115,6 +2143,25 @@ mod tests {
         serial_pool()
             .install(|| proof.parse_and_run_program(None, &rendered))
             .unwrap();
+    }
+
+    #[test]
+    fn nested_container_dirty_propagation_slice_strictly_replays() {
+        let program = include_str!("../../tests/nested-container-dirty-propagation.egg");
+        let mut recorder = EGraph::default();
+        serial_pool().install(|| recorder.enable_trace()).unwrap();
+        serial_pool()
+            .install(|| recorder.parse_and_run_program(None, program))
+            .unwrap();
+
+        let slice = slice_all_checks(&recorder).unwrap();
+        let replay = build_replay_program(&recorder, &slice).unwrap();
+        let rendered = ReplayProgram::render_commands(&replay.to_commands().unwrap()).unwrap();
+
+        let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
+        if let Err(error) = serial_pool().install(|| proof.parse_and_run_program(None, &rendered)) {
+            panic!("strict replay failed: {error}\n{rendered}");
+        }
     }
 
     #[test]

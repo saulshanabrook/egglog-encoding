@@ -102,6 +102,22 @@ pub struct ContainerRebuildSummary {
     anchor_journal: ContainerAnchorJournal,
 }
 
+/// A reached container-rebuild operation cannot be represented by exact trace
+/// capture. Ordinary container execution does not use this error path.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum TraceCaptureError {
+    #[error("trace capture does not support rebuilding container type `{container}`")]
+    UnsupportedContainerRebuild { container: &'static str },
+}
+
+impl TraceCaptureError {
+    fn unsupported_container<C: ContainerValue>() -> Self {
+        Self::UnsupportedContainerRebuild {
+            container: std::any::type_name::<C>(),
+        }
+    }
+}
+
 impl ContainerRebuildSummary {
     /// Returns whether any container entry changed during rebuild.
     pub fn changed(&self) -> bool {
@@ -261,9 +277,9 @@ impl ContainerValues {
         table_id: TableId,
         table: &WrappedTable,
         exec_state: &mut ExecutionState,
-    ) -> ContainerRebuildSummary {
+    ) -> Result<ContainerRebuildSummary, TraceCaptureError> {
         let Some(rebuilder) = table.rebuilder(&[]) else {
-            return Default::default();
+            return Ok(Default::default());
         };
         let to_scan = rebuilder.hint_col().map(|_| {
             // We may attempt an incremental rebuild.
@@ -284,6 +300,7 @@ impl ContainerValues {
                         &mut exec_state,
                         None,
                     )
+                    .expect("ordinary container rebuild cannot return a trace capture error")
                 })
                 .reduce(ContainerRebuildSummary::default, |mut acc, summary| {
                     acc.extend(summary);
@@ -299,13 +316,13 @@ impl ContainerValues {
                     to_scan.as_ref().map(|x| x.as_ref()),
                     exec_state,
                     causal.then_some(&mut summary.anchor_journal),
-                );
+                )?;
                 summary.extend(env_summary);
             }
             summary
         };
-        self.expand_dirty_id_closure(&mut summary, exec_state.trace());
-        summary
+        self.expand_dirty_id_closure(&mut summary, exec_state.trace())?;
+        Ok(summary)
     }
 
     /// Add ancestor containers to the dirty-id set until it is transitively closed.
@@ -323,7 +340,7 @@ impl ContainerValues {
         &self,
         summary: &mut ContainerRebuildSummary,
         trace: Option<&Trace>,
-    ) {
+    ) -> Result<(), TraceCaptureError> {
         if !summary.dirty_dependencies.is_empty() {
             let trace = trace.expect("typed dirty-container dependencies require causal trace");
             let mut frontier = summary
@@ -364,10 +381,9 @@ impl ContainerValues {
                                 continue;
                             };
                             if env.capture_kind().is_none() {
-                                panic!(
-                                    "causal container rebuild does not support {}",
-                                    env.container_type_name()
-                                );
+                                return Err(TraceCaptureError::UnsupportedContainerRebuild {
+                                    container: env.container_type_name(),
+                                });
                             }
                             assert!(
                                 parent_candidates
@@ -392,7 +408,7 @@ impl ContainerValues {
                 }
                 frontier = next;
             }
-            return;
+            return Ok(());
         }
 
         let mut frontier = summary.dirty_ids.clone();
@@ -411,6 +427,7 @@ impl ContainerValues {
                 }
             }
         }
+        Ok(())
     }
 
     /// Add a new container type to the given [`ContainerValue`] instance.
@@ -510,7 +527,7 @@ pub(crate) trait DynamicContainerEnv: Any + dyn_clone::DynClone + Send + Sync {
         subset: Option<SubsetRef>,
         exec_state: &mut ExecutionState,
         journal: Option<&mut ContainerAnchorJournal>,
-    ) -> ContainerRebuildSummary;
+    ) -> Result<ContainerRebuildSummary, TraceCaptureError>;
     /// Add ids for containers in this environment that contain any `values`.
     ///
     /// This uses the container content index populated from
@@ -600,7 +617,7 @@ impl<C: ContainerValue> DynamicContainerEnv for ContainerEnv<C> {
         subset: Option<SubsetRef>,
         exec_state: &mut ExecutionState,
         journal: Option<&mut ContainerAnchorJournal>,
-    ) -> ContainerRebuildSummary {
+    ) -> Result<ContainerRebuildSummary, TraceCaptureError> {
         let use_incremental = subset.is_some_and(|subset| {
             incremental_rebuild(
                 subset.size(),
@@ -631,15 +648,15 @@ impl<C: ContainerValue> DynamicContainerEnv for ContainerEnv<C> {
             );
         }
         if use_incremental {
-            return self.apply_rebuild_incremental(
+            return Ok(self.apply_rebuild_incremental(
                 table,
                 rebuilder,
                 exec_state,
                 subset.expect("incremental rebuild requires a recent-update subset"),
                 rebuilder.hint_col().unwrap(),
-            );
+            ));
         }
-        self.apply_rebuild_nonincremental(rebuilder, exec_state)
+        Ok(self.apply_rebuild_nonincremental(rebuilder, exec_state))
     }
 
     fn extend_containers_containing(&self, values: &IndexSet<Value>, out: &mut IndexSet<Value>) {
@@ -827,7 +844,7 @@ impl<C: ContainerValue> ContainerEnv<C> {
         rebuilder: &dyn Rebuilder,
         exec_state: &mut ExecutionState,
         journal: &mut ContainerAnchorJournal,
-    ) -> ContainerRebuildSummary {
+    ) -> Result<ContainerRebuildSummary, TraceCaptureError> {
         struct Prepared<C> {
             before: C,
             after: C,
@@ -855,12 +872,8 @@ impl<C: ContainerValue> ContainerEnv<C> {
             if !contents_changed && rebuilt_id == old_id {
                 continue;
             }
-            let kind = C::capture_kind().unwrap_or_else(|| {
-                panic!(
-                    "causal container rebuild does not support {}",
-                    std::any::type_name::<C>()
-                )
-            });
+            let kind =
+                C::capture_kind().ok_or_else(TraceCaptureError::unsupported_container::<C>)?;
             kind.validate_arity(before.iter().count())
                 .unwrap_or_else(|error| panic!("{error}"));
             kind.validate_arity(after.iter().count())
@@ -938,7 +951,7 @@ impl<C: ContainerValue> ContainerEnv<C> {
                 }
             }
         }
-        summary
+        Ok(summary)
     }
 
     fn apply_rebuild_incremental(
@@ -1006,7 +1019,7 @@ impl<C: ContainerValue> ContainerEnv<C> {
         journal: &mut ContainerAnchorJournal,
         to_scan: SubsetRef,
         search_col: ColumnId,
-    ) -> ContainerRebuildSummary {
+    ) -> Result<ContainerRebuildSummary, TraceCaptureError> {
         struct Prepared<C> {
             before: C,
             after: C,
@@ -1059,12 +1072,8 @@ impl<C: ContainerValue> ContainerEnv<C> {
             if !contents_changed && rebuilt_id == old_id {
                 continue;
             }
-            let kind = C::capture_kind().unwrap_or_else(|| {
-                panic!(
-                    "causal container rebuild does not support {}",
-                    std::any::type_name::<C>()
-                )
-            });
+            let kind =
+                C::capture_kind().ok_or_else(TraceCaptureError::unsupported_container::<C>)?;
             kind.validate_arity(before.iter().count())
                 .unwrap_or_else(|error| panic!("{error}"));
             kind.validate_arity(after.iter().count())
@@ -1152,7 +1161,7 @@ impl<C: ContainerValue> ContainerEnv<C> {
                 }
             }
         }
-        summary
+        Ok(summary)
     }
 
     fn apply_rebuild_nonincremental(

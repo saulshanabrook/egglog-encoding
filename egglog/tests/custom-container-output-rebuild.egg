@@ -1,0 +1,17 @@
+;; A custom function's container-valued output must rebuild when elements
+;; inside it go stale: `(N 1)` is older than `(N 2)`, so the union points
+;; `(N 2)` at `(N 1)` and the stored set `{(N 2)}` must canonicalize to
+;; `{(N 1)}` (native egglog rebuilds it; the term encoding needs a value-column
+;; rebuild rule using the container rebuild primitive).
+(datatype Math (N i64))
+(sort MSet (Set Math))
+(function freer (Math) MSet :merge (set-union old new))
+(N 1)
+(set (freer (N 0)) (set-of (N 2)))
+(union (N 1) (N 2))
+(check (= (freer (N 0)) (set-of (N 1))))
+
+;; The merge path stays live alongside the rebuild: merging in a second set
+;; unions with the (by then canonical) stored value.
+(set (freer (N 0)) (set-of (N 3)))
+(check (= (freer (N 0)) (set-of (N 1) (N 3))))

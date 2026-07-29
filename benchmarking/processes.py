@@ -55,7 +55,7 @@ def run_command(
     checkout_path: Path,
     timeout_sec: int,
     env_overrides: Mapping[str, str] | None = None,
-    required_outputs: Sequence[str] = (),
+    required_output: str | Sequence[str] | None = None,
 ) -> TimingResult:
     env = os.environ.copy()
     env["RUST_LOG"] = "error"
@@ -90,14 +90,20 @@ def run_command(
         timing = timing_from_usage(usage, wall_sec)
         stdout = read_tempfile(stdout_file)
         stderr = read_tempfile(stderr_file)
-    output = stdout + stderr
-    missing_output = next((required for required in required_outputs if required not in output), None)
-    if return_code == 0 and missing_output is not None:
+    if return_code == 0 and isinstance(required_output, str) and required_output not in stdout + stderr:
         return TimingResult(
             status="failure",
             timing=timing,
-            error=ErrorRow(message=f"successful process output did not contain {missing_output!r}"),
+            error=ErrorRow(message=f"successful process output did not contain {required_output!r}"),
         )
+    if return_code == 0 and required_output is not None and not isinstance(required_output, str):
+        missing_output = next((value for value in required_output if value not in stdout + stderr), None)
+        if missing_output is not None:
+            return TimingResult(
+                status="failure",
+                timing=timing,
+                error=ErrorRow(message=f"successful process output did not contain {missing_output!r}"),
+            )
     if return_code == 0:
         return TimingResult(status="success", timing=timing, error=None)
     message = stderr.strip() or stdout.strip() or "process exited with non-zero status"

@@ -96,7 +96,11 @@ impl RootExtractor {
         sort: &ArcSort,
     ) -> Option<TermId> {
         for func in egraph.functions.values() {
-            if func.decl.subtype != FunctionSubtype::Constructor
+            // Term/proof relations (function-to-Unit, id in the last input) and
+            // ordinary constructors both reconstruct here; views and the
+            // delete/subsume markers (`is_relation_term` is false for markers) are
+            // skipped.
+            if (func.decl.subtype != FunctionSubtype::Constructor && !func.is_relation_term())
                 || func.extraction_output_sort().name() != sort.name()
                 || func.decl.term_constructor.is_some()
             {
@@ -112,6 +116,10 @@ impl RootExtractor {
                         matching_rows.push(row.vals.to_vec());
                     }
                 });
+            // Reconstruct from the lexicographically-smallest matching row so the
+            // chosen term does not depend on the backend's (possibly nondeterministic)
+            // row iteration order — see `prove_exists`.
+            matching_rows.sort();
 
             for row in matching_rows {
                 let num_children = func.extraction_num_children();

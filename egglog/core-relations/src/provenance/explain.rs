@@ -939,6 +939,27 @@ impl<'a> TraceView<'a> {
         )))
     }
 
+    /// Inclusive native-history frontier of replay-visible mutations in one
+    /// support set. Facts and applied equalities own allocated event positions;
+    /// rekeys already carry theirs. `causes` only attribute those mutations and
+    /// therefore do not add another scheduling boundary.
+    fn replay_support_frontier(
+        &self,
+        support: &RawEqualitySupport,
+    ) -> Result<HistoryPosition, TraceViewError> {
+        let mut frontier = HistoryPosition::new(0);
+        for equality in support.applied.iter().copied() {
+            frontier = frontier.max(self.applied_equality(equality)?.position);
+        }
+        for fact in support.facts.iter().copied() {
+            frontier = frontier.max(self.fact(fact)?.position);
+        }
+        for rekey in support.rekeys.iter().copied() {
+            frontier = frontier.max(rekey);
+        }
+        Ok(frontier)
+    }
+
     fn try_explain_structural_term_availability_at(
         &mut self,
         term: ReplayTermId,
@@ -974,6 +995,7 @@ impl<'a> TraceView<'a> {
             }
             let equality_sort = self.is_equality_sort(sort, op);
             let mut fresh_after = inherited_fresh_after;
+            let mut support_ready_after = HistoryPosition::new(0);
             if self.replay_terms.container_child_sorts.contains_key(&sort)
                 && let (Some(desired), Some(anchor)) = (desired, anchor)
             {
@@ -1028,14 +1050,19 @@ impl<'a> TraceView<'a> {
                     aliases.truncate(alias_checkpoint);
                     return Ok(None);
                 };
+                support_ready_after =
+                    support_ready_after.max(self.replay_support_frontier(&support)?);
                 parts.push(support);
             }
             // Pure calls and the allowed ordered containers can be evaluated
-            // whenever their child aliases are available. The replay
-            // scheduler enforces that topological dependency separately.
+            // once their child aliases and child denotation bridges are
+            // available. The replay scheduler enforces both separately.
             aliases.push(RawAliasWindow {
                 term,
+                producer: None,
                 available_after: fresh_after.unwrap_or(HistoryPosition::new(0)),
+                support_ready_after,
+                live_before: None,
                 fresh_after,
             });
             return Ok(Some(combine_raw_equality_support(parts)));
@@ -1100,14 +1127,32 @@ impl<'a> TraceView<'a> {
                     fact: producer,
                     column: crate::ColumnId::from_usize(output),
                 };
+                let live_before = self
+                    .arena
+                    .removals
+                    .iter()
+                    .filter(|removal| removal.removed_fact == producer)
+                    .map(|removal| removal.position)
+                    .min();
                 let (output_cell, occurrence_position) =
                     match self.fact_cell_at(occurrence, position) {
                         Ok(cell) => (cell, position),
-                        Err(TraceViewError::FactNoLongerLive { .. }) => {
-                            (self.fact_cell_at(occurrence, fact_position)?, fact_position)
+                        Err(TraceViewError::FactNoLongerLive { ended_at, .. }) => {
+                            let last_live = ended_at.get().checked_sub(1).ok_or_else(|| {
+                                TraceViewError::Invalid(format!(
+                                    "constructor producer {producer:?} ended before history began"
+                                ))
+                            })?;
+                            let last_live = HistoryPosition::new(last_live);
+                            (self.fact_cell_at(occurrence, last_live)?, last_live)
                         }
                         Err(error) => return Err(error),
                     };
+                // Output equivalence may be established after this exact row
+                // is gone: an alias captured while live survives later unions.
+                // Its key is different. Children must address the producer
+                // while the row exists, so recursion uses the bounded
+                // occurrence position rather than the consumer position.
                 let output_support = if let Some(desired) = desired {
                     if desired.sort != output_cell.endpoint.sort {
                         continue;
@@ -1166,6 +1211,7 @@ impl<'a> TraceView<'a> {
                 let mut parts = Vec::with_capacity(children.len() + 2);
                 let alias_checkpoint = aliases.len();
                 let mut compatible = true;
+                let mut support_ready_after = HistoryPosition::new(0);
                 if let Some(support) = output_support {
                     parts.push(support);
                 }
@@ -1189,7 +1235,7 @@ impl<'a> TraceView<'a> {
                     }
                     let Some(support) = self.try_explain_structural_term_availability_at(
                         child,
-                        position,
+                        occurrence_position,
                         depth + 1,
                         aliases,
                         StructuralAvailabilityContext {
@@ -1206,28 +1252,37 @@ impl<'a> TraceView<'a> {
                         compatible = false;
                         break;
                     };
+                    support_ready_after =
+                        support_ready_after.max(self.replay_support_frontier(&support)?);
                     parts.push(support);
-                    parts.push(RawEqualitySupport {
+                    let child_anchor = RawEqualitySupport {
                         applied: Box::new([]),
                         facts: Box::new([child_cell.occurrence.fact]),
                         causes: Box::new([]),
                         rekeys: child_cell.rekeys,
-                    });
+                    };
+                    support_ready_after =
+                        support_ready_after.max(self.replay_support_frontier(&child_anchor)?);
+                    parts.push(child_anchor);
                 }
                 if !compatible {
                     continue;
                 }
-                // Capture at the earliest retained boundary after creation.
-                // Child facts may be published later in the same native batch;
-                // replay scheduling also waits for every child alias.
-                let available_after = anchor
-                    .map(|anchor| self.fact(anchor.occurrence.fact).map(|fact| fact.position))
-                    .transpose()?
-                    .map_or(fact_position, |anchor| anchor.max(fact_position));
+                // Capture this exact constructor occurrence as soon as its own
+                // producer exists. A parent anchor is causal support for the
+                // requested denotation, not liveness for the child row; using
+                // its later position would cross removal/recreation and collapse
+                // distinct same-syntax occurrences. Replay scheduling separately
+                // waits for every child alias and key-support frontier before
+                // constructing the parent.
+                let available_after = fact_position;
                 aliases.push(RawAliasWindow {
                     term,
+                    producer: Some(producer),
                     available_after: inherited_fresh_after
                         .map_or(available_after, |fresh| fresh.max(available_after)),
+                    support_ready_after,
+                    live_before,
                     fresh_after: inherited_fresh_after,
                 });
                 parts.push(RawEqualitySupport {

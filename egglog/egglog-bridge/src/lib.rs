@@ -21,7 +21,7 @@ use crate::core_relations::{
     BaseValue, BaseValueId, BaseValues, ColumnId, Constraint, ContainerValue, ContainerValues,
     CounterId, Database, DisplacedTable, ExecutionState, ExternalFunction, ExternalFunctionId,
     MergeOriginSelector, MergeVal, Offset, PlanStrategy, RowOriginSiteId, SortedWritesTable,
-    TableId, TaggedRowBuffer, Value, WrappedTable,
+    TableId, TaggedRowBuffer, Value, WrappedTable, make_external_func,
 };
 use crate::numeric_id::{DenseIdMap, DenseIdMapWithReuse, NumericId, define_id};
 use egglog_core_relations as core_relations;
@@ -36,6 +36,7 @@ use indexmap::IndexSet;
 use log::info;
 use once_cell::sync::Lazy;
 use smallvec::SmallVec;
+use std::collections::BTreeMap;
 use web_time::{Duration, Instant};
 
 pub mod macros;
@@ -162,6 +163,18 @@ pub struct EGraph {
     /// also serve as a debugging tool in the case that the number of panic messages grows without
     /// bound.
     panic_funcs: HashMap<String, CachedPanic>,
+    /// Reverse index `id -> message` for [`EGraph::panic_funcs`]. Lets
+    /// [`EGraph::free_external_func`] find a cached panic's entry — or determine
+    /// that a func is not a cached panic at all — in O(1), instead of scanning
+    /// the whole (id-unindexed) `panic_funcs` map on every free. That scan made
+    /// freeing one-shot action rules O(number of cached panics), which grows with
+    /// the program, so a long run of one-shot actions was quadratic.
+    // `BTreeMap` (not `HashMap`) on purpose: it introduces no new randomly-seeded
+    // hasher, so the seed sequence of the other hash tables is unchanged. Some
+    // backends' row iteration order (which order-dependent proof extraction reads)
+    // depends on that sequence, so a `HashMap` here would needlessly shift it.
+    // Lookups are by a small integer id, so a `BTreeMap` is more than fast enough.
+    panic_func_ids: BTreeMap<ExternalFunctionId, String>,
     report_level: ReportLevel,
     /// Live registry of name-indexed action handles. Shared (via
     /// `Arc<RwLock<_>>`) with state wrappers and primitive callbacks
@@ -199,11 +212,13 @@ impl Default for EGraph {
         // same message reuses the id.
         let panic_message: SideChannel<String> = Default::default();
         let mut panic_funcs: HashMap<String, CachedPanic> = Default::default();
+        let mut panic_func_ids: BTreeMap<ExternalFunctionId, String> = Default::default();
         let default_panic_msg = "primitive panicked".to_string();
         let default_panic_id = db.add_external_function(Box::new(Panic(
             default_panic_msg.clone(),
             panic_message.clone(),
         )));
+        panic_func_ids.insert(default_panic_id, default_panic_msg.clone());
         panic_funcs.insert(
             default_panic_msg,
             CachedPanic {
@@ -231,6 +246,7 @@ impl Default for EGraph {
             funcs: Default::default(),
             panic_message,
             panic_funcs,
+            panic_func_ids,
             report_level: Default::default(),
             action_registry,
         }
@@ -428,19 +444,77 @@ impl EGraph {
         self.db.add_external_function(func)
     }
 
+    /// Register the term encoder's `set-if-empty` canonicalize op for the FD
+    /// view table named `view_name` (`n_keys` key columns), returning the
+    /// [`ExternalFunctionId`] its mint sites resolve to. At invoke: look up
+    /// `(view keys)`; if a row exists return its first output (the eclass);
+    /// otherwise insert `(keys, trailing-default-columns)` and return the first
+    /// default column. Serviced over this backend's db view table.
+    pub fn register_set_if_empty(
+        &mut self,
+        view_name: String,
+        n_keys: usize,
+        _out_arity: usize,
+    ) -> ExternalFunctionId {
+        let registry = self.action_registry.clone();
+        self.register_external_func(Box::new(make_external_func(
+            move |state: &mut ExecutionState, args: &[Value]| {
+                let registry = registry.read().unwrap();
+                let action = registry.lookup_table(&view_name)?.clone();
+                let keys = &args[..n_keys];
+                if let Some(vals) = action.lookup_values(state, keys) {
+                    // Already canonicalized: reuse the committed eclass and skip
+                    // the insert, so the fresh id never enters the table.
+                    return Some(vals[0]);
+                }
+                action.insert(state, args.iter().copied());
+                Some(args[n_keys])
+            },
+        )))
+    }
+
+    /// Register a reader for output column `col_idx` of the FD view named
+    /// `view_name` (`n_keys` key columns): `(keys, fallback) -> column`, returning
+    /// that output column for `keys` or `fallback` when the key is absent. The term
+    /// encoder reads its proof column with `col_idx = 1`.
+    pub fn register_view_column_read(
+        &mut self,
+        view_name: String,
+        n_keys: usize,
+        col_idx: usize,
+    ) -> ExternalFunctionId {
+        let registry = self.action_registry.clone();
+        self.register_external_func(Box::new(make_external_func(
+            move |state: &mut ExecutionState, args: &[Value]| {
+                let registry = registry.read().unwrap();
+                let action = registry.lookup_table(&view_name)?.clone();
+                let fallback = args[n_keys];
+                Some(match action.lookup_values(state, &args[..n_keys]) {
+                    Some(vals) => vals[col_idx],
+                    None => fallback,
+                })
+            },
+        )))
+    }
+
     pub fn free_external_func(&mut self, func: ExternalFunctionId) {
+        // A cached panic with more than one reference is kept alive (just
+        // decrement); one at its last reference — or any func that is not a
+        // cached panic — is freed from the database. The reverse index makes the
+        // "is this a cached panic, and which entry?" question O(1); previously we
+        // scanned all of `panic_funcs` on every call (see `panic_func_ids`).
         let mut free = true;
-        self.panic_funcs.retain(|_, cached| {
-            if cached.id != func {
-                true
-            } else if cached.references > 1 {
+        if let Some(message) = self.panic_func_ids.get(&func).cloned()
+            && let Some(cached) = self.panic_funcs.get_mut(&message)
+        {
+            if cached.references > 1 {
                 cached.references -= 1;
                 free = false;
-                true
             } else {
-                false
+                self.panic_funcs.remove(&message);
+                self.panic_func_ids.remove(&func);
             }
-        });
+        }
         if free {
             self.db.free_external_function(func);
         }
@@ -449,6 +523,13 @@ impl EGraph {
     /// Generate a fresh id.
     pub fn fresh_id(&mut self) -> Value {
         Value::from_usize(self.db.inc_counter(self.id_counter))
+    }
+
+    /// The global counter that mints fresh ids (backing [`fresh_id`](Self::fresh_id)
+    /// and `DefaultVal::FreshId`). Exposed so a primitive can mint ids in the same space during
+    /// rule execution — used by the term/proof encoding's `get-fresh!` primitive.
+    pub fn id_counter(&self) -> CounterId {
+        self.id_counter
     }
 
     /// Look up the canonical value for `val` in the union-find.
@@ -1316,7 +1397,7 @@ impl EGraph {
                 //
                 // Rebuilding containers first will find that v3 and v2 are equal, and the rest of
                 // the rules can proceed.
-                let container_rebuild = self.db.rebuild_containers(self.uf_table);
+                let container_rebuild = self.db.rebuild_containers(self.uf_table)?;
                 let next_ts = self.next_ts().to_value();
                 let table_rebuild = self.db.apply_rebuild(self.uf_table, &tables, next_ts);
                 // Container rebuild can make a parent row newly matchable without
@@ -1610,6 +1691,17 @@ impl EGraph {
     /// Flush the pending update buffers to the EGraph.
     /// Returns `true` if the database is updated.
     pub fn flush_updates(&mut self) -> bool {
+        self.try_flush_updates()
+            .expect("ordinary flush failed during rebuild")
+    }
+
+    /// Fallible flush used by trace-capable frontend execution.
+    ///
+    /// Exact trace capture can reject a reached container rebuild before it
+    /// mutates the container registry. That capability error must remain a
+    /// normal backend error rather than being converted back into a panic by
+    /// the ordinary convenience API above.
+    pub fn try_flush_updates(&mut self) -> Result<bool> {
         let uf_size_before = self.db.get_table(self.uf_table).len();
         let updated = self.db.merge_all();
         self.inc_ts();
@@ -1617,9 +1709,9 @@ impl EGraph {
         if uf_size_before != uf_size_after {
             // Rebuilding is only necessary when new unions have been made because ids may need to be updated.
             // Adding terms doesn't necessarily touch the union-find, only doing a union between existing ids does.
-            self.rebuild().unwrap();
+            self.rebuild()?;
         }
-        updated
+        Ok(updated)
     }
 
     pub fn set_report_level(&mut self, level: ReportLevel) {
@@ -2853,6 +2945,7 @@ impl EGraph {
         }
         let panic = Panic(message.clone(), self.panic_message.clone());
         let id = self.db.add_external_function(Box::new(panic));
+        self.panic_func_ids.insert(id, message.clone());
         self.panic_funcs
             .insert(message, CachedPanic { id, references: 1 });
         id

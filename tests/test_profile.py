@@ -147,6 +147,17 @@ def test_resolve_profile_request_reuses_backend_treatment_validation(tmp_path: P
         profile_runner.resolve_profile_request(args, ROOT)
 
 
+def test_profile_accepts_explicit_main_proof_extraction(tmp_path: Path) -> None:
+    file_path = tmp_path / "file.egg"
+    file_path.write_text("(check (= 1 1))\n", encoding="utf-8")
+    args = profile_runner.parse_profile_args([str(file_path), "--treatment", "proof-extraction"])
+
+    request = profile_runner.resolve_profile_request(args, ROOT)
+
+    assert request.backend == "main"
+    assert request.treatment == "proof-extraction"
+
+
 def test_target_resolvers_share_materialization_and_select_build_profile(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

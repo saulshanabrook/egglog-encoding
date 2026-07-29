@@ -91,6 +91,9 @@ struct Args {
     /// Write the validated replay program. This implies `--slice`.
     #[clap(long)]
     slice_output: Option<PathBuf>,
+    /// Extract proofs for all `check` statements without verifying them
+    #[clap(long, conflicts_with_all = ["proofs", "proof_testing"])]
+    proof_extraction: bool,
 }
 
 fn path_identity(path: &Path) -> Result<PathBuf, String> {
@@ -260,6 +263,8 @@ fn cli_with_args_inner<I, T>(
             Some("--slice requires exactly one input file")
         } else if args.proof_testing {
             Some("--slice conflicts with --proof-testing")
+        } else if args.proof_extraction {
+            Some("--slice conflicts with --proof-extraction")
         } else if args.term_encoding {
             Some("--slice conflicts with --term-encoding")
         } else if args.naive {
@@ -309,6 +314,10 @@ fn cli_with_args_inner<I, T>(
     if args.proof_testing {
         egraph = egraph.with_proofs_enabled();
         egraph = egraph.with_proof_testing();
+    }
+
+    if args.proof_extraction {
+        egraph = egraph.with_proof_extraction();
     }
 
     if slice_requested && let Err(error) = egraph.enable_trace() {
@@ -703,6 +712,18 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&existing).unwrap(), "keep me");
         assert!(!fresh.exists());
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn proof_extraction_is_a_distinct_cli_mode() {
+        let args = Args::try_parse_from(["egglog", "--proof-extraction"]).unwrap();
+        assert!(args.proof_extraction);
+
+        for conflicting in ["--proofs", "--proof-testing"] {
+            let error = Args::try_parse_from(["egglog", "--proof-extraction", conflicting])
+                .expect_err("proof extraction should conflict with other proof modes");
+            assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+        }
     }
 
     #[test]

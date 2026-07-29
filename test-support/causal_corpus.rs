@@ -117,6 +117,7 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
     AllowlistGroup {
         paths: &[
             "core/before-proofs.egg",
+            "core/begin-block.egg",
             "core/container-rebuild.egg",
             "core/cykjson.egg",
             "core/interval.egg",
@@ -128,17 +129,11 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
             "core/typed_primitive_unstable_app.egg",
             "core/unsafe-seminaive.egg",
             "core/vec.egg",
-            "core/web-demo/array.egg",
-            "core/web-demo/bdd.egg",
             "core/web-demo/bignum.egg",
-            "core/web-demo/cyk.egg",
             "core/web-demo/herbie-tutorial.egg",
-            "core/web-demo/herbie.egg",
-            "core/web-demo/math.egg",
             "core/web-demo/multiset.egg",
             "core/web-demo/set.egg",
             "core/web-demo/towers-of-hanoi.egg",
-            "core/web-demo/typeinfer.egg",
             "experimental/herbie-rational.egg",
             "experimental/herbie-tutorial-rational.egg",
             "experimental/interval-rational.egg",
@@ -236,7 +231,13 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
             "core/container-fail.egg",
             "core/python_array_optimize.egg",
             "core/stresstest_large_expr.egg",
+            "core/web-demo/array.egg",
+            "core/web-demo/bdd.egg",
+            "core/web-demo/cyk.egg",
+            "core/web-demo/herbie.egg",
             "core/web-demo/lambda.egg",
+            "core/web-demo/math.egg",
+            "core/web-demo/typeinfer.egg",
         ],
         disposition: Disposition::Unsupported {
             diagnostic: "trace capture does not support push/pop state",
@@ -290,6 +291,16 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
         ],
         disposition: Disposition::Unsupported {
             diagnostic: "merge reached an unsupported structural result expression",
+            artifact: ArtifactExpectation::Absent,
+        },
+    },
+    AllowlistGroup {
+        paths: &[
+            "core/container-reorder-proofs.egg",
+            "core/custom-container-output-rebuild.egg",
+        ],
+        disposition: Disposition::Unsupported {
+            diagnostic: "trace capture does not support rebuilding container type `egglog::sort::set::SetContainer`",
             artifact: ArtifactExpectation::Absent,
         },
     },

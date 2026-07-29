@@ -1,0 +1,22 @@
+;; `(begin <action>*)` runs a block of actions once with a shared *local* scope,
+;; and `(let a (begin <action>* <expr>))` binds the global `a` to the block's
+;; trailing value. The scaffolding `let`s (`x`, `y`) are local to their block,
+;; not global functions/tables. Under the term/proof encoding these must still
+;; build and verify proofs for the resulting terms.
+(datatype Math
+  (Num i64)
+  (Add Math Math))
+(function keep () Math :merge new)
+
+;; top-level begin: build a term with a local scaffold and store it in a function
+(begin
+   (let x (Num 1))
+   (set (keep) (Add x x)))
+
+;; let-begin: bind a global to a block's value; the scaffold `y` stays local
+(let doubled (begin
+   (let y (Num 2))
+   (Add y y)))
+
+(check (= (keep) (Add (Num 1) (Num 1))))
+(check (= doubled (Add (Num 2) (Num 2))))

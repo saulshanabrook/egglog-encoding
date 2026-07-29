@@ -2,5 +2,4 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
-(let t0 (Ass "x" (Const 10)))
-(Sym (= (Prog (L 0)) t0) (Fiat (= t0 (Prog (L 0)))))
+(Fiat (= (Prog (L 0)) (Ass "x" (Const 10))))

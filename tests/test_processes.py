@@ -155,24 +155,53 @@ def test_run_command_records_peak_rss() -> None:
     assert result.timing.max_rss_bytes > 0
 
 
-def test_run_command_can_require_capability_outputs() -> None:
+def test_run_command_can_require_capability_output() -> None:
     present = processes.run_command(
-        [sys.executable, "-c", "print('--timing-summary PATH --slice')"],
+        [sys.executable, "-c", "print('--timing-summary PATH')"],
         ROOT,
         120,
-        required_outputs=("--timing-summary", "--slice"),
+        required_output="--timing-summary",
+    )
+    missing = processes.run_command(
+        [sys.executable, "-c", "print('usage')"],
+        ROOT,
+        120,
+        required_output="--timing-summary",
+    )
+
+    assert present.status == "success"
+    assert missing.status == "failure"
+    assert missing.error is not None
+    assert missing.error.message == "successful process output did not contain '--timing-summary'"
+
+
+def test_run_command_can_require_capability_outputs() -> None:
+    present = processes.run_command(
+        [sys.executable, "-c", "print('--timing-summary PATH --slice --proof-extraction')"],
+        ROOT,
+        120,
+        required_output=("--timing-summary", "--slice", "--proof-extraction"),
     )
     missing = processes.run_command(
         [sys.executable, "-c", "print('--timing-summary PATH')"],
         ROOT,
         120,
-        required_outputs=("--timing-summary", "--slice"),
+        required_output=("--timing-summary", "--slice"),
+    )
+    extraction_missing = processes.run_command(
+        [sys.executable, "-c", "print('--timing-summary PATH')"],
+        ROOT,
+        120,
+        required_output=("--timing-summary", "--proof-extraction"),
     )
 
     assert present.status == "success"
     assert missing.status == "failure"
     assert missing.error is not None
     assert missing.error.message == "successful process output did not contain '--slice'"
+    assert extraction_missing.status == "failure"
+    assert extraction_missing.error is not None
+    assert "--proof-extraction" in extraction_missing.error.message
 
 
 def test_timing_from_usage_records_peak_rss() -> None:

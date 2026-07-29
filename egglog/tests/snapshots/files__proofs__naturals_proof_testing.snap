@@ -6,284 +6,252 @@ expression: proof_snapshot
 (let t1 (S t0))
 (let t2 (Plus (S (S (Z))) (S (S (Z)))))
 (let t3 (Plus (S (Z)) (S (S (Z)))))
-(let t4 (S t3))
-(let t5 (premises (Fiat (= t2 t2))))
-(let t6 (n (S (S (Z)))))
-(let t7 (substitution (m (S (Z))) (__rewrite_root t2) t6))
-(let t8 (Plus (Z) (S (S (Z)))))
-(let t9 (S t8))
-(let t10
+(let t4 (premises (Fiat (= t2 t2))))
+(let t5 (n (S (S (Z)))))
+(let t6 (substitution (m (S (Z))) (__rewrite_root t2) t5))
+(let t7 (Plus (Z) (S (S (Z)))))
+(let t8
   (premises
-              (Rule
-                (= t3 t3)
-                (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
-                t5
-                t7)))
-(let t11 (substitution (m (Z)) (__rewrite_root t3) t6))
+            (Rule
+              (= t3 t3)
+              (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
+              t4
+              t6)))
+(let t9 (substitution (m (Z)) (__rewrite_root t3) t5))
 (Sym
   (= t1 t2)
   (Congr
     (= t2 t1)
-    (Sym
-      (= t2 t4)
-      (Rule (= t4 t2) (name "(rewrite (Plus (S m) n) (S (Plus m n)))") t5 t7))
+    (Rule (= t2 (S t3)) (name "(rewrite (Plus (S m) n) (S (Plus m n)))") t4 t6)
     (Congr
       (= t3 t0)
-      (Sym
-        (= t3 t9)
-        (Rule
-          (= t9 t3)
-          (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
-          t10
-          t11))
       (Rule
-        (= t8 (S (S (Z))))
+        (= t3 (S t7))
+        (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
+        t8
+        t9)
+      (Rule
+        (= t7 (S (S (Z))))
         (name "(rewrite (Plus (Z) n) n)")
         (premises
           (Rule
-            (= t8 t8)
+            (= t7 t7)
             (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
-            t10
-            t11))
-        (substitution (__rewrite_root t8) t6))
+            t8
+            t9))
+        (substitution (__rewrite_root t7) t5))
       0)
     0))
 (let t0 (S (S (S (Z)))))
 (let t1 (Times (S (S (Z))) t0))
-(let t2 (Plus (S (S (Z))) (S (S (Z)))))
+(let t2 (S t0))
 (let t3 (Plus (S (S (Z))) t2))
-(let t4 (S t0))
-(let t5 (Plus (S (Z)) t4))
-(let t6 (S t5))
-(let t7 (Times (S (Z)) t0))
-(let t8 (Plus (S (S (Z))) t7))
-(let t9 (S t8))
-(let t10 (Plus t0 t7))
-(let t11 (premises (Fiat (= t1 t1))))
-(let t12 (__rewrite_root t1))
-(let t13 (n t0))
-(let t14 (substitution (m (S (Z))) t12 t13))
-(let t15
+(let t4 (Plus (S (Z)) t2))
+(let t5 (S t4))
+(let t6 (Times (S (Z)) t0))
+(let t7 (Plus (S (S (Z))) t6))
+(let t8 (premises (Fiat (= t1 t1))))
+(let t9 (__rewrite_root t1))
+(let t10 (n t0))
+(let t11 (substitution (m (S (Z))) t9 t10))
+(let t12
   (premises
-            (Sym
-              (= t1 t10)
+          (Rule
+            (= t1 (Plus t0 t6))
+            (name "(rewrite (Times (S m) n) (Plus n (Times m n)))")
+            t8
+            t11)))
+(let t13 (m (S (S (Z)))))
+(let t14 (n t6))
+(let t15 (substitution t13 t9 t14))
+(let t16 (S t2))
+(let t17 (Plus (S (Z)) t6))
+(let t18
+  (premises
               (Rule
-                (= t10 t1)
-                (name "(rewrite (Times (S m) n) (Plus n (Times m n)))")
-                t11
-                t14))))
-(let t16 (m (S (S (Z)))))
-(let t17 (n t7))
-(let t18 (substitution t16 t12 t17))
-(let t19 (S t4))
-(let t20 (Plus (S (Z)) t7))
-(let t21 (S t20))
-(let t22
-  (premises
-                (Rule
-                  (= t8 t8)
-                  (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
-                  t15
-                  t18)))
-(let t23 (substitution (m (S (Z))) (__rewrite_root t8) t17))
-(let t24 (Plus (Z) t7))
-(let t25 (S t24))
-(let t26
-  (premises
-                    (Rule
-                      (= t20 t20)
-                      (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
-                      t22
-                      t23)))
-(let t27 (substitution (m (Z)) (__rewrite_root t20) t17))
-(let t28 (Times (Z) t0))
-(let t29 (Plus (S (S (Z))) t28))
-(let t30 (S t29))
-(let t31 (Plus t0 t28))
-(let t32
-  (premises
-                          (Rule
-                            (= t7 t7)
-                            (name
-                              "(rewrite (Times (S m) n) (Plus n (Times m n)))")
-                            t11
-                            t14)))
-(let t33 (__rewrite_root t7))
-(let t34 (substitution (m (Z)) t33 t13))
-(let t35
-  (premises
-                    (Sym
-                      (= t7 t31)
-                      (Rule
-                        (= t31 t7)
-                        (name "(rewrite (Times (S m) n) (Plus n (Times m n)))")
-                        t32
-                        t34))))
-(let t36 (substitution t16 t33 (n t28)))
-(let t37 (Plus (S (Z)) (Z)))
-(let t38 (S t37))
-(let t39
-  (premises
-                      (Congr
-                        (= t29 (Plus (S (S (Z))) (Z)))
-                        (Rule
-                          (= t29 t29)
-                          (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
-                          t35
-                          t36)
-                        (Rule
-                          (= t28 (Z))
-                          (name "(rewrite (Times (Z) n) (Z))")
-                          (premises
-                            (Rule
-                              (= t28 t28)
-                              (name
-                                "(rewrite (Times (S m) n) (Plus n (Times m n)))")
-                              t32
-                              t34))
-                          (substitution (__rewrite_root t28) t13))
-                        1)))
-(let t40 (substitution (m (S (Z))) (__rewrite_root t29) (n (Z))))
-(let t41 (S (Plus (Z) (Z))))
-(let t42
-  (premises
-                        (Rule
-                          (= t37 t37)
-                          (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
-                          t39
-                          t40)))
-(let t43 (substitution (m (Z)) (__rewrite_root t37) (n (Z))))
-(let t44 (Plus (Z) t4))
-(let t45 (S t44))
-(let t46 (Plus (S (Z)) (S (S (Z)))))
-(let t47 (S t46))
-(let t48 (premises (Fiat (= t2 t2))))
-(let t49 (n (S (S (Z)))))
-(let t50 (substitution (m (S (Z))) (__rewrite_root t2) t49))
-(let t51 (Plus (Z) (S (S (Z)))))
-(let t52 (S t51))
-(let t53
-  (premises
-                                  (Rule
-                                    (= t46 t46)
-                                    (name
-                                      "(rewrite (Plus (S m) n) (S (Plus m n)))")
-                                    t48
-                                    t50)))
-(let t54 (substitution (m (Z)) (__rewrite_root t46) t49))
-(let t55
-  (premises
-                      (Congr
-                        (= t3 (Plus (S (S (Z))) t4))
-                        (Fiat (= t3 t3))
-                        (Congr
-                          (= t2 t4)
-                          (Sym
-                            (= t2 t47)
-                            (Rule
-                              (= t47 t2)
-                              (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
-                              t48
-                              t50))
-                          (Congr
-                            (= t46 t0)
-                            (Sym
-                              (= t46 t52)
-                              (Rule
-                                (= t52 t46)
-                                (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
-                                t53
-                                t54))
-                            (Rule
-                              (= t51 (S (S (Z))))
-                              (name "(rewrite (Plus (Z) n) n)")
-                              (premises
-                                (Rule
-                                  (= t51 t51)
-                                  (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
-                                  t53
-                                  t54))
-                              (substitution (__rewrite_root t51) t49))
-                            0)
-                          0)
-                        1)))
-(let t56 (n t4))
-(let t57 (substitution (m (S (Z))) (__rewrite_root t3) t56))
-(let t58
+                (= t7 t7)
+                (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
+                t12
+                t15)))
+(let t19 (substitution (m (S (Z))) (__rewrite_root t7) t14))
+(let t20 (Plus (Z) t6))
+(let t21
   (premises
                   (Rule
-                    (= t5 t5)
+                    (= t17 t17)
                     (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
-                    t55
-                    t57)))
-(let t59 (substitution (m (Z)) (__rewrite_root t5) t56))
+                    t18
+                    t19)))
+(let t22 (substitution (m (Z)) (__rewrite_root t17) t14))
+(let t23 (Times (Z) t0))
+(let t24 (Plus (S (S (Z))) t23))
+(let t25
+  (premises
+                      (Rule
+                        (= t6 t6)
+                        (name "(rewrite (Times (S m) n) (Plus n (Times m n)))")
+                        t8
+                        t11)))
+(let t26 (__rewrite_root t6))
+(let t27 (substitution (m (Z)) t26 t10))
+(let t28
+  (premises
+                  (Rule
+                    (= t6 (Plus t0 t23))
+                    (name "(rewrite (Times (S m) n) (Plus n (Times m n)))")
+                    t25
+                    t27)))
+(let t29 (substitution t13 t26 (n t23)))
+(let t30 (Plus (S (Z)) (Z)))
+(let t31
+  (premises
+                    (Congr
+                      (= t24 (Plus (S (S (Z))) (Z)))
+                      (Rule
+                        (= t24 t24)
+                        (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
+                        t28
+                        t29)
+                      (Rule
+                        (= t23 (Z))
+                        (name "(rewrite (Times (Z) n) (Z))")
+                        (premises
+                          (Rule
+                            (= t23 t23)
+                            (name
+                              "(rewrite (Times (S m) n) (Plus n (Times m n)))")
+                            t25
+                            t27))
+                        (substitution (__rewrite_root t23) t10))
+                      1)))
+(let t32 (substitution (m (S (Z))) (__rewrite_root t24) (n (Z))))
+(let t33
+  (premises
+                      (Rule
+                        (= t30 t30)
+                        (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
+                        t31
+                        t32)))
+(let t34 (substitution (m (Z)) (__rewrite_root t30) (n (Z))))
+(let t35 (Plus (Z) t2))
+(let t36 (Plus (S (S (Z))) (S (S (Z)))))
+(let t37 (Plus (S (S (Z))) t36))
+(let t38 (Plus (S (Z)) (S (S (Z)))))
+(let t39 (premises (Fiat (= t36 t36))))
+(let t40 (n (S (S (Z)))))
+(let t41 (substitution (m (S (Z))) (__rewrite_root t36) t40))
+(let t42 (Plus (Z) (S (S (Z)))))
+(let t43
+  (premises
+                                  (Rule
+                                    (= t38 t38)
+                                    (name
+                                      "(rewrite (Plus (S m) n) (S (Plus m n)))")
+                                    t39
+                                    t41)))
+(let t44 (substitution (m (Z)) (__rewrite_root t38) t40))
+(let prf0
+  (Congr
+                          (= t37 t3)
+                          (Fiat (= t37 t37))
+                          (Congr
+                            (= t36 t2)
+                            (Rule
+                              (= t36 (S t38))
+                              (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
+                              t39
+                              t41)
+                            (Congr
+                              (= t38 t0)
+                              (Rule
+                                (= t38 (S t42))
+                                (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
+                                t43
+                                t44)
+                              (Rule
+                                (= t42 (S (S (Z))))
+                                (name "(rewrite (Plus (Z) n) n)")
+                                (premises
+                                  (Rule
+                                    (= t42 t42)
+                                    (name
+                                      "(rewrite (Plus (S m) n) (S (Plus m n)))")
+                                    t43
+                                    t44))
+                                (substitution (__rewrite_root t42) t40))
+                              0)
+                            0)
+                          1))
+(let t45 (premises (Trans (= t3 t3) (Sym (= t3 t37) prf0) prf0)))
+(let t46 (n t2))
+(let t47 (substitution (m (S (Z))) (__rewrite_root t3) t46))
+(let t48
+  (premises
+                (Rule
+                  (= t4 t4)
+                  (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
+                  t45
+                  t47)))
+(let t49 (substitution (m (Z)) (__rewrite_root t4) t46))
 (Trans
   (= t1 t3)
   (Congr
-    (= t1 t6)
-    (Sym
-      (= t1 t9)
-      (Rule (= t9 t1) (name "(rewrite (Plus (S m) n) (S (Plus m n)))") t15 t18))
+    (= t1 t5)
+    (Rule
+      (= t1 (S t7))
+      (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
+      t12
+      t15)
     (Trans
-      (= t8 t5)
+      (= t7 t4)
       (Congr
-        (= t8 t19)
-        (Sym
-          (= t8 t21)
-          (Rule
-            (= t21 t8)
-            (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
-            t22
-            t23))
+        (= t7 t16)
+        (Rule
+          (= t7 (S t17))
+          (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
+          t18
+          t19)
         (Congr
-          (= t20 t4)
+          (= t17 t2)
           (Congr
-            (= t20 (S t7))
-            (Sym
-              (= t20 t25)
-              (Rule
-                (= t25 t20)
-                (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
-                t26
-                t27))
+            (= t17 (S t6))
             (Rule
-              (= t24 t7)
+              (= t17 (S t20))
+              (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
+              t21
+              t22)
+            (Rule
+              (= t20 t6)
               (name "(rewrite (Plus (Z) n) n)")
               (premises
                 (Rule
-                  (= t24 t24)
+                  (= t20 t20)
                   (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
-                  t26
-                  t27))
-              (substitution (__rewrite_root t24) t17))
+                  t21
+                  t22))
+              (substitution (__rewrite_root t20) t14))
             0)
           (Congr
-            (= t7 t0)
-            (Sym
-              (= t7 t30)
-              (Rule
-                (= t30 t7)
-                (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
-                t35
-                t36))
+            (= t6 t0)
+            (Rule
+              (= t6 (S t24))
+              (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
+              t28
+              t29)
             (Congr
-              (= t29 (S (S (Z))))
-              (Sym
-                (= t29 t38)
-                (Rule
-                  (= t38 t29)
-                  (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
-                  t39
-                  t40))
+              (= t24 (S (S (Z))))
+              (Rule
+                (= t24 (S t30))
+                (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
+                t31
+                t32)
               (Congr
-                (= t37 (S (Z)))
-                (Sym
-                  (= t37 t41)
-                  (Rule
-                    (= t41 t37)
-                    (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
-                    t42
-                    t43))
+                (= t30 (S (Z)))
+                (Rule
+                  (= t30 (S (Plus (Z) (Z))))
+                  (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
+                  t33
+                  t34)
                 (Rule
                   (= (Plus (Z) (Z)) (Z))
                   (name "(rewrite (Plus (Z) n) n)")
@@ -291,8 +259,8 @@ expression: proof_snapshot
                     (Rule
                       (= (Plus (Z) (Z)) (Plus (Z) (Z)))
                       (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
-                      t42
-                      t43))
+                      t33
+                      t34))
                   (substitution (__rewrite_root (Plus (Z) (Z))) (n (Z))))
                 0)
               0)
@@ -300,26 +268,26 @@ expression: proof_snapshot
           0)
         0)
       (Sym
-        (= t19 t5)
+        (= t16 t4)
         (Congr
-          (= t5 t19)
-          (Sym
-            (= t5 t45)
-            (Rule
-              (= t45 t5)
-              (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
-              t58
-              t59))
+          (= t4 t16)
           (Rule
-            (= t44 t4)
+            (= t4 (S t35))
+            (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
+            t48
+            t49)
+          (Rule
+            (= t35 t2)
             (name "(rewrite (Plus (Z) n) n)")
             (premises
               (Rule
-                (= t44 t44)
+                (= t35 t35)
                 (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
-                t58
-                t59))
-            (substitution (__rewrite_root t44) t56))
+                t48
+                t49))
+            (substitution (__rewrite_root t35) t46))
           0)))
     0)
-  (Rule (= t6 t3) (name "(rewrite (Plus (S m) n) (S (Plus m n)))") t55 t57))
+  (Sym
+    (= t5 t3)
+    (Rule (= t3 t5) (name "(rewrite (Plus (S m) n) (S (Plus m n)))") t45 t47)))

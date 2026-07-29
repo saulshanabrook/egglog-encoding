@@ -267,6 +267,17 @@ pub struct TypeInfo {
     pub(crate) sorts: HashMap<String, Arc<dyn Sort>>,
     primitives: HashMap<String, Vec<PrimitiveWithId>>,
     func_types: HashMap<String, FuncType>,
+    /// Source constructor signatures recovered from encoded FD views.  The
+    /// term/proof encoding reuses a constructor's source name for an internal
+    /// term relation whose final input is the explicitly minted e-class id.
+    /// Closed lookup expressions in `let-check` and `run-rule` must instead
+    /// retain the source `(children) -> eclass` schema so they can read the FD
+    /// view without inserting a term.
+    source_lookup_func_types: HashMap<String, FuncType>,
+    /// Names of encoded term relations.  Lookup-schema recovery requires the
+    /// paired relation to carry this marker rather than merely matching its
+    /// public input/output shape.
+    internal_term_nodes: HashSet<String>,
     pub(crate) global_sorts: HashMap<String, ArcSort>,
     /// Sorts that do not allow union (e.g., from `:no-union` sorts or relations).
     pub(crate) non_unionable_sorts: HashSet<String>,
@@ -459,6 +470,26 @@ impl EGraph {
         });
     }
 
+    /// Register a term-encoding op primitive whose runtime entrypoint the backend
+    /// itself mints. `prim` supplies only the type constraints (its body is never
+    /// invoked); `make_id` asks each backend on the typechecker chain for the
+    /// [`ExternalFunctionId`] that services this op against that backend's own
+    /// storage. Unlike [`Self::register_registry_primitive`], this works on
+    /// backends without an action registry.
+    pub(crate) fn add_backend_op_primitive<T, F>(
+        &mut self,
+        prim: T,
+        valid_ctxs: &[Context],
+        mut make_id: F,
+    ) where
+        T: Primitive + Clone,
+        F: FnMut(&mut dyn Backend, Context) -> ExternalFunctionId,
+    {
+        self.register_per_context(prim, None, valid_ctxs, move |backend, _x, ctx| {
+            make_id(backend, ctx)
+        });
+    }
+
     /// Shared registration engine. Stores one primitive definition, plus
     /// one runtime id per valid [`Context`]. Each wrapper carries its
     /// specific context stamped onto the state wrapper at invoke time.
@@ -634,6 +665,19 @@ impl EGraph {
         let command: ResolvedNCommand = match command {
             NCommand::Function(fdecl) => {
                 let resolved = self.type_info.typecheck_function(symbol_gen, fdecl)?;
+                // An FD view (function carrying `term_constructor` with a tuple
+                // `(eclass, proof)` output) gets a `set-if-empty` primitive (+ a
+                // proof-column reader) so the encoding can canonicalize a term to
+                // the view's e-class at insertion time. Registered here so it
+                // survives re-parse of the desugared program.
+                if resolved.term_constructor.is_some()
+                    && let ResolvedCall::Func(ft) = &resolved.resolved_schema
+                    && ft.outputs.len() >= 2
+                {
+                    let (name, input, outputs) =
+                        (resolved.name.clone(), ft.input.clone(), ft.outputs.clone());
+                    crate::proofs::proof_fresh::register_set_if_empty(self, &name, input, outputs);
+                }
                 // If this is a let binding, add it to global_sorts
                 // This preserves bahavior for lets after desugaring
                 if resolved.internal_let {
@@ -689,6 +733,7 @@ impl EGraph {
                     let names = &mut self.proof_state.proof_names;
                     names.proof_datatype = name.clone();
                     names.congr_constructor = pc.congr.clone();
+                    names.congr_all_constructor = pc.congr_all.clone();
                     names.eq_trans_constructor = pc.trans.clone();
                     names.eq_sym_constructor = pc.sym.clone();
                     names.container_normalize_constructor = pc.normalize.clone();
@@ -735,6 +780,38 @@ impl EGraph {
                     Context::Full,
                 )?)
             }
+            NCommand::CoreActions(actions) => {
+                ResolvedNCommand::CoreActions(self.type_info.typecheck_standalone_actions(
+                    symbol_gen,
+                    actions,
+                    &Default::default(),
+                    Context::Full,
+                )?)
+            }
+            NCommand::LetBegin(span, name, actions) => {
+                let resolved = self.type_info.typecheck_standalone_actions(
+                    symbol_gen,
+                    actions,
+                    &Default::default(),
+                    Context::Full,
+                )?;
+                self.ensure_global_name_prefix(span, name)?;
+                // The parser guarantees a trailing expression; its type is the
+                // global's.
+                let Some(ResolvedAction::Expr(_, value)) = resolved.0.last() else {
+                    unreachable!("(let _ (begin ...)) must end with an expression")
+                };
+                let sort = value.output_type();
+                self.type_info
+                    .global_sorts
+                    .insert(name.clone(), sort.clone());
+                let resolved_var = ResolvedVar {
+                    name: name.clone(),
+                    sort,
+                    is_global_ref: false,
+                };
+                ResolvedNCommand::LetBegin(span.clone(), resolved_var, resolved)
+            }
             NCommand::LetCheck {
                 span,
                 name,
@@ -764,8 +841,13 @@ impl EGraph {
                             .ok_or_else(|| TypeError::UndefinedSort(sort.clone(), span.clone()))
                     })
                     .transpose()?;
+                let source_lookup_type_info = self
+                    .type_info
+                    .source_lookup_type_info(std::iter::once(expr));
+                let expression_type_info =
+                    source_lookup_type_info.as_ref().unwrap_or(&self.type_info);
                 let resolved_expr = if let Some(expected) = expected {
-                    self.type_info.typecheck_expr_with_output(
+                    expression_type_info.typecheck_expr_with_output(
                         symbol_gen,
                         expr,
                         &checked_alias_bindings,
@@ -773,7 +855,7 @@ impl EGraph {
                         Context::Pure,
                     )?
                 } else {
-                    self.type_info.typecheck_standalone_expr(
+                    expression_type_info.typecheck_standalone_expr(
                         symbol_gen,
                         expr,
                         &checked_alias_bindings,
@@ -837,9 +919,12 @@ impl EGraph {
                     &checked_alias_bindings,
                 )?,
             ),
-            NCommand::Fail(span, cmd) => {
-                ResolvedNCommand::Fail(span.clone(), Box::new(self.typecheck_command(cmd)?))
-            }
+            NCommand::Fail(span, cmds) => ResolvedNCommand::Fail(
+                span.clone(),
+                cmds.iter()
+                    .map(|cmd| self.typecheck_command(cmd))
+                    .collect::<Result<_, _>>()?,
+            ),
             NCommand::RunSchedule(_) => ResolvedNCommand::RunSchedule(
                 self.type_info.typecheck_schedule(
                     symbol_gen,
@@ -878,16 +963,13 @@ impl EGraph {
                 ResolvedNCommand::PrintSize(span.clone(), n.clone())
             }
             NCommand::ProveExists(span, constructor) => {
+                // prove-exists targets a table: a constructor, or its lowering to
+                // a term relation (a function) under the term/proof encoding.
+                // `get_func_type` already rejects primitives/unbound names.
                 let func_type = self
                     .type_info
                     .get_func_type(constructor)
                     .ok_or_else(|| TypeError::UnboundFunction(constructor.clone(), span.clone()))?;
-                if func_type.subtype != FunctionSubtype::Constructor {
-                    return Err(TypeError::ProveExistsRequiresConstructor(
-                        constructor.clone(),
-                        span.clone(),
-                    ));
-                }
                 ResolvedNCommand::ProveExists(span.clone(), ResolvedCall::Func(func_type.clone()))
             }
             NCommand::Output { span, file, exprs } => {
@@ -961,6 +1043,54 @@ impl EGraph {
 }
 
 impl TypeInfo {
+    /// Return a typechecking view in which encoded term-relation names recover
+    /// their source constructor signatures.  This is deliberately used only
+    /// for closed, lookup-only expressions (`let-check` and `run-rule`
+    /// bindings); ordinary actions must continue to see the encoded relation
+    /// schema with its explicit term-id input.
+    fn source_lookup_type_info<'a>(
+        &self,
+        expressions: impl IntoIterator<Item = &'a Expr>,
+    ) -> Option<Self> {
+        fn collect_source_lookups(
+            expression: &Expr,
+            source_types: &HashMap<String, FuncType>,
+            candidates: &mut HashMap<String, bool>,
+        ) {
+            if let GenericExpr::Call(_, head, children) = expression {
+                if let Some(function) = source_types.get(head) {
+                    let has_source_arity = function.input.len() == children.len();
+                    candidates
+                        .entry(head.clone())
+                        .and_modify(|all_source_arity| *all_source_arity &= has_source_arity)
+                        .or_insert(has_source_arity);
+                }
+                for child in children {
+                    collect_source_lookups(child, source_types, candidates);
+                }
+            }
+        }
+
+        let mut candidates = HashMap::default();
+        for expression in expressions {
+            collect_source_lookups(expression, &self.source_lookup_func_types, &mut candidates);
+        }
+        let selected = candidates
+            .into_iter()
+            .filter_map(|(name, all_source_arity)| all_source_arity.then_some(name))
+            .collect::<Vec<_>>();
+        if selected.is_empty() {
+            return None;
+        }
+        let mut type_info = self.clone();
+        for name in selected {
+            type_info
+                .func_types
+                .insert(name.clone(), self.source_lookup_func_types[&name].clone());
+        }
+        Some(type_info)
+    }
+
     fn register_named_rule(&mut self, rule: &ResolvedRule) -> Result<(), TypeError> {
         if let Some(previous) = self.named_rules.get(&rule.name) {
             return Err(TypeError::DuplicateRuleName {
@@ -1124,11 +1254,58 @@ impl TypeInfo {
             ));
         }
         let ftype = self.function_to_functype(fdecl)?;
+        // A tuple-valued FD view carrying `:internal-term-constructor F`
+        // serializes enough information to recover a source constructor's
+        // lookup schema.  Require the encoder's exact metadata and paired
+        // term-node shape: encoded constructors are relations
+        // `F(children..., eclass) -> Unit`, whereas encoded globals and custom
+        // functions must not become source-level constructor lookups.
+        let source_lookup_type = fdecl.term_constructor.as_ref().and_then(|source_name| {
+            let term_node = self.func_types.get(source_name)?;
+            let (term_id_sort, term_children) = term_node.input.split_last()?;
+            (!fdecl.internal_let
+                && !fdecl.internal_term_node
+                && fdecl.identity_vals == Some(1)
+                && ftype.outputs.len() == 2
+                && self.internal_term_nodes.contains(source_name)
+                && term_node.subtype == FunctionSubtype::Custom
+                && term_node.outputs.len() == 1
+                && term_node.output().name() == UnitSort.name()
+                && term_children.len() == ftype.input.len()
+                && term_children
+                    .iter()
+                    .zip(&ftype.input)
+                    .all(|(term, view)| term.name() == view.name())
+                && term_id_sort.name() == ftype.output().name())
+            .then(|| FuncType {
+                name: source_name.clone(),
+                subtype: FunctionSubtype::Constructor,
+                input: ftype.input.clone(),
+                outputs: vec![ftype.output().clone()],
+            })
+        });
+        if let Some(source_lookup_type) = &source_lookup_type
+            && self
+                .source_lookup_func_types
+                .contains_key(&source_lookup_type.name)
+        {
+            return Err(TypeError::DuplicateSourceLookupView {
+                constructor: source_lookup_type.name.clone(),
+                span: fdecl.span.clone(),
+            });
+        }
         if self.func_types.insert(fdecl.name.clone(), ftype).is_some() {
             return Err(TypeError::FunctionAlreadyBound(
                 fdecl.name.clone(),
                 fdecl.span.clone(),
             ));
+        }
+        if fdecl.internal_term_node {
+            self.internal_term_nodes.insert(fdecl.name.clone());
+        }
+        if let Some(source_lookup_type) = source_lookup_type {
+            self.source_lookup_func_types
+                .insert(source_lookup_type.name.clone(), source_lookup_type);
         }
         let outputs: Vec<ArcSort> = fdecl
             .schema
@@ -1236,6 +1413,7 @@ impl TypeInfo {
             span: fdecl.span.clone(),
             term_constructor: fdecl.term_constructor.clone(),
             identity_vals: fdecl.identity_vals,
+            internal_term_node: fdecl.internal_term_node,
         })
     }
 
@@ -1409,13 +1587,17 @@ impl TypeInfo {
                         span,
                     });
                 }
-                self.typecheck_expr_with_output(
-                    symbol_gen,
-                    expr,
-                    &Default::default(),
-                    target.sort.clone(),
-                    Context::Read,
-                )?
+                let source_lookup_type_info = self.source_lookup_type_info(std::iter::once(expr));
+                source_lookup_type_info
+                    .as_ref()
+                    .unwrap_or(self)
+                    .typecheck_expr_with_output(
+                        symbol_gen,
+                        expr,
+                        &Default::default(),
+                        target.sort.clone(),
+                        Context::Read,
+                    )?
             };
             bindings.push((target.clone(), resolved_expr));
         }
@@ -1806,6 +1988,8 @@ pub enum TypeError {
         variable: String,
         span: Span,
     },
+    #[error("{span}\nMore than one encoded lookup view refers to source constructor {constructor}")]
+    DuplicateSourceLookupView { constructor: String, span: Span },
     #[error(
         "{span}\nChecked alias {name} must start with `{}`",
         crate::GLOBAL_NAME_PREFIX
@@ -1827,8 +2011,6 @@ pub enum TypeError {
     UndefinedSort(String, Span),
     #[error("{1}\nUnbound function {0}")]
     UnboundFunction(String, Span),
-    #[error("{1}\nprove-exists requires constructor function, but {0} is not a constructor")]
-    ProveExistsRequiresConstructor(String, Span),
     #[error("{1}\nFunction already bound {0}")]
     FunctionAlreadyBound(String, Span),
     #[error("{1}\nSort {0} already declared.")]

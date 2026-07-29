@@ -16,6 +16,42 @@ const SETUP: &str = r#"
     (let-check $wrapped-b (Wrap $b))
 "#;
 
+const CONSTRUCTOR_BINDING_PROGRAM: &str = r#"
+    (datatype Expr (A) (B) (Wrap Expr))
+    (relation Selected (Expr))
+    (rule ((Selected x))
+          ((union (Wrap x) x))
+          :name "unwrap")
+    (let $wrapped-a (Wrap (A)))
+    (let $wrapped-b (Wrap (B)))
+    (Selected (A))
+    (Selected (B))
+    (run-schedule
+      (run-rule ("unwrap" ((x (A))))))
+    (check (= $wrapped-a (A)))
+    (fail (check (= $wrapped-b (B))))
+"#;
+
+#[test]
+fn run_rule_constructor_binding_survives_proof_encoding_and_desugar() {
+    let mut direct = EGraph::new_with_proofs();
+    direct
+        .parse_and_run_program(None, CONSTRUCTOR_BINDING_PROGRAM)
+        .unwrap();
+
+    let mut resolver = EGraph::new_with_proofs();
+    let encoded = resolver
+        .resolve_program(None, CONSTRUCTOR_BINDING_PROGRAM)
+        .unwrap()
+        .into_iter()
+        .map(|command| command.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut replay = EGraph::default();
+    replay.ensure_no_reserved_symbols(false);
+    replay.parse_and_run_program(None, &encoded).unwrap();
+}
+
 #[test]
 fn run_rule_requires_exactly_one_match_and_a_later_list_recovers() {
     let mut egraph = EGraph::default();

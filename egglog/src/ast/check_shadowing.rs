@@ -106,15 +106,28 @@ impl Names {
                 Ok(())
             }
             ResolvedNCommand::CoreAction(action) => self.check_shadowing_action(action),
+            ResolvedNCommand::CoreActions(actions) => {
+                let mut inner = self.clone();
+                for action in actions.iter() {
+                    inner.check_shadowing_action(action)?;
+                }
+                Ok(())
+            }
+            ResolvedNCommand::LetBegin(..) => {
+                unreachable!("LetBegin is removed by remove_globals")
+            }
             // Runtime evaluation owns atomic namespace publication.
             ResolvedNCommand::LetCheck { .. } => Ok(()),
             ResolvedNCommand::Check(_span, query) => {
                 let mut inner = self.clone();
                 inner.check_shadowing_check(query)
             }
-            ResolvedNCommand::Fail(_span, command) => {
+            ResolvedNCommand::Fail(_span, commands) => {
                 let mut inner = self.clone();
-                inner.check_shadowing(command)
+                for command in commands {
+                    inner.check_shadowing(command)?;
+                }
+                Ok(())
             }
             ResolvedNCommand::Extract(..) => Ok(()),
             ResolvedNCommand::RunSchedule(..) => Ok(()),

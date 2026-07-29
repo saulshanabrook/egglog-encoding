@@ -643,16 +643,30 @@ pub struct RawTermAvailability {
     pub aliases: Box<[RawAliasWindow]>,
 }
 
-/// Earliest native point after which one structural Call occurrence can be
-/// captured by a persistent checked alias. Entries are emitted child-first in
-/// structural occurrence order; equal `term` ids may therefore appear more
-/// than once with different lower bounds. Bounds belong only to the exact
-/// constructor row that names this occurrence; causal support facts are not
-/// alias liveness.
+/// Native history window for capturing one structural Call occurrence with a
+/// persistent checked alias. Entries are emitted child-first in structural
+/// occurrence order; equal `term` ids may therefore appear more than once
+/// with different producer lifetimes and bounds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RawAliasWindow {
     pub term: ReplayTermId,
+    /// Exact constructor-row occurrence used to justify this alias. Pure and
+    /// otherwise recomputable calls have no producer fact.
+    pub producer: Option<FactId>,
+    /// Creation point of the exact constructor row that names this occurrence,
+    /// or the freshness floor for a recomputable call. This bound is
+    /// occurrence-local: a caller's later anchor is causal support, not row
+    /// liveness.
     pub available_after: HistoryPosition,
+    /// Frontier of the equality/fact/rekey support needed for this call's
+    /// children to address the selected producer key during replay. The
+    /// current call's output-to-parent bridge is deliberately excluded: a
+    /// persistent alias may be captured before its output is later unioned.
+    pub support_ready_after: HistoryPosition,
+    /// Exclusive native end of the exact producer row's lifetime, when it was
+    /// explicitly removed. Replay enforces this upper bound only when that
+    /// tombstone is selected; an omitted deletion leaves the row live.
+    pub live_before: Option<HistoryPosition>,
     /// A refreshed ordered-container spelling and its structural descendants
     /// cannot canonicalize back to aliases from an earlier container version.
     pub fresh_after: Option<HistoryPosition>,

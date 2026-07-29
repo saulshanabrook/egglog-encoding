@@ -319,7 +319,7 @@ def run_preflight(
     binary_path: Path,
     checkout_path: Path,
     timeout_sec: int,
-    required_outputs: tuple[str, ...],
+    required_outputs: tuple[str, ...] = ("--timing-summary",),
 ) -> TimingResult:
     """Run one untimed ``--help`` capability preflight."""
 
@@ -327,7 +327,7 @@ def run_preflight(
         [str(binary_path), "--help"],
         checkout_path,
         timeout_sec,
-        required_outputs=required_outputs,
+        required_output=required_outputs,
     )
 
 
@@ -345,6 +345,8 @@ def preflight_collection(plan: CollectionPlan, timeout_sec: int) -> None:
     required_outputs: tuple[str, ...] = ("--timing-summary",)
     if any(run.treatment == "sliced-proofs" and run.missing_observations > 0 for run in plan.runs):
         required_outputs += ("--slice",)
+    if any(run.treatment == "proof-extraction" and run.missing_observations > 0 for run in plan.runs):
+        required_outputs += ("--proof-extraction",)
     result = run_preflight(target.binary_path, Path(target.row.path), timeout_sec, required_outputs)
     if result.status != "success":
         message = f"target {target.display_label} preflight failed"

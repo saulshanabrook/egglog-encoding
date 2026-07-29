@@ -1,0 +1,29 @@
+;; A union operand that is reused as a child after the union. A term built
+;; from the reused variable must use the representative the union chose, so
+;; terms over the two unioned variables stay congruent. Exercises the
+;; term-encoding union path for let-bound, reused operands (and guards the
+;; future construct-into normal form, which must keep d/e aliased to one
+;; representative even though d is used again).
+(datatype Math
+  (A)
+  (B)
+  (C)
+  (Add Math Math))
+
+(relation Go ())
+(Go)
+
+(rule ((Go))
+      ((let d (Add (A) (B)))
+       (let e (Add (B) (A)))
+       (union d e)
+       ;; reuse both operands as children after the union
+       (Add d (C))
+       (Add e (C))))
+
+(run 2)
+
+;; the operands were unioned
+(check (= (Add (A) (B)) (Add (B) (A))))
+;; terms built from the reused operands are congruent (share one representative)
+(check (= (Add (Add (A) (B)) (C)) (Add (Add (B) (A)) (C))))

@@ -27,7 +27,8 @@ pub use action::{ExecutionState, MergeVal, QueryEntry, WriteVal};
 pub use base_values::{BaseValue, BaseValueId, BaseValuePrinter, BaseValues, Boxed};
 pub use common::Value;
 pub use containers::{
-    CausalContainerKind, ContainerRebuildSummary, ContainerValue, ContainerValueId, ContainerValues,
+    CausalContainerKind, ContainerRebuildSummary, ContainerValue, ContainerValueId,
+    ContainerValues, TraceCaptureError,
 };
 pub use free_join::{
     AtomId, CounterId, Database, ExternalFunction, ExternalFunctionId, GroundedRuleMatch,

@@ -262,7 +262,9 @@ impl EGraph {
                     *rule_info.matches.lock().unwrap() = matches.instantiate(state, &table_action);
                 }
             });
-            self.backend.flush_updates();
+            self.backend
+                .flush_updates()
+                .map_err(|error| Error::BackendError(error.to_string()))?;
 
             // Step 4: run the action rules
             let action_rules = rules

@@ -115,6 +115,7 @@ impl GlobalRemover<'_> {
                         span: span.clone(),
                         term_constructor: None,
                         identity_vals: None,
+                        internal_term_node: false,
                     };
                     vec![
                         GenericNCommand::Function(func_decl),
@@ -128,6 +129,57 @@ impl GlobalRemover<'_> {
                 }
                 _ => vec![GenericNCommand::CoreAction(remove_globals_action(action))],
             },
+            // Rewrite global references but leave the block's own `let`s local.
+            GenericNCommand::CoreActions(actions) => {
+                vec![GenericNCommand::CoreActions(
+                    actions.visit_actions(&mut remove_globals_action),
+                )]
+            }
+            // Declare `a` as a global function, then run the block, ending by
+            // setting the function to the block's trailing value.
+            GenericNCommand::LetBegin(span, name, actions) => {
+                let mut acts = actions.0;
+                let value = match acts.pop() {
+                    Some(GenericAction::Expr(_, e)) => e,
+                    _ => panic!("`(let _ (begin ...))` must end with an expression"),
+                };
+                let ty = value.output_type();
+                let resolved_call = ResolvedCall::Func(FuncType {
+                    name: name.name.clone(),
+                    subtype: FunctionSubtype::Custom,
+                    input: vec![],
+                    outputs: vec![ty.clone()],
+                });
+                let func_decl = ResolvedFunctionDecl {
+                    name: name.name,
+                    subtype: FunctionSubtype::Custom,
+                    schema: Schema {
+                        input: vec![],
+                        outputs: vec![ty.name().to_owned()],
+                    },
+                    resolved_schema: resolved_call.clone(),
+                    merge: None,
+                    cost: None,
+                    unextractable: true,
+                    internal_hidden: false,
+                    internal_let: true,
+                    span: span.clone(),
+                    term_constructor: None,
+                    identity_vals: None,
+                    internal_term_node: false,
+                };
+                let mut new_acts: Vec<_> = acts.into_iter().map(remove_globals_action).collect();
+                new_acts.push(GenericAction::Set(
+                    span,
+                    resolved_call,
+                    vec![],
+                    remove_globals_expr(value),
+                ));
+                vec![
+                    GenericNCommand::Function(func_decl),
+                    GenericNCommand::CoreActions(GenericActions(new_acts)),
+                ]
+            }
             GenericNCommand::NormRule { rule } => {
                 // A map from the global variables in actions to their new names
                 // in the query.
@@ -185,14 +237,15 @@ impl GlobalRemover<'_> {
                 };
                 vec![GenericNCommand::NormRule { rule: new_rule }]
             }
-            // Handle the corner case where a global command is wrap in (fail )
-            GenericNCommand::Fail(span, cmd) => {
-                let mut removed = self.remove_globals_cmd(*cmd);
-                let last = removed.pop().unwrap();
-                let boxed_last = Box::new(last);
-                let new_command = GenericNCommand::Fail(span, boxed_last);
-                removed.push(new_command);
-                removed
+            // Handle the corner case where a global command is wrapped in (fail).
+            // Remove globals from every wrapped command and keep the whole flattened
+            // result inside the `fail`.
+            GenericNCommand::Fail(span, cmds) => {
+                let mut removed = vec![];
+                for cmd in cmds {
+                    removed.extend(self.remove_globals_cmd(cmd));
+                }
+                vec![GenericNCommand::Fail(span, removed)]
             }
             _ => vec![cmd.visit_exprs(&mut replace_global_vars)],
         }

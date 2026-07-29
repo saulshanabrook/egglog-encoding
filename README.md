@@ -29,6 +29,7 @@ make python-nits    # Python hygiene only
 make rust-nits      # rustfmt check and Clippy only
 make proof-tests    # proof-focused subset of the workspace tests
 make benchmark-smoke
+make nightly        # benchmark the nightly endpoints and publish nightly/output/
 make update-snapshots
 make format         # apply Ruff and rustfmt formatting
 ```
@@ -92,10 +93,14 @@ Treatments map directly to engine modes:
 | `term` | `--term-encoding` |
 | `proofs` | `--proofs` |
 | `sliced-proofs` | `--slice --proofs` |
+| `proof-extraction` | `--proof-extraction`; rewrite checks, then extract, materialize, clean, and simplify proofs without verifying them |
 
-The `main` backend supports all four treatments; `dd` supports `term` and
-`proofs`. The engine's `--proof-testing` option is a correctness mode, not a
-benchmark treatment.
+The `main` backend supports all five treatments. The `dd` backend supports
+`term` and `proofs`; an explicit `proof-extraction` treatment is rejected. The
+engine's `--proof-testing` option is a strict correctness mode that rewrites
+checks, extracts proofs, and verifies them, not a benchmark treatment. Results
+from `proof-extraction` are performance evidence only, not proof-validity
+evidence.
 
 ### Common comparisons
 
@@ -103,6 +108,12 @@ Proof overhead in the current checkout is the default:
 
 ```bash
 ./bench.py
+```
+
+Measure non-validating proof-extraction overhead explicitly:
+
+```bash
+./bench.py --treatment proof-extraction
 ```
 
 Compare the current proof implementation with proof mode on `origin/main`:
@@ -198,10 +209,11 @@ corpus:
 | Pointer analysis | First 100 rows from 23 relations; three legacy functions are constructors for current egglog compatibility | Known `constant_points_to` row is derived |
 | Hardboiled | Dormant canonicalization rules using unsupported unstable helpers are omitted | Extracted WMMA store result is checked |
 | Luminal | Static Llama graph from [`egglog_repro` commit `7fb0194`](https://github.com/saulshanabrook/egglog_repro/blob/7fb0194812b5b11e41a286d8b55e48e3b0bfcd66/llama.egg) | `t712` is checked after kernel lowering |
+| Herbie | Static engine proxy without Racket orchestration or an FPCore corpus | All 14 checks exercise the selected treatment |
 
 Benchmark files must not contain executable `(prove ...)` commands. Use
-`(check ...)` in timed workloads and test proof extraction separately, so
-printing or checking a proof does not become part of the timing boundary.
+`(check ...)` in timed workloads so the selected treatment controls whether
+proof extraction is included in the timing boundary.
 
 Reports normally identify a selected file by filename. If names collide, they
 use the shortest distinguishing path suffix; persisted rows retain the invoked
@@ -345,6 +357,38 @@ network runtime cannot load, the initial static report remains readable and
 only retargeting is unavailable. The HTML contains the full cache, including
 machine-local paths and provenance, so treat it as potentially sensitive when
 sharing it.
+
+### Nightly
+
+`make nightly` benchmarks each endpoint in `ENDPOINTS` — the main backend's
+`term`, `proofs`, and `proof-extraction`, with the `dd` backend disabled for
+now — on the current checkout and on the latest `main`, accumulating them all in
+the ordinary report cache, and copies the resulting interactive page and its
+cache to `nightly/output/index.html` and `index.jsonl`:
+
+```bash
+make nightly
+uv run --locked python scripts/nightly_bench.py /path/to/output  # alternate output directory
+```
+
+Endpoints are labelled by target (`branch` / `main`) and commit hash, so the
+page's dropdown can compare any two of them and it is clear which commit each
+side is; endpoints with identical binaries collapse to one option. The page
+opens on proof overhead of the current checkout. Populating is best effort: an
+endpoint that fails to build or run drops one dropdown option rather than
+failing the run, and the output directory is only overwritten after a
+successful run. Edit `TARGETS` and `ENDPOINTS` in `scripts/nightly_bench.py` to
+change what is measured.
+
+The [egraphs-good nightly service](https://nightly.cs.washington.edu) checks out
+this repository, runs `make nightly`, and serves `nightly/output/`, matching the
+`report=` entry in the nightly configuration. Two things that runner does not
+provide, `make nightly` arranges itself: it installs a pinned uv into `.uv/`
+when uv is missing from `PATH` (uv then downloads its own CPython; bump
+`UV_VERSION` in the `Makefile` to move that pin), and it installs rustup when
+the box has none. The runner also leaves rustup's `~/.cargo/bin` off `PATH`,
+which would leave cargo resolving to Ubuntu's — too old for
+`rust-toolchain.toml`'s pin — so `nightly_bench.py` puts those shims first.
 
 ### CPU profiling
 
