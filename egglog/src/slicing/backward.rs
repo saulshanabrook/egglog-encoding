@@ -8,9 +8,9 @@ use std::collections::VecDeque;
 use crate::core_relations::{
     AppliedEqualityId, CauseRef, Criterion, CriterionEndpointOccurrence, EdgeHorizon,
     EqualityEndpoint, EqualityReason, FactCellRef, FactId, FiringEqualitySource, FiringId,
-    HistoryPosition, ProjectedAppliedEquality, RawAliasWindow, RawCause, RawEqualityEndpoint,
-    RawEqualitySupport, ReplayTableKind, ReplayTermId, SourceRef, TableId, TraceView,
-    TraceViewError, TypedCellEquality, Value,
+    HistoryPosition, PremiseOccurrence, ProjectedAppliedEquality, RawAliasWindow, RawCause,
+    RawEqualityEndpoint, RawEqualitySupport, ReplayTableKind, ReplayTermId, SourceRef, TableId,
+    TraceView, TraceViewError, TypedCellEquality, Value,
 };
 use crate::numeric_id::NumericId;
 use crate::util::{HashMap, HashSet};
@@ -179,88 +179,37 @@ fn explain_rule_equality(
     as_of_edges: EdgeHorizon,
     position: HistoryPosition,
 ) -> Result<RawEqualitySupport, TraceViewError> {
-    let premise_cell =
-        |source: FiringEqualitySource| -> Result<Option<FactCellRef>, TraceViewError> {
-            let FiringEqualitySource::Premise(occurrence) = source else {
-                return Ok(None);
-            };
-            let fact = *premises.get(occurrence.premise).ok_or_else(|| {
-                TraceViewError::Invalid(format!(
-                    "equality obligation cites missing premise {}",
-                    occurrence.premise
-                ))
-            })?;
-            let column = occurrence.column.try_into().map_err(|_| {
-                TraceViewError::Invalid("premise occurrence column exceeds u32".into())
-            })?;
-            Ok(Some(FactCellRef {
-                fact,
-                column: crate::core_relations::ColumnId::new(column),
-            }))
-        };
-    let left_cell = premise_cell(left)?;
-    let right_cell = premise_cell(right)?;
-    match (left_cell, right_cell) {
-        (Some(left), Some(right)) => {
-            return view.explain_fact_cell_support_at(left, right, as_of_edges, position);
-        }
-        (Some(fact), None) => {
-            let FiringEqualitySource::Constant(endpoint) = right else {
-                unreachable!("non-premise equality source is always a constant")
-            };
-            return view.explain_fact_endpoint_support_at(fact, endpoint, as_of_edges, position);
-        }
-        (None, Some(fact)) => {
-            let FiringEqualitySource::Constant(endpoint) = left else {
-                unreachable!("non-premise equality source is always a constant")
-            };
-            return view.explain_fact_endpoint_support_at(fact, endpoint, as_of_edges, position);
-        }
-        (None, None) => {}
-    }
-
-    let mut facts = Vec::new();
-    let mut rekeys = Vec::new();
-    let mut resolve = |source| -> Result<EqualityEndpoint, TraceViewError> {
-        match source {
-            FiringEqualitySource::Premise(occurrence) => {
-                let fact = *premises.get(occurrence.premise).ok_or_else(|| {
-                    TraceViewError::Invalid(format!(
-                        "equality obligation cites missing premise {}",
-                        occurrence.premise
-                    ))
-                })?;
-                let column = occurrence.column.try_into().map_err(|_| {
-                    TraceViewError::Invalid("premise occurrence column exceeds u32".into())
-                })?;
-                let cell = view.fact_cell_at(
-                    FactCellRef {
-                        fact,
-                        column: crate::core_relations::ColumnId::new(column),
-                    },
-                    position,
-                )?;
-                facts.push(fact);
-                rekeys.extend(cell.rekeys);
-                Ok(cell.created)
-            }
-            FiringEqualitySource::Constant(endpoint) => Ok(endpoint),
-        }
+    let premise_cell = |occurrence: PremiseOccurrence| -> Result<FactCellRef, TraceViewError> {
+        let fact = *premises.get(occurrence.premise).ok_or_else(|| {
+            TraceViewError::Invalid(format!(
+                "equality obligation cites missing premise {}",
+                occurrence.premise
+            ))
+        })?;
+        let column = occurrence
+            .column
+            .try_into()
+            .map_err(|_| TraceViewError::Invalid("premise occurrence column exceeds u32".into()))?;
+        Ok(FactCellRef {
+            fact,
+            column: crate::core_relations::ColumnId::new(column),
+        })
     };
-    let left = resolve(left)?;
-    let right = resolve(right)?;
-    let support = view.explain_equality_support_at(left, right, as_of_edges, position)?;
-    facts.extend(support.facts);
-    facts.sort_unstable();
-    facts.dedup();
-    rekeys.extend(support.rekeys);
-    rekeys.sort_unstable();
-    rekeys.dedup();
-    Ok(RawEqualitySupport {
-        applied: support.applied,
-        facts: facts.into_boxed_slice(),
-        rekeys: rekeys.into_boxed_slice(),
-    })
+    match (left, right) {
+        (FiringEqualitySource::Premise(left), FiringEqualitySource::Premise(right)) => view
+            .explain_fact_cell_support_at(
+                premise_cell(left)?,
+                premise_cell(right)?,
+                as_of_edges,
+                position,
+            ),
+        (FiringEqualitySource::Premise(fact), FiringEqualitySource::Constant(endpoint))
+        | (FiringEqualitySource::Constant(endpoint), FiringEqualitySource::Premise(fact)) => view
+            .explain_fact_endpoint_support_at(premise_cell(fact)?, endpoint, as_of_edges, position),
+        (FiringEqualitySource::Constant(left), FiringEqualitySource::Constant(right)) => {
+            view.explain_equality_support_at(left, right, as_of_edges, position)
+        }
+    }
 }
 
 fn replay_owner_for_cause(
