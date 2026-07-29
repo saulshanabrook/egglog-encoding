@@ -1170,7 +1170,6 @@ impl<'a> TraceView<'a> {
             RawEqualitySupport {
                 applied: Box::new([]),
                 facts: Box::new([]),
-                causes: Box::new([]),
                 rekeys: Box::new([]),
             }
         } else {
@@ -1190,7 +1189,6 @@ impl<'a> TraceView<'a> {
         let anchor = RawEqualitySupport {
             applied: Box::new([]),
             facts: Box::new([anchor.occurrence.fact]),
-            causes: Box::new([]),
             rekeys: anchor.rekeys,
         };
         Ok(RawTermAvailability {

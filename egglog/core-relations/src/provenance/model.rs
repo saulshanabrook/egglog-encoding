@@ -630,7 +630,6 @@ pub struct HistoricalFactCell {
 pub struct RawEqualitySupport {
     pub applied: Box<[AppliedEqualityId]>,
     pub facts: Box<[FactId]>,
-    pub causes: Box<[CauseRef]>,
     pub rekeys: Box<[HistoryPosition]>,
 }
 
@@ -677,26 +676,21 @@ pub(super) fn combine_raw_equality_support(
 ) -> RawEqualitySupport {
     let mut applied = Vec::new();
     let mut facts = Vec::new();
-    let mut causes = Vec::new();
     let mut rekeys = Vec::new();
     for part in parts {
         applied.extend(part.applied);
         facts.extend(part.facts);
-        causes.extend(part.causes);
         rekeys.extend(part.rekeys);
     }
     applied.sort_unstable();
     applied.dedup();
     facts.sort_unstable();
     facts.dedup();
-    causes.sort_unstable();
-    causes.dedup();
     rekeys.sort_unstable();
     rekeys.dedup();
     RawEqualitySupport {
         applied: applied.into_boxed_slice(),
         facts: facts.into_boxed_slice(),
-        causes: causes.into_boxed_slice(),
         rekeys: rekeys.into_boxed_slice(),
     }
 }

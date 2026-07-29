@@ -1881,7 +1881,7 @@ fn same_term_native_bridge_joins_distinct_historical_components() {
                 first_support.applied.as_ref(),
                 &[crate::AppliedEqualityId::new(1)]
             );
-            assert!(first_support.facts.is_empty() && first_support.causes.is_empty());
+            assert!(first_support.facts.is_empty());
             let crate::EqualityReason::RuleUnion(first_match) = first.reason else {
                 panic!("first equality lost its rule attribution")
             };
@@ -4939,7 +4939,6 @@ fn late_fact_rekey_attachment_case(reverse_equality_endpoints: bool) {
                 &[crate::AppliedEqualityId::new(1)]
             );
             assert_eq!(support.facts.as_ref(), &[fact]);
-            assert!(support.causes.is_empty());
             assert_eq!(support.rekeys.as_ref(), &[rekey_position]);
             assert!(
                 view.explain_equality_support_at(

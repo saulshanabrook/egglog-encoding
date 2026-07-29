@@ -21,7 +21,6 @@ use crate::EGraph;
 struct SupportRequirement {
     applied: Box<[AppliedEqualityId]>,
     facts: Box<[FactId]>,
-    causes: Box<[CauseRef]>,
     rekeys: Box<[HistoryPosition]>,
 }
 
@@ -147,18 +146,6 @@ impl Slice {
                     });
                 }
             }
-            for id in &requirement.causes {
-                if !self.causes.contains(id) {
-                    let raw = match id {
-                        CauseRef::Rule(rule) => rule.get(),
-                        CauseRef::Cause(cause) => cause.get() as u64,
-                    };
-                    return Err(SliceError::MissingSupport {
-                        kind: "cause",
-                        id: raw,
-                    });
-                }
-            }
             for position in &requirement.rekeys {
                 if !self.rekeys.contains(position) {
                     return Err(SliceError::MissingSupport {
@@ -189,16 +176,12 @@ fn enqueue_support(slice: &mut Slice, work: &mut VecDeque<Work>, support: RawEqu
     for id in &support.facts {
         work.push_back(Work::Fact(*id));
     }
-    for cause in &support.causes {
-        work.push_back(Work::Cause(*cause));
-    }
     for position in &support.rekeys {
         work.push_back(Work::Rekey(*position));
     }
     slice.requirements.push(SupportRequirement {
         applied: support.applied,
         facts: support.facts,
-        causes: support.causes,
         rekeys: support.rekeys,
     });
 }
@@ -298,7 +281,6 @@ fn explain_rule_equality(
     Ok(RawEqualitySupport {
         applied: support.applied,
         facts: facts.into_boxed_slice(),
-        causes: support.causes,
         rekeys: rekeys.into_boxed_slice(),
     })
 }

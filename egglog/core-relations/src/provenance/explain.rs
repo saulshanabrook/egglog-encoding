@@ -410,7 +410,6 @@ impl<'a> TraceView<'a> {
         Ok(Some(RawEqualitySupport {
             applied: edges.into_boxed_slice(),
             facts: Box::new([]),
-            causes: Box::new([]),
             rekeys: Box::new([]),
         }))
     }
@@ -479,7 +478,6 @@ impl<'a> TraceView<'a> {
             RawEqualitySupport {
                 applied: Box::new([]),
                 facts: Box::new([]),
-                causes: Box::new([]),
                 rekeys: Box::new([]),
             }
         } else {
@@ -589,7 +587,6 @@ impl<'a> TraceView<'a> {
                 .unwrap_or(RawEqualitySupport {
                     applied: Box::new([]),
                     facts: Box::new([]),
-                    causes: Box::new([]),
                     rekeys: Box::new([]),
                 }));
         }
@@ -723,7 +720,6 @@ impl<'a> TraceView<'a> {
         Ok(RawEqualitySupport {
             applied: support.applied,
             facts: facts.into_boxed_slice(),
-            causes: support.causes,
             rekeys: rekeys.into_boxed_slice(),
         })
     }
@@ -758,7 +754,6 @@ impl<'a> TraceView<'a> {
             RawEqualitySupport {
                 applied: Box::new([]),
                 facts: Box::new([]),
-                causes: Box::new([]),
                 rekeys: Box::new([]),
             }
         } else {
@@ -787,7 +782,6 @@ impl<'a> TraceView<'a> {
         Ok(RawEqualitySupport {
             applied: support.applied,
             facts: facts.into_boxed_slice(),
-            causes: support.causes,
             rekeys: rekeys.into_boxed_slice(),
         })
     }
@@ -982,7 +976,6 @@ impl<'a> TraceView<'a> {
             return Ok(Some(RawEqualitySupport {
                 applied: Box::new([]),
                 facts: Box::new([]),
-                causes: Box::new([]),
                 rekeys: Box::new([]),
             }));
         };
@@ -1258,7 +1251,6 @@ impl<'a> TraceView<'a> {
                     let child_anchor = RawEqualitySupport {
                         applied: Box::new([]),
                         facts: Box::new([child_cell.occurrence.fact]),
-                        causes: Box::new([]),
                         rekeys: child_cell.rekeys,
                     };
                     support_ready_after =
@@ -1288,7 +1280,6 @@ impl<'a> TraceView<'a> {
                 parts.push(RawEqualitySupport {
                     applied: Box::new([]),
                     facts: Box::new([producer]),
-                    causes: Box::new([]),
                     rekeys: output_cell.rekeys,
                 });
                 return Ok(Some(combine_raw_equality_support(parts)));
@@ -1577,7 +1568,6 @@ impl<'a> TraceView<'a> {
             let support = RawEqualitySupport {
                 applied: Box::new([]),
                 facts: Box::new([]),
-                causes: Box::new([]),
                 rekeys: Box::new([]),
             };
             self.exact_occurrence_support_cache
@@ -1647,7 +1637,6 @@ impl<'a> TraceView<'a> {
                 RawEqualitySupport {
                     applied: Box::new([]),
                     facts: Box::new([producer]),
-                    causes: Box::new([]),
                     rekeys: Box::new([]),
                 },
             ]));
@@ -1677,7 +1666,6 @@ impl<'a> TraceView<'a> {
             return Ok(Some(RawEqualitySupport {
                 applied: Box::new([]),
                 facts: Box::new([cell.occurrence.fact]),
-                causes: Box::new([]),
                 rekeys: Box::new([]),
             }));
         }
@@ -1688,7 +1676,6 @@ impl<'a> TraceView<'a> {
             return Ok(Some(RawEqualitySupport {
                 applied: Box::new([]),
                 facts: Box::new([cell.occurrence.fact]),
-                causes: Box::new([]),
                 rekeys: Box::new([]),
             }));
         }
@@ -1697,7 +1684,6 @@ impl<'a> TraceView<'a> {
         let origin = RawEqualitySupport {
             applied: Box::new([]),
             facts: Box::new([origin]),
-            causes: Box::new([]),
             rekeys: Box::new([]),
         };
         let as_of = self.equality_edge_count_at(fact.position)?;
@@ -1888,7 +1874,6 @@ impl<'a> TraceView<'a> {
                 RawEqualitySupport {
                     applied: Box::new([]),
                     facts: Box::new([]),
-                    causes: Box::new([]),
                     rekeys: Box::new([]),
                 }
             };
@@ -1977,7 +1962,6 @@ impl<'a> TraceView<'a> {
                     RawEqualitySupport {
                         applied: Box::new([]),
                         facts: Box::new([producer]),
-                        causes: Box::new([]),
                         rekeys: output_support.1,
                     },
                 ])
@@ -2034,7 +2018,6 @@ impl<'a> TraceView<'a> {
                 RawEqualitySupport {
                     applied: Box::new([]),
                     facts: Box::new([producer]),
-                    causes: Box::new([]),
                     rekeys: output_cell.rekeys,
                 },
             ];
@@ -2163,7 +2146,6 @@ impl<'a> TraceView<'a> {
                 RawEqualitySupport {
                     applied: Box::new([]),
                     facts: Box::new([producer]),
-                    causes: Box::new([]),
                     rekeys: output_cell.rekeys,
                 },
             ];
