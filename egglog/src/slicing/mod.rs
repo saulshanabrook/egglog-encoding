@@ -59,6 +59,7 @@ pub fn slice_all_checks(egraph: &EGraph) -> Result<Vec<Command>, Error> {
     replay.to_commands().map_err(|error| invalid(&error))
 }
 
+#[cfg(any(feature = "bin", test))]
 pub(crate) fn render_commands(commands: &[Command]) -> String {
     replay::render_commands_as_source(commands)
 }

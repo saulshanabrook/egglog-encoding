@@ -333,6 +333,7 @@ impl ReplayProgram {
 }
 
 /// Render ordinary commands as a standalone source program.
+#[cfg(any(feature = "bin", test))]
 pub(super) fn render_commands_as_source(commands: &[Command]) -> String {
     use std::fmt::Write as _;
 
