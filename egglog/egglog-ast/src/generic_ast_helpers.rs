@@ -818,9 +818,11 @@ impl Display for Literal {
             Literal::Bool(b) => Display::fmt(b, f),
             Literal::String(s) => {
                 f.write_str("\"")?;
+                // Multiline strings are valid source. Keeping real newlines
+                // also preserves the readable layout of embedded rule text;
+                // escaping `\\` still distinguishes a literal `\\n`.
                 for character in s.chars() {
                     match character {
-                        '\n' => f.write_str("\\n")?,
                         '\t' => f.write_str("\\t")?,
                         '\\' => f.write_str("\\\\")?,
                         '"' => f.write_str("\\\"")?,
@@ -850,7 +852,7 @@ mod tests {
         let literal = Literal::String("quote\" slash\\ newline\n tab\t cr\r nul\0".into());
         assert_eq!(
             literal.to_string(),
-            "\"quote\\\" slash\\\\ newline\\n tab\\t cr\r nul\0\""
+            "\"quote\\\" slash\\\\ newline\n tab\\t cr\r nul\0\""
         );
     }
 
