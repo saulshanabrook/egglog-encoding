@@ -138,11 +138,13 @@ where
     /// Evaluate one closed replay value without publishing it as a global or
     /// mutating relational/equality state.
     LetCheck {
+        /// Source location used for diagnostics.
         span: Span,
+        /// `$`-prefixed frontend alias published only after lookup succeeds.
         name: Leaf,
+        /// Closed lookup expression; variables may name only earlier aliases.
         expr: GenericExpr<Head, Leaf>,
-        /// Causal replay carries the exact recorded sort out-of-band. Parsed
-        /// two-argument syntax leaves this absent and lets type inference decide.
+        /// Exact nominal-sort guard, or `None` to infer the expression's sort.
         expected_sort: Option<String>,
     },
     Extract(Span, GenericExpr<Head, Leaf>, GenericExpr<Head, Leaf>),
@@ -1014,9 +1016,13 @@ where
     LetBegin(Span, Leaf, GenericActions<Head, Leaf>),
     /// Bind a closed, checked replay value in a frontend-only alias table.
     LetCheck {
+        /// Source location used for diagnostics.
         span: Span,
+        /// `$`-prefixed frontend alias published only after lookup succeeds.
         name: Leaf,
+        /// Closed lookup expression; variables may name only earlier aliases.
         expr: GenericExpr<Head, Leaf>,
+        /// Exact nominal-sort guard, or `None` to infer the expression's sort.
         expected_sort: Option<String>,
     },
     /// `extract` a datatype from the egraph, choosing

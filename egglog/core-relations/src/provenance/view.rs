@@ -71,7 +71,7 @@ impl<'a> TermProjector<'a> {
                 .facts
                 .get((fact_id.get().checked_sub(1).ok_or("missing FactId")?) as usize)
                 .and_then(Option::as_ref)
-                .ok_or_else(|| format!("unknown causal fact {fact_id:?}"))?;
+                .ok_or_else(|| format!("unknown trace fact {fact_id:?}"))?;
             let owner = self
                 .arena
                 .originating_rule(fact.cause)
@@ -307,7 +307,7 @@ impl<'a> TermProjector<'a> {
                             .facts
                             .get((fact.get().checked_sub(1).ok_or("missing FactId")?) as usize)
                             .and_then(Option::as_ref)
-                            .ok_or_else(|| format!("unknown causal fact {fact:?}"))?
+                            .ok_or_else(|| format!("unknown trace fact {fact:?}"))?
                             .position,
                         false,
                     ),

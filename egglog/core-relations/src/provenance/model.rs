@@ -835,19 +835,19 @@ pub struct RawRekeyRecord<'a> {
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum TraceViewError {
     /// Capture has not reached the publication boundary required by borrowed views.
-    #[error("causal trace history is not finalized: {0}")]
+    #[error("trace history is not finalized: {0}")]
     NotFinalized(
         /// Finalization precondition that remains unsatisfied.
         &'static str,
     ),
     /// A trace lock was poisoned, so historical reads fail closed.
-    #[error("causal trace lock is poisoned: {0}")]
+    #[error("trace lock is poisoned: {0}")]
     Poisoned(
         /// Lock or trace component that could not be read safely.
         &'static str,
     ),
     /// No published fact has the requested identity.
-    #[error("unknown causal fact {0:?}")]
+    #[error("unknown trace fact {0:?}")]
     UnknownFact(
         /// Unresolved fact identity.
         FactId,
@@ -859,7 +859,7 @@ pub enum TraceViewError {
         FiringId,
     ),
     /// No published non-rule cause has the requested identity.
-    #[error("unknown causal cause {0:?}")]
+    #[error("unknown trace cause {0:?}")]
     UnknownCause(
         /// Unresolved shared cause identity.
         CauseId,
@@ -871,13 +871,13 @@ pub enum TraceViewError {
         AppliedEqualityId,
     ),
     /// No rekey event exists at the requested cross-stream position.
-    #[error("unknown causal rekey at {0:?}")]
+    #[error("unknown trace rekey at {0:?}")]
     UnknownRekey(
         /// Unresolved history position.
         HistoryPosition,
     ),
     /// No retained keyed-row removal exists at the requested dense index.
-    #[error("unknown causal removal {0}")]
+    #[error("unknown trace removal {0}")]
     UnknownRemoval(
         /// Zero-based removal-record index requested by the consumer.
         usize,
@@ -895,14 +895,14 @@ pub enum TraceViewError {
         TableId,
     ),
     /// Captured records violate an invariant required for sound historical replay.
-    #[error("invalid causal trace history: {0}")]
+    #[error("invalid trace history: {0}")]
     Invalid(
         /// Invariant violation detected while reading or explaining the trace.
         String,
     ),
     /// A requested fact occurrence ended before the queried history position.
     #[error(
-        "causal fact {fact:?} ended at {ended_at:?} with successor {successor:?}; it is not live at {position:?}"
+        "trace fact {fact:?} ended at {ended_at:?} with successor {successor:?}; it is not live at {position:?}"
     )]
     FactNoLongerLive {
         /// Fact occurrence whose lifetime was queried.

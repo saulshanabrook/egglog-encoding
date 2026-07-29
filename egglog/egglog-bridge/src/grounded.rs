@@ -1,3 +1,10 @@
+//! Exact point execution for compiled grounded rule tapes.
+//!
+//! A grounded wave validates every supplied binding, premise, and guard
+//! against one pre-wave snapshot before committing any head action. It neither
+//! searches for another match nor exposes trace capture while executing the
+//! historical point writes.
+
 use std::sync::Arc;
 
 use egglog_reports::{IterationReport, RuleReport, RuleSetReport};
@@ -10,8 +17,11 @@ use super::{
 /// One typed value supplied for an exact grounded rule invocation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GroundedRuleBinding {
+    /// Bridge-local variable being supplied.
     pub variable: VariableId,
+    /// Physical column type used to validate the raw value.
     pub ty: ColumnTy,
+    /// Exact raw value observed in the recorded firing.
     pub value: Value,
 }
 
@@ -21,8 +31,11 @@ pub struct GroundedRuleBinding {
 /// values and is validated atomically against one pre-wave snapshot.
 #[derive(Clone, Debug)]
 pub struct GroundedRuleRun {
+    /// Strict source order within this wave; this is not a match identity.
     pub invocation_ordinal: u64,
+    /// Already-registered rule plan to point-execute.
     pub rule: RuleId,
+    /// Complete typed bindings for its grounded variables.
     pub bindings: Box<[GroundedRuleBinding]>,
 }
 
@@ -30,8 +43,11 @@ pub struct GroundedRuleRun {
 /// without assuming that backend variable ids and bridge ids coincide.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GroundedRuleVariable {
+    /// Bridge-local variable identity used by [`GroundedRuleBinding`].
     pub variable: VariableId,
+    /// Source variable name, absent for hidden plan variables.
     pub name: Option<Box<str>>,
+    /// Physical column type required by grounded execution.
     pub ty: ColumnTy,
 }
 

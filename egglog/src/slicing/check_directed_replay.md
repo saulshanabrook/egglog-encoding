@@ -35,7 +35,8 @@ The implementation follows the same boundaries as this explanation:
    `slicing/replay.rs` for the graph-neutral replay program, chronological
    scheduling, command lowering, and optional source rendering.
 5. Finish with [`slice_all_checks`] and `cli.rs`, then use the sibling
-   `*_tests.rs` files and `test-support/causal_corpus.rs` as representative
+   `*_tests.rs` files and the workspace integration corpus in
+   `test-support/causal_corpus.rs` as representative
    examples that exercise supported behavior and fail-closed boundaries. The
    examples are regression evidence, not an exhaustive capability inventory.
 
@@ -128,8 +129,16 @@ not a proof object.
 Replay lowering copies the selection into an owned, graph-neutral program and
 then lowers that program to ordinary [`Command`] values. Backend IDs,
 recording-graph values, trace handles, and borrows do not cross into the fresh
-graph. Literal values remain source literals; structural-call-valued bindings are
-re-established through checked `let-check` aliases.
+graph. Literal values remain source literals; structural-call-valued bindings
+are re-established through checked `let-check` aliases.
+
+`let-check` is deliberately narrower than an ordinary `let` action. Variables
+may reference only aliases published by earlier `let-check` commands. Literals
+and validated pure primitives may evaluate normally, while equality-sort
+constructor calls are lookup-only and must already exist. The command performs
+no Fiat insertion, relational write, equality, or global binding. Replay always
+supplies the recorded expected sort so nominal container aliases cannot be
+confused even when they share one physical Rust representation.
 
 Selected firings are emitted as grounded `run-rule` configurations. Firings
 from the same captured wave are placed in one list-form schedule, so they see
@@ -324,6 +333,11 @@ those selected rows as ordinary actions. Replay never opens or hashes the
 original input file, so changing or deleting that file cannot change an
 already-built replay program.
 
+The source language has only one textual `NaN` spelling. A noncanonical NaN
+sign or payload therefore has no exact portable literal; if one reaches a
+replay boundary, including through an `input` row such as `-NaN`, capture fails
+closed instead of silently canonicalizing its bits.
+
 ## Trace evidence and proof are independent
 
 Trace evidence answers “what made this check succeed in the recorded run?” A
@@ -424,9 +438,10 @@ so proof and other execution-mode flags can be combined with slicing. If
 output and replay are both requested, rendering and writing still precede
 direct command replay and are not made transactional by it.
 
-The causal corpus executes each artifact it classifies as supported under
-`--proof-testing`; a failure fails that fixture. This is regression evidence for
-the exercised corpus, not proof that every supported program shape replays.
+The workspace integration corpus executes each artifact it classifies as
+supported under `--proof-testing`; a failure fails that fixture. This is
+regression evidence for the exercised corpus, not proof that every supported
+program shape replays.
 Code that publishes an artifact outside that workflow must decide whether to
 run its own validation and atomic-publication protocol. The existence of an
 output file alone is not a validation claim.
@@ -442,7 +457,7 @@ than from a desired output shape:
    repeated syntax can distinguish two values, a structural term alone is not
    a sufficient key.
 3. **Record at the effective commit point.** Persist the smallest stable cause,
-   premise, endpoint, or version receipt that the engine already knows. Do not
+   premise, endpoint, or version landmark that the engine already knows. Do not
    eagerly unfold it into a proof or replay tree.
 4. **State the temporal law.** Specify the wave, cross-stream position and its
    derived equality prefix, plus any availability, readiness, liveness, or

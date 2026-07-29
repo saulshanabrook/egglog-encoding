@@ -51,7 +51,7 @@ fn slicing_disabled_has_a_distinct_error() {
     assert!(matches!(error, SliceError::Disabled));
     assert_eq!(
         error.to_string(),
-        "causal slicing is unavailable without exact trace capture"
+        "check-directed slicing is unavailable without exact trace capture"
     );
 }
 

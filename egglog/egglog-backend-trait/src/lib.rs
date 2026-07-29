@@ -64,9 +64,10 @@
 //! ## Advanced features are optional
 //!
 //! Capabilities that not every backend can offer — the seminaive-safe
-//! [`ActionRegistry`] ([`Backend::action_registry`]) and container sorts — are
-//! exposed as methods with **default** bodies. An implementer overrides only
-//! what it supports; the frontend gates on the returned capability.
+//! [`ActionRegistry`] ([`Backend::action_registry`]), container sorts, and
+//! execution-trace capture ([`Backend::enable_trace`]) — are exposed as methods
+//! with **default** bodies. An implementer overrides only what it supports; the
+//! frontend gates on the returned capability.
 //!
 //! ## Ergonomic sugar
 //!
@@ -142,12 +143,18 @@ pub struct RuleValue {
 /// One source-ordered binding in an ordinary-rule capture template.
 #[derive(Clone, Debug)]
 pub enum FiringCaptureBinding {
+    /// A rule variable whose raw value is projected at commit time.
     Variable {
+        /// Typed backend variable supplying the committed raw value.
         variable: RuleVar,
+        /// Logical sort used to interpret that value at the firing cutoff.
         current_sort: ReplaySortId,
     },
+    /// A source constant already represented by a stable replay term.
     Constant {
+        /// Interned structural term for the constant.
         term: ReplayTermId,
+        /// Logical sort of the constant term.
         sort: ReplaySortId,
     },
 }
@@ -155,7 +162,9 @@ pub enum FiringCaptureBinding {
 /// Backend-neutral capture metadata for one ordinary rule firing.
 #[derive(Clone, Debug)]
 pub struct FiringCaptureSpec {
+    /// Frontend catalog identity of the source rule.
     pub rule: u32,
+    /// Source-ordered variables and constants needed to ground the firing.
     pub bindings: Box<[FiringCaptureBinding]>,
     /// Logical equality sorts for rule-head `union` actions, in head order.
     pub union_sorts: Box<[ReplaySortId]>,
@@ -164,6 +173,7 @@ pub struct FiringCaptureSpec {
 /// Backend-neutral capture metadata for one top-level source action.
 #[derive(Clone, Debug)]
 pub struct SourceCaptureSpec {
+    /// Exact source command or input-row occurrence owning the effects.
     pub source: SourceRef,
     /// Logical equality sorts for source `union` actions, in head order.
     pub union_sorts: Box<[ReplaySortId]>,
@@ -188,7 +198,9 @@ pub struct CriterionCapturePremise {
 /// source expression's replay term.
 #[derive(Clone, Debug)]
 pub struct CriterionCaptureSpec {
+    /// Frontend catalog identity of the source check.
     pub check: u32,
+    /// Source-ordered endpoint-premise pairs for each checked equality.
     pub equalities: Box<[(CriterionCapturePremise, CriterionCapturePremise)]>,
 }
 

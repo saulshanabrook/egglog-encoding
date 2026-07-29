@@ -155,11 +155,11 @@ impl SelectedEqualityDsu {
 pub(super) enum SliceError {
     #[error(transparent)]
     Trace(#[from] TraceViewError),
-    #[error("causal slicing is unavailable without exact trace capture")]
+    #[error("check-directed slicing is unavailable without exact trace capture")]
     Disabled,
-    #[error("causal slicing requires the concrete main bridge backend")]
+    #[error("check-directed slicing requires the concrete main bridge backend")]
     UnsupportedBackend,
-    #[error("causal slicing cannot use a poisoned capture: {0}")]
+    #[error("check-directed slicing cannot use a poisoned capture: {0}")]
     Poisoned(String),
 }
 

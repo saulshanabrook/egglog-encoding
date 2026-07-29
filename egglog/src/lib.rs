@@ -1522,7 +1522,7 @@ impl EGraph {
         self
     }
 
-    /// Enable exact causal trace capture for later [`slicing::slice_all_checks`].
+    /// Enable exact execution-trace capture for later [`slicing::slice_all_checks`].
     ///
     /// Call this before registering rules or inserting facts or input rows.
     /// Empty declarations may precede capture, but a fresh replay graph must

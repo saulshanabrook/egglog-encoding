@@ -695,7 +695,7 @@ impl Table for SortedWritesTable {
     fn clear(&mut self) {
         assert!(
             !self.trace_enabled,
-            "causal trace do not support unattributed table clear; failing closed"
+            "trace capture does not support unattributed table clear; failing closed"
         );
         self.pending_state.clear();
         if self.data.data.len() == 0 {

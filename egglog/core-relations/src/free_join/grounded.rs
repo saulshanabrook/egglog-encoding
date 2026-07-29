@@ -1,3 +1,11 @@
+//! Exact execution of a compiled free-join rule at supplied bindings.
+//!
+//! Every invocation in a batch is point-probed against the same pre-wave
+//! database state. All premises and guards are validated before any head is
+//! committed, so a rejected invocation cannot leave partial rule effects.
+//! Grounded batches deliberately reject trace capture: they replay recorded
+//! history and must not recursively record another history.
+
 use std::{
     panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
     sync::Arc,

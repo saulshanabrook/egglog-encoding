@@ -1110,7 +1110,7 @@ impl<'a> ExecutionState<'a> {
     pub fn stage_remove(&mut self, table: TableId, key: &[Value]) {
         assert!(
             self.db.trace.is_none(),
-            "causal trace do not support removal; failing closed"
+            "trace capture does not support removal; failing closed"
         );
         self.buffers
             .lazy_init(table, || self.db.table_info[table].table.new_buffer());
