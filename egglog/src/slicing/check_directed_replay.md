@@ -24,7 +24,7 @@ stages:
 
 ```text
 ordinary execution
-  + effective-event capture
+  + causal-event capture
               |
               v
 successful checks -- backward closure --> closed historical support
@@ -49,8 +49,8 @@ observed. It also cannot distinguish two deleted-and-recreated occurrences
 that have identical source syntax. Capture therefore attaches compact causal
 records at the engine points that already know an operation's exact result.
 
-The trace records effective source effects, immutable logical fact identities,
-effective grounded firings and their exact premises and bindings, applied
+The trace records selected source effects, immutable logical fact identities,
+observed grounded firings and their exact premises and bindings, applied
 equality edges and their causes, rekeys, replay-observable removals, and the
 first successful witness for each check. Static source and structural-term
 recipes are shared rather than copied into every event.
@@ -62,11 +62,11 @@ designs was materializing and repeatedly projecting those representations,
 not observing native events. The current trace keeps a shared causal DAG and
 enough typed history to recover one actual witness on demand.
 
-Only effective events become durable. A no-op proposal can be counted for
-diagnostics without becoming causal support. Conversely, when a selected
-source command or firing owns one relevant effect, replay preserves its whole
-visible action bundle. Replaying only one action from a multi-action head
-would no longer replay the event that actually occurred.
+Only replay-observable events become durable. A no-op proposal does not become
+causal support. Conversely, when a selected source command or firing owns one
+relevant effect, replay preserves its whole visible action bundle. Replaying
+only one action from a multi-action head would no longer replay the event that
+actually occurred.
 
 ### Backward closure selects one actual history
 
@@ -89,10 +89,11 @@ evidence for the check:
 - Every selected equality carrier closes over the earlier history that made
   its source-level endpoints denote the native edge that was actually applied.
 
-These passes iterate until they add no support, after which an exact-support
-check verifies that every recorded obligation is present. The result is a
-sound support cone for the observed execution. It deliberately makes no claim
-of global minimality, and it is not a proof object.
+These passes iterate until they add no support. Typed work items make each
+dependency rule explicit, while strict-replay and permutation tests exercise
+the resulting closure invariant. The result is a sound support cone for the
+observed execution. It deliberately makes no claim of global minimality, and
+it is not a proof object.
 
 ### Grounded replay checks the account
 
@@ -331,7 +332,7 @@ than from a desired output shape:
    A missing capability should end in a precise error, never a conservative
    prefix.
 
-This discipline keeps capture cheap enough to leave enabled, keeps historical
+This discipline keeps capture bounded and its costs explicit, keeps historical
 queries exact, and makes the fresh engine an independent oracle for the final
 artifact.
 
