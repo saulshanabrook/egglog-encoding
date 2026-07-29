@@ -305,16 +305,14 @@ impl ReplayProgram {
     }
 
     /// Render ordinary commands as a standalone source program.
-    pub(crate) fn render_commands(commands: &[Command]) -> Result<String, ReplayError> {
+    pub(crate) fn render_commands(commands: &[Command]) -> String {
         use std::fmt::Write as _;
 
         let mut rendered = String::new();
         for command in commands {
-            writeln!(&mut rendered, "{command}").map_err(|error| {
-                ReplayError::Invalid(format!("cannot render slice replay command: {error}"))
-            })?;
+            writeln!(&mut rendered, "{command}").expect("writing to a String cannot fail");
         }
-        Ok(rendered)
+        rendered
     }
 
     fn term(&self, term: ReplayTermRef) -> Result<&OwnedReplayTerm, ReplayError> {

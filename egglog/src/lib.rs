@@ -5039,13 +5039,20 @@ impl EGraph {
         filename: Option<String>,
         input: &str,
     ) -> Result<Vec<ResolvedCommand>, Error> {
+        let parsed = self.parser.get_program_from_string(filename, input)?;
+        self.resolve_commands(parsed)
+    }
+
+    pub(crate) fn resolve_commands(
+        &mut self,
+        commands: Vec<Command>,
+    ) -> Result<Vec<ResolvedCommand>, Error> {
         if self.capture_catalog.is_some() {
             return Err(Error::BackendError(
                 "trace capture does not support resolve_program after capture starts".into(),
             ));
         }
-        let parsed = self.parser.get_program_from_string(filename, input)?;
-        let res = self.process_program_internal(parsed, false)?;
+        let res = self.process_program_internal(commands, false)?;
         Ok(res.resolved.into_iter().map(|c| c.to_command()).collect())
     }
 

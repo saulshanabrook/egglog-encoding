@@ -27,9 +27,9 @@ for the temporal and occurrence model.
 
 Rust callers enable capture with [`EGraph::enable_trace`] before installing
 user declarations or input, run the source program normally, and then call
-[`slicing::slice_all_checks`]. That function returns source text without
-executing or validating it, so the caller chooses the replay mode and
-publication policy.
+[`slicing::slice_all_checks`]. That function returns owned commands suitable
+for [`EGraph::run_program`] without executing, rendering, or validating them,
+so the caller chooses the replay mode and publication policy.
 
 # Using egglog from Rust
 We encourage using the egglog language as much as possible, even from Rust.

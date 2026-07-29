@@ -183,11 +183,12 @@ where
                 std::process::exit(1);
             }
         }
-        let rendered = crate::slicing::slice_all_checks(&egraph).unwrap_or_else(|error| {
+        let commands = crate::slicing::slice_all_checks(&egraph).unwrap_or_else(|error| {
             log::error!("{error}");
             std::process::exit(1);
         });
         if let Some(path) = &args.slice_output {
+            let rendered = crate::slicing::render_commands(&commands);
             std::fs::write(path, &rendered).unwrap_or_else(|error| {
                 log::error!(
                     "cannot write slice replay artifact `{}`: {error}",
@@ -210,17 +211,11 @@ where
                 RunMode::Interactive | RunMode::ShowDesugaredEgglog
             );
         if replay_requested {
-            // The rendered program is the phase boundary: no captured runtime
-            // value or trace allocation can leak into replay.
+            // Lowering owns every command, so no captured runtime value or
+            // trace allocation can leak into the fresh replay graph.
             drop(egraph);
             egraph = configure_requested_mode(replay_factory(), &args);
-            match run_commands(
-                &mut egraph,
-                Some("generated slice replay".into()),
-                &rendered,
-                io::stdout(),
-                args.mode,
-            ) {
+            match run_command_ast(&mut egraph, commands, io::stdout(), args.mode) {
                 Ok(None) => {}
                 _ => std::process::exit(1),
             }
@@ -425,6 +420,22 @@ fn run_commands<W>(
     egraph: &mut EGraph,
     filename: Option<String>,
     command: &str,
+    output: W,
+    mode: RunMode,
+) -> io::Result<Option<Error>>
+where
+    W: Write,
+{
+    let commands = match egraph.parse_program(filename, command) {
+        Ok(commands) => commands,
+        Err(error) => return command_error(error, output, mode),
+    };
+    run_command_ast(egraph, commands, output, mode)
+}
+
+fn run_command_ast<W>(
+    egraph: &mut EGraph,
+    commands: Vec<Command>,
     mut output: W,
     mode: RunMode,
 ) -> io::Result<Option<Error>>
@@ -432,7 +443,7 @@ where
     W: Write,
 {
     if mode == RunMode::ShowDesugaredEgglog {
-        return Ok(match egraph.resolve_program(filename, command) {
+        return Ok(match egraph.resolve_commands(commands) {
             Ok(resolved) => {
                 let sanitized = sanitize_internal_names(&resolved);
 
@@ -448,7 +459,7 @@ where
         });
     };
 
-    Ok(match egraph.parse_and_run_program(filename, command) {
+    Ok(match egraph.run_program(commands) {
         Ok(msgs) => {
             if mode != RunMode::NoMessages {
                 for msg in msgs {
@@ -468,6 +479,17 @@ where
             Some(err)
         }
     })
+}
+
+fn command_error<W>(error: Error, mut output: W, mode: RunMode) -> io::Result<Option<Error>>
+where
+    W: Write,
+{
+    log::error!("{error}");
+    if mode == RunMode::Interactive {
+        writeln!(output, "(error)")?;
+    }
+    Ok(Some(error))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]

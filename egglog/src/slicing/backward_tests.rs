@@ -372,7 +372,7 @@ fn parent_alias_waits_for_child_key_bridge_without_borrowing_parent_anchor() {
 
     let replay = crate::slicing::replay::build_replay_program(&egraph, &slice).unwrap();
     let commands = replay.to_commands().unwrap();
-    let rendered = crate::slicing::replay::ReplayProgram::render_commands(&commands).unwrap();
+    let rendered = crate::slicing::replay::ReplayProgram::render_commands(&commands);
     let bridge = rendered
         .find("(run-schedule (run-rule (\"bridge\"")
         .unwrap();
@@ -480,7 +480,7 @@ fn post_deletion_equality_cannot_select_stale_child_producer() {
 
     let replay = crate::slicing::replay::build_replay_program(&egraph, &slice).unwrap();
     let commands = replay.to_commands().unwrap();
-    let rendered = crate::slicing::replay::ReplayProgram::render_commands(&commands).unwrap();
+    let rendered = crate::slicing::replay::ReplayProgram::render_commands(&commands);
     let h_alias = rendered
         .lines()
         .position(|line| line.starts_with("(let-check ") && line.contains("(H "))
@@ -554,7 +554,7 @@ fn duplicate_syntax_in_one_binding_keeps_distinct_occurrence_windows() {
     );
     let replay = crate::slicing::replay::build_replay_program(&egraph, &slice).unwrap();
     let commands = replay.to_commands().unwrap();
-    let rendered = crate::slicing::replay::ReplayProgram::render_commands(&commands).unwrap();
+    let rendered = crate::slicing::replay::ReplayProgram::render_commands(&commands);
     assert!(
         rendered.contains(
             "(run-schedule (run-rule (\"pair\" ((old $__slice_replay_0) (new $__slice_replay_1)))))"

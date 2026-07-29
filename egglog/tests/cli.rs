@@ -210,16 +210,14 @@ fn public_slice_api_replays_and_output_only_does_not_call_its_factory() {
         .build()
         .unwrap();
 
-    let rendered = serial.install(|| {
+    let commands = serial.install(|| {
         let mut captured = EGraph::default();
         captured.enable_trace().unwrap();
         captured.parse_and_run_program(None, &source).unwrap();
         slicing::slice_all_checks(&captured).unwrap()
     });
     serial.install(|| {
-        EGraph::default()
-            .parse_and_run_program(None, &rendered)
-            .unwrap();
+        EGraph::default().run_program(commands).unwrap();
     });
 
     let artifact = directory.path().join("output-only.egg");

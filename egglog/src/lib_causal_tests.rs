@@ -29,7 +29,8 @@ fn trace_accepts_empty_declarations_installed_by_a_matching_replay_factory() {
             .parse_and_run_program(None, "(A) (B) (union (A) (B)) (check (= (A) (B)))")
             .unwrap();
 
-        let rendered = crate::slicing::slice_all_checks(&recorder).unwrap();
+        let commands = crate::slicing::slice_all_checks(&recorder).unwrap();
+        let rendered = crate::slicing::render_commands(&commands);
         assert!(
             !rendered.contains("(datatype E"),
             "factory-owned declarations should not be copied into the artifact"
@@ -1085,7 +1086,8 @@ fn replay_alpha_renames_anonymous_rule_around_user_name_collision() {
         )
         .unwrap();
 
-    let rendered = crate::slicing::slice_all_checks(&egraph).unwrap();
+    let commands = crate::slicing::slice_all_checks(&egraph).unwrap();
+    let rendered = crate::slicing::render_commands(&commands);
     assert!(rendered.contains(&format!(r#":name "{generated_name}""#)));
     assert!(rendered.contains(&format!(r#":name "{generated_name}_1""#)));
 

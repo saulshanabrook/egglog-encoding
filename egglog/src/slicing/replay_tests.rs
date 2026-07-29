@@ -34,7 +34,7 @@ fn slice_commands(program: &str) -> (Vec<Command>, String) {
     let slice = slice_all_checks(&recorder).unwrap();
     let ir = build_replay_program(&recorder, &slice).unwrap();
     let commands = ir.to_commands().unwrap();
-    let rendered = ReplayProgram::render_commands(&commands).unwrap();
+    let rendered = ReplayProgram::render_commands(&commands);
 
     let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
     serial_pool()
@@ -117,7 +117,7 @@ fn slice_replays_precanonicalized_union_endpoints_in_any_allocation_order() {
             .unwrap();
         let slice = slice_all_checks(&recorder).unwrap();
         let ir = build_replay_program(&recorder, &slice).unwrap();
-        let rendered = ReplayProgram::render_commands(&ir.to_commands().unwrap()).unwrap();
+        let rendered = ReplayProgram::render_commands(&ir.to_commands().unwrap());
 
         for (mode, mut replay) in [
             ("native", EGraph::default()),
@@ -366,8 +366,7 @@ fn run_endpoint_case(case: EndpointCase) -> Result<(), String> {
         &replay
             .to_commands()
             .map_err(|error| format!("build commands: {error}"))?,
-    )
-    .map_err(|error| format!("render: {error}"))?;
+    );
     if !rendered.contains("(union (A) (B))") {
         return Err("missing denotation anchor `(union (A) (B))`".into());
     }
@@ -577,7 +576,7 @@ fn rendered_artifact_round_trips_globals_and_grounded_rules_with_proofs() {
             }
         )
     }));
-    let rendered = ReplayProgram::render_commands(&commands).unwrap();
+    let rendered = ReplayProgram::render_commands(&commands);
     assert!(rendered.contains("(datatype E"));
     assert!(rendered.contains("(relation Seed"));
     assert!(rendered.contains("(let $seed (A 1))"));
@@ -864,7 +863,7 @@ fn owned_ir_embeds_only_selected_input_rows() {
     assert_eq!(value.0.to_bits(), (-0.0f64).to_bits());
 
     let commands = ir.to_commands().unwrap();
-    let rendered = ReplayProgram::render_commands(&commands).unwrap();
+    let rendered = ReplayProgram::render_commands(&commands);
     let mut replay = EGraph::default().with_proofs_enabled().with_proof_testing();
     serial_pool()
         .install(|| replay.parse_and_run_program(None, &rendered))
