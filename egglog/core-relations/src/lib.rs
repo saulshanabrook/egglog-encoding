@@ -48,8 +48,8 @@ pub use provenance::{
     RawFactRecord, RawRekeyRecord, RawTermAvailability, RekeyOutcome, ReplayConstructorSpec,
     ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTableKind, ReplayTableSchema, ReplayTerm,
     ReplayTermId, RowOriginSiteId, RuleBindingSpec, SourceCaptureSpec, SourceRef,
-    TermInternerCounters, Tombstone, Trace, TraceTotals, TraceView, TraceViewCounters,
-    TraceViewError, TypedCellEquality, TypedEqualityProposal, Wave,
+    TermInternerCounters, Tombstone, Trace, TraceTotals, TraceView, TraceViewError,
+    TypedCellEquality, TypedEqualityProposal, Wave,
 };
 pub use query::{
     CachedPlan, CaptureBuildError, GroundedProbe, GroundedRule, QueryBuilder, QueryError,

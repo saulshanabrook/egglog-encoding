@@ -525,7 +525,6 @@ pub struct TraceView<'a> {
         HashMap<StructuralOccurrenceQuery, Option<RawEqualitySupport>>,
     pub(super) exact_occurrence_support_cache:
         HashMap<StructuralOccurrenceQuery, Option<RawEqualitySupport>>,
-    pub(super) counters: TraceViewCounters,
 }
 
 pub(super) struct ExplanationForest {
@@ -568,19 +567,6 @@ struct StructuralAvailabilityContext<'a> {
 enum ObservedEqualitySupport {
     Support(RawEqualitySupport),
     Missing(ReplayTermId),
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct TraceViewCounters {
-    pub equality_index_builds: u64,
-    pub equality_events_indexed: u64,
-    pub equality_positions_validated: u64,
-    pub equality_explanation_queries: u64,
-    pub equality_parent_steps: u64,
-    pub equality_occurrence_facts_scanned: u64,
-    pub equality_occurrence_terms_projected: u64,
-    pub rekey_lookups: u64,
-    pub rekey_records_scanned: u64,
 }
 
 impl<'a> TraceView<'a> {
@@ -657,10 +643,6 @@ impl<'a> TraceView<'a> {
             removals: self.arena.removals.len() as u64,
             check_roots: self.arena.check_roots.len() as u64,
         }
-    }
-
-    pub fn view_counters(&self) -> TraceViewCounters {
-        self.counters
     }
 
     pub fn counters(&self) -> CaptureCounters {
@@ -859,14 +841,12 @@ impl<'a> TraceView<'a> {
         &mut self,
         position: HistoryPosition,
     ) -> Result<RawRekeyRecord<'a>, TraceViewError> {
-        self.counters.rekey_lookups += 1;
         let index = self
             .rekey_index()
             .by_position
             .get(&position)
             .copied()
             .ok_or(TraceViewError::UnknownRekey(position))?;
-        self.counters.rekey_records_scanned += 1;
         let record = &self.arena.rekeys[index];
         Ok(RawRekeyRecord {
             fact: record.fact,

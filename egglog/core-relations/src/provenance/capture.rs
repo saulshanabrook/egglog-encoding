@@ -3539,7 +3539,6 @@ impl Trace {
             constructor_occurrence_index: None,
             occurrence_support_cache: HashMap::default(),
             exact_occurrence_support_cache: HashMap::default(),
-            counters: TraceViewCounters::default(),
         };
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| inspect(&mut view))) {
             Ok(result) => result,

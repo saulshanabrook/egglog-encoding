@@ -177,10 +177,6 @@ impl<'a> TraceView<'a> {
                     ));
                 }
             }
-            self.counters.equality_index_builds += 1;
-            self.counters.equality_events_indexed += self.arena.durable_equalities.len() as u64;
-            self.counters.equality_positions_validated +=
-                self.arena.durable_equalities.len() as u64;
             self.equality_index = Some(ExplanationForest { parents });
         }
         Ok(self
@@ -370,7 +366,6 @@ impl<'a> TraceView<'a> {
             ));
         }
         let cutoff = self.validate_equality_cutoff(as_of, position)?;
-        self.counters.equality_explanation_queries += 1;
         let parents = &self.raw_equality_index()?.parents;
         let edge_is_visible = |edge: AppliedEqualityId| edge.get() as usize <= cutoff;
         let mut left_ancestors = HashMap::<Value, usize>::default();
@@ -402,7 +397,6 @@ impl<'a> TraceView<'a> {
             right_edges.push(edge);
             cursor = parent;
         };
-        self.counters.equality_parent_steps += (left_edges.len() + right_edges.len()) as u64;
         let mut edges = left_edges[..left_depth].to_vec();
         edges.extend(right_edges);
         edges.sort_unstable();
@@ -436,7 +430,6 @@ impl<'a> TraceView<'a> {
                 ));
             }
         }
-        self.counters.equality_parent_steps += steps as u64;
         Ok(cursor)
     }
 
@@ -841,7 +834,6 @@ impl<'a> TraceView<'a> {
                     &mut visited_terms,
                 );
             }
-            self.counters.equality_occurrence_facts_scanned += self.arena.facts.len() as u64;
             for (index, slot) in self.arena.facts.iter().enumerate() {
                 let Some(fact) = slot.as_ref() else {
                     continue;
@@ -1107,7 +1099,6 @@ impl<'a> TraceView<'a> {
                         ))
                     })?;
                 let output = constructor.child_sorts.len();
-                self.counters.equality_occurrence_terms_projected += 1;
                 let produced_term = self
                     .projector
                     .fact_term(producer, output)
@@ -1595,7 +1586,6 @@ impl<'a> TraceView<'a> {
                 .map(|entry| entry.clone())
                 .ok_or(TraceViewError::UnknownTable(fact.table))?;
             let output = constructor.child_sorts.len();
-            self.counters.equality_occurrence_terms_projected += 1;
             let produced_term = match self.projector.fact_term(producer, output) {
                 Ok(term) => term,
                 Err(error) => {
@@ -1906,7 +1896,6 @@ impl<'a> TraceView<'a> {
                 .map(|entry| entry.clone())
                 .ok_or(TraceViewError::UnknownTable(fact.table))?;
             let output = constructor.child_sorts.len();
-            self.counters.equality_occurrence_terms_projected += 1;
             let produced_term = self
                 .projector
                 .fact_term(producer, output)
@@ -1989,7 +1978,6 @@ impl<'a> TraceView<'a> {
                 .map(|entry| entry.clone())
                 .ok_or(TraceViewError::UnknownTable(fact.table))?;
             let output = constructor.child_sorts.len();
-            self.counters.equality_occurrence_terms_projected += 1;
             let produced_term = self
                 .projector
                 .fact_term(producer, output)
@@ -2119,7 +2107,6 @@ impl<'a> TraceView<'a> {
                 .map(|entry| entry.clone())
                 .ok_or(TraceViewError::UnknownTable(fact.table))?;
             let output = constructor.child_sorts.len();
-            self.counters.equality_occurrence_terms_projected += 1;
             let produced_term = match self.projector.fact_term(producer, output) {
                 Ok(term) => term,
                 Err(error) => {
