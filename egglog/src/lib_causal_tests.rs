@@ -848,50 +848,6 @@ fn trace_waves_are_cumulative_across_run_commands() {
 }
 
 #[test]
-fn parsed_input_digest_is_optional() {
-    let directory = std::env::temp_dir().join(format!(
-        "egglog-input-digest-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&directory).unwrap();
-    std::fs::write(directory.join("rows.tsv"), "first\nsecond\n").unwrap();
-
-    let mut egraph = EGraph {
-        fact_directory: Some(directory.clone()),
-        ..Default::default()
-    };
-    egraph
-        .parse_and_run_program(None, "(relation R (String))")
-        .unwrap();
-    let function_type = egraph.type_info.get_func_type("R").unwrap();
-    let uncaptured = EGraph::read_input_file(
-        egraph.fact_directory.as_deref(),
-        function_type,
-        &Span::Panic,
-        "rows.tsv",
-        false,
-    )
-    .unwrap();
-    assert_eq!(uncaptured.digest, None);
-
-    let captured = EGraph::read_input_file(
-        egraph.fact_directory.as_deref(),
-        function_type,
-        &Span::Panic,
-        "rows.tsv",
-        true,
-    )
-    .unwrap();
-    let expected: [u8; 32] = Sha256::digest(b"first\nsecond\n").into();
-    assert_eq!(captured.digest, Some(expected));
-    std::fs::remove_dir_all(directory).unwrap();
-}
-
-#[test]
 fn trace_batch_tsv_rows_with_exact_physical_sources() {
     let directory = std::env::temp_dir().join(format!(
         "egglog-trace-input-{}-{}",

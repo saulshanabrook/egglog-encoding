@@ -25,10 +25,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::ast::{Action, Command, Expr, FunctionSubtype, RunRuleConfig, RustSpan, Schedule, Span};
+use crate::ast::{Action, Command, Expr, RunRuleConfig, RustSpan, Schedule, Span};
 use crate::core_relations::{
     FactId, ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTerm, ReplayTermId, SourceRef,
     TraceView, TraceViewError,
@@ -92,8 +91,7 @@ pub(crate) struct ReplaySetup {
 /// The source-level action used to reconstruct selected initial state.
 ///
 /// Synthetic sources retain their ordinary surface command. Selected input
-/// rows are materialized as parsed literals after the captured file digest is
-/// verified.
+/// rows are materialized from the exact literals retained at capture time.
 pub(crate) enum ReplaySourceKind {
     Command(Box<Command>),
     InputRow {
@@ -473,9 +471,9 @@ fn replay_span(command: usize) -> Span {
 #[derive(Debug, Error)]
 /// Failures while validating or lowering a selected replay.
 ///
-/// This internal type distinguishes capture, input, catalog, and unsupported
-/// source-representation failures. The public facade reports them through the
-/// crate's existing `crate::Error` type.
+/// This internal type distinguishes capture, catalog, and unsupported source-
+/// representation failures. The public facade reports them through the crate's
+/// existing `crate::Error` type.
 pub(crate) enum ReplayError {
     #[error("slice replay is unavailable without exact trace capture")]
     Disabled,
@@ -483,8 +481,6 @@ pub(crate) enum ReplayError {
     UnsupportedBackend,
     #[error("slice replay trace error: {0}")]
     Trace(#[from] TraceViewError),
-    #[error("slice replay input error: {0}")]
-    Input(String),
     #[error("invalid slice replay: {0}")]
     Invalid(String),
     #[error("unsupported slice replay: {0}")]
@@ -695,12 +691,11 @@ fn selected_source_closure(
 
 /// Re-materialize exactly the selected input rows as source literal actions.
 ///
-/// The captured absolute path and whole-file digest are rechecked before rows
-/// are parsed with the captured command's current schema. This prevents replay
-/// from silently using changed external input while omitting unselected rows
-/// from the generated artifact.
+/// Each cell is copied from the replay-term literal interned during capture, so
+/// the artifact is independent of the original input file and still preserves
+/// exact floating-point bits.
 fn selected_input_rows(
-    egraph: &EGraph,
+    view: &mut TraceView<'_>,
     catalog: &CaptureCatalog,
     sources: &HashSet<SourceRef>,
 ) -> Result<Vec<ReplaySource>, ReplayError> {
@@ -711,74 +706,40 @@ fn selected_input_rows(
         }
     }
     let mut rows = Vec::new();
-    for (command, mut remaining) in selected {
+    for (command, selected_lines) in selected {
         let entry = catalog.input_commands.get(&command).ok_or_else(|| {
             ReplayError::Invalid(format!("input command {command} is absent from catalog"))
         })?;
-        let function_type = egraph
-            .type_info
-            .get_func_type(&entry.function)
-            .ok_or_else(|| {
-                ReplayError::Invalid(format!(
-                    "input function `{}` is absent from type information",
-                    entry.function
-                ))
-            })?;
-        if function_type.subtype == FunctionSubtype::Custom {
-            return Err(ReplayError::Unsupported(format!(
-                "selected input into value function `{}`",
-                entry.function
-            )));
-        }
-        let bytes = std::fs::read(&entry.resolved_path).map_err(|error| {
-            ReplayError::Input(format!(
-                "cannot reread `{}`: {error}",
-                entry.resolved_path.display()
-            ))
-        })?;
-        let digest: [u8; 32] = Sha256::digest(&bytes).into();
-        if digest != entry.digest {
-            return Err(ReplayError::Input(format!(
-                "input `{}` changed after trace capture",
-                entry.resolved_path.display()
-            )));
-        }
-        let contents = String::from_utf8(bytes).map_err(|error| {
-            ReplayError::Input(format!(
-                "input `{}` is no longer UTF-8: {error}",
-                entry.resolved_path.display()
-            ))
-        })?;
-        let schema = EGraph::input_row_schema(function_type);
-        for (index, text) in contents.lines().enumerate() {
-            let line = u64::try_from(index + 1)
-                .map_err(|_| ReplayError::Input("input has too many lines".into()))?;
-            if !remaining.remove(&line) {
-                continue;
-            }
-            let parsed = EGraph::parse_input_line(&schema, &entry.file, line, text)
-                .map_err(|error| ReplayError::Input(error.to_string()))?
+        for line in selected_lines {
+            let row = entry
+                .rows
+                .binary_search_by_key(&line, |row| row.line)
+                .ok()
+                .and_then(|index| entry.rows.get(index))
                 .ok_or_else(|| {
                     ReplayError::Invalid(format!(
-                        "selected input row {}:{} parsed as empty",
-                        entry.file, line
+                        "selected input row {command}:{line} is absent from captured history"
                     ))
                 })?;
+            let literals = row
+                .terms
+                .iter()
+                .map(|term| match view.replay_term(*term)? {
+                    ReplayTerm::Literal { literal, .. } => Ok(replay_literal(literal)),
+                    ReplayTerm::Call { .. } => Err(ReplayError::Invalid(format!(
+                        "selected input row {command}:{line} contains a structural call"
+                    ))),
+                })
+                .collect::<Result<Box<[_]>, _>>()?;
             rows.push(ReplaySource {
                 after_wave: entry.after_wave,
                 catalog_ordinal: catalog.command_catalog[entry.command].surface_command,
                 kind: ReplaySourceKind::InputRow {
                     line,
                     function: entry.function.clone(),
-                    literals: parsed.literals.into_boxed_slice(),
+                    literals,
                 },
             });
-        }
-        if let Some(line) = remaining.first() {
-            return Err(ReplayError::Invalid(format!(
-                "selected input row {}:{line} no longer exists",
-                entry.file
-            )));
         }
     }
     Ok(rows)
@@ -1013,7 +974,6 @@ fn retained_rewrite_command(
 /// removals split reuse epochs and a producer deletion is an exclusive upper
 /// bound on capture.
 fn build_owned(
-    egraph: &EGraph,
     catalog: &CaptureCatalog,
     view: &mut TraceView<'_>,
     slice: &Slice,
@@ -1083,7 +1043,7 @@ fn build_owned(
             });
     }
     let mut source_events = source_events.into_values().collect::<Vec<_>>();
-    source_events.extend(selected_input_rows(egraph, catalog, &sources)?);
+    source_events.extend(selected_input_rows(view, catalog, &sources)?);
     let mut rewrite_groups = BTreeMap::<usize, Vec<u32>>::new();
     for rule in &retained_rules {
         let entry = catalog.rule_catalog.get(*rule as usize).ok_or_else(|| {
@@ -1410,7 +1370,7 @@ pub(crate) fn build_replay_program(
         .as_any()
         .downcast_ref::<egglog_bridge::EGraph>()
         .ok_or(ReplayError::UnsupportedBackend)?;
-    bridge.with_trace_view(|view| Ok(build_owned(egraph, catalog, view, slice)))?
+    bridge.with_trace_view(|view| Ok(build_owned(catalog, view, slice)))?
 }
 
 #[cfg(test)]

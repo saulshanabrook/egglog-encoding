@@ -43,8 +43,8 @@ use crate::{EGraph, Error};
 /// # Errors
 ///
 /// Returns the existing [`enum@crate::Error`] type. Missing or poisoned capture,
-/// unsupported backends or selected constructs, changed selected input, and
-/// invalid trace or lowering state are surfaced as
+/// unsupported backends or selected constructs, and invalid trace or lowering
+/// state are surfaced as
 /// [`crate::Error::BackendError`].
 pub fn slice_all_checks(egraph: &EGraph) -> Result<String, Error> {
     let invalid = |error: &dyn std::fmt::Display| Error::BackendError(error.to_string());

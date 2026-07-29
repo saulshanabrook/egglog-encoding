@@ -703,7 +703,7 @@ fn rendered_artifact_preserves_single_retained_birewrite_direction() {
 }
 
 #[test]
-fn owned_ir_rereads_only_selected_input_rows_and_checks_digest() {
+fn owned_ir_embeds_only_selected_input_rows() {
     static NEXT_RELATIVE: AtomicU64 = AtomicU64::new(0);
     let relative_dir = PathBuf::from("target").join(format!(
         "egglog-causal-replay-relative-{}-{}",
@@ -713,7 +713,7 @@ fn owned_ir_rereads_only_selected_input_rows_and_checks_digest() {
     let dir = std::env::current_dir().unwrap().join(&relative_dir);
     fs::create_dir_all(&dir).unwrap();
     let file = relative_dir.join("rows.tsv");
-    fs::write(&file, "drop\nkeep\n").unwrap();
+    fs::write(&file, "drop\t1.0\nkeep\t-0.0\n").unwrap();
 
     let mut egraph = EGraph {
         fact_directory: Some(relative_dir),
@@ -723,22 +723,13 @@ fn owned_ir_rereads_only_selected_input_rows_and_checks_digest() {
     egraph
         .parse_and_run_program(
             None,
-            "(relation R (String))
+            "(relation R (String f64))
                  (input R \"rows.tsv\")
-                 (check (R \"keep\"))",
+                 (check (R \"keep\" -0.0))",
         )
         .unwrap();
-    assert!(
-        egraph
-            .capture_catalog
-            .as_ref()
-            .unwrap()
-            .input_commands
-            .values()
-            .all(|entry| entry.resolved_path.is_absolute()),
-        "capture must freeze the effective input path independently of later cwd changes"
-    );
     let slice = slice_all_checks(&egraph).unwrap();
+    fs::remove_dir_all(dir).unwrap();
     let ir = build_replay_program(&egraph, &slice).unwrap();
     assert_eq!(
         ir.events
@@ -762,14 +753,20 @@ fn owned_ir_rereads_only_selected_input_rows_and_checks_digest() {
         }) => Some((*line, literals.as_ref())),
         _ => None,
     });
-    assert_eq!(selected, Some((2, &[Literal::String("keep".into())][..])));
+    let (line, literals) = selected.expect("selected input row disappeared");
+    assert_eq!(line, 2);
+    assert_eq!(literals[0], Literal::String("keep".into()));
+    let Literal::Float(value) = literals[1] else {
+        panic!("selected f64 input cell lost its literal type")
+    };
+    assert_eq!(value.0.to_bits(), (-0.0f64).to_bits());
 
-    fs::write(&file, "changed-but-unselected\nkeep\n").unwrap();
-    let error = build_replay_program(&egraph, &slice).unwrap_err();
-    assert!(
-        matches!(error, ReplayError::Input(message) if message.contains("changed after trace capture"))
-    );
-    fs::remove_dir_all(dir).unwrap();
+    let commands = ir.to_commands().unwrap();
+    let rendered = ReplayProgram::render_commands(&commands).unwrap();
+    let mut replay = EGraph::default().with_proofs_enabled().with_proof_testing();
+    serial_pool()
+        .install(|| replay.parse_and_run_program(None, &rendered))
+        .unwrap();
 }
 
 #[test]

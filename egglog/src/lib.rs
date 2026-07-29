@@ -74,7 +74,6 @@ pub mod proof {
 }
 use scheduler::{SchedulerId, SchedulerRecord};
 pub use serialize::{SerializeConfig, SerializeOutput, SerializedNode};
-use sha2::{Digest, Sha256};
 use sort::*;
 use std::any::{Any, TypeId};
 use std::fmt::{Debug, Display, Formatter};
@@ -420,9 +419,9 @@ struct CaptureCatalog {
     /// actions. Input rows use `input_commands` because their physical line is
     /// already part of `SourceRef`.
     source_commands: HashMap<SourceRef, SourceCatalogEntry>,
-    /// `(input ...)` source-command ordinal to immutable file identity and
-    /// normalized command. Physical rows remain cold and are reread only for
-    /// selected `SourceRef::InputRow`s.
+    /// `(input ...)` source-command ordinal to exact captured literal terms.
+    /// Lowering copies only selected [`SourceRef::InputRow`] values into the
+    /// self-contained artifact and never rereads the source file.
     input_commands: HashMap<u64, InputCatalogEntry>,
     /// Exact normalized command for each successful recorded check.
     check_commands: HashMap<u32, usize>,
@@ -516,10 +515,15 @@ struct InputCatalogEntry {
     /// Last native trace wave completed before this input crossed execution.
     after_wave: u64,
     function: String,
-    file: String,
-    resolved_path: PathBuf,
-    digest: [u8; 32],
+    /// Exact captured literals for each nonempty physical input row.
+    rows: Vec<InputCatalogRow>,
     unsupported: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct InputCatalogRow {
+    line: u64,
+    terms: Box<[ReplayTermId]>,
 }
 
 #[derive(Clone, Debug)]
@@ -540,12 +544,6 @@ struct SourceCaptureAnalysis {
 struct ParsedInputRow {
     line: u64,
     literals: Vec<Literal>,
-}
-
-struct ParsedInputFile {
-    path: PathBuf,
-    digest: Option<[u8; 32]>,
-    rows: Vec<ParsedInputRow>,
 }
 
 impl Default for CaptureCatalog {
@@ -4190,27 +4188,15 @@ impl EGraph {
         function_type: &FuncType,
         span: &Span,
         file: &str,
-        capture_digest: bool,
-    ) -> Result<ParsedInputFile, Error> {
+    ) -> Result<Vec<ParsedInputRow>, Error> {
         let mut filename = fact_directory.map_or_else(PathBuf::new, PathBuf::from);
         filename.push(file);
 
         let row_schema = Self::input_row_schema(function_type);
 
         log::info!("Opening file '{filename:?}'...");
-        let bytes = std::fs::read(&filename)
-            .map_err(|error| Error::IoError(filename.clone(), error, span.clone()))?;
-        let digest = capture_digest.then(|| {
-            let digest: [u8; 32] = Sha256::digest(&bytes).into();
-            digest
-        });
-        let contents = String::from_utf8(bytes).map_err(|error| {
-            Error::IoError(
-                filename.clone(),
-                std::io::Error::new(std::io::ErrorKind::InvalidData, error),
-                span.clone(),
-            )
-        })?;
+        let contents = std::fs::read_to_string(&filename)
+            .map_err(|error| Error::IoError(filename, error, span.clone()))?;
 
         let mut rows = Vec::with_capacity(contents.lines().count());
         for (line_index, line) in contents.lines().enumerate() {
@@ -4223,11 +4209,7 @@ impl EGraph {
                 rows.push(row);
             }
         }
-        Ok(ParsedInputFile {
-            path: filename,
-            digest,
-            rows,
-        })
+        Ok(rows)
     }
 
     fn input_row_schema(function_type: &FuncType) -> Vec<ArcSort> {
@@ -4334,23 +4316,11 @@ impl EGraph {
             .get_func_type(func_name)
             .unwrap_or_else(|| panic!("Unrecognized function name {func_name}"))
             .clone();
-        let parsed_file = Self::read_input_file(
-            self.fact_directory.as_deref(),
-            &function_type,
-            &span,
-            &file,
-            self.capture_catalog.is_some(),
-        )?;
-        let resolved_input_path = if parsed_file.path.is_absolute() {
-            parsed_file.path.clone()
-        } else {
-            std::env::current_dir()
-                .map_err(|error| Error::IoError(parsed_file.path.clone(), error, span.clone()))?
-                .join(&parsed_file.path)
-        };
+        let parsed_contents =
+            Self::read_input_file(self.fact_directory.as_deref(), &function_type, &span, &file)?;
         let backend_id = self.functions[func_name].backend_id;
         let unit_val = self.backend.base_values().get(());
-        let pending_input_catalog = self.capture_catalog.as_mut().map(|catalog| {
+        let mut pending_input_catalog = self.capture_catalog.as_mut().map(|catalog| {
             let source_ordinal = catalog.next_source_ordinal();
             let command = catalog
                 .active_command
@@ -4361,11 +4331,7 @@ impl EGraph {
                     command,
                     after_wave: catalog.completed_wave(),
                     function: func_name.to_owned(),
-                    file: file.clone(),
-                    resolved_path: resolved_input_path,
-                    digest: parsed_file
-                        .digest
-                        .expect("input capture requires a parsed file digest"),
+                    rows: Vec::with_capacity(parsed_contents.len()),
                     unsupported: (function_type.subtype == FunctionSubtype::Custom).then(|| {
                         format!(
                             "input into value function `{func_name}` requires set/merge replay semantics"
@@ -4375,7 +4341,6 @@ impl EGraph {
             )
         });
         let source_command = pending_input_catalog.as_ref().map(|(command, _)| *command);
-        let parsed_contents = parsed_file.rows;
         let (values, capture_rows) = if let Some(command) = source_command {
             let mut capture_rows = Vec::with_capacity(parsed_contents.len());
             for parsed in parsed_contents {
@@ -4397,6 +4362,15 @@ impl EGraph {
                         .map_err(|error| Error::BackendError(error.to_string()))?;
                     terms.push(term);
                 }
+                pending_input_catalog
+                    .as_mut()
+                    .expect("input capture catalog disappeared")
+                    .1
+                    .rows
+                    .push(InputCatalogRow {
+                        line: parsed.line,
+                        terms: terms.iter().copied().collect(),
+                    });
                 capture_rows.push(egglog_bridge::SourceInputRow::new(
                     SourceRef::InputRow {
                         command,

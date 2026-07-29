@@ -1691,14 +1691,8 @@ impl<'a> ProofInstrumentor<'a> {
             .and_then(|typechecker| typechecker.type_info.get_func_type(name))
             .unwrap_or_else(|| panic!("Unrecognized function name {name}"))
             .clone();
-        let rows = EGraph::read_input_file(
-            egraph.fact_directory.as_deref(),
-            &function_type,
-            span,
-            file,
-            false,
-        )?
-        .rows;
+        let rows =
+            EGraph::read_input_file(egraph.fact_directory.as_deref(), &function_type, span, file)?;
         let mut actions = vec![];
         for row in rows {
             let mut expressions = row
