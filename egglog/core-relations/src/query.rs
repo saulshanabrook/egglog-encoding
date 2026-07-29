@@ -33,7 +33,7 @@ define_id!(pub RuleId, u32, "An identifier for a rule in a rule set");
 
 /// Resolves variables and atoms in a rule to their string names.
 #[allow(dead_code)]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SymbolMap {
     pub atoms: HashMap<AtomId, Arc<str>>,
     pub vars: HashMap<Variable, Arc<str>>,
@@ -618,7 +618,6 @@ enum PreparedInstructionOrigins {
 
 type RecipeRoot = Arc<RecipeExpr>;
 
-#[derive(Clone, Debug)]
 enum RecipeExpr {
     Input(Variable),
     Static {
@@ -2275,6 +2274,10 @@ impl RuleBuilder<'_, '_> {
         Ok(res)
     }
 
+    /// Call a primitive with a fallback. A single static structural recipe
+    /// cannot distinguish which branch produced each lane, so replay metadata
+    /// is deliberately not registered for this operation. If a retained fact
+    /// needs such a current value, cold projection fails closed.
     pub fn call_external_with_fallback(
         &mut self,
         f1: ExternalFunctionId,
@@ -2282,33 +2285,7 @@ impl RuleBuilder<'_, '_> {
         f2: ExternalFunctionId,
         args2: &[QueryEntry],
     ) -> Result<Variable, QueryError> {
-        self.call_external_with_fallback_replay(f1, args1, f2, args2, None)
-    }
-
-    /// Call a primitive with a fallback. A single static structural recipe
-    /// cannot distinguish which branch produced each lane, so replay metadata
-    /// is deliberately not registered for this operation. If a retained fact
-    /// needs such a current value, cold projection fails closed.
-    pub fn call_external_with_fallback_replay(
-        &mut self,
-        f1: ExternalFunctionId,
-        args1: &[QueryEntry],
-        f2: ExternalFunctionId,
-        args2: &[QueryEntry],
-        replay: Option<ReplayConstructorSpec>,
-    ) -> Result<Variable, QueryError> {
         let res = self.qb.new_var();
-        if let Some(replay) = replay.as_ref() {
-            assert_eq!(
-                replay.child_sorts.len(),
-                args1.len(),
-                "primitive replay metadata needs one sort per argument"
-            );
-            assert!(
-                self.qb.rsb.db.trace.is_some(),
-                "primitive replay metadata requires causal trace"
-            );
-        }
         self.qb.instrs.push(Instr::ExternalWithFallback {
             f1,
             args1: args1.to_vec(),
@@ -2495,7 +2472,7 @@ impl VarColumnMap {
 ///
 /// This data structure can compute the closure of a set of variables under
 /// a set of functional dependencies.
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub(crate) struct FunDeps {
     /// List of functional dependencies (antecedent -> consequent)
     dependencies: Vec<(Vec<Variable>, Vec<Variable>)>,

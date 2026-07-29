@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
-use crate::slicing::backward::slice_all_checks;
+use crate::slicing::backward::select_all_checks;
 
 fn serial_pool() -> &'static rayon::ThreadPool {
     static SERIAL_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
@@ -31,10 +31,10 @@ fn slice_commands(program: &str) -> (Vec<Command>, String) {
     let mut recorder = EGraph::default();
     serial_pool().install(|| recorder.enable_trace()).unwrap();
     recorder.parse_and_run_program(None, program).unwrap();
-    let slice = slice_all_checks(&recorder).unwrap();
+    let slice = select_all_checks(&recorder).unwrap();
     let ir = build_replay_program(&recorder, &slice).unwrap();
     let commands = ir.to_commands().unwrap();
-    let rendered = ReplayProgram::render_commands(&commands);
+    let rendered = render_commands_as_source(&commands);
 
     let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
     serial_pool()
@@ -115,9 +115,9 @@ fn slice_replays_precanonicalized_union_endpoints_in_any_allocation_order() {
         recorder
             .parse_and_run_program(None, &endpoint_normalization_program(order))
             .unwrap();
-        let slice = slice_all_checks(&recorder).unwrap();
+        let slice = select_all_checks(&recorder).unwrap();
         let ir = build_replay_program(&recorder, &slice).unwrap();
-        let rendered = ReplayProgram::render_commands(&ir.to_commands().unwrap());
+        let rendered = render_commands_as_source(&ir.to_commands().unwrap());
 
         for (mode, mut replay) in [
             ("native", EGraph::default()),
@@ -216,8 +216,6 @@ enum EndpointCarrier {
 struct EndpointCase {
     carrier: EndpointCarrier,
     order: [&'static str; 5],
-    noise: bool,
-    compact: bool,
 }
 
 fn next_endpoint_random(state: &mut u64) -> u64 {
@@ -269,22 +267,10 @@ fn endpoint_case_program(case: EndpointCase) -> String {
         }
     }
 
-    let needs_c = matches!(
-        case.carrier,
-        EndpointCarrier::SourceUnion | EndpointCarrier::RuleUnion | EndpointCarrier::DeleteRecreate
-    );
     for name in case.order {
-        if matches!(name, "NoiseL" | "NoiseR") && !case.noise {
-            continue;
-        }
-        if name == "C" && case.compact && !needs_c {
-            continue;
-        }
         lines.push(format!("({name})"));
     }
-    if case.noise {
-        lines.push("(union (NoiseL) (NoiseR))".into());
-    }
+    lines.push("(union (NoiseL) (NoiseR))".into());
     lines.push("(union (A) (B))".into());
 
     match case.carrier {
@@ -356,13 +342,13 @@ fn run_endpoint_case(case: EndpointCase) -> Result<(), String> {
     serial_pool()
         .install(|| recorder.parse_and_run_program(None, &program))
         .map_err(|error| format!("capture: {error}"))?;
-    let slice = slice_all_checks(&recorder).map_err(|error| format!("slice: {error}"))?;
+    let slice = select_all_checks(&recorder).map_err(|error| format!("slice: {error}"))?;
     if matches!(case.carrier, EndpointCarrier::DeleteRecreate) && slice.replay_removals.is_empty() {
         return Err("delete/recreate case lost its selected removal".into());
     }
     let replay = build_replay_program(&recorder, &slice)
         .map_err(|error| format!("build replay: {error}"))?;
-    let rendered = ReplayProgram::render_commands(
+    let rendered = render_commands_as_source(
         &replay
             .to_commands()
             .map_err(|error| format!("build commands: {error}"))?,
@@ -370,7 +356,7 @@ fn run_endpoint_case(case: EndpointCase) -> Result<(), String> {
     if !rendered.contains("(union (A) (B))") {
         return Err("missing denotation anchor `(union (A) (B))`".into());
     }
-    if case.noise && rendered.contains("(union (NoiseL) (NoiseR))") {
+    if rendered.contains("(union (NoiseL) (NoiseR))") {
         return Err("disconnected noise equality was retained".into());
     }
     for (mode, mut graph) in [
@@ -398,8 +384,6 @@ fn endpoint_denotation_is_complete_across_carriers_and_allocation_orders() {
         let case = EndpointCase {
             carrier: carriers[index % carriers.len()],
             order: shuffled_endpoint_order(&mut random),
-            noise: true,
-            compact: false,
         };
         if let Err(error) = run_endpoint_case(case) {
             panic!(
@@ -424,7 +408,7 @@ fn owned_ir_preserves_pre_run_check_and_source_order() {
                  (check (R 2))",
         )
         .unwrap();
-    let slice = slice_all_checks(&egraph).unwrap();
+    let slice = select_all_checks(&egraph).unwrap();
     let ir = build_replay_program(&egraph, &slice).unwrap();
     assert!(matches!(
         ir.events.as_slice(),
@@ -458,7 +442,7 @@ fn owned_ir_records_late_source_boundary_without_retaining_prefix_wave() {
         )
         .unwrap();
 
-    let slice = slice_all_checks(&egraph).unwrap();
+    let slice = select_all_checks(&egraph).unwrap();
     let ir = build_replay_program(&egraph, &slice).unwrap();
     assert!(matches!(
         ir.events.as_slice(),
@@ -506,7 +490,7 @@ fn rendered_artifact_round_trips_globals_and_grounded_rules_with_proofs() {
                  (check (= (B $seed) (C (A 1))))",
         )
         .unwrap();
-    let slice = slice_all_checks(&recorder).unwrap();
+    let slice = select_all_checks(&recorder).unwrap();
     let ir = build_replay_program(&recorder, &slice).unwrap();
     let commands = ir.to_commands().unwrap();
     assert!(commands.iter().any(|command| {
@@ -527,7 +511,7 @@ fn rendered_artifact_round_trips_globals_and_grounded_rules_with_proofs() {
             }
         )
     }));
-    let rendered = ReplayProgram::render_commands(&commands);
+    let rendered = render_commands_as_source(&commands);
     assert!(rendered.contains("(datatype E"));
     assert!(rendered.contains("(relation Seed"));
     assert!(rendered.contains("(let $seed (A 1))"));
@@ -780,7 +764,7 @@ fn owned_ir_embeds_only_selected_input_rows() {
                  (check (R \"keep\" -0.0))",
         )
         .unwrap();
-    let slice = slice_all_checks(&egraph).unwrap();
+    let slice = select_all_checks(&egraph).unwrap();
     fs::remove_dir_all(dir).unwrap();
     let ir = build_replay_program(&egraph, &slice).unwrap();
     assert_eq!(
@@ -814,7 +798,7 @@ fn owned_ir_embeds_only_selected_input_rows() {
     assert_eq!(value.0.to_bits(), (-0.0f64).to_bits());
 
     let commands = ir.to_commands().unwrap();
-    let rendered = ReplayProgram::render_commands(&commands);
+    let rendered = render_commands_as_source(&commands);
     let mut replay = EGraph::default().with_proofs_enabled().with_proof_testing();
     serial_pool()
         .install(|| replay.parse_and_run_program(None, &rendered))
@@ -842,8 +826,11 @@ fn unsupported_input_fails_only_when_selected() {
                  (check (Out 2))",
         )
         .unwrap();
-    let slice = slice_all_checks(&selected).unwrap();
-    let error = build_replay_program(&selected, &slice).unwrap_err();
+    let slice = select_all_checks(&selected).unwrap();
+    let error = match build_replay_program(&selected, &slice) {
+        Err(error) => error,
+        Ok(_) => panic!("selected unsupported input unexpectedly lowered"),
+    };
     assert!(
         matches!(error, ReplayError::Unsupported(message) if message.contains("value function `f`"))
     );
@@ -865,7 +852,7 @@ fn unsupported_input_fails_only_when_selected() {
                  (check (R ()))",
         )
         .unwrap();
-    let slice = slice_all_checks(&unreachable).unwrap();
+    let slice = select_all_checks(&unreachable).unwrap();
     build_replay_program(&unreachable, &slice).unwrap();
     fs::remove_dir_all(dir).unwrap();
 }

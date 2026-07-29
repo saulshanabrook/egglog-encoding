@@ -53,11 +53,11 @@ use crate::{EGraph, Error};
 /// [`crate::Error::BackendError`].
 pub fn slice_all_checks(egraph: &EGraph) -> Result<Vec<Command>, Error> {
     let invalid = |error: &dyn std::fmt::Display| Error::BackendError(error.to_string());
-    let slice = backward::slice_all_checks(egraph).map_err(|error| invalid(&error))?;
+    let slice = backward::select_all_checks(egraph).map_err(|error| invalid(&error))?;
     let replay = replay::build_replay_program(egraph, &slice).map_err(|error| invalid(&error))?;
     replay.to_commands().map_err(|error| invalid(&error))
 }
 
 pub(crate) fn render_commands(commands: &[Command]) -> String {
-    replay::ReplayProgram::render_commands(commands)
+    replay::render_commands_as_source(commands)
 }

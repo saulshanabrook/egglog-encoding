@@ -46,12 +46,12 @@ use crate::{
     RuleBindingRole, RuleCatalogEntry,
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 /// Arena-local reference to an owned replay term.
 ///
 /// Unlike the trace's replay-term ids, this reference is meaningful only in a
 /// [`ReplayProgram`] and carries no recording-graph identity.
-pub(crate) struct ReplayTermRef(u32);
+struct ReplayTermRef(u32);
 
 impl ReplayTermRef {
     fn from_index(index: usize) -> Result<Self, ReplayError> {
@@ -60,14 +60,14 @@ impl ReplayTermRef {
         })?))
     }
 
-    pub(crate) fn index(self) -> usize {
+    fn index(self) -> usize {
         self.0 as usize
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 /// A typed, graph-neutral recipe for a literal or constructor call.
-pub(crate) enum OwnedReplayTerm {
+enum OwnedReplayTerm {
     Literal {
         sort: String,
         literal: Literal,
@@ -87,19 +87,17 @@ impl OwnedReplayTerm {
     }
 }
 
-#[derive(Clone, Debug)]
 /// A retained declaration or rule, positioned by its surface catalog ordinal.
-pub(crate) struct ReplaySetup {
-    pub(crate) catalog_ordinal: usize,
-    pub(crate) command: Command,
+struct ReplaySetup {
+    catalog_ordinal: usize,
+    command: Command,
 }
 
-#[derive(Clone, Debug)]
 /// The source-level action used to reconstruct selected initial state.
 ///
 /// Synthetic sources retain their ordinary surface command. Selected input
 /// rows are materialized from the exact literals retained at capture time.
-pub(crate) enum ReplaySourceKind {
+enum ReplaySourceKind {
     Command(Box<Command>),
     InputRow {
         /// One-based physical line, used only to preserve order within one input command.
@@ -109,58 +107,51 @@ pub(crate) enum ReplaySourceKind {
     },
 }
 
-#[derive(Clone, Debug)]
 /// A selected source action together with its catalog chronology.
-pub(crate) struct ReplaySource {
+struct ReplaySource {
     /// Last completed trace wave before the source executed on the recorder.
-    pub(crate) after_wave: u64,
-    pub(crate) catalog_ordinal: usize,
-    pub(crate) kind: ReplaySourceKind,
+    after_wave: u64,
+    catalog_ordinal: usize,
+    kind: ReplaySourceKind,
 }
 
-#[derive(Clone, Debug)]
 /// A checked source-level name established for a structural call before a wave.
-pub(crate) struct ReplayAlias {
-    pub(crate) name: String,
-    pub(crate) term: ReplayTermRef,
+struct ReplayAlias {
+    name: String,
+    term: ReplayTermRef,
 }
 
-#[derive(Clone, Debug)]
 /// One grounded rule variable and its owned literal-or-alias term.
-pub(crate) struct ReplayBinding {
-    pub(crate) variable: String,
-    pub(crate) term: ReplayTermRef,
+struct ReplayBinding {
+    variable: String,
+    term: ReplayTermRef,
 }
 
-#[derive(Clone, Debug)]
 /// A selected rule firing lowered to its stable replay name and bindings.
-pub(crate) struct ReplayFiring {
-    pub(crate) replay_name: String,
-    pub(crate) bindings: Box<[ReplayBinding]>,
+struct ReplayFiring {
+    replay_name: String,
+    bindings: Box<[ReplayBinding]>,
 }
 
-#[derive(Clone, Debug)]
 /// All checked aliases and grounded firings executed at one retained wave.
 ///
 /// Aliases run first against the immutable pre-wave database; the grouped
 /// firings then execute through one ordinary `run-rule` schedule.
-pub(crate) struct ReplayWave {
-    pub(crate) wave: u64,
-    pub(crate) aliases: Box<[ReplayAlias]>,
-    pub(crate) firings: Box<[ReplayFiring]>,
+struct ReplayWave {
+    wave: u64,
+    aliases: Box<[ReplayAlias]>,
+    firings: Box<[ReplayFiring]>,
 }
 
-#[derive(Clone, Debug)]
 /// A retained surface check placed after the wave that originally satisfied it.
-pub(crate) struct ReplayCheck {
-    pub(crate) after_wave: u64,
-    pub(crate) catalog_ordinal: usize,
-    pub(crate) command: Command,
+struct ReplayCheck {
+    after_wave: u64,
+    catalog_ordinal: usize,
+    command: Command,
 }
 
-#[derive(Clone, Debug)]
 /// One chronological unit in the owned replay program.
-pub(crate) enum ReplayEvent {
+enum ReplayEvent {
     Source(ReplaySource),
     Wave(ReplayWave),
     Check(Box<ReplayCheck>),
@@ -186,17 +177,16 @@ impl ReplayEvent {
     }
 }
 
-#[derive(Clone, Debug)]
 /// An owned, graph-neutral replay intermediate representation.
 ///
 /// `setup` holds candidate catalog declarations plus retained rules. Lowering
 /// keeps only the transitive declaration closure needed by the emitted roots.
 /// `terms` owns structural binding recipes, and `events` preserves
 /// source/wave/check chronology. No field is a handle into the recording graph.
-pub(crate) struct ReplayProgram {
-    pub(crate) setup: Vec<ReplaySetup>,
-    pub(crate) terms: Vec<OwnedReplayTerm>,
-    pub(crate) events: Vec<ReplayEvent>,
+pub(super) struct ReplayProgram {
+    setup: Vec<ReplaySetup>,
+    terms: Vec<OwnedReplayTerm>,
+    events: Vec<ReplayEvent>,
 }
 
 impl ReplayProgram {
@@ -207,7 +197,7 @@ impl ReplayProgram {
     /// grounded firings use ordinary `run-rule` schedules, and literals remain
     /// source literals. The final hygiene pass alpha-renames retained internal
     /// symbols consistently across declarations, rules, bindings, and sorts.
-    pub(crate) fn to_commands(&self) -> Result<Vec<Command>, ReplayError> {
+    pub(super) fn to_commands(&self) -> Result<Vec<Command>, ReplayError> {
         let mut commands = Vec::new();
         let mut setup = self.setup.iter().peekable();
 
@@ -309,17 +299,6 @@ impl ReplayProgram {
         Ok(hygienic_source_commands(commands, observed))
     }
 
-    /// Render ordinary commands as a standalone source program.
-    pub(crate) fn render_commands(commands: &[Command]) -> String {
-        use std::fmt::Write as _;
-
-        let mut rendered = String::new();
-        for command in commands {
-            writeln!(&mut rendered, "{command}").expect("writing to a String cannot fail");
-        }
-        rendered
-    }
-
     fn term(&self, term: ReplayTermRef) -> Result<&OwnedReplayTerm, ReplayError> {
         self.terms.get(term.index()).ok_or_else(|| {
             ReplayError::Invalid(format!(
@@ -351,6 +330,17 @@ impl ReplayProgram {
                 }),
         }
     }
+}
+
+/// Render ordinary commands as a standalone source program.
+pub(super) fn render_commands_as_source(commands: &[Command]) -> String {
+    use std::fmt::Write as _;
+
+    let mut rendered = String::new();
+    for command in commands {
+        writeln!(&mut rendered, "{command}").expect("writing to a String cannot fail");
+    }
+    rendered
 }
 
 fn split_replay_direction(symbol: &str) -> (&str, &str) {
@@ -486,7 +476,7 @@ fn replay_span(command: usize) -> Span {
 /// This internal type distinguishes capture, catalog, and unsupported source-
 /// representation failures. The public facade reports them through the crate's
 /// existing `crate::Error` type.
-pub(crate) enum ReplayError {
+pub(super) enum ReplayError {
     #[error("slice replay is unavailable without exact trace capture")]
     Disabled,
     #[error("slice replay requires the main native backend")]
@@ -658,7 +648,7 @@ fn is_static_declaration(command: &Command) -> bool {
     )
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 enum DefinitionKey {
     Sort(String),
     Function(String),
@@ -1230,7 +1220,7 @@ fn retained_rewrite_command(
 ///    actions, and retained rule surfaces from the catalog;
 /// 2. copy structural binding terms, schedule their checked aliases within the
 ///    captured occurrence lifetimes, and group grounded firings by wave;
-/// 3. recover selected checks and merge all source, wave, and check events in
+/// 3. recover every successful check and merge all source, wave, and check events in
 ///    recorded chronology; and
 /// 4. return only owned names, literals, commands, and structural recipes.
 ///
@@ -1238,12 +1228,12 @@ fn retained_rewrite_command(
 /// an alias earlier within its valid retained boundaries, but selected
 /// removals split reuse epochs and a producer deletion is an exclusive upper
 /// bound on capture.
-fn build_owned(
+fn lower_slice_to_owned_program(
     catalog: &CaptureCatalog,
     view: &mut TraceView<'_>,
     slice: &Slice,
 ) -> Result<ReplayProgram, ReplayError> {
-    let sources = selected_source_closure(catalog, &slice.sources)?;
+    let sources = selected_source_closure(catalog, &slice.source_roots)?;
     let mut retained_rules = BTreeSet::new();
     let mut firings = Vec::with_capacity(slice.firing_bindings.len());
     let mut firing_ids = slice.firing_bindings.keys().copied().collect::<Vec<_>>();
@@ -1571,10 +1561,8 @@ fn build_owned(
             firings: firings.into_boxed_slice(),
         }));
     }
-    let mut checks = slice.checks.iter().copied().collect::<Vec<_>>();
-    checks.sort_unstable();
-    for check in checks {
-        let root = view.check_root(check)?;
+    for root in view.check_roots() {
+        let check = root.check;
         let command_index = catalog.check_commands.get(&check).ok_or_else(|| {
             ReplayError::Invalid(format!("selected check {check} has no catalog command"))
         })?;
@@ -1619,7 +1607,7 @@ fn build_owned(
 /// The concrete backend is borrowed only while trace records are copied into
 /// owned data. Missing capture, poisoned catalog state, and unsupported backend
 /// implementations fail before a partial replay program is returned.
-pub(crate) fn build_replay_program(
+pub(super) fn build_replay_program(
     egraph: &EGraph,
     slice: &Slice,
 ) -> Result<ReplayProgram, ReplayError> {
@@ -1635,7 +1623,7 @@ pub(crate) fn build_replay_program(
         .as_any()
         .downcast_ref::<egglog_bridge::EGraph>()
         .ok_or(ReplayError::UnsupportedBackend)?;
-    bridge.with_trace_view(|view| Ok(build_owned(catalog, view, slice)))?
+    bridge.with_trace_view(|view| Ok(lower_slice_to_owned_program(catalog, view, slice)))?
 }
 
 #[cfg(test)]

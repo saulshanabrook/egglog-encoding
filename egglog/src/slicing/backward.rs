@@ -37,21 +37,19 @@ use crate::util::{HashMap, HashSet};
 
 use crate::EGraph;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Default)]
 /// The closed selection consumed by replay lowering.
 ///
 /// This contains only the reconstruction set read by replay lowering. The
 /// visited sets and projected equality records used while closing the trace
 /// remain private to [`SelectionState`].
-pub(crate) struct Slice {
-    /// Successful check criteria reproduced by the slice.
-    pub(crate) checks: HashSet<u32>,
+pub(super) struct Slice {
     /// Removal effects needed by an owner or to prevent stale-row interference.
-    pub(crate) replay_removals: HashSet<usize>,
+    pub(super) replay_removals: HashSet<usize>,
     /// Source commands and input rows needed by the selection.
-    pub(crate) sources: HashSet<SourceRef>,
+    pub(super) source_roots: HashSet<SourceRef>,
     /// Structural terms paired with checked-alias schedules for each selected firing.
-    pub(crate) firing_bindings: HashMap<FiringId, Box<[FiringBindingPlan]>>,
+    pub(super) firing_bindings: HashMap<FiringId, Box<[FiringBindingPlan]>>,
 }
 
 #[derive(Default)]
@@ -66,16 +64,16 @@ struct SelectionState {
     equality_records: HashMap<AppliedEqualityId, ProjectedAppliedEquality>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 /// One grounded binding term and its child-first checked-alias schedule.
-pub(crate) struct FiringBindingPlan {
+pub(super) struct FiringBindingPlan {
     /// Graph-neutral structural term bound by the firing.
-    pub(crate) term: ReplayTermId,
+    pub(super) term: ReplayTermId,
     /// Capture bounds aligned with the term's child-first call occurrences.
-    pub(crate) aliases: Box<[ReplayAliasPlan]>,
+    pub(super) aliases: Box<[ReplayAliasPlan]>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 /// A source-level unit whose complete visible effects execute together.
 ///
 /// Rule causes belong to their grounded firing and source causes belong to the
@@ -87,7 +85,7 @@ enum ReplayOwner {
     Source(SourceRef),
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Default)]
 /// Every trace effect attributed to one replay owner.
 ///
 /// Selecting the owner copies this whole bundle into the replay-effect sets;
@@ -100,7 +98,7 @@ struct OwnerEffects {
 
 type OwnerIndex = HashMap<ReplayOwner, OwnerEffects>;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 enum KeyCell {
     Base(Value),
     Equality(EqualityEndpoint),
@@ -153,7 +151,7 @@ impl SelectedEqualityDsu {
 ///
 /// The public facade does not expose this implementation type; it maps these
 /// failures into the crate's existing `crate::Error` result type.
-pub(crate) enum SliceError {
+pub(super) enum SliceError {
     #[error(transparent)]
     Trace(#[from] TraceViewError),
     #[error("causal slicing requires the concrete main bridge backend")]
@@ -162,7 +160,6 @@ pub(crate) enum SliceError {
     Poisoned(String),
 }
 
-#[derive(Clone, Copy)]
 /// One obligation in the mixed-domain backward-closure worklist.
 ///
 /// Keeping equality support and equality denotation as distinct work items
@@ -409,7 +406,7 @@ fn maintenance_cause_is_replay_visible(
     let visible = match cause {
         CauseRef::Rule(rule) => selection.slice.firing_bindings.contains_key(&rule),
         CauseRef::Cause(id) => match view.cause(id)? {
-            RawCause::Source(source) => selection.slice.sources.contains(source),
+            RawCause::Source(source) => selection.slice.source_roots.contains(source),
             RawCause::Merge {
                 incoming,
                 prior_fact,
@@ -628,11 +625,9 @@ fn select_interfering_removals(
 /// endpoint spelling available at the check.
 fn seed_check_root(
     view: &mut TraceView<'_>,
-    selection: &mut SelectionState,
     work: &mut VecDeque<Work>,
     root: &Criterion,
 ) -> Result<(), TraceViewError> {
-    selection.slice.checks.insert(root.check);
     work.extend(root.premises.iter().copied().map(Work::Fact));
 
     for equality in root.equalities.iter().copied() {
@@ -685,7 +680,7 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
     let mut selection = SelectionState::default();
     let mut work = VecDeque::new();
     for root in &roots {
-        seed_check_root(view, &mut selection, &mut work, root)?;
+        seed_check_root(view, &mut work, root)?;
     }
 
     loop {
@@ -751,7 +746,7 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                     match view.cause(id)? {
                         RawCause::Source(source) => {
                             let source = source.clone();
-                            selection.slice.sources.insert(source.clone());
+                            selection.slice.source_roots.insert(source.clone());
                             mark_owner_visible(
                                 view,
                                 &owner_index,
@@ -903,7 +898,7 @@ fn slice_all_view(view: &mut TraceView<'_>) -> Result<Slice, TraceViewError> {
 /// This frontend boundary rejects missing or poisoned capture catalogs and
 /// non-native backends before borrowing a trace view. The public facade maps
 /// the resulting [`SliceError`] into `crate::Error`.
-pub(crate) fn slice_all_checks(egraph: &EGraph) -> Result<Slice, SliceError> {
+pub(super) fn select_all_checks(egraph: &EGraph) -> Result<Slice, SliceError> {
     egraph
         .capture_catalog
         .as_ref()
