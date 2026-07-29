@@ -481,7 +481,7 @@ pub trait Table: Any + Send + Sync {
     }
 
     /// Returns true if the table contains any stale rows (rows whose first column
-    /// has been set to [`Value::stale()`]). The default implementation returns `true`
+    /// has been set to `Value::stale()`). The default implementation returns `true`
     /// (conservative). Tables that track stale-row counts should override this.
     fn has_stale_rows(&self) -> bool {
         true

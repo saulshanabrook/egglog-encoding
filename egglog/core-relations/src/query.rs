@@ -1345,7 +1345,7 @@ impl RuleBuilder<'_, '_> {
     }
 
     /// Build a rule together with the fixed capture layout preserved from the
-    /// source-level rule. Runtime capture stores exact premise [`FactId`]
+    /// source-level rule. Runtime capture stores exact premise [`crate::FactId`]
     /// occurrences; structural bindings are reconstructed lazily from the
     /// static recipe.
     pub fn try_build_with_capture(
