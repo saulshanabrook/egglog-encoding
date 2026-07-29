@@ -1572,27 +1572,19 @@ impl EGraph {
                 "trace capture must be enabled before registering rules".into(),
             ));
         }
-        self.backend
-            .enable_trace()
-            .map_err(|error| Error::BackendError(error.to_string()))?;
-
         let mut catalog = CaptureCatalog::default();
-        let container_sorts = self
+        let container_registrations = self
             .type_info
             .sorts
             .values()
             .filter(|sort| sort.is_container_sort())
-            .cloned()
+            .map(|sort| {
+                catalog
+                    .container_sort_spec(sort)
+                    .expect("filtered container sort lost its metadata")
+            })
             .collect::<Vec<_>>();
-        for sort in container_sorts {
-            let (logical_sort, container_type, child_sorts) = catalog
-                .container_sort_spec(&sort)
-                .expect("filtered container sort lost its metadata");
-            self.backend
-                .register_container_replay_sort(logical_sort, container_type, &child_sorts)
-                .map_err(|error| Error::BackendError(error.to_string()))?;
-        }
-        let registrations = self
+        let function_registrations = self
             .functions
             .values()
             .map(|function| {
@@ -1607,11 +1599,29 @@ impl EGraph {
                 )
             })
             .collect::<Vec<_>>();
-        for (function, spec) in registrations {
-            self.backend
-                .register_function_replay(function, spec)
+
+        let activate = |backend: &mut dyn Backend| -> Result<(), Error> {
+            backend
+                .enable_trace()
                 .map_err(|error| Error::BackendError(error.to_string()))?;
-        }
+            for (sort, container_type, child_sorts) in &container_registrations {
+                backend
+                    .register_container_replay_sort(*sort, *container_type, child_sorts)
+                    .map_err(|error| Error::BackendError(error.to_string()))?;
+            }
+            for (function, spec) in &function_registrations {
+                backend
+                    .register_function_replay(*function, spec.clone())
+                    .map_err(|error| Error::BackendError(error.to_string()))?;
+            }
+            Ok(())
+        };
+
+        // Exercise the complete virtual registration path before enabling the
+        // real backend, whose capture state cannot be rolled back safely.
+        let mut probe = self.backend.clone_boxed();
+        activate(&mut *probe)?;
+        activate(&mut *self.backend)?;
         self.capture_catalog = Some(catalog);
         Ok(())
     }

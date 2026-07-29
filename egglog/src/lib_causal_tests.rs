@@ -42,6 +42,32 @@ fn trace_accepts_empty_declarations_installed_by_a_matching_replay_factory() {
 }
 
 #[test]
+fn failed_trace_activation_leaves_ordinary_execution_usable() {
+    let mut egraph = EGraph::default();
+    egraph
+        .parse_and_run_program(
+            None,
+            "(datatype E (A i64) (Pair E E))\
+             (function bad (E) E :merge (Pair old new))\
+             (relation Safe (i64))",
+        )
+        .unwrap();
+
+    let error = serial_trace_pool()
+        .install(|| egraph.enable_trace())
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("merge reached an unsupported structural result expression")
+    );
+
+    egraph
+        .parse_and_run_program(None, "(Safe 1) (check (Safe 1))")
+        .unwrap();
+}
+
+#[test]
 fn trace_extract_temporary_rule_is_replay_free() {
     let mut egraph = EGraph::default();
     enable_serial_trace(&mut egraph).unwrap();
