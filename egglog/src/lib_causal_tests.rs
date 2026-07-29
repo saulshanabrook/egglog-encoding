@@ -1561,7 +1561,7 @@ fn trace_reject_late_rule_activation_without_switching_modes() {
         .unwrap();
 
     let error = enable_serial_trace(&mut egraph).unwrap_err();
-    assert!(error.to_string().contains("replay catalog is complete"));
+    assert!(error.to_string().contains("before registering rules"));
     egraph
         .parse_and_run_program(None, "(A 1) (run 1) (check (B 1))")
         .unwrap();
