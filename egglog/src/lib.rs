@@ -337,13 +337,6 @@ impl<T> ExtensionStateValue for T where T: Any + Clone + Send + Sync {}
 
 dyn_clone::clone_trait_object!(ExtensionStateValue);
 
-/// A frontend-only replay alias. Unlike an ordinary global `let`, this owns no
-/// backend function row and contributes no proof or trace fact.
-#[derive(Clone, Debug)]
-struct CheckedAlias {
-    value: Value,
-}
-
 #[derive(Clone, Debug)]
 struct CheckedAliasType {
     declaration_span: Span,
@@ -363,7 +356,9 @@ pub struct EGraph {
     /// Pop reverts the egraph to the last pushed egraph.
     pushed_egraph: Option<Box<Self>>,
     functions: IndexMap<String, Function>,
-    checked_aliases: IndexMap<String, CheckedAlias>,
+    /// Frontend-only replay aliases. Unlike ordinary global `let`s, these own
+    /// no backend function rows and contribute no proof or trace facts.
+    checked_aliases: IndexMap<String, Value>,
     /// Type-only mirror used while resolving later proof-mode commands on the
     /// original typechecking graph. It deliberately contains no backend Value.
     checked_alias_types: IndexMap<String, CheckedAliasType>,
@@ -3484,7 +3479,7 @@ impl EGraph {
                         ),
                     ));
                 }
-                Ok(self.canonical_checked_value(&checked_type.sort, checked.value))
+                Ok(self.canonical_checked_value(&checked_type.sort, *checked))
             }
             ResolvedExpr::Call(span, ResolvedCall::Values(_), _) => Err(Self::checked_alias_error(
                 span,
@@ -3728,7 +3723,7 @@ impl EGraph {
                         "checked alias has no published runtime value",
                     )
                 })?;
-                let value = self.canonical_checked_value(&variable.sort, checked.value);
+                let value = self.canonical_checked_value(&variable.sort, *checked);
                 Ok((variable, value))
             })
             .collect::<Result<Vec<_>, Error>>()?;
@@ -3986,8 +3981,7 @@ impl EGraph {
                     &self.checked_alias_types,
                 );
                 let alias = name.name.clone();
-                self.checked_aliases
-                    .insert(alias.clone(), CheckedAlias { value });
+                self.checked_aliases.insert(alias.clone(), value);
                 self.checked_alias_types.insert(
                     alias.clone(),
                     CheckedAliasType {
