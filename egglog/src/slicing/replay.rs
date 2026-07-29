@@ -69,14 +69,9 @@ pub(crate) struct ReplayTermArena {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum ReplaySetupKind {
-    Command(Command),
-}
-
-#[derive(Clone, Debug)]
 pub(crate) struct ReplaySetup {
     pub(crate) catalog_ordinal: usize,
-    pub(crate) kind: ReplaySetupKind,
+    pub(crate) command: Command,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -122,14 +117,11 @@ pub(crate) struct ReplayAlias {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ReplayBinding {
     pub(crate) variable: String,
-    pub(crate) sort: String,
     pub(crate) term: ReplayTermRef,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ReplayFiring {
-    pub(crate) firing_id: u64,
-    pub(crate) rule_ordinal: u32,
     pub(crate) replay_name: String,
     pub(crate) bindings: Box<[ReplayBinding]>,
 }
@@ -137,7 +129,6 @@ pub(crate) struct ReplayFiring {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ReplayWave {
     pub(crate) wave: u64,
-    pub(crate) position: u64,
     pub(crate) aliases: Box<[ReplayAlias]>,
     pub(crate) firings: Box<[ReplayFiring]>,
 }
@@ -175,16 +166,9 @@ impl ReplayEvent {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ReplayIrStats {
-    pub(crate) setup_commands: u64,
-    pub(crate) logical_sources: u64,
-    pub(crate) closed_sources: u64,
-    pub(crate) source_events: u64,
-    pub(crate) input_rows: u64,
-    pub(crate) terms: u64,
     pub(crate) aliases: u64,
     pub(crate) firings: u64,
     pub(crate) waves: u64,
-    pub(crate) checks: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -216,9 +200,7 @@ impl ReplayProgram {
                 .is_some_and(|entry| setup_bound.is_none_or(|bound| entry.catalog_ordinal <= bound))
             {
                 let entry = setup.next().expect("peeked replay setup disappeared");
-                match &entry.kind {
-                    ReplaySetupKind::Command(command) => commands.push(command.clone()),
-                }
+                commands.push(entry.command.clone());
             }
             match event {
                 ReplayEvent::Source(source) => match &source.kind {
@@ -298,9 +280,7 @@ impl ReplayProgram {
                 ReplayEvent::Check(check) => commands.push(check.command.clone()),
             }
         }
-        commands.extend(setup.map(|entry| match &entry.kind {
-            ReplaySetupKind::Command(command) => command.clone(),
-        }));
+        commands.extend(setup.map(|entry| entry.command.clone()));
         Ok(hygienic_source_commands(commands))
     }
 
@@ -1001,11 +981,9 @@ fn build_owned(
         if command.as_ref().is_some_and(is_static_declaration) {
             setup.push(ReplaySetup {
                 catalog_ordinal: ordinal,
-                kind: ReplaySetupKind::Command(
-                    command
-                        .clone()
-                        .expect("static surface command disappeared from replay catalog"),
-                ),
+                command: command
+                    .clone()
+                    .expect("static surface command disappeared from replay catalog"),
             });
         }
     }
@@ -1059,9 +1037,7 @@ fn build_owned(
             CatalogRuleSurface::Normalized => {
                 setup.push(ReplaySetup {
                     catalog_ordinal: catalog.command_catalog[entry.command].surface_command,
-                    kind: ReplaySetupKind::Command(normalized_rule_command(
-                        catalog, &sources, *rule, entry,
-                    )?),
+                    command: normalized_rule_command(catalog, &sources, *rule, entry)?,
                 });
             }
             CatalogRuleSurface::Rewrite {
@@ -1075,12 +1051,7 @@ fn build_owned(
     for (surface_command, rules) in rewrite_groups {
         setup.push(ReplaySetup {
             catalog_ordinal: surface_command,
-            kind: ReplaySetupKind::Command(retained_rewrite_command(
-                catalog,
-                &sources,
-                surface_command,
-                &rules,
-            )?),
+            command: retained_rewrite_command(catalog, &sources, surface_command, &rules)?,
         });
     }
     setup.sort_by_key(|entry| entry.catalog_ordinal);
@@ -1108,7 +1079,7 @@ fn build_owned(
     alias_reset_positions.dedup();
 
     let mut terms = OwnedTermBuilder::new(view, catalog)?;
-    let mut waves = BTreeMap::<u64, (u64, Vec<ReplayFiring>)>::new();
+    let mut waves = BTreeMap::<u64, Vec<ReplayFiring>>::new();
     let mut aliases_by_wave = BTreeMap::<u64, Vec<ReplayAlias>>::new();
     let mut alias_wave_by_term = HashMap::<ReplayTermRef, u64>::default();
     let mut alias_ordinal_by_term = HashMap::<ReplayTermRef, usize>::default();
@@ -1128,7 +1099,7 @@ fn build_owned(
             .or_insert(*position);
     }
     let mut next_alias = 0usize;
-    for (id, rule, wave, position) in firings {
+    for (id, rule, wave, _) in firings {
         let rule_entry = &catalog.rule_catalog[rule as usize];
         let binding_terms = slice.firing_terms.get(&id).ok_or_else(|| {
             ReplayError::Invalid(format!(
@@ -1328,15 +1299,10 @@ fn build_owned(
             }
             bindings.push(ReplayBinding {
                 variable: variable_name.clone(),
-                sort: expected_sort.clone(),
                 term: canonical_term.get(&term).copied().unwrap_or(term),
             });
         }
-        let wave_entry = waves.entry(wave).or_insert((position, Vec::new()));
-        wave_entry.0 = wave_entry.0.min(position);
-        wave_entry.1.push(ReplayFiring {
-            firing_id: id.get(),
-            rule_ordinal: rule,
+        waves.entry(wave).or_default().push(ReplayFiring {
             replay_name: rule_entry.replay_name.clone(),
             bindings: bindings.into_boxed_slice(),
         });
@@ -1352,11 +1318,9 @@ fn build_owned(
         .into_iter()
         .map(ReplayEvent::Source)
         .collect::<Vec<_>>();
-    for (wave, (position, mut firings)) in waves {
-        firings.sort_unstable_by_key(|firing| firing.firing_id);
+    for (wave, firings) in waves {
         events.push(ReplayEvent::Wave(ReplayWave {
             wave,
-            position,
             aliases: aliases_by_wave
                 .remove(&wave)
                 .unwrap_or_default()
@@ -1403,29 +1367,6 @@ fn build_owned(
     events.sort_by_key(ReplayEvent::chronology_key);
 
     let stats = ReplayIrStats {
-        setup_commands: setup
-            .iter()
-            .filter(|entry| matches!(entry.kind, ReplaySetupKind::Command(_)))
-            .count() as u64,
-        logical_sources: slice.sources.len() as u64,
-        closed_sources: sources.len() as u64,
-        source_events: events
-            .iter()
-            .filter(|event| matches!(event, ReplayEvent::Source(_)))
-            .count() as u64,
-        input_rows: events
-            .iter()
-            .filter(|event| {
-                matches!(
-                    event,
-                    ReplayEvent::Source(ReplaySource {
-                        kind: ReplaySourceKind::InputRow { .. },
-                        ..
-                    })
-                )
-            })
-            .count() as u64,
-        terms: term_nodes.len() as u64,
         aliases: next_alias as u64,
         firings: events
             .iter()
@@ -1437,10 +1378,6 @@ fn build_owned(
         waves: events
             .iter()
             .filter(|event| matches!(event, ReplayEvent::Wave(_)))
-            .count() as u64,
-        checks: events
-            .iter()
-            .filter(|event| matches!(event, ReplayEvent::Check(_)))
             .count() as u64,
     };
     Ok(ReplayProgram {
@@ -2277,7 +2214,21 @@ mod tests {
         );
         let slice = slice_all_checks(&egraph).unwrap();
         let ir = build_replay_program(&egraph, &slice).unwrap();
-        assert_eq!(ir.stats.input_rows, 1);
+        assert_eq!(
+            ir.events
+                .iter()
+                .filter(|event| {
+                    matches!(
+                        event,
+                        ReplayEvent::Source(ReplaySource {
+                            kind: ReplaySourceKind::InputRow { .. },
+                            ..
+                        })
+                    )
+                })
+                .count(),
+            1
+        );
         let selected = ir.events.iter().find_map(|event| match event {
             ReplayEvent::Source(ReplaySource {
                 source: OwnedSourceRef::InputRow { line, .. },
