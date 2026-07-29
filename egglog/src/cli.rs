@@ -35,13 +35,13 @@ struct Args {
     mode: RunMode,
     /// The file names for the egglog files to run
     inputs: Vec<PathBuf>,
-    /// Serializes the egraph for each egglog file as JSON
+    /// Serializes after each input, or once for the final replay graph when slicing
     #[clap(long)]
     to_json: bool,
-    /// Serializes the egraph for each egglog file as a dot file
+    /// Writes DOT after each input, or once for the final replay graph when slicing
     #[clap(long)]
     to_dot: bool,
-    /// Serializes the egraph for each egglog file as an SVG
+    /// Writes SVG after each input, or once for the final replay graph when slicing
     #[clap(long)]
     to_svg: bool,
     /// Splits the serialized egraph into primitives and non-primitives
@@ -174,19 +174,13 @@ where
             let filename = Some(input.to_str().unwrap().to_owned());
             let parsed = egraph
                 .parse_program(filename, &program)
-                .unwrap_or_else(|error| {
-                    log::error!("{error}");
-                    std::process::exit(1);
-                });
-            if let Err(error) = egraph.run_program(parsed) {
-                log::error!("{error}");
-                std::process::exit(1);
-            }
+                .unwrap_or_else(|error| exit_with_command_error(error, args.mode));
+            egraph
+                .run_program(parsed)
+                .unwrap_or_else(|error| exit_with_command_error(error, args.mode));
         }
-        let commands = crate::slicing::slice_all_checks(&egraph).unwrap_or_else(|error| {
-            log::error!("{error}");
-            std::process::exit(1);
-        });
+        let commands = crate::slicing::slice_all_checks(&egraph)
+            .unwrap_or_else(|error| exit_with_command_error(error, args.mode));
         if let Some(path) = &args.slice_output {
             let rendered = crate::slicing::render_commands(&commands);
             std::fs::write(path, &rendered).unwrap_or_else(|error| {
@@ -221,6 +215,8 @@ where
             }
         }
         if args.to_json || args.to_dot || args.to_svg {
+            // A slice spans every input. Serialize its final replay graph once;
+            // the last path continues to supply the output-file stem.
             serialize_egraph(
                 &egraph,
                 args.inputs
@@ -490,6 +486,11 @@ where
         writeln!(output, "(error)")?;
     }
     Ok(Some(error))
+}
+
+fn exit_with_command_error(error: Error, mode: RunMode) -> ! {
+    let _ = command_error(error, io::stdout(), mode);
+    std::process::exit(1)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]

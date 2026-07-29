@@ -148,6 +148,18 @@ fn slice_spans_multiple_input_files() {
 }
 
 #[test]
+fn sliced_serialization_help_describes_the_final_replay_graph() {
+    let output = egglog().arg("--help").output().unwrap();
+    assert_success(&output, "CLI help");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        stdout.matches("final replay graph when slicing").count(),
+        3,
+        "serialization help did not describe sliced multi-input behavior:\n{stdout}"
+    );
+}
+
+#[test]
 fn slice_composes_with_execution_modes() {
     let directory = TestDir::new();
     for (name, flags) in [
@@ -198,6 +210,67 @@ fn slice_output_composes_without_requesting_replay() {
         .unwrap();
     assert_success(&output, "naive output-only slice");
     assert!(artifact.exists());
+}
+
+#[test]
+fn source_proof_commands_fail_closed_before_sliced_proof_replay() {
+    let directory = TestDir::new();
+    let prefix = r#"
+        (relation R (i64))
+        (R 1)
+        (check (R 1))
+    "#;
+    let diagnostic = "trace capture does not support source `prove` or `prove-exists` commands";
+
+    for (source_name, source_tail) in [
+        ("prove", "(prove (R 1))"),
+        ("prove-exists", "(prove-exists Witness)"),
+    ] {
+        for proof_mode in ["--proofs", "--proof-testing"] {
+            let program = directory
+                .path()
+                .join(format!("{source_name}-{}.egg", &proof_mode[2..]));
+            let artifact = program.with_extension("slice.egg");
+            std::fs::write(&program, format!("{prefix}\n{source_tail}\n")).unwrap();
+
+            let output = egglog()
+                .args(["--slice", "--mode", "interactive", proof_mode])
+                .arg("--slice-output")
+                .arg(&artifact)
+                .arg(&program)
+                .output()
+                .unwrap();
+            assert_eq!(output.status.code(), Some(1));
+            assert_eq!(String::from_utf8_lossy(&output.stdout), "(error)\n");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains(diagnostic),
+                "missing controlled diagnostic for {source_name} {proof_mode}:\n{stderr}"
+            );
+            assert!(!stderr.contains("rule-origin catalog"));
+            assert!(!stderr.contains("panicked at"));
+            assert!(
+                !artifact.exists(),
+                "unsupported capture published an artifact"
+            );
+        }
+    }
+}
+
+#[test]
+fn interactive_slice_parse_errors_use_the_normal_protocol_frame() {
+    let directory = TestDir::new();
+    let program = directory.path().join("parse-error.egg");
+    std::fs::write(&program, "(relation R (").unwrap();
+
+    let output = egglog()
+        .args(["--slice", "--mode", "interactive"])
+        .arg(program)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "(error)\n");
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("panicked at"));
 }
 
 #[test]

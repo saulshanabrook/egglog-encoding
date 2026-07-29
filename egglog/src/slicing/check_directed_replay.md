@@ -405,6 +405,13 @@ existing grounded executor does not expose that commit-time carrier, so trace
 capture rejects the schedule instead of synthesizing premise identities or
 recording its effects as source facts.
 
+Source-authored `prove` and `prove-exists` commands are also rejected before
+resolution. Successful `check` commands are the only slice roots; proof
+generation is an independent replay mode, not a second kind of captured root.
+Rejecting the source commands before `prove` expands into a rule keeps that
+boundary explicit and prevents its generated rule from entering the capture
+catalog.
+
 `--slice-output PATH` captures and slices, renders the returned commands, then
 writes that source directly to `PATH`. By itself it does not replay the
 artifact. The write is an ordinary direct filesystem write: there is no

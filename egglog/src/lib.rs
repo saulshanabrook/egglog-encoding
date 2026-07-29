@@ -4807,6 +4807,9 @@ impl EGraph {
                     let unsupported = match &command {
                         Command::Fail(_, _) => Some("nested fail commands"),
                         Command::Push(_) | Command::Pop(_, _) => Some("push/pop state"),
+                        Command::Prove(..) | Command::ProveExists(..) => {
+                            Some("source `prove` or `prove-exists` commands")
+                        }
                         _ => None,
                     };
                     if let Some(unsupported) = unsupported {
