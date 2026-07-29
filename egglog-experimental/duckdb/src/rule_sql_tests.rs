@@ -774,7 +774,7 @@ fn unsupported_rule_ir_fails_closed_before_allocating_an_id() -> Result<()> {
             .add_rule(multiple)
             .unwrap_err()
             .to_string()
-            .contains("exactly one Set")
+            .contains("unsupported action language")
     );
 
     let mut non_set_actions = Vec::new();
@@ -800,15 +800,6 @@ fn unsupported_rule_ir_fails_closed_before_allocating_an_id() -> Result<()> {
             ty: ColumnTy::Id,
         },
         key.clone(),
-    ));
-    non_set_actions.push(GenericCoreAction::Change(
-        Span::Panic,
-        egglog_ast::generic_ast::Change::Delete,
-        RuleActionCall::Table {
-            id: source,
-            name: "source".into(),
-        },
-        vec![key.clone()],
     ));
     non_set_actions.push(GenericCoreAction::Union(Span::Panic, key.clone(), key));
     non_set_actions.push(GenericCoreAction::Panic(

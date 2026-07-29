@@ -156,13 +156,15 @@ relations.
 
 The five workloads' typed schemas and rule shapes are representable at the
 current backend SPI. This is not a claim that checkpoint 1 executes the full
-programs: production `RuleSpec` lowering admits only nonempty Live table bodies
-with typed variables/literals and exactly one Set into a one-output
-`MergeFn::Old` or `MergeFn::AssertEq` target. The reduced Old subset passes the
-Math and Pointer differentials described above. One-output AssertEq now checks
-intra-stage and existing-row conflicts set-wise in DuckDB before ordinal
-consolidation; equal duplicates remain idempotent. Ordinary function tables
-have no primary/unique constraints, singleton column, or ART indexes.
+programs. Production direct `RuleSpec` lowering now admits nonempty Live table
+bodies with typed variables/literals and either exactly one supported Set, a
+nonempty Delete-only table head, or exactly one complete-row body-bound
+Subsume. It also admits the exact structural path-compression vertical below.
+The reduced Old subset passes the Math and Pointer differentials described
+above. One-output AssertEq checks intra-stage and existing-row conflicts
+set-wise in DuckDB before ordinal consolidation; equal duplicates remain
+idempotent. Ordinary function tables have no primary/unique constraints,
+singleton column, or ART indexes.
 
 Table registration now retains schema, output and identity counts, default,
 the complete recursively validated merge tree, subsumption, and name.
@@ -171,10 +173,10 @@ register as explicitly deferred capabilities; native input and one-Set rules
 reject a write to them during preflight. This lets all five proof-mode public
 paths register their common 23-table prefix (21 AssertEq, one Old, and one
 two-output identity Block) without claiming the deferred Block is executable.
-The first remaining public failure is the generated `uf_path_compress` rule,
-whose four-action head and `!=` primitive are intentionally outside this
-slice. The static census still reveals no dynamic `UnstableFn`
-construction/application, so it remains schema-only deferred.
+The current public boundary is a generated rebuild rule requesting `ReadMode::All`;
+the direct compiler still admits only Live body reads. The static census still
+reveals no dynamic `UnstableFn` construction/application, so it remains
+schema-only deferred.
 
 The source programs' ordinary scalar declarations use `Id`, `Unit`, `bool`,
 `i64`, `f64`, and `String`, but that was not the complete proof-mode storage
@@ -278,3 +280,45 @@ the same later fail-closed boundary:
 Fresh wall times were Math 0.286s, Eggcc 0.292s, Pointer 0.251s, Hardboiled
 0.317s, and Luminal 0.245s. These are boundary-probe times, not workload
 benchmarks or a performance claim.
+
+### Native direct cleanup slice
+
+The direct staged plan now stores an ordered typed effect list. Admission is
+source- and name-independent: a Delete-only head may contain one or more table
+Deletes with exact typed keys, including a nullary key and a target whose merge
+is deferred. A Subsume head must contain exactly one action, target a
+`can_subsume` table, and have an identical-key Live body atom from which the
+complete typed pre-wave row can be staged. Mixed heads, primitive targets,
+globals, malformed/unbound variables, and naked Subsume remain fail-closed
+before RuleId allocation.
+
+All scheduled stages materialize before effects. The executor then applies all
+Deletes in schedule/action order, all existing Set/conflict effects, and all
+Subsumes. Subsume first marks any current live row—thereby preserving a
+same-wave Set value—and then restores a missing row from its staged pre-wave
+tuple so Delete+Subsume ends present and subsumed. Rust observes statement
+results only as scalar counts. Delete/Subsume transitions remain zero in Set
+insert telemetry.
+
+Physical and report changes are tracked separately. A real Delete advances the
+DuckDB generation but reports `changed=false`, matching the current Reference
+backend; a Set insert or Live-to-Subsumed transition advances generation and
+reports true. Rows, flags, generation, scratch tables, watermarks, and run
+identity share one transaction, while `fresh_id` remains untouched.
+
+The focused nonbundled library gate passes 48/48 tests. Cleanup canaries include
+Reference pure-Delete reporting, equal-row reinsertion freshness, nullary,
+mixed scalar/ID, hostile-literal, and synthetic 27-key Deletes, duplicate
+same-target actions, deferred and already-subsumed targets, stable pre-wave
+visibility, both schedule orders around Delete/Set, complete multi-value
+Subsume, Delete+Subsume fallback, post-Set value preservation, late AssertEq
+rollback, scratch cleanup, fresh-counter stability, and rejection RuleId
+nonconsumption.
+
+After a fresh nonbundled feature build, all five capped public proof-mode probes
+registered through both generated Delete and Subsume cleanup companions and
+stopped at the same later fail-closed boundary:
+`DuckDB rule @rebuild_rule requests All; only Live table reads are supported`.
+Fresh repaired-artifact wall times were Math 0.60s, Eggcc 0.50s, Pointer 0.53s,
+Hardboiled 0.58s, and Luminal 0.48s. These are boundary probes, not complete
+workloads or a performance claim.

@@ -3,13 +3,13 @@
 //!
 //! Function rows live only in typed DuckDB tables. The backend implements a
 //! deliberately closed production [`RuleSpec`] subset:
-//! Live table atoms with typed variables/literals and one table Set into a
-//! one-output `MergeFn::Old` or `MergeFn::AssertEq` target, plus the structural
-//! two-atom union-find path rule and its typed identity-guarded merge Block.
-//! Path matches, effects, proof constructors, fresh allocation, and recursive
-//! merge candidates execute through staged DuckDB SQL. Unsupported writes fail
-//! closed even though their complete configurations remain registered for
-//! later lowering.
+//! Live table atoms with typed variables/literals and either one table Set, a
+//! nonempty Delete-only head, or one complete-row body-bound Subsume, plus the
+//! structural two-atom union-find path rule and its typed identity-guarded
+//! merge Block. Matches, phased cleanup effects, proof constructors, fresh
+//! allocation, and recursive merge candidates execute through staged DuckDB
+//! SQL. Unsupported writes fail closed even though their complete
+//! configurations remain registered for later lowering.
 
 use std::any::Any;
 use std::sync::{Arc, Mutex};
@@ -23,6 +23,8 @@ use egglog_backend_trait::{
 use egglog_core_relations::Database;
 use egglog_numeric_id::NumericId;
 
+#[cfg(test)]
+mod cleanup_effect_tests;
 mod path_compress;
 #[cfg(test)]
 mod path_compress_tests;
@@ -104,8 +106,9 @@ impl EGraph {
         &self.last_rule.matched_rows
     }
 
-    /// Rows installed per scheduled rule in the most recent bounded run.
-    /// Direct rules report target-table inserts. Path-compression rules report
+    /// Set rows installed per scheduled rule in the most recent bounded run.
+    /// Delete and Subsume rules report zero rather than laundering physical
+    /// cleanup transitions into insert telemetry. Path-compression rules report
     /// only head Trans inserts, not recursive UF, Sym, or Trans effects.
     pub fn last_rule_insert_counts(&self) -> &[usize] {
         &self.last_rule.inserted_rows

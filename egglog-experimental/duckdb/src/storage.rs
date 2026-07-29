@@ -30,9 +30,9 @@ pub(crate) enum ScalarSqlType {
     Rational,
 }
 
-/// Whether a registered table may currently be written by native input or the
-/// production one-Set rule compiler. Every table retains its full merge plan;
-/// this enum is only an explicit execution capability.
+/// Whether a registered table may currently be merge-written by native input
+/// or a direct Set. Key deletion and complete-row subsumption do not invoke a
+/// table's merge plan and therefore admit deferred capabilities independently.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum WriteCapability {
     KeepOld,
@@ -926,7 +926,7 @@ impl Storage {
         let mut sql_log = Vec::new();
         let mut stage_names = Vec::with_capacity(scheduled.len());
         let mut matched_rows = Vec::with_capacity(scheduled.len());
-        let mut inserted_rows = Vec::with_capacity(scheduled.len());
+        let mut inserted_rows = vec![0; scheduled.len()];
         let mut statement_count = 0;
 
         let execute = (|| -> Result<(u64, bool)> {
@@ -942,6 +942,7 @@ impl Storage {
             // their contents are never mirrored or enumerated in Rust.
             for (schedule_index, (rule, watermark)) in scheduled.iter().enumerate() {
                 let stage = format!("egglog_rule_stage_{run}_{schedule_index}");
+                stage_names.push(stage.clone());
                 let create = rule.materialize_sql(&stage, *watermark);
                 transaction.execute(&create, [])?;
                 #[cfg(test)]
@@ -955,11 +956,29 @@ impl Storage {
                 #[cfg(test)]
                 sql_log.push(count_sql);
                 statement_count += 1;
-                stage_names.push(stage);
             }
 
-            let mut changed = false;
+            // Reference applies every scheduled Delete before any Set/merge,
+            // independent of rule schedule order. A real Delete advances the
+            // physical freshness generation but deliberately does not set the
+            // Reference-compatible public `changed` report.
+            let mut physical_changed = false;
+            let mut report_changed = false;
             for ((rule, _), stage) in scheduled.iter().zip(&stage_names) {
+                for delete in rule.delete_sql(stage) {
+                    let deleted = transaction.execute(&delete, [])?;
+                    physical_changed |= deleted != 0;
+                    #[cfg(test)]
+                    sql_log.push(delete);
+                    statement_count += 1;
+                }
+            }
+
+            // Set/conflict effects retain schedule order so a later AssertEq
+            // observes an earlier scheduled insert atomically.
+            for (schedule_index, ((rule, _), stage)) in
+                scheduled.iter().zip(&stage_names).enumerate()
+            {
                 if let Some(conflict_sql) = rule.conflict_sql(stage) {
                     let conflict = transaction.query_row(&conflict_sql, [], |row| row.get(0))?;
                     #[cfg(test)]
@@ -969,16 +988,31 @@ impl Storage {
                         bail!("illegal MergeFn::AssertEq conflict in scheduled rule");
                     }
                 }
-                let insert = rule.insert_sql(stage, generation);
-                let inserted = transaction.execute(&insert, [])?;
-                changed |= inserted != 0;
-                inserted_rows.push(inserted);
-                #[cfg(test)]
-                sql_log.push(insert);
-                statement_count += 1;
+                if let Some(insert) = rule.insert_sql(stage, generation) {
+                    let inserted = transaction.execute(&insert, [])?;
+                    physical_changed |= inserted != 0;
+                    report_changed |= inserted != 0;
+                    inserted_rows[schedule_index] = inserted;
+                    #[cfg(test)]
+                    sql_log.push(insert);
+                    statement_count += 1;
+                }
             }
 
-            if changed {
+            // Subsume last. UPDATE preserves any same-wave Set value; INSERT
+            // restores the staged pre-wave row after a same-wave Delete.
+            for ((rule, _), stage) in scheduled.iter().zip(&stage_names) {
+                for subsume in rule.subsume_sql(stage, generation) {
+                    let transitioned = transaction.execute(&subsume, [])?;
+                    physical_changed |= transitioned != 0;
+                    report_changed |= transitioned != 0;
+                    #[cfg(test)]
+                    sql_log.push(subsume);
+                    statement_count += 1;
+                }
+            }
+
+            if physical_changed {
                 let update = format!(
                     "UPDATE {COUNTERS_TABLE} SET value = value + 1 WHERE name = 'generation'"
                 );
@@ -995,15 +1029,17 @@ impl Storage {
                 sql_log.push(drop);
                 statement_count += 1;
             }
-            Ok((generation, changed))
+            Ok((generation, report_changed))
         })();
 
         let (watermark, changed) = match execute {
             Ok(result) => result,
             Err(error) => {
-                if let Err(rollback) = transaction.rollback() {
+                let rollback_error = transaction.rollback().err();
+                let cleanup_error = cleanup_scratch(&state.connection, &stage_names).err();
+                if rollback_error.is_some() || cleanup_error.is_some() {
                     return Err(anyhow!(
-                        "DuckDB rule transaction failed: {error:#}; rollback also failed: {rollback}"
+                        "DuckDB rule transaction failed: {error:#}; rollback: {rollback_error:?}; scratch cleanup: {cleanup_error:?}"
                     ));
                 }
                 return Err(error);

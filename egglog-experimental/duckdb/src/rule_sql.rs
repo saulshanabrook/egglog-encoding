@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 
 use anyhow::{Result, anyhow, bail};
 use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
+use egglog_ast::generic_ast::Change;
 use egglog_backend_trait::{
     BaseValues, ColumnTy, FunctionId, ReadMode, RuleActionCall, RuleBodyCall, RuleSpec, RuleValue,
     RuleVar,
@@ -20,8 +21,8 @@ use crate::path_compress::{
     PathCompressionPlan, compile_path_compression, looks_like_path_compression,
 };
 use crate::storage::{
-    ScalarSqlType, Storage, TableInfo, WriteCapability, assert_eq_conflict_sql, qualified_columns,
-    sql_table, visible_columns,
+    ScalarSqlType, Storage, TableInfo, WriteCapability, assert_eq_conflict_sql, sql_table,
+    visible_columns,
 };
 
 #[derive(Clone, Debug)]
@@ -45,15 +46,41 @@ enum CompiledRuleKind {
 
 #[derive(Clone, Debug)]
 struct DirectRule {
-    target: FunctionId,
-    target_arity: usize,
-    target_n_keys: usize,
-    target_write_capability: WriteCapability,
+    effects: Vec<DirectEffect>,
     select_expressions: Vec<String>,
     from: Vec<String>,
     predicates: Vec<String>,
     freshness_columns: Vec<String>,
     order_columns: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+enum DirectEffect {
+    Set {
+        target: FunctionId,
+        target_arity: usize,
+        target_n_keys: usize,
+        target_write_capability: WriteCapability,
+        column_offset: usize,
+    },
+    Delete {
+        target: FunctionId,
+        target_n_keys: usize,
+        column_offset: usize,
+    },
+    Subsume {
+        target: FunctionId,
+        target_arity: usize,
+        target_n_keys: usize,
+        column_offset: usize,
+    },
+}
+
+#[derive(Clone, Debug)]
+struct BodyTable {
+    id: FunctionId,
+    alias: String,
+    args: Vec<GenericAtomTerm<RuleVar, RuleValue>>,
 }
 
 impl CompiledRule {
@@ -86,55 +113,91 @@ impl CompiledRule {
         } else {
             predicates.join(" AND ")
         };
-        let projection = direct
+        let mut projection = direct
             .select_expressions
             .iter()
             .enumerate()
             .map(|(column, expression)| format!("{expression} AS c{column}"))
-            .collect::<Vec<_>>()
-            .join(", ");
+            .collect::<Vec<_>>();
+        projection.push(format!(
+            "row_number() OVER (ORDER BY {}) AS __match_ordinal",
+            direct.order_columns.join(", ")
+        ));
         format!(
             "CREATE TEMP TABLE {stage} AS
-             SELECT {projection},
-                    row_number() OVER (ORDER BY {}) AS __match_ordinal
+             SELECT {}
              FROM {}
              WHERE {predicate}",
-            direct.order_columns.join(", "),
+            projection.join(", "),
             direct.from.join(" CROSS JOIN ")
         )
     }
 
-    pub(crate) fn insert_sql(&self, stage: &str, generation: u64) -> String {
+    pub(crate) fn delete_sql(&self, stage: &str) -> Vec<String> {
         let CompiledRuleKind::Direct(direct) = &self.kind else {
             unreachable!("path-compression rules use the staged queue executor");
+        };
+        direct
+            .effects
+            .iter()
+            .filter_map(|effect| {
+                let DirectEffect::Delete {
+                    target,
+                    target_n_keys,
+                    column_offset,
+                } = effect
+                else {
+                    return None;
+                };
+                let predicate =
+                    stage_key_equality("existing", "staged", *column_offset, *target_n_keys);
+                Some(format!(
+                    "DELETE FROM {} AS existing
+                     WHERE EXISTS (SELECT 1 FROM {stage} AS staged WHERE {predicate})",
+                    sql_table(*target)
+                ))
+            })
+            .collect()
+    }
+
+    pub(crate) fn insert_sql(&self, stage: &str, generation: u64) -> Option<String> {
+        let CompiledRuleKind::Direct(direct) = &self.kind else {
+            unreachable!("path-compression rules use the staged queue executor");
+        };
+        let DirectEffect::Set {
+            target,
+            target_arity,
+            target_n_keys,
+            column_offset,
+            ..
+        } = direct.effects.first()?
+        else {
+            return None;
         };
         debug_assert!(
             stage
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
         );
-        let partition = if direct.target_n_keys == 0 {
+        let partition = if *target_n_keys == 0 {
             "ORDER BY staged.__match_ordinal".to_string()
         } else {
             format!(
                 "PARTITION BY {} ORDER BY staged.__match_ordinal",
-                qualified_columns("staged", direct.target_n_keys)
+                qualified_column_range("staged", *column_offset, *target_n_keys)
             )
         };
-        let no_existing = if direct.target_n_keys == 0 {
-            format!("NOT EXISTS (SELECT 1 FROM {})", sql_table(direct.target))
+        let no_existing = if *target_n_keys == 0 {
+            format!("NOT EXISTS (SELECT 1 FROM {})", sql_table(*target))
         } else {
-            let equality = (0..direct.target_n_keys)
-                .map(|column| format!("existing.c{column} IS NOT DISTINCT FROM ranked.c{column}"))
-                .collect::<Vec<_>>()
-                .join(" AND ");
+            let equality = stage_key_equality("existing", "ranked", *column_offset, *target_n_keys);
             format!(
                 "NOT EXISTS (SELECT 1 FROM {} AS existing WHERE {equality})",
-                sql_table(direct.target)
+                sql_table(*target)
             )
         };
 
-        format!(
+        Some(format!(
             "INSERT INTO {} ({}, __generation, __subsumed)
              SELECT {}, CAST('{generation}' AS UBIGINT), FALSE
              FROM (
@@ -143,18 +206,93 @@ impl CompiledRule {
                  FROM {stage} AS staged
              ) AS ranked
              WHERE ranked.__key_rank = 1 AND {no_existing}",
-            sql_table(direct.target),
-            visible_columns(direct.target_arity),
-            qualified_columns("ranked", direct.target_arity),
-        )
+            sql_table(*target),
+            visible_columns(*target_arity),
+            qualified_column_range("ranked", *column_offset, *target_arity),
+        ))
     }
 
     pub(crate) fn conflict_sql(&self, stage: &str) -> Option<String> {
         let CompiledRuleKind::Direct(direct) = &self.kind else {
             return None;
         };
-        (direct.target_write_capability == WriteCapability::AssertEq)
-            .then(|| assert_eq_conflict_sql(direct.target, direct.target_n_keys, stage))
+        let DirectEffect::Set {
+            target,
+            target_n_keys,
+            target_write_capability,
+            column_offset,
+            ..
+        } = direct.effects.first()?
+        else {
+            return None;
+        };
+        debug_assert_eq!(*column_offset, 0);
+        (*target_write_capability == WriteCapability::AssertEq)
+            .then(|| assert_eq_conflict_sql(*target, *target_n_keys, stage))
+    }
+
+    pub(crate) fn subsume_sql(&self, stage: &str, generation: u64) -> Vec<String> {
+        let CompiledRuleKind::Direct(direct) = &self.kind else {
+            unreachable!("path-compression rules use the staged queue executor");
+        };
+        direct
+            .effects
+            .iter()
+            .filter_map(|effect| {
+                let DirectEffect::Subsume {
+                    target,
+                    target_arity,
+                    target_n_keys,
+                    column_offset,
+                } = effect
+                else {
+                    return None;
+                };
+                let equality =
+                    stage_key_equality("existing", "staged", *column_offset, *target_n_keys);
+                let partition = if *target_n_keys == 0 {
+                    "ORDER BY staged.__match_ordinal".to_string()
+                } else {
+                    format!(
+                        "PARTITION BY {} ORDER BY staged.__match_ordinal",
+                        qualified_column_range("staged", *column_offset, *target_n_keys)
+                    )
+                };
+                let no_existing = if *target_n_keys == 0 {
+                    format!("NOT EXISTS (SELECT 1 FROM {})", sql_table(*target))
+                } else {
+                    let equality =
+                        stage_key_equality("existing", "ranked", *column_offset, *target_n_keys);
+                    format!(
+                        "NOT EXISTS (SELECT 1 FROM {} AS existing WHERE {equality})",
+                        sql_table(*target)
+                    )
+                };
+                Some(vec![
+                    format!(
+                        "UPDATE {} AS existing
+                         SET __generation = CAST('{generation}' AS UBIGINT), __subsumed = TRUE
+                         WHERE existing.__subsumed = FALSE
+                           AND EXISTS (SELECT 1 FROM {stage} AS staged WHERE {equality})",
+                        sql_table(*target)
+                    ),
+                    format!(
+                        "INSERT INTO {} ({}, __generation, __subsumed)
+                         SELECT {}, CAST('{generation}' AS UBIGINT), TRUE
+                         FROM (
+                             SELECT staged.*,
+                                    row_number() OVER ({partition}) AS __key_rank
+                             FROM {stage} AS staged
+                         ) AS ranked
+                         WHERE ranked.__key_rank = 1 AND {no_existing}",
+                        sql_table(*target),
+                        visible_columns(*target_arity),
+                        qualified_column_range("ranked", *column_offset, *target_arity),
+                    ),
+                ])
+            })
+            .flatten()
+            .collect()
     }
 
     pub(crate) fn path_compression(&self) -> Option<&PathCompressionPlan> {
@@ -180,7 +318,11 @@ pub(crate) fn compile_rule(
     base_values: &BaseValues,
     rule: RuleSpec,
 ) -> Result<CompiledRule> {
-    if looks_like_path_compression(&rule) {
+    // A Delete-only head is already a complete direct language regardless of
+    // body/head cardinality. Give it priority over the path compiler's cheap
+    // arity discriminator so a three-body/four-Delete rule cannot be captured
+    // as a malformed path candidate.
+    if looks_like_path_compression(&rule) && !is_delete_only(&rule) {
         let seminaive = rule.seminaive;
         let plan = compile_path_compression(storage, base_values, &rule)?;
         return Ok(CompiledRule {
@@ -191,19 +333,12 @@ pub(crate) fn compile_rule(
     if rule.core.body.atoms.is_empty() {
         bail!("DuckDB rule `{}` has an empty body", rule.name);
     }
-    if rule.core.head.0.len() != 1 {
-        bail!(
-            "DuckDB rule `{}` must contain exactly one Set action, found {} actions",
-            rule.name,
-            rule.core.head.0.len()
-        );
-    }
-
     let mut bindings = BTreeMap::<u32, VariableBinding>::new();
     let mut from = Vec::with_capacity(rule.core.body.atoms.len());
     let mut predicates = Vec::new();
     let mut freshness_columns = Vec::with_capacity(rule.core.body.atoms.len());
     let mut order_columns = Vec::new();
+    let mut body_tables = Vec::with_capacity(rule.core.body.atoms.len());
 
     for (atom_index, atom) in rule.core.body.atoms.iter().enumerate() {
         let RuleBodyCall::Table { id, read } = &atom.head else {
@@ -241,6 +376,11 @@ pub(crate) fn compile_rule(
         freshness_columns.push(format!("{alias}.__generation"));
         order_columns.push(format!("{alias}.__generation"));
         order_columns.extend((0..info.arity()).map(|column| format!("{alias}.c{column}")));
+        body_tables.push(BodyTable {
+            id: *id,
+            alias: alias.clone(),
+            args: atom.args.clone(),
+        });
 
         for (column, (term, &expected)) in atom.args.iter().zip(&info.schema).enumerate() {
             let column_expression = format!("{alias}.c{column}");
@@ -288,45 +428,13 @@ pub(crate) fn compile_rule(
         }
     }
 
-    let GenericCoreAction::Set(_, call, arguments, values) = &rule.core.head.0[0] else {
-        bail!(
-            "DuckDB rule `{}` has an unsupported action; exactly one table Set is required",
-            rule.name
-        );
-    };
-    let RuleActionCall::Table { id: target, .. } = call else {
-        bail!(
-            "DuckDB rule `{}` attempts to set a primitive; exactly one table Set is required",
-            rule.name
-        );
-    };
-    let target_info = storage.table_info(*target).map_err(|error| {
-        anyhow!(
-            "DuckDB rule `{}` references an invalid target table {}: {error:#}",
-            rule.name,
-            target.rep()
-        )
-    })?;
-    validate_target(&rule.name, &target_info, arguments.len(), values.len())?;
-
-    let mut select_expressions = Vec::with_capacity(target_info.arity());
-    for (term, &expected) in arguments.iter().chain(values).zip(&target_info.schema) {
-        select_expressions.push(head_expression(
-            &rule.name,
-            base_values,
-            &bindings,
-            term,
-            expected,
-        )?);
-    }
+    let (effects, select_expressions) =
+        compile_direct_effects(storage, base_values, &rule, &bindings, &body_tables)?;
 
     Ok(CompiledRule {
         seminaive: rule.seminaive,
         kind: CompiledRuleKind::Direct(DirectRule {
-            target: *target,
-            target_arity: target_info.arity(),
-            target_n_keys: target_info.n_keys,
-            target_write_capability: target_info.write_capability,
+            effects,
             select_expressions,
             from,
             predicates,
@@ -334,6 +442,212 @@ pub(crate) fn compile_rule(
             order_columns,
         }),
     })
+}
+
+fn compile_direct_effects(
+    storage: &Storage,
+    base_values: &BaseValues,
+    rule: &RuleSpec,
+    bindings: &BTreeMap<u32, VariableBinding>,
+    body_tables: &[BodyTable],
+) -> Result<(Vec<DirectEffect>, Vec<String>)> {
+    if rule.core.head.0.is_empty() {
+        bail!("DuckDB rule `{}` has an empty action list", rule.name);
+    }
+
+    if rule.core.head.0.len() == 1
+        && let GenericCoreAction::Set(_, call, arguments, values) = &rule.core.head.0[0]
+    {
+        let RuleActionCall::Table { id: target, .. } = call else {
+            bail!(
+                "DuckDB rule `{}` attempts to set a primitive; exactly one table Set is required",
+                rule.name
+            );
+        };
+        let target_info = action_table_info(storage, &rule.name, *target)?;
+        validate_target(&rule.name, &target_info, arguments.len(), values.len())?;
+        let mut select_expressions = Vec::with_capacity(target_info.arity());
+        for (term, &expected) in arguments.iter().chain(values).zip(&target_info.schema) {
+            select_expressions.push(head_expression(
+                &rule.name,
+                base_values,
+                bindings,
+                term,
+                expected,
+            )?);
+        }
+        return Ok((
+            vec![DirectEffect::Set {
+                target: *target,
+                target_arity: target_info.arity(),
+                target_n_keys: target_info.n_keys,
+                target_write_capability: target_info.write_capability,
+                column_offset: 0,
+            }],
+            select_expressions,
+        ));
+    }
+
+    if is_delete_only(rule) {
+        let mut effects = Vec::with_capacity(rule.core.head.0.len());
+        let mut select_expressions = Vec::new();
+        for action in &rule.core.head.0 {
+            let GenericCoreAction::Change(_, Change::Delete, call, arguments) = action else {
+                unreachable!();
+            };
+            let RuleActionCall::Table { id: target, .. } = call else {
+                bail!(
+                    "DuckDB rule `{}` attempts to delete a primitive; Delete requires a table target",
+                    rule.name
+                );
+            };
+            let target_info = action_table_info(storage, &rule.name, *target)?;
+            validate_change_key(&rule.name, &target_info, arguments)?;
+            let column_offset = select_expressions.len();
+            for (term, &expected) in arguments.iter().zip(&target_info.schema) {
+                select_expressions.push(head_expression(
+                    &rule.name,
+                    base_values,
+                    bindings,
+                    term,
+                    expected,
+                )?);
+            }
+            effects.push(DirectEffect::Delete {
+                target: *target,
+                target_n_keys: target_info.n_keys,
+                column_offset,
+            });
+        }
+        return Ok((effects, select_expressions));
+    }
+
+    if rule.core.head.0.len() == 1
+        && let GenericCoreAction::Change(_, Change::Subsume, call, arguments) = &rule.core.head.0[0]
+    {
+        let RuleActionCall::Table { id: target, .. } = call else {
+            bail!(
+                "DuckDB rule `{}` attempts to subsume a primitive; Subsume requires a table target",
+                rule.name
+            );
+        };
+        let target_info = action_table_info(storage, &rule.name, *target)?;
+        validate_change_key(&rule.name, &target_info, arguments)?;
+        if !target_info.can_subsume {
+            bail!(
+                "DuckDB rule `{}` target `{}` does not support subsumption",
+                rule.name,
+                target_info.name
+            );
+        }
+        let body = body_tables
+            .iter()
+            .find(|body| {
+                body.id == *target
+                    && body.args[..target_info.n_keys]
+                        .iter()
+                        .zip(arguments)
+                        .all(|(body, action)| same_rule_term(body, action))
+            })
+            .ok_or_else(|| {
+                anyhow!(
+                    "DuckDB rule `{}` Subsume target `{}` requires a complete Live body row with identical keys",
+                    rule.name,
+                    target_info.name
+                )
+            })?;
+        let select_expressions = (0..target_info.arity())
+            .map(|column| format!("{}.c{column}", body.alias))
+            .collect();
+        return Ok((
+            vec![DirectEffect::Subsume {
+                target: *target,
+                target_arity: target_info.arity(),
+                target_n_keys: target_info.n_keys,
+                column_offset: 0,
+            }],
+            select_expressions,
+        ));
+    }
+
+    bail!(
+        "DuckDB rule `{}` has an unsupported action language; expected exactly one Set, a nonempty Delete-only head, or exactly one body-bound Subsume",
+        rule.name
+    )
+}
+
+fn is_delete_only(rule: &RuleSpec) -> bool {
+    !rule.core.head.0.is_empty()
+        && rule
+            .core
+            .head
+            .0
+            .iter()
+            .all(|action| matches!(action, GenericCoreAction::Change(_, Change::Delete, _, _)))
+}
+
+fn action_table_info(storage: &Storage, rule_name: &str, target: FunctionId) -> Result<TableInfo> {
+    storage.table_info(target).map_err(|error| {
+        anyhow!(
+            "DuckDB rule `{rule_name}` references an invalid target table {}: {error:#}",
+            target.rep()
+        )
+    })
+}
+
+fn validate_change_key(
+    rule_name: &str,
+    target: &TableInfo,
+    arguments: &[GenericAtomTerm<RuleVar, RuleValue>],
+) -> Result<()> {
+    if arguments.len() != target.n_keys {
+        bail!(
+            "DuckDB rule `{rule_name}` target `{}` requires {} key term(s), got {}",
+            target.name,
+            target.n_keys,
+            arguments.len()
+        );
+    }
+    Ok(())
+}
+
+fn same_rule_term(
+    lhs: &GenericAtomTerm<RuleVar, RuleValue>,
+    rhs: &GenericAtomTerm<RuleVar, RuleValue>,
+) -> bool {
+    match (lhs, rhs) {
+        (GenericAtomTerm::Var(_, lhs), GenericAtomTerm::Var(_, rhs)) => lhs == rhs,
+        (GenericAtomTerm::Literal(_, lhs), GenericAtomTerm::Literal(_, rhs)) => lhs == rhs,
+        (GenericAtomTerm::Global(_, lhs), GenericAtomTerm::Global(_, rhs)) => lhs == rhs,
+        _ => false,
+    }
+}
+
+fn qualified_column_range(alias: &str, offset: usize, len: usize) -> String {
+    (offset..offset + len)
+        .map(|column| format!("{alias}.c{column}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn stage_key_equality(
+    existing_alias: &str,
+    stage_alias: &str,
+    stage_offset: usize,
+    n_keys: usize,
+) -> String {
+    if n_keys == 0 {
+        return "TRUE".to_string();
+    }
+    (0..n_keys)
+        .map(|column| {
+            format!(
+                "{existing_alias}.c{column} IS NOT DISTINCT FROM {stage_alias}.c{}",
+                stage_offset + column
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" AND ")
 }
 
 fn validate_target(
