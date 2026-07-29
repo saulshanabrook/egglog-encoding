@@ -86,7 +86,7 @@ impl MarkerFixture {
             vec![keys[key_index].clone(), canonical.clone(), uf_payload],
         );
         let inequality = inequality(
-            self.inner.token,
+            self.inner.tokens.neq,
             self.inner.unit,
             keys[key_index].clone(),
             canonical.clone(),
@@ -187,7 +187,7 @@ fn inequality(
         span: Span::Panic,
         head: RuleBodyCall::Primitive {
             id: token,
-            name: "!=".into(),
+            name: "renamed-marker-neq-diagnostic".into(),
             output: ColumnTy::Base(unit),
         },
         args: vec![lhs, rhs, result],
@@ -660,6 +660,8 @@ fn assert_rejected_preserves_rule_id(
     let classified = compile_marker_rekey(
         &fixture.inner.backend.storage,
         fixture.inner.backend.base_values(),
+        &fixture.inner.backend.native_primitives,
+        &fixture.inner.backend.fresh_tokens,
         &rule,
     );
     let classifier_error = classified.unwrap_err().to_string();
@@ -694,6 +696,8 @@ fn assert_fallthrough_preserves_rule_id(fixture: &mut MarkerFixture, rule: RuleS
     let classified = compile_marker_rekey(
         &fixture.inner.backend.storage,
         fixture.inner.backend.base_values(),
+        &fixture.inner.backend.native_primitives,
+        &fixture.inner.backend.fresh_tokens,
         &rule,
     )?;
     assert!(classified.is_none(), "near-shape was captured as a marker");
@@ -723,11 +727,12 @@ fn marker_tri_state_matrix_is_fail_closed_without_consuming_rule_ids() -> Result
 
     let mut primitive = MarkerFixture::one_id("bad-primitive")?;
     let mut rule = primitive.rule("bad-primitive-rule", 0, BodyOrder::UfViewNeq);
-    let RuleBodyCall::Primitive { name, .. } = &mut rule.core.body.atoms[2].head else {
+    let RuleBodyCall::Primitive { id, name, .. } = &mut rule.core.body.atoms[2].head else {
         unreachable!()
     };
-    *name = "opaque-not-inequality".into();
-    assert_rejected_preserves_rule_id(&mut primitive, rule, "requires `!=")?;
+    *id = primitive.inner.tokens.ordering_min;
+    *name = "!=".into();
+    assert_rejected_preserves_rule_id(&mut primitive, rule, "ValueNeq")?;
 
     let mut primitive_output = MarkerFixture::one_id("bad-primitive-output")?;
     let mut rule = primitive_output.rule("bad-primitive-output-rule", 0, BodyOrder::NeqUfView);
@@ -735,7 +740,7 @@ fn marker_tri_state_matrix_is_fail_closed_without_consuming_rule_ids() -> Result
         unreachable!()
     };
     *output = ColumnTy::Id;
-    assert_rejected_preserves_rule_id(&mut primitive_output, rule, "requires `!=")?;
+    assert_rejected_preserves_rule_id(&mut primitive_output, rule, "ValueNeq")?;
 
     let mut primitive_arity = MarkerFixture::one_id("bad-primitive-arity")?;
     let mut rule = primitive_arity.rule("bad-primitive-arity-rule", 0, BodyOrder::ViewUfNeq);
@@ -780,7 +785,7 @@ fn marker_tri_state_matrix_is_fail_closed_without_consuming_rule_ids() -> Result
         unreachable!()
     };
     *call = RuleActionCall::Primitive {
-        id: action_target.inner.token,
+        id: action_target.inner.tokens.neq,
         name: "opaque-non-table-target".into(),
         output: ColumnTy::Base(action_target.inner.unit),
     };
@@ -855,7 +860,7 @@ fn marker_tri_state_matrix_is_fail_closed_without_consuming_rule_ids() -> Result
         n_identity_vals: info.n_identity_vals,
         default: info.default,
         merge: ordered_union(
-            uf_config.inner.token,
+            uf_config.inner.tokens,
             uf_config.inner.label,
             uf_config.inner.string,
             uf_config.inner.unit,
@@ -888,7 +893,7 @@ fn marker_tri_state_matrix_is_fail_closed_without_consuming_rule_ids() -> Result
         n_identity_vals: Some(1),
         default: DefaultVal::Fail,
         merge: ordered_union(
-            orientation.inner.token,
+            orientation.inner.tokens,
             orientation.inner.label,
             orientation.inner.string,
             orientation.inner.unit,
@@ -935,7 +940,7 @@ fn marker_outer_near_shapes_explicitly_fall_through_without_allocating_rule_ids(
         path.inner.unit,
         path.inner.string,
         path.inner.label,
-        path.inner.token,
+        path.inner.tokens,
         path.inner.trans,
         path.inner.uf,
     );
@@ -953,7 +958,7 @@ fn marker_outer_near_shapes_explicitly_fall_through_without_allocating_rule_ids(
         )
         .expect("UF atom");
     atom.head = RuleBodyCall::Primitive {
-        id: container.inner.token,
+        id: container.inner.tokens.neq,
         name: "opaque-container-rebuild".into(),
         output: ColumnTy::Id,
     };
@@ -1014,6 +1019,8 @@ fn marker_outer_near_shapes_explicitly_fall_through_without_allocating_rule_ids(
         compile_marker_rekey(
             &direct.inner.backend.storage,
             direct.inner.backend.base_values(),
+            &direct.inner.backend.native_primitives,
+            &direct.inner.backend.fresh_tokens,
             &rule,
         )?
         .is_none()
@@ -1026,6 +1033,8 @@ fn marker_outer_near_shapes_explicitly_fall_through_without_allocating_rule_ids(
         compile_marker_rekey(
             &standard.backend.storage,
             standard.backend.base_values(),
+            &standard.backend.native_primitives,
+            &standard.backend.fresh_tokens,
             &rule,
         )?
         .is_none()

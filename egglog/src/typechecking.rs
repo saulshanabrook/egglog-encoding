@@ -326,6 +326,26 @@ impl EGraph {
         );
     }
 
+    /// Register a pure primitive whose runtime identity is meaningful to a
+    /// native backend. The primitive definition retains frontend typechecking
+    /// and proof validation; the backend receives only the shared semantic tag
+    /// and supplies the context-specific runtime token.
+    pub(crate) fn add_native_primitive<T>(
+        &mut self,
+        x: T,
+        validator: Option<PrimitiveValidator>,
+        native: NativePrimitive,
+    ) where
+        T: Primitive + Clone,
+    {
+        self.register_per_context(
+            x,
+            validator,
+            PureState::valid_contexts(),
+            move |backend, _x, _ctx| backend.register_native_primitive(native),
+        );
+    }
+
     /// Register a [`WritePrim`]. Pass `None` for the validator if not
     /// using the proof checker.
     pub fn add_write_primitive<T>(&mut self, x: T, validator: Option<PrimitiveValidator>)

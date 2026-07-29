@@ -8,8 +8,8 @@ use egglog_ast::{
 };
 use egglog_backend_trait::{
     Backend, BaseValueId, ColumnTy, DefaultVal, ExternalFunctionId, FunctionConfig, FunctionId,
-    MergeAction, MergeFn, ReadMode, RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec,
-    RuleValue, RuleVar, Value,
+    MergeAction, MergeFn, NativePrimitive, ReadMode, RuleActionCall, RuleBodyCall, RuleId,
+    RuleSetRun, RuleSpec, RuleValue, RuleVar, Value,
 };
 use egglog_core_relations::Boxed;
 use egglog_numeric_id::NumericId;
@@ -29,13 +29,23 @@ pub(crate) enum BodyOrder {
     UfViewNeq,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct NativeTokens {
+    pub(crate) neq: ExternalFunctionId,
+    pub(crate) select_min: ExternalFunctionId,
+    pub(crate) select_max: ExternalFunctionId,
+    pub(crate) ordering_min: ExternalFunctionId,
+    pub(crate) ordering_max: ExternalFunctionId,
+    pub(crate) fresh: ExternalFunctionId,
+}
+
 pub(crate) struct Fixture {
     pub(crate) backend: EGraph,
     pub(crate) unit: BaseValueId,
     pub(crate) string: BaseValueId,
     pub(crate) i64_ty: BaseValueId,
     pub(crate) label: Value,
-    pub(crate) token: ExternalFunctionId,
+    pub(crate) tokens: NativeTokens,
     pub(crate) sym: FunctionId,
     pub(crate) trans: FunctionId,
     pub(crate) congr: FunctionId,
@@ -69,7 +79,14 @@ impl Fixture {
         let label = backend
             .base_values()
             .get(Boxed::new(format!("{prefix}-opaque-fresh-domain")));
-        let token = backend.new_panic("test primitive token must remain declarative".into());
+        let tokens = NativeTokens {
+            neq: backend.register_native_primitive(NativePrimitive::ValueNeq),
+            select_min: backend.register_native_primitive(NativePrimitive::SelectMinPayload),
+            select_max: backend.register_native_primitive(NativePrimitive::SelectMaxPayload),
+            ordering_min: backend.register_native_primitive(NativePrimitive::OrderingMin),
+            ordering_max: backend.register_native_primitive(NativePrimitive::OrderingMax),
+            fresh: backend.register_get_fresh(),
+        };
         let key_types = key_layout(string, i64_ty);
         let unit_value = backend.base_values().get(());
 
@@ -119,7 +136,7 @@ impl Fixture {
             n_identity_vals: Some(1),
             default: DefaultVal::Fail,
             merge: ordered_union(
-                token,
+                tokens,
                 label,
                 string,
                 unit,
@@ -142,7 +159,7 @@ impl Fixture {
                 n_identity_vals: Some(1),
                 default: DefaultVal::Fail,
                 merge: ordered_union(
-                    token,
+                    tokens,
                     label,
                     string,
                     unit,
@@ -169,7 +186,7 @@ impl Fixture {
             n_identity_vals: Some(1),
             default: DefaultVal::Fail,
             merge: ordered_union(
-                token, label, string, unit, unit_value, sym, trans, output_uf, true,
+                tokens, label, string, unit, unit_value, sym, trans, output_uf, true,
             ),
             name: format!("{prefix}-renamed-view"),
             can_subsume: true,
@@ -181,7 +198,7 @@ impl Fixture {
             string,
             i64_ty,
             label,
-            token,
+            tokens,
             sym,
             trans,
             congr,
@@ -251,7 +268,7 @@ impl Fixture {
             ],
         );
         let neq_atom = inequality(
-            self.token,
+            self.tokens.neq,
             self.unit,
             keys[child_index].clone(),
             canonical.clone(),
@@ -269,7 +286,7 @@ impl Fixture {
                 span: Span::Panic,
                 body: Query { atoms },
                 head: GenericCoreActions::new(vec![
-                    fresh_action(self.token, self.string, self.label, fresh.clone()),
+                    fresh_action(self.tokens.fresh, self.string, self.label, fresh.clone()),
                     GenericCoreAction::LetAtomTerm(Span::Panic, alias.clone(), variable(fresh)),
                     GenericCoreAction::Set(
                         Span::Panic,
@@ -357,7 +374,7 @@ impl Fixture {
             vec![identity.clone(), canonical.clone(), edge_payload.clone()],
         );
         let neq_atom = inequality(
-            self.token,
+            self.tokens.neq,
             self.unit,
             identity,
             canonical.clone(),
@@ -373,7 +390,12 @@ impl Fixture {
                 span: Span::Panic,
                 body: Query { atoms },
                 head: GenericCoreActions::new(vec![
-                    fresh_action(self.token, self.string, self.label, sym_fresh.clone()),
+                    fresh_action(
+                        self.tokens.fresh,
+                        self.string,
+                        self.label,
+                        sym_fresh.clone(),
+                    ),
                     GenericCoreAction::LetAtomTerm(
                         Span::Panic,
                         sym_alias.clone(),
@@ -385,7 +407,12 @@ impl Fixture {
                         vec![edge_payload, variable(sym_alias.clone())],
                         vec![unit_literal(&self.backend, self.unit)],
                     ),
-                    fresh_action(self.token, self.string, self.label, trans_fresh.clone()),
+                    fresh_action(
+                        self.tokens.fresh,
+                        self.string,
+                        self.label,
+                        trans_fresh.clone(),
+                    ),
                     GenericCoreAction::LetAtomTerm(
                         Span::Panic,
                         trans_alias.clone(),
@@ -500,7 +527,7 @@ impl Fixture {
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn ordered_union(
-    token: ExternalFunctionId,
+    tokens: NativeTokens,
     label: Value,
     string: BaseValueId,
     unit: BaseValueId,
@@ -510,8 +537,8 @@ pub(crate) fn ordered_union(
     displaced: FunctionId,
     eclass_to_term: bool,
 ) -> MergeFn {
-    let orient = |name: &str| MergeFn::Primitive {
-        id: token,
+    let orient = |id, name: &str| MergeFn::Primitive {
+        id,
         name: name.to_string(),
         input: vec![ColumnTy::Id; 4],
         output: ColumnTy::Id,
@@ -522,16 +549,16 @@ pub(crate) fn ordered_union(
             MergeFn::NewCol(1),
         ],
     };
-    let ordering = |name: &str| MergeFn::Primitive {
-        id: token,
+    let ordering = |id, name: &str| MergeFn::Primitive {
+        id,
         name: name.to_string(),
         input: vec![ColumnTy::Id; 2],
         output: ColumnTy::Id,
         args: vec![MergeFn::OldCol(0), MergeFn::NewCol(0)],
     };
     let fresh = || MergeFn::Primitive {
-        id: token,
-        name: "get-fresh!".to_string(),
+        id: tokens.fresh,
+        name: "renamed-fresh-diagnostic".to_string(),
         input: vec![ColumnTy::Base(string)],
         output: ColumnTy::Id,
         args: vec![MergeFn::Const {
@@ -549,11 +576,11 @@ pub(crate) fn ordered_union(
         actions: vec![
             MergeAction::Let {
                 slot: 0,
-                value: orient("proof-of-max"),
+                value: orient(tokens.select_max, "renamed-select-max-diagnostic"),
             },
             MergeAction::Let {
                 slot: 1,
-                value: orient("proof-of-min"),
+                value: orient(tokens.select_min, "renamed-select-min-diagnostic"),
             },
             MergeAction::Let {
                 slot: 2,
@@ -583,14 +610,14 @@ pub(crate) fn ordered_union(
             MergeAction::Set(
                 displaced,
                 vec![
-                    ordering("ordering-max"),
-                    ordering("ordering-min"),
+                    ordering(tokens.ordering_max, "renamed-ordering-max-diagnostic"),
+                    ordering(tokens.ordering_min, "renamed-ordering-min-diagnostic"),
                     MergeFn::LetVar(3),
                 ],
             ),
         ],
         result: Box::new(MergeFn::Columns(vec![
-            ordering("ordering-min"),
+            ordering(tokens.ordering_min, "another-ordering-min-diagnostic"),
             MergeFn::LetVar(1),
         ])),
     }
@@ -632,7 +659,7 @@ fn inequality(
         span: Span::Panic,
         head: RuleBodyCall::Primitive {
             id: token,
-            name: "!=".into(),
+            name: "renamed-rebuild-neq-diagnostic".into(),
             output: ColumnTy::Base(unit),
         },
         args: vec![lhs, rhs, result],
@@ -650,7 +677,7 @@ fn fresh_action(
         binding,
         RuleActionCall::Primitive {
             id: token,
-            name: "get-fresh!".into(),
+            name: "renamed-rebuild-head-fresh".into(),
             output: ColumnTy::Id,
         },
         vec![literal(label, ColumnTy::Base(string))],
@@ -1008,11 +1035,12 @@ fn structural_admission_mutation_matrix_is_fail_closed_without_consuming_rule_id
 
     let mut fake_name = Fixture::one_id("matrix-fake-name")?;
     let mut rule = fake_name.eq_rule("matrix-fake-name-rule", 0, BodyOrder::ViewUfNeq);
-    let RuleBodyCall::Primitive { name, .. } = &mut rule.core.body.atoms[2].head else {
+    let RuleBodyCall::Primitive { id, name, .. } = &mut rule.core.body.atoms[2].head else {
         unreachable!()
     };
-    *name = "opaque-not-inequality".into();
-    rejected_rule_preserves_id(&mut fake_name, rule, true, "requires `!=")?;
+    *id = fake_name.tokens.ordering_min;
+    *name = "!=".into();
+    rejected_rule_preserves_id(&mut fake_name, rule, true, "ValueNeq")?;
 
     let mut fake_signature = Fixture::one_id("matrix-fake-signature")?;
     let mut rule = fake_signature.eq_rule("matrix-fake-signature-rule", 0, BodyOrder::ViewUfNeq);
@@ -1020,7 +1048,7 @@ fn structural_admission_mutation_matrix_is_fail_closed_without_consuming_rule_id
         unreachable!()
     };
     *output = ColumnTy::Id;
-    rejected_rule_preserves_id(&mut fake_signature, rule, true, "requires `!=")?;
+    rejected_rule_preserves_id(&mut fake_signature, rule, true, "ValueNeq")?;
 
     let mut child_type = Fixture::one_id("matrix-child-type")?;
     let mut rule = child_type.eq_rule("matrix-child-type-rule", 0, BodyOrder::ViewUfNeq);
@@ -1033,7 +1061,7 @@ fn structural_admission_mutation_matrix_is_fail_closed_without_consuming_rule_id
     let mut container = Fixture::one_id("matrix-container")?;
     let mut rule = container.eq_rule("matrix-container-rule", 0, BodyOrder::ViewUfNeq);
     rule.core.body.atoms[1].head = RuleBodyCall::Primitive {
-        id: container.token,
+        id: container.tokens.neq,
         name: "opaque-container-rebuild".into(),
         output: ColumnTy::Id,
     };
@@ -1066,7 +1094,7 @@ fn custom_view_merge_with_the_same_rule_head_falls_through_and_preserves_rule_id
         // That is a custom Block family and must fall through tri-state
         // admission before standard interior validation.
         merge: ordered_union(
-            fixture.token,
+            fixture.tokens,
             fixture.label,
             fixture.string,
             fixture.unit,

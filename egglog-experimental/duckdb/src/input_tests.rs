@@ -7,10 +7,10 @@ use egglog_ast::{
 };
 use egglog_backend_trait::{
     Backend, BaseValueId, ColumnTy, DefaultVal, ExternalFunctionId, FunctionConfig, FunctionId,
-    MergeAction, MergeFn, NativeInputValue, ReadMode, RuleActionCall, RuleBodyCall, RuleSetRun,
-    RuleSpec, RuleValue, RuleVar, Value,
+    MergeAction, MergeFn, NativeInputValue, NativePrimitive, ReadMode, RuleActionCall,
+    RuleBodyCall, RuleSetRun, RuleSpec, RuleValue, RuleVar, Value,
 };
-use egglog_core_relations::{Boxed, make_external_func};
+use egglog_core_relations::Boxed;
 use egglog_numeric_id::NumericId;
 use ordered_float::OrderedFloat;
 
@@ -161,34 +161,10 @@ fn identity_transcript<B: Backend>(mut fixture: Fixture<B>) -> Result<IdentityTr
 }
 
 fn ordered_primitives(backend: &mut impl Backend) -> OrderedPrimitives {
-    let proof_min = backend.register_external_func(Box::new(make_external_func(|_, args| {
-        let [old_identity, old_payload, new_identity, new_payload] = args else {
-            return None;
-        };
-        Some(if old_identity.rep() <= new_identity.rep() {
-            *old_payload
-        } else {
-            *new_payload
-        })
-    })));
-    let proof_max = backend.register_external_func(Box::new(make_external_func(|_, args| {
-        let [old_identity, old_payload, new_identity, new_payload] = args else {
-            return None;
-        };
-        Some(if old_identity.rep() >= new_identity.rep() {
-            *old_payload
-        } else {
-            *new_payload
-        })
-    })));
-    let ordering_min = backend.register_external_func(Box::new(make_external_func(|_, args| {
-        let [lhs, rhs] = args else { return None };
-        Some(if lhs.rep() <= rhs.rep() { *lhs } else { *rhs })
-    })));
-    let ordering_max = backend.register_external_func(Box::new(make_external_func(|_, args| {
-        let [lhs, rhs] = args else { return None };
-        Some(if lhs.rep() >= rhs.rep() { *lhs } else { *rhs })
-    })));
+    let proof_min = backend.register_native_primitive(NativePrimitive::SelectMinPayload);
+    let proof_max = backend.register_native_primitive(NativePrimitive::SelectMaxPayload);
+    let ordering_min = backend.register_native_primitive(NativePrimitive::OrderingMin);
+    let ordering_max = backend.register_native_primitive(NativePrimitive::OrderingMax);
     let fresh = backend.register_get_fresh();
     OrderedPrimitives {
         proof_min,
@@ -232,7 +208,7 @@ fn ordered_union(
     };
     let fresh = || MergeFn::Primitive {
         id: primitives.fresh,
-        name: "get-fresh!".to_string(),
+        name: "renamed-input-fresh-diagnostic".to_string(),
         input: vec![ColumnTy::Base(string)],
         output: ColumnTy::Id,
         args: vec![MergeFn::Const {
@@ -250,11 +226,11 @@ fn ordered_union(
         actions: vec![
             MergeAction::Let {
                 slot: 0,
-                value: proof(primitives.proof_max, "proof-of-max"),
+                value: proof(primitives.proof_max, "renamed-input-select-max"),
             },
             MergeAction::Let {
                 slot: 1,
-                value: proof(primitives.proof_min, "proof-of-min"),
+                value: proof(primitives.proof_min, "renamed-input-select-min"),
             },
             MergeAction::Let {
                 slot: 2,
@@ -284,14 +260,14 @@ fn ordered_union(
             MergeAction::Set(
                 displaced,
                 vec![
-                    ordering(primitives.ordering_max, "ordering-max"),
-                    ordering(primitives.ordering_min, "ordering-min"),
+                    ordering(primitives.ordering_max, "renamed-input-ordering-max"),
+                    ordering(primitives.ordering_min, "renamed-input-ordering-min"),
                     MergeFn::LetVar(3),
                 ],
             ),
         ],
         result: Box::new(MergeFn::Columns(vec![
-            ordering(primitives.ordering_min, "ordering-min"),
+            ordering(primitives.ordering_min, "another-input-ordering-min"),
             MergeFn::LetVar(1),
         ])),
     }
@@ -1104,10 +1080,14 @@ fn native_input_admission_is_exact_and_ordinary_direct_set_stays_deferred() -> R
     let MergeAction::Let { value, .. } = &mut actions[0] else {
         unreachable!()
     };
-    let MergeFn::Primitive { name, .. } = value else {
+    let hostile = fixture
+        .backend
+        .new_panic("ordinary callback must not authenticate native input".into());
+    let MergeFn::Primitive { id, name, .. } = value else {
         unreachable!()
     };
-    *name = "proof-of-neither".into();
+    *id = hostile;
+    *name = "proof-of-max".into();
     let malformed = fixture.backend.add_table(FunctionConfig {
         schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
         n_vals: 2,
@@ -1124,7 +1104,7 @@ fn native_input_admission_is_exact_and_ordinary_direct_set_stays_deferred() -> R
             vec![Value::new(1), Value::new(2), Value::new(3)],
         )])
         .unwrap_err();
-    assert!(malformed_error.to_string().contains("proof-of-max"));
+    assert!(malformed_error.to_string().contains("SelectMaxPayload"));
 
     let unknown = fixture
         .backend
@@ -1398,6 +1378,87 @@ fn owned_graph_admission_mutation_matrix_fails_closed() -> Result<()> {
         false,
         "merge topology mismatch",
     )?;
+
+    let mut swapped_tag_merge = fixture_ordered_union(&fixture, fixture.uf, true);
+    let MergeFn::Block { actions, .. } = &mut swapped_tag_merge else {
+        unreachable!()
+    };
+    let MergeAction::Let { value, .. } = &mut actions[0] else {
+        unreachable!()
+    };
+    let MergeFn::Primitive { id, name, .. } = value else {
+        unreachable!()
+    };
+    *id = fixture.primitives.proof_min;
+    *name = "proof-of-max".into();
+    let swapped_tag = add_three_id_view(&mut fixture, "swapped-native-tag-view", swapped_tag_merge);
+    assert_input_rejection_preserves_state(&mut fixture, swapped_tag, false, "SelectMaxPayload")?;
+
+    let mut malformed_signature_merge = fixture_ordered_union(&fixture, fixture.uf, true);
+    let MergeFn::Block { actions, .. } = &mut malformed_signature_merge else {
+        unreachable!()
+    };
+    let MergeAction::Let { value, .. } = &mut actions[0] else {
+        unreachable!()
+    };
+    let MergeFn::Primitive { output, .. } = value else {
+        unreachable!()
+    };
+    *output = ColumnTy::Base(fixture.unit);
+    let malformed_signature = add_three_id_view(
+        &mut fixture,
+        "genuine-tag-malformed-signature-view",
+        malformed_signature_merge,
+    );
+    assert_input_rejection_preserves_state(
+        &mut fixture,
+        malformed_signature,
+        false,
+        "SelectMaxPayload",
+    )?;
+
+    let alternate_max = fixture
+        .backend
+        .register_native_primitive(NativePrimitive::SelectMaxPayload);
+    let mut alternate_context_merge = fixture_ordered_union(&fixture, fixture.uf, true);
+    let MergeFn::Block { actions, .. } = &mut alternate_context_merge else {
+        unreachable!()
+    };
+    let MergeAction::Let { value, .. } = &mut actions[0] else {
+        unreachable!()
+    };
+    let MergeFn::Primitive { id, .. } = value else {
+        unreachable!()
+    };
+    *id = alternate_max;
+    let alternate_context = add_three_id_view(
+        &mut fixture,
+        "distinct-context-same-tag-view",
+        alternate_context_merge,
+    );
+    fixture.backend.add_values(vec![(
+        alternate_context,
+        vec![Value::new(9), Value::new(90), Value::new(91)],
+    )])?;
+    assert_eq!(fixture.backend.table_size(alternate_context), 1);
+    assert_eq!(fixture.backend.pending_panic_message(), None);
+    fixture.backend.run_rules(RuleSetRun {
+        name: Some("placeholder-uninvoked-native-input"),
+        rules: &[],
+    })?;
+
+    let stale = fixture.primitives.proof_max;
+    fixture.backend.free_external_func(stale);
+    let reused = fixture.backend.register_external_func(Box::new(
+        egglog_core_relations::make_external_func(
+            |_state: &mut egglog_backend_trait::ExecutionState<'_>, _args: &[Value]| {
+                Some(Value::new(999))
+            },
+        ),
+    ));
+    assert_eq!(reused, stale, "freed native ids should be reusable");
+    let original_view = fixture.view;
+    assert_input_rejection_preserves_state(&mut fixture, original_view, false, "SelectMaxPayload")?;
 
     Ok(())
 }

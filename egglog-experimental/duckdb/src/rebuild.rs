@@ -6,12 +6,14 @@
 //! marker, container, and custom-merge topologies fall through to the ordinary
 //! closed rule compiler.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use anyhow::{Result, anyhow, bail, ensure};
 use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
 use egglog_ast::generic_ast::Change;
 use egglog_backend_trait::{
-    BaseValues, ColumnTy, DefaultVal, FunctionId, MergeAction, MergeFn, ReadMode, RuleActionCall,
-    RuleBodyCall, RuleSpec, RuleValue, RuleVar,
+    BaseValues, ColumnTy, DefaultVal, ExternalFunctionId, FunctionId, MergeAction, MergeFn,
+    NativePrimitive, ReadMode, RuleActionCall, RuleBodyCall, RuleSpec, RuleValue, RuleVar,
 };
 use egglog_numeric_id::NumericId;
 
@@ -58,6 +60,14 @@ impl OrderedUnionPlan {
     pub(crate) fn arity(&self) -> usize {
         self.columns.len()
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct OrderedUnionGraph {
+    pub(crate) root: OrderedUnionPlan,
+    pub(crate) displaced: OrderedUnionPlan,
+    pub(crate) fresh_token: ExternalFunctionId,
+    pub(crate) fresh_label: RuleValue,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -152,12 +162,21 @@ enum OuterShape {
 pub(crate) fn compile_standard_rebuild(
     storage: &Storage,
     base_values: &BaseValues,
+    native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
+    fresh_tokens: &BTreeSet<ExternalFunctionId>,
     rule: &RuleSpec,
 ) -> Result<Option<StandardRebuildPlan>> {
     let Some(shape) = outer_shape(rule) else {
         return Ok(None);
     };
-    compile_selected(storage, base_values, rule, shape)
+    compile_selected(
+        storage,
+        base_values,
+        native_primitives,
+        fresh_tokens,
+        rule,
+        shape,
+    )
 }
 
 fn outer_shape(rule: &RuleSpec) -> Option<OuterShape> {
@@ -205,6 +224,8 @@ fn outer_shape(rule: &RuleSpec) -> Option<OuterShape> {
 fn compile_selected(
     storage: &Storage,
     base_values: &BaseValues,
+    native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
+    fresh_tokens: &BTreeSet<ExternalFunctionId>,
     rule: &RuleSpec,
     shape: OuterShape,
 ) -> Result<Option<StandardRebuildPlan>> {
@@ -328,8 +349,14 @@ fn compile_selected(
             (view_info.n_keys, view_identity)
         }
     };
-    let inequality_result =
-        validate_inequality(base_values, &rule.name, inequality, stale.1, canonical)?;
+    let inequality_result = validate_inequality(
+        base_values,
+        native_primitives,
+        &rule.name,
+        inequality,
+        stale.1,
+        canonical,
+    )?;
 
     let mut body_vars = key_vars.clone();
     body_vars.extend([
@@ -344,6 +371,8 @@ fn compile_selected(
     let view_union = validate_ordered_union(
         base_values,
         storage,
+        native_primitives,
+        fresh_tokens,
         &rule.name,
         view_id,
         &view_info,
@@ -353,6 +382,8 @@ fn compile_selected(
     let uf_union = validate_ordered_union(
         base_values,
         storage,
+        native_primitives,
+        fresh_tokens,
         &rule.name,
         uf_id,
         &uf_info,
@@ -362,6 +393,8 @@ fn compile_selected(
     let displaced_union = validate_ordered_union(
         base_values,
         storage,
+        native_primitives,
+        fresh_tokens,
         &rule.name,
         view_displaced,
         &displaced_info,
@@ -371,9 +404,11 @@ fn compile_selected(
     ensure!(
         view_union.plan.sym == uf_union.plan.sym
             && view_union.plan.trans == uf_union.plan.trans
+            && view_union.fresh_token == uf_union.fresh_token
             && view_union.fresh_label == uf_union.fresh_label
             && view_union.plan.sym == displaced_union.plan.sym
             && view_union.plan.trans == displaced_union.plan.trans
+            && view_union.fresh_token == displaced_union.fresh_token
             && view_union.fresh_label == displaced_union.fresh_label,
         "DuckDB standard rebuild rule `{}` View and UF ordered-union blocks disagree",
         rule.name
@@ -383,6 +418,7 @@ fn compile_selected(
         OuterShape::EqKey => compile_eq_key_head(
             storage,
             base_values,
+            fresh_tokens,
             rule,
             &view_info,
             view_id,
@@ -398,6 +434,7 @@ fn compile_selected(
         OuterShape::EclassOutput => compile_eclass_head(
             storage,
             base_values,
+            fresh_tokens,
             rule,
             view_id,
             &key_vars,
@@ -422,6 +459,7 @@ fn compile_selected(
 fn compile_eq_key_head(
     storage: &Storage,
     base_values: &BaseValues,
+    fresh_tokens: &BTreeSet<ExternalFunctionId>,
     rule: &RuleSpec,
     view_info: &TableInfo,
     view: FunctionId,
@@ -444,7 +482,8 @@ fn compile_eq_key_head(
     else {
         unreachable!("outer shape checked eq-key action arity");
     };
-    let (fresh, fresh_label) = head_fresh(base_values, &rule.name, fresh_action)?;
+    let (fresh, _fresh_token, fresh_label) =
+        head_fresh(base_values, fresh_tokens, &rule.name, fresh_action)?;
     let alias = head_alias(&rule.name, alias_action, fresh)?;
     ensure!(
         fresh_label == merge_fresh_label,
@@ -537,6 +576,7 @@ fn compile_eq_key_head(
 fn compile_eclass_head(
     storage: &Storage,
     base_values: &BaseValues,
+    fresh_tokens: &BTreeSet<ExternalFunctionId>,
     rule: &RuleSpec,
     view: FunctionId,
     key_vars: &[&RuleVar],
@@ -558,13 +598,17 @@ fn compile_eclass_head(
     else {
         unreachable!("outer shape checked eclass action arity");
     };
-    let (sym_fresh, sym_label) = head_fresh(base_values, &rule.name, sym_fresh_action)?;
+    let (sym_fresh, sym_token, sym_label) =
+        head_fresh(base_values, fresh_tokens, &rule.name, sym_fresh_action)?;
     let sym_alias = head_alias(&rule.name, sym_alias_action, sym_fresh)?;
-    let (trans_fresh, trans_label) = head_fresh(base_values, &rule.name, trans_fresh_action)?;
+    let (trans_fresh, trans_token, trans_label) =
+        head_fresh(base_values, fresh_tokens, &rule.name, trans_fresh_action)?;
     let trans_alias = head_alias(&rule.name, trans_alias_action, trans_fresh)?;
     ensure!(
-        sym_label == trans_label && sym_label == ordered_union.fresh_label,
-        "DuckDB eclass-output rebuild rule `{}` fresh labels disagree",
+        sym_token == trans_token
+            && sym_label == trans_label
+            && sym_label == ordered_union.fresh_label,
+        "DuckDB eclass-output rebuild rule `{}` head fresh tokens or labels disagree",
         rule.name
     );
 
@@ -660,6 +704,8 @@ fn validate_union_find_table(
 pub(crate) fn validate_marker_union_find(
     base_values: &BaseValues,
     storage: &Storage,
+    native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
+    fresh_tokens: &BTreeSet<ExternalFunctionId>,
     rule_name: &str,
     target: FunctionId,
 ) -> Result<OrderedUnionPlan> {
@@ -670,6 +716,8 @@ pub(crate) fn validate_marker_union_find(
     let validated = validate_ordered_union(
         base_values,
         storage,
+        native_primitives,
+        fresh_tokens,
         rule_name,
         target,
         &info,
@@ -684,6 +732,7 @@ pub(crate) fn validate_marker_union_find(
 
 struct ValidatedOrderedUnion {
     plan: OrderedUnionPlan,
+    fresh_token: ExternalFunctionId,
     fresh_label: RuleValue,
 }
 
@@ -714,9 +763,12 @@ pub(crate) fn ordered_union_outer(merge: &MergeFn) -> Option<FunctionId> {
     (displaced_arguments.len() == 3 && results.len() == 2).then_some(*displaced)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_ordered_union(
     base_values: &BaseValues,
     tables: &(impl TableCatalog + ?Sized),
+    native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
+    fresh_tokens: &BTreeSet<ExternalFunctionId>,
     rule_name: &str,
     target: FunctionId,
     info: &TableInfo,
@@ -742,21 +794,24 @@ fn validate_ordered_union(
     };
     expect_let_primitive(
         base_values,
+        native_primitives,
         rule_name,
         max_pf,
         0,
-        "proof-of-max",
+        NativePrimitive::SelectMaxPayload,
         &[old(0), old(1), new(0), new(1)],
     )?;
     expect_let_primitive(
         base_values,
+        native_primitives,
         rule_name,
         min_pf,
         1,
-        "proof-of-min",
+        NativePrimitive::SelectMinPayload,
         &[old(0), old(1), new(0), new(1)],
     )?;
-    let sym_label = expect_fresh_merge(base_values, rule_name, fresh_sym, 2)?;
+    let (sym_token, sym_label) =
+        expect_fresh_merge(base_values, fresh_tokens, rule_name, fresh_sym, 2)?;
     let sym_argument = match orientation {
         OrderedUnionOrientation::KeyToParent => let_var(0),
         OrderedUnionOrientation::EclassToTerm => let_var(1),
@@ -769,8 +824,12 @@ fn validate_ordered_union(
         &[sym_argument, let_var(2), unit()],
         &[ScalarSqlType::Id, ScalarSqlType::Id],
     )?;
-    let trans_label = expect_fresh_merge(base_values, rule_name, fresh_trans, 3)?;
-    ensure!(sym_label == trans_label);
+    let (trans_token, trans_label) =
+        expect_fresh_merge(base_values, fresh_tokens, rule_name, fresh_trans, 3)?;
+    ensure!(
+        sym_token == trans_token && sym_label == trans_label,
+        "DuckDB standard rebuild rule `{rule_name}` merge fresh sites must use one live token and label"
+    );
     let trans_arguments = match orientation {
         OrderedUnionOrientation::KeyToParent => [let_var(2), let_var(1), let_var(3), unit()],
         OrderedUnionOrientation::EclassToTerm => [let_var(0), let_var(2), let_var(3), unit()],
@@ -799,16 +858,18 @@ fn validate_ordered_union(
     }
     expect_primitive(
         base_values,
+        native_primitives,
         rule_name,
         &arguments[0],
-        "ordering-max",
+        NativePrimitive::OrderingMax,
         &[old(0), new(0)],
     )?;
     expect_primitive(
         base_values,
+        native_primitives,
         rule_name,
         &arguments[1],
-        "ordering-min",
+        NativePrimitive::OrderingMin,
         &[old(0), new(0)],
     )?;
     expect_pattern(base_values, rule_name, &arguments[2], let_var(3))?;
@@ -823,9 +884,10 @@ fn validate_ordered_union(
     };
     expect_primitive(
         base_values,
+        native_primitives,
         rule_name,
         identity,
-        "ordering-min",
+        NativePrimitive::OrderingMin,
         &[old(0), new(0)],
     )?;
     expect_pattern(base_values, rule_name, payload, let_var(1))?;
@@ -840,7 +902,80 @@ fn validate_ordered_union(
             columns: info.columns.clone(),
             n_keys: info.n_keys,
         },
+        fresh_token: sym_token,
         fresh_label: sym_label,
+    })
+}
+
+fn validate_view_ordered_union_graph(
+    base_values: &BaseValues,
+    tables: &(impl TableCatalog + ?Sized),
+    native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
+    fresh_tokens: &BTreeSet<ExternalFunctionId>,
+    rule_name: &str,
+    target: FunctionId,
+) -> Result<OrderedUnionGraph> {
+    let info = tables.table_info_for_merge(target)?;
+    validate_view_table(base_values, rule_name, &info)?;
+    let root = validate_ordered_union(
+        base_values,
+        tables,
+        native_primitives,
+        fresh_tokens,
+        rule_name,
+        target,
+        &info,
+        None,
+        OrderedUnionOrientation::EclassToTerm,
+    )?;
+    let displaced_info = tables.table_info_for_merge(root.plan.displaced_target)?;
+    validate_union_find_table(base_values, rule_name, &displaced_info)?;
+    let displaced = validate_ordered_union(
+        base_values,
+        tables,
+        native_primitives,
+        fresh_tokens,
+        rule_name,
+        root.plan.displaced_target,
+        &displaced_info,
+        Some(root.plan.displaced_target),
+        OrderedUnionOrientation::KeyToParent,
+    )?;
+    ensure!(
+        root.plan.sym == displaced.plan.sym
+            && root.plan.trans == displaced.plan.trans
+            && root.fresh_token == displaced.fresh_token
+            && root.fresh_label == displaced.fresh_label,
+        "DuckDB ordered-union View and displaced UF blocks disagree"
+    );
+    Ok(OrderedUnionGraph {
+        root: root.plan,
+        displaced: displaced.plan,
+        fresh_token: root.fresh_token,
+        fresh_label: root.fresh_label,
+    })
+}
+
+pub(crate) fn validate_scalar_mixed_ordered_union(
+    base_values: &BaseValues,
+    storage: &Storage,
+    native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
+    fresh_tokens: &BTreeSet<ExternalFunctionId>,
+    rule_name: &str,
+    target: FunctionId,
+) -> Result<OrderedUnionGraph> {
+    validate_view_ordered_union_graph(
+        base_values,
+        storage,
+        native_primitives,
+        fresh_tokens,
+        rule_name,
+        target,
+    )
+    .map_err(|error| {
+        anyhow!(
+            "DuckDB scalar-mixed rule `{rule_name}` has an incompatible ordered-union graph: {error:#}"
+        )
     })
 }
 
@@ -853,6 +988,8 @@ fn validate_ordered_union(
 pub(crate) fn validate_native_input_ordered_union(
     base_values: &BaseValues,
     tables: &[TableInfo],
+    native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
+    fresh_tokens: &BTreeSet<ExternalFunctionId>,
     target: FunctionId,
 ) -> Result<Option<Vec<OrderedUnionPlan>>> {
     let info = tables.table_info_for_merge(target)?;
@@ -866,16 +1003,27 @@ pub(crate) fn validate_native_input_ordered_union(
         }
     }
 
-    let orientation = if info.can_subsume {
-        validate_view_table(base_values, "native input", &info)?;
-        OrderedUnionOrientation::EclassToTerm
-    } else {
+    if info.can_subsume {
+        let graph = validate_view_ordered_union_graph(
+            base_values,
+            tables,
+            native_primitives,
+            fresh_tokens,
+            "native input",
+            target,
+        )?;
+        return Ok(Some(vec![graph.root, graph.displaced]));
+    }
+
+    let orientation = {
         validate_union_find_table(base_values, "native input", &info)?;
         OrderedUnionOrientation::KeyToParent
     };
     let root = validate_ordered_union(
         base_values,
         tables,
+        native_primitives,
+        fresh_tokens,
         "native input",
         target,
         &info,
@@ -883,44 +1031,24 @@ pub(crate) fn validate_native_input_ordered_union(
         orientation,
     )?;
 
-    if orientation == OrderedUnionOrientation::KeyToParent {
-        return Ok(Some(vec![root.plan]));
-    }
-
-    let displaced_info = tables.table_info_for_merge(root.plan.displaced_target)?;
-    validate_union_find_table(base_values, "native input", &displaced_info)?;
-    let displaced = validate_ordered_union(
-        base_values,
-        tables,
-        "native input",
-        root.plan.displaced_target,
-        &displaced_info,
-        Some(root.plan.displaced_target),
-        OrderedUnionOrientation::KeyToParent,
-    )?;
-    ensure!(
-        root.plan.sym == displaced.plan.sym
-            && root.plan.trans == displaced.plan.trans
-            && root.fresh_label == displaced.fresh_label,
-        "DuckDB native-input View and displaced UF ordered-union blocks disagree"
-    );
-    Ok(Some(vec![root.plan, displaced.plan]))
+    Ok(Some(vec![root.plan]))
 }
 
 fn validate_inequality<'a>(
     base_values: &BaseValues,
+    native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
     rule_name: &str,
     atom: &'a egglog_ast::core::GenericAtom<RuleBodyCall, RuleVar, RuleValue>,
     stale: &RuleVar,
     canonical: &RuleVar,
 ) -> Result<&'a RuleVar> {
-    let RuleBodyCall::Primitive { name, output, .. } = &atom.head else {
+    let RuleBodyCall::Primitive { id, name, output } = &atom.head else {
         bail!("DuckDB standard rebuild rule `{rule_name}` requires a typed inequality atom");
     };
     ensure!(
-        name.as_ref() == "!="
+        native_primitives.get(id) == Some(&NativePrimitive::ValueNeq)
             && ScalarSqlType::from_column(base_values, *output)? == ScalarSqlType::Unit,
-        "DuckDB standard rebuild rule `{rule_name}` requires `!= (Id, Id) -> Unit`"
+        "DuckDB standard rebuild rule `{rule_name}` requires authenticated ValueNeq (diagnostic name `{name}`) with (Id, Id) -> Unit"
     );
     let [lhs, rhs, result] = atom.args.as_slice() else {
         bail!("DuckDB standard rebuild rule `{rule_name}` inequality has the wrong arity");
@@ -936,7 +1064,8 @@ fn validate_inequality<'a>(
         anyhow!("DuckDB standard rebuild rule `{rule_name}` inequality output must be a variable")
     })?;
     ensure!(
-        ScalarSqlType::from_column(base_values, result.ty)? == ScalarSqlType::Unit,
+        result.ty == *output
+            && ScalarSqlType::from_column(base_values, result.ty)? == ScalarSqlType::Unit,
         "DuckDB standard rebuild rule `{rule_name}` inequality output must have Unit type"
     );
     Ok(result)
@@ -944,18 +1073,19 @@ fn validate_inequality<'a>(
 
 fn head_fresh<'a>(
     base_values: &BaseValues,
+    fresh_tokens: &BTreeSet<ExternalFunctionId>,
     rule_name: &str,
     action: &'a GenericCoreAction<RuleActionCall, RuleVar, RuleValue>,
-) -> Result<(&'a RuleVar, RuleValue)> {
+) -> Result<(&'a RuleVar, ExternalFunctionId, RuleValue)> {
     let GenericCoreAction::Let(_, binding, call, arguments) = action else {
         bail!("DuckDB standard rebuild rule `{rule_name}` fresh action must be a Let");
     };
-    let RuleActionCall::Primitive { name, output, .. } = call else {
+    let RuleActionCall::Primitive { id, name, output } = call else {
         bail!("DuckDB standard rebuild rule `{rule_name}` fresh action must call a primitive");
     };
     ensure!(
-        name.as_ref() == "get-fresh!" && *output == ColumnTy::Id && binding.ty == ColumnTy::Id,
-        "DuckDB standard rebuild rule `{rule_name}` requires get-fresh! (String) -> Id"
+        fresh_tokens.contains(id) && *output == ColumnTy::Id && binding.ty == ColumnTy::Id,
+        "DuckDB standard rebuild rule `{rule_name}` requires a live fresh token (diagnostic name `{name}`) with (String) -> Id"
     );
     let [argument] = arguments.as_slice() else {
         bail!("DuckDB standard rebuild rule `{rule_name}` get-fresh! must have one argument");
@@ -967,7 +1097,7 @@ fn head_fresh<'a>(
         ScalarSqlType::from_column(base_values, label.ty)? == ScalarSqlType::String,
         "DuckDB standard rebuild rule `{rule_name}` fresh label must have String type"
     );
-    Ok((binding, *label))
+    Ok((binding, *id, *label))
 }
 
 fn head_alias<'a>(
@@ -1114,10 +1244,11 @@ fn table_action(rule_name: &str, call: &RuleActionCall, role: &str) -> Result<Fu
 
 fn expect_let_primitive(
     base_values: &BaseValues,
+    native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
     rule_name: &str,
     action: &MergeAction,
     slot: usize,
-    name: &str,
+    primitive: NativePrimitive,
     arguments: &[MergePattern],
 ) -> Result<()> {
     let MergeAction::Let {
@@ -1128,15 +1259,23 @@ fn expect_let_primitive(
         bail!("DuckDB standard rebuild rule `{rule_name}` merge slot {slot} must be a Let");
     };
     ensure!(*actual == slot);
-    expect_primitive(base_values, rule_name, value, name, arguments)
+    expect_primitive(
+        base_values,
+        native_primitives,
+        rule_name,
+        value,
+        primitive,
+        arguments,
+    )
 }
 
 fn expect_fresh_merge(
     base_values: &BaseValues,
+    fresh_tokens: &BTreeSet<ExternalFunctionId>,
     rule_name: &str,
     action: &MergeAction,
     slot: usize,
-) -> Result<RuleValue> {
+) -> Result<(ExternalFunctionId, RuleValue)> {
     let MergeAction::Let {
         slot: actual,
         value,
@@ -1146,6 +1285,7 @@ fn expect_fresh_merge(
     };
     ensure!(*actual == slot);
     let MergeFn::Primitive {
+        id,
         name,
         input,
         output,
@@ -1156,22 +1296,29 @@ fn expect_fresh_merge(
         bail!("DuckDB standard rebuild rule `{rule_name}` merge fresh slot must call a primitive");
     };
     ensure!(
-        name == "get-fresh!"
+        fresh_tokens.contains(id)
             && input.len() == 1
             && ScalarSqlType::from_column(base_values, input[0])? == ScalarSqlType::String
             && *output == ColumnTy::Id
-            && args.len() == 1
+            && args.len() == 1,
+        "DuckDB standard rebuild rule `{rule_name}` merge primitive `{name}` requires a live registered get-fresh token with (String) -> Id"
     );
     let MergeFn::Const { value, ty } = &args[0] else {
         bail!(
             "DuckDB standard rebuild rule `{rule_name}` merge get-fresh! requires a typed constant"
         );
     };
-    ensure!(ScalarSqlType::from_column(base_values, *ty)? == ScalarSqlType::String);
-    Ok(RuleValue {
-        value: *value,
-        ty: *ty,
-    })
+    ensure!(
+        input[0] == *ty && ScalarSqlType::from_column(base_values, *ty)? == ScalarSqlType::String,
+        "DuckDB standard rebuild rule `{rule_name}` merge fresh primitive `{name}` has mismatched typed input"
+    );
+    Ok((
+        *id,
+        RuleValue {
+            value: *value,
+            ty: *ty,
+        },
+    ))
 }
 
 fn expect_merge_proof_set(
@@ -1196,12 +1343,14 @@ fn expect_merge_proof_set(
 
 fn expect_primitive(
     base_values: &BaseValues,
+    native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
     rule_name: &str,
     merge: &MergeFn,
-    expected_name: &str,
+    expected: NativePrimitive,
     expected_args: &[MergePattern],
 ) -> Result<()> {
     let MergeFn::Primitive {
+        id,
         name,
         input,
         output,
@@ -1210,16 +1359,16 @@ fn expect_primitive(
     } = merge
     else {
         bail!(
-            "DuckDB standard rebuild rule `{rule_name}` merge requires primitive `{expected_name}`"
+            "DuckDB standard rebuild rule `{rule_name}` merge requires native primitive {expected:?}"
         );
     };
     ensure!(
-        name == expected_name
+        native_primitives.get(id) == Some(&expected)
             && input.len() == expected_args.len()
             && input.iter().all(|ty| *ty == ColumnTy::Id)
             && *output == ColumnTy::Id
             && args.len() == expected_args.len(),
-        "DuckDB standard rebuild rule `{rule_name}` primitive `{expected_name}` has an incompatible signature"
+        "DuckDB standard rebuild rule `{rule_name}` primitive `{name}` is not authenticated as {expected:?} with the required typed signature"
     );
     for (argument, expected) in args.iter().zip(expected_args) {
         expect_pattern(base_values, rule_name, argument, *expected)?;

@@ -7,23 +7,28 @@
 //! nonempty Delete-only head, or one complete-row body-bound Subsume, plus the
 //! structural two-atom union-find path rule and its typed identity-guarded
 //! merge Block, and the two standard scalar All-mode rebuild forms over exact
-//! ordered-union Blocks. Matches, phased cleanup effects, constructor rows,
-//! fresh allocation, and recursive merge candidates execute through staged
-//! DuckDB SQL. Unsupported writes fail closed even though their complete
-//! configurations remain registered for later lowering.
+//! ordered-union Blocks, plus the exact proof-instrumented scalar 34-action
+//! rewrite family. Matches, phased cleanup effects, constructor rows, fresh
+//! allocation, and recursive merge candidates execute through staged DuckDB
+//! SQL. Unsupported writes fail closed even though their complete configurations
+//! remain registered for later lowering.
 
 use std::any::Any;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, anyhow, bail};
 use egglog_backend_trait::{
     Backend, BaseValues, ColumnTy, ContainerValues, ExecutionState, ExternalFunction,
-    ExternalFunctionId, FunctionConfig, FunctionId, IterationReport, NativeInputValue, ReportLevel,
-    RuleId, RuleSetRun, RuleSpec, ScanEntry, Value,
+    ExternalFunctionId, FunctionConfig, FunctionId, IterationReport, NativeInputValue,
+    NativePrimitive, ReportLevel, RuleId, RuleSetRun, RuleSpec, ScanEntry, Value,
 };
 use egglog_core_relations::Database;
 use egglog_numeric_id::NumericId;
 
+mod action_rule;
+#[cfg(test)]
+mod action_rule_tests;
 #[cfg(test)]
 mod cleanup_effect_tests;
 #[cfg(test)]
@@ -60,6 +65,8 @@ pub struct EGraph {
     storage: Storage,
     registries: Database,
     deferred_panic: Arc<Mutex<Option<String>>>,
+    fresh_tokens: BTreeSet<ExternalFunctionId>,
+    native_primitives: BTreeMap<ExternalFunctionId, NativePrimitive>,
     rules: Vec<Option<RegisteredRule>>,
     last_insert: InsertStats,
     last_rule: RuleExecutionStats,
@@ -74,6 +81,8 @@ impl EGraph {
             storage,
             registries,
             deferred_panic: Arc::new(Mutex::new(None)),
+            fresh_tokens: BTreeSet::new(),
+            native_primitives: BTreeMap::new(),
             rules: Vec::new(),
             last_insert: InsertStats::default(),
             last_rule: RuleExecutionStats::default(),
@@ -122,6 +131,9 @@ impl EGraph {
     /// only head Trans inserts, not recursive UF, Sym, or Trans effects.
     /// Standard rebuild rules likewise report only their independent head
     /// constructor inserts, never recursive ordered-union effects.
+    /// Scalar-mixed rules report their 15 ordinary direct head installations
+    /// per completed match, excluding the queued View and collision-generated
+    /// effects.
     pub fn last_rule_insert_counts(&self) -> &[usize] {
         &self.last_rule.inserted_rows
     }
@@ -249,10 +261,12 @@ impl Backend for EGraph {
     }
 
     fn add_values(&mut self, values: Vec<(FunctionId, Vec<Value>)>) -> Result<()> {
-        match self
-            .storage
-            .insert_batch(self.registries.base_values(), values)
-        {
+        match self.storage.insert_batch_authenticated(
+            self.registries.base_values(),
+            &self.native_primitives,
+            &self.fresh_tokens,
+            values,
+        ) {
             Ok(stats) => {
                 self.last_insert = stats;
                 Ok(())
@@ -268,10 +282,12 @@ impl Backend for EGraph {
         &mut self,
         values: Vec<(FunctionId, Vec<NativeInputValue>)>,
     ) -> Result<()> {
-        match self
-            .storage
-            .insert_batch_with_fresh(self.registries.base_values(), values)
-        {
+        match self.storage.insert_batch_with_fresh(
+            self.registries.base_values(),
+            &self.native_primitives,
+            &self.fresh_tokens,
+            values,
+        ) {
             Ok(stats) => {
                 self.last_insert = stats;
                 Ok(())
@@ -290,7 +306,13 @@ impl Backend for EGraph {
     }
 
     fn add_rule(&mut self, rule: RuleSpec) -> Result<RuleId> {
-        let plan = compile_rule(&self.storage, self.registries.base_values(), rule)?;
+        let plan = compile_rule(
+            &self.storage,
+            self.registries.base_values(),
+            &self.native_primitives,
+            &self.fresh_tokens,
+            rule,
+        )?;
         let id = RuleId::new(self.rules.len() as u32);
         self.rules.push(Some(RegisteredRule { plan, watermark: 0 }));
         Ok(id)
@@ -347,15 +369,30 @@ impl Backend for EGraph {
         self.registries.add_external_function(func)
     }
 
+    fn register_native_primitive(&mut self, primitive: NativePrimitive) -> ExternalFunctionId {
+        // Native tokens authenticate typed SQL lowering. Their host callback is
+        // deliberately a fail-closed placeholder so no rule or input executor
+        // can accidentally run the operation outside DuckDB's transaction.
+        let token = self.new_panic(format!(
+            "DuckDB native primitive {primitive:?} requires authenticated SQL lowering"
+        ));
+        self.native_primitives.insert(token, primitive);
+        token
+    }
+
     fn register_get_fresh(&mut self) -> ExternalFunctionId {
         // This ID is a semantic token retained in typed rule IR. Executing it
         // as a host callback would move rule effects out of DuckDB's atomic SQL
         // transaction, so accidental host execution fails closed. Native rule
         // lowering reserves ids directly from the SQL counter instead.
-        self.new_panic("DuckDB get-fresh requires native SQL lowering".to_string())
+        let token = self.new_panic("DuckDB get-fresh requires native SQL lowering".to_string());
+        self.fresh_tokens.insert(token);
+        token
     }
 
     fn free_external_func(&mut self, func: ExternalFunctionId) {
+        self.native_primitives.remove(&func);
+        self.fresh_tokens.remove(&func);
         self.registries.free_external_function(func);
     }
 
@@ -410,6 +447,60 @@ mod tests {
     use egglog_backend_trait::{DefaultVal, MergeAction, MergeFn, NativeInputValue};
     use egglog_core_relations::Boxed;
     use ordered_float::OrderedFloat;
+
+    #[test]
+    fn native_primitive_tokens_are_distinct_fail_closed_and_freed_before_reuse() -> Result<()> {
+        let mut backend = EGraph::new()?;
+        let first = Backend::register_native_primitive(&mut backend, NativePrimitive::ValueNeq);
+        let second = Backend::register_native_primitive(&mut backend, NativePrimitive::ValueNeq);
+
+        assert_ne!(first, second, "each frontend context needs its own token");
+        assert_eq!(
+            backend.native_primitives.get(&first),
+            Some(&NativePrimitive::ValueNeq)
+        );
+        assert_eq!(
+            backend.native_primitives.get(&second),
+            Some(&NativePrimitive::ValueNeq)
+        );
+
+        let host_result = backend.registries.with_execution_state(|state| {
+            state.call_external_func(first, &[Value::new(1), Value::new(2)])
+        });
+        assert_eq!(host_result, None);
+        let error = backend.take_deferred_panic().unwrap_err();
+        assert!(error.to_string().contains("authenticated SQL lowering"));
+
+        Backend::free_external_func(&mut backend, first);
+        assert!(!backend.native_primitives.contains_key(&first));
+        assert!(!backend.fresh_tokens.contains(&first));
+
+        let reused =
+            backend.register_external_func(Box::new(egglog_core_relations::make_external_func(
+                |_state: &mut ExecutionState<'_>, _args: &[Value]| Some(Value::new(9)),
+            )));
+        assert_eq!(reused, first, "the registry should reuse the freed slot");
+        assert!(!backend.native_primitives.contains_key(&reused));
+        assert!(!backend.fresh_tokens.contains(&reused));
+        assert_eq!(
+            backend
+                .registries
+                .with_execution_state(|state| state.call_external_func(reused, &[])),
+            Some(Value::new(9))
+        );
+
+        let fresh = Backend::register_get_fresh(&mut backend);
+        assert!(backend.fresh_tokens.contains(&fresh));
+        Backend::free_external_func(&mut backend, fresh);
+        let reused_fresh =
+            backend.register_external_func(Box::new(egglog_core_relations::make_external_func(
+                |_state: &mut ExecutionState<'_>, _args: &[Value]| Some(Value::new(10)),
+            )));
+        assert_eq!(reused_fresh, fresh);
+        assert!(!backend.native_primitives.contains_key(&reused_fresh));
+        assert!(!backend.fresh_tokens.contains(&reused_fresh));
+        Ok(())
+    }
 
     #[test]
     fn assert_eq_equal_input_duplicates_are_idempotent() -> Result<()> {

@@ -7,14 +7,14 @@ use egglog_ast::{
 };
 use egglog_backend_trait::{
     Backend, BaseValueId, ColumnTy, DefaultVal, FunctionConfig, FunctionId, MergeAction, MergeFn,
-    ReadMode, RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar,
-    Value,
+    NativePrimitive, ReadMode, RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec,
+    RuleValue, RuleVar, Value,
 };
 use egglog_core_relations::Boxed;
 use egglog_numeric_id::NumericId;
 use ordered_float::OrderedFloat;
 
-use crate::{EGraph, storage::sql_table};
+use crate::{EGraph, rebuild_tests::NativeTokens, storage::sql_table};
 
 type Term = GenericAtomTerm<RuleVar, RuleValue>;
 
@@ -23,7 +23,7 @@ struct Fixture {
     unit: BaseValueId,
     string: BaseValueId,
     proof_sort: Value,
-    token: egglog_backend_trait::ExternalFunctionId,
+    tokens: NativeTokens,
     sym: FunctionId,
     trans: FunctionId,
     uf: FunctionId,
@@ -51,19 +51,26 @@ impl Fixture {
         let proof_sort = backend
             .base_values()
             .get(Boxed::new(format!("{prefix}-opaque-sort")));
-        let token = backend.new_panic("test primitive token must stay in SQL".into());
+        let tokens = NativeTokens {
+            neq: backend.register_native_primitive(NativePrimitive::ValueNeq),
+            select_min: backend.register_native_primitive(NativePrimitive::SelectMinPayload),
+            select_max: backend.register_native_primitive(NativePrimitive::SelectMaxPayload),
+            ordering_min: backend.register_native_primitive(NativePrimitive::OrderingMin),
+            ordering_max: backend.register_native_primitive(NativePrimitive::OrderingMax),
+            fresh: backend.register_get_fresh(),
+        };
         let Instance {
             sym,
             trans,
             uf,
             rule,
-        } = add_instance(&mut backend, prefix, unit, string, proof_sort, token)?;
+        } = add_instance(&mut backend, prefix, unit, string, proof_sort, tokens)?;
         Ok(Self {
             backend,
             unit,
             string,
             proof_sort,
-            token,
+            tokens,
             sym,
             trans,
             uf,
@@ -118,7 +125,7 @@ impl Fixture {
             self.unit,
             self.string,
             self.proof_sort,
-            self.token,
+            self.tokens,
             self.trans,
             self.uf,
         )
@@ -131,7 +138,7 @@ fn add_instance(
     unit: BaseValueId,
     string: BaseValueId,
     proof_sort: Value,
-    token: egglog_backend_trait::ExternalFunctionId,
+    tokens: NativeTokens,
 ) -> Result<Instance> {
     let unit_value = backend.base_values().get(());
     let sym = backend.add_table(FunctionConfig {
@@ -158,9 +165,43 @@ fn add_instance(
         can_subsume: false,
     });
     let predicted = backend.peek_next_function_id();
+    let uf = backend.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
+        n_vals: 2,
+        n_identity_vals: Some(1),
+        default: DefaultVal::Fail,
+        merge: path_ordered_union(
+            tokens, string, unit, proof_sort, unit_value, sym, trans, predicted,
+        ),
+        name: format!("{prefix}-parent-map"),
+        can_subsume: false,
+    });
+    assert_eq!(uf, predicted);
+    let rule = backend.add_rule(path_rule(
+        prefix, unit, string, proof_sort, tokens, trans, uf,
+    ))?;
+    Ok(Instance {
+        sym,
+        trans,
+        uf,
+        rule,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn path_ordered_union(
+    tokens: NativeTokens,
+    string: BaseValueId,
+    unit: BaseValueId,
+    proof_sort: Value,
+    unit_value: Value,
+    sym: FunctionId,
+    trans: FunctionId,
+    displaced: FunctionId,
+) -> MergeFn {
     let fresh = || MergeFn::Primitive {
-        id: token,
-        name: "get-fresh!".to_string(),
+        id: tokens.fresh,
+        name: "renamed-merge-fresh-diagnostic".to_string(),
         input: vec![ColumnTy::Base(string)],
         output: ColumnTy::Id,
         args: vec![MergeFn::Const {
@@ -168,8 +209,8 @@ fn add_instance(
             ty: ColumnTy::Base(string),
         }],
     };
-    let orient = |name: &str| MergeFn::Primitive {
-        id: token,
+    let orient = |id, name: &str| MergeFn::Primitive {
+        id,
         name: name.to_string(),
         input: vec![ColumnTy::Id; 4],
         output: ColumnTy::Id,
@@ -180,8 +221,8 @@ fn add_instance(
             MergeFn::NewCol(1),
         ],
     };
-    let ordering = |name: &str| MergeFn::Primitive {
-        id: token,
+    let ordering = |id, name: &str| MergeFn::Primitive {
+        id,
         name: name.to_string(),
         input: vec![ColumnTy::Id; 2],
         output: ColumnTy::Id,
@@ -191,69 +232,51 @@ fn add_instance(
         value: unit_value,
         ty: ColumnTy::Base(unit),
     };
-    let uf = backend.add_table(FunctionConfig {
-        schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
-        n_vals: 2,
-        n_identity_vals: Some(1),
-        default: DefaultVal::Fail,
-        merge: MergeFn::Block {
-            actions: vec![
-                MergeAction::Let {
-                    slot: 0,
-                    value: orient("proof-of-max"),
-                },
-                MergeAction::Let {
-                    slot: 1,
-                    value: orient("proof-of-min"),
-                },
-                MergeAction::Let {
-                    slot: 2,
-                    value: fresh(),
-                },
-                MergeAction::Set(
-                    sym,
-                    vec![MergeFn::LetVar(0), MergeFn::LetVar(2), unit_constant()],
-                ),
-                MergeAction::Let {
-                    slot: 3,
-                    value: fresh(),
-                },
-                MergeAction::Set(
-                    trans,
-                    vec![
-                        MergeFn::LetVar(2),
-                        MergeFn::LetVar(1),
-                        MergeFn::LetVar(3),
-                        unit_constant(),
-                    ],
-                ),
-                MergeAction::Set(
-                    predicted,
-                    vec![
-                        ordering("ordering-max"),
-                        ordering("ordering-min"),
-                        MergeFn::LetVar(3),
-                    ],
-                ),
-            ],
-            result: Box::new(MergeFn::Columns(vec![
-                ordering("ordering-min"),
-                MergeFn::LetVar(1),
-            ])),
-        },
-        name: format!("{prefix}-parent-map"),
-        can_subsume: false,
-    });
-    assert_eq!(uf, predicted);
-    let rule = backend.add_rule(path_rule(
-        prefix, unit, string, proof_sort, token, trans, uf,
-    ))?;
-    Ok(Instance {
-        sym,
-        trans,
-        uf,
-        rule,
-    })
+    MergeFn::Block {
+        actions: vec![
+            MergeAction::Let {
+                slot: 0,
+                value: orient(tokens.select_max, "renamed-select-max-diagnostic"),
+            },
+            MergeAction::Let {
+                slot: 1,
+                value: orient(tokens.select_min, "renamed-select-min-diagnostic"),
+            },
+            MergeAction::Let {
+                slot: 2,
+                value: fresh(),
+            },
+            MergeAction::Set(
+                sym,
+                vec![MergeFn::LetVar(0), MergeFn::LetVar(2), unit_constant()],
+            ),
+            MergeAction::Let {
+                slot: 3,
+                value: fresh(),
+            },
+            MergeAction::Set(
+                trans,
+                vec![
+                    MergeFn::LetVar(2),
+                    MergeFn::LetVar(1),
+                    MergeFn::LetVar(3),
+                    unit_constant(),
+                ],
+            ),
+            MergeAction::Set(
+                displaced,
+                vec![
+                    ordering(tokens.ordering_max, "renamed-ordering-max-diagnostic"),
+                    ordering(tokens.ordering_min, "renamed-ordering-min-diagnostic"),
+                    MergeFn::LetVar(3),
+                ],
+            ),
+        ],
+        result: Box::new(MergeFn::Columns(vec![
+            ordering(tokens.ordering_min, "another-ordering-min-diagnostic"),
+            MergeFn::LetVar(1),
+        ])),
+    }
 }
 
 pub(crate) fn path_rule(
@@ -261,7 +284,7 @@ pub(crate) fn path_rule(
     unit: BaseValueId,
     string: BaseValueId,
     proof_sort: Value,
-    token: egglog_backend_trait::ExternalFunctionId,
+    tokens: NativeTokens,
     trans: FunctionId,
     uf: FunctionId,
 ) -> RuleSpec {
@@ -294,8 +317,8 @@ pub(crate) fn path_rule(
                     GenericAtom {
                         span: Span::Panic,
                         head: RuleBodyCall::Primitive {
-                            id: token,
-                            name: "!=".into(),
+                            id: tokens.neq,
+                            name: "renamed-neq-diagnostic".into(),
                             output: ColumnTy::Base(unit),
                         },
                         args: vec![b.clone(), c.clone(), neq_result],
@@ -307,8 +330,8 @@ pub(crate) fn path_rule(
                     Span::Panic,
                     fresh_binding.clone(),
                     RuleActionCall::Primitive {
-                        id: token,
-                        name: "get-fresh!".into(),
+                        id: tokens.fresh,
+                        name: "renamed-head-fresh-diagnostic".into(),
                         output: ColumnTy::Id,
                     },
                     vec![literal(proof_sort, ColumnTy::Base(string))],
@@ -588,7 +611,7 @@ fn independent_targets_globally_drain_wave_before_later_generated_candidates() -
         fixture.unit,
         fixture.string,
         second_label,
-        fixture.token,
+        fixture.tokens,
     )?;
     fixture.backend.storage.set_next_fresh_id(100)?;
     fixture.seed_uf(&[(40, 30, 70), (30, 20, 80), (20, 10, 90)])?;
@@ -752,20 +775,167 @@ fn corrupt_duplicate_owners_fail_closed_and_unsupported_shape_consumes_no_rule_i
     assert_eq!(fixture.scratch_count()?, 0);
 
     let mut unsupported = fixture.rule_spec("unsupported-primitive");
-    let RuleBodyCall::Primitive { name, .. } = &mut unsupported.core.body.atoms[2].head else {
+    let RuleBodyCall::Primitive { id, name, .. } = &mut unsupported.core.body.atoms[2].head else {
         unreachable!();
     };
-    *name = "unknown-inequality".into();
+    *id = fixture.tokens.ordering_min;
+    *name = "!=".into();
     assert!(
         fixture
             .backend
             .add_rule(unsupported)
             .unwrap_err()
             .to_string()
-            .contains("!=")
+            .contains("ValueNeq")
     );
     let next = fixture.backend.add_rule(fixture.rule_spec("still-valid"))?;
     assert_eq!(next.rep(), 1, "failed admission must not consume RuleId 1");
+    Ok(())
+}
+
+fn add_mutated_path_union_find(
+    fixture: &mut Fixture,
+    name: &str,
+    mutate: impl FnOnce(&mut MergeFn),
+) -> Result<FunctionId> {
+    let info = fixture.backend.storage.table_info(fixture.uf)?;
+    let predicted = fixture.backend.peek_next_function_id();
+    let mut merge = path_ordered_union(
+        fixture.tokens,
+        fixture.string,
+        fixture.unit,
+        fixture.proof_sort,
+        fixture.backend.base_values().get(()),
+        fixture.sym,
+        fixture.trans,
+        predicted,
+    );
+    mutate(&mut merge);
+    let target = fixture.backend.add_table(FunctionConfig {
+        schema: info.schema,
+        n_vals: info.n_vals,
+        n_identity_vals: info.n_identity_vals,
+        default: info.default,
+        merge,
+        name: name.into(),
+        can_subsume: info.can_subsume,
+    });
+    assert_eq!(target, predicted);
+    Ok(target)
+}
+
+fn assert_path_admission_rejected(
+    fixture: &mut Fixture,
+    target: FunctionId,
+    name: &str,
+    fragment: &str,
+) {
+    let error = fixture
+        .backend
+        .add_rule(path_rule(
+            name,
+            fixture.unit,
+            fixture.string,
+            fixture.proof_sort,
+            fixture.tokens,
+            fixture.trans,
+            target,
+        ))
+        .unwrap_err();
+    assert!(error.to_string().contains(fragment), "{error:#}");
+}
+
+#[test]
+fn native_path_merge_tags_and_topology_are_authenticated_before_rule_id() -> Result<()> {
+    let mut fixture = Fixture::new("path-native-auth")?;
+
+    let hostile = fixture
+        .backend
+        .new_panic("ordinary canonical-name callback must stay declarative".into());
+    let ordinary = add_mutated_path_union_find(&mut fixture, "ordinary-max-token", |merge| {
+        let MergeFn::Block { actions, .. } = merge else {
+            unreachable!()
+        };
+        let MergeAction::Let { value, .. } = &mut actions[0] else {
+            unreachable!()
+        };
+        let MergeFn::Primitive { id, name, .. } = value else {
+            unreachable!()
+        };
+        *id = hostile;
+        *name = "proof-of-max".into();
+    })?;
+    assert_path_admission_rejected(
+        &mut fixture,
+        ordinary,
+        "ordinary max token",
+        "SelectMaxPayload",
+    );
+
+    let select_min = fixture.tokens.select_min;
+    let swapped = add_mutated_path_union_find(&mut fixture, "swapped-max-token", |merge| {
+        let MergeFn::Block { actions, .. } = merge else {
+            unreachable!()
+        };
+        let MergeAction::Let { value, .. } = &mut actions[0] else {
+            unreachable!()
+        };
+        let MergeFn::Primitive { id, .. } = value else {
+            unreachable!()
+        };
+        *id = select_min;
+    })?;
+    assert_path_admission_rejected(
+        &mut fixture,
+        swapped,
+        "swapped max token",
+        "SelectMaxPayload",
+    );
+
+    let unit = fixture.unit;
+    let malformed =
+        add_mutated_path_union_find(&mut fixture, "malformed-max-signature", |merge| {
+            let MergeFn::Block { actions, .. } = merge else {
+                unreachable!()
+            };
+            let MergeAction::Let { value, .. } = &mut actions[0] else {
+                unreachable!()
+            };
+            let MergeFn::Primitive { output, .. } = value else {
+                unreachable!()
+            };
+            *output = ColumnTy::Base(unit);
+        })?;
+    assert_path_admission_rejected(
+        &mut fixture,
+        malformed,
+        "malformed max signature",
+        "SelectMaxPayload",
+    );
+
+    let topology = add_mutated_path_union_find(&mut fixture, "malformed-max-topology", |merge| {
+        let MergeFn::Block { actions, .. } = merge else {
+            unreachable!()
+        };
+        let MergeAction::Let { value, .. } = &mut actions[0] else {
+            unreachable!()
+        };
+        let MergeFn::Primitive { args, .. } = value else {
+            unreachable!()
+        };
+        args.swap(0, 2);
+    })?;
+    assert_path_admission_rejected(
+        &mut fixture,
+        topology,
+        "malformed max topology",
+        "topology mismatch",
+    );
+
+    let next = fixture
+        .backend
+        .add_rule(fixture.rule_spec("valid-after-native-auth"))?;
+    assert_eq!(next.rep(), 1, "rejected native shapes must not consume ids");
     Ok(())
 }
 

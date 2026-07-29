@@ -113,6 +113,73 @@ pub enum ReadMode {
     All,
 }
 
+/// A primitive whose identity and semantics are shared with native backends.
+///
+/// The frontend registers these operations through
+/// [`Backend::register_native_primitive`]. Backends that do not lower them
+/// specially inherit the reference callback semantics from that method.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum NativePrimitive {
+    /// Return `Unit` exactly when two raw values differ.
+    ValueNeq,
+    /// Return the smaller raw value, choosing the right argument on a tie.
+    OrderingMin,
+    /// Return the larger raw value, choosing the right argument on a tie.
+    OrderingMax,
+    /// Select the payload paired with the smaller raw value, choosing the
+    /// right payload on a tie.
+    SelectMinPayload,
+    /// Select the payload paired with the larger raw value, choosing the
+    /// right payload on a tie.
+    SelectMaxPayload,
+}
+
+impl NativePrimitive {
+    fn invoke(self, state: &mut ExecutionState<'_>, args: &[Value]) -> Option<Value> {
+        match self {
+            Self::ValueNeq => {
+                let [left, right] = args else {
+                    return None;
+                };
+                (left != right).then(|| state.base_values().get::<()>(()))
+            }
+            Self::OrderingMin => {
+                let [left, right] = args else {
+                    return None;
+                };
+                Some(if left < right { *left } else { *right })
+            }
+            Self::OrderingMax => {
+                let [left, right] = args else {
+                    return None;
+                };
+                Some(if left > right { *left } else { *right })
+            }
+            Self::SelectMinPayload => {
+                let [left, left_payload, right, right_payload] = args else {
+                    return None;
+                };
+                Some(if left < right {
+                    *left_payload
+                } else {
+                    *right_payload
+                })
+            }
+            Self::SelectMaxPayload => {
+                let [left, left_payload, right, right_payload] = args else {
+                    return None;
+                };
+                Some(if left > right {
+                    *left_payload
+                } else {
+                    *right_payload
+                })
+            }
+        }
+    }
+}
+
 impl ReadMode {
     pub(crate) fn is_subsumed(self) -> Option<bool> {
         match self {
@@ -367,6 +434,18 @@ pub trait Backend: Send + Sync {
         func: Box<dyn ExternalFunction + 'static>,
     ) -> ExternalFunctionId;
 
+    /// Register a shared native primitive.
+    ///
+    /// The default preserves source compatibility for existing backends by
+    /// installing the canonical callback implementation. A backend may
+    /// override this to retain the primitive tag and lower authenticated call
+    /// sites without invoking the callback.
+    fn register_native_primitive(&mut self, primitive: NativePrimitive) -> ExternalFunctionId {
+        self.register_external_func(Box::new(egglog_core_relations::make_external_func(
+            move |state: &mut ExecutionState, args: &[Value]| primitive.invoke(state, args),
+        )))
+    }
+
     /// Drop a user-defined primitive.
     fn free_external_func(&mut self, func: ExternalFunctionId);
 
@@ -594,5 +673,75 @@ impl<B: Backend + ?Sized> BackendExt for B {
                 .expect("backend returned a container counter without a container registry")
                 .register_type::<C>(counter, move |state, old, new| merge_fn(state, old, new));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use egglog_numeric_id::NumericId;
+
+    use super::{Backend, BackendExt, NativePrimitive, Value};
+
+    #[test]
+    fn native_primitive_defaults_are_object_safe_and_choose_right_on_ties() {
+        let mut backend: Box<dyn Backend> = Box::new(egglog_bridge::EGraph::default());
+        backend.base_values_mut().register_type::<()>();
+
+        let neq = backend.register_native_primitive(NativePrimitive::ValueNeq);
+        let min = backend.register_native_primitive(NativePrimitive::OrderingMin);
+        let max = backend.register_native_primitive(NativePrimitive::OrderingMax);
+        let min_payload = backend.register_native_primitive(NativePrimitive::SelectMinPayload);
+        let max_payload = backend.register_native_primitive(NativePrimitive::SelectMaxPayload);
+
+        let low = Value::from_usize(3);
+        let high = Value::from_usize(7);
+        let left_payload = Value::from_usize(11);
+        let right_payload = Value::from_usize(13);
+        let unit = backend.base_values().get::<()>(());
+
+        backend.with_execution_state(|state| {
+            assert_eq!(state.call_external_func(neq, &[low, high]), Some(unit));
+            assert_eq!(state.call_external_func(neq, &[low, low]), None);
+            assert_eq!(state.call_external_func(min, &[high, low]), Some(low));
+            assert_eq!(state.call_external_func(min, &[low, high]), Some(low));
+            assert_eq!(state.call_external_func(max, &[low, high]), Some(high));
+            assert_eq!(state.call_external_func(max, &[high, low]), Some(high));
+            assert_eq!(
+                state.call_external_func(min_payload, &[low, left_payload, high, right_payload]),
+                Some(left_payload)
+            );
+            assert_eq!(
+                state.call_external_func(min_payload, &[high, left_payload, low, right_payload]),
+                Some(right_payload)
+            );
+            assert_eq!(
+                state.call_external_func(max_payload, &[low, left_payload, high, right_payload]),
+                Some(right_payload)
+            );
+            assert_eq!(
+                state.call_external_func(max_payload, &[high, left_payload, low, right_payload]),
+                Some(left_payload)
+            );
+
+            assert_eq!(state.call_external_func(min, &[low, low]), Some(low));
+            assert_eq!(
+                state.call_external_func(min_payload, &[low, left_payload, low, right_payload]),
+                Some(right_payload)
+            );
+            assert_eq!(
+                state.call_external_func(max_payload, &[high, left_payload, high, right_payload]),
+                Some(right_payload)
+            );
+
+            for (id, args) in [
+                (neq, vec![low]),
+                (min, vec![low]),
+                (max, vec![low, high, low]),
+                (min_payload, vec![low, left_payload]),
+                (max_payload, vec![low, left_payload, high]),
+            ] {
+                assert_eq!(state.call_external_func(id, &args), None);
+            }
+        });
     }
 }

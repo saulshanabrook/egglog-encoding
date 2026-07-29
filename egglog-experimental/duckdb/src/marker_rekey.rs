@@ -4,6 +4,8 @@
 //! exact rule/config topology without consulting generated names, then emits a
 //! small immutable SQL plan for the combined rebuilding executor.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use crate::rebuild::{
     OrderedUnionPlan, ordered_union_outer, safe_scratch_name, validate_marker_union_find,
 };
@@ -12,8 +14,8 @@ use anyhow::{Result, anyhow, bail, ensure};
 use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
 use egglog_ast::generic_ast::Change;
 use egglog_backend_trait::{
-    BaseValues, ColumnTy, DefaultVal, FunctionId, MergeFn, ReadMode, RuleActionCall, RuleBodyCall,
-    RuleSpec, RuleValue, RuleVar,
+    BaseValues, ColumnTy, DefaultVal, ExternalFunctionId, FunctionId, MergeFn, NativePrimitive,
+    ReadMode, RuleActionCall, RuleBodyCall, RuleSpec, RuleValue, RuleVar,
 };
 
 /// A fully validated scalar marker-rekey rule.
@@ -108,12 +110,22 @@ impl MarkerRekeyPlan {
 pub(crate) fn compile_marker_rekey(
     storage: &Storage,
     base_values: &BaseValues,
+    native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
+    fresh_tokens: &BTreeSet<ExternalFunctionId>,
     rule: &RuleSpec,
 ) -> Result<Option<MarkerRekeyPlan>> {
     let Some(selected) = select_outer_family(storage, rule)? else {
         return Ok(None);
     };
-    compile_selected(storage, base_values, rule, selected).map(Some)
+    compile_selected(
+        storage,
+        base_values,
+        native_primitives,
+        fresh_tokens,
+        rule,
+        selected,
+    )
+    .map(Some)
 }
 
 struct SelectedOuter<'a> {
@@ -188,6 +200,8 @@ fn select_outer_family<'a>(
 fn compile_selected(
     storage: &Storage,
     base_values: &BaseValues,
+    native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
+    fresh_tokens: &BTreeSet<ExternalFunctionId>,
     rule: &RuleSpec,
     selected: SelectedOuter<'_>,
 ) -> Result<MarkerRekeyPlan> {
@@ -198,8 +212,14 @@ fn compile_selected(
     );
     let marker_info = storage.table_info(selected.marker)?;
     validate_marker_table(base_values, &rule.name, &marker_info)?;
-    let union_find =
-        validate_marker_union_find(base_values, storage, &rule.name, selected.union_find)?;
+    let union_find = validate_marker_union_find(
+        base_values,
+        storage,
+        native_primitives,
+        fresh_tokens,
+        &rule.name,
+        selected.union_find,
+    )?;
 
     let (_, marker_read, marker_terms) = table_atom_parts(selected.marker_atom);
     let (_, union_find_read, union_find_terms) = table_atom_parts(selected.union_find_atom);
@@ -256,6 +276,7 @@ fn compile_selected(
     );
     let inequality_result = validate_inequality(
         base_values,
+        native_primitives,
         &rule.name,
         selected.inequality,
         union_find_key,
@@ -325,18 +346,19 @@ fn validate_marker_table(
 
 fn validate_inequality<'a>(
     base_values: &BaseValues,
+    native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
     rule_name: &str,
     atom: &'a egglog_ast::core::GenericAtom<RuleBodyCall, RuleVar, RuleValue>,
     stale: &RuleVar,
     canonical: &RuleVar,
 ) -> Result<&'a RuleVar> {
-    let RuleBodyCall::Primitive { name, output, .. } = &atom.head else {
+    let RuleBodyCall::Primitive { id, name, output } = &atom.head else {
         unreachable!("selected primitive atom")
     };
     ensure!(
-        name.as_ref() == "!="
+        native_primitives.get(id) == Some(&NativePrimitive::ValueNeq)
             && ScalarSqlType::from_column(base_values, *output)? == ScalarSqlType::Unit,
-        "DuckDB marker rekey rule `{rule_name}` requires `!= (Id, Id) -> Unit`"
+        "DuckDB marker rekey rule `{rule_name}` requires authenticated ValueNeq (diagnostic name `{name}`) with (Id, Id) -> Unit"
     );
     let [lhs, rhs, result] = atom.args.as_slice() else {
         bail!("DuckDB marker rekey rule `{rule_name}` inequality has the wrong arity");

@@ -1077,13 +1077,604 @@ with the retired writer. Review against the frozen artifact, not mutable chat.
 
 ## Next action
 
-The typed ordered-union native-input checkpoint is accepted at repaired hash
-`bfd333cc9ad2795c575a2629934017190d06a537ba2ddb15573b82bced8a4cbc`.
-Inspect the complete dirty/cached scope, stage only this coordinator ledger and
-the four authorized DuckDB paths, and create one local reviewed checkpoint
-commit with no push. Then refresh the five-workload executable frontier from
-that commit. Treat the Pointer dyld startup failure as a separate integration
-boundary: diagnose it read-only before deciding whether the next material slice
-is link/runtime launch, ordinary user-rule compilation, or container lowering.
-Do not rerun Pointer until a material link/runtime change exists; do not tune
-performance before the next functional frontier is identified.
+The typed ordered-union native-input checkpoint is committed locally as
+`ee71aa30d984a248c12bb2f34a01e450972cb59a` with no push; the worktree was
+clean immediately after the commit. Begin a new Understand/Explore round before
+another implementation slice.
+
+### Active re-census roster
+
+| Agent | Circle/domain | Aim | Authority | Expected output | Stop |
+| --- | --- | --- | --- | --- | --- |
+| runtime-link auditor | macOS Mach-O/DuckDB launch boundary | Identify why `@rpath/libduckdb.dylib` cannot load and the smallest public-API/runtime remedy; distinguish repository defect from invocation environment | Read-only inspection plus bounded loader-only `--help` probes; no build, workload, or edit | Exact cause, observed loader matrix, minimal material fix candidates, risks | Stop after one discriminating loader probe per materially distinct environment |
+| workload-frontier auditor | five benchmark proof-mode compiler/runtime surface | Re-census the earliest likely post-input unsupported boundary from committed code, prior public diagnostics, and source rules; rank the next functional slice | Read-only source/log inspection; no builds, tests, workloads, or edits | Per-workload boundary table, shared mechanism, smallest canaries, next-slice recommendation | Stop when one shared frontier or explicit divergent ordering is evidenced |
+
+Both auditors start from committed HEAD
+`ee71aa30d984a248c12bb2f34a01e450972cb59a`, observe only this coordinator
+ledger as dirty, and make no source edits, commits, pushes, benchmark/cache
+changes, or contact with retired writers. Every loader-only process is capped
+at 110 seconds and must not invoke Pointer or another workload. The coordinator
+owns any subsequent five-workload public probes and must not retry Pointer until
+the runtime-link audit establishes a materially different launch premise.
+
+Synthesize both audits into one proposal with a concrete next writer, owned
+write set, canaries, acceptance signal, and stop rule. Do not treat the dyld
+failure as semantic evidence, implement two adjacent slices in parallel, or
+begin performance tuning.
+
+### Re-census audit synthesis
+
+- **Loader cause:** the failed Pointer command placed
+  `DYLD_LIBRARY_PATH` before SIP-protected `/usr/bin/time`; the platform binary
+  stripped the `DYLD_*` environment before launching egglog. The retained
+  DuckDB-feature executable loads `@rpath/libduckdb.dylib` and has zero
+  `LC_RPATH` entries, while `target/debug/deps/libduckdb.dylib` is the correct
+  universal DuckDB 1.5.4 image. Direct `env DYLD_LIBRARY_PATH=... <bin> --help`
+  and `/usr/bin/time -lp env DYLD_LIBRARY_PATH=... <bin> --help` both exit zero;
+  placing `env` before `/usr/bin/time` reproduces exit 134 and the exact dyld
+  error. No Pointer retry occurred during the audit.
+- **Immediate launch premise:** after recreating the top-level DuckDB-feature
+  binary, place `/usr/bin/time -lp` before
+  `env DYLD_LIBRARY_PATH="$PWD/target/debug/deps"`. A successful `--help` on
+  that exact image authorizes one fresh coordinator-owned attempt per frozen
+  workload, including exactly one Pointer retry. The missing final-target
+  relative rpath is real packaging debt but is not required for this functional
+  census and must not be mixed into the compiler slice.
+- **Static workload frontier:** Math and Luminal retain the same first ordinary
+  commutativity rule: one Live View body and a structurally isomorphic 34-action
+  proof-instrumented head with literals/aliases, one action-side proof lookup,
+  14 fresh IDs, ordinary proof/constructor Sets, and a final ordered-union View
+  Set. Eggcc remains at an empty-body ground action rule. Hardboiled remains at
+  an All/body-container-rebuild primitive. Pointer is predicted, but not yet
+  observed, to finish 23 inputs and stop at a 28-action ordinary rule containing
+  `set-if-empty` and a semantic View read.
+- **Provisional priority:** implement a native nonempty scalar mixed-action
+  scheduler for the shared Math/Luminal topology first. Keep Pointer semantic
+  primitives, Eggcc empty-body execution, and Hardboiled containers as later
+  separately gated slices. Reuse the existing ordered-union queue kernel; do not
+  add host matching/merge, name routing, shared SPI, unsafe/private APIs, or
+  adjacent capabilities.
+
+### Authorized fresh public census
+
+Build the nonbundled DuckDB-feature CLI under the 110-second watchdog. Verify
+the corrected `/usr/bin/time -lp env DYLD_LIBRARY_PATH=... <exact-bin> --help`
+premise once. If it passes, execute Math, Eggcc, Pointer, Hardboiled, and Luminal
+once each in DuckDB proofs/no-messages mode, each in a fresh process with its
+own 110-second watchdog and corrected environment order. Pointer alone receives
+its fact directory. Capture exact exit, wall time, RSS, and first diagnostic.
+Do not retry a timeout or any workload without a material change. A timeout is
+censored performance data. Any input/transaction failure in Pointer is a live
+checkpoint defect; reaching line 70 or a later ordinary-rule diagnostic closes
+the native-input integration residual.
+
+After the census, consent-check one mixed-action writer contract against the
+observed boundaries. Do not implement rpath packaging, semantic primitives,
+empty bodies, containers, or performance changes in that writer.
+
+### Fresh public census at `ee71aa3`
+
+The exact rebuilt feature binary SHA-256 was
+`61bed546a5965e48c5321034bffd03cf7875197d34b84ab2f9af74148545c829`.
+The corrected-order loader-only `--help` exited zero in 0.54 seconds with
+13,107,200-byte max RSS. Every workload then ran once in a fresh process under
+its own external 110-second watchdog, using `/usr/bin/time -lp env
+DYLD_LIBRARY_PATH=... <binary>` in that order:
+
+| Workload | Exit | Real | Max RSS | First live boundary |
+| --- | ---: | ---: | ---: | --- |
+| Math | 1 | 0.02s | 37,175,296 B | `(rewrite (Add a b) (Add b a))` unsupported action language |
+| Eggcc | 1 | 1.99s | 73,596,928 B | `eval_actions` has an empty body |
+| Pointer | 1 | 1.83s | 83,591,168 B | first `(allocation alloc) -> (A alloc)` user rule unsupported action language |
+| Hardboiled | 1 | 0.03s | 44,793,856 B | `@rebuild_rule64` requests All; container rebuild body remains unsupported |
+| Luminal | 1 | 0.04s | 59,490,304 B | `mul-comm` unsupported action language |
+
+The Pointer run completed all 23 native input calls and generated maintenance
+before reaching its ordinary user rule. This closes the native-input public
+integration residual. None of the five timed out; no retry occurred.
+
+### Active mixed-action proposal roster
+
+| Agent | Circle/domain | Aim | Authority | Expected output | Stop |
+| --- | --- | --- | --- | --- | --- |
+| action semantic auditor | Reference/backend action evaluation and observable ordering | Freeze stable-prewave, action lookup/prediction, fresh-slot, Set/merge, generation/report, rollback, and seminaive semantics for the Math/Luminal topology | Read-only current source; no builds/workloads/edits | Exact semantic contract and smallest differential witnesses | Stop once every reached action motif has a source-backed ordering/failure rule |
+| action SQL architect | accepted DuckDB compilers, staging, transaction, and ordered-union queue | Produce two SQL-only execution designs and recommend the smallest that preserves the semantic contract using public APIs | Read-only DuckDB/source/docs already pinned; no builds/workloads/edits | Plan IR, staging/phase/allocation algorithm, risks, second-design stop path | Stop after one recommended and one materially different fallback design |
+| action admission/test auditor | Math/Luminal RuleSpec topology and fail-closed boundary | Define structural admission, canary/mutation matrix, public gates, and exact later-boundary exclusions | Read-only generated/source/compiler/tests; no builds/workloads/edits | Frozen family predicate, test plan, owned write set, stop rule | Stop once valid/invalid boundary and review gates are discriminating |
+
+All three auditors start at committed HEAD
+`ee71aa30d984a248c12bb2f34a01e450972cb59a`, observe only this coordinator
+ledger as dirty, and make no source/cache/binary changes, commits, pushes, or
+contact with prior writers. The action slice may target the reached nonempty
+scalar Math/Luminal family, not every arbitrary action program. It must remain
+typed/name-independent and fully DuckDB-native for match enumeration, action
+lookups, merge decisions, and generated rows. Rust may orchestrate statements
+and scalar counters only.
+
+Synthesize the audits into one Design-A worker contract with a single owned
+write set, irreducible semantic gate, negative family boundary, public
+acceptance frontier, one review-authorized repair, and one materially distinct
+Design-B fallback. Do not seat a writer until the contract is frozen.
+
+### Mixed-action audit synthesis and locked decisions
+
+- The reached Math/Luminal family is exactly one Live EclassToTerm View body,
+  three literal/alias actions, one early Fail/Old action-side term-proof lookup,
+  14 registered-token `get-fresh!` actions, and 16 Sets: 14 AssertEq, one Old,
+  and one EclassToTerm ordered-union View Set. The View Set is zero-based action
+  28 of 34; an alias plus two Fresh/AssertEq proof pairs follow it.
+- Reference materializes a stable prewave, runs actions action-major over active
+  lanes, flushes all ordinary action buffers, and invokes `merge_all` only after
+  the complete action stream. The trailing actions do not read or predict the
+  View, collision rows, or displaced UF. Therefore Design A must stage/apply all
+  direct effects before draining the queued View candidate while retaining its
+  source action/event ordinal. An action-28 queue barrier is rejected.
+- Production admission for this checkpoint is the exact 34-action structural
+  family, renamed and FunctionId-order independent. The plan IR may be generic
+  over typed supported motifs and tests may exercise a reduced plan internally,
+  but production must not claim an arbitrary five-motif program until its wider
+  collision/error semantics receive a separate audit. Counts and topology are
+  structural proof-encoding facts, not rule/table/sort-name routing.
+- Explicit head IDs use deterministic `(schedule ordinal, fresh-action ordinal,
+  canonical match ordinal)` allocation. One-match transcripts compare exact
+  IDs; multi-match correctness compares typed state/proof topology modulo a
+  sort-preserving fresh-ID bijection because Reference batching/parallelism does
+  not provide stable global raw-ID-to-match order. Every explicit head ID is
+  reserved before any ordered-union collision ID.
+- The lookup reads durable prewave state, including subsumed current rows. It is
+  Fail/Old, never lookup-or-insert and never prediction-producing; missing or
+  duplicate owners abort atomically. Same-run Sets are invisible to it.
+- Retain DuckDB's established atomic fail-closed policy: lookup failure, explicit
+  fresh exhaustion, merge-time failure, conflict, overflow, or scratch failure
+  rolls back rows, generation, counter, run identity, watermarks, telemetry, and
+  trace. This intentionally differs from Reference's silent/partial head-fresh
+  exhaustion and partial state after some errors; do not emulate that unsound
+  failure state. Successful-state semantics remain the blocking oracle.
+- Mixed-action telemetry is fixed as: matched rows are complete prewave matches;
+  inserted rows are the 15 independent direct head installations per completed
+  match (14 AssertEq plus one Old), excluding the queued View candidate and all
+  collision-generated Sym/Trans/UF effects; changed is any physical direct or
+  generated mutation; statement count is descriptive.
+- Current rulesets may remain homogeneous for this bounded checkpoint. A mixed
+  schedule containing scalar-mixed plus another plan kind must fail closed
+  before mutation unless the writer can support it inside the same stable
+  transaction without expanding the contract. If a public execution—not mere
+  registration—requires mixing, stop and reassess rather than weakening phases.
+
+## Worker contract: native scalar 34-action rules
+
+- **Hypothesis:** the exact reached Math/Luminal commutativity family can compile
+  into a typed tri-state `ScalarMixedPlan` and execute entirely through public
+  DuckDB SQL using stable match/head/effect stages plus the accepted
+  ordered-union queue, without a shared SPI change or host row enumeration.
+- **Frozen base:** committed
+  `ee71aa30d984a248c12bb2f34a01e450972cb59a`. The Reference backend is the
+  successful-state semantic oracle. Error-state comparison follows the atomic
+  fail-closed decision above. DD is diagnostic only.
+- **Plan/dispatch:** add a separate scalar-mixed compiler after
+  Standard/Marker/Path admission and before Direct; do not widen `DirectRule`
+  or `WriteCapability`. Plans retain typed body/slot/literal refs, source action
+  ordinals, semantic external-function tokens, target IDs/configs, Set kinds,
+  fresh ranks, and the complete catalog-validated EclassToTerm/KeyToParent
+  ordered-union graph. Plans/rendered SQL never route on diagnostic names,
+  fresh-label text, opaque numeric allocation order, or corpus identity.
+- **Tri-state ownership:** return `None` unless a multi-action rule has exactly
+  one Live body table and a head Set back to that same table whose root and
+  displaced merge both have the complete ordered-union outer graph. Once owned,
+  require `seminaive && !no_decomp`, the exact 34-action kind/order above, exact
+  typed SSA bind-before-use, one early `[Id] -> Id` Fail/Old/non-subsumable
+  lookup, the retained DuckDB fresh semantic token with String-literal to Id
+  signature, 14 scalar AssertEq/Unit targets, one scalar Old target, and the
+  complete View/UF/Sym/Trans graph. Every selected deviation is `Err` before
+  RuleId allocation; unrelated Direct/custom/Pointer/empty/container forms fall
+  through to their existing exact diagnostic.
+- **Stable execution:** before any durable mutation, validate every plan/target,
+  materialize every scheduled body match at its seminaive watermark, assign a
+  canonical ordinal from generation plus typed visible columns, and evaluate
+  exact lookup cardinality against prewave durable state. Materialize the full
+  typed 34-action head/effect stream. Rust reads only scalar counters/counts and
+  issues statements; it never receives match, lookup, effect, or owner rows.
+- **Allocation/effects:** checked-reserve all `14 * match_count` explicit slots
+  in `(schedule, fresh action, match)` order. Apply ordinary Old/AssertEq stages
+  in source-action order with setwise conflict checks and deterministic candidate
+  folds. Enqueue the action-28 View candidates with source schedule/action/match
+  event ordinals, apply actions 29--33, then drain the existing ordered-union
+  queues to fixed point. Collision IDs start after the complete explicit range;
+  missing/equal/old-min/new-min/subsumed owner and recursive UF semantics remain
+  exactly those of the accepted queue kernel. There is no semantic wave cap.
+- **Transaction/publication:** one transaction covers stable stages, rows,
+  generation, explicit/collision counter reservations, scratch, run identity,
+  watermarks, telemetry, and SQL trace. Bump physical generation once iff any
+  direct or generated row state changed. Drop scratch inside the transaction;
+  on failure roll back and clean connection-level residue, then preserve prior
+  public state. Publish run identity/watermarks/telemetry/trace only after commit.
+- **Irreducible gate:** a completely renamed one-match 34-action fixture with
+  shuffled FunctionIds and fresh base 100 must match independently constructed
+  Reference state/transcript exactly on a missing View owner: explicit IDs
+  100..113, no collision IDs, 15 independent head inserts, one View install,
+  next ID 114, changed true, and the new reversed View invisible to the same
+  run. A differing-owner variant must allocate collision Sym/Trans 114/115 and
+  leave 116 next with exact orientation and displaced UF state. Failure stops
+  the larger implementation.
+- **Positive canaries:** full renamed Math and Luminal equivalents; two matches
+  proving fresh-action-major allocation and alpha-equivalent topology; stable
+  prewave and seminaive quiescence; lookup hit including subsumed owner;
+  View missing/equal/old-min/new-min/subsumed cases; ordinary Old and AssertEq
+  setwise behavior; recursive UF fixed point; explicit-before-collision IDs;
+  nullary and synthetic 27-key scalar Views where the exact fixture can express
+  them; typed/hostile literals through the central codec; and a late trailing
+  conflict/exhaustion rollback from nonzero watermarks followed by exact retry.
+- **Negative canaries:** missing/duplicate lookup; moved/extra lookup; wrong
+  seminaive/no-decomp/mode/body cardinality; use-before-bind/rebinding/type/arity;
+  wrong fresh token/signature/count/action order; wrong ordinary target
+  config/merge; incomplete/misoriented root/displaced ordered-union graph; a
+  second View Set; mixed plan schedule; empty body; Pointer set-if-empty/View
+  read; All/body primitives/containers; Delete/Subsume/Union/Panic/Change;
+  tuple outputs/globals/unknown tokens/custom merges. Unrelated shapes preserve
+  their current diagnostics; selected malformed shapes preserve RuleId zero.
+- **Public gate:** with the corrected `/usr/bin/time -lp env
+  DYLD_LIBRARY_PATH=...` order, Math must register lines 19--20 and Luminal
+  lines 64--65 before reporting their next exact boundary. Eggcc must remain at
+  empty-body `eval_actions`; Pointer must complete all 23 inputs and remain at
+  its set-if-empty/View-read ordinary rule; Hardboiled must remain at its
+  All/container rebuild. No probe may time out; timings/RSS/statements are
+  descriptive only. Registration advance is the public signal; the synthetic
+  34-action fixtures are the blocking execution signal because later unsupported
+  registrations prevent these benchmark heads from running yet.
+- **Owned write set:** new `egglog-experimental/duckdb/src/action_rule.rs` and
+  `action_rule_tests.rs`; narrow `rule_sql.rs`, `rebuild.rs`, `storage.rs`, and
+  `lib.rs` changes only. Exclude this ledger. No frontend/backend trait,
+  Reference/DD, proof encoder, fixture/snapshot, census, manifest/lockfile,
+  benchmark harness/cache, link/rpath, input/file loader, commit, or push.
+- **Forbidden shortcuts:** host row/effect enumeration, matcher/merge/callback;
+  proof/table/sort/rule/variable-name or FunctionId-order routing; Appender,
+  Arrow, `read_csv`, `COPY`, parameters, SQL NULL-as-undefined, ordinary indexes
+  or PKs, unsafe/private/FFI APIs, dependency fork/patch, proof-aware durable
+  metadata, fail-open fallback, performance tuning, or adjacent empty-body,
+  semantic-primitive, multi-body, container, or general action support.
+- **Verification/review:** worker runs focused scalar-mixed tests, complete
+  nonbundled DuckDB lib, DuckDB/feature-CLI Clippy with warnings denied, feature
+  CLI tests/build, format/diff, and the five one-shot public boundaries, all
+  under independent 110-second watchdogs. Freeze an exact owned patch hash.
+  Three independent semantic, admission, and safe-SQL/test reviews follow; only
+  the coordinator runs `make proof-tests` and commits an accepted checkpoint.
+- **Stop/Design B:** freeze Design A's first reviewable artifact. At most one
+  review-authorized repair may follow. If fused typed head/effect staging cannot
+  meet the irreducible transcript, exact source ordering, or atomic failure
+  contract, reassess one materially different typed action-bytecode/effect-trace
+  executor with per-slot typed relations and explicit barriers. If both SQL-only
+  designs fail the same reduced gate, or correctness requires a forbidden
+  shortcut/shared API/adjacent capability, exit this goal early with the
+  smallest witness; do not try a third architecture.
+
+## Scalar-mixed contract amendment from the public API
+
+The source/desugared proof form contains the 34 semantic actions documented
+above, but the actual backend `RuleSpec` for the shared Math/Luminal
+commutativity family contains 50 head actions. Core canonicalization prepends
+one identity alias for the eliminated body equality and inserts one
+call-result alias after the early Old lookup and each of the 14 `get-fresh!`
+calls. The production admission contract is therefore the exact 50-action
+frontend shape, with those 16 scaffolding aliases validated and collapsed to
+the frozen 34-action semantic plan. Semantic action/event ordinals, 14 fresh
+slots, 15 direct installs, and all expected poststates remain unchanged.
+
+The earlier 34-action *backend-head* wording and action-28 physical index are
+superseded. Action 28 remains the semantic View event ordinal after alias
+normalization; it is not the raw frontend action index. Admission must reject
+missing, moved, mistyped, or non-identity scaffolding aliases before RuleId
+allocation. The tri-state selector must return `None` before inspecting actions
+unless the rule has exactly one Live table body and a Set back to that same
+complete nested ordered-union View table. This preserves Pointer, All,
+container, UF-shaped, empty-body, and unrelated Direct diagnostics.
+
+Fresh-token provenance is context-sensitive. Egglog registers the same generic
+`get-fresh!` primitive separately for Write and Full contexts, so the ordered-
+union graph token and the rule-head token may be distinct. Both must be live
+tokens registered in this DuckDB backend; all 14 head calls must use the same
+live head token and retain the String-literal-to-Id typed shape. Token numeric
+IDs and diagnostic names are non-semantic.
+
+## Frozen Design-A scalar implementation
+
+The sole writer froze the six authorized source paths at committed base
+`ee71aa30d984a248c12bb2f34a01e450972cb59a`. The coordinator independently
+reproduced the complete owned patch SHA-256, including the two untracked files,
+as `002a991b65b41bffb367bd19d8de6326aac65f0cb31e9f2f6dcc9dc92ac80a05`.
+The only dirty path outside that owned set is this coordinator ledger.
+
+The artifact contains the exact frontend/scaffolding compiler, transactional
+native-SQL executor, ordered-union queue integration, live-token provenance,
+strict tri-state ownership, and 19 focused tests. Internal review found and the
+writer repaired: action-19 Old-table retargeting, name-sensitive `RuleVar`
+comparison, unregistered fresh-token acceptance, overbroad scalar ownership,
+the 34/35/50 frontend-count model, and incorrect equality between graph and
+head context tokens. The accepted execution path retained direct-effects-first
+ordering and one post-action-stream ordered-union drain.
+
+Writer-reported bounded gates on the frozen hash:
+
+- focused scalar tests 19/19;
+- complete DuckDB library 102/102;
+- DuckDB all-target Clippy with warnings denied;
+- feature CLI tests 4/4, build, and Clippy;
+- `cargo fmt --all -- --check` and `git diff --check`;
+- independent minimal end-to-end commutativity registration advanced to the
+  following associativity rule.
+
+The writer's five one-shot public probes were evidence-producing but not final
+acceptance probes because Math, Hardboiled, and Luminal exposed admission
+defects repaired afterward. They were not retried by the writer. Initial
+results were: Math 0.02s/37,208,064 B at the pre-repair 34-vs-50 mismatch;
+Eggcc 2.54s/72,728,576 B at the expected empty-body boundary; Pointer
+1.85s/83,820,544 B after all inputs at the expected allocation-rule boundary;
+Hardboiled 0.03s/44,695,552 B at the pre-repair overbroad selector; Luminal
+0.50s/59,326,464 B at the pre-repair graph/head token-equality check. None
+timed out. The coordinator may run one fresh post-freeze acceptance probe per
+workload after independent review; that is a materially changed artifact, not
+a retry of the same premise.
+
+### Independent review roster
+
+| Agent | Circle/domain | Aim | Authority | Expected output | Stop |
+| --- | --- | --- | --- | --- | --- |
+| scalar semantic reviewer | Reference-success-state and DuckDB transaction semantics | Verify the frozen 50-to-34 normalization, prewave lookup, allocation, direct-before-queue ordering, collisions, rollback, generation, seminaive watermarks, and telemetry | Read-only frozen source and ledger; no edits/builds/tests/workloads/contact | Pass/fail findings with exact code evidence and smallest counterexample | Stop after every locked semantic invariant is traced or one blocker is proven |
+| scalar admission reviewer | exact public RuleSpec family and tri-state fallthrough | Verify exact scaffolding/token/SSA/config admission, RuleId-zero failure, and preservation of unrelated Pointer/All/container/empty/custom diagnostics | Read-only frozen source/frontend/compiler/tests/ledger; no edits/builds/tests/workloads/contact | Pass/fail mutation matrix and any missing boundary | Stop once ownership and selected-vs-unrelated behavior are discriminated |
+| scalar safe-SQL/test reviewer | public DuckDB boundary, native execution, and evidence quality | Verify no host rows/effects, private/unsafe/file/Arrow/Appender paths, proof-aware storage, or forbidden fallback; assess test canaries and writer gate claims structurally | Read-only frozen source/tests/ledger/diff; no edits/builds/tests/workloads/contact | Pass/fail findings, missing canary, and gate recommendation | Stop after the forbidden-shortcut audit and test sufficiency decision |
+
+All reviewers must independently record start/end HEAD, owned hash, and status.
+They may not contact the writer or each other. At most one consolidated,
+review-authorized repair is available; no repair is presumed.
+
+## Next action
+
+The three frozen-hash reviews completed without changing HEAD, owned hash, or
+the exact dirty set:
+
+- **Semantic review: PASS.** The reviewer traced 50-to-34 normalization,
+  prewave matching/lookup, explicit-before-collision allocation, all direct
+  effects before the sole ordered-union drain, collision/recursive UF cases,
+  rollback/publication, generation/watermarks, and telemetry. It found two
+  nonblocking coverage gaps: a successful two-scalar-rule schedule and a
+  scalar-specific subsumed-Live no-match canary.
+- **Admission review: FAIL.** `scalar_mixed_owner` can claim a self-displacing
+  UF-shaped rule because it does not require the selected body table to be a
+  subsumable View before inspecting the action stream. The smallest repair is
+  to return `None` for `!TableInfo::can_subsume`, then add a self-displacing UF
+  fallthrough/RuleId-zero witness. It also requested exact scaffolding-alias
+  mutation coverage.
+- **Safe-SQL/test review: REVISE.** The SQL boundary itself contains no host
+  row/effect enumeration, host merge, unsafe/private/FFI/fork/patch,
+  Appender/Arrow/file SQL, parameters, indexes, proof metadata, or fail-open
+  path. However ordered-union native semantics are currently authenticated by
+  the strings `proof-of-min/max` and `ordering-min/max`, while the validator
+  discards their `ExternalFunctionId`s. A same-token rename rejects and an
+  expected-name spoof can select hard-coded SQL for a different callback in an
+  adversarial `RuleSpec`; current tests do not discriminate those cases.
+
+Do not spend the single repair or run broad gates until primitive provenance is
+decided. Three read-only proposal-forming audits are active: (A) determine
+whether `Primitive.name` is a trusted public source-language semantic identity
+and whether the spoof/rename witnesses are reachable through the real frontend;
+(B) design the smallest public semantic-tag SPI if names are insufficient; and
+(C) decide whether public DuckDB vector/scalar UDFs can execute the exact
+registered callback without forbidden host-row/reentrant state. After all
+three return, consent-check exactly one repair contract containing the UF
+prefilter, required negative canaries, and the chosen provenance design. If no
+public, name-independent provenance path exists without a shared SPI change,
+stop this scalar checkpoint and promote that SPI change to an explicit
+prerequisite; do not add a heuristic or silently weaken the contract.
+
+### Primitive-provenance decision and consolidated repair contract
+
+All three proposal audits converged. Primitive names are stable frontend
+metadata but are not authenticated semantics in the public Backend SPI:
+`RuleSpec` fields are independently constructible, and Reference/DD execute the
+`ExternalFunctionId` while using `name` only diagnostically. The ordinary
+frontend co-derives name and token, so spoof/rename witnesses are not produced
+by valid source programs, but they are valid public SPI inputs and Reference/DD
+give them token semantics. DuckDB must not diverge by substituting SQL from the
+string alone.
+
+Public DuckDB UDFs are rejected for this prerequisite. In the pinned crate the
+typed vector access needed by `VScalar` is unsafe (the safe alternative is the
+forbidden Arrow path), there is no safe row-at-a-time UDF API, the erased
+callback requires mutable `ExecutionState`, and UDF catalog lifetime does not
+match freed/reused external-function IDs. Hard-coded typed SQL remains the
+right executor only after registration-bound semantic authentication.
+
+The one review-authorized repair is expanded into a shared prerequisite plus
+the scalar repair, in one frozen artifact:
+
+- Add a public, non-exhaustive, copyable/hashable `NativePrimitive` enum to
+  `egglog-backend-trait` with the currently native semantics:
+  `ValueNeq`, `OrderingMin`, `OrderingMax`, `SelectMinPayload`, and
+  `SelectMaxPayload`. Semantics use strict raw-`Value` comparison; ties choose
+  the right argument/payload; `ValueNeq` returns Unit only when unequal; wrong
+  arity returns `None`.
+- Add one defaulted object-safe
+  `Backend::register_native_primitive(NativePrimitive) -> ExternalFunctionId`.
+  The default registers the canonical callback, preserving Reference/DD and
+  external Backend source compatibility. The method accepts no caller-supplied
+  callback, so a native token cannot be bound to hostile behavior.
+- Add a crate-private frontend registration helper that retains the existing
+  primitive/type constraints/validators but asks each backend/context for a
+  native token. Register source `!=`, `ordering-min`, `ordering-max`, and the
+  two proof-payload selectors through it. Ordinary/user primitives remain on
+  `register_external_func`; RuleSpec/MergeFn shapes and lowering remain
+  unchanged.
+- DuckDB overrides registration with a fail-closed callback slot plus
+  `ExternalFunctionId -> NativePrimitive` map. Distinct context tokens may map
+  to the same operation. `free_external_func` removes native and fresh-token
+  provenance before freeing/reuse. No native executor invokes the placeholder.
+- Authenticate every current hard-coded native primitive path by token/tag and
+  exact typed signature/topology: marker rekey and path-compression `ValueNeq`;
+  path compression, standard rebuild, native ordered-union input, and scalar
+  ordered-union min/max/payload selection. Primitive names become diagnostics
+  only. Existing get-fresh authentication continues through the live fresh
+  token set; remove any `get-fresh!` string requirement while retaining exact
+  signature/topology and required token relationships.
+- Repair scalar tri-state ownership by returning `None` before action
+  inspection for a non-subsume-capable body table. Add the self-displacing UF
+  fallthrough/unchanged-diagnostic/next-RuleId-zero witness.
+- Add blocking provenance canaries: genuine token with renamed diagnostic;
+  expected name with ordinary/hostile token; swapped genuine tags;
+  freed-token numeric reuse; distinct genuine context tokens; tie/wrong-arity
+  default semantics; malformed signature/topology with genuine token; and
+  native input/rule paths using the same registry with placeholders uninvoked.
+  Add a table-driven scaffolding-alias mutation canary. The successful two-
+  scalar schedule and subsumed-Live zero-match canaries are desirable within
+  the same test module but remain coverage additions, not excuses to expand
+  production behavior.
+
+The expanded owned write set is limited to this ledger; the existing six
+scalar files; `egglog/egglog-backend-trait/src/lib.rs` (and
+`backend_impl.rs` only if the default test requires it); `egglog/src/lib.rs`,
+`egglog/src/typechecking.rs`, and the existing proof helper only if needed;
+plus DuckDB `path_compress.rs`, `marker_rekey.rs`, their focused test modules,
+`rebuild_tests.rs`, and `input_tests.rs`. A single new focused frontend/backend
+trait test file is allowed if inline coverage is materially worse. No manifest,
+lockfile, shared RuleSpec/MergeFn shape, Reference/DD semantic implementation,
+proof encoding/storage, fixture/snapshot, benchmark, rpath/loader, Appender,
+Arrow, UDF, unsafe/FFI/private API, host row/effect/merge/callback, or
+performance edit is authorized.
+
+The writer starts from unchanged HEAD
+`ee71aa30d984a248c12bb2f34a01e450972cb59a` and frozen rejected owned hash
+`002a991b65b41bffb367bd19d8de6326aac65f0cb31e9f2f6dcc9dc92ac80a05`.
+It must first prove the default canonical callback and DuckDB tag lifecycle,
+then repair all name-authenticated native sites, then the UF selector. Run only
+focused/shared/DuckDB/feature gates under independent 110-second watchdogs;
+do not run public workloads, `make proof-tests`, commit, or push. Freeze one new
+complete patch hash. If the default method cannot remain object-safe/source-
+compatible, tags cannot reach every current native validator without changing
+RuleSpec/MergeFn, or any path still needs names/callback execution for
+correctness, stop the checkpoint. Do not attempt the larger first-class-IR
+fallback in this cycle.
+
+## Next action
+
+The sole writer completed and froze the consolidated repair at unchanged HEAD
+`ee71aa30d984a248c12bb2f34a01e450972cb59a`. The coordinator independently
+reproduced the expanded owned patch SHA-256 as
+`46934c83a6d63e5989f9f10a7612404b02501f0d62e9474039d0e6734d8c92a6`,
+using the tracked binary diff over the shared trait/frontend and complete
+DuckDB crate plus no-index binary diffs for `action_rule.rs` and
+`action_rule_tests.rs`. Status is exactly this ledger, 13 authorized tracked
+source/test files, and the two authorized untracked action files.
+
+The artifact adds the object-safe canonical `NativePrimitive` registration,
+frontend context-token registration, DuckDB token/tag lifecycle, tag-based
+authentication at every current native SQL path, fresh-token lifecycle checks,
+the non-subsumable UF fallthrough repair, and provenance/topology/lifecycle/
+tie/arity/freed-ID/16-alias canaries. The writer reports that no semantic
+primitive-name admission check remains.
+
+Writer-reported bounded evidence on the frozen hash:
+
+- workspace tests excluding DuckDB passed;
+- DuckDB library 106/106 passed;
+- feature CLI 4/4 passed;
+- DD timing test 1/1 passed;
+- all four `make rust-clippy` constituent stages passed;
+- formatting and tracked/untracked whitespace checks passed.
+
+The aggregate `make rust-test` was censored by its 110-second watchdog. The
+writer then ran each constituent command independently under its own watchdog
+and reports every constituent passed. The aggregate timeout is retained as
+censored evidence, not converted into a pass. Public workloads and
+`make proof-tests` have not run on this repaired hash.
+
+### Re-review roster
+
+| Agent | Circle/domain | Aim | Authority | Expected output | Stop |
+| --- | --- | --- | --- | --- | --- |
+| shared-SPI reviewer | public trait, default callbacks, frontend context registration, Reference/DD compatibility | Verify enum semantics, object/source compatibility, unforgeable registration, context/lifecycle behavior, and unchanged public IR | Read-only frozen hash; no edits/builds/tests/workloads/contact | Pass/fail with exact smallest public-SPI witness | Stop after every shared invariant is traced or one blocker is proven |
+| admission/semantic reviewer | all native compilers plus scalar executor | Verify all five tag seams, fresh-token name independence/lifecycle, UF fallthrough, 50-to-34/scalar semantics, rollback/allocation, and canary discrimination | Read-only frozen hash; no edits/builds/tests/workloads/contact | Pass/fail with exact code/test evidence | Stop after all repaired blockers and locked semantics are decided |
+| safe-SQL/test reviewer | forbidden-boundary and evidence quality | Prove no semantic name authority, host rows/effects/merge/callback, unsafe/private/FFI/UDF/Arrow/Appender/file SQL/proof metadata/fallback; assess gate sufficiency | Read-only frozen hash; no edits/builds/tests/workloads/contact | Pass/fail, residual gaps, gate recommendation | Stop after shortcut audit and sufficiency decision |
+
+### Re-review decision
+
+All three independent read-only reviews passed against source hash
+`46934c83a6d63e5989f9f10a7612404b02501f0d62e9474039d0e6734d8c92a6`
+at unchanged HEAD `ee71aa30d984a248c12bb2f34a01e450972cb59a` and unchanged source status:
+
+- The shared-SPI review found the five `NativePrimitive` semantics exact,
+  `register_native_primitive` object-safe and source-compatible, frontend
+  context registration correct, Reference/DD behavior unchanged, and freed
+  token provenance removed before numeric ID reuse. Its only nonblocking
+  coverage note is the absence of a dedicated recording-backend count of the
+  four frontend context registrations; the direct loop and distinct-context
+  acceptance canary cover the contract structurally.
+- The admission/semantic review found the non-subsume-capable UF fallthrough
+  repaired before action inspection; all marker/path/rebuild/input/scalar
+  native seams authenticate tag, signature, and topology; fresh names are
+  diagnostic only; all 16 raw scaffolding aliases are discriminated; and the
+  exact 50-to-34 scalar normalization, prewave, action-major allocation,
+  ordered effects, rollback, generation, and publication semantics remain
+  intact.
+- The safe-SQL review found no semantic name authority, host row/effect/merge
+  execution, callback invocation, unsafe/private/FFI/UDF/Arrow/Appender/file
+  SQL, proof-aware storage, or fallback. User values use the central typed SQL
+  codec, durable function rows retain only `__generation` and `__subsumed`,
+  and scalar execution remains one transaction with post-commit publication.
+
+The two anticipated nonblocking scalar coverage additions remain: no successful
+two-scalar-plan schedule and no scalar-specific subsumed-Live zero-match
+canary. No reviewer found a production defect or authorized another edit.
+
+The coordinator must now independently reproduce focused/shared/DuckDB/CLI/
+Clippy/format gates, one fresh post-repair public probe per workload, and
+`make proof-tests`, each independently capped at 110 seconds. Preserve the
+aggregate `make rust-test` timeout as censored evidence. Any new correctness or
+admission blocker stops this checkpoint because the repair budget is exhausted.
+If all blocking gates pass, record exact evidence and make one local commit.
+Do not push or tune performance.
+
+### Coordinator acceptance evidence
+
+The coordinator reproduced every blocking gate independently under an external
+110-second watchdog on unchanged source hash
+`46934c83a6d63e5989f9f10a7612404b02501f0d62e9474039d0e6734d8c92a6`:
+
+- canonical `NativePrimitive` default/object-safety canary: 1/1 in 0.49s;
+- scalar action module: 21/21 in 0.97s;
+- complete DuckDB library: 106/106 in 0.76s;
+- workspace excluding DuckDB: passed in 53.90s, including 792 core file
+  tests and all workspace doctests;
+- DuckDB feature CLI: 4/4 in 0.43s;
+- DD timing-summary constituent: 1/1 in 0.72s;
+- all four `make rust-clippy` constituents: passed independently;
+- DuckDB feature binary build: passed; the final probe binary was rebuilt
+  after the workspace tests so its feature provenance could not be overwritten;
+- `cargo fmt --all -- --check`, tracked `git diff --check`, and explicit
+  no-index whitespace checks for both untracked action files: passed;
+- `make proof-tests`: 204 core plus 8 experimental in 53.74s.
+
+Two attempted commands were explicitly rejected as evidence rather than
+laundered into passes. The first native-default invocation used `--exact` with
+an incomplete module path and selected zero tests; the corrected filter then
+ran 1/1. The first Math probe found that a later workspace build had replaced
+the feature binary and exited before backend construction; the feature binary
+was rebuilt and only the post-rebuild probe is accepted.
+
+Fresh public probes, each run once against that final feature binary, produced:
+
+| Workload | Exit | Wall | Max RSS | Accepted frontier |
+| --- | ---: | ---: | ---: | --- |
+| Math | 1 | 0.48s | 37,568,512 B | commutativity admitted; stops at the later associativity rewrite |
+| Luminal | 1 | 0.07s | 59,949,056 B | add/mul commutativity admitted; stops at the later constant-fold primitive body |
+| Eggcc | 1 | 2.42s | 73,515,008 B | unchanged empty-body `eval_actions` boundary |
+| Pointer | 1 | 2.19s | 84,312,064 B | all inputs admitted; unchanged first allocation-rule boundary |
+| Hardboiled | 1 | 0.04s | 44,597,248 B | unchanged `All`/container-rebuild boundary |
+
+All five are expected fail-closed frontier exits, not completed benchmarks.
+There were no timeouts, loader failures, earlier diagnostics, performance
+retries, or public cache/report writes. Math and Luminal demonstrate the
+checkpoint's intended new scalar coverage; the other three preserve their
+prior boundaries.
+
+The final source hash remained exactly
+`46934c83a6d63e5989f9f10a7612404b02501f0d62e9474039d0e6734d8c92a6`.
+Status remained exactly this ledger, the 13 reviewed tracked source/test files,
+and the two reviewed untracked action files. The scalar/native-primitive
+checkpoint is accepted for one local commit. Do not push.
