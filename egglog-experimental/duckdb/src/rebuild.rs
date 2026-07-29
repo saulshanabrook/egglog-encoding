@@ -13,8 +13,27 @@ use egglog_backend_trait::{
     BaseValues, ColumnTy, DefaultVal, FunctionId, MergeAction, MergeFn, ReadMode, RuleActionCall,
     RuleBodyCall, RuleSpec, RuleValue, RuleVar,
 };
+use egglog_numeric_id::NumericId;
 
 use crate::storage::{ScalarSqlType, Storage, TableInfo, WriteCapability, sql_table};
+
+trait TableCatalog {
+    fn table_info_for_merge(&self, id: FunctionId) -> Result<TableInfo>;
+}
+
+impl TableCatalog for Storage {
+    fn table_info_for_merge(&self, id: FunctionId) -> Result<TableInfo> {
+        self.table_info(id)
+    }
+}
+
+impl TableCatalog for [TableInfo] {
+    fn table_info_for_merge(&self, id: FunctionId) -> Result<TableInfo> {
+        self.get(id.rep() as usize)
+            .cloned()
+            .ok_or_else(|| anyhow!("unregistered DuckDB function {}", id.rep()))
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum OrderedUnionOrientation {
@@ -697,7 +716,7 @@ pub(crate) fn ordered_union_outer(merge: &MergeFn) -> Option<FunctionId> {
 
 fn validate_ordered_union(
     base_values: &BaseValues,
-    storage: &Storage,
+    tables: &(impl TableCatalog + ?Sized),
     rule_name: &str,
     target: FunctionId,
     info: &TableInfo,
@@ -744,7 +763,7 @@ fn validate_ordered_union(
     };
     let sym = expect_merge_proof_set(
         base_values,
-        storage,
+        tables,
         rule_name,
         set_sym,
         &[sym_argument, let_var(2), unit()],
@@ -758,7 +777,7 @@ fn validate_ordered_union(
     };
     let trans = expect_merge_proof_set(
         base_values,
-        storage,
+        tables,
         rule_name,
         set_trans,
         &trans_arguments,
@@ -823,6 +842,69 @@ fn validate_ordered_union(
         },
         fresh_label: sym_label,
     })
+}
+
+/// Tri-state native-input admission for the ordered-union family. A View owns
+/// this branch only when both its root and displaced target have the generated
+/// outer topology; unrelated custom Blocks then retain generic `Deferred`
+/// fallthrough. Once owned, every interior and the complete queue graph is
+/// validated fail-closed. This deliberately does not alter [`WriteCapability`],
+/// so an ordinary Direct Set still rejects the same Block.
+pub(crate) fn validate_native_input_ordered_union(
+    base_values: &BaseValues,
+    tables: &[TableInfo],
+    target: FunctionId,
+) -> Result<Option<Vec<OrderedUnionPlan>>> {
+    let info = tables.table_info_for_merge(target)?;
+    let Some(displaced_target) = ordered_union_outer(&info.merge) else {
+        return Ok(None);
+    };
+    if info.can_subsume {
+        let displaced_info = tables.table_info_for_merge(displaced_target)?;
+        if ordered_union_outer(&displaced_info.merge).is_none() {
+            return Ok(None);
+        }
+    }
+
+    let orientation = if info.can_subsume {
+        validate_view_table(base_values, "native input", &info)?;
+        OrderedUnionOrientation::EclassToTerm
+    } else {
+        validate_union_find_table(base_values, "native input", &info)?;
+        OrderedUnionOrientation::KeyToParent
+    };
+    let root = validate_ordered_union(
+        base_values,
+        tables,
+        "native input",
+        target,
+        &info,
+        (orientation == OrderedUnionOrientation::KeyToParent).then_some(target),
+        orientation,
+    )?;
+
+    if orientation == OrderedUnionOrientation::KeyToParent {
+        return Ok(Some(vec![root.plan]));
+    }
+
+    let displaced_info = tables.table_info_for_merge(root.plan.displaced_target)?;
+    validate_union_find_table(base_values, "native input", &displaced_info)?;
+    let displaced = validate_ordered_union(
+        base_values,
+        tables,
+        "native input",
+        root.plan.displaced_target,
+        &displaced_info,
+        Some(root.plan.displaced_target),
+        OrderedUnionOrientation::KeyToParent,
+    )?;
+    ensure!(
+        root.plan.sym == displaced.plan.sym
+            && root.plan.trans == displaced.plan.trans
+            && root.fresh_label == displaced.fresh_label,
+        "DuckDB native-input View and displaced UF ordered-union blocks disagree"
+    );
+    Ok(Some(vec![root.plan, displaced.plan]))
 }
 
 fn validate_inequality<'a>(
@@ -1094,7 +1176,7 @@ fn expect_fresh_merge(
 
 fn expect_merge_proof_set(
     base_values: &BaseValues,
-    storage: &Storage,
+    tables: &(impl TableCatalog + ?Sized),
     rule_name: &str,
     action: &MergeAction,
     expected: &[MergePattern],
@@ -1107,7 +1189,7 @@ fn expect_merge_proof_set(
     for (argument, expected) in arguments.iter().zip(expected) {
         expect_pattern(base_values, rule_name, argument, *expected)?;
     }
-    let info = storage.table_info(*target)?;
+    let info = tables.table_info_for_merge(*target)?;
     validate_assert_eq_table(base_values, rule_name, &info, key_types)?;
     Ok(*target)
 }

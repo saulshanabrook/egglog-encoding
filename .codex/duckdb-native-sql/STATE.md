@@ -86,9 +86,9 @@ preserve these current SPI semantics:
 ## Steering frame
 
 - **Current frontier:** checkpoints 0 and 0.5 plus typed storage, native input,
-  path compression, direct cleanup, and standard scalar rebuild are committed
-  through `2914373`. The marker-rekey slice is accepted but not yet committed:
-  its DuckDB-local compiler and mixed Standard/Marker transaction passed all
+  path compression, direct cleanup, standard scalar rebuild, and marker rekey
+  are committed through `7a1ec52`. The DuckDB-local marker compiler and mixed
+  Standard/Marker transaction passed all
   three independent reviews, the sole test-only repair, and fresh coordinator
   acceptance at owned patch-stream hash
   `fce5af5b1359614de29079f34309e57be69c9ff7264a43040ee37f615f4a21d1`.
@@ -125,9 +125,8 @@ preserve these current SPI semantics:
   the benchmark harness does not yet advertise the DuckDB endpoint; direct
   execution of the downloaded dylib needs its dependency directory added to
   `DYLD_LIBRARY_PATH` on macOS; and slow bounded proof workloads.
-- **Next decision:** create one local marker-rekey checkpoint commit with no
-  push, then return to the committed raw-input audit and seat bounded read-only
-  architecture/test circles before one DuckDB-only writer. Raw input must reuse
+- **Next decision:** return to the committed raw-input audit and seat bounded
+  read-only architecture/test circles before one DuckDB-only writer. Raw input must reuse
   the complete ordered-union semantics rather than admit a missing-only corpus
   shortcut. Preserve
   UnstableFn as schema-only deferred: hardboiled stores only its `ColumnTy::Id`,
@@ -180,6 +179,10 @@ preserve these current SPI semantics:
 | `/root/marker_semantics_review` | independent frozen semantic review | audit stable mixed pre-wave, phases, one-hop behavior, generation/reporting, allocation, rollback, and watermarks | exact frozen owned hash only; no writes/builds/tests or writer contact | `PASS`, `REVISE`, or `REASSESS` with exact source evidence | completed `PASS`; no production semantic defect or counterexample |
 | `/root/marker_admission_review` | independent frozen admission review | audit name-independent tri-state ownership, exact typed roles/configs/actions, fallthrough/error boundaries, and RuleId preservation | exact frozen owned hash only; no writes/builds/tests or writer contact | `PASS`, `REVISE`, or `REASSESS` with exact source evidence | repaired-surface re-review completed `PASS`; every requested classification/config axis closes at `fce5af5b...` |
 | `/root/marker_sql_tests_review` | independent frozen SQL/test/API review | audit typed SQL safety, scratch lifecycle, forbidden surfaces, Standard regression risk, telemetry, and canary sufficiency | exact frozen owned hash only; no writes/builds/tests or writer contact | `PASS`, `REVISE`, or `REASSESS` with exact source evidence | repaired-surface re-review completed `PASS`; blocker closed test-only at `fce5af5b...` |
+| `/root/raw_input_ordered_union_arch` | read-only ordered-union reuse architecture | design the smallest complete native input path by generalizing the accepted queue fold rather than adding missing-only insertion | committed `7a1ec52`; no writes/builds/tests/commits/pushes or other-agent contact; safe public API and literal SQL only | two concrete designs, reusable abstraction/write set, risks, recommendation, and stop rule | completed; extract the accepted queue kernel for input-specific admission, with a broader unified Set scheduler deferred |
+| `/root/raw_input_semantic_canaries` | read-only raw-input oracle/test audit | freeze Reference-winning collision, allocation, rollback, telemetry, typed-literal, and negative-admission canaries | committed `7a1ec52`; no writes/builds/tests/commits/pushes or other-agent contact | exact focused matrix, public Pointer gate, blocking/descriptive split, and stop rule | completed; Reference differential plus eight focused canaries and the old-min/new-min/identity minimal gate are frozen |
+| `/root/raw_input_integration_scope` | read-only Pointer integration/frontier audit | trace parsed facts through the typed batch and bound one writer slice at the next executable boundary | committed `7a1ec52`; no writes/builds/tests/commits/pushes or other-agent contact; no Appender/read_csv/COPY | verified target/config/input surface, owned paths, forbidden shortcuts, commands, and two-design early exit | completed; 23 calls/2,255 facts/13,530 rows/9,020 slots verified and the first ordinary user rule selected as the post-input boundary |
+| `/root/duckdb_raw_input_worker` | complete typed ordered-union native-input implementation | extract the accepted queue kernel and seed it from Rust-parsed typed literal SQL in one atomic input transaction | `egglog-experimental/duckdb/**` except this ledger; no shared API/frontend/DD/Reference/ordinary-rule/container/harness/fixture/manifest/commit/push | Reference-differential minimal gate, focused canaries, complete DuckDB gates, and Pointer beyond all inputs | seated on frozen contract; first Design-A artifact only, no repair or commit |
 
 No overlapping writing worker may be added. Read-only specialist circles may
 be seated only for disjoint evidence questions with explicit stop terms.
@@ -317,6 +320,10 @@ be seated only for disjoint evidence questions with explicit stop terms.
 | 2026-07-29 | repaired marker admission re-review at owned hash `fce5af5b...` | direct initial-to-repaired test-surface review; reviewer reproduced HEAD/hash/status at both boundaries; no writes/builds/tests/writer contact | `PASS`: direct `compile_marker_rekey -> None` plus RuleId-0 canaries close both-ordered, real path, container, custom Block, no-outer, direct, and Standard fallthrough; selected flag/primitive/config/action/UF errors are complete | admission gate closed; no production correction or second repair |
 | 2026-07-29 | repaired marker SQL/test re-review at owned hash `fce5af5b...` | direct initial-to-repaired test-surface/API/scope review; reviewer reproduced HEAD/hash/status at both boundaries; no writes/builds/tests/writer contact | `PASS`: the sole blocker closes through direct classifier/RuleId canaries; repair is test-only, accounting is 12 marker plus 61 prior tests, and no forbidden API/scope drift appeared | all frozen reviews pass; coordinator acceptance set authorized |
 | 2026-07-29 | coordinator final marker-rekey acceptance | reproduced owned hash `fce5af5b1359614de29079f34309e57be69c9ff7264a43040ee37f615f4a21d1`; nonbundled DuckDB lib and focused marker tests; DuckDB and feature-CLI Clippy; feature CLI test/build; format/diff; five rebuilt proof-mode probes; `make proof-tests`; every process externally capped at 110 seconds | fresh PASS: DuckDB 73/73, marker 12/12, feature CLI 4/4, all lint/build/format/diff gates exit 0; Math/Eggcc/Hardboiled/Luminal execute 18/77/20/38 markers before distinct later fail-closed boundaries, Pointer retains raw input, and no probe times out; proof gate core 204/204 plus experimental 8/8 in 22.36s | marker rekey accepted for one local checkpoint commit; complete ordered-union raw input is the next bounded frontier |
+| 2026-07-29 | coordinator local checkpoint commit | `7a1ec52c8a77edac7e0fc62ec029660af373a087 feat: execute native DuckDB marker rekeys`; nine expected paths; clean worktree immediately after commit; no push | accepted exact marker tri-state compiler, mixed stable Standard/Marker executor, 12 marker canaries, and reconciled ledger are a durable rollback point | seat ordered-union reuse and raw-input test-plan circles before another writer |
+| 2026-07-29 | ordered-union reuse architecture audit at committed `7a1ec52` | current native input, exact ordered-union validator, accepted rebuild queue fold, Reference merge actions, and DD scheduling; static/read-only | Design A extracts typed queue preparation, seed admission, and global wave draining for input-specific use. It preserves caller ordinals, reserves frontend slots before collision IDs, keeps generic Direct Set admission deferred, and recursively validates the displaced-UF graph. Design B is a materially broader unified Set scheduler. | select Design A; after one reviewed repair only, Design B may be tried once, then stop rather than add a third design or host fallback |
+| 2026-07-29 | Pointer raw-input integration audit at committed `7a1ec52` | Rust TSV parsing, proof-mode batch construction, DuckDB preflight/literal encoder, checked-in fact files, and source program order; static/read-only | 23 atomic calls contain 2,255 unique facts, 13,530 direct rows, 9,020 dense fresh slots, and 115 target groups. Pointer reaches only String/i64/Id/Unit; the sixth row of its first fact is the first rejected ordered-union View. The central hex/numeric typed literal encoder is complete for this surface. | no parser/SPI/fixture change; success is all inputs committed before the first ordinary proof-instrumented rule at source lines 70--74, with timeout reported rather than misclassified |
+| 2026-07-29 | raw-input semantic/canary audit at committed `7a1ec52` | Backend contract, Reference atomic input and merge waves, DD diagnostic ordering, existing DuckDB input tests/hooks, proof ordered-union topology, and Pointer corpus; static/read-only | Reference is the blocking oracle. The irreducible gate is old-min, new-min, and identity-equal/payload-different with exact slots-before-Sym/Trans IDs. Eight focused tests cover heterogeneous order, duplicate/live/subsumed owners, self/cross waves, nullary/27-column hostile types, rollback/retry, negative/structural admission, direct-only telemetry, and synchronous flush. | freeze correctness as blocking; one Pointer attempt under 110 seconds is descriptive, and timeout is censored rather than a semantic result |
 
 ## Review rubric
 
@@ -831,13 +838,252 @@ frontier to reassessment rather than another micro-variant.
   repaired artifact without commit/push and return it to both revising reviewers;
   no second repair is authorized.
 
+## Worker contract: complete typed ordered-union native input
+
+- **Hypothesis:** the exact scalar ordered-union `MergeFn::Block` already
+  accepted by Standard rebuild can be admitted specifically for native input by
+  extracting its DuckDB queue kernel. Rust-parsed values remain typed raw-SQL
+  `VALUES`; every match, owner selection, collision, merge decision, and
+  generated row remains inside DuckDB.
+- **Frozen base:** committed
+  `7a1ec52c8a77edac7e0fc62ec029660af373a087`. The Reference backend is the
+  blocking semantic oracle. DD is diagnostic only where its stable
+  `(merge_level, FunctionId)` ordering differs.
+- **Admission:** classify the complete target graph structurally from retained
+  `FunctionConfig`: a subsumable View is `EclassToTerm`; its displaced
+  non-subsumable UF is `KeyToParent` and self-displacing; Sym/Trans are exact
+  one-output AssertEq targets. Validate the full seven-action Block, typed
+  schemas, primitives, slots, proof Sets, result tuple, and recursive displaced
+  graph. A near-shape remains deferred. This is an input-only capability:
+  ordinary Direct `Set` compilation must continue to reject the Block.
+- **Execution:** preserve each caller row's original ordinal while grouping.
+  Before durable mutation validate every target, row arity, stale sentinel,
+  typed/dense slots, literal encoding, ordered-union graph, owner uniqueness,
+  subsumed-UF prohibition, AssertEq conflicts, and fresh capacity. In one
+  transaction, reserve all frontend slots first; apply direct KeepOld/AssertEq
+  input; enqueue ordered-union seeds at wave zero; then drain target queues in
+  `(wave, FunctionId, event ordinal)` order. Missing owners insert live;
+  identity-equal owners retain the complete old tuple/status/generation and run
+  no actions; identity-changing collisions emit exact Sym then Trans rows,
+  preserve an existing View's subsumed bit, update the canonical owner, and
+  enqueue the displaced UF write at wave plus one. No semantic wave cap is
+  permitted. Increment generation once iff any direct or generated physical
+  state changed. Any error restores rows, both fresh-ID classes, generation,
+  scratch, input telemetry, rule telemetry, and the last committed SQL trace.
+- **Telemetry:** preserve the existing local meaning: `rows` is requested
+  direct rows; `target_statements` is unique direct input targets;
+  `inserted_rows` is direct physical owner inserts only, excluding collision
+  updates and generated Sym/Trans/UF effects. Failure publishes zeros. A
+  successful input is synchronous, so the next `flush_updates()` is false.
+- **Irreducible gate:** with slots beginning at 100, check Reference-equivalent
+  old-min and new-min View collisions allocate slots 100/101, then Sym 102 and
+  Trans 103, emit the direction-correct proof rows and displaced UF edge, and
+  leave 104 next. An identity-equal/payload-different candidate consumes its
+  explicit slot but retains the old payload, emits no effects, and does not
+  advance generation. Failure of any one stops the larger implementation.
+- **Focused canaries:** one opaque/renamed generic fixture instantiated
+  independently on Reference and DuckDB; frontend-shaped heterogeneous order;
+  missing/equal/two- and three-way live/subsumed collisions; self- and
+  cross-target queue fixed points; nullary and synthetic 27-column mixed hostile
+  keys; late direct/indirect AssertEq and capacity rollback with exact retry
+  IDs; structural near-miss/unknown/arity/stale/wrong-slot/sparse-slot negative
+  admission; generation/watermark/scratch/telemetry/SQL-trace preservation; and
+  no parameter markers or forbidden input API. Do not add referential-integrity
+  checks for a valid minted-but-not-stored Id.
+- **Public gate:** one freshly built Pointer proof-mode attempt under the
+  external 110-second watchdog. Success for this slice is all 23 input calls
+  (2,255 facts, 13,530 direct rows, 9,020 slots) completing and execution
+  reaching the first ordinary user rule at
+  `benchmarks/pointer-analysis-small.egg:70`, or exiting zero. Capture the first
+  live later diagnostic. A timeout is censored performance data and neither a
+  semantic pass nor failure; statement count, wall time, and RSS are descriptive.
+- **Owned write set:** `egglog-experimental/duckdb/**` except this ledger,
+  normally `src/storage.rs`, `src/rebuild.rs`, `src/lib.rs`, and one focused
+  input test module. No frontend, SPI, Reference/DD, marker, ordinary-rule,
+  container, manifest/lockfile, Pointer fixture, harness/cache, commit, or push.
+- **Forbidden shortcuts:** missing-only/rank-one final insertion; host row
+  mirror/enumeration/matcher/merge; proof/table/sort-name or numeric-ID routing;
+  Appender, Arrow, `read_csv`, `COPY`, parameters, SQL NULL-as-undefined,
+  ordinary-row index/PK, unsafe/private/FFI APIs, fork/patch, durable metadata
+  beyond generation/subsumed, or a nontransactional/fail-open fallback.
+- **Verification:** focused input tests, complete nonbundled DuckDB lib tests,
+  DuckDB Clippy with warnings denied, feature CLI tests/build/Clippy, formatting,
+  diff/whitespace checks, and the Pointer public probe. Every subprocess gets an
+  external 110-second watchdog. Freeze an exact owned patch-stream hash before
+  three independent semantic, admission, and safe-SQL/test reviews; the
+  coordinator alone runs the broad proof gate after review.
+- **Stop rule:** Design A is the shared queue extraction. At most one
+  review-authorized repair may follow. If it cannot meet the irreducible gate,
+  Design B is one typed recursive SQL effect trace with the same ordering and
+  transaction contract. If both materially different SQL-only designs fail the
+  same minimal transcript, or correctness requires any forbidden shortcut,
+  stop and preserve the smallest counterexample; do not try a third design or
+  begin performance tuning.
+
+## Typed ordered-union native-input implementation evidence
+
+- **Frozen base:** `7a1ec52c8a77edac7e0fc62ec029660af373a087`.
+- **Frozen owned paths:** `egglog-experimental/duckdb/src/lib.rs`,
+  `rebuild.rs`, `storage.rs`, and the new `input_tests.rs`. The coordinator
+  ledger is the only other dirty path.
+- **Frozen patch-stream SHA-256:**
+  `46c6e388470b066ce0c0cb72d68842f3ab852248b56b81bae9e6024c158663f1`,
+  reproduced independently from the tracked binary diff plus the untracked
+  no-index binary diff.
+- **Implementation result:** Design A meets the irreducible Reference gate for
+  old-min, new-min, and identity-equal collisions. Rebuild and native input
+  share the extracted SQL queue kernel; input-specific admission does not
+  change `WriteCapability::Deferred` for ordinary Direct Set. The input path
+  preserves global caller ordinals, pre-encodes typed literals, reserves all
+  frontend slots before collision IDs, recursively closes displaced UF queues,
+  publishes direct-owner telemetry only, and commits effects atomically.
+- **Writer gates, each externally capped at 110 seconds:** focused input 8/8
+  passed in 0.08s; complete nonbundled DuckDB lib 81/81 in 0.29s; DuckDB Clippy
+  with warnings denied in 1.05s; feature CLI 4/4 in 6.24s; feature CLI Clippy in
+  1.28s; fresh feature build in 6.58s; formatting and diff checks passed. The
+  coordinator-owned broad proof gate has not run yet.
+- **Pointer attempt:** the single permitted attempt failed before process
+  startup in 0.49s because dyld could not load `@rpath/libduckdb.dylib` and the
+  executable had no `LC_RPATH`; 0/23 inputs ran. RSS was 704,512 bytes. This is
+  an environment/load-path residual and provides neither semantic pass nor
+  semantic failure. Do not retry without a material build/link change.
+
+## Active review roster: typed ordered-union native input
+
+| Agent | Circle/domain | Aim | Authority | Expected output | Stop |
+| --- | --- | --- | --- | --- | --- |
+| semantic reviewer | Reference/order/allocation/transaction/generation/subsumption | Check exact backend semantics against the frozen contract and first-principles code paths | Read-only feedback; no commands that build or mutate | PASS or evidence-bearing blocking findings with exact paths/witnesses | End after one complete frozen-diff review |
+| admission reviewer | input-only classifier and fail-closed near-shapes | Prove native input admits exactly the ordered-union family while ordinary Direct Set remains deferred | Read-only feedback; no commands that build or mutate | PASS or exact over/under-admission findings | End after one complete frozen-diff review |
+| safe-SQL/test reviewer | public APIs, forbidden shortcuts, typed SQL, telemetry, tests, Pointer evidence | Audit boundary purity and whether tests/gates substantiate the contract | Read-only feedback; no commands that build or mutate | PASS or exact live gaps, distinguishing missing evidence from defects | End after one complete frozen-diff review |
+
+All reviewers must begin and end at HEAD
+`7a1ec52c8a77edac7e0fc62ec029660af373a087`, reproduce patch-stream SHA-256
+`46c6e388470b066ce0c0cb72d68842f3ab852248b56b81bae9e6024c158663f1`,
+observe only the four frozen owned paths plus this coordinator ledger as dirty,
+and make no writes, builds, tests, benchmark runs, commits, pushes, or contact
+with the retired writer. Review against the frozen artifact, not mutable chat.
+
+### Frozen review synthesis
+
+- **Semantic review: PASS.** No live semantic defect found. The reviewer traced
+  global ordinals, frontend-slot reservation, wave/FunctionId/event order,
+  Sym-before-Trans allocation and orientation, complete-old identity retention,
+  old/new minima, displaced UF recursion, subsumption, duplicate-owner
+  preflight, rollback, generation, telemetry, trace publication, and Reference
+  parity. Residual evidence only: Pointer did not start, and an interleaved
+  two-key/second-same-key allocation canary would strengthen coverage.
+- **Admission review: PASS for semantic row admission, REVISE classifier
+  ownership.** No invalid family mutates and no valid ordered-union family is
+  rejected. Native input currently claims a root seven-action outer shape
+  before proving the displaced graph belongs to the ordered-union family; a
+  custom View whose displaced target is a plain AssertEq therefore receives a
+  selected-family validation error rather than generic deferred fallthrough.
+  The row/state remain unchanged. The native-input mutation matrix also lacks
+  recursive graph, config, slot, proof-target, and result-tuple canaries.
+- **Safe-SQL/test review: runtime/data path PASS, REVISE documentation.** No
+  forbidden API, host row decision, name/ID routing, parameter, nullable stored
+  value, index/PK, or unsafe/private/fork path was found. The
+  `last_input_inserted_rows` comment incorrectly implies all generated inserts,
+  while the accepted metric is direct physical owner inserts only. The
+  `WriteCapability` comment omits the narrowly validated input-specific
+  ordered-union exception. Existing tests establish rollback structurally;
+  direct KeepOld plus a later generated AssertEq failure is optional extra
+  coverage, not a live defect.
+- Every reviewer ended on the frozen HEAD/hash and exactly the expected five
+  dirty paths, with no writes, builds, tests, binaries, commits, pushes, or
+  writer contact.
+
+### Sole authorized native-input repair
+
+- Make input claim the ordered-union family only after the complete displaced
+  graph passes the same structural ownership prefilter used by Standard
+  rebuild. Unrelated custom seven-action Views must fall through to generic
+  `Deferred`; selected malformed members of an owned graph must still fail
+  closed before mutation.
+- Add a native-input regression for the concrete custom-View/plain-AssertEq
+  witness and expand the targeted mutation matrix across recursive Sym/Trans
+  or fresh-label disagreement, displaced self-target/orientation, relevant
+  config flags, Let slots/proof-target config, and result tuple where the
+  existing fixture can express them without unrelated machinery. Assertions
+  must distinguish fallthrough from selected-family rejection and prove no
+  state/counter/generation change.
+- Correct only the two inaccurate public/internal comments for
+  `last_input_inserted_rows` and `WriteCapability`. Do not change the accepted
+  telemetry behavior or globally widen ordinary Direct writes.
+- The interleaved mixed-key allocation and direct-KeepOld-plus-late-generated-
+  failure probes are optional only if they fit the existing fixture with no
+  production expansion. They are not permission to redesign the executor.
+- Owned write set remains the same four DuckDB source paths. No frontend, SPI,
+  Reference/DD, manifest/lockfile, fixture, Pointer/harness, link/rpath,
+  performance, commit, or remote change. Do not rerun Pointer: the dyld premise
+  is unchanged and the single public attempt is already recorded.
+- Rerun focused input tests, complete nonbundled DuckDB lib tests, DuckDB and
+  feature-CLI Clippy with warnings denied, feature CLI tests/build, formatting,
+  and diff checks under independent 110-second watchdogs. Freeze and report a
+  new exact patch-stream hash. The coordinator owns the broad proof gate.
+- This is the one permitted repair. If complete-graph ownership cannot preserve
+  selected-malformed fail-closed behavior without broad classifier or SPI
+  changes, stop with the smallest witness; do not attempt another design.
+
+### Native-input repair evidence
+
+- **Frozen repaired patch-stream SHA-256:**
+  `bfd333cc9ad2795c575a2629934017190d06a537ba2ddb15573b82bced8a4cbc`,
+  independently reproduced from the tracked DuckDB binary diff plus the
+  untracked `input_tests.rs` no-index binary diff at unchanged HEAD
+  `7a1ec52c8a77edac7e0fc62ec029660af373a087`.
+- Complete-graph ownership now makes an unrelated custom seven-action View,
+  including the plain displaced-AssertEq witness, fall through generically.
+  Once the graph is owned, malformed members remain selected and fail closed.
+- Added the concrete fallthrough regression and a seven-case admission mutation
+  matrix with explicit no-row/counter/generation/trace/telemetry mutation
+  assertions. The rollback canary now also includes a direct KeepOld insertion
+  before a late generated failure. Corrected the two telemetry/capability
+  comments without changing behavior.
+- Writer gates under independent 110-second watchdogs: focused input 10/10;
+  complete nonbundled DuckDB lib 83/83; DuckDB all-target Clippy with warnings
+  denied; feature CLI 4/4; feature build; feature CLI Clippy with warnings
+  denied; formatting and diff checks all passed. Pointer was not rerun. No
+  commit or push occurred; dirty scope remains the four authorized files plus
+  this coordinator ledger.
+
+### Native-input repair reviews and coordinator acceptance
+
+- **Admission re-review: PASS.** The complete-graph ownership prefilter closes
+  the generic-fallthrough defect; the custom View/plain-AssertEq witness now
+  defers with no mutation, the seven-case owned-graph matrix remains selected
+  and fail-closed, and ordinary Direct Set remains globally deferred with
+  RuleId preservation.
+- **Safe-SQL/test re-review: PASS.** Both comments match the accepted behavior;
+  direct KeepOld plus late generated failure rolls back and retries exact IDs;
+  no forbidden API, host row decision, parameterized ingestion, unsafe/private
+  path, index, or name routing was introduced. Both reviewers independently
+  reproduced the unchanged HEAD, five-path dirty scope, and repaired hash, and
+  made no writes or execution attempts.
+- **Coordinator fresh gates, each externally capped at 110 seconds:** focused
+  input 10/10 in 0.08s; complete DuckDB lib 83/83 in 0.29s; DuckDB all-target
+  Clippy with warnings denied; feature CLI 4/4; feature build; feature CLI
+  Clippy with warnings denied; `cargo fmt --all -- --check`; and
+  `git diff --check` all passed.
+- **Broad proof gate:** `make proof-tests` passed 204/204 core plus 8/8
+  experimental proof tests in 22.68 seconds wall time under the external
+  watchdog. The emitted unextractable-root diagnostics are expected passing
+  fixture output; exit was zero.
+- **Public integration residual:** Pointer remains unclassified because the
+  sole attempt failed in dyld before program startup. Do not describe 0/23
+  inputs as either a DuckDB semantic pass or failure. Link/rpath remediation is
+  a distinct material change and was intentionally excluded from the sole
+  semantic repair.
+
 ## Next action
 
-Checkpoint `2914373` remains the committed production base with no push. The
-accepted marker-rekey artifact is frozen at owned hash
-`fce5af5b1359614de29079f34309e57be69c9ff7264a43040ee37f615f4a21d1`;
-all three independent reviews and fresh coordinator gates pass, and its repair
-budget is exhausted. Create one local checkpoint commit with no push. Then
-record the commit and seat bounded read-only ordered-union reuse and raw-input
-test-plan circles before authorizing one DuckDB-only writer. Performance work
-remains descriptive and out of this next slice.
+The typed ordered-union native-input checkpoint is accepted at repaired hash
+`bfd333cc9ad2795c575a2629934017190d06a537ba2ddb15573b82bced8a4cbc`.
+Inspect the complete dirty/cached scope, stage only this coordinator ledger and
+the four authorized DuckDB paths, and create one local reviewed checkpoint
+commit with no push. Then refresh the five-workload executable frontier from
+that commit. Treat the Pointer dyld startup failure as a separate integration
+boundary: diagnose it read-only before deciding whether the next material slice
+is link/runtime launch, ordinary user-rule compilation, or container lowering.
+Do not rerun Pointer until a material link/runtime change exists; do not tune
+performance before the next functional frontier is identified.

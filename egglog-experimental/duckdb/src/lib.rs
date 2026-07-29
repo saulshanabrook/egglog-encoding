@@ -26,6 +26,8 @@ use egglog_numeric_id::NumericId;
 
 #[cfg(test)]
 mod cleanup_effect_tests;
+#[cfg(test)]
+mod input_tests;
 mod marker_rekey;
 #[cfg(test)]
 mod marker_rekey_tests;
@@ -96,8 +98,9 @@ impl EGraph {
         self.last_insert.rows
     }
 
-    /// Number of rows actually inserted by the latest `add_values` call after
-    /// DuckDB applied the supported KeepOld conflict policy.
+    /// Number of direct physical owner inserts in the latest `add_values`
+    /// call. Collision updates and generated proof/union-find effects are not
+    /// included.
     pub fn last_input_inserted_rows(&self) -> usize {
         self.last_insert.inserted_rows
     }

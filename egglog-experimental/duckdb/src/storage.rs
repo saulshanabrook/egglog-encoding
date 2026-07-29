@@ -13,7 +13,10 @@ use num::{BigInt, BigRational, ToPrimitive, Zero, rational::Rational64};
 use ordered_float::OrderedFloat;
 
 use crate::path_compress::PathCompressionPlan;
-use crate::rebuild::{OrderedUnionOrientation, OrderedUnionPlan, StandardRebuildKind};
+use crate::rebuild::{
+    OrderedUnionOrientation, OrderedUnionPlan, StandardRebuildKind,
+    validate_native_input_ordered_union,
+};
 use crate::rule_sql::{CompiledRule, RuleExecutionStats};
 
 const COUNTERS_TABLE: &str = "egglog_backend_counters";
@@ -31,9 +34,10 @@ pub(crate) enum ScalarSqlType {
     Rational,
 }
 
-/// Whether a registered table may currently be merge-written by native input
-/// or a direct Set. Key deletion and complete-row subsumption do not invoke a
-/// table's merge plan and therefore admit deferred capabilities independently.
+/// Merge-write capability shared by ordinary native input and a direct Set.
+/// Native input separately admits the exact ordered-union Block without
+/// widening direct rule writes. Key deletion and complete-row subsumption do
+/// not invoke a table's merge plan and admit deferred capabilities separately.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum WriteCapability {
     KeepOld,
@@ -574,9 +578,30 @@ pub(crate) struct InsertStats {
     pub(crate) target_statements: usize,
 }
 
+#[derive(Clone)]
+enum PreparedInputValue {
+    Literal(String),
+    FreshSlot(u32),
+}
+
+#[derive(Clone)]
+struct PreparedInputRow {
+    ordinal: u64,
+    values: Vec<PreparedInputValue>,
+}
+
+#[derive(Clone)]
+struct PreparedInputGroup {
+    function: FunctionId,
+    info: TableInfo,
+    rows: Vec<PreparedInputRow>,
+    ordered_union: bool,
+}
+
 struct State {
     connection: Connection,
     tables: Vec<TableInfo>,
+    next_input_run: u64,
     next_rule_run: u64,
     #[cfg(test)]
     latest_input_sql: Vec<String>,
@@ -609,6 +634,7 @@ impl Storage {
             state: Mutex::new(State {
                 connection,
                 tables: Vec::new(),
+                next_input_run: 0,
                 next_rule_run: 0,
                 #[cfg(test)]
                 latest_input_sql: Vec::new(),
@@ -723,11 +749,36 @@ impl Storage {
         }
 
         let mut state = self.state.lock().expect("DuckDB storage mutex poisoned");
-        let mut grouped = BTreeMap::<u32, Vec<Vec<NativeInputValue>>>::new();
+        let row_count = values.len();
+        let mut grouped = BTreeMap::<u32, Vec<PreparedInputRow>>::new();
+        let mut target_plans = BTreeMap::<u32, OrderedUnionPlan>::new();
         let mut slots = std::collections::BTreeSet::new();
-        for (function, row) in values {
-            let info = table_info(&state, function)?;
-            info.preflight_write()?;
+        for (ordinal, (function, row)) in values.into_iter().enumerate() {
+            let info = table_info(&state, function)?.clone();
+            let ordered_union = if info.write_capability == WriteCapability::Deferred {
+                let Some(plans) =
+                    validate_native_input_ordered_union(base_values, &state.tables, function)?
+                else {
+                    info.preflight_write()?;
+                    unreachable!("deferred preflight must fail")
+                };
+                for plan in plans {
+                    if let Some(existing) = target_plans.get(&plan.target.rep()) {
+                        if existing != &plan {
+                            bail!(
+                                "DuckDB native-input target {} has inconsistent ordered-union plans",
+                                plan.target.rep()
+                            );
+                        }
+                    } else {
+                        target_plans.insert(plan.target.rep(), plan);
+                    }
+                }
+                true
+            } else {
+                info.preflight_write()?;
+                false
+            };
             if row.len() != info.arity() {
                 bail!(
                     "table `{}` expects {} columns, got {}",
@@ -736,8 +787,11 @@ impl Storage {
                     row.len()
                 );
             }
-            for (&value, &ty) in row.iter().zip(&info.schema) {
-                match value {
+            let prepared = row
+                .into_iter()
+                .zip(info.schema.iter().copied())
+                .zip(info.columns.iter().copied())
+                .map(|((value, column_ty), sql_ty)| match value {
                     NativeInputValue::Existing(value) => {
                         if value.rep() == u32::MAX {
                             bail!(
@@ -745,19 +799,35 @@ impl Storage {
                                 info.name
                             );
                         }
+                        Ok(PreparedInputValue::Literal(
+                            sql_ty.sql_literal(base_values, value)?,
+                        ))
                     }
                     NativeInputValue::FreshSlot(slot) => {
-                        if ty != ColumnTy::Id {
+                        if column_ty != ColumnTy::Id {
                             bail!(
                                 "native input fresh slot {slot} targets a non-id column in `{}`",
                                 info.name
                             );
                         }
                         slots.insert(slot);
+                        Ok(PreparedInputValue::FreshSlot(slot))
                     }
-                }
+                })
+                .collect::<Result<Vec<_>>>()?;
+            grouped
+                .entry(function.rep())
+                .or_default()
+                .push(PreparedInputRow {
+                    ordinal: u64::try_from(ordinal)
+                        .context("native input row ordinal exceeds u64")?
+                        .checked_add(1)
+                        .context("native input row ordinal exceeds u64")?,
+                    values: prepared,
+                });
+            if ordered_union {
+                debug_assert!(target_plans.contains_key(&function.rep()));
             }
-            grouped.entry(function.rep()).or_default().push(row);
         }
         for (expected, actual) in slots.iter().copied().enumerate() {
             if usize::try_from(actual).ok() != Some(expected) {
@@ -767,7 +837,6 @@ impl Storage {
             }
         }
 
-        let row_count = grouped.values().map(Vec::len).sum();
         let target_statements = grouped.len();
         let grouped = grouped
             .into_iter()
@@ -777,23 +846,156 @@ impl Storage {
                     .get(function as usize)
                     .expect("validated table disappeared")
                     .clone();
-                (FunctionId::new(function), info, rows)
+                PreparedInputGroup {
+                    function: FunctionId::new(function),
+                    ordered_union: target_plans.contains_key(&function),
+                    info,
+                    rows,
+                }
             })
             .collect::<Vec<_>>();
+        let mut owner_checks = BTreeMap::<u32, (usize, bool)>::new();
+        for group in &grouped {
+            owner_checks.insert(group.function.rep(), (group.info.n_keys, false));
+        }
+        for plan in target_plans.values() {
+            owner_checks.insert(
+                plan.target.rep(),
+                (
+                    plan.n_keys,
+                    plan.orientation == OrderedUnionOrientation::KeyToParent,
+                ),
+            );
+            for proof in [plan.sym, plan.trans] {
+                let info = state
+                    .tables
+                    .get(proof.rep() as usize)
+                    .expect("validated ordered-union proof target disappeared");
+                owner_checks.insert(proof.rep(), (info.n_keys, false));
+            }
+        }
+        let run = state.next_input_run;
+        let next_input_run = run
+            .checked_add(1)
+            .context("DuckDB input-stage identifier overflow")?;
         let transaction = state.connection.transaction()?;
-        let mut inserted_rows = 0;
+        let mut inserted_rows = 0_usize;
+        let mut scratch_names = Vec::new();
+        let mut statement_count = 0;
         #[cfg(test)]
-        let mut executed_sql = Vec::with_capacity(target_statements);
+        let mut executed_sql = Vec::new();
         let write = (|| -> Result<()> {
             let first_fresh = transaction.query_row(
                 &format!("SELECT value FROM {COUNTERS_TABLE} WHERE name = 'fresh_id'"),
                 [],
                 |row| row.get::<_, u64>(0),
             )?;
-            let next_fresh = first_fresh
-                .checked_add(slots.len() as u64)
-                .filter(|&end| end <= u32::MAX as u64)
-                .context("native input fresh-id allocation exceeds the usable Value domain")?;
+            statement_count += 1;
+            let next_fresh = checked_fresh_end(
+                first_fresh,
+                u64::try_from(slots.len())?,
+                "native input fresh-id allocation",
+            )?;
+
+            let generation = transaction.query_row(
+                &format!("SELECT value FROM {COUNTERS_TABLE} WHERE name = 'generation'"),
+                [],
+                |row| row.get::<_, u64>(0),
+            )?;
+            statement_count += 1;
+
+            let resolved = grouped
+                .iter()
+                .map(|group| {
+                    let rows = group
+                        .rows
+                        .iter()
+                        .map(|row| {
+                            let values = row
+                                .values
+                                .iter()
+                                .map(|value| match value {
+                                    PreparedInputValue::Literal(literal) => Ok(literal.clone()),
+                                    PreparedInputValue::FreshSlot(slot) => {
+                                        let value = first_fresh
+                                            .checked_add(u64::from(*slot))
+                                            .context("native input fresh-id offset overflow")?;
+                                        Ok(format!("CAST('{value}' AS UBIGINT)"))
+                                    }
+                                })
+                                .collect::<Result<Vec<_>>>()?;
+                            Ok((row.ordinal, values))
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    Ok((group, rows))
+                })
+                .collect::<Result<Vec<_>>>()?;
+
+            // Reject ambiguous durable owners and illegal subsumed UF rows
+            // before reserving the first explicit slot or changing any row.
+            for (&target_id, &(n_keys, reject_subsumed)) in &owner_checks {
+                let target = sql_table(FunctionId::new(target_id));
+                let duplicate = duplicate_owner_sql(&target, n_keys);
+                let has_duplicate =
+                    transaction.query_row(&duplicate, [], |row| row.get::<_, bool>(0))?;
+                statement_count += 1;
+                if has_duplicate {
+                    bail!(
+                        "DuckDB native-input executor found duplicate owners for function {target_id}"
+                    );
+                }
+                if reject_subsumed {
+                    let subsumed =
+                        format!("SELECT EXISTS (SELECT 1 FROM {target} WHERE __subsumed)");
+                    let has_subsumed =
+                        transaction.query_row(&subsumed, [], |row| row.get::<_, bool>(0))?;
+                    statement_count += 1;
+                    if has_subsumed {
+                        bail!(
+                            "DuckDB native-input executor found a subsumed UF owner for function {target_id}"
+                        );
+                    }
+                }
+            }
+
+            // AssertEq is validated setwise for every direct target before any
+            // direct KeepOld row is installed.
+            for (group, rows) in &resolved {
+                if !group.ordered_union && group.info.write_capability == WriteCapability::AssertEq
+                {
+                    let conflict_sql =
+                        input_assert_eq_conflict_sql(group.function, &group.info, rows);
+                    let conflict = transaction.query_row(&conflict_sql, [], |row| row.get(0))?;
+                    #[cfg(test)]
+                    executed_sql.push(conflict_sql);
+                    statement_count += 1;
+                    if conflict {
+                        bail!(
+                            "illegal MergeFn::AssertEq conflict for table `{}`",
+                            group.info.name
+                        );
+                    }
+                }
+            }
+
+            let (queue_groups, group_indices) = {
+                #[cfg(test)]
+                let mut queue_trace = Some(&mut executed_sql);
+                #[cfg(not(test))]
+                let mut queue_trace = None;
+                create_ordered_union_queues(
+                    &transaction,
+                    &target_plans,
+                    "egglog_input",
+                    run,
+                    &mut scratch_names,
+                    &mut queue_trace,
+                    &mut statement_count,
+                )?
+            };
+
+            // Frontend slots occupy the first contiguous range in the shared
+            // allocator. Collision constructors may reserve only after this.
             if !slots.is_empty() {
                 transaction.execute(
                     &format!(
@@ -801,73 +1003,102 @@ impl Storage {
                     ),
                     [],
                 )?;
+                statement_count += 1;
             }
 
-            let generation = transaction.query_row(
-                &format!("SELECT value FROM {COUNTERS_TABLE} WHERE name = 'generation'"),
-                [],
-                |row| row.get::<_, u64>(0),
-            )?;
-
-            for (function, info, rows) in grouped {
-                let rows = rows
-                    .into_iter()
-                    .map(|row| {
-                        info.columns
-                            .iter()
-                            .zip(row)
-                            .map(|(&ty, value)| {
-                                let value = match value {
-                                    NativeInputValue::Existing(value) => value,
-                                    NativeInputValue::FreshSlot(slot) => {
-                                        let value = first_fresh + u64::from(slot);
-                                        Value::new(u32::try_from(value).expect(
-                                            "fresh-id range was checked before row encoding",
-                                        ))
-                                    }
-                                };
-                                ty.sql_literal(base_values, value)
-                            })
-                            .collect::<Result<Vec<_>>>()
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                if info.write_capability == WriteCapability::AssertEq {
-                    let conflict_sql = input_assert_eq_conflict_sql(function, &info, &rows);
-                    let conflict = transaction.query_row(&conflict_sql, [], |row| row.get(0))?;
-                    #[cfg(test)]
-                    executed_sql.push(conflict_sql);
-                    if conflict {
-                        bail!(
-                            "illegal MergeFn::AssertEq conflict for table `{}`",
-                            info.name
-                        );
-                    }
+            let mut physical_changed = false;
+            for (group, rows) in &resolved {
+                if group.ordered_union {
+                    continue;
                 }
-                let sql = input_insert_sql(function, &info, &rows, generation);
-                inserted_rows += transaction.execute(&sql, [])?;
+                let sql = input_insert_sql(group.function, &group.info, rows, generation);
+                let inserted = transaction.execute(&sql, [])?;
+                inserted_rows = inserted_rows
+                    .checked_add(inserted)
+                    .context("native input direct insert telemetry overflow")?;
+                physical_changed |= inserted != 0;
                 #[cfg(test)]
                 executed_sql.push(sql);
+                statement_count += 1;
             }
 
-            if inserted_rows != 0 {
+            let mut event_count = 0_u64;
+            for (group, rows) in &resolved {
+                if !group.ordered_union {
+                    continue;
+                }
+                let group_index = group_indices[&group.function.rep()];
+                let queue = &queue_groups[group_index].queue;
+                let enqueue = input_queue_sql(queue, group.info.arity(), rows);
+                let enqueued = transaction.execute(&enqueue, [])?;
+                ensure_count(
+                    enqueued,
+                    u64::try_from(rows.len())?,
+                    "native input ordered-union candidate enqueue",
+                )?;
+                #[cfg(test)]
+                executed_sql.push(enqueue);
+                statement_count += 1;
+                event_count = event_count
+                    .checked_add(u64::try_from(rows.len())?)
+                    .context("native input event count overflow")?;
+            }
+
+            if !queue_groups.is_empty() {
+                let drain = {
+                    #[cfg(test)]
+                    let mut drain_trace = Some(&mut executed_sql);
+                    #[cfg(not(test))]
+                    let mut drain_trace = None;
+                    drain_ordered_union_queues(
+                        &transaction,
+                        &queue_groups,
+                        &group_indices,
+                        generation,
+                        next_fresh,
+                        u64::try_from(row_count)?,
+                        "egglog_input",
+                        run,
+                        "native input",
+                        &mut scratch_names,
+                        &mut drain_trace,
+                        &mut statement_count,
+                    )?
+                };
+                debug_assert!(event_count <= u64::try_from(row_count)?);
+                inserted_rows = inserted_rows
+                    .checked_add(drain.wave_zero_inserted)
+                    .context("native input direct insert telemetry overflow")?;
+                physical_changed |= drain.physical_changed;
+            }
+
+            if physical_changed {
                 transaction.execute(
                     &format!(
                         "UPDATE {COUNTERS_TABLE} SET value = value + 1 WHERE name = 'generation'"
                     ),
                     [],
                 )?;
+                statement_count += 1;
+            }
+            for scratch in scratch_names.iter().rev() {
+                transaction.execute(&format!("DROP TABLE IF EXISTS {scratch}"), [])?;
+                statement_count += 1;
             }
             Ok(())
         })();
         if let Err(error) = write {
-            if let Err(rollback) = transaction.rollback() {
+            let rollback_error = transaction.rollback().err();
+            let cleanup_error = cleanup_scratch(&state.connection, &scratch_names).err();
+            if rollback_error.is_some() || cleanup_error.is_some() {
                 return Err(anyhow!(
-                    "DuckDB input transaction failed: {error:#}; rollback also failed: {rollback}"
+                    "DuckDB input transaction failed: {error:#}; rollback: {rollback_error:?}; scratch cleanup: {cleanup_error:?}"
                 ));
             }
             return Err(error);
         }
         transaction.commit()?;
+        state.next_input_run = next_input_run;
         #[cfg(test)]
         {
             state.latest_input_sql = executed_sql;
@@ -1620,12 +1851,6 @@ impl Storage {
         &self,
         scheduled: &[(&CompiledRule, u64)],
     ) -> Result<RuleExecutionStats> {
-        #[derive(Clone)]
-        struct QueueGroup {
-            plan: OrderedUnionPlan,
-            queue: String,
-        }
-
         #[derive(Clone, Copy)]
         struct OwnerCheck {
             n_keys: usize,
@@ -1755,33 +1980,21 @@ impl Storage {
                 stages.push(stage);
             }
 
-            let mut groups = Vec::<QueueGroup>::with_capacity(target_plans.len());
-            let mut group_indices = BTreeMap::<u32, usize>::new();
-            for plan in target_plans.values() {
-                let index = groups.len();
-                let queue = format!("egglog_rebuild_queue_{run}_{index}");
-                scratch_names.push(queue.clone());
-                let mut columns = vec![
-                    "__wave UBIGINT NOT NULL".to_string(),
-                    "__event_ordinal UBIGINT NOT NULL".to_string(),
-                ];
-                columns.extend(
-                    plan.columns
-                        .iter()
-                        .enumerate()
-                        .map(|(column, ty)| format!("c{column} {} NOT NULL", ty.sql())),
-                );
-                let create = format!("CREATE TEMP TABLE {queue} ({})", columns.join(", "));
-                transaction.execute(&create, [])?;
+            let (groups, group_indices) = {
                 #[cfg(test)]
-                sql_log.push(create);
-                statement_count += 1;
-                group_indices.insert(plan.target.rep(), index);
-                groups.push(QueueGroup {
-                    plan: plan.clone(),
-                    queue,
-                });
-            }
+                let mut queue_trace = Some(&mut sql_log);
+                #[cfg(not(test))]
+                let mut queue_trace = None;
+                create_ordered_union_queues(
+                    &transaction,
+                    &target_plans,
+                    "egglog_rebuild",
+                    run,
+                    &mut scratch_names,
+                    &mut queue_trace,
+                    &mut statement_count,
+                )?
+            };
 
             // Corrupt physical owners make a key fold/rekey ambiguous. Check
             // every Standard View/UF plus every Marker/UF target before the
@@ -1846,7 +2059,7 @@ impl Storage {
                 sql_log.push(reserve);
                 statement_count += 1;
             }
-            let mut next_fresh = after_heads;
+            let next_fresh = after_heads;
 
             let mut physical_changed = false;
             let mut report_changed = false;
@@ -2102,352 +2315,28 @@ impl Storage {
                     .context("standard rebuild event ordinal overflow")?;
             }
 
-            let mut wave = 0_u64;
-            let mut next_event = event_offset;
-            let mut pass = 0_u64;
-            loop {
-                for group_index in 0..groups.len() {
-                    let group = groups[group_index].clone();
-                    loop {
-                        let count_sql = format!(
-                            "SELECT count(*) FROM {} WHERE __wave = CAST('{wave}' AS UBIGINT)",
-                            group.queue
-                        );
-                        let pending =
-                            transaction.query_row(&count_sql, [], |row| row.get::<_, u64>(0))?;
-                        #[cfg(test)]
-                        sql_log.push(count_sql);
-                        statement_count += 1;
-                        if pending == 0 {
-                            break;
-                        }
-
-                        let outcome = format!("egglog_rebuild_outcome_{run}_{pass}");
-                        let collision = format!("egglog_rebuild_collision_{run}_{pass}");
-                        let sym_stage = format!("egglog_rebuild_sym_{run}_{pass}");
-                        let trans_stage = format!("egglog_rebuild_trans_{run}_{pass}");
-                        scratch_names.extend([
-                            outcome.clone(),
-                            collision.clone(),
-                            sym_stage.clone(),
-                            trans_stage.clone(),
-                        ]);
-                        let target = sql_table(group.plan.target);
-                        let key_partition = if group.plan.n_keys == 0 {
-                            String::new()
-                        } else {
-                            format!(
-                                "PARTITION BY {} ",
-                                (0..group.plan.n_keys)
-                                    .map(|column| format!("c{column}"))
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
-                            )
-                        };
-                        let selected_columns = (0..group.plan.arity())
-                            .map(|column| format!("selected.c{column} AS new_c{column}"))
-                            .collect::<Vec<_>>()
-                            .join(", ");
-                        let old_columns = (0..group.plan.arity())
-                            .map(|column| format!("existing.c{column} AS old_c{column}"))
-                            .collect::<Vec<_>>()
-                            .join(", ");
-                        let join = key_equality("existing", "selected", group.plan.n_keys);
-                        let create_outcome = format!(
-                            "CREATE TEMP TABLE {outcome} AS
-                             WITH selected AS (
-                                 SELECT __wave, __event_ordinal, {}
-                                 FROM (
-                                     SELECT queued.*,
-                                            row_number() OVER (
-                                                {key_partition}ORDER BY __event_ordinal
-                                            ) AS __key_rank
-                                     FROM {} AS queued
-                                     WHERE __wave = CAST('{wave}' AS UBIGINT)
-                                 )
-                                 WHERE __key_rank = 1
-                             )
-                             SELECT selected.__wave,
-                                    selected.__event_ordinal,
-                                    {selected_columns},
-                                    {old_columns},
-                                    existing.__generation AS old_generation,
-                                    existing.__subsumed AS old_subsumed
-                             FROM selected
-                             LEFT JOIN {target} AS existing ON {join}",
-                            visible_columns(group.plan.arity()),
-                            group.queue
-                        );
-                        transaction.execute(&create_outcome, [])?;
-                        #[cfg(test)]
-                        sql_log.push(create_outcome);
-                        statement_count += 1;
-
-                        let remove = format!(
-                            "DELETE FROM {} AS queued
-                             USING {outcome} AS selected
-                             WHERE queued.__wave = selected.__wave
-                               AND queued.__event_ordinal = selected.__event_ordinal",
-                            group.queue
-                        );
-                        transaction.execute(&remove, [])?;
-                        #[cfg(test)]
-                        sql_log.push(remove);
-                        statement_count += 1;
-
-                        let new_columns = (0..group.plan.arity())
-                            .map(|column| format!("new_c{column}"))
-                            .collect::<Vec<_>>()
-                            .join(", ");
-                        let insert_missing = format!(
-                            "INSERT INTO {target} ({}, __generation, __subsumed)
-                             SELECT {new_columns}, CAST('{generation}' AS UBIGINT), FALSE
-                             FROM {outcome}
-                             WHERE old_generation IS NULL
-                             ORDER BY __event_ordinal",
-                            visible_columns(group.plan.arity())
-                        );
-                        let missing_inserted = transaction.execute(&insert_missing, [])?;
-                        physical_changed |= missing_inserted != 0;
-                        report_changed |= missing_inserted != 0;
-                        #[cfg(test)]
-                        sql_log.push(insert_missing);
-                        statement_count += 1;
-
-                        let identity = group.plan.n_keys;
-                        let payload = identity + 1;
-                        let create_collision = format!(
-                            "CREATE TEMP TABLE {collision} AS
-                             SELECT outcome.*,
-                                    CASE WHEN old_c{identity} < new_c{identity}
-                                         THEN old_c{identity} ELSE new_c{identity} END AS min_identity,
-                                    CASE WHEN old_c{identity} > new_c{identity}
-                                         THEN old_c{identity} ELSE new_c{identity} END AS max_identity,
-                                    CASE WHEN old_c{identity} < new_c{identity}
-                                         THEN old_c{payload} ELSE new_c{payload} END AS lo_payload,
-                                    CASE WHEN old_c{identity} > new_c{identity}
-                                         THEN old_c{payload} ELSE new_c{payload} END AS hi_payload,
-                                    row_number() OVER (ORDER BY __event_ordinal)
-                                        AS __collision_ordinal
-                             FROM {outcome} AS outcome
-                             WHERE old_generation IS NOT NULL
-                               AND old_c{identity} IS DISTINCT FROM new_c{identity}"
-                        );
-                        transaction.execute(&create_collision, [])?;
-                        #[cfg(test)]
-                        sql_log.push(create_collision);
-                        statement_count += 1;
-                        let collision_count_sql = format!("SELECT count(*) FROM {collision}");
-                        let collision_count =
-                            transaction
-                                .query_row(&collision_count_sql, [], |row| row.get::<_, u64>(0))?;
-                        #[cfg(test)]
-                        sql_log.push(collision_count_sql);
-                        statement_count += 1;
-
-                        if collision_count != 0 {
-                            let first_collision_id = next_fresh;
-                            let collision_ids = collision_count
-                                .checked_mul(2)
-                                .context("standard rebuild collision fresh-id count overflow")?;
-                            next_fresh = checked_fresh_end(
-                                first_collision_id,
-                                collision_ids,
-                                "standard rebuild merge collisions",
-                            )?;
-                            let reserve = format!(
-                                "UPDATE {COUNTERS_TABLE} SET value = CAST('{next_fresh}' AS UBIGINT) WHERE name = 'fresh_id'"
-                            );
-                            transaction.execute(&reserve, [])?;
-                            #[cfg(test)]
-                            sql_log.push(reserve);
-                            statement_count += 1;
-
-                            let sym_input = match group.plan.orientation {
-                                OrderedUnionOrientation::KeyToParent => "hi_payload",
-                                OrderedUnionOrientation::EclassToTerm => "lo_payload",
-                            };
-                            let create_sym = format!(
-                                "CREATE TEMP TABLE {sym_stage} AS
-                                 SELECT {sym_input} AS c0,
-                                        CAST('{first_collision_id}' AS UBIGINT)
-                                            + 2 * (__collision_ordinal - 1) AS c1,
-                                        CAST(TRUE AS BOOLEAN) AS c2,
-                                        __collision_ordinal AS __ordinal
-                                 FROM {collision}"
-                            );
-                            transaction.execute(&create_sym, [])?;
-                            #[cfg(test)]
-                            sql_log.push(create_sym);
-                            statement_count += 1;
-                            let conflict = check_assert_eq_conflict(
-                                &transaction,
-                                group.plan.sym,
-                                2,
-                                &sym_stage,
-                            )?;
-                            #[cfg(test)]
-                            sql_log.push(conflict);
-                            #[cfg(not(test))]
-                            drop(conflict);
-                            statement_count += 1;
-                            let insert_sym =
-                                stage_insert_sql(group.plan.sym, 3, 2, &sym_stage, generation);
-                            let sym_inserted = transaction.execute(&insert_sym, [])?;
-                            physical_changed |= sym_inserted != 0;
-                            report_changed |= sym_inserted != 0;
-                            #[cfg(test)]
-                            sql_log.push(insert_sym);
-                            statement_count += 1;
-
-                            let (trans_first, trans_second) = match group.plan.orientation {
-                                OrderedUnionOrientation::KeyToParent => (
-                                    format!(
-                                        "CAST('{first_collision_id}' AS UBIGINT) + 2 * (__collision_ordinal - 1)"
-                                    ),
-                                    "lo_payload".to_string(),
-                                ),
-                                OrderedUnionOrientation::EclassToTerm => (
-                                    "hi_payload".to_string(),
-                                    format!(
-                                        "CAST('{first_collision_id}' AS UBIGINT) + 2 * (__collision_ordinal - 1)"
-                                    ),
-                                ),
-                            };
-                            let create_trans = format!(
-                                "CREATE TEMP TABLE {trans_stage} AS
-                                 SELECT {trans_first} AS c0,
-                                        {trans_second} AS c1,
-                                        CAST('{first_collision_id}' AS UBIGINT)
-                                            + 2 * (__collision_ordinal - 1) + 1 AS c2,
-                                        CAST(TRUE AS BOOLEAN) AS c3,
-                                        __collision_ordinal AS __ordinal
-                                 FROM {collision}"
-                            );
-                            transaction.execute(&create_trans, [])?;
-                            #[cfg(test)]
-                            sql_log.push(create_trans);
-                            statement_count += 1;
-                            let conflict = check_assert_eq_conflict(
-                                &transaction,
-                                group.plan.trans,
-                                3,
-                                &trans_stage,
-                            )?;
-                            #[cfg(test)]
-                            sql_log.push(conflict);
-                            #[cfg(not(test))]
-                            drop(conflict);
-                            statement_count += 1;
-                            let insert_trans =
-                                stage_insert_sql(group.plan.trans, 4, 3, &trans_stage, generation);
-                            let trans_inserted = transaction.execute(&insert_trans, [])?;
-                            physical_changed |= trans_inserted != 0;
-                            report_changed |= trans_inserted != 0;
-                            #[cfg(test)]
-                            sql_log.push(insert_trans);
-                            statement_count += 1;
-
-                            let owner_join = (0..group.plan.n_keys)
-                                .map(|column| {
-                                    format!(
-                                        "existing.c{column} IS NOT DISTINCT FROM collision.new_c{column}"
-                                    )
-                                })
-                                .collect::<Vec<_>>()
-                                .join(" AND ");
-                            let owner_join = if owner_join.is_empty() {
-                                "TRUE".to_string()
-                            } else {
-                                owner_join
-                            };
-                            let update_owner = format!(
-                                "UPDATE {target} AS existing
-                                 SET c{identity} = collision.min_identity,
-                                     c{payload} = collision.lo_payload,
-                                     __generation = CAST('{generation}' AS UBIGINT)
-                                 FROM {collision} AS collision
-                                 WHERE {owner_join}
-                                   AND (existing.c{identity} IS DISTINCT FROM collision.min_identity
-                                        OR existing.c{payload} IS DISTINCT FROM collision.lo_payload)"
-                            );
-                            let updated = transaction.execute(&update_owner, [])?;
-                            physical_changed |= updated != 0;
-                            report_changed |= updated != 0;
-                            #[cfg(test)]
-                            sql_log.push(update_owner);
-                            statement_count += 1;
-
-                            let displaced_index = group_indices
-                                .get(&group.plan.displaced_target.rep())
-                                .copied()
-                                .ok_or_else(|| {
-                                    anyhow!(
-                                        "standard rebuild target {} has no displaced UF queue",
-                                        group.plan.displaced_target.rep()
-                                    )
-                                })?;
-                            let displaced_queue = &groups[displaced_index].queue;
-                            let next_wave = wave
-                                .checked_add(1)
-                                .context("standard rebuild logical wave overflow")?;
-                            let enqueue_generated = format!(
-                                "INSERT INTO {displaced_queue} (__wave, __event_ordinal, c0, c1, c2)
-                                 SELECT CAST('{next_wave}' AS UBIGINT),
-                                        CAST('{next_event}' AS UBIGINT) + __collision_ordinal,
-                                        max_identity,
-                                        min_identity,
-                                        CAST('{first_collision_id}' AS UBIGINT)
-                                            + 2 * (__collision_ordinal - 1) + 1
-                                 FROM {collision}
-                                 ORDER BY __collision_ordinal"
-                            );
-                            let generated = transaction.execute(&enqueue_generated, [])?;
-                            ensure_count(
-                                generated,
-                                collision_count,
-                                "standard rebuild generated UF candidate enqueue",
-                            )?;
-                            #[cfg(test)]
-                            sql_log.push(enqueue_generated);
-                            statement_count += 1;
-                            next_event = next_event
-                                .checked_add(collision_count)
-                                .context("standard rebuild generated event ordinal overflow")?;
-                        }
-
-                        for scratch in [&trans_stage, &sym_stage, &collision, &outcome] {
-                            let drop = format!("DROP TABLE IF EXISTS {scratch}");
-                            transaction.execute(&drop, [])?;
-                            #[cfg(test)]
-                            sql_log.push(drop);
-                            statement_count += 1;
-                        }
-                        pass = pass
-                            .checked_add(1)
-                            .context("standard rebuild fold-pass identifier overflow")?;
-                    }
-                }
-
-                let mut remaining = 0_u64;
-                for group in &groups {
-                    let count_sql = format!("SELECT count(*) FROM {}", group.queue);
-                    let count =
-                        transaction.query_row(&count_sql, [], |row| row.get::<_, u64>(0))?;
-                    #[cfg(test)]
-                    sql_log.push(count_sql);
-                    statement_count += 1;
-                    remaining = remaining
-                        .checked_add(count)
-                        .context("standard rebuild queue row count overflow")?;
-                }
-                if remaining == 0 {
-                    break;
-                }
-                wave = wave
-                    .checked_add(1)
-                    .context("standard rebuild logical wave overflow")?;
-            }
+            let drain = {
+                #[cfg(test)]
+                let mut drain_trace = Some(&mut sql_log);
+                #[cfg(not(test))]
+                let mut drain_trace = None;
+                drain_ordered_union_queues(
+                    &transaction,
+                    &groups,
+                    &group_indices,
+                    generation,
+                    next_fresh,
+                    event_offset,
+                    "egglog_rebuild",
+                    run,
+                    "standard rebuild",
+                    &mut scratch_names,
+                    &mut drain_trace,
+                    &mut statement_count,
+                )?
+            };
+            physical_changed |= drain.physical_changed;
+            report_changed |= drain.physical_changed;
 
             if physical_changed {
                 let update = format!(
@@ -2645,6 +2534,405 @@ fn ensure_count(actual: usize, expected: u64, context: &str) -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone)]
+struct OrderedUnionQueueGroup {
+    plan: OrderedUnionPlan,
+    queue: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct OrderedUnionDrainStats {
+    physical_changed: bool,
+    wave_zero_inserted: usize,
+}
+
+fn trace_sql(trace: &mut Option<&mut Vec<String>>, sql: &str) {
+    if let Some(trace) = trace.as_deref_mut() {
+        trace.push(sql.to_string());
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn create_ordered_union_queues(
+    transaction: &duckdb::Transaction<'_>,
+    target_plans: &BTreeMap<u32, OrderedUnionPlan>,
+    scratch_prefix: &str,
+    run: u64,
+    scratch_names: &mut Vec<String>,
+    trace: &mut Option<&mut Vec<String>>,
+    statement_count: &mut usize,
+) -> Result<(Vec<OrderedUnionQueueGroup>, BTreeMap<u32, usize>)> {
+    debug_assert!(
+        scratch_prefix
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    );
+    let mut groups = Vec::with_capacity(target_plans.len());
+    let mut group_indices = BTreeMap::new();
+    for plan in target_plans.values() {
+        let index = groups.len();
+        let queue = format!("{scratch_prefix}_queue_{run}_{index}");
+        scratch_names.push(queue.clone());
+        let mut columns = vec![
+            "__wave UBIGINT NOT NULL".to_string(),
+            "__event_ordinal UBIGINT NOT NULL".to_string(),
+        ];
+        columns.extend(
+            plan.columns
+                .iter()
+                .enumerate()
+                .map(|(column, ty)| format!("c{column} {} NOT NULL", ty.sql())),
+        );
+        let create = format!("CREATE TEMP TABLE {queue} ({})", columns.join(", "));
+        transaction.execute(&create, [])?;
+        trace_sql(trace, &create);
+        *statement_count += 1;
+        group_indices.insert(plan.target.rep(), index);
+        groups.push(OrderedUnionQueueGroup {
+            plan: plan.clone(),
+            queue,
+        });
+    }
+    Ok((groups, group_indices))
+}
+
+/// Drain the accepted ordered-union queue language. Both standard rebuild and
+/// native input feed this kernel; only the producer of wave-zero candidates is
+/// different. Rust observes scalar counts and schedules SQL statements, while
+/// DuckDB owns every owner match, fold, merge decision, and generated row.
+#[allow(clippy::too_many_arguments)]
+fn drain_ordered_union_queues(
+    transaction: &duckdb::Transaction<'_>,
+    groups: &[OrderedUnionQueueGroup],
+    group_indices: &BTreeMap<u32, usize>,
+    generation: u64,
+    mut next_fresh: u64,
+    mut next_event: u64,
+    scratch_prefix: &str,
+    run: u64,
+    operation: &str,
+    scratch_names: &mut Vec<String>,
+    trace: &mut Option<&mut Vec<String>>,
+    statement_count: &mut usize,
+) -> Result<OrderedUnionDrainStats> {
+    let mut stats = OrderedUnionDrainStats::default();
+    let mut wave = 0_u64;
+    let mut pass = 0_u64;
+    loop {
+        for group_index in 0..groups.len() {
+            let group = groups[group_index].clone();
+            loop {
+                let count_sql = format!(
+                    "SELECT count(*) FROM {} WHERE __wave = CAST('{wave}' AS UBIGINT)",
+                    group.queue
+                );
+                let pending = transaction.query_row(&count_sql, [], |row| row.get::<_, u64>(0))?;
+                trace_sql(trace, &count_sql);
+                *statement_count += 1;
+                if pending == 0 {
+                    break;
+                }
+
+                let outcome = format!("{scratch_prefix}_outcome_{run}_{pass}");
+                let collision = format!("{scratch_prefix}_collision_{run}_{pass}");
+                let sym_stage = format!("{scratch_prefix}_sym_{run}_{pass}");
+                let trans_stage = format!("{scratch_prefix}_trans_{run}_{pass}");
+                scratch_names.extend([
+                    outcome.clone(),
+                    collision.clone(),
+                    sym_stage.clone(),
+                    trans_stage.clone(),
+                ]);
+                let target = sql_table(group.plan.target);
+                let key_partition = if group.plan.n_keys == 0 {
+                    String::new()
+                } else {
+                    format!(
+                        "PARTITION BY {} ",
+                        (0..group.plan.n_keys)
+                            .map(|column| format!("c{column}"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                };
+                let selected_columns = (0..group.plan.arity())
+                    .map(|column| format!("selected.c{column} AS new_c{column}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let old_columns = (0..group.plan.arity())
+                    .map(|column| format!("existing.c{column} AS old_c{column}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let join = key_equality("existing", "selected", group.plan.n_keys);
+                let create_outcome = format!(
+                    "CREATE TEMP TABLE {outcome} AS
+                     WITH selected AS (
+                         SELECT __wave, __event_ordinal, {}
+                         FROM (
+                             SELECT queued.*,
+                                    row_number() OVER (
+                                        {key_partition}ORDER BY __event_ordinal
+                                    ) AS __key_rank
+                             FROM {} AS queued
+                             WHERE __wave = CAST('{wave}' AS UBIGINT)
+                         )
+                         WHERE __key_rank = 1
+                     )
+                     SELECT selected.__wave,
+                            selected.__event_ordinal,
+                            {selected_columns},
+                            {old_columns},
+                            existing.__generation AS old_generation,
+                            existing.__subsumed AS old_subsumed
+                     FROM selected
+                     LEFT JOIN {target} AS existing ON {join}",
+                    visible_columns(group.plan.arity()),
+                    group.queue
+                );
+                transaction.execute(&create_outcome, [])?;
+                trace_sql(trace, &create_outcome);
+                *statement_count += 1;
+
+                let remove = format!(
+                    "DELETE FROM {} AS queued
+                     USING {outcome} AS selected
+                     WHERE queued.__wave = selected.__wave
+                       AND queued.__event_ordinal = selected.__event_ordinal",
+                    group.queue
+                );
+                transaction.execute(&remove, [])?;
+                trace_sql(trace, &remove);
+                *statement_count += 1;
+
+                let new_columns = (0..group.plan.arity())
+                    .map(|column| format!("new_c{column}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let insert_missing = format!(
+                    "INSERT INTO {target} ({}, __generation, __subsumed)
+                     SELECT {new_columns}, CAST('{generation}' AS UBIGINT), FALSE
+                     FROM {outcome}
+                     WHERE old_generation IS NULL
+                     ORDER BY __event_ordinal",
+                    visible_columns(group.plan.arity())
+                );
+                let missing_inserted = transaction.execute(&insert_missing, [])?;
+                stats.physical_changed |= missing_inserted != 0;
+                if wave == 0 {
+                    stats.wave_zero_inserted = stats
+                        .wave_zero_inserted
+                        .checked_add(missing_inserted)
+                        .with_context(|| format!("{operation} direct insert telemetry overflow"))?;
+                }
+                trace_sql(trace, &insert_missing);
+                *statement_count += 1;
+
+                let identity = group.plan.n_keys;
+                let payload = identity + 1;
+                let create_collision = format!(
+                    "CREATE TEMP TABLE {collision} AS
+                     SELECT outcome.*,
+                            CASE WHEN old_c{identity} < new_c{identity}
+                                 THEN old_c{identity} ELSE new_c{identity} END AS min_identity,
+                            CASE WHEN old_c{identity} > new_c{identity}
+                                 THEN old_c{identity} ELSE new_c{identity} END AS max_identity,
+                            CASE WHEN old_c{identity} < new_c{identity}
+                                 THEN old_c{payload} ELSE new_c{payload} END AS lo_payload,
+                            CASE WHEN old_c{identity} > new_c{identity}
+                                 THEN old_c{payload} ELSE new_c{payload} END AS hi_payload,
+                            row_number() OVER (ORDER BY __event_ordinal)
+                                AS __collision_ordinal
+                     FROM {outcome} AS outcome
+                     WHERE old_generation IS NOT NULL
+                       AND old_c{identity} IS DISTINCT FROM new_c{identity}"
+                );
+                transaction.execute(&create_collision, [])?;
+                trace_sql(trace, &create_collision);
+                *statement_count += 1;
+                let collision_count_sql = format!("SELECT count(*) FROM {collision}");
+                let collision_count =
+                    transaction.query_row(&collision_count_sql, [], |row| row.get::<_, u64>(0))?;
+                trace_sql(trace, &collision_count_sql);
+                *statement_count += 1;
+
+                if collision_count != 0 {
+                    let first_collision_id = next_fresh;
+                    let collision_ids = collision_count.checked_mul(2).with_context(|| {
+                        format!("{operation} collision fresh-id count overflow")
+                    })?;
+                    next_fresh = checked_fresh_end(
+                        first_collision_id,
+                        collision_ids,
+                        &format!("{operation} merge collisions"),
+                    )?;
+                    let reserve = format!(
+                        "UPDATE {COUNTERS_TABLE} SET value = CAST('{next_fresh}' AS UBIGINT) WHERE name = 'fresh_id'"
+                    );
+                    transaction.execute(&reserve, [])?;
+                    trace_sql(trace, &reserve);
+                    *statement_count += 1;
+
+                    let sym_input = match group.plan.orientation {
+                        OrderedUnionOrientation::KeyToParent => "hi_payload",
+                        OrderedUnionOrientation::EclassToTerm => "lo_payload",
+                    };
+                    let create_sym = format!(
+                        "CREATE TEMP TABLE {sym_stage} AS
+                         SELECT {sym_input} AS c0,
+                                CAST('{first_collision_id}' AS UBIGINT)
+                                    + 2 * (__collision_ordinal - 1) AS c1,
+                                CAST(TRUE AS BOOLEAN) AS c2,
+                                __collision_ordinal AS __ordinal
+                         FROM {collision}"
+                    );
+                    transaction.execute(&create_sym, [])?;
+                    trace_sql(trace, &create_sym);
+                    *statement_count += 1;
+                    let conflict =
+                        check_assert_eq_conflict(transaction, group.plan.sym, 2, &sym_stage)?;
+                    trace_sql(trace, &conflict);
+                    *statement_count += 1;
+                    let insert_sym = stage_insert_sql(group.plan.sym, 3, 2, &sym_stage, generation);
+                    let sym_inserted = transaction.execute(&insert_sym, [])?;
+                    stats.physical_changed |= sym_inserted != 0;
+                    trace_sql(trace, &insert_sym);
+                    *statement_count += 1;
+
+                    let (trans_first, trans_second) = match group.plan.orientation {
+                        OrderedUnionOrientation::KeyToParent => (
+                            format!(
+                                "CAST('{first_collision_id}' AS UBIGINT) + 2 * (__collision_ordinal - 1)"
+                            ),
+                            "lo_payload".to_string(),
+                        ),
+                        OrderedUnionOrientation::EclassToTerm => (
+                            "hi_payload".to_string(),
+                            format!(
+                                "CAST('{first_collision_id}' AS UBIGINT) + 2 * (__collision_ordinal - 1)"
+                            ),
+                        ),
+                    };
+                    let create_trans = format!(
+                        "CREATE TEMP TABLE {trans_stage} AS
+                         SELECT {trans_first} AS c0,
+                                {trans_second} AS c1,
+                                CAST('{first_collision_id}' AS UBIGINT)
+                                    + 2 * (__collision_ordinal - 1) + 1 AS c2,
+                                CAST(TRUE AS BOOLEAN) AS c3,
+                                __collision_ordinal AS __ordinal
+                         FROM {collision}"
+                    );
+                    transaction.execute(&create_trans, [])?;
+                    trace_sql(trace, &create_trans);
+                    *statement_count += 1;
+                    let conflict =
+                        check_assert_eq_conflict(transaction, group.plan.trans, 3, &trans_stage)?;
+                    trace_sql(trace, &conflict);
+                    *statement_count += 1;
+                    let insert_trans =
+                        stage_insert_sql(group.plan.trans, 4, 3, &trans_stage, generation);
+                    let trans_inserted = transaction.execute(&insert_trans, [])?;
+                    stats.physical_changed |= trans_inserted != 0;
+                    trace_sql(trace, &insert_trans);
+                    *statement_count += 1;
+
+                    let owner_join = (0..group.plan.n_keys)
+                        .map(|column| {
+                            format!(
+                                "existing.c{column} IS NOT DISTINCT FROM collision.new_c{column}"
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" AND ");
+                    let owner_join = if owner_join.is_empty() {
+                        "TRUE".to_string()
+                    } else {
+                        owner_join
+                    };
+                    let update_owner = format!(
+                        "UPDATE {target} AS existing
+                         SET c{identity} = collision.min_identity,
+                             c{payload} = collision.lo_payload,
+                             __generation = CAST('{generation}' AS UBIGINT)
+                         FROM {collision} AS collision
+                         WHERE {owner_join}
+                           AND (existing.c{identity} IS DISTINCT FROM collision.min_identity
+                                OR existing.c{payload} IS DISTINCT FROM collision.lo_payload)"
+                    );
+                    let updated = transaction.execute(&update_owner, [])?;
+                    stats.physical_changed |= updated != 0;
+                    trace_sql(trace, &update_owner);
+                    *statement_count += 1;
+
+                    let displaced_index = group_indices
+                        .get(&group.plan.displaced_target.rep())
+                        .copied()
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "{operation} target {} has no displaced UF queue",
+                                group.plan.displaced_target.rep()
+                            )
+                        })?;
+                    let displaced_queue = &groups[displaced_index].queue;
+                    let next_wave = wave
+                        .checked_add(1)
+                        .with_context(|| format!("{operation} logical wave overflow"))?;
+                    let enqueue_generated = format!(
+                        "INSERT INTO {displaced_queue} (__wave, __event_ordinal, c0, c1, c2)
+                         SELECT CAST('{next_wave}' AS UBIGINT),
+                                CAST('{next_event}' AS UBIGINT) + __collision_ordinal,
+                                max_identity,
+                                min_identity,
+                                CAST('{first_collision_id}' AS UBIGINT)
+                                    + 2 * (__collision_ordinal - 1) + 1
+                         FROM {collision}
+                         ORDER BY __collision_ordinal"
+                    );
+                    let generated = transaction.execute(&enqueue_generated, [])?;
+                    ensure_count(
+                        generated,
+                        collision_count,
+                        &format!("{operation} generated UF candidate enqueue"),
+                    )?;
+                    trace_sql(trace, &enqueue_generated);
+                    *statement_count += 1;
+                    next_event = next_event
+                        .checked_add(collision_count)
+                        .with_context(|| format!("{operation} generated event ordinal overflow"))?;
+                }
+
+                for scratch in [&trans_stage, &sym_stage, &collision, &outcome] {
+                    let drop = format!("DROP TABLE IF EXISTS {scratch}");
+                    transaction.execute(&drop, [])?;
+                    trace_sql(trace, &drop);
+                    *statement_count += 1;
+                }
+                pass = pass
+                    .checked_add(1)
+                    .with_context(|| format!("{operation} fold-pass identifier overflow"))?;
+            }
+        }
+
+        let mut remaining = 0_u64;
+        for group in groups {
+            let count_sql = format!("SELECT count(*) FROM {}", group.queue);
+            let count = transaction.query_row(&count_sql, [], |row| row.get::<_, u64>(0))?;
+            trace_sql(trace, &count_sql);
+            *statement_count += 1;
+            remaining = remaining
+                .checked_add(count)
+                .with_context(|| format!("{operation} queue row count overflow"))?;
+        }
+        if remaining == 0 {
+            break;
+        }
+        wave = wave
+            .checked_add(1)
+            .with_context(|| format!("{operation} logical wave overflow"))?;
+    }
+    Ok(stats)
+}
+
 fn check_assert_eq_conflict(
     transaction: &duckdb::Transaction<'_>,
     target: FunctionId,
@@ -2737,15 +3025,14 @@ fn create_table(connection: &Connection, id: FunctionId, info: &TableInfo) -> Re
 fn input_insert_sql(
     function: FunctionId,
     info: &TableInfo,
-    rows: &[Vec<String>],
+    rows: &[(u64, Vec<String>)],
     generation: u64,
 ) -> String {
     debug_assert!(!rows.is_empty());
-    debug_assert!(rows.iter().all(|row| row.len() == info.arity()));
+    debug_assert!(rows.iter().all(|(_, row)| row.len() == info.arity()));
 
     let row_sql = rows
         .iter()
-        .enumerate()
         .map(|(ordinal, row)| {
             format!(
                 "({}, CAST('{generation}' AS UBIGINT), FALSE, CAST('{ordinal}' AS UBIGINT))",
@@ -2794,19 +3081,48 @@ fn input_insert_sql(
 fn input_assert_eq_conflict_sql(
     function: FunctionId,
     info: &TableInfo,
-    rows: &[Vec<String>],
+    rows: &[(u64, Vec<String>)],
 ) -> String {
     debug_assert_eq!(info.write_capability, WriteCapability::AssertEq);
     debug_assert_eq!(info.n_vals, 1);
     let values = rows
         .iter()
-        .map(|row| format!("({})", row.join(", ")))
+        .map(|(_, row)| format!("({})", row.join(", ")))
         .collect::<Vec<_>>()
         .join(", ");
     format!(
         "WITH incoming({}) AS (VALUES {values}) {}",
         visible_columns(info.arity()),
         assert_eq_conflict_sql(function, info.n_keys, "incoming")
+    )
+}
+
+fn input_queue_sql(queue: &str, arity: usize, rows: &[(u64, Vec<String>)]) -> String {
+    debug_assert!(!rows.is_empty());
+    debug_assert!(rows.iter().all(|(_, row)| row.len() == arity));
+    debug_assert!(
+        queue
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    );
+    let values = rows
+        .iter()
+        .map(|(ordinal, row)| {
+            format!(
+                "(CAST('0' AS UBIGINT), CAST('{ordinal}' AS UBIGINT), {})",
+                row.join(", ")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "INSERT INTO {queue} (__wave, __event_ordinal, {})
+         SELECT __wave, __event_ordinal, {}
+         FROM (VALUES {values}) AS incoming(__wave, __event_ordinal, {})
+         ORDER BY __event_ordinal",
+        visible_columns(arity),
+        visible_columns(arity),
+        visible_columns(arity)
     )
 }
 
