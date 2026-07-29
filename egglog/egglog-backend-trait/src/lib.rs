@@ -96,8 +96,8 @@ mod backend_impl;
 // ---------------------------------------------------------------------------
 
 pub use egglog_bridge::{
-    ActionRegistry, ColumnTy, DefaultVal, FunctionConfig, FunctionId, MergeAction, MergeFn, RuleId,
-    ScanEntry,
+    ActionRegistry, ColumnTy, DefaultVal, FunctionConfig, FunctionId, MergeAction, MergeFn,
+    NativeInputValue, RuleId, ScanEntry,
 };
 pub use egglog_core_relations::{
     BaseValue, BaseValueId, BaseValues, ContainerValue, ContainerValues, CounterId, ExecutionState,
@@ -276,17 +276,25 @@ pub trait Backend: Send + Sync {
         None
     }
 
-    /// The counter this backend mints ids from, when its ids come from a monotonic
-    /// counter (the reference bridge); `None` when it assigns ids
-    /// deterministically/structurally. Exposed so the term encoding's `get-fresh!`
-    /// primitive mints from the same counter the backend uses.
+    /// The host [`ExecutionState`] counter this backend mints ids from, when it
+    /// exposes one. SQL-authoritative backends may support fresh ids without
+    /// exposing a host counter; callers that only need mint capability must use
+    /// [`Backend::supports_fresh_ids`] and [`Backend::register_get_fresh`].
     fn id_counter(&self) -> Option<CounterId> {
         None
     }
 
+    /// Whether this backend can mint fresh ids. Defaults to the presence of an
+    /// [`ExecutionState`] counter; backends with another authoritative allocator
+    /// override this together with [`Backend::fresh_id`] and
+    /// [`Backend::register_get_fresh`].
+    fn supports_fresh_ids(&self) -> bool {
+        self.id_counter().is_some()
+    }
+
     /// Select the merge policy for a registered container type. Backends that
     /// advertise container support outside the reference bridge must provide
-    /// this alongside a container registry and id counter.
+    /// this alongside a container registry and fresh-id support.
     fn container_merge_fn(&self, _container_type: TypeId) -> Option<ContainerMergeFn> {
         None
     }
@@ -300,10 +308,10 @@ pub trait Backend: Send + Sync {
     // host-side mirror for Differential Dataflow), so input loading never falls
     // back to rule compilation.
 
-    /// Mint a fresh id: the next unused integer from the backend's counter. A fresh
-    /// id names a term (terms double as their own e-class) or a proof/AST node; the
-    /// id itself is not stored anywhere until the encoding asserts a relation row
-    /// referencing it. Panics on a backend without a counter.
+    /// Mint a fresh id from the backend's authoritative allocator. A fresh id
+    /// names a term (terms double as their own e-class) or a proof/AST node; the
+    /// id itself is not stored anywhere until the encoding asserts a relation
+    /// row referencing it. Panics on a backend without fresh-id support.
     fn fresh_id(&mut self) -> Value;
 
     /// Insert a batch of logical rows and flush. Each `(func, row)` gives a
@@ -313,6 +321,15 @@ pub trait Backend: Send + Sync {
     /// rather than get-or-insert. An error rejects the whole batch: no target
     /// table may retain a partial input transaction.
     fn add_values(&mut self, values: Vec<(FunctionId, Vec<Value>)>) -> Result<()>;
+
+    /// Resolve dense, batch-local fresh-id slots and insert the complete native
+    /// input batch atomically. Repeated occurrences of one slot resolve to one
+    /// id; distinct slots resolve in ascending slot order. A rejected batch
+    /// must restore both all affected rows and the backend's fresh-id counter.
+    fn add_values_with_fresh(
+        &mut self,
+        values: Vec<(FunctionId, Vec<NativeInputValue>)>,
+    ) -> Result<()>;
 
     // -- execution state (object-safe; see `with_execution_state` sugar) -----
 
@@ -372,15 +389,25 @@ pub trait Backend: Send + Sync {
     /// Register the `get-fresh!` mint op. Returns the [`ExternalFunctionId`]
     /// its mint sites (`(get-fresh! "Sort")`) resolve to. The default mints an
     /// impure `() -> id` value from the backend's
-    /// [`Backend::id_counter`], so it works for any counter-based
-    /// backend. Called only when [`Backend::id_counter`] is `Some`.
+    /// [`Backend::id_counter`], so it works for any host-counter backend.
+    /// Called only when [`Backend::supports_fresh_ids`] is true; a backend that
+    /// overrides that capability without exposing a counter must also override
+    /// this method. The bounded increment is atomic across callback clones. A
+    /// backend whose other allocator paths require a wider critical section
+    /// must override this method and share that allocator's lock.
     fn register_get_fresh(&mut self) -> ExternalFunctionId {
         let counter = self
             .id_counter()
             .expect("register_get_fresh requires an id counter");
         self.register_external_func(Box::new(egglog_core_relations::make_external_func(
-            move |state: &mut ExecutionState, _args: &[Value]| {
-                Some(Value::from_usize(state.inc_counter(counter)))
+            move |state: &mut ExecutionState, _args: &[Value]| match state
+                .try_inc_counter_bounded(counter, u32::MAX as usize)
+            {
+                Some(raw) if raw < u32::MAX as usize => Some(Value::from_usize(raw)),
+                Some(_) | None => {
+                    state.trigger_early_stop();
+                    None
+                }
             },
         )))
     }

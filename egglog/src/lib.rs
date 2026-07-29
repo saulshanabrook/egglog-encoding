@@ -43,7 +43,8 @@ use egglog_ast::util::ListDisplay;
 /// implement their own backend (see [`EGraph::with_backend`]).
 pub use egglog_backend_trait::{Backend, BackendExt};
 use egglog_backend_trait::{
-    ReadMode, RuleActionCall, RuleBodyCall, RuleSetRun, RuleSpec, RuleValue, RuleVar,
+    NativeInputValue, ReadMode, RuleActionCall, RuleBodyCall, RuleSetRun, RuleSpec, RuleValue,
+    RuleVar,
 };
 use egglog_bridge::ColumnTy;
 use egglog_core_relations as core_relations;
@@ -875,7 +876,8 @@ impl EGraph {
         match expr {
             GenericExpr::Lit(_, literal) => {
                 let val = literal_to_value(self.backend.base_values(), literal);
-                Ok(egglog_bridge::MergeFn::Const(val))
+                let ty = sort::literal_sort(literal).column_ty(self.backend.base_values());
+                Ok(egglog_bridge::MergeFn::Const { value: val, ty })
             }
             GenericExpr::Var(span, resolved_var) => {
                 let name = resolved_var.name.as_str();
@@ -912,6 +914,11 @@ impl EGraph {
                     .iter()
                     .map(|arg| self.translate_expr_to_mergefn(arg, lets))
                     .collect::<Result<Vec<_>, _>>()?;
+                let mut input = p
+                    .input()
+                    .iter()
+                    .map(|sort| sort.column_ty(self.backend.base_values()))
+                    .collect::<Vec<_>>();
                 if p.name() == "unstable-fn" {
                     let Some(GenericExpr::Lit(_, Literal::String(name))) = args.first() else {
                         return Err(Error::BackendError(
@@ -937,13 +944,24 @@ impl EGraph {
                         p,
                         panic_id,
                     )?;
-                    translated_args[0] =
-                        egglog_bridge::MergeFn::Const(self.backend.base_values().get(resolved));
+                    translated_args[0] = egglog_bridge::MergeFn::Const {
+                        value: self.backend.base_values().get(resolved),
+                        ty: ColumnTy::Base(self.backend.base_values().get_ty::<ResolvedFunction>()),
+                    };
+                    // `unstable-fn` is source-typed with a leading String name,
+                    // but merge lowering resolves that name to the runtime
+                    // `ResolvedFunction` handle consumed by its registered
+                    // callback. Describe the actual lowered call boundary.
+                    input[0] =
+                        ColumnTy::Base(self.backend.base_values().get_ty::<ResolvedFunction>());
                 }
-                Ok(egglog_bridge::MergeFn::Primitive(
-                    p.external_id(crate::Context::Write),
-                    translated_args,
-                ))
+                Ok(egglog_bridge::MergeFn::Primitive {
+                    id: p.external_id(crate::Context::Write),
+                    name: p.name().to_owned(),
+                    input,
+                    output: p.output().column_ty(self.backend.base_values()),
+                    args: translated_args,
+                })
             }
             // `(values ...)` never legitimately reaches here: a top-level tuple merge is
             // destructured per column in `declare_function`, and any other `(values ...)` is
@@ -2515,35 +2533,56 @@ impl EGraph {
         });
 
         let num_facts = value_rows.len();
-        let mut batch: Vec<(egglog_bridge::FunctionId, Vec<Value>)> = Vec::new();
+        let mut batch: Vec<(egglog_bridge::FunctionId, Vec<NativeInputValue>)> = Vec::new();
+        let mut next_fresh_slot = 0u32;
+        let mut fresh = || -> Result<NativeInputValue, Error> {
+            if next_fresh_slot == u32::MAX {
+                return Err(Error::BackendError(
+                    "native input fresh-slot count exceeds the usable Value domain".to_string(),
+                ));
+            }
+            let slot = next_fresh_slot;
+            next_fresh_slot += 1;
+            Ok(NativeInputValue::FreshSlot(slot))
+        };
         for value_row in value_rows {
-            let fv = self.backend.fresh_id();
+            let fv = fresh()?;
             // Term-relation row: CSV columns (children [+ output]) + term id + Unit.
-            let mut frow = value_row.clone();
+            let mut frow = value_row
+                .iter()
+                .copied()
+                .map(NativeInputValue::Existing)
+                .collect::<Vec<_>>();
             frow.push(fv);
-            frow.push(unit_val);
+            frow.push(NativeInputValue::Existing(unit_val));
             batch.push((f_id, frow));
 
             let view_proof = if let Some((ast_id, fiat_id, proof_func_id)) = proof_tables {
                 // Fiat proof of the base fact: `@Fiat(ast(fv), ast(fv))`.
-                let a1 = self.backend.fresh_id();
-                batch.push((ast_id, vec![fv, a1, unit_val]));
-                let a2 = self.backend.fresh_id();
-                batch.push((ast_id, vec![fv, a2, unit_val]));
-                let pf = self.backend.fresh_id();
-                batch.push((fiat_id, vec![a1, a2, pf, unit_val]));
+                let a1 = fresh()?;
+                batch.push((ast_id, vec![fv, a1, NativeInputValue::Existing(unit_val)]));
+                let a2 = fresh()?;
+                batch.push((ast_id, vec![fv, a2, NativeInputValue::Existing(unit_val)]));
+                let pf = fresh()?;
+                batch.push((
+                    fiat_id,
+                    vec![a1, a2, pf, NativeInputValue::Existing(unit_val)],
+                ));
                 if let Some(proof_func_id) = proof_func_id {
                     batch.push((proof_func_id, vec![fv, pf]));
                 }
                 pf
             } else {
-                unit_val
+                NativeInputValue::Existing(unit_val)
             };
 
             // View row. A constructor's FD view value-0 is the minted term id; a
             // custom view stores the base output (already in `value_row`). The
             // proof column follows (`Unit` when the encoding carries no proofs).
-            let mut vrow = value_row;
+            let mut vrow = value_row
+                .into_iter()
+                .map(NativeInputValue::Existing)
+                .collect::<Vec<_>>();
             if is_constructor {
                 vrow.push(fv);
             }
@@ -2551,7 +2590,7 @@ impl EGraph {
             batch.push((view_id, vrow));
         }
         self.backend
-            .add_values(batch)
+            .add_values_with_fresh(batch)
             .map_err(|error| Error::BackendError(error.to_string()))?;
         log::info!("Natively loaded {num_facts} facts into {func_name} from '{file}'.");
         Ok(())
@@ -3755,6 +3794,7 @@ pub enum Error {
 mod tests {
     use crate::constraint::SimpleTypeConstraint;
     use crate::*;
+    use egglog_bridge::MergeFn;
 
     use crate::PureState;
 
@@ -3882,6 +3922,107 @@ mod tests {
             validator("proof-of-max")(&mut term_dag, &args),
             Some(b_proof)
         );
+    }
+
+    #[test]
+    fn merge_lowering_retains_specialized_primitive_and_constant_types() {
+        let mut egraph = EGraph::default();
+        let mut parser = crate::ast::Parser::default();
+
+        let ordering = parser
+            .get_expr_from_string(None, "(ordering-min 1 2)")
+            .unwrap();
+        let ordering = egraph
+            .typecheck_expr_with_bindings_and_output(
+                &ordering,
+                &[],
+                I64Sort.to_arcsort(),
+                Context::Write,
+            )
+            .unwrap();
+        let ordering = egraph
+            .translate_expr_to_mergefn(&ordering, &HashMap::default())
+            .unwrap();
+        let MergeFn::Primitive {
+            name,
+            input,
+            output,
+            args,
+            ..
+        } = ordering
+        else {
+            panic!("ordering-min did not lower to a primitive merge call");
+        };
+        let i64_ty = I64Sort.to_arcsort().column_ty(egraph.backend.base_values());
+        assert_eq!(name, "ordering-min");
+        assert_eq!(input, [i64_ty, i64_ty]);
+        assert_eq!(output, i64_ty);
+        assert!(
+            args.iter()
+                .all(|arg| matches!(arg, MergeFn::Const { ty, .. } if *ty == i64_ty))
+        );
+
+        let orient = parser
+            .get_expr_from_string(None, "(proof-of-min 1 true 2 false)")
+            .unwrap();
+        let orient = egraph
+            .typecheck_expr_with_bindings_and_output(
+                &orient,
+                &[],
+                BoolSort.to_arcsort(),
+                Context::Write,
+            )
+            .unwrap();
+        let orient = egraph
+            .translate_expr_to_mergefn(&orient, &HashMap::default())
+            .unwrap();
+        let MergeFn::Primitive {
+            name,
+            input,
+            output,
+            ..
+        } = orient
+        else {
+            panic!("proof-of-min did not lower to a primitive merge call");
+        };
+        let bool_ty = BoolSort
+            .to_arcsort()
+            .column_ty(egraph.backend.base_values());
+        assert_eq!(name, "proof-of-min");
+        assert_eq!(input, [i64_ty, bool_ty, i64_ty, bool_ty]);
+        assert_eq!(output, bool_ty);
+
+        egraph.parse_and_run_program(None, "(sort Proof)").unwrap();
+        let proof_sort = egraph.get_sort_by_name("Proof").unwrap().clone();
+        let get_fresh = parser
+            .get_expr_from_string(None, "(get-fresh! \"Proof\")")
+            .unwrap();
+        let get_fresh = egraph
+            .typecheck_expr_with_bindings_and_output(&get_fresh, &[], proof_sort, Context::Write)
+            .unwrap();
+        let get_fresh = egraph
+            .translate_expr_to_mergefn(&get_fresh, &HashMap::default())
+            .unwrap();
+        let MergeFn::Primitive {
+            name,
+            input,
+            output,
+            args,
+            ..
+        } = get_fresh
+        else {
+            panic!("get-fresh! did not lower to a primitive merge call");
+        };
+        let string_ty = StringSort
+            .to_arcsort()
+            .column_ty(egraph.backend.base_values());
+        assert_eq!(name, "get-fresh!");
+        assert_eq!(input, [string_ty]);
+        assert_eq!(output, ColumnTy::Id);
+        assert!(matches!(
+            args.as_slice(),
+            [MergeFn::Const { ty, .. }] if *ty == string_ty
+        ));
     }
 
     #[test]

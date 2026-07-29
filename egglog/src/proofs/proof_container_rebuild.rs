@@ -11,24 +11,18 @@
 use super::proof_encoding::ProofInstrumentor;
 use crate::exec_state::{Internal, RegistrySealed};
 use crate::*;
-use egglog_backend_trait::CounterId;
 use egglog_bridge::TableAction;
-use egglog_numeric_id::NumericId;
 
 /// Mint a fresh proof id and assert the relation row `(<action> args… out ())`,
 /// returning `out`. Proof constructors are relations, so a proof node is created
 /// by minting its id rather than by a constructor's lookup-or-insert.
-fn mint_proof_row(
-    state: &mut FullState,
-    action: &TableAction,
-    id_counter: CounterId,
-    args: &[Value],
-) -> Value {
-    let out = Value::from_usize(state.raw_exec_state().inc_counter(id_counter));
+fn mint_proof_row(state: &mut FullState, action: &TableAction, args: &[Value]) -> Option<Value> {
+    let fresh_id = state.registry().fresh_id()?;
+    let out = state.raw_exec_state().call_external_func(fresh_id, &[])?;
     let unit = state.base_values().get::<()>(());
     let row: Vec<Value> = args.iter().copied().chain([out, unit]).collect();
     action.insert(state.raw_exec_state(), row.into_iter());
-    out
+    Some(out)
 }
 
 /// Register a container sort's rebuild primitives from its
@@ -59,11 +53,11 @@ pub(crate) fn register_container_rebuild_from_spec(
     );
 
     if let Some(proof_prim) = &spec.internal_rebuild_proof_prim {
-        // Proof ids are minted from the backend's id counter; a backend without
-        // one can't run these proofs.
-        let Some(id_counter) = eg.backend.id_counter() else {
+        // Proof ids use the same backend-owned allocator as `get-fresh!`; a
+        // backend may implement that allocator without exposing a host counter.
+        if !eg.backend.supports_fresh_ids() {
             return;
-        };
+        }
         // Each container's `<CSort>Proof` table (this sort + nested containers),
         // recovered from proof_state (filled by `:internal-proof-func`).
         let mut cproof_names = HashMap::default();
@@ -89,7 +83,6 @@ pub(crate) fn register_container_rebuild_from_spec(
                 trans_name,
                 sym_name,
                 container_normalize_name,
-                id_counter,
             },
             None,
         );
@@ -258,8 +251,6 @@ struct ContainerRebuildProof {
     trans_name: String,
     sym_name: String,
     container_normalize_name: String,
-    /// Counter for minting fresh proof ids (see [`mint_proof_row`]).
-    id_counter: egglog_backend_trait::CounterId,
 }
 
 impl Primitive for ContainerRebuildProof {
@@ -348,7 +339,7 @@ fn rebuild_container_proof_rec(
     let congr_all_action = state.registry().lookup_table(&prim.congr_all_name)?.clone();
     let mut current = base;
     for proof in child_proofs {
-        current = mint_proof_row(state, &congr_all_action, prim.id_counter, &[current, proof]);
+        current = mint_proof_row(state, &congr_all_action, &[current, proof])?;
     }
 
     // Bridge the (possibly non-canonical) `raw` term to the canonical `rebuilt`
@@ -361,7 +352,7 @@ fn rebuild_container_proof_rec(
         .registry()
         .lookup_table(&prim.container_normalize_name)?
         .clone();
-    current = mint_proof_row(state, &normalize_action, prim.id_counter, &[current]);
+    current = mint_proof_row(state, &normalize_action, &[current])?;
 
     // Anchor a reflexive proof on the rebuilt value for future rebuilds.
     if rebuilt != value {
@@ -372,8 +363,8 @@ fn rebuild_container_proof_rec(
             .lookup_table(prim.cproof_names.get(sort.name())?)?
             .clone();
         // Sym(current): rebuilt = value;  Trans(Sym(current), current): rebuilt = rebuilt.
-        let sym_p = mint_proof_row(state, &sym_action, prim.id_counter, &[current]);
-        let refl = mint_proof_row(state, &trans_action, prim.id_counter, &[sym_p, current]);
+        let sym_p = mint_proof_row(state, &sym_action, &[current])?;
+        let refl = mint_proof_row(state, &trans_action, &[sym_p, current])?;
         cproof_action.insert(state.raw_exec_state(), [rebuilt, refl].into_iter());
     }
 

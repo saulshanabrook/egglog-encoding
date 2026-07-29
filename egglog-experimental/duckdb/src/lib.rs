@@ -13,9 +13,9 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, anyhow, bail};
 use egglog_backend_trait::{
-    Backend, BaseValues, ColumnTy, ContainerValues, CounterId, ExecutionState, ExternalFunction,
-    ExternalFunctionId, FunctionConfig, FunctionId, IterationReport, ReportLevel, RuleId,
-    RuleSetRun, RuleSpec, ScanEntry, Value,
+    Backend, BaseValues, ColumnTy, ContainerValues, ExecutionState, ExternalFunction,
+    ExternalFunctionId, FunctionConfig, FunctionId, IterationReport, NativeInputValue, ReportLevel,
+    RuleId, RuleSetRun, RuleSpec, ScanEntry, Value,
 };
 use egglog_core_relations::Database;
 use egglog_numeric_id::NumericId;
@@ -42,7 +42,6 @@ struct RegisteredRule {
 pub struct EGraph {
     storage: Storage,
     registries: Database,
-    id_counter: CounterId,
     deferred_panic: Arc<Mutex<Option<String>>>,
     rules: Vec<Option<RegisteredRule>>,
     last_insert: InsertStats,
@@ -53,12 +52,10 @@ pub struct EGraph {
 impl EGraph {
     pub fn new() -> Result<Self> {
         let storage = Storage::new()?;
-        let mut registries = Database::new();
-        let id_counter = registries.add_counter();
+        let registries = Database::new();
         Ok(Self {
             storage,
             registries,
-            id_counter,
             deferred_panic: Arc::new(Mutex::new(None)),
             rules: Vec::new(),
             last_insert: InsertStats::default(),
@@ -218,18 +215,39 @@ impl Backend for EGraph {
             .and_then(|row| row.get(key.len()).copied())
     }
 
-    fn id_counter(&self) -> Option<CounterId> {
-        Some(self.id_counter)
+    fn supports_fresh_ids(&self) -> bool {
+        true
     }
 
     fn fresh_id(&mut self) -> Value {
-        Value::from_usize(self.registries.inc_counter(self.id_counter))
+        self.storage
+            .fresh_id()
+            .unwrap_or_else(|error| panic!("DuckDB fresh_id failed: {error:#}"))
     }
 
     fn add_values(&mut self, values: Vec<(FunctionId, Vec<Value>)>) -> Result<()> {
         match self
             .storage
             .insert_batch(self.registries.base_values(), values)
+        {
+            Ok(stats) => {
+                self.last_insert = stats;
+                Ok(())
+            }
+            Err(error) => {
+                self.last_insert = InsertStats::default();
+                Err(error)
+            }
+        }
+    }
+
+    fn add_values_with_fresh(
+        &mut self,
+        values: Vec<(FunctionId, Vec<NativeInputValue>)>,
+    ) -> Result<()> {
+        match self
+            .storage
+            .insert_batch_with_fresh(self.registries.base_values(), values)
         {
             Ok(stats) => {
                 self.last_insert = stats;
@@ -306,6 +324,14 @@ impl Backend for EGraph {
         self.registries.add_external_function(func)
     }
 
+    fn register_get_fresh(&mut self) -> ExternalFunctionId {
+        // This ID is a semantic token retained in typed rule IR. Executing it
+        // as a host callback would move rule effects out of DuckDB's atomic SQL
+        // transaction, so accidental host execution fails closed. Native rule
+        // lowering reserves ids directly from the SQL counter instead.
+        self.new_panic("DuckDB get-fresh requires native SQL lowering".to_string())
+    }
+
     fn free_external_func(&mut self, func: ExternalFunctionId) {
         self.registries.free_external_function(func);
     }
@@ -358,7 +384,7 @@ mod tests {
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
     use super::*;
-    use egglog_backend_trait::{DefaultVal, MergeAction, MergeFn};
+    use egglog_backend_trait::{DefaultVal, MergeAction, MergeFn, NativeInputValue};
     use egglog_core_relations::Boxed;
     use ordered_float::OrderedFloat;
 
@@ -533,11 +559,239 @@ mod tests {
     }
 
     #[test]
+    fn sql_fresh_ids_and_native_input_slots_are_one_atomic_domain() -> Result<()> {
+        let mut backend = EGraph::new()?;
+        backend.base_values_mut().register_type::<()>();
+        backend.base_values_mut().register_type::<bool>();
+        let int_ty = backend.base_values_mut().register_type::<i64>();
+        backend
+            .base_values_mut()
+            .register_type::<Boxed<OrderedFloat<f64>>>();
+        backend.base_values_mut().register_type::<Boxed<String>>();
+        let keep_old = backend.add_table(FunctionConfig {
+            schema: vec![ColumnTy::Id, ColumnTy::Id],
+            n_vals: 1,
+            n_identity_vals: None,
+            default: DefaultVal::Fail,
+            merge: MergeFn::Old,
+            name: "fresh-slot-target".to_string(),
+            can_subsume: false,
+        });
+        let asserted = backend.add_table(FunctionConfig {
+            schema: vec![ColumnTy::Id, ColumnTy::Id],
+            n_vals: 1,
+            n_identity_vals: None,
+            default: DefaultVal::Fail,
+            merge: MergeFn::AssertEq,
+            name: "fresh-slot-assert".to_string(),
+            can_subsume: false,
+        });
+        let base_output = backend.add_table(FunctionConfig {
+            schema: vec![ColumnTy::Id, ColumnTy::Base(int_ty)],
+            n_vals: 1,
+            n_identity_vals: None,
+            default: DefaultVal::Fail,
+            merge: MergeFn::Old,
+            name: "fresh-slot-base".to_string(),
+            can_subsume: false,
+        });
+
+        assert!(Backend::id_counter(&backend).is_none());
+        assert!(Backend::supports_fresh_ids(&backend));
+        assert_eq!(Backend::fresh_id(&mut backend), Value::new(0));
+        Backend::add_values_with_fresh(
+            &mut backend,
+            vec![
+                (
+                    keep_old,
+                    vec![
+                        NativeInputValue::Existing(Value::new(10)),
+                        NativeInputValue::FreshSlot(0),
+                    ],
+                ),
+                (
+                    keep_old,
+                    vec![
+                        NativeInputValue::Existing(Value::new(11)),
+                        NativeInputValue::FreshSlot(0),
+                    ],
+                ),
+                (
+                    keep_old,
+                    vec![
+                        NativeInputValue::Existing(Value::new(12)),
+                        NativeInputValue::FreshSlot(1),
+                    ],
+                ),
+            ],
+        )?;
+        assert_eq!(
+            backend.lookup_id(keep_old, &[Value::new(10)]),
+            Some(Value::new(1))
+        );
+        assert_eq!(
+            backend.lookup_id(keep_old, &[Value::new(11)]),
+            Some(Value::new(1))
+        );
+        assert_eq!(
+            backend.lookup_id(keep_old, &[Value::new(12)]),
+            Some(Value::new(2))
+        );
+        assert_eq!(backend.storage.next_fresh_id()?, 3);
+
+        let generation_before_hostile = backend.storage.generation()?;
+        let sparse = Backend::add_values_with_fresh(
+            &mut backend,
+            vec![(
+                keep_old,
+                vec![
+                    NativeInputValue::Existing(Value::new(20)),
+                    NativeInputValue::FreshSlot(1),
+                ],
+            )],
+        )
+        .unwrap_err();
+        assert!(sparse.to_string().contains("dense"));
+        let wrong_type = Backend::add_values_with_fresh(
+            &mut backend,
+            vec![(
+                base_output,
+                vec![
+                    NativeInputValue::Existing(Value::new(20)),
+                    NativeInputValue::FreshSlot(0),
+                ],
+            )],
+        )
+        .unwrap_err();
+        assert!(wrong_type.to_string().contains("non-id"));
+        let stale = Backend::add_values_with_fresh(
+            &mut backend,
+            vec![(
+                keep_old,
+                vec![
+                    NativeInputValue::Existing(Value::new(21)),
+                    NativeInputValue::Existing(Value::new(u32::MAX)),
+                ],
+            )],
+        )
+        .unwrap_err();
+        assert!(stale.to_string().contains("stale Value sentinel"));
+        assert_eq!(backend.lookup_id(keep_old, &[Value::new(21)]), None);
+        assert_eq!(backend.storage.next_fresh_id()?, 3);
+        assert_eq!(backend.storage.generation()?, generation_before_hostile);
+
+        Backend::add_values(
+            &mut backend,
+            vec![(asserted, vec![Value::new(1), Value::new(100)])],
+        )?;
+        let generation_before_conflict = backend.storage.generation()?;
+        let error = Backend::add_values_with_fresh(
+            &mut backend,
+            vec![
+                (
+                    keep_old,
+                    vec![
+                        NativeInputValue::Existing(Value::new(30)),
+                        NativeInputValue::FreshSlot(0),
+                    ],
+                ),
+                (
+                    asserted,
+                    vec![
+                        NativeInputValue::Existing(Value::new(1)),
+                        NativeInputValue::Existing(Value::new(101)),
+                    ],
+                ),
+            ],
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("AssertEq"));
+        assert_eq!(backend.lookup_id(keep_old, &[Value::new(30)]), None);
+        assert_eq!(backend.storage.next_fresh_id()?, 3);
+        assert_eq!(backend.storage.generation()?, generation_before_conflict);
+
+        Backend::add_values_with_fresh(
+            &mut backend,
+            vec![(
+                keep_old,
+                vec![
+                    NativeInputValue::Existing(Value::new(30)),
+                    NativeInputValue::FreshSlot(0),
+                ],
+            )],
+        )?;
+        assert_eq!(
+            backend.lookup_id(keep_old, &[Value::new(30)]),
+            Some(Value::new(3))
+        );
+        assert_eq!(backend.storage.next_fresh_id()?, 4);
+
+        let token = Backend::register_get_fresh(&mut backend);
+        let host_result = backend
+            .registries
+            .with_execution_state(|state| state.call_external_func(token, &[]));
+        assert_eq!(host_result, None);
+        let host_error = backend.take_deferred_panic().unwrap_err();
+        assert!(host_error.to_string().contains("native SQL lowering"));
+        assert_eq!(backend.storage.next_fresh_id()?, 4);
+        assert_eq!(Backend::fresh_id(&mut backend), Value::new(4));
+
+        let generation_before_idempotent = backend.storage.generation()?;
+        Backend::add_values_with_fresh(
+            &mut backend,
+            vec![(
+                keep_old,
+                vec![
+                    NativeInputValue::Existing(Value::new(30)),
+                    NativeInputValue::FreshSlot(0),
+                ],
+            )],
+        )?;
+        assert_eq!(backend.storage.next_fresh_id()?, 6);
+        assert_eq!(backend.storage.generation()?, generation_before_idempotent);
+        assert_eq!(
+            backend.lookup_id(keep_old, &[Value::new(30)]),
+            Some(Value::new(3))
+        );
+
+        backend.storage.set_next_fresh_id(u32::MAX as u64 - 1)?;
+        Backend::add_values_with_fresh(
+            &mut backend,
+            vec![(
+                keep_old,
+                vec![
+                    NativeInputValue::Existing(Value::new(40)),
+                    NativeInputValue::FreshSlot(0),
+                ],
+            )],
+        )?;
+        assert_eq!(
+            backend.lookup_id(keep_old, &[Value::new(40)]),
+            Some(Value::new(u32::MAX - 1))
+        );
+        let exhausted = Backend::add_values_with_fresh(
+            &mut backend,
+            vec![(
+                keep_old,
+                vec![
+                    NativeInputValue::Existing(Value::new(41)),
+                    NativeInputValue::FreshSlot(0),
+                ],
+            )],
+        )
+        .unwrap_err();
+        assert!(exhausted.to_string().contains("usable Value domain"));
+        assert_eq!(backend.storage.next_fresh_id()?, u32::MAX as u64);
+        assert_eq!(backend.lookup_id(keep_old, &[Value::new(41)]), None);
+        Ok(())
+    }
+
+    #[test]
     fn function_config_is_retained_and_deferred_preflight_preserves_ids() -> Result<()> {
         let mut backend = EGraph::new()?;
         backend.base_values_mut().register_type::<()>();
         backend.base_values_mut().register_type::<bool>();
-        backend.base_values_mut().register_type::<i64>();
+        let int_ty = backend.base_values_mut().register_type::<i64>();
         backend
             .base_values_mut()
             .register_type::<Boxed<OrderedFloat<f64>>>();
@@ -586,6 +840,49 @@ mod tests {
             backend.storage.table_info(lookup_reader)?.merge.as_ref(),
             MergeFn::Lookup(id, arguments) if *id == tuple_output && arguments.len() == 1
         ));
+        let primitive = backend.register_external_func(Box::new(
+            egglog_core_relations::make_external_func(|_, args| args.first().copied()),
+        ));
+        let typed_primitive = backend.add_table(FunctionConfig {
+            schema: vec![ColumnTy::Id, ColumnTy::Base(int_ty)],
+            n_vals: 1,
+            n_identity_vals: None,
+            default: DefaultVal::Fail,
+            merge: MergeFn::Primitive {
+                id: primitive,
+                name: "ordering-min".to_string(),
+                input: vec![ColumnTy::Base(int_ty); 2],
+                output: ColumnTy::Base(int_ty),
+                args: vec![
+                    MergeFn::Const {
+                        value: backend.base_values().get(5i64),
+                        ty: ColumnTy::Base(int_ty),
+                    },
+                    MergeFn::Old,
+                ],
+            },
+            name: "typed-primitive-retention".to_string(),
+            can_subsume: false,
+        });
+        let typed = backend.storage.table_info(typed_primitive)?;
+        let MergeFn::Primitive {
+            id,
+            name,
+            input,
+            output,
+            args,
+        } = typed.merge.as_ref()
+        else {
+            panic!("typed primitive merge was not retained");
+        };
+        assert_eq!(*id, primitive);
+        assert_eq!(name, "ordering-min");
+        assert_eq!(input, &[ColumnTy::Base(int_ty); 2]);
+        assert_eq!(*output, ColumnTy::Base(int_ty));
+        assert!(matches!(
+            args.as_slice(),
+            [MergeFn::Const { ty, .. }, MergeFn::Old] if *ty == ColumnTy::Base(int_ty)
+        ));
         let predicted = backend.peek_next_function_id();
         let deferred = backend.add_table(FunctionConfig {
             schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
@@ -596,12 +893,18 @@ mod tests {
                 actions: vec![
                     MergeAction::Let {
                         slot: 0,
-                        value: MergeFn::Const(Value::new(10)),
+                        value: MergeFn::Const {
+                            value: Value::new(10),
+                            ty: ColumnTy::Id,
+                        },
                     },
                     MergeAction::Set(
                         predicted,
                         vec![
-                            MergeFn::Const(Value::new(5)),
+                            MergeFn::Const {
+                                value: Value::new(5),
+                                ty: ColumnTy::Id,
+                            },
                             MergeFn::LetVar(0),
                             MergeFn::NewCol(1),
                         ],

@@ -31,7 +31,7 @@ use indexmap::IndexSet;
 use log::info;
 use once_cell::sync::Lazy;
 use smallvec::SmallVec;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use web_time::{Duration, Instant};
 
 pub mod macros;
@@ -55,6 +55,7 @@ pub struct ActionRegistry {
     table_actions: hashbrown::HashMap<String, TableAction>,
     union_action: UnionAction,
     default_panic_id: ExternalFunctionId,
+    fresh_id: Option<ExternalFunctionId>,
 }
 
 impl ActionRegistry {
@@ -63,6 +64,7 @@ impl ActionRegistry {
             table_actions: hashbrown::HashMap::new(),
             union_action,
             default_panic_id,
+            fresh_id: None,
         }
     }
 
@@ -94,12 +96,35 @@ impl ActionRegistry {
     pub fn default_panic_id(&self) -> ExternalFunctionId {
         self.default_panic_id
     }
+
+    /// Record the backend-local entrypoint for the generic fresh-id operation.
+    pub fn register_fresh_id(&mut self, fresh_id: ExternalFunctionId) {
+        self.fresh_id = Some(fresh_id);
+    }
+
+    /// The backend-local entrypoint for the generic fresh-id operation.
+    pub fn fresh_id(&self) -> Option<ExternalFunctionId> {
+        self.fresh_id
+    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum ColumnTy {
     Id,
     Base(BaseValueId),
+}
+
+/// One value in an atomic native-input batch.
+///
+/// [`NativeInputValue::Existing`] carries a value already interned in the
+/// backend's registries. [`NativeInputValue::FreshSlot`] is a repeatable,
+/// batch-local placeholder for a freshly minted id. Slots must form the dense
+/// range `0..n`; each backend resolves them in ascending order inside the same
+/// rollback boundary as the row insertions.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeInputValue {
+    Existing(Value),
+    FreshSlot(u32),
 }
 
 define_id!(pub RuleId, u32, "An egglog-style rule");
@@ -146,6 +171,11 @@ pub struct EGraph {
     /// [`WriteState`] / [`FullState`] can resolve table actions at
     /// invoke time. Mutated in place from [`add_table`](EGraph::add_table).
     action_registry: Arc<std::sync::RwLock<ActionRegistry>>,
+    /// Serialize merge-time constructor predictions around their shared fresh
+    /// counter. This lets a callback distinguish a final-id prediction reuse
+    /// from a new, out-of-domain allocation without racing callbacks from
+    /// another table (or a concurrently running clone).
+    merge_fresh_lock: Arc<Mutex<()>>,
 }
 
 pub type Result<T> = std::result::Result<T, anyhow::Error>;
@@ -212,6 +242,7 @@ impl Default for EGraph {
             panic_func_ids,
             report_level: Default::default(),
             action_registry,
+            merge_fresh_lock: Arc::new(Mutex::new(())),
         }
     }
 }
@@ -416,6 +447,32 @@ impl EGraph {
         self.id_counter
     }
 
+    /// Register the term encoder's generic fresh-id primitive against the same
+    /// allocator lock used by merge-time constructor prediction. The exclusive
+    /// `u32::MAX` stale sentinel is never constructed: both the pre-read and the
+    /// raw value returned by the bounded reservation are checked before
+    /// conversion.
+    pub fn register_get_fresh(&mut self) -> ExternalFunctionId {
+        let counter = self.id_counter;
+        let allocator_lock = Arc::clone(&self.merge_fresh_lock);
+        self.register_external_func(Box::new(make_external_func(
+            move |state: &mut ExecutionState, _args: &[Value]| {
+                let _guard = allocator_lock.lock().unwrap();
+                if state.read_counter(counter) >= u32::MAX as usize {
+                    state.trigger_early_stop();
+                    return None;
+                }
+                match state.try_inc_counter_bounded(counter, u32::MAX as usize) {
+                    Some(raw) if raw < u32::MAX as usize => Some(Value::from_usize(raw)),
+                    Some(_) | None => {
+                        state.trigger_early_stop();
+                        None
+                    }
+                }
+            },
+        )))
+    }
+
     /// Look up the canonical value for `val` in the union-find.
     ///
     /// If the value has never been inserted into the union-find, `val` is returned.
@@ -498,6 +555,94 @@ impl EGraph {
         if let Some(message) = error {
             *self = checkpoint;
             return Err(PanicError(message).into());
+        }
+        Ok(())
+    }
+
+    /// Resolve batch-local fresh-id slots and atomically insert the resulting
+    /// rows. Allocation and merge-aware insertion share the same snapshot, so a
+    /// rejected merge restores both table state and the fresh-id counter.
+    pub fn try_add_values_with_fresh(
+        &mut self,
+        values: Vec<(FunctionId, Vec<NativeInputValue>)>,
+    ) -> Result<()> {
+        let mut slots = BTreeSet::new();
+        for (function, row) in &values {
+            let info = self.funcs.get(*function).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "native input references unknown function {}",
+                    function.rep()
+                )
+            })?;
+            anyhow::ensure!(
+                row.len() == info.schema.len(),
+                "native input for `{}` expects {} columns, got {}",
+                info.name,
+                info.schema.len(),
+                row.len()
+            );
+            for (&value, &ty) in row.iter().zip(&info.schema) {
+                match value {
+                    NativeInputValue::Existing(value) => anyhow::ensure!(
+                        value.rep() != u32::MAX,
+                        "native input contains the reserved stale Value sentinel in `{}`",
+                        info.name
+                    ),
+                    NativeInputValue::FreshSlot(slot) => {
+                        anyhow::ensure!(
+                            ty == ColumnTy::Id,
+                            "native input fresh slot {slot} targets a non-id column in `{}`",
+                            info.name
+                        );
+                        slots.insert(slot);
+                    }
+                }
+            }
+        }
+        for (expected, actual) in slots.iter().copied().enumerate() {
+            anyhow::ensure!(
+                usize::try_from(actual).ok() == Some(expected),
+                "native input fresh slots must be dense from zero; expected {expected}, found {actual}"
+            );
+        }
+        self.flush_updates();
+        if let Some(message) = self.panic_message.lock().unwrap().take() {
+            return Err(PanicError(message).into());
+        }
+
+        // Flushing prior staged work can commit constructor predictions that
+        // advance this same counter, so capacity must be checked afterwards.
+        let next_id = self.db.read_counter(self.id_counter);
+        anyhow::ensure!(
+            next_id
+                .checked_add(slots.len())
+                .is_some_and(|end| end <= u32::MAX as usize),
+            "native input fresh-id allocation exceeds the usable Value domain"
+        );
+
+        let checkpoint = self.clone();
+        let resolved_slots = (0..slots.len())
+            .map(|_| self.fresh_id())
+            .collect::<Vec<_>>();
+        let resolved = values.into_iter().map(|(function, row)| {
+            let row = row
+                .into_iter()
+                .map(|value| match value {
+                    NativeInputValue::Existing(value) => value,
+                    NativeInputValue::FreshSlot(slot) => resolved_slots[slot as usize],
+                })
+                .collect();
+            (function, row)
+        });
+        self.add_values(resolved);
+        let error = self.panic_message.lock().unwrap().take();
+        if let Some(message) = error {
+            *self = checkpoint;
+            return Err(PanicError(message).into());
+        }
+        if self.db.read_counter(self.id_counter) > u32::MAX as usize {
+            *self = checkpoint;
+            anyhow::bail!("native input merge fresh-id allocation exceeds the usable Value domain");
         }
         Ok(())
     }
@@ -1286,7 +1431,17 @@ pub enum MergeFn {
     UnionId,
     /// The output of a merge is determined by applying the given ExternalFunction to the result
     /// of the argument merge functions.
-    Primitive(ExternalFunctionId, Vec<MergeFn>),
+    Primitive {
+        /// Runtime identity retained for the reference and DD interpreters.
+        id: ExternalFunctionId,
+        /// Stable source-level semantic name at this specialized call site.
+        name: String,
+        /// Concrete input types at this specialized call site.
+        input: Vec<ColumnTy>,
+        /// Concrete output type at this specialized call site.
+        output: ColumnTy,
+        args: Vec<MergeFn>,
+    },
     /// The output of a merge is determined by looking up the value for the given function and the
     /// given arguments in the egraph.
     Function(FunctionId, Vec<MergeFn>),
@@ -1305,7 +1460,7 @@ pub enum MergeFn {
     /// Always overwrite the new value for the given function with a constant. This is more useful
     /// as a "base case" in a more complicated merge function (e.g. one that clamps a value between
     /// 1 and 100) than it is as a standalone merge function.
-    Const(Value),
+    Const { value: Value, ty: ColumnTy },
     /// A merge for a tuple-output function: one [`MergeFn`] per value column. Each inner
     /// `MergeFn` produces that column's merged value and may reference any column via
     /// [`MergeFn::OldCol`] / [`MergeFn::NewCol`]. The length determines the number of value
@@ -1348,7 +1503,7 @@ impl MergeFn {
     ) {
         use MergeFn::*;
         match self {
-            Primitive(_, args) => {
+            Primitive { args, .. } => {
                 args.iter()
                     .for_each(|arg| arg.fill_deps(egraph, read_deps, write_deps));
                 write_deps.insert(egraph.uf_table);
@@ -1378,7 +1533,7 @@ impl MergeFn {
                     .for_each(|a| a.fill_deps(egraph, read_deps, write_deps));
                 result.fill_deps(egraph, read_deps, write_deps);
             }
-            AssertEq | Old | New | OldCol(..) | NewCol(..) | LetVar(..) | Const(..) => {}
+            AssertEq | Old | New | OldCol(..) | NewCol(..) | LetVar(..) | Const { .. } => {}
         }
     }
 
@@ -1396,7 +1551,23 @@ impl MergeFn {
         match self {
             OldCol(i) => check(*i, "OldCol"),
             NewCol(i) => check(*i, "NewCol"),
-            Primitive(_, args) | Function(_, args) | Columns(args) | Lookup(_, args) => args
+            Primitive {
+                name: primitive,
+                input,
+                args,
+                ..
+            } => {
+                assert_eq!(
+                    input.len(),
+                    args.len(),
+                    "merge for `{name}` calls primitive `{primitive}` with {} arguments but records {} input types",
+                    args.len(),
+                    input.len()
+                );
+                args.iter()
+                    .for_each(|a| a.check_value_col_indices(n_vals, name));
+            }
+            Function(_, args) | Columns(args) | Lookup(_, args) => args
                 .iter()
                 .for_each(|a| a.check_value_col_indices(n_vals, name)),
             Block { actions, result } => {
@@ -1405,7 +1576,7 @@ impl MergeFn {
                     .for_each(|a| a.check_value_col_indices(n_vals, name));
                 result.check_value_col_indices(n_vals, name);
             }
-            AssertEq | Old | New | UnionId | LetVar(..) | Const(..) => {}
+            AssertEq | Old | New | UnionId | LetVar(..) | Const { .. } => {}
         }
     }
 
@@ -1518,7 +1689,7 @@ impl MergeFn {
 
     fn resolve(&self, function_name: &str, egraph: &mut EGraph) -> ResolvedMergeFn {
         match self {
-            MergeFn::Const(v) => ResolvedMergeFn::Const(*v),
+            MergeFn::Const { value, .. } => ResolvedMergeFn::Const(*value),
             MergeFn::Old => ResolvedMergeFn::Old,
             MergeFn::New => ResolvedMergeFn::New,
             MergeFn::OldCol(i) => ResolvedMergeFn::OldCol(*i),
@@ -1539,8 +1710,8 @@ impl MergeFn {
             // for each layer of nesting. This introduces a bit of overhead, particularly for cases
             // that look like `(f old new)` or `(f new old)`. We could special-case common cases in
             // this function if that overhead shows up.
-            MergeFn::Primitive(prim, args) => ResolvedMergeFn::Primitive {
-                prim: *prim,
+            MergeFn::Primitive { id, args, .. } => ResolvedMergeFn::Primitive {
+                prim: *id,
                 args: args
                     .iter()
                     .map(|arg| arg.resolve(function_name, egraph))
@@ -1557,11 +1728,16 @@ impl MergeFn {
                     "Merge function for {function_name} must match function arity for {}",
                     func_info.name
                 );
+                let func_name = func_info.name.clone();
                 ResolvedMergeFn::Function {
                     func: TableAction::new(egraph, *func),
+                    merge_fresh_lock: Arc::clone(&egraph.merge_fresh_lock),
+                    fresh_id_overflow_panic: egraph.new_panic(
+                        "merge fresh-id allocation exceeds the usable Value domain".into(),
+                    ),
                     panic: egraph.new_panic(format!(
                         "Lookup on {} failed in the merge function for {function_name}",
-                        func_info.name
+                        func_name
                     )),
                     args: args
                         .iter()
@@ -1571,6 +1747,9 @@ impl MergeFn {
             }
             MergeFn::Lookup(func, args) => ResolvedMergeFn::Lookup {
                 table: TableAction::new(egraph, *func),
+                merge_fresh_lock: Arc::clone(&egraph.merge_fresh_lock),
+                fresh_id_overflow_panic: egraph
+                    .new_panic("merge fresh-id allocation exceeds the usable Value domain".into()),
                 args: args
                     .iter()
                     .map(|arg| arg.resolve(function_name, egraph))
@@ -1610,12 +1789,16 @@ enum ResolvedMergeFn {
         func: TableAction,
         args: Vec<ResolvedMergeFn>,
         panic: ExternalFunctionId,
+        merge_fresh_lock: Arc<Mutex<()>>,
+        fresh_id_overflow_panic: ExternalFunctionId,
     },
     /// Look up / mint a function value inside a merge value expression (mint on miss, like a
     /// constructor), via `lookup_or_insert`.
     Lookup {
         table: TableAction,
         args: Vec<ResolvedMergeFn>,
+        merge_fresh_lock: Arc<Mutex<()>>,
+        fresh_id_overflow_panic: ExternalFunctionId,
     },
 }
 
@@ -1795,7 +1978,13 @@ impl ResolvedMergeFn {
                     }
                 }
             }
-            ResolvedMergeFn::Function { func, args, panic } => {
+            ResolvedMergeFn::Function {
+                func,
+                args,
+                panic,
+                merge_fresh_lock,
+                fresh_id_overflow_panic,
+            } => {
                 // see github.com/egraphs-good/egglog/pull/287
                 if cur[n_keys + self_col] == new[n_keys + self_col] {
                     return cur[n_keys + self_col];
@@ -1811,21 +2000,40 @@ impl ResolvedMergeFn {
                 // (return `None` → panic). `lookup_or_insert` preserves
                 // both behaviors; the pure-read `lookup` would skip
                 // constructor minting.
-                func.lookup_or_insert(state, &args).unwrap_or_else(|| {
-                    let res = state.call_external_func(*panic, &[]);
-                    assert_eq!(res, None);
-                    cur[n_keys + self_col]
-                })
+                match func.lookup_or_insert_checked(state, &args, merge_fresh_lock) {
+                    Ok(Some(value)) => value,
+                    Ok(None) => {
+                        let res = state.call_external_func(*panic, &[]);
+                        assert_eq!(res, None);
+                        cur[n_keys + self_col]
+                    }
+                    Err(FreshIdExhausted) => {
+                        let res = state.call_external_func(*fresh_id_overflow_panic, &[]);
+                        assert_eq!(res, None);
+                        cur[n_keys + self_col]
+                    }
+                }
             }
-            ResolvedMergeFn::Lookup { table, args } => {
+            ResolvedMergeFn::Lookup {
+                table,
+                args,
+                merge_fresh_lock,
+                fresh_id_overflow_panic,
+            } => {
                 let key = args
                     .iter()
                     .map(|arg| arg.run(state, cur, new, n_keys, self_col, ts, env))
                     .collect::<SmallVec<[Value; 4]>>();
                 // A constructor mints its (single) output on miss; no extra value columns.
-                table
-                    .lookup_or_insert_multi(state, &key, &[])
-                    .unwrap_or(cur[n_keys + self_col])
+                match table.lookup_or_insert_checked(state, &key, merge_fresh_lock) {
+                    Ok(Some(value)) => value,
+                    Ok(None) => cur[n_keys + self_col],
+                    Err(FreshIdExhausted) => {
+                        let res = state.call_external_func(*fresh_id_overflow_panic, &[]);
+                        assert_eq!(res, None);
+                        cur[n_keys + self_col]
+                    }
+                }
             }
         }
     }
@@ -1840,6 +2048,8 @@ pub enum TableKind {
     Function,
     Constructor,
 }
+
+struct FreshIdExhausted;
 
 /// This is an intern-able struct that holds all the data needed
 /// to do table operations with an [`ExecutionState`], assuming
@@ -1908,6 +2118,43 @@ impl TableAction {
     /// constructors, use [`TableAction::lookup_or_insert`].
     pub fn lookup(&self, state: &ExecutionState, key: &[Value]) -> Option<Value> {
         self.lookup_values(state, key).map(|values| values[0])
+    }
+
+    /// Run a single-value lookup-or-insert without ever converting the reserved
+    /// stale sentinel (or a wider counter value) into a merge result.
+    ///
+    /// At an exactly exhausted counter, a constant-sentinel prediction probes
+    /// the execution state's prediction cache: an existing prediction returns
+    /// its final valid id, while a genuinely missing key produces the sentinel
+    /// and is reported for rollback. The shared lock makes the counter check and
+    /// prediction atomic with respect to other merge callbacks.
+    fn lookup_or_insert_checked(
+        &self,
+        state: &mut ExecutionState,
+        key: &[Value],
+        fresh_lock: &Mutex<()>,
+    ) -> std::result::Result<Option<Value>, FreshIdExhausted> {
+        let Some(MergeVal::Counter(counter)) = self.default else {
+            return Ok(self.lookup_or_insert(state, key));
+        };
+        let _guard = fresh_lock.lock().unwrap();
+        match state.read_counter(counter).cmp(&(u32::MAX as usize)) {
+            std::cmp::Ordering::Less => Ok(self.lookup_or_insert(state, key)),
+            std::cmp::Ordering::Equal => {
+                // `lookup` cannot see execution-local predictions. Reuse
+                // `predict_val` with a non-allocating reserved marker instead:
+                // an existing prediction wins, while a miss yields the marker
+                // and the enclosing fallible operation rolls the staged probe
+                // back.
+                let mut probe = self.clone();
+                probe.default = Some(MergeVal::Constant(Value::new(u32::MAX)));
+                match probe.lookup_or_insert(state, key) {
+                    Some(value) if value.rep() != u32::MAX => Ok(Some(value)),
+                    _ => Err(FreshIdExhausted),
+                }
+            }
+            std::cmp::Ordering::Greater => Err(FreshIdExhausted),
+        }
     }
 
     /// Return the current number of rows in this table.

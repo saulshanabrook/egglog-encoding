@@ -5,7 +5,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use duckdb::{Connection, Row};
 use egglog_backend_trait::{
     BaseValueId, BaseValues, ColumnTy, DefaultVal, FunctionConfig, FunctionId, MergeAction,
-    MergeFn, ScanEntry, Value,
+    MergeFn, NativeInputValue, ScanEntry, Value,
 };
 use egglog_core_relations::{BaseValue, Boxed};
 use egglog_numeric_id::NumericId;
@@ -462,7 +462,19 @@ fn validate_merge_expression(
                 );
             }
         }
-        MergeFn::Primitive(_, arguments) => {
+        MergeFn::Primitive {
+            input,
+            args: arguments,
+            ..
+        } => {
+            if input.len() != arguments.len() {
+                bail!(
+                    "merge for `{}` calls a primitive with {} arguments but records {} input types",
+                    config.name,
+                    arguments.len(),
+                    input.len()
+                );
+            }
             for argument in arguments {
                 validate_merge_expression(argument, tables, predicted_id, config, available_slots)?;
             }
@@ -533,7 +545,11 @@ fn validate_merge_expression(
                 config.name
             )
         }
-        MergeFn::AssertEq | MergeFn::UnionId | MergeFn::Old | MergeFn::New | MergeFn::Const(_) => {}
+        MergeFn::AssertEq
+        | MergeFn::UnionId
+        | MergeFn::Old
+        | MergeFn::New
+        | MergeFn::Const { .. } => {}
     }
     Ok(())
 }
@@ -585,7 +601,7 @@ impl Storage {
                  name VARCHAR PRIMARY KEY,
                  value UBIGINT NOT NULL
              );
-             INSERT INTO {COUNTERS_TABLE} VALUES ('generation', 1);"
+             INSERT INTO {COUNTERS_TABLE} VALUES ('generation', 1), ('fresh_id', 0);"
         ))?;
         Ok(Self {
             state: Mutex::new(State {
@@ -606,6 +622,29 @@ impl Storage {
             .connection
             .query_row("SELECT version()", [], |row| row.get(0))
             .map_err(Into::into)
+    }
+
+    pub(crate) fn fresh_id(&self) -> Result<Value> {
+        let mut state = self.state.lock().expect("DuckDB storage mutex poisoned");
+        let transaction = state.connection.transaction()?;
+        let value = transaction.query_row(
+            &format!("SELECT value FROM {COUNTERS_TABLE} WHERE name = 'fresh_id'"),
+            [],
+            |row| row.get::<_, u64>(0),
+        )?;
+        if value >= u32::MAX as u64 {
+            transaction.rollback()?;
+            bail!("DuckDB fresh-id counter exceeds the usable Value domain");
+        }
+        transaction.execute(
+            &format!(
+                "UPDATE {COUNTERS_TABLE} SET value = CAST('{}' AS UBIGINT) WHERE name = 'fresh_id'",
+                value + 1
+            ),
+            [],
+        )?;
+        transaction.commit()?;
+        Ok(Value::new(value as u32))
     }
 
     pub(crate) fn next_table_id(&self) -> FunctionId {
@@ -658,12 +697,32 @@ impl Storage {
         base_values: &BaseValues,
         values: Vec<(FunctionId, Vec<Value>)>,
     ) -> Result<InsertStats> {
+        self.insert_batch_with_fresh(
+            base_values,
+            values
+                .into_iter()
+                .map(|(function, row)| {
+                    (
+                        function,
+                        row.into_iter().map(NativeInputValue::Existing).collect(),
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    pub(crate) fn insert_batch_with_fresh(
+        &self,
+        base_values: &BaseValues,
+        values: Vec<(FunctionId, Vec<NativeInputValue>)>,
+    ) -> Result<InsertStats> {
         if values.is_empty() {
             return Ok(InsertStats::default());
         }
 
         let mut state = self.state.lock().expect("DuckDB storage mutex poisoned");
-        let mut grouped = BTreeMap::<u32, Vec<Vec<String>>>::new();
+        let mut grouped = BTreeMap::<u32, Vec<Vec<NativeInputValue>>>::new();
+        let mut slots = std::collections::BTreeSet::new();
         for (function, row) in values {
             let info = table_info(&state, function)?;
             info.preflight_write()?;
@@ -675,13 +734,35 @@ impl Storage {
                     row.len()
                 );
             }
-            let encoded = info
-                .columns
-                .iter()
-                .zip(row)
-                .map(|(&ty, value)| ty.sql_literal(base_values, value))
-                .collect::<Result<Vec<_>>>()?;
-            grouped.entry(function.rep()).or_default().push(encoded);
+            for (&value, &ty) in row.iter().zip(&info.schema) {
+                match value {
+                    NativeInputValue::Existing(value) => {
+                        if value.rep() == u32::MAX {
+                            bail!(
+                                "native input contains the reserved stale Value sentinel in `{}`",
+                                info.name
+                            );
+                        }
+                    }
+                    NativeInputValue::FreshSlot(slot) => {
+                        if ty != ColumnTy::Id {
+                            bail!(
+                                "native input fresh slot {slot} targets a non-id column in `{}`",
+                                info.name
+                            );
+                        }
+                        slots.insert(slot);
+                    }
+                }
+            }
+            grouped.entry(function.rep()).or_default().push(row);
+        }
+        for (expected, actual) in slots.iter().copied().enumerate() {
+            if usize::try_from(actual).ok() != Some(expected) {
+                bail!(
+                    "native input fresh slots must be dense from zero; expected {expected}, found {actual}"
+                );
+            }
         }
 
         let row_count = grouped.values().map(Vec::len).sum();
@@ -702,6 +783,24 @@ impl Storage {
         #[cfg(test)]
         let mut executed_sql = Vec::with_capacity(target_statements);
         let write = (|| -> Result<()> {
+            let first_fresh = transaction.query_row(
+                &format!("SELECT value FROM {COUNTERS_TABLE} WHERE name = 'fresh_id'"),
+                [],
+                |row| row.get::<_, u64>(0),
+            )?;
+            let next_fresh = first_fresh
+                .checked_add(slots.len() as u64)
+                .filter(|&end| end <= u32::MAX as u64)
+                .context("native input fresh-id allocation exceeds the usable Value domain")?;
+            if !slots.is_empty() {
+                transaction.execute(
+                    &format!(
+                        "UPDATE {COUNTERS_TABLE} SET value = CAST('{next_fresh}' AS UBIGINT) WHERE name = 'fresh_id'"
+                    ),
+                    [],
+                )?;
+            }
+
             let generation = transaction.query_row(
                 &format!("SELECT value FROM {COUNTERS_TABLE} WHERE name = 'generation'"),
                 [],
@@ -709,6 +808,27 @@ impl Storage {
             )?;
 
             for (function, info, rows) in grouped {
+                let rows = rows
+                    .into_iter()
+                    .map(|row| {
+                        info.columns
+                            .iter()
+                            .zip(row)
+                            .map(|(&ty, value)| {
+                                let value = match value {
+                                    NativeInputValue::Existing(value) => value,
+                                    NativeInputValue::FreshSlot(slot) => {
+                                        let value = first_fresh + u64::from(slot);
+                                        Value::new(u32::try_from(value).expect(
+                                            "fresh-id range was checked before row encoding",
+                                        ))
+                                    }
+                                };
+                                ty.sql_literal(base_values, value)
+                            })
+                            .collect::<Result<Vec<_>>>()
+                    })
+                    .collect::<Result<Vec<_>>>()?;
                 if info.write_capability == WriteCapability::AssertEq {
                     let conflict_sql = input_assert_eq_conflict_sql(function, &info, &rows);
                     let conflict = transaction.query_row(&conflict_sql, [], |row| row.get(0))?;
@@ -972,6 +1092,31 @@ impl Storage {
                 |row| row.get(0),
             )
             .map_err(Into::into)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn next_fresh_id(&self) -> Result<u64> {
+        let state = self.state.lock().expect("DuckDB storage mutex poisoned");
+        state
+            .connection
+            .query_row(
+                &format!("SELECT value FROM {COUNTERS_TABLE} WHERE name = 'fresh_id'"),
+                [],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_next_fresh_id(&self, value: u64) -> Result<()> {
+        let state = self.state.lock().expect("DuckDB storage mutex poisoned");
+        state.connection.execute(
+            &format!(
+                "UPDATE {COUNTERS_TABLE} SET value = CAST('{value}' AS UBIGINT) WHERE name = 'fresh_id'"
+            ),
+            [],
+        )?;
+        Ok(())
     }
 
     #[cfg(test)]

@@ -142,7 +142,7 @@ preserve these current SPI semantics:
 | `/root` | coordinator | preserve mission, integrate checkpoints, own broad/final commands and user communication | shared ledger, diff review, final gates, narrow recorded integration repairs only after worker is seated | accepted checkpoint and next bounded slice | goal completes, evidence rejects architecture, or user decision is required |
 | `/root/fallible_input_worker` | checkpoint 0 implementation | deliver the reassessment-authorized fallible native-input boundary | explicitly authorized bridge/backend-trait/frontend/DD/DuckDB files; targeted commands only | accepted fallible-input patch and exact command evidence | completed with independent PASS |
 | `/root/rule_sql_worker` | checkpoint 0.5 implementation | deliver the smallest production SQL-native rule compiler plus real main differentials | DuckDB crate and focused tests only; no shared SPI/frontend edits without a stop-and-review | table-only/Set-only compiler, Pointer/Math transcripts, exact gate evidence | completed; both differentials and canaries pass |
-| `/root/primary_lowering_frontier` | checkpoint 1 read-only diagnosis | locate the first unsupported production surface for each frozen proof-mode workload | no writes; public paths, static/desugar evidence, and focused capped probes only | exact failure matrix and one bounded next writer contract | one evidence-backed frontier or an architectural blocker |
+| `/root/primary_lowering_frontier` | checkpoint 1 read-only diagnosis and downstream SQL blueprint | locate the first unsupported production surface, then prepare the exact staged-wave implementation without observing the moving writer diff | committed blobs only for the follow-up; no writes/builds/tests or writer contact | exact failure matrix, scratch schemas, wave algorithm, primitive dispatch, canaries, and any unavoidable remaining SPI blocker | follow-up active; one bounded advisory report is the stop |
 | `/root/primary_schema_merge_census` | checkpoint 1 read-only schema/merge diagnosis | enumerate public proof-lowered schemas and merge trees without admitting unsupported execution | no writes; symbolic frontend/config inspection and source evidence only | exact shared prefix, full merge/type distribution, and narrow SPI recommendation | completed with a 9,344-config census and common 23-table prefix |
 | `/root/merge_assert_codec_worker` | checkpoint 1 implementation | advance all five public workloads through the common proof table prefix using real SQL-native semantics | DuckDB crate, its focused tests/census, and mechanical DuckDB dependency lock changes only; no shared SPI, frontend, DD, fixtures, or benchmark harness | native one-output `AssertEq`, lossless config admission, typed exact-number codecs, and a public boundary that reaches the first generated rule | completed; artifact frozen without commit or push and all focused gates passed |
 | `/root/codec_public_api_audit` | checkpoint 1 read-only codec review | verify exact safe public APIs and SQL forms for lossless BIGNUM/BigRat/Rational construction and projection | no writes/builds; pinned dependency source, engine docs/tests already present locally, and current crate only | implementation-ready codec constraints and failure canaries | completed; typed storage plus canonical SQL text projection is the sole safe public design |
@@ -152,7 +152,8 @@ preserve these current SPI semantics:
 | `/root/primary_lowering_frontier` and subcircles | path-compression IR/SPI diagnosis | pin the exact first rule/config across all five workloads and identify the smallest non-special-cased continuation | committed-source/desugar inspection only; no writes or DuckDB execution | exact RuleSpec, merge tree, shared blockers, canaries, and writer contract | completed; all five are isomorphic and a DuckDB-only admission patch is rejected |
 | `/root/causal_semantics_audit/committed_semantics_review/duckdb_contract` | independent semantic contract | separate mandatory observable semantics from SQL-physical choices using current reference/DD and committed causal lessons | committed blobs only; no writes/builds/tests | old/new tuple, action/fresh/fixed-point/generation/rollback matrix | completed; native staged-wave design is coherent after typed merge metadata |
 | `/root/sql_artifact` | independent SQL architecture | compare multi-statement work queues with a tagged recursive CTE for the exact frontier | safe public DuckDB 1.5.4 SQL/source only; no writes/builds/tests | two materially different designs and bounded recommendation | completed; staged work queues recommended first, recursive CTE retained as the second design |
-| `/root/typed_merge_input_spi_worker` | checkpoint 1 shared prerequisite | preserve reference/DD behavior while making merge calls typed and native input fresh allocation atomic | bounded shared bridge/backend-trait/frontend/DD/DuckDB paths listed in its contract; targeted commands only | independently reviewable typed merge IR plus fresh-slot batch boundary | to be seated after this ledger contract is committed |
+| `/root/typed_merge_input_spi_worker` | checkpoint 1 shared prerequisite | preserve reference/DD behavior while making merge calls typed and native input fresh allocation atomic | recorded bounded write set plus the allocator-boundary and direct-DD amendments below | independently reviewable typed merge IR plus fresh-slot batch boundary | completed at code hash `514583114d774461886f81f899bf1ad775a2f1973a957bbedfb0ee5dbcf457cd`; focused and broad gates pass |
+| `/root/spi_prereq_final_reviewer` and allocator/direct-path subreviews | independent prerequisite final review | audit the frozen code diff against the typed-merge, transaction, counter, proof-registration, and public-API contracts | read-only frozen diffs; no builds/tests/writes or writer contact | `PASS`, `REVISE`, or `REASSESS` with live defects separated from later SQL/container work | final `PASS` after allocator-boundary reassessment and one narrow DD direct-primitive parity repair |
 
 No overlapping writing worker may be added. Read-only specialist circles may
 be seated only for disjoint evidence questions with explicit stop terms.
@@ -195,7 +196,7 @@ be seated only for disjoint evidence questions with explicit stop terms.
 |---|---|---|---|
 | 0 provenance/integration/census | exact refs and primary surface census; plausible safe-native lowering for every reached primary surface | **passed** | worktree/base and frozen corpus pinned; census complete; safe crates.io client and loaded v1.5.4 runtime verified; typed literal/no-ART/transaction/input/CLI surfaces passed focused gates; final independent review PASS |
 | 0.5 API/literal/kernel spike | typed input/API probes and two real kernels agree with main on reduced data | **passed** | 19/19 DuckDB tests pass against loaded DuckDB v1.5.4; reduced source-pinned Pointer and Math fixtures use production `add_rule`/`run_rules` on independently constructed main and DuckDB state and agree across initial/fresh/no-delta transcripts; independent implementation review found no live defect |
-| 1 typed IR/storage/input | primary schemas and input commands install; deterministic SQL manifest | **in progress** | shared-prefix slice implemented: full valid config retention, typed BigInt/BigRat/Rational storage, and native one-output AssertEq; all five advance through 23 tables to `@uf_path_compress`. Exact diagnosis found two shared IR/input prerequisites before native Block lowering. Complete primary schema installation and deterministic SQL manifest remain open. |
+| 1 typed IR/storage/input | primary schemas and input commands install; deterministic SQL manifest | **in progress; shared prerequisite passed** | full config retention, typed BigInt/BigRat/Rational storage, native AssertEq, typed merge primitive/constants, atomic dense fresh slots, one SQL-authoritative DuckDB counter, and bounded host-counter allocation are accepted. All five advance through 23 tables to `@uf_path_compress`; native staged Block/rule lowering and the deterministic SQL manifest remain open. |
 | 2 SQL matching/transcripts | bounded primary proxies match main without Rust match enumeration | pending | |
 | 3 primitives/containers | all five statically compile with deny fallback and run bounded first iteration | pending | |
 | 4 native merges/effects/fixed point | canaries and bounded proxies agree; complete rollback; host oracle removed | pending | |
@@ -246,6 +247,13 @@ be seated only for disjoint evidence questions with explicit stop terms.
 | 2026-07-28 | read-only exact RuleSpec census | five proof-mode desugar invocations, each under a 20-second cap, plus committed lowering source | all five first rules are isomorphic: two Live UF atoms, `!=`, one `get-fresh!`, its SSA alias, `Trans` Set, and tuple UF Set; the complete desugared corpus contains 174 instances of this one shape | removed action-count ambiguity and proved one structural lowering can advance every primary workload |
 | 2026-07-28 | three independent read-only path/merge audits | current bridge/DD merge evaluators, exact `FunctionConfig`, backend SPI, and safe DuckDB SQL design at clean `f9d07eb` | effective path compression necessarily executes the identity-changing UF `Block`; merge primitives retain only opaque IDs and constants are untyped, so a DuckDB-only native compiler would require a host callback, registration-order guess, or proof-specific branch | authorized one shared typed-merge prerequisite; admission-only work is a recorded no-go |
 | 2026-07-28 | independent SQL architecture audit | staged per-key work queues versus tagged `USING KEY` recursion | both are feasible after typed merge metadata; staged queues preserve one old/new fold per key per wave and isolate failures, while the recursive CTE remains a higher-risk artifact/performance alternative | selected staged multi-statement waves without a statement-count performance gate |
+| 2026-07-28 | independent prerequisite pre-review | committed source at `1b2a2252c2f8e77610db6b8d674c97910ce15acb`; no writer diff, builds, tests, or writes | `REVISE`: `id_counter()` currently controls both generic fresh registration and proof-container callbacks, so a DuckDB dummy counter or SQL-calling host callback would violate single-counter authority. Dense-slot, sentinel, and rollback traps were also pinned. | amended the sole writer's scope to split native-fresh capability from host `CounterId`; DuckDB registration is a fail-closed semantic token pending native SQL lowering |
+| 2026-07-28 | read-only staged-wave blueprint | exact committed path rule, UF Block, reference/DD merge semantics, and current DuckDB transaction boundary at `1b2a225`; no moving-diff reads, builds, tests, or writes | no further shared SPI is needed after this prerequisite. One logical wave must contain repeated one-candidate-per-key fold passes; all original candidates drain before Block-generated `w+1` candidates become eligible. Head IDs precede Block IDs and all effects/counters/scratch share one transaction. | implementation-ready scratch schemas, typed primitive table, allocation order, 13 source-independent canaries, and a DuckDB-local writer contract are available after prerequisite acceptance |
+| 2026-07-28 | independent prerequisite final review | frozen 11-file code diff `1298c02903095b204f8e396dec55108a8e1f2794b5036de53f8ab316225dea37`; static bridge/frontend, metadata/typechecker, DD rollback, and DuckDB transaction subreviews | `REVISE`: reference/DD checked capacity only for explicit slots; the same batch could mint `u32::MAX` through collision-time `Lookup`/`DefaultVal::FreshId` and commit a stale/wrapped ID. Every other reviewed surface passed. | authorized exactly one bridge/DD repair with adversarial counter-at-maximum canaries and a focused re-review |
+| 2026-07-29 | allocator-boundary reassessment and implementation | frozen code-only diff `514583114d774461886f81f899bf1ad775a2f1973a957bbedfb0ee5dbcf457cd` at HEAD `1b2a2252c2f8e77610db6b8d674c97910ce15acb`; atomic bounded counter, shared reference allocator lock, real two-mint merge Block, side-effect rollback, DD direct-RHS parity | independent final `PASS`; bounded contention reserves exactly the final eight valid IDs; reference/DD exhaustion returns `Err` without panic or stale publication, restores complete native-input state, and reuses the rolled-back ID; a failed DD direct primitive cannot commit a following Set | closes both live fresh-allocation findings without a host DuckDB allocator, proof-specific branch, or broad interpreter/prediction rewrite |
+| 2026-07-29 | coordinator focused acceptance gates, repository root, same frozen code diff | capped `cargo test`: core-relations 58/58, bridge 30/30, DD 42/42, egglog lib 69/69, proof-mode regression 12/12, nonbundled DuckDB 28/28, feature CLI 4/4; scoped non-DuckDB, DuckDB, and feature-CLI Clippy with warnings denied; format and diff checks | every fresh command exited 0 under the 110-second watchdog; production feature build completed in 39.27s; no report artifact, bundled build, push, or external write | prerequisite compiles and preserves all focused reference/DD/DuckDB contracts |
+| 2026-07-29 | coordinator broad proof gate | `/opt/homebrew/bin/timeout --signal=TERM --kill-after=5s 110s make proof-tests`, repository root, same frozen code diff | fresh PASS: core 204/204 plus experimental 8/8, 212 total, zero failures; Cargo test execution completed under the cap | current proof conformance remains green after shared SPI and allocator changes |
+| 2026-07-29 | coordinator five public DuckDB probes | feature-built `target/debug/egglog-experimental --backend duckdb --proofs --mode no-messages`, `DYLD_LIBRARY_PATH=target/debug/deps`, frozen sources and Pointer fact directory | all five exit 1 at the intentional next boundary `@uf_path_compress ... found 4 actions`; tool wall times Math 0.325s, Eggcc 0.246s, Pointer 0.238s, Hardboiled 0.272s, Luminal 0.318s; no timeout or report artifact | confirms the prerequisite changes no public boundary and authorizes the DuckDB-local staged path-compression writer |
 
 ## Review rubric
 
@@ -449,12 +457,20 @@ frontier to reassessment rather than another micro-variant.
   slots against each backend's existing ID counter inside an outer rollback
   boundary that includes both allocation and merge-aware insertion. A rejected
   batch restores the counter and all rows and leaves the backend reusable.
+- **Fresh capability split:** distinguish a backend that supports native fresh
+  allocation from one that exposes an executable host `CounterId`. Reference and
+  DD retain the counter-backed default. DuckDB reports native fresh support but
+  returns `None` from `id_counter()`; no dummy/non-authoritative host counter is
+  permitted. Generic `get-fresh!` and proof-container registration gate on the
+  capability rather than on `id_counter()`.
 - **DuckDB behavior:** add a `fresh_id` row to the existing backend metadata
   counter table. Resolve slots and typed rows inside the same DuckDB transaction
-  as conflict checks, insertion, and generation. `fresh_id()` and the backend's
-  `get-fresh!` registration must draw from that same SQL-authoritative counter;
-  the host registry counter may remain only as a non-authoritative compatibility
-  handle and must never allocate a production ID. Use safe public SQL APIs only.
+  as conflict checks, insertion, and generation. `fresh_id()` and later native
+  SQL lowering of registered `get-fresh!` calls draw from that same
+  SQL-authoritative counter. DuckDB's registered external-function ID is only a
+  fail-closed semantic token for the compiler; it must not execute a host
+  callback into DuckDB. Reference/DD registrations remain executable. Use safe
+  public SQL APIs only.
 - **Typed-IR population:** build merge primitive metadata from the resolved
   call site (`SpecializedPrimitive::name`, concrete inputs, concrete output) and
   build typed constants from each resolved expression's output sort. Do not add
@@ -467,11 +483,14 @@ frontier to reassessment rather than another micro-variant.
   deterministic; a late merge failure restores rows and the counter; the next
   successful batch reuses the rolled-back ID; DuckDB interleaves `fresh_id`, an
   atomic fresh-slot batch, and another `fresh_id` without collision; hostile
-  slot layouts/types reject without consuming IDs; existing input/fail/proof
-  gates remain green.
+  sparse/out-of-order slot layouts, non-Id slots, invalid targets/arity, and the
+  `u32::MAX` stale sentinel reject without consuming IDs; existing input/fail/
+  proof gates remain green. Static review must prove `native_input` contains no
+  direct `backend.fresh_id()` call and DuckDB contains no production host mint.
 - **Owned write set:** `egglog/egglog-bridge/src/{lib.rs,tests.rs}`;
   `egglog/egglog-backend-trait/src/{lib.rs,backend_impl.rs}`;
-  `egglog/src/lib.rs` and only a focused frontend regression file if required;
+  `egglog/src/lib.rs`, `egglog/src/proofs/{proof_fresh.rs,proof_container_rebuild.rs}`,
+  and only a focused frontend regression file if required;
   `egglog-experimental/dd/src/{compile.rs,lib.rs}`; and
   `egglog-experimental/duckdb/src/{lib.rs,storage.rs}` plus focused existing test
   modules. No fixtures, proof generators, container implementation, benchmark
@@ -499,10 +518,20 @@ frontier to reassessment rather than another micro-variant.
 - Compile the reached typed merge vocabulary—old/new columns, lets, constants,
   ordering/payload-selection primitives, tuple Columns, identity guard, ordered
   Sets, and fresh allocation—into staged DuckDB work queues.
-- Materialize every scheduled rule's matches before effects. Process at most one
-  pending candidate per logical key per SQL wave, append self-writes to later
-  waves, and continue to fixed point. Rust may schedule statements and read
-  scalar counts/booleans, but may not enumerate matches, effects, or merge rows.
+- Materialize every scheduled rule's matches before effects. A logical merge
+  wave contains repeated SQL fold passes, each selecting at most one pending
+  candidate per logical key. Drain every original candidate for logical wave
+  `w` before making Block-generated candidates tagged `w + 1` eligible; advancing
+  the logical wave after each fold pass is incorrect. Continue until every
+  queue is empty, with no semantic wave cap. Rust may schedule statements and
+  read scalar counts/booleans, but may not enumerate matches, effects, or merge
+  rows.
+- Assign deterministic backend-local match/event ordinals after typed binding
+  deduplication. Allocate all head fresh requests before any collision request;
+  within each identity-changing UF Block allocate its Sym proof before its
+  Trans proof. Missing/equal-identity candidates allocate nothing. Do not claim
+  a portable global order between independent matches or collisions; compare
+  proof graphs modulo a consistent fresh-ID renaming.
 - Keep head IDs, collision IDs, proof rows, UF rows, generation, scratch state,
   and the SQL fresh counter in one transaction; update Rust watermarks/telemetry
   only after commit. Unsupported primitives/actions/dependencies fail during
@@ -519,8 +548,13 @@ frontier to reassessment rather than another micro-variant.
 
 ## Next action
 
-Commit this diagnosis/worker contract locally without pushing, then seat exactly
-one typed-merge/fresh-slot prerequisite writer. Freeze and independently review
-that shared artifact before authorizing the native path-compression SQL writer.
-Do not weaken compiler admission, add a host fallback, recognize proof names, or
-edit the benchmark harness merely to move the reported boundary.
+Commit the accepted prerequisite locally as one checkpoint, without pushing.
+Then seat one DuckDB-local staged path-compression writer using the contract
+above. Its first gate is structural rather than performance-based: compile the
+exact reached two-UF-atom/`!=`/fresh/ordered-Set vocabulary and the typed UF
+Block without inspecting proof names, preserve stable pre-wave and allocation
+order, pass the source-independent merge/wave/rollback canaries, and move all
+five public probes beyond `@uf_path_compress` to one freshly recorded later
+boundary. If the staged work-queue design fails the same semantic gate after
+one bounded repair, test the tagged `USING KEY` design; if both fail, stop the
+goal early with exact evidence rather than adding host match/merge fallback.

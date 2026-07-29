@@ -141,17 +141,19 @@ impl Primitive for ViewProof {
 pub(crate) const GET_FRESH_PRIM_NAME: &str = "get-fresh!";
 
 /// Register the generic `get-fresh!` primitive, minting from the backend's
-/// id counter. Called from [`EGraph::with_backend`], so the primitive
+/// authoritative fresh-id allocator. Called from [`EGraph::with_backend`], so the primitive
 /// is available both during encoding and when the desugared program is
-/// re-parsed. A no-op on backends without an id counter (those assign ids
-/// deterministically and need no mint primitive).
+/// re-parsed. A no-op on backends without fresh-id support.
 pub(crate) fn register_get_fresh(eg: &mut EGraph) {
-    // No counter → the backend assigns ids deterministically; nothing to mint.
-    if eg.backend.id_counter().is_none() {
+    if !eg.backend.supports_fresh_ids() {
         return;
     }
     eg.add_backend_op_primitive(GetFresh, WriteState::valid_contexts(), |backend, _| {
-        backend.register_get_fresh()
+        let fresh_id = backend.register_get_fresh();
+        if let Some(registry) = backend.action_registry() {
+            registry.write().unwrap().register_fresh_id(fresh_id);
+        }
+        fresh_id
     });
 }
 

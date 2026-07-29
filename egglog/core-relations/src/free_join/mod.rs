@@ -281,8 +281,57 @@ impl Counters {
         // NB: we may want to experiment with Ordering::Relaxed here.
         self.0[ctr].fetch_add(1, Ordering::Release)
     }
+    /// Increment `ctr` only when its current value is below the exclusive
+    /// upper bound, returning the value reserved by this call. A failed
+    /// reservation leaves the counter unchanged.
+    pub(crate) fn try_inc_bounded(
+        &self,
+        ctr: CounterId,
+        exclusive_upper_bound: usize,
+    ) -> Option<usize> {
+        self.0[ctr]
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                (current < exclusive_upper_bound).then(|| current + 1)
+            })
+            .ok()
+    }
     pub(crate) fn set(&self, ctr: CounterId, value: usize) {
         self.0[ctr].store(value, Ordering::Release);
+    }
+}
+
+#[cfg(test)]
+mod counter_tests {
+    use std::sync::Mutex;
+
+    use super::Database;
+
+    #[test]
+    fn bounded_increment_is_atomic_and_leaves_exhaustion_unchanged() {
+        let mut db = Database::new();
+        let counter = db.add_counter();
+        let upper = u32::MAX as usize;
+        db.set_counter(counter, upper - 8);
+        let reserved = Mutex::new(Vec::new());
+
+        std::thread::scope(|scope| {
+            for _ in 0..64 {
+                scope.spawn(|| {
+                    if let Some(raw) = db.counters.try_inc_bounded(counter, upper) {
+                        reserved.lock().unwrap().push(raw);
+                    }
+                });
+            }
+        });
+
+        let mut reserved = reserved.into_inner().unwrap();
+        reserved.sort_unstable();
+        assert_eq!(reserved, (upper - 8..upper).collect::<Vec<_>>());
+        assert_eq!(db.read_counter(counter), upper);
+        for _ in 0..64 {
+            assert_eq!(db.counters.try_inc_bounded(counter, upper), None);
+            assert_eq!(db.read_counter(counter), upper);
+        }
     }
 }
 

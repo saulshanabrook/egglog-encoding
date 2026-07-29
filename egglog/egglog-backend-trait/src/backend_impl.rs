@@ -16,8 +16,9 @@ use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
 
 use crate::{
     Backend, BaseValues, ColumnTy, ContainerValues, ExecutionState, ExternalFunction,
-    ExternalFunctionId, FunctionConfig, FunctionId, IterationReport, ReportLevel, RuleActionCall,
-    RuleBodyCall, RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry, Value,
+    ExternalFunctionId, FunctionConfig, FunctionId, IterationReport, NativeInputValue, ReportLevel,
+    RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry,
+    Value,
 };
 
 fn rule_entry(
@@ -203,6 +204,13 @@ impl Backend for EGraph {
         EGraph::try_add_values(self, values)
     }
 
+    fn add_values_with_fresh(
+        &mut self,
+        values: Vec<(FunctionId, Vec<NativeInputValue>)>,
+    ) -> Result<()> {
+        EGraph::try_add_values_with_fresh(self, values)
+    }
+
     fn free_rule(&mut self, id: RuleId) {
         EGraph::free_rule(self, id);
     }
@@ -228,6 +236,10 @@ impl Backend for EGraph {
 
     fn new_panic(&mut self, message: String) -> ExternalFunctionId {
         EGraph::new_panic(self, message)
+    }
+
+    fn register_get_fresh(&mut self) -> ExternalFunctionId {
+        EGraph::register_get_fresh(self)
     }
 
     fn register_set_if_empty(

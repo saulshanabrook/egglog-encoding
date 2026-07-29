@@ -28,8 +28,9 @@ use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
 use egglog_backend_trait::{
     Backend, BaseValues, ColumnTy, ContainerMergeFn, ContainerValues, CounterId, DefaultVal,
     ExecutionState, ExternalFunction, ExternalFunctionId, FunctionConfig, FunctionId,
-    IterationReport, MergeAction, MergeFn, PreMergeTiming, ReportLevel, RuleActionCall,
-    RuleBodyCall, RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry, Value,
+    IterationReport, MergeAction, MergeFn, NativeInputValue, PreMergeTiming, ReportLevel,
+    RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry,
+    Value,
 };
 use egglog_core_relations::Database;
 use egglog_numeric_id::NumericId;
@@ -106,6 +107,7 @@ pub(crate) struct RelationInfo {
     name: String,
     /// Number of visible columns.
     pub(crate) arity: usize,
+    schema: Vec<ColumnTy>,
     n_keys: usize,
     merge: Arc<MergeFn>,
     default: TableDefault,
@@ -486,7 +488,13 @@ impl EGraph {
     /// enter the next wave and are processed until the transaction reaches a
     /// fixed point.
     pub(crate) fn apply_sets(&mut self, sets: Vec<(FunctionId, Row)>) -> Result<bool> {
-        MergeTransaction::new(self, sets).run()
+        MergeTransaction::new(self, sets, false).run()
+    }
+
+    /// The native-input variant rejects collision-driven fresh allocations
+    /// outside the usable `Value` domain before transaction-local rows publish.
+    fn apply_sets_with_fresh_guard(&mut self, sets: Vec<(FunctionId, Row)>) -> Result<bool> {
+        MergeTransaction::new(self, sets, true).run()
     }
 
     /// Move every live row of `f` whose LEADING columns equal `prefix` into the
@@ -660,12 +668,13 @@ struct MergeTransaction<'a> {
     states: HashMap<FunctionId, FunctionMergeState>,
     state_order: Vec<FunctionId>,
     changed: bool,
-    next_id_at_start: u32,
+    next_id_at_start: usize,
+    guard_fresh_id_domain: bool,
 }
 
 impl<'a> MergeTransaction<'a> {
-    fn new(eg: &'a mut EGraph, sets: Vec<(FunctionId, Row)>) -> Self {
-        let next_id_at_start = eg.db.read_counter(eg.id_counter) as u32;
+    fn new(eg: &'a mut EGraph, sets: Vec<(FunctionId, Row)>, guard_fresh_id_domain: bool) -> Self {
+        let next_id_at_start = eg.db.read_counter(eg.id_counter);
         Self {
             eg,
             pending: sets,
@@ -674,6 +683,7 @@ impl<'a> MergeTransaction<'a> {
             state_order: Vec::new(),
             changed: false,
             next_id_at_start,
+            guard_fresh_id_domain,
         }
     }
 
@@ -682,7 +692,7 @@ impl<'a> MergeTransaction<'a> {
         if result.is_err() {
             self.eg
                 .db
-                .set_counter(self.eg.id_counter, self.next_id_at_start as usize);
+                .set_counter(self.eg.id_counter, self.next_id_at_start);
         }
         result
     }
@@ -695,6 +705,12 @@ impl<'a> MergeTransaction<'a> {
                 self.apply_set(function, &row)?;
             }
             self.pending = std::mem::take(&mut self.next_wave);
+        }
+
+        if self.guard_fresh_id_domain
+            && self.eg.db.read_counter(self.eg.id_counter) > u32::MAX as usize
+        {
+            bail!("native input merge fresh-id allocation exceeds the usable Value domain");
         }
 
         let states = std::mem::take(&mut self.states);
@@ -722,8 +738,7 @@ impl<'a> MergeTransaction<'a> {
             self.changed |= self.eg.replace_located_rows(function, n_keys, replacements);
         }
 
-        Ok(self.changed
-            || self.eg.db.read_counter(self.eg.id_counter) as u32 != self.next_id_at_start)
+        Ok(self.changed || self.eg.db.read_counter(self.eg.id_counter) != self.next_id_at_start)
     }
 
     fn ensure_state(&mut self, function: FunctionId, n_keys: usize) {
@@ -921,8 +936,12 @@ impl<'a> MergeTransaction<'a> {
                     self.eg.relation_name(owner)
                 )
             }),
-            MergeFn::Const(value) => Ok(value.rep()),
-            MergeFn::Primitive(id, arguments) => {
+            MergeFn::Const { value, .. } => Ok(value.rep()),
+            MergeFn::Primitive {
+                id,
+                args: arguments,
+                ..
+            } => {
                 let args = self.eval_args(arguments, owner, old, new, self_col, environment)?;
                 // A custom merge lowered into the FD view's `:merge` may build
                 // terms, so the term encoder's `set-if-empty` / view-column-read ops can
@@ -991,7 +1010,7 @@ impl<'a> MergeTransaction<'a> {
             ));
         }
         let value = match default {
-            TableDefault::FreshId => self.eg.fresh_id_internal(),
+            TableDefault::FreshId => self.fresh_id_for_lookup()?,
             TableDefault::Const(value) => value,
             TableDefault::Fail => return Ok(None),
         };
@@ -1007,6 +1026,15 @@ impl<'a> MergeTransaction<'a> {
             },
         );
         Ok(Some(values))
+    }
+
+    fn fresh_id_for_lookup(&mut self) -> Result<u32> {
+        if self.guard_fresh_id_domain
+            && self.eg.db.read_counter(self.eg.id_counter) >= u32::MAX as usize
+        {
+            bail!("native input merge fresh-id allocation exceeds the usable Value domain");
+        }
+        Ok(self.eg.fresh_id_internal())
     }
 
     /// Service a `set-if-empty` op invoked from inside a merge, against the
@@ -1120,8 +1148,8 @@ mod tests {
     };
     use egglog_backend_trait::{
         Backend, BaseValueId, ColumnTy, DefaultVal, ExternalFunctionId, FunctionConfig,
-        MergeAction, MergeFn, ReadMode, RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec,
-        RuleValue, RuleVar, Value,
+        MergeAction, MergeFn, NativeInputValue, ReadMode, RuleActionCall, RuleBodyCall, RuleId,
+        RuleSetRun, RuleSpec, RuleValue, RuleVar, Value,
     };
     use egglog_numeric_id::NumericId;
 
@@ -1632,6 +1660,447 @@ mod tests {
     }
 
     #[test]
+    fn native_input_fresh_slots_are_dense_typed_and_atomic() {
+        let mut eg = EGraph::new();
+        let keep_old = id_function(&mut eg, "fresh-slot-target", MergeFn::Old);
+        let asserted = id_function(&mut eg, "fresh-slot-assert", MergeFn::AssertEq);
+        let int_ty = eg.db.base_values_mut().register_type::<i64>();
+        let base_output = Backend::add_table(
+            &mut eg,
+            FunctionConfig {
+                schema: vec![ColumnTy::Id, ColumnTy::Base(int_ty)],
+                n_vals: 1,
+                n_identity_vals: None,
+                default: DefaultVal::Fail,
+                merge: MergeFn::Old,
+                name: "fresh-slot-base".to_string(),
+                can_subsume: false,
+            },
+        );
+
+        let first = eg.db.read_counter(eg.id_counter);
+        Backend::add_values_with_fresh(
+            &mut eg,
+            vec![
+                (
+                    keep_old,
+                    vec![
+                        NativeInputValue::Existing(Value::new(10)),
+                        NativeInputValue::FreshSlot(0),
+                    ],
+                ),
+                (
+                    keep_old,
+                    vec![
+                        NativeInputValue::Existing(Value::new(11)),
+                        NativeInputValue::FreshSlot(0),
+                    ],
+                ),
+                (
+                    keep_old,
+                    vec![
+                        NativeInputValue::Existing(Value::new(12)),
+                        NativeInputValue::FreshSlot(1),
+                    ],
+                ),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            eg.lookup_id(keep_old, &[Value::new(10)]),
+            Some(Value::from_usize(first))
+        );
+        assert_eq!(
+            eg.lookup_id(keep_old, &[Value::new(11)]),
+            Some(Value::from_usize(first))
+        );
+        assert_eq!(
+            eg.lookup_id(keep_old, &[Value::new(12)]),
+            Some(Value::from_usize(first + 1))
+        );
+
+        let counter_before_hostile = eg.db.read_counter(eg.id_counter);
+        let sparse = Backend::add_values_with_fresh(
+            &mut eg,
+            vec![(
+                keep_old,
+                vec![
+                    NativeInputValue::Existing(Value::new(20)),
+                    NativeInputValue::FreshSlot(1),
+                ],
+            )],
+        )
+        .unwrap_err();
+        assert!(sparse.to_string().contains("dense"));
+        let wrong_type = Backend::add_values_with_fresh(
+            &mut eg,
+            vec![(
+                base_output,
+                vec![
+                    NativeInputValue::Existing(Value::new(20)),
+                    NativeInputValue::FreshSlot(0),
+                ],
+            )],
+        )
+        .unwrap_err();
+        assert!(wrong_type.to_string().contains("non-id"));
+        let stale = Backend::add_values_with_fresh(
+            &mut eg,
+            vec![(
+                keep_old,
+                vec![
+                    NativeInputValue::Existing(Value::new(21)),
+                    NativeInputValue::Existing(Value::new(u32::MAX)),
+                ],
+            )],
+        )
+        .unwrap_err();
+        assert!(stale.to_string().contains("stale Value sentinel"));
+        assert_eq!(eg.lookup_id(keep_old, &[Value::new(21)]), None);
+        assert_eq!(eg.db.read_counter(eg.id_counter), counter_before_hostile);
+
+        Backend::add_values(
+            &mut eg,
+            vec![(asserted, vec![Value::new(1), Value::new(100)])],
+        )
+        .unwrap();
+        let rolled_back = eg.db.read_counter(eg.id_counter);
+        let error = Backend::add_values_with_fresh(
+            &mut eg,
+            vec![
+                (
+                    keep_old,
+                    vec![
+                        NativeInputValue::Existing(Value::new(30)),
+                        NativeInputValue::FreshSlot(0),
+                    ],
+                ),
+                (
+                    asserted,
+                    vec![
+                        NativeInputValue::Existing(Value::new(1)),
+                        NativeInputValue::Existing(Value::new(101)),
+                    ],
+                ),
+            ],
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("illegal merge attempted"));
+        assert_eq!(eg.lookup_id(keep_old, &[Value::new(30)]), None);
+        assert_eq!(eg.db.read_counter(eg.id_counter), rolled_back);
+
+        Backend::add_values_with_fresh(
+            &mut eg,
+            vec![(
+                keep_old,
+                vec![
+                    NativeInputValue::Existing(Value::new(30)),
+                    NativeInputValue::FreshSlot(0),
+                ],
+            )],
+        )
+        .unwrap();
+        assert_eq!(
+            eg.lookup_id(keep_old, &[Value::new(30)]),
+            Some(Value::from_usize(rolled_back))
+        );
+
+        eg.db.set_counter(eg.id_counter, u32::MAX as usize - 1);
+        Backend::add_values_with_fresh(
+            &mut eg,
+            vec![(
+                keep_old,
+                vec![
+                    NativeInputValue::Existing(Value::new(40)),
+                    NativeInputValue::FreshSlot(0),
+                ],
+            )],
+        )
+        .unwrap();
+        assert_eq!(
+            eg.lookup_id(keep_old, &[Value::new(40)]),
+            Some(Value::new(u32::MAX - 1))
+        );
+        let exhausted = Backend::add_values_with_fresh(
+            &mut eg,
+            vec![(
+                keep_old,
+                vec![
+                    NativeInputValue::Existing(Value::new(41)),
+                    NativeInputValue::FreshSlot(0),
+                ],
+            )],
+        )
+        .unwrap_err();
+        assert!(exhausted.to_string().contains("usable Value domain"));
+        assert_eq!(eg.db.read_counter(eg.id_counter), u32::MAX as usize);
+        assert_eq!(eg.lookup_id(keep_old, &[Value::new(41)]), None);
+    }
+
+    #[test]
+    fn native_input_collision_fresh_overflow_rolls_back_and_reuses_id() {
+        let mut eg = EGraph::new();
+        let keep_old = id_function(&mut eg, "collision-overflow-output", MergeFn::Old);
+        let constructor = Backend::add_table(
+            &mut eg,
+            FunctionConfig {
+                schema: vec![ColumnTy::Id, ColumnTy::Id],
+                n_vals: 1,
+                n_identity_vals: None,
+                default: DefaultVal::FreshId,
+                merge: MergeFn::UnionId,
+                name: "collision-overflow-constructor".to_string(),
+                can_subsume: false,
+            },
+        );
+        let merge_target = id_function(
+            &mut eg,
+            "collision-overflow-merge",
+            MergeFn::Lookup(constructor, vec![MergeFn::New]),
+        );
+        Backend::add_values(
+            &mut eg,
+            vec![
+                (merge_target, vec![Value::new(1), Value::new(10)]),
+                (merge_target, vec![Value::new(4), Value::new(11)]),
+            ],
+        )
+        .unwrap();
+        eg.db.set_counter(eg.id_counter, u32::MAX as usize - 1);
+
+        let counter_before = eg.db.read_counter(eg.id_counter);
+        let mirror_before = eg.mirror.clone();
+        let subsumed_before = eg.subsumed.clone();
+        let live_versions_before = eg.live_versions.clone();
+        let all_versions_before = eg.all_versions.clone();
+        let subsumed_versions_before = eg.subsumed_versions.clone();
+        let fused_versions_before = eg.dd_fused_fed_versions.clone();
+        let next_row_version_before = eg.next_row_version;
+
+        let attempted = catch_unwind(AssertUnwindSafe(|| {
+            Backend::add_values_with_fresh(
+                &mut eg,
+                vec![
+                    (
+                        keep_old,
+                        vec![
+                            NativeInputValue::Existing(Value::new(2)),
+                            NativeInputValue::FreshSlot(0),
+                        ],
+                    ),
+                    (
+                        merge_target,
+                        vec![
+                            NativeInputValue::Existing(Value::new(1)),
+                            NativeInputValue::Existing(Value::new(20)),
+                        ],
+                    ),
+                    (
+                        merge_target,
+                        vec![
+                            NativeInputValue::Existing(Value::new(4)),
+                            NativeInputValue::Existing(Value::new(21)),
+                        ],
+                    ),
+                ],
+            )
+        }));
+        let error = attempted
+            .expect("collision-driven fresh overflow must return an error, not panic")
+            .unwrap_err();
+        assert!(error.to_string().contains("merge fresh-id allocation"));
+        assert_eq!(eg.db.read_counter(eg.id_counter), counter_before);
+        assert_eq!(eg.mirror, mirror_before);
+        assert_eq!(eg.subsumed, subsumed_before);
+        assert_eq!(eg.live_versions, live_versions_before);
+        assert_eq!(eg.all_versions, all_versions_before);
+        assert_eq!(eg.subsumed_versions, subsumed_versions_before);
+        assert_eq!(eg.dd_fused_fed_versions, fused_versions_before);
+        assert_eq!(eg.next_row_version, next_row_version_before);
+        assert_eq!(eg.lookup_id(keep_old, &[Value::new(2)]), None);
+        assert_eq!(
+            eg.lookup_id(merge_target, &[Value::new(1)]),
+            Some(Value::new(10))
+        );
+        assert_eq!(
+            eg.lookup_id(merge_target, &[Value::new(4)]),
+            Some(Value::new(11))
+        );
+        assert_eq!(eg.lookup_id(constructor, &[Value::new(20)]), None);
+        assert_eq!(eg.lookup_id(constructor, &[Value::new(21)]), None);
+
+        Backend::add_values_with_fresh(
+            &mut eg,
+            vec![(
+                keep_old,
+                vec![
+                    NativeInputValue::Existing(Value::new(3)),
+                    NativeInputValue::FreshSlot(0),
+                ],
+            )],
+        )
+        .unwrap();
+        assert_eq!(
+            eg.lookup_id(keep_old, &[Value::new(3)]),
+            Some(Value::new(u32::MAX - 1))
+        );
+    }
+
+    #[test]
+    fn native_input_merge_get_fresh_exhaustion_rolls_back_and_reuses_id() {
+        let mut eg = EGraph::new();
+        let get_fresh = Backend::register_get_fresh(&mut eg);
+        let mint = || MergeFn::Primitive {
+            id: get_fresh,
+            name: "get-fresh!".into(),
+            input: Vec::new(),
+            output: ColumnTy::Id,
+            args: Vec::new(),
+        };
+        let keep_old = id_function(&mut eg, "primitive-overflow-output", MergeFn::Old);
+        let side = id_function(&mut eg, "primitive-overflow-side", MergeFn::Old);
+        let merge_target = id_function(
+            &mut eg,
+            "primitive-overflow-merge",
+            MergeFn::Block {
+                actions: vec![
+                    MergeAction::Let {
+                        slot: 0,
+                        value: MergeFn::Old,
+                    },
+                    MergeAction::Set(
+                        side,
+                        vec![
+                            MergeFn::Const {
+                                value: Value::new(7),
+                                ty: ColumnTy::Id,
+                            },
+                            MergeFn::LetVar(0),
+                        ],
+                    ),
+                    MergeAction::Let {
+                        slot: 1,
+                        value: mint(),
+                    },
+                    MergeAction::Let {
+                        slot: 2,
+                        value: mint(),
+                    },
+                ],
+                result: Box::new(MergeFn::Old),
+            },
+        );
+        Backend::add_values(
+            &mut eg,
+            vec![(merge_target, vec![Value::new(1), Value::new(10)])],
+        )
+        .unwrap();
+        eg.db.set_counter(eg.id_counter, u32::MAX as usize - 1);
+
+        let counter_before = eg.db.read_counter(eg.id_counter);
+        let mirror_before = eg.mirror.clone();
+        let subsumed_before = eg.subsumed.clone();
+        let live_versions_before = eg.live_versions.clone();
+        let all_versions_before = eg.all_versions.clone();
+        let subsumed_versions_before = eg.subsumed_versions.clone();
+        let fused_versions_before = eg.dd_fused_fed_versions.clone();
+        let next_row_version_before = eg.next_row_version;
+
+        let attempted = catch_unwind(AssertUnwindSafe(|| {
+            Backend::add_values_with_fresh(
+                &mut eg,
+                vec![
+                    (
+                        keep_old,
+                        vec![
+                            NativeInputValue::Existing(Value::new(2)),
+                            NativeInputValue::FreshSlot(0),
+                        ],
+                    ),
+                    (
+                        merge_target,
+                        vec![
+                            NativeInputValue::Existing(Value::new(1)),
+                            NativeInputValue::Existing(Value::new(20)),
+                        ],
+                    ),
+                ],
+            )
+        }));
+        let error = attempted
+            .expect("exhausted get-fresh merge must return an error, not panic")
+            .unwrap_err();
+        assert!(error.to_string().contains("merge primitive failed"));
+        assert_eq!(eg.db.read_counter(eg.id_counter), counter_before);
+        assert_eq!(eg.mirror, mirror_before);
+        assert_eq!(eg.subsumed, subsumed_before);
+        assert_eq!(eg.live_versions, live_versions_before);
+        assert_eq!(eg.all_versions, all_versions_before);
+        assert_eq!(eg.subsumed_versions, subsumed_versions_before);
+        assert_eq!(eg.dd_fused_fed_versions, fused_versions_before);
+        assert_eq!(eg.next_row_version, next_row_version_before);
+        assert_eq!(eg.lookup_id(keep_old, &[Value::new(2)]), None);
+        assert_eq!(eg.lookup_id(side, &[Value::new(7)]), None);
+        assert_eq!(
+            eg.lookup_id(merge_target, &[Value::new(1)]),
+            Some(Value::new(10))
+        );
+
+        Backend::add_values_with_fresh(
+            &mut eg,
+            vec![(
+                keep_old,
+                vec![
+                    NativeInputValue::Existing(Value::new(3)),
+                    NativeInputValue::FreshSlot(0),
+                ],
+            )],
+        )
+        .unwrap();
+        assert_eq!(
+            eg.lookup_id(keep_old, &[Value::new(3)]),
+            Some(Value::new(u32::MAX - 1))
+        );
+    }
+
+    #[test]
+    fn exhausted_direct_get_fresh_stops_atomless_head_before_following_set() {
+        let mut eg = EGraph::new();
+        let get_fresh = Backend::register_get_fresh(&mut eg);
+        let side = id_function(&mut eg, "direct-get-fresh-side", MergeFn::Old);
+        let mut rule = TestRule::new("exhausted-direct-get-fresh");
+        let GenericAtomTerm::Var(_, unused) = rule.new_var(ColumnTy::Id) else {
+            unreachable!("new_var must return a variable term")
+        };
+        rule.spec.core.head.0.push(GenericCoreAction::Let(
+            Span::Panic,
+            unused,
+            RuleActionCall::Primitive {
+                id: get_fresh,
+                name: "get-fresh!".into(),
+                output: ColumnTy::Id,
+            },
+            Vec::new(),
+        ));
+        rule.set(
+            side,
+            &[constant(7, ColumnTy::Id), constant(10, ColumnTy::Id)],
+        );
+        let rule = rule.build(&mut eg);
+        eg.db.set_counter(eg.id_counter, u32::MAX as usize);
+
+        let attempted = catch_unwind(AssertUnwindSafe(|| run_rules(&mut eg, &[rule])));
+        let error = attempted
+            .expect("exhausted direct get-fresh must return an error, not panic")
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("call of primitive get-fresh! failed"));
+        assert_eq!(eg.db.read_counter(eg.id_counter), u32::MAX as usize);
+        assert_eq!(eg.lookup_id(side, &[Value::new(7)]), None);
+    }
+
+    #[test]
     fn fail_wrapped_native_input_observes_backend_error_immediately() {
         let directory =
             std::env::temp_dir().join(format!("egglog_dd_fallible_input_{}", std::process::id()));
@@ -1698,7 +2167,13 @@ mod tests {
             &mut eg,
             "failing tuple",
             MergeFn::Columns(vec![
-                MergeFn::Lookup(fresh, vec![MergeFn::Const(Value::new(7))]),
+                MergeFn::Lookup(
+                    fresh,
+                    vec![MergeFn::Const {
+                        value: Value::new(7),
+                        ty: ColumnTy::Id,
+                    }],
+                ),
                 MergeFn::AssertEq,
             ]),
             None,
@@ -1729,7 +2204,13 @@ mod tests {
                 merge: MergeFn::Block {
                     actions: vec![MergeAction::Set(
                         function,
-                        vec![MergeFn::Const(Value::new(1)), MergeFn::Old],
+                        vec![
+                            MergeFn::Const {
+                                value: Value::new(1),
+                                ty: ColumnTy::Id,
+                            },
+                            MergeFn::Old,
+                        ],
                     )],
                     result: Box::new(MergeFn::Old),
                 },
@@ -1740,7 +2221,7 @@ mod tests {
         assert_eq!(actual, function);
         eg.insert_live_row(function, row(&[1, 10]));
 
-        let mut transaction = MergeTransaction::new(&mut eg, Vec::new());
+        let mut transaction = MergeTransaction::new(&mut eg, Vec::new(), false);
         transaction.apply_set(function, &[1, 10]).unwrap();
 
         assert!(transaction.next_wave.is_empty());
@@ -1777,14 +2258,23 @@ mod tests {
                 actions: vec![
                     MergeAction::Let {
                         slot: 0,
-                        value: MergeFn::Primitive(
-                            max,
-                            vec![MergeFn::OldCol(0), MergeFn::NewCol(0)],
-                        ),
+                        value: MergeFn::Primitive {
+                            id: max,
+                            name: "max".into(),
+                            input: vec![ColumnTy::Id; 2],
+                            output: ColumnTy::Id,
+                            args: vec![MergeFn::OldCol(0), MergeFn::NewCol(0)],
+                        },
                     },
                     MergeAction::Set(
                         side,
-                        vec![MergeFn::Const(Value::new(7)), MergeFn::LetVar(0)],
+                        vec![
+                            MergeFn::Const {
+                                value: Value::new(7),
+                                ty: ColumnTy::Id,
+                            },
+                            MergeFn::LetVar(0),
+                        ],
                     ),
                 ],
                 result: Box::new(MergeFn::Columns(vec![
@@ -1818,7 +2308,13 @@ mod tests {
                     actions: vec![MergeAction::Set(
                         uf,
                         vec![
-                            MergeFn::Primitive(max, vec![MergeFn::Old, MergeFn::New]),
+                            MergeFn::Primitive {
+                                id: max,
+                                name: "max".into(),
+                                input: vec![ColumnTy::Id; 2],
+                                output: ColumnTy::Id,
+                                args: vec![MergeFn::Old, MergeFn::New],
+                            },
                             MergeFn::UnionId,
                         ],
                     )],
@@ -2387,6 +2883,7 @@ impl Backend for EGraph {
         self.relations.push(RelationInfo {
             name: config.name,
             arity,
+            schema: config.schema,
             n_keys,
             merge,
             default,
@@ -2541,6 +3038,89 @@ impl Backend for EGraph {
             .map(|(func, row)| (func, row.iter().map(|v| v.rep()).collect()))
             .collect();
         self.apply_sets(sets).map(|_| ())
+    }
+
+    fn add_values_with_fresh(
+        &mut self,
+        values: Vec<(FunctionId, Vec<NativeInputValue>)>,
+    ) -> Result<()> {
+        let mut slots = std::collections::BTreeSet::new();
+        for (function, row) in &values {
+            let info = self.relations.get(function.rep() as usize).ok_or_else(|| {
+                anyhow!(
+                    "native input references unknown function {}",
+                    function.rep()
+                )
+            })?;
+            if row.len() != info.arity {
+                bail!(
+                    "native input for `{}` expects {} columns, got {}",
+                    info.name,
+                    info.arity,
+                    row.len()
+                );
+            }
+            for (&value, &ty) in row.iter().zip(&info.schema) {
+                match value {
+                    NativeInputValue::Existing(value) => {
+                        if value.rep() == u32::MAX {
+                            bail!(
+                                "native input contains the reserved stale Value sentinel in `{}`",
+                                info.name
+                            );
+                        }
+                    }
+                    NativeInputValue::FreshSlot(slot) => {
+                        if ty != ColumnTy::Id {
+                            bail!(
+                                "native input fresh slot {slot} targets a non-id column in `{}`",
+                                info.name
+                            );
+                        }
+                        slots.insert(slot);
+                    }
+                }
+            }
+        }
+        for (expected, actual) in slots.iter().copied().enumerate() {
+            if usize::try_from(actual).ok() != Some(expected) {
+                bail!(
+                    "native input fresh slots must be dense from zero; expected {expected}, found {actual}"
+                );
+            }
+        }
+
+        let next_id = self.db.read_counter(self.id_counter);
+        if next_id
+            .checked_add(slots.len())
+            .is_none_or(|end| end > u32::MAX as usize)
+        {
+            bail!("native input fresh-id allocation exceeds the usable Value domain");
+        }
+        let resolved_slots = (0..slots.len())
+            .map(|_| self.fresh_id_internal())
+            .collect::<Vec<_>>();
+        let sets = values
+            .into_iter()
+            .map(|(function, row)| {
+                let row = row
+                    .into_iter()
+                    .map(|value| match value {
+                        NativeInputValue::Existing(value) => value.rep(),
+                        NativeInputValue::FreshSlot(slot) => resolved_slots[slot as usize],
+                    })
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice();
+                (function, row)
+            })
+            .collect();
+        match self.apply_sets_with_fresh_guard(sets) {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                self.db.set_counter(self.id_counter, next_id);
+                Err(error)
+            }
+        }
     }
 
     fn free_rule(&mut self, id: RuleId) {

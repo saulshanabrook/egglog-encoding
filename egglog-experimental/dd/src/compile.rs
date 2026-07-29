@@ -64,16 +64,35 @@ fn validate_merge_expr(merge: &MergeFn, n_vals: usize, name: &str, available_slo
             *slot < available_slots,
             "merge for `{name}` references let slot {slot} before it is bound"
         ),
-        MergeFn::Primitive(_, arguments)
-        | MergeFn::Function(_, arguments)
-        | MergeFn::Lookup(_, arguments) => {
+        MergeFn::Primitive {
+            name: primitive,
+            input,
+            args: arguments,
+            ..
+        } => {
+            assert_eq!(
+                input.len(),
+                arguments.len(),
+                "merge for `{name}` calls primitive `{primitive}` with {} arguments but records {} input types",
+                arguments.len(),
+                input.len()
+            );
+            for argument in arguments {
+                validate_merge_expr(argument, n_vals, name, available_slots);
+            }
+        }
+        MergeFn::Function(_, arguments) | MergeFn::Lookup(_, arguments) => {
             for argument in arguments {
                 validate_merge_expr(argument, n_vals, name, available_slots);
             }
         }
         MergeFn::Columns(_) => panic!("nested MergeFn::Columns is not supported for `{name}`"),
         MergeFn::Block { .. } => panic!("nested MergeFn::Block is not supported for `{name}`"),
-        MergeFn::AssertEq | MergeFn::UnionId | MergeFn::Old | MergeFn::New | MergeFn::Const(_) => {}
+        MergeFn::AssertEq
+        | MergeFn::UnionId
+        | MergeFn::Old
+        | MergeFn::New
+        | MergeFn::Const { .. } => {}
     }
 }
 
@@ -85,7 +104,10 @@ pub(super) fn visit_merge_read_dependencies(merge: &MergeFn, visit: &mut impl Fn
                 visit_merge_read_dependencies(argument, visit);
             }
         }
-        MergeFn::Primitive(_, arguments) | MergeFn::Columns(arguments) => {
+        MergeFn::Primitive {
+            args: arguments, ..
+        }
+        | MergeFn::Columns(arguments) => {
             for argument in arguments {
                 visit_merge_read_dependencies(argument, visit);
             }
@@ -116,7 +138,7 @@ pub(super) fn visit_merge_read_dependencies(merge: &MergeFn, visit: &mut impl Fn
         | MergeFn::OldCol(_)
         | MergeFn::NewCol(_)
         | MergeFn::LetVar(_)
-        | MergeFn::Const(_) => {}
+        | MergeFn::Const { .. } => {}
     }
 }
 

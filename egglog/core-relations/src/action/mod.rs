@@ -468,6 +468,16 @@ impl<'a> ExecutionState<'a> {
         self.db.counters.inc(ctr)
     }
 
+    /// Atomically reserve the current counter value only when it is below
+    /// `exclusive_upper_bound`. Failure leaves the counter unchanged.
+    pub fn try_inc_counter_bounded(
+        &self,
+        ctr: CounterId,
+        exclusive_upper_bound: usize,
+    ) -> Option<usize> {
+        self.db.counters.try_inc_bounded(ctr, exclusive_upper_bound)
+    }
+
     pub fn read_counter(&self, ctr: CounterId) -> usize {
         self.db.counters.read(ctr)
     }

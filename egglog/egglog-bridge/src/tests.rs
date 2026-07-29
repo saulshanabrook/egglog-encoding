@@ -20,8 +20,8 @@ use num_rational::Rational64;
 use once_cell::sync::Lazy;
 
 use crate::{
-    ColumnTy, DefaultVal, EGraph, FunctionConfig, FunctionId, MergeAction, MergeFn, QueryEntry,
-    TableAction, add_expressions, define_rule,
+    ColumnTy, DefaultVal, EGraph, FunctionConfig, FunctionId, MergeAction, MergeFn,
+    NativeInputValue, QueryEntry, TableAction, add_expressions, define_rule,
 };
 
 #[test]
@@ -291,6 +291,537 @@ fn fallible_add_values_rolls_back_all_targets_and_remains_usable() {
     assert_eq!(
         egraph.lookup_row(unrelated, &[Value::new(2)]),
         Some(vec![Value::new(2), Value::new(40)])
+    );
+}
+
+#[test]
+fn native_input_fresh_slots_are_dense_typed_and_atomic() {
+    let mut egraph = EGraph::default();
+    let int_base = egraph.base_values_mut().register_type::<i64>();
+    let keep_old = egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::Old,
+        name: "fresh-slot-target".into(),
+        can_subsume: false,
+    });
+    let asserted = egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::AssertEq,
+        name: "fresh-slot-assert".into(),
+        can_subsume: false,
+    });
+    let base_output = egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Base(int_base)],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::Old,
+        name: "fresh-slot-base".into(),
+        can_subsume: false,
+    });
+
+    let first = egraph.db.read_counter(egraph.id_counter);
+    egraph
+        .try_add_values_with_fresh(vec![
+            (
+                keep_old,
+                vec![
+                    NativeInputValue::Existing(Value::new(10)),
+                    NativeInputValue::FreshSlot(0),
+                ],
+            ),
+            (
+                keep_old,
+                vec![
+                    NativeInputValue::Existing(Value::new(11)),
+                    NativeInputValue::FreshSlot(0),
+                ],
+            ),
+            (
+                keep_old,
+                vec![
+                    NativeInputValue::Existing(Value::new(12)),
+                    NativeInputValue::FreshSlot(1),
+                ],
+            ),
+        ])
+        .unwrap();
+    assert_eq!(
+        egraph.lookup_id(keep_old, &[Value::new(10)]),
+        Some(Value::from_usize(first))
+    );
+    assert_eq!(
+        egraph.lookup_id(keep_old, &[Value::new(11)]),
+        Some(Value::from_usize(first))
+    );
+    assert_eq!(
+        egraph.lookup_id(keep_old, &[Value::new(12)]),
+        Some(Value::from_usize(first + 1))
+    );
+
+    let counter_before_hostile = egraph.db.read_counter(egraph.id_counter);
+    let sparse = egraph
+        .try_add_values_with_fresh(vec![(
+            keep_old,
+            vec![
+                NativeInputValue::Existing(Value::new(20)),
+                NativeInputValue::FreshSlot(1),
+            ],
+        )])
+        .unwrap_err();
+    assert!(sparse.to_string().contains("dense"));
+    let wrong_type = egraph
+        .try_add_values_with_fresh(vec![(
+            base_output,
+            vec![
+                NativeInputValue::Existing(Value::new(20)),
+                NativeInputValue::FreshSlot(0),
+            ],
+        )])
+        .unwrap_err();
+    assert!(wrong_type.to_string().contains("non-id"));
+    let stale = egraph
+        .try_add_values_with_fresh(vec![(
+            keep_old,
+            vec![
+                NativeInputValue::Existing(Value::new(21)),
+                NativeInputValue::Existing(Value::new(u32::MAX)),
+            ],
+        )])
+        .unwrap_err();
+    assert!(stale.to_string().contains("stale Value sentinel"));
+    assert_eq!(egraph.lookup_id(keep_old, &[Value::new(21)]), None);
+    assert_eq!(
+        egraph.db.read_counter(egraph.id_counter),
+        counter_before_hostile
+    );
+
+    egraph
+        .try_add_values(vec![(asserted, vec![Value::new(1), Value::new(100)])])
+        .unwrap();
+    let rolled_back = egraph.db.read_counter(egraph.id_counter);
+    let error = egraph
+        .try_add_values_with_fresh(vec![
+            (
+                keep_old,
+                vec![
+                    NativeInputValue::Existing(Value::new(30)),
+                    NativeInputValue::FreshSlot(0),
+                ],
+            ),
+            (
+                asserted,
+                vec![
+                    NativeInputValue::Existing(Value::new(1)),
+                    NativeInputValue::Existing(Value::new(101)),
+                ],
+            ),
+        ])
+        .unwrap_err();
+    assert!(error.to_string().contains("Illegal merge attempted"));
+    assert_eq!(egraph.lookup_id(keep_old, &[Value::new(30)]), None);
+    assert_eq!(egraph.db.read_counter(egraph.id_counter), rolled_back);
+
+    egraph
+        .try_add_values_with_fresh(vec![(
+            keep_old,
+            vec![
+                NativeInputValue::Existing(Value::new(30)),
+                NativeInputValue::FreshSlot(0),
+            ],
+        )])
+        .unwrap();
+    assert_eq!(
+        egraph.lookup_id(keep_old, &[Value::new(30)]),
+        Some(Value::from_usize(rolled_back))
+    );
+
+    egraph
+        .db
+        .set_counter(egraph.id_counter, u32::MAX as usize - 1);
+    egraph
+        .try_add_values_with_fresh(vec![(
+            keep_old,
+            vec![
+                NativeInputValue::Existing(Value::new(40)),
+                NativeInputValue::FreshSlot(0),
+            ],
+        )])
+        .unwrap();
+    assert_eq!(
+        egraph.lookup_id(keep_old, &[Value::new(40)]),
+        Some(Value::new(u32::MAX - 1))
+    );
+    let exhausted = egraph
+        .try_add_values_with_fresh(vec![(
+            keep_old,
+            vec![
+                NativeInputValue::Existing(Value::new(41)),
+                NativeInputValue::FreshSlot(0),
+            ],
+        )])
+        .unwrap_err();
+    assert!(exhausted.to_string().contains("usable Value domain"));
+    assert_eq!(egraph.db.read_counter(egraph.id_counter), u32::MAX as usize);
+    assert_eq!(egraph.lookup_id(keep_old, &[Value::new(41)]), None);
+
+    // A pending merge may mint from the same counter while the fresh batch
+    // quiesces prior work. Capacity must therefore be checked after that flush.
+    let constructor = egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::FreshId,
+        merge: MergeFn::UnionId,
+        name: "staged-counter-constructor".into(),
+        can_subsume: false,
+    });
+    let merge_target = egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::Lookup(constructor, vec![MergeFn::New]),
+        name: "staged-counter-merge".into(),
+        can_subsume: false,
+    });
+    egraph
+        .try_add_values(vec![(merge_target, vec![Value::new(1), Value::new(10)])])
+        .unwrap();
+    egraph
+        .db
+        .set_counter(egraph.id_counter, u32::MAX as usize - 1);
+    let merge_action = TableAction::new(&egraph, merge_target);
+    egraph.with_execution_state(|state| {
+        merge_action.insert(state, [Value::new(1), Value::new(20)].into_iter());
+    });
+    let capacity = egraph
+        .try_add_values_with_fresh(vec![(
+            keep_old,
+            vec![
+                NativeInputValue::Existing(Value::new(42)),
+                NativeInputValue::FreshSlot(0),
+            ],
+        )])
+        .unwrap_err();
+    assert!(capacity.to_string().contains("usable Value domain"));
+    assert_eq!(egraph.db.read_counter(egraph.id_counter), u32::MAX as usize);
+    assert_eq!(egraph.lookup_id(keep_old, &[Value::new(42)]), None);
+    assert_eq!(
+        egraph.lookup_id(constructor, &[Value::new(20)]),
+        Some(Value::new(u32::MAX - 1))
+    );
+}
+
+#[test]
+fn native_input_collision_fresh_overflow_rolls_back_and_reuses_id() {
+    let mut egraph = EGraph::default();
+    let keep_old = egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::Old,
+        name: "collision-overflow-output".into(),
+        can_subsume: false,
+    });
+    let constructor = egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::FreshId,
+        merge: MergeFn::UnionId,
+        name: "collision-overflow-constructor".into(),
+        can_subsume: false,
+    });
+    let merge_target = egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::Lookup(constructor, vec![MergeFn::New]),
+        name: "collision-overflow-merge".into(),
+        can_subsume: false,
+    });
+    egraph
+        .try_add_values(vec![
+            (merge_target, vec![Value::new(1), Value::new(10)]),
+            (merge_target, vec![Value::new(4), Value::new(11)]),
+        ])
+        .unwrap();
+    egraph
+        .db
+        .set_counter(egraph.id_counter, u32::MAX as usize - 1);
+    let counter_before = egraph.db.read_counter(egraph.id_counter);
+
+    let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        egraph.try_add_values_with_fresh(vec![
+            (
+                keep_old,
+                vec![
+                    NativeInputValue::Existing(Value::new(2)),
+                    NativeInputValue::FreshSlot(0),
+                ],
+            ),
+            (
+                merge_target,
+                vec![
+                    NativeInputValue::Existing(Value::new(1)),
+                    NativeInputValue::Existing(Value::new(20)),
+                ],
+            ),
+            (
+                merge_target,
+                vec![
+                    NativeInputValue::Existing(Value::new(4)),
+                    NativeInputValue::Existing(Value::new(21)),
+                ],
+            ),
+        ])
+    }));
+    let error = attempted
+        .expect("collision-driven fresh overflow must return an error, not panic")
+        .unwrap_err();
+    assert!(error.to_string().contains("merge fresh-id allocation"));
+    assert_eq!(egraph.db.read_counter(egraph.id_counter), counter_before);
+    assert_eq!(egraph.lookup_id(keep_old, &[Value::new(2)]), None);
+    assert_eq!(
+        egraph.lookup_id(merge_target, &[Value::new(1)]),
+        Some(Value::new(10))
+    );
+    assert_eq!(
+        egraph.lookup_id(merge_target, &[Value::new(4)]),
+        Some(Value::new(11))
+    );
+    assert_eq!(egraph.lookup_id(constructor, &[Value::new(20)]), None);
+    assert_eq!(egraph.lookup_id(constructor, &[Value::new(21)]), None);
+
+    egraph
+        .try_add_values_with_fresh(vec![(
+            keep_old,
+            vec![
+                NativeInputValue::Existing(Value::new(3)),
+                NativeInputValue::FreshSlot(0),
+            ],
+        )])
+        .unwrap();
+    assert_eq!(
+        egraph.lookup_id(keep_old, &[Value::new(3)]),
+        Some(Value::new(u32::MAX - 1))
+    );
+}
+
+#[test]
+fn native_input_collision_reuses_final_predicted_fresh_id() {
+    let mut egraph = EGraph::default();
+    let keep_old = egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::Old,
+        name: "prediction-reuse-output".into(),
+        can_subsume: false,
+    });
+    let constructor = egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::FreshId,
+        merge: MergeFn::UnionId,
+        name: "prediction-reuse-constructor".into(),
+        can_subsume: false,
+    });
+    let merge_target = egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::Lookup(
+            constructor,
+            vec![MergeFn::Const {
+                value: Value::new(20),
+                ty: ColumnTy::Id,
+            }],
+        ),
+        name: "prediction-reuse-merge".into(),
+        can_subsume: false,
+    });
+    egraph
+        .try_add_values(vec![
+            (merge_target, vec![Value::new(1), Value::new(10)]),
+            (merge_target, vec![Value::new(4), Value::new(11)]),
+        ])
+        .unwrap();
+    egraph
+        .db
+        .set_counter(egraph.id_counter, u32::MAX as usize - 2);
+
+    egraph
+        .try_add_values_with_fresh(vec![
+            (
+                keep_old,
+                vec![
+                    NativeInputValue::Existing(Value::new(2)),
+                    NativeInputValue::FreshSlot(0),
+                ],
+            ),
+            (
+                merge_target,
+                vec![
+                    NativeInputValue::Existing(Value::new(1)),
+                    NativeInputValue::Existing(Value::new(30)),
+                ],
+            ),
+            (
+                merge_target,
+                vec![
+                    NativeInputValue::Existing(Value::new(4)),
+                    NativeInputValue::Existing(Value::new(31)),
+                ],
+            ),
+        ])
+        .unwrap();
+
+    assert_eq!(egraph.db.read_counter(egraph.id_counter), u32::MAX as usize);
+    assert_eq!(
+        egraph.lookup_id(keep_old, &[Value::new(2)]),
+        Some(Value::new(u32::MAX - 2))
+    );
+    assert_eq!(
+        egraph.lookup_id(constructor, &[Value::new(20)]),
+        Some(Value::new(u32::MAX - 1))
+    );
+    assert_eq!(
+        egraph.lookup_id(merge_target, &[Value::new(1)]),
+        Some(Value::new(u32::MAX - 1))
+    );
+    assert_eq!(
+        egraph.lookup_id(merge_target, &[Value::new(4)]),
+        Some(Value::new(u32::MAX - 1))
+    );
+}
+
+#[test]
+fn native_input_merge_get_fresh_exhaustion_rolls_back_and_reuses_id() {
+    let mut egraph = EGraph::default();
+    let get_fresh = egraph.register_get_fresh();
+    let mint = || MergeFn::Primitive {
+        id: get_fresh,
+        name: "get-fresh!".into(),
+        input: Vec::new(),
+        output: ColumnTy::Id,
+        args: Vec::new(),
+    };
+    let keep_old = egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::Old,
+        name: "primitive-overflow-output".into(),
+        can_subsume: false,
+    });
+    let side = egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::Old,
+        name: "primitive-overflow-side".into(),
+        can_subsume: false,
+    });
+    let merge_target = egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::Block {
+            actions: vec![
+                MergeAction::Let {
+                    slot: 0,
+                    value: MergeFn::Old,
+                },
+                MergeAction::Set(
+                    side,
+                    vec![
+                        MergeFn::Const {
+                            value: Value::new(7),
+                            ty: ColumnTy::Id,
+                        },
+                        MergeFn::LetVar(0),
+                    ],
+                ),
+                MergeAction::Let {
+                    slot: 1,
+                    value: mint(),
+                },
+                MergeAction::Let {
+                    slot: 2,
+                    value: mint(),
+                },
+            ],
+            result: Box::new(MergeFn::Old),
+        },
+        name: "primitive-overflow-merge".into(),
+        can_subsume: false,
+    });
+    egraph
+        .try_add_values(vec![(merge_target, vec![Value::new(1), Value::new(10)])])
+        .unwrap();
+    egraph
+        .db
+        .set_counter(egraph.id_counter, u32::MAX as usize - 1);
+    let counter_before = egraph.db.read_counter(egraph.id_counter);
+
+    let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        egraph.try_add_values_with_fresh(vec![
+            (
+                keep_old,
+                vec![
+                    NativeInputValue::Existing(Value::new(2)),
+                    NativeInputValue::FreshSlot(0),
+                ],
+            ),
+            (
+                merge_target,
+                vec![
+                    NativeInputValue::Existing(Value::new(1)),
+                    NativeInputValue::Existing(Value::new(20)),
+                ],
+            ),
+        ])
+    }));
+    let error = attempted
+        .expect("exhausted get-fresh merge must return an error, not panic")
+        .unwrap_err();
+    assert!(error.to_string().contains("primitive call failed"));
+    assert_eq!(egraph.db.read_counter(egraph.id_counter), counter_before);
+    assert_eq!(egraph.lookup_id(keep_old, &[Value::new(2)]), None);
+    assert_eq!(egraph.lookup_id(side, &[Value::new(7)]), None);
+    assert_eq!(
+        egraph.lookup_id(merge_target, &[Value::new(1)]),
+        Some(Value::new(10))
+    );
+
+    egraph
+        .try_add_values_with_fresh(vec![(
+            keep_old,
+            vec![
+                NativeInputValue::Existing(Value::new(3)),
+                NativeInputValue::FreshSlot(0),
+            ],
+        )])
+        .unwrap();
+    assert_eq!(
+        egraph.lookup_id(keep_old, &[Value::new(3)]),
+        Some(Value::new(u32::MAX - 1))
     );
 }
 
@@ -1232,13 +1763,25 @@ fn mergefn_arithmetic() {
         n_identity_vals: None,
         schema: vec![ColumnTy::Base(int_base), ColumnTy::Base(int_base)],
         default: DefaultVal::Fail,
-        merge: MergeFn::Primitive(
-            add_func,
-            vec![
-                MergeFn::Const(value_1),
-                MergeFn::Primitive(multiply_func, vec![MergeFn::Old, MergeFn::New]),
+        merge: MergeFn::Primitive {
+            id: add_func,
+            name: "+".into(),
+            input: vec![ColumnTy::Base(int_base); 2],
+            output: ColumnTy::Base(int_base),
+            args: vec![
+                MergeFn::Const {
+                    value: value_1,
+                    ty: ColumnTy::Base(int_base),
+                },
+                MergeFn::Primitive {
+                    id: multiply_func,
+                    name: "*".into(),
+                    input: vec![ColumnTy::Base(int_base); 2],
+                    output: ColumnTy::Base(int_base),
+                    args: vec![MergeFn::Old, MergeFn::New],
+                },
             ],
-        ),
+        },
         name: "f".into(),
         can_subsume: false,
     });
@@ -1875,8 +2418,20 @@ fn self_referential_merge_union_find() {
 
     // The merge references the table itself, so reserve its id before creating it.
     let uf_id = egraph.peek_next_function_id();
-    let min = || MergeFn::Primitive(min_func, vec![MergeFn::Old, MergeFn::New]);
-    let max = MergeFn::Primitive(max_func, vec![MergeFn::Old, MergeFn::New]);
+    let min = || MergeFn::Primitive {
+        id: min_func,
+        name: "min".into(),
+        input: vec![ColumnTy::Base(int_base); 2],
+        output: ColumnTy::Base(int_base),
+        args: vec![MergeFn::Old, MergeFn::New],
+    };
+    let max = MergeFn::Primitive {
+        id: max_func,
+        name: "max".into(),
+        input: vec![ColumnTy::Base(int_base); 2],
+        output: ColumnTy::Base(int_base),
+        args: vec![MergeFn::Old, MergeFn::New],
+    };
     let uf = egraph.add_table(FunctionConfig {
         schema: vec![ColumnTy::Base(int_base), ColumnTy::Base(int_base)],
         n_vals: 1,

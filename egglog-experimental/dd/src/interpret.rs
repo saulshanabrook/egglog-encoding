@@ -508,6 +508,8 @@ fn apply_head(
                 };
                 if let Some(result) = result {
                     env.insert(variable.id, result.rep());
+                } else if let RuleActionCall::Primitive { name, .. } = call {
+                    return Err(anyhow!("DD backend: call of primitive {name} failed"));
                 }
             }
             GenericCoreAction::LetAtomTerm(_, variable, term) => {
