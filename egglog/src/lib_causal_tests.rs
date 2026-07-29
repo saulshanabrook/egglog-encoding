@@ -1164,6 +1164,19 @@ fn capture_catalog_rejects_stateful_command_boundaries_before_mutation() {
 }
 
 #[test]
+fn resolve_program_rejects_before_parsing_during_trace_capture() {
+    let mut egraph = EGraph::default();
+    enable_serial_trace(&mut egraph).unwrap();
+
+    let error = egraph.resolve_program(None, "(").unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("trace capture does not support resolve_program")
+    );
+}
+
+#[test]
 fn trace_user_command_authority_is_not_granted_by_name() {
     struct Impostor(std::sync::Arc<std::sync::atomic::AtomicBool>);
 
