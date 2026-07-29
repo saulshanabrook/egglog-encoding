@@ -64,7 +64,7 @@ pub struct ReplayConstructorSpec {
     anchor_on_primitive_return: bool,
     /// Physical registry type for a container result. This is intentionally
     /// absent for ordinary e-class constructors and base-value primitives and
-    /// does not itself imply immediate promotion.
+    /// does not itself imply return-time anchoring.
     pub(super) container_type: Option<TypeId>,
 }
 
@@ -93,11 +93,11 @@ impl ReplayConstructorSpec {
         self
     }
 
-    /// Mark a container-producing primitive for immediate version anchoring.
+    /// Mark a container-producing primitive for return-time version anchoring.
     ///
     /// Combining the timing policy with its physical container type makes the
-    /// invalid state “immediate promotion without a container” unrepresentable.
-    pub fn with_immediate_container_promotion(mut self, container_type: TypeId) -> Self {
+    /// invalid state “return-time anchoring without a container” unrepresentable.
+    pub fn with_primitive_return_anchor(mut self, container_type: TypeId) -> Self {
         self.container_type = Some(container_type);
         self.anchor_on_primitive_return = true;
         self

@@ -374,7 +374,7 @@ fn container_anchor_projects_only_referenced_bindings_and_memoizes_repeated_leav
     });
     let replay =
         ReplayConstructorSpec::new(container_sort, container_op, [current_sort, current_sort])
-            .with_immediate_container_promotion(TypeId::of::<Vec<Value>>());
+            .with_primitive_return_anchor(TypeId::of::<Vec<Value>>());
     let current_value = Value::new_const(12);
     let container_value = Value::new_const(13);
 

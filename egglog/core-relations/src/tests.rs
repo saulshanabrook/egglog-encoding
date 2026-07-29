@@ -2126,7 +2126,7 @@ fn capture_recipe_failure_precedes_catalog_and_rule_set_mutation() {
         valid_before_failure,
         Some(
             ReplayConstructorSpec::new(sort, op, iter::empty::<ReplaySortId>())
-                .with_immediate_container_promotion(TypeId::of::<Vec<Value>>()),
+                .with_primitive_return_anchor(TypeId::of::<Vec<Value>>()),
         ),
     );
     action.promote_replay_call(
@@ -2134,7 +2134,7 @@ fn capture_recipe_failure_precedes_catalog_and_rule_set_mutation() {
         destination,
         Some(
             ReplayConstructorSpec::new(sort, op, [sort])
-                .with_immediate_container_promotion(TypeId::of::<Vec<Value>>()),
+                .with_primitive_return_anchor(TypeId::of::<Vec<Value>>()),
         ),
     );
     let error = action
@@ -2166,7 +2166,7 @@ fn capture_recipe_failure_precedes_catalog_and_rule_set_mutation() {
         destination,
         Some(
             ReplayConstructorSpec::new(sort, op, iter::empty::<ReplaySortId>())
-                .with_immediate_container_promotion(TypeId::of::<Vec<Value>>()),
+                .with_primitive_return_anchor(TypeId::of::<Vec<Value>>()),
         ),
     );
     let rule = action

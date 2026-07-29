@@ -746,7 +746,7 @@ impl CaptureCatalog {
             .collect::<Option<Vec<_>>>()?;
         let replay = ReplayConstructorSpec::new(result_sort, op, child_sorts);
         Some(Arc::new(if primitive.output().is_container_sort() {
-            replay.with_immediate_container_promotion(
+            replay.with_primitive_return_anchor(
                 primitive
                     .output()
                     .value_type()
