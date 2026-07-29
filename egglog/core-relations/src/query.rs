@@ -1602,13 +1602,10 @@ impl RuleBuilder<'_, '_> {
                         .copied()
                         .enumerate()
                         .find_map(|(premise, atom)| {
-                        let Some(subatom) = var_info[*var]
+                        let subatom = var_info[*var]
                             .occurrences
                             .iter()
-                            .find(|occurrence| occurrence.atom == atom)
-                        else {
-                            return None;
-                        };
+                            .find(|occurrence| occurrence.atom == atom)?;
                         let column = subatom.vars.last().copied()?;
                         let table = self.qb.query.atoms[atom].table;
                         let sort = self
