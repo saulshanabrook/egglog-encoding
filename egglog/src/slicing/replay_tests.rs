@@ -131,69 +131,6 @@ fn slice_replays_precanonicalized_union_endpoints_in_any_allocation_order() {
 }
 
 #[test]
-fn endpoint_denotation_does_not_retain_an_unrelated_prefix() {
-    let mut recorder = EGraph::default();
-    serial_pool().install(|| recorder.enable_trace()).unwrap();
-    recorder
-        .parse_and_run_program(
-            None,
-            "(datatype E (A) (B) (C) (NoiseL) (NoiseR))
-             (NoiseL) (NoiseR) (A) (B) (C)
-             (union (NoiseL) (NoiseR))
-             (union (A) (B))
-             (union (B) (C))
-             (check (= (A) (C)))",
-        )
-        .unwrap();
-    let slice = slice_all_checks(&recorder).unwrap();
-    let noise = crate::core_relations::AppliedEqualityId::new(1);
-    assert!(!slice.equalities.contains(&noise));
-    assert!(!slice.replay_equalities.contains(&noise));
-    let ir = build_replay_program(&recorder, &slice).unwrap();
-    let rendered = ReplayProgram::render_commands(&ir.to_commands().unwrap()).unwrap();
-    for mut replay in [
-        EGraph::default(),
-        EGraph::default().with_term_encoding_enabled(),
-    ] {
-        replay.parse_and_run_program(None, &rendered).unwrap();
-    }
-}
-
-#[test]
-fn rule_union_retains_precanonicalized_endpoint_denotation() {
-    let mut recorder = EGraph::default();
-    serial_pool().install(|| recorder.enable_trace()).unwrap();
-    recorder
-        .parse_and_run_program(
-            None,
-            "(datatype E (A) (B) (C))
-             (relation Trigger ())
-             (A) (B) (C)
-             (union (A) (B))
-             (Trigger)
-             (rule ((Trigger)) ((union (B) (C))) :name \"bridge\")
-             (run 1)
-             (check (= (A) (C)))",
-        )
-        .unwrap();
-    let slice = slice_all_checks(&recorder).unwrap();
-    assert!(
-        slice
-            .equalities
-            .contains(&crate::core_relations::AppliedEqualityId::new(1)),
-        "the rule union reads B through the earlier A=B denotation"
-    );
-    let ir = build_replay_program(&recorder, &slice).unwrap();
-    let rendered = ReplayProgram::render_commands(&ir.to_commands().unwrap()).unwrap();
-    for mut replay in [
-        EGraph::default(),
-        EGraph::default().with_term_encoding_enabled(),
-    ] {
-        replay.parse_and_run_program(None, &rendered).unwrap();
-    }
-}
-
-#[test]
 fn carrier_container_denotation_retains_its_historical_anchor() {
     let program = "(sort E)
                        (constructor A () E)

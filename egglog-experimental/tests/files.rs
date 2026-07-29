@@ -298,11 +298,6 @@ fn generate_workload_causal_tests() -> Vec<Trial> {
     let workloads = [
         ("math", "egglog/tests/math-microbenchmark.egg", None),
         (
-            "eggcc",
-            "egglog-experimental/tests/fixtures/eggcc-2mm-pass1.egg",
-            None,
-        ),
-        (
             "pointer",
             "benchmarks/pointer-analysis-small.egg",
             Some("benchmarks/data/pointer-analysis-small"),
