@@ -97,7 +97,9 @@ pub struct GroundedRuleRunOutcome {
 #[derive(Debug, Error)]
 #[doc(hidden)]
 pub enum GroundedRuleRunError {
-    #[error("grounded matches must be in strict MatchId order; {current} followed {previous}")]
+    #[error(
+        "grounded matches must be in strict MatchId order; observed {previous} followed by {current}"
+    )]
     MatchOrder { previous: u64, current: u64 },
     #[error("grounded match {match_id} binds variable {variable:?} more than once")]
     DuplicateBinding { match_id: u64, variable: Variable },

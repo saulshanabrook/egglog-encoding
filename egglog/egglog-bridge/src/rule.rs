@@ -1150,7 +1150,7 @@ impl Query {
                 Some((variable, *core_variable))
             })
             .collect();
-        let rule = Arc::new(rb.build_grounded(body_end).with_probes(probes));
+        let rule = Arc::new(rb.build_grounded(body_end, probes));
         Ok(GroundedRuleInfo { rule, variables })
     }
 

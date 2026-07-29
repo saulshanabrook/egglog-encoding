@@ -82,13 +82,6 @@ pub struct GroundedRule {
     pub(crate) probes: Arc<[GroundedProbe]>,
 }
 
-impl GroundedRule {
-    pub fn with_probes(mut self, probes: impl Into<Arc<[GroundedProbe]>>) -> Self {
-        self.probes = probes.into();
-        self
-    }
-}
-
 enum RuleBuildOutput {
     Planned(RuleId),
     Grounded(GroundedRule),
@@ -1533,17 +1526,22 @@ impl RuleBuilder<'_, '_> {
     /// Finish a plan-free rule tape. `body_end` must be the boundary captured
     /// after all body computations/guards and before the first head action.
     #[doc(hidden)]
-    pub fn build_grounded(self, body_end: usize) -> GroundedRule {
-        self.build_impl("", None, Some(body_end)).grounded()
+    pub fn build_grounded(
+        self,
+        body_end: usize,
+        probes: impl Into<Arc<[GroundedProbe]>>,
+    ) -> GroundedRule {
+        self.build_impl("", None, Some((body_end, probes.into())))
+            .grounded()
     }
 
     fn build_impl(
         self,
         desc: impl Into<String>,
         capture: Option<CaptureBuildSpec>,
-        grounded_body_end: Option<usize>,
+        grounded: Option<(usize, Arc<[GroundedProbe]>)>,
     ) -> RuleBuildOutput {
-        self.try_build_impl(desc, capture, grounded_body_end)
+        self.try_build_impl(desc, capture, grounded)
             .unwrap_or_else(|error| panic!("{error}"))
     }
 
@@ -1551,10 +1549,10 @@ impl RuleBuilder<'_, '_> {
         mut self,
         desc: impl Into<String>,
         capture: Option<CaptureBuildSpec>,
-        grounded_body_end: Option<usize>,
+        grounded: Option<(usize, Arc<[GroundedProbe]>)>,
     ) -> Result<RuleBuildOutput, CaptureBuildError> {
         if capture.is_none()
-            && grounded_body_end.is_none()
+            && grounded.is_none()
             && self.qb.rsb.db.trace.is_some()
             && self.qb.query.atoms.is_empty()
         {
@@ -1882,12 +1880,12 @@ impl RuleBuilder<'_, '_> {
             used_vars,
             capture,
         };
-        if let Some(body_end) = grounded_body_end {
+        if let Some((body_end, probes)) = grounded {
             assert!(body_end <= action.instrs.len());
             return Ok(RuleBuildOutput::Grounded(GroundedRule {
                 action,
                 body_end,
-                probes: Arc::from([]),
+                probes,
             }));
         }
         let action_id = self.qb.rsb.rule_set.actions.push(action);

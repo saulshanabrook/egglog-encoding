@@ -177,6 +177,15 @@ fn grounded_wave_point_probes_every_match_before_running_any_head_without_planni
 
     assert!(!egraph.rule_has_cached_plan(rule));
     let error = egraph
+        .run_grounded_wave(&[firing(11, one, one_id), firing(10, zero, zero_id)])
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "grounded matches must be in strict MatchId order; observed 11 followed by 10"
+    );
+    assert_eq!(head_calls.load(Ordering::Relaxed), 0);
+
+    let error = egraph
         .run_grounded_wave(&[firing(10, zero, zero_id), firing(11, missing, one_id)])
         .unwrap_err();
     assert!(error.to_string().contains("premise"));
