@@ -17,6 +17,10 @@
 //! - **`(run [ruleset] [:until cond])`** — run one step of `ruleset` (or the
 //!   empty/default ruleset if omitted). With `:until cond`, the step is skipped
 //!   once `cond` already holds (`cond` is checked as a [`Check`](egglog::ast::Command::Check)).
+//! - **`(run-rule ("rule" ((variable value) ...)) ...)`** — atomically run the
+//!   listed named-rule invocations at their exact closed bindings. Each entry
+//!   uses core egglog's list-form `run-rule` grammar; at least one invocation
+//!   is required.
 //! - **`(run-with scheduler [ruleset] [:until cond])`** — like `run`, but drives
 //!   the ruleset with a named scheduler previously bound by `let-scheduler`.
 //! - **`(let-scheduler name (scheduler-kind args...))`** — bind `name` to a fresh
@@ -39,6 +43,16 @@
 //!   forwarded by re-parsing the s-expression through
 //!   [`parse_and_run_program`](egglog::EGraph::parse_and_run_program); any other
 //!   head (rule declarations, `let` bindings, function definitions, …) is rejected.
+//!
+//! # Trace-capture compatibility
+//!
+//! Trace mode accepts only bare ruleset names, `(run)` or `(run ruleset)`
+//! without `:until`, and recursive `seq`, `saturate`, or non-negative `repeat`
+//! compositions of those forms. It validates the complete schedule before
+//! execution. List-form `run-rule`, `run-with`, `let-scheduler`, `eval`,
+//! forwarded commands, and every `run ... :until` form are rejected during
+//! trace capture because they bypass the normalized replay catalog or require
+//! capabilities unavailable from [`TraceScheduleContext`].
 //!
 //! # Example
 //!

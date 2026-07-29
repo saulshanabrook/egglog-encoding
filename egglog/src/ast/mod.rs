@@ -451,6 +451,7 @@ pub enum GenericSchedule<Head, Leaf> {
     Saturate(Span, Box<GenericSchedule<Head, Leaf>>),
     Repeat(Span, usize, Box<GenericSchedule<Head, Leaf>>),
     Run(Span, GenericRunConfig<Head, Leaf>),
+    /// Atomically run one or more named rules at exact closed bindings.
     RunRule(Span, Vec<GenericRunRuleConfig<Head, Leaf>>),
     Sequence(Span, Vec<GenericSchedule<Head, Leaf>>),
 }
