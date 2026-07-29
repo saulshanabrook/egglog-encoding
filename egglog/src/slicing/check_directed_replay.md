@@ -17,6 +17,30 @@ requested, is reconstructed by the proof subsystem while the generated
 program runs on a fresh graph. Keeping those roles separate is central to the
 design.
 
+## Suggested reading order
+
+The implementation follows the same boundaries as this explanation:
+
+1. Start with the retained-data table in the `core_relations::provenance`
+   module documentation. It ties each recorded field to an egglog event, its
+   cold consumer, and the behavior that would be lost without it.
+2. Read `provenance/capture.rs` at the effective mutation publication points,
+   then `provenance/view.rs` and `provenance/explain.rs` for the checked cold
+   projection boundary.
+3. Read the frontend capture catalog and [`EGraph::enable_trace`] integration
+   in `lib.rs`; this is where source syntax and typed producer recipes join the
+   backend trace.
+4. Read `slicing/backward.rs` as the executable dependency model, followed by
+   `slicing/replay.rs` for the graph-neutral IR, chronological scheduling, and
+   surface rendering.
+5. Finish with [`slice_all_checks`] and `cli.rs`, then use the sibling
+   `*_tests.rs` files and `test-support/causal_corpus.rs` as the falsifying
+   examples for each supported or fail-closed boundary.
+
+Capture, selection, and replay are intentionally separate review units. A
+change that crosses one of those units should state which new semantic
+dependency requires it rather than moving convenience data between layers.
+
 ## The three-stage model
 
 The implementation is easiest to understand as three deliberately separate
