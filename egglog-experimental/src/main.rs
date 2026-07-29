@@ -122,7 +122,7 @@ mod tests {
         assert_eq!(parse_backend(Some("main")), Ok(Backend::Main));
     }
 
-    #[path = "causal_slice.rs"]
+    #[path = "../causal_slice_tests.rs"]
     mod causal_slice;
 
     #[cfg(not(feature = "dd-backend"))]

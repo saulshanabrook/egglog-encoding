@@ -2351,7 +2351,7 @@ mod tests {
         assert!(!eg.mirror[&view].contains(&row(&[10, 0])));
     }
 
-    #[path = "rule_lifecycle.rs"]
+    #[path = "../rule_lifecycle_tests.rs"]
     mod rule_lifecycle;
 }
 
