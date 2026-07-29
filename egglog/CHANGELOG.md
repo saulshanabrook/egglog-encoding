@@ -21,7 +21,13 @@
   Selected input rows are embedded from captured exact literals rather than
   reread from their source files, and a cold transitive dependency pass prunes
   captured sort, function, and ruleset declarations from the replay program
-  when their dependency shape is known.
+  when their dependency shape is known. The artifact-only `let-check` command
+  and list-form `run-rule` schedule are now reserved public AST variants, and
+  rule names are globally unique across rulesets so a grounded firing has one
+  unambiguous target. Backend implementors must also adopt the fallible
+  `flush_updates`, trace lifecycle methods, rule capture/owned-function
+  metadata, and primitive replay metadata; lifecycle failures surface through
+  the new `Error::TraceLifecycle` variant.
 - Add a `(begin <action>*)` command and a `(let <var> (begin <action>* <expr>))` form that run a block of actions once, immediately, with a shared *local* scope (`let`s bind local variables, not global functions); `let`-begin additionally binds the global `<var>` to the block's trailing value. In the term/proof encoding, each top-level action's minted temporaries — and the shared `let`s introduced by the common-subexpression prepass — now run inside one such block instead of as separate top-level `let`s, so a temporary no longer becomes its own global function/table. This removes the per-proof-node table blow-up that made building a large static graph under the encoding slow (dominant cost on graphs with many top-level terms). Proof checking evaluates user-written blocks with the same local-scope rule: local bindings do not escape, while their equalities and a `let`-begin's final value remain available to later top-level commands.
 - Common-subexpression prepass for the term/proof encoding (`ast::cse`, run over the program before encoding): within an action scope, a constructor application occurring more than once is bound to a shared `let` and its occurrences rewritten to that variable, so it is interned once. A top-level action that gains shared `let`s becomes a `begin` block, so they stay local rather than adding a global table per hoisted subterm.
 - In the term/proof encoding, when a `union` operand is a freshly-built constructor term, build it directly into the other operand's e-class instead of minting a fresh id and unioning it away: a plain view `set` points the constructor's children at the other operand's (target) e-class, and the view's congruence `:merge` handles the case where the term already exists. This reuses ids and drops the corresponding `@UF` rows (union-heavy workloads run substantially faster and use less memory in both term and proof mode). In proof mode the view row carries the equality proof `target = f(children)`, composed from the union's rule justification and a `Congr` chain over canonicalized children, with the built-in operand's term kept on its own id so proof reconstruction stays unambiguous.

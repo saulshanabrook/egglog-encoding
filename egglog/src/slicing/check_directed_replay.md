@@ -426,6 +426,12 @@ existing grounded executor does not expose that commit-time carrier, so trace
 capture rejects the schedule instead of synthesizing premise identities or
 recording its effects as source facts.
 
+Source-authored `let-check` commands are likewise rejected. `let-check` is a
+replay-only carrier for aliases whose values were already observed and checked
+during capture; accepting it as source input would require a separate account
+of where that asserted value came from. Keeping it reserved prevents a user
+assertion from being mistaken for captured evidence.
+
 Source-authored `prove` and `prove-exists` commands are also rejected before
 resolution. Successful `check` commands are the only slice roots; proof
 generation is an independent replay mode, not a second kind of captured root.

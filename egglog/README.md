@@ -90,7 +90,8 @@ the main backend. A selected execution that reaches an unsupported scheduler,
 source, container, or mutation shape fails closed with a diagnostic.
 Source-authored `run-rule` schedules are currently unsupported; generated
 replay uses `run-rule` only for ordinary firings whose exact premises were
-captured at commit.
+captured at commit. Source-authored `let-check` is also unsupported: it is a
+reserved replay carrier for values that capture already observed and checked.
 Successful `check` commands are the only replay roots; `extract` and
 `multi-extract` output is not retained. The trace records effective source
 events, rule firings and their grounded premises, applied equality history and
