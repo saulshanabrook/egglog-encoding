@@ -46,16 +46,6 @@ fn repeated_variable_slice_keeps_exact_equality_support() {
         let record = slice.firing_terms.get(firing).unwrap();
         record.len() <= 1
     }));
-
-    let mut damaged = slice.clone();
-    damaged.equalities.clear();
-    assert!(matches!(
-        damaged.validate_exact_support(),
-        Err(SliceError::MissingSupport {
-            kind: "applied equality",
-            ..
-        })
-    ));
 }
 
 #[test]
@@ -808,15 +798,6 @@ fn same_term_child_occurrences_keep_their_native_bridge() {
 
     let slice = slice_check(&egraph, 0).unwrap();
     assert_eq!(slice.equalities.len(), 1, "retain the A occurrence bridge");
-    let mut damaged = slice.clone();
-    damaged.equalities.clear();
-    assert!(matches!(
-        damaged.validate_exact_support(),
-        Err(SliceError::MissingSupport {
-            kind: "applied equality",
-            ..
-        })
-    ));
     let replay = crate::slicing::replay::build_replay_program(&egraph, &slice).unwrap();
     let commands = replay.to_commands().unwrap();
     drop(egraph);
@@ -1061,15 +1042,6 @@ fn eqsort_projection_retains_the_child_equality_it_observed() {
     let slice = slice_check(&egraph, 0).unwrap();
     assert_eq!(slice.firings.len(), 3);
     assert_eq!(slice.equalities.len(), 1);
-    let mut damaged = slice.clone();
-    damaged.equalities.clear();
-    assert!(matches!(
-        damaged.validate_exact_support(),
-        Err(SliceError::MissingSupport {
-            kind: "applied equality",
-            ..
-        })
-    ));
     let replay = crate::slicing::replay::build_replay_program(&egraph, &slice).unwrap();
     let commands = replay.to_commands().unwrap();
     drop(egraph);

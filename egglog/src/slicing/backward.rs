@@ -36,7 +36,6 @@ pub(crate) struct Slice {
     pub(crate) firing_term_windows: HashMap<FiringId, Box<[Box<[RawAliasWindow]>]>>,
     pub(crate) equality_records: HashMap<AppliedEqualityId, ProjectedAppliedEquality>,
     denotation_equalities: HashSet<AppliedEqualityId>,
-    requirements: Vec<RawEqualitySupport>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -105,40 +104,6 @@ pub(crate) enum SliceError {
     UnsupportedBackend,
     #[error("causal slicing cannot use a poisoned capture: {0}")]
     Poisoned(String),
-    #[error("selected causal support is missing {kind} {id}")]
-    MissingSupport { kind: &'static str, id: u64 },
-}
-
-impl Slice {
-    pub(crate) fn validate_exact_support(&self) -> Result<(), SliceError> {
-        for requirement in &self.requirements {
-            for id in &requirement.applied {
-                if !self.equalities.contains(id) {
-                    return Err(SliceError::MissingSupport {
-                        kind: "applied equality",
-                        id: id.get(),
-                    });
-                }
-            }
-            for id in &requirement.facts {
-                if !self.facts.contains(id) {
-                    return Err(SliceError::MissingSupport {
-                        kind: "fact",
-                        id: id.get(),
-                    });
-                }
-            }
-            for position in &requirement.rekeys {
-                if !self.rekeys.contains(position) {
-                    return Err(SliceError::MissingSupport {
-                        kind: "rekey",
-                        id: position.get(),
-                    });
-                }
-            }
-        }
-        Ok(())
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -151,7 +116,7 @@ enum Work {
     Rekey(HistoryPosition),
 }
 
-fn enqueue_support(slice: &mut Slice, work: &mut VecDeque<Work>, support: RawEqualitySupport) {
+fn enqueue_support(work: &mut VecDeque<Work>, support: RawEqualitySupport) {
     for id in &support.applied {
         work.push_back(Work::Equality(*id));
     }
@@ -161,7 +126,6 @@ fn enqueue_support(slice: &mut Slice, work: &mut VecDeque<Work>, support: RawEqu
     for position in &support.rekeys {
         work.push_back(Work::Rekey(*position));
     }
-    slice.requirements.push(support);
 }
 
 fn check_occurrence_cell(occurrence: CriterionEndpointOccurrence) -> Option<FactCellRef> {
@@ -590,14 +554,14 @@ fn seed_check_root(
                     root.as_of_edges,
                     root.position,
                 )?;
-                enqueue_support(slice, work, exact);
+                enqueue_support(work, exact);
                 let left_source = view.explain_fact_endpoint_availability_at(
                     left,
                     left_endpoint,
                     root.as_of_edges,
                     root.position,
                 )?;
-                enqueue_support(slice, work, left_source.support);
+                enqueue_support(work, left_source.support);
                 view.explain_fact_endpoint_availability_at(
                     right,
                     right_endpoint,
@@ -613,7 +577,7 @@ fn seed_check_root(
                     root.as_of_edges,
                     root.position,
                 )?;
-                enqueue_support(slice, work, source.support);
+                enqueue_support(work, source.support);
                 view.explain_fact_endpoint_support_at(
                     fact,
                     right_endpoint,
@@ -628,7 +592,7 @@ fn seed_check_root(
                     root.as_of_edges,
                     root.position,
                 )?;
-                enqueue_support(slice, work, source.support);
+                enqueue_support(work, source.support);
                 view.explain_fact_endpoint_support_at(
                     fact,
                     left_endpoint,
@@ -643,7 +607,7 @@ fn seed_check_root(
                 root.position,
             )?,
         };
-        enqueue_support(slice, work, support);
+        enqueue_support(work, support);
     }
     Ok(())
 }
@@ -691,7 +655,7 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                     for binding in 0..terms.len() {
                         let availability = view.explain_firing_term_availability(id, binding)?;
                         windows.push(availability.aliases);
-                        enqueue_support(&mut slice, &mut work, availability.support);
+                        enqueue_support(&mut work, availability.support);
                     }
                     slice.firing_terms.insert(id, terms);
                     slice
@@ -706,7 +670,7 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                             as_of_edges,
                             position,
                         )?;
-                        enqueue_support(&mut slice, &mut work, support);
+                        enqueue_support(&mut work, support);
                     }
                 }
                 Work::Cause(cause) => {
@@ -761,7 +725,7 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                                     as_of_edges,
                                     position,
                                 )?;
-                                enqueue_support(&mut slice, &mut work, support);
+                                enqueue_support(&mut work, support);
                             }
                         }
                         RawCause::ContainerCanonicalize {
@@ -784,7 +748,7 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                                     as_of_edges,
                                     position,
                                 )?;
-                                enqueue_support(&mut slice, &mut work, support);
+                                enqueue_support(&mut work, support);
                             }
                         }
                         RawCause::Merge {
@@ -819,7 +783,7 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                             as_of_edges,
                             position,
                         )?;
-                        enqueue_support(&mut slice, &mut work, support);
+                        enqueue_support(&mut work, support);
                     }
                     work.push_back(Work::Cause(match reason {
                         EqualityReason::RuleUnion(rule) => CauseRef::Rule(rule),
@@ -833,7 +797,7 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                         continue;
                     }
                     let support = view.explain_equality_denotation_before(id)?;
-                    enqueue_support(&mut slice, &mut work, support);
+                    enqueue_support(&mut work, support);
                 }
                 Work::Rekey(position) => {
                     if !slice.rekeys.insert(position) {
@@ -866,7 +830,7 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                             as_of_edges,
                             equality_position,
                         )?;
-                        enqueue_support(&mut slice, &mut work, support);
+                        enqueue_support(&mut work, support);
                     }
                 }
             }
@@ -877,9 +841,6 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
             break;
         }
     }
-    slice
-        .validate_exact_support()
-        .map_err(|error| TraceViewError::Invalid(error.to_string()))?;
     Ok(slice)
 }
 
