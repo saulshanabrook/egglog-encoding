@@ -69,7 +69,7 @@ pub struct ReplayConstructorSpec {
 }
 
 impl ReplayConstructorSpec {
-    /// Creates a deferred structural call specification with no container registry type.
+    /// Creates a static structural call specification with no container registry type.
     pub fn new(
         result_sort: ReplaySortId,
         op: ReplayOpId,
@@ -86,7 +86,7 @@ impl ReplayConstructorSpec {
 
     /// Registers the physical container registry used for versioned anchor tracking.
     ///
-    /// This only identifies container storage; it does not request immediate
+    /// This only identifies container storage; it does not request return-time
     /// anchoring before later query guards.
     pub fn with_container_type(mut self, container_type: TypeId) -> Self {
         self.container_type = Some(container_type);

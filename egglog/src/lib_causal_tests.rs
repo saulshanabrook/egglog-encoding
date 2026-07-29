@@ -282,6 +282,40 @@ fn trace_defer_body_primitive_terms_until_all_guards_pass() {
 }
 
 #[test]
+fn rejected_body_lane_still_anchors_a_returned_container_version() {
+    let mut egraph = EGraph::default();
+    enable_serial_trace(&mut egraph).unwrap();
+    egraph
+        .parse_and_run_program(
+            None,
+            "(sort V (Vec i64))\
+             (relation Go (Unit))\
+             (relation Done (V))\
+             (Go ())\
+             (rule ((Go u) (= pushed (vec-of 1)) (vec-contains pushed 999))\
+               ((Done pushed)) :name \"rejected-container\")",
+        )
+        .unwrap();
+    let before = egraph
+        .replay_term_counters()
+        .unwrap()
+        .container_anchor_terms;
+
+    egraph.parse_and_run_program(None, "(run 1)").unwrap();
+
+    let after = egraph
+        .replay_term_counters()
+        .unwrap()
+        .container_anchor_terms;
+    assert!(
+        after > before,
+        "the returned container version was not anchored"
+    );
+    let done = &egraph.functions["Done"];
+    assert_eq!(egraph.backend.table_size(done.backend_id), 0);
+}
+
+#[test]
 fn trace_fail_closed_when_a_pure_call_depends_on_an_unsupported_primitive() {
     let mut egraph = EGraph::default();
     enable_serial_trace(&mut egraph).unwrap();

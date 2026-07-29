@@ -203,8 +203,8 @@ pub enum RuleBodyCall {
         id: ExternalFunctionId,
         name: Box<str>,
         output: ColumnTy,
-        /// Typed structural call used only when this primitive binds a new
-        /// value in a capture-enabled rule.
+        /// Typed structural call used by a capture-enabled rule. A known output
+        /// can still need a container-version anchor before a later guard.
         replay: Option<Arc<ReplayConstructorSpec>>,
     },
 }

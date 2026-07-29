@@ -8,7 +8,9 @@
 //!
 //! [`Trace`] is the shared capture handle. Its hot path retains raw values,
 //! stable identities, compact range handles, and static producer metadata; it
-//! does not traverse explanations or eagerly materialize structural terms.
+//! does not traverse explanations or eagerly materialize ordinary fact terms.
+//! Mutable-container primitives are the bounded exception: their exact
+//! structural version is anchored when the primitive returns.
 //! Commit-local batches publish at existing engine barriers. A quiescent arena
 //! has dense identities for facts, firings, causes, and applied equalities;
 //! mutation and check events also have unique [`HistoryPosition`]s. Firings do

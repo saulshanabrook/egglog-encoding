@@ -5,9 +5,10 @@ use super::*;
 #[path = "explain.rs"]
 mod explain;
 
-/// Lazy trace-view projector. Native capture stores raw creation rows and
-/// compact static origin sites; selected reads expand only the requested
-/// references into the historical replay-term DAG.
+/// Lazy historical projector shared by borrowed views and runtime container
+/// anchoring. Native capture stores raw creation rows and compact static origin
+/// sites; consumers expand only the requested references into the replay-term
+/// DAG.
 #[derive(Clone)]
 enum TemplateOwner {
     Durable(FiringId),

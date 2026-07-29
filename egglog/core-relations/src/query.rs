@@ -2127,7 +2127,8 @@ impl RuleBuilder<'_, '_> {
     }
 
     /// Apply an external function, optionally registering a static structural
-    /// recipe for its successful result. Runtime execution records no terms.
+    /// recipe for its successful result. Ordinary recipes record no runtime
+    /// terms; mutable-container specs additionally anchor the returned version.
     pub fn call_external_with_replay(
         &mut self,
         func: ExternalFunctionId,
