@@ -30,7 +30,7 @@ pub use egglog_core_relations::{
     Trace, TraceView, TraceViewError, Wave,
 };
 use egglog_numeric_id as numeric_id;
-use egglog_reports::{IterationReport, PreMergeTiming, ReportLevel, RuleReport, RuleSetReport};
+use egglog_reports::{IterationReport, PreMergeTiming, ReportLevel, RuleSetReport};
 use hashbrown::HashMap;
 use indexmap::IndexSet;
 use log::info;
@@ -39,11 +39,13 @@ use smallvec::SmallVec;
 use std::collections::BTreeMap;
 use web_time::{Duration, Instant};
 
+mod grounded;
 pub mod macros;
 pub(crate) mod rule;
 #[cfg(test)]
 mod tests;
 
+pub use grounded::{GroundedRuleBinding, GroundedRuleRun, GroundedRuleVariable};
 pub use rule::{
     CriterionCapturePremise, CriterionCaptureSpec, FiringCaptureBinding, FiringCaptureSpec,
     Function, QueryEntry, RuleBuilder, Variable, VariableId,
@@ -113,32 +115,6 @@ pub enum ColumnTy {
 define_id!(pub RuleId, u32, "An egglog-style rule");
 define_id!(pub FunctionId, u32, "An id representing an egglog function");
 define_id!(pub(crate) Timestamp, u32, "An abstract timestamp used to track execution of egglog rules");
-
-/// One typed value supplied for an exact grounded rule invocation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct GroundedRuleBinding {
-    pub variable: VariableId,
-    pub ty: ColumnTy,
-    pub value: Value,
-}
-
-/// One source-ordered grounded firing. A wave must be strictly ordered by
-/// `match_id` and is validated atomically against one pre-wave snapshot.
-#[derive(Clone, Debug)]
-pub struct GroundedRuleRun {
-    pub match_id: u64,
-    pub rule: RuleId,
-    pub bindings: Box<[GroundedRuleBinding]>,
-}
-
-/// A typed bridge variable descriptor used by the frontend to resolve names
-/// without assuming that backend variable ids and bridge ids coincide.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GroundedRuleVariable {
-    pub variable: VariableId,
-    pub name: Option<Box<str>>,
-    pub ty: ColumnTy,
-}
 
 impl Timestamp {
     fn to_value(self) -> Value {
@@ -1169,138 +1145,6 @@ impl EGraph {
     /// If the given rules are malformed, this method can return an error.
     pub fn run_rules(&mut self, rules: &[RuleId]) -> Result<IterationReport> {
         self.run_rules_inner(rules)
-    }
-
-    /// Return the bridge-local typed variables for one registered rule. Names
-    /// are resolved here rather than by casting backend descriptor ids: hidden
-    /// timestamp/proof variables make those numeric id spaces differ.
-    pub fn grounded_rule_variables(&mut self, rule: RuleId) -> Result<Vec<GroundedRuleVariable>> {
-        let info = &mut self.rules[rule];
-        anyhow::ensure!(
-            info.query.supports_grounded_execution(),
-            "rule {} records trace capture and cannot be grounded",
-            info.desc
-        );
-        if info.grounded_rule.is_none() {
-            info.grounded_rule = Some(info.query.build_grounded_rule(&mut self.db)?);
-        }
-        let grounded = info.grounded_rule.as_ref().unwrap();
-        Ok(info
-            .query
-            .grounded_variables()
-            .filter(|(variable, _, _)| grounded.variables.get(*variable).is_some())
-            .map(|(variable, ty, name)| GroundedRuleVariable { variable, name, ty })
-            .collect())
-    }
-
-    /// Point-probe and atomically execute a source-ordered wave of exact rule
-    /// firings without constructing or consulting a query plan.
-    pub fn run_grounded_wave(&mut self, firings: &[GroundedRuleRun]) -> Result<IterationReport> {
-        for firing in firings {
-            let info = &mut self.rules[firing.rule];
-            anyhow::ensure!(
-                info.query.supports_grounded_execution(),
-                "rule {} records trace capture and cannot be grounded",
-                info.desc
-            );
-            if info.grounded_rule.is_none() {
-                info.grounded_rule = Some(info.query.build_grounded_rule(&mut self.db)?);
-            }
-        }
-
-        let mut core_firings = Vec::with_capacity(firings.len());
-        for firing in firings {
-            let info = &self.rules[firing.rule];
-            let grounded = info.grounded_rule.as_ref().unwrap();
-            let mut bindings = Vec::with_capacity(firing.bindings.len());
-            for binding in firing.bindings.iter().copied() {
-                let expected = info
-                    .query
-                    .grounded_variable_type(binding.variable)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "grounded match {} binds unknown variable {:?}",
-                            firing.match_id,
-                            binding.variable
-                        )
-                    })?;
-                anyhow::ensure!(
-                    expected == binding.ty,
-                    "grounded match {} binds variable {:?} as {:?}, expected {:?}",
-                    firing.match_id,
-                    binding.variable,
-                    binding.ty,
-                    expected
-                );
-                let variable = grounded.variables.get(binding.variable).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "grounded match {} has no compiled slot for variable {:?}",
-                        firing.match_id,
-                        binding.variable
-                    )
-                })?;
-                bindings.push((*variable, binding.value));
-            }
-            core_firings.push(core_relations::GroundedRuleMatch {
-                match_id: firing.match_id,
-                rule: Arc::clone(&grounded.rule),
-                bindings: bindings.into_boxed_slice(),
-            });
-        }
-
-        let uf_size_before = self.db.get_table(self.uf_table).len();
-        let panic_message = Arc::clone(&self.panic_message);
-        let outcome = self.db.run_grounded_rule_batch(&core_firings, move || {
-            panic_message.lock().unwrap().is_none()
-        });
-        if let Some(message) = self.panic_message.lock().unwrap().take() {
-            return Err(PanicError(message).into());
-        }
-        let outcome = outcome?;
-        let mut rule_reports = RuleSetReport::default().rule_reports;
-        for firing in firings {
-            let desc = Arc::clone(&self.rules[firing.rule].desc);
-            let reports = rule_reports.entry(desc).or_default();
-            if let Some(report) = reports.first_mut() {
-                report.num_matches += 1;
-            } else {
-                reports.push(RuleReport {
-                    num_matches: 1,
-                    ..RuleReport::default()
-                });
-            }
-        }
-        let mut report = IterationReport {
-            rule_set_report: RuleSetReport {
-                changed: outcome.changed,
-                rule_reports,
-                // Grounded replay deliberately has no query plan, scan, or
-                // join whose time could be classified as search/apply.
-                // Preserve the exact total in the split report's explicit
-                // residual bucket so benchmark timing summaries remain
-                // available without inventing a phase attribution.
-                pre_merge: PreMergeTiming::Split {
-                    search: Duration::ZERO,
-                    apply: Duration::ZERO,
-                    unattributed: outcome.pre_merge_time,
-                },
-                merge_time: outcome.merge_time,
-            },
-            rebuild_time: Duration::ZERO,
-        };
-        let uf_size_after = self.db.get_table(self.uf_table).len();
-        if uf_size_before == uf_size_after {
-            self.inc_ts();
-            return Ok(report);
-        }
-
-        let rebuild_timer = Instant::now();
-        self.rebuild()?;
-        report.rebuild_time = rebuild_timer.elapsed();
-        if let Some(message) = self.panic_message.lock().unwrap().take() {
-            return Err(PanicError(message).into());
-        }
-        Ok(report)
     }
 
     fn run_rules_inner(&mut self, rules: &[RuleId]) -> Result<IterationReport> {
