@@ -1,0 +1,30 @@
+[package]
+name = "egglog-integration-tests"
+version = "0.0.0"
+edition = { workspace = true }
+publish = false
+
+[[test]]
+name = "files"
+path = "tests/files.rs"
+harness = false
+
+[[bin]]
+name = "causal-egglog"
+path = "src/bin/causal_egglog.rs"
+
+[[bin]]
+name = "causal-egglog-experimental-capture"
+path = "src/bin/causal_egglog_experimental.rs"
+
+[[bin]]
+name = "causal-egglog-experimental-proof"
+path = "src/bin/causal_egglog_experimental_proof.rs"
+
+[dependencies]
+egglog = { workspace = true, features = ["bin"] }
+egglog-experimental = { path = "../egglog-experimental" }
+
+[dev-dependencies]
+glob = { workspace = true }
+libtest-mimic = { workspace = true }

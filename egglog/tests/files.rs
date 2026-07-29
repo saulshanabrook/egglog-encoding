@@ -1,31 +1,12 @@
 use std::path::{Path, PathBuf};
 
-use egglog::{ast::Command, file_supports_proofs, *};
+use egglog::{file_supports_proofs, *};
 use hashbrown::HashSet;
 use libtest_mimic::Trial;
 
-#[path = "../../test-support/causal_corpus.rs"]
-mod causal_corpus;
-
-struct ManualProofDisable {
-    file: &'static str,
-    reason: &'static str,
-}
-
-const MANUAL_PROOF_DISABLED_FILES: &[ManualProofDisable] = &[
-    ManualProofDisable {
-        file: "eggcc-2mm.egg",
-        reason: "the full benchmark exceeds the routine proof harness resource budget; the bounded eggcc-2mm-pass1 fixture covers this workload in proof benchmarks",
-    },
-    ManualProofDisable {
-        file: "subsume.egg",
-        reason: "proof-testing rewrites a check on a subsumed expression into a prove query that no longer matches",
-    },
-    ManualProofDisable {
-        file: "subsume-relation.egg",
-        reason: "proof-testing rewrites a check on a subsumed relation row into a prove query that no longer matches",
-    },
-];
+#[path = "support/manual_proof_support.rs"]
+mod manual_proof_support;
+use manual_proof_support::{MANUAL_PROOF_DISABLED_FILES, manual_proof_disable_reason};
 
 // These proof-testing runs are still executed, but their proof snapshots are
 // redundant with dedicated coverage or too large for checked-in fixtures.
@@ -372,13 +353,6 @@ impl Run {
     }
 }
 
-fn manual_proof_disable_reason(path: &Path) -> Option<&'static str> {
-    MANUAL_PROOF_DISABLED_FILES
-        .iter()
-        .find(|disabled| path.ends_with(disabled.file))
-        .map(|disabled| disabled.reason)
-}
-
 fn proof_testing_snapshot_disabled(path: &Path) -> bool {
     PROOF_TESTING_SNAPSHOT_DISABLED_FILES
         .iter()
@@ -443,87 +417,6 @@ fn generate_tests(glob: &str) -> Vec<Trial> {
     trials
 }
 
-fn resolved_replay_roots(
-    path: &Path,
-    working_directory: &Path,
-) -> Result<causal_corpus::ReplayRoots, String> {
-    let mut egraph = EGraph::default();
-    let mut roots = causal_corpus::ReplayRoots {
-        checks: Vec::new(),
-        extracts: 0,
-    };
-    collect_replay_roots(&mut egraph, path, working_directory, &mut roots)?;
-    Ok(roots)
-}
-
-fn collect_replay_roots(
-    egraph: &mut EGraph,
-    path: &Path,
-    working_directory: &Path,
-    roots: &mut causal_corpus::ReplayRoots,
-) -> Result<(), String> {
-    let program = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
-    let commands = egraph
-        .parse_program(path.to_str().map(String::from), &program)
-        .map_err(|error| error.to_string())?;
-    for command in commands {
-        match command {
-            Command::Include(_, file) => {
-                collect_replay_roots(
-                    egraph,
-                    &working_directory.join(file),
-                    working_directory,
-                    roots,
-                )?;
-            }
-            Command::Check(..) => roots.checks.push(command.to_string()),
-            Command::Extract(..) => roots.extracts += 1,
-            Command::UserDefined(_, name, _) if name == "multi-extract" => roots.extracts += 1,
-            _ => {}
-        }
-    }
-    Ok(())
-}
-
-fn generate_causal_tests(glob: &str) -> Vec<Trial> {
-    let package_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let binary = PathBuf::from(env!("CARGO_BIN_EXE_egglog"));
-    let paths = glob::glob(glob)
-        .unwrap()
-        .map(|entry| entry.unwrap())
-        .filter(|path| !path.to_string_lossy().contains("fail-typecheck"))
-        .collect::<Vec<_>>();
-    let names = paths
-        .iter()
-        .map(|path| {
-            format!(
-                "core/{}",
-                path.strip_prefix("tests").unwrap().to_string_lossy()
-            )
-        })
-        .collect::<Vec<_>>();
-    causal_corpus::validate_allowlist("core/", &names, causal_corpus::ALLOWLIST);
-    paths
-        .into_iter()
-        .map(|path| {
-            let relative = path.strip_prefix("tests").unwrap().to_string_lossy();
-            let name = format!("core/{relative}");
-            let proof_supported =
-                file_supports_proofs(&path) && manual_proof_disable_reason(&path).is_none();
-            causal_corpus::CausalCase {
-                allowlisted: causal_corpus::disposition_for(&name, causal_corpus::ALLOWLIST),
-                name,
-                path,
-                working_directory: package_root.clone(),
-                asset_directories: vec![(package_root.join("tests"), PathBuf::from("tests"))],
-                binary: binary.clone(),
-                proof_supported,
-            }
-            .into_trial(resolved_replay_roots)
-        })
-        .collect()
-}
-
 fn generate_manual_proof_disable_snapshot_test() -> Trial {
     Trial::test("proof_manual_disabled_files", || {
         let mut snapshot = MANUAL_PROOF_DISABLED_FILES
@@ -564,8 +457,6 @@ fn generate_proof_support_snapshot_test() -> Trial {
 fn main() {
     let args = libtest_mimic::Arguments::from_args();
     let mut tests = generate_tests("tests/**/*.egg");
-
-    tests.extend(generate_causal_tests("tests/**/*.egg"));
 
     // Add the proof support snapshot test
     tests.push(generate_proof_support_snapshot_test());

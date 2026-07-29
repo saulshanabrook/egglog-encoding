@@ -316,7 +316,8 @@ pub struct CausalCase {
     pub path: PathBuf,
     pub working_directory: PathBuf,
     pub asset_directories: Vec<(PathBuf, PathBuf)>,
-    pub binary: PathBuf,
+    pub capture_binary: PathBuf,
+    pub replay_binary: PathBuf,
     pub proof_supported: bool,
     pub allowlisted: Option<Disposition>,
 }
@@ -454,7 +455,7 @@ fn run_case(case: &CausalCase, resolve_roots: RootResolver) {
         copy_assets(assets, &sandbox.path().join(relative_destination));
     }
     let artifact = sandbox.path().join("slice-replay.egg");
-    let capture = Command::new(&case.binary)
+    let capture = Command::new(&case.capture_binary)
         .current_dir(&case.working_directory)
         .arg("--slice-output")
         .arg(&artifact)
@@ -462,7 +463,12 @@ fn run_case(case: &CausalCase, resolve_roots: RootResolver) {
         .arg(sandbox.path())
         .arg(&case.path)
         .output()
-        .unwrap_or_else(|error| panic!("failed to launch {}: {error}", case.binary.display()));
+        .unwrap_or_else(|error| {
+            panic!(
+                "failed to launch {}: {error}",
+                case.capture_binary.display()
+            )
+        });
 
     match case.allowlisted {
         None | Some(Disposition::ChecksOnly) | Some(Disposition::ExtractRootsUnsupported) => {
@@ -503,7 +509,7 @@ fn run_case(case: &CausalCase, resolve_roots: RootResolver) {
 }
 
 fn run_strict_replay(case: &CausalCase, sandbox: &Sandbox, artifact: &Path) -> Output {
-    Command::new(&case.binary)
+    Command::new(&case.replay_binary)
         .current_dir(&case.working_directory)
         .arg("--proof-testing")
         .args(["--fact-directory"])
