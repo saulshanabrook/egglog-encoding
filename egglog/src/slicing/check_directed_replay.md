@@ -21,7 +21,8 @@ design.
 
 The implementation follows the same boundaries as this explanation:
 
-1. Start with the retained-data table in the `core_relations::provenance`
+1. Start with the retained-data table in the public
+   `egglog_core_relations::provenance`
    module documentation. It ties each recorded field to an egglog event, its
    cold consumer, and the behavior that would be lost without it.
 2. Read `provenance/capture.rs` at the effective mutation publication points,
@@ -326,7 +327,10 @@ design chooses direct historical evidence and keeps that cost visible.
 
 The current command-line boundary is intentionally narrow: sequential input
 files, one execution thread, the main backend, and trace capture enabled on an
-ordinary graph before user declarations, rules, or input are installed.
+ordinary graph before rules, facts, or input are installed. Embedding callers
+may enable capture after installing empty declarations. Those declarations are
+owned by the graph factory and omitted from the artifact, so replay requires a
+fresh factory that installs the same declarations before running the slice.
 Successful `check` commands are the replay roots. `extract` and
 `multi-extract` output are not retained.
 
@@ -352,7 +356,8 @@ directly to `PATH`. By itself it does not replay the artifact. The write is an
 ordinary direct filesystem write: there is no production replay-validation
 pass and no atomic temporary-file-and-rename publication protocol.
 
-`--slice` requests execution of the generated program on a fresh graph. Replay
+`--slice` requests execution of the generated program on a fresh, equivalently
+configured graph supplied by the replay factory. Replay
 mode is independent, so proof and other execution-mode flags can be combined
 with slicing. If output and replay are both requested, writing still precedes
 replay and is not made transactional by it.

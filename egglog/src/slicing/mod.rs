@@ -4,9 +4,12 @@
 //!
 //! [`slice_all_checks`] is the public in-process facade. Its input is the
 //! ordinary recording graph after [`EGraph::enable_trace`] was called before
-//! user declarations, rules, or input were installed. It selects every
-//! recorded successful check and returns graph-neutral egglog source that owns
-//! no handles or runtime values from that graph.
+//! rules, facts, or input were installed. Empty declarations may already be
+//! present, but callers must replay with a fresh graph factory that installs
+//! the same declarations because the artifact does not duplicate them. The
+//! facade selects every recorded successful check and returns graph-neutral
+//! egglog source that owns no handles or runtime values from the recording
+//! graph.
 //!
 //! The facade only selects, lowers, and renders. It does not run the returned
 //! program, validate replay, write a file, or claim that the selected support
@@ -26,11 +29,13 @@ use crate::{EGraph, Error};
 /// Render graph-neutral replay source for every successful check in `egraph`.
 ///
 /// Trace capture must have been enabled with [`EGraph::enable_trace`] on the
-/// serial main backend before user declarations or input were installed.
+/// serial main backend before rules, facts, or input were installed. Empty
+/// declarations may precede capture only when the caller supplies the same
+/// declarations in the fresh replay graph; the rendered artifact omits them.
 /// Selection follows the
 /// recorded historical cutoffs, preserves complete visible effects of retained
 /// source commands and firings, and renders ordinary egglog source suitable for
-/// a fresh graph.
+/// a fresh, equivalently configured graph.
 ///
 /// The returned program is not run, replay-validated, or written anywhere.
 /// Callers choose whether to execute it and under which execution mode.

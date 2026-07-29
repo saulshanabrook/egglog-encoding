@@ -12,7 +12,11 @@ pub(crate) mod hash_index;
 pub(crate) mod offsets;
 pub(crate) mod parallel_heuristics;
 pub(crate) mod pool;
-pub(crate) mod provenance;
+/// Causal trace records, capture, borrowed views, and cold explanation.
+///
+/// The module-level reference ties each retained or derived field to the
+/// egglog semantic event it represents, its consumer, and its necessity.
+pub mod provenance;
 pub(crate) mod query;
 pub(crate) mod row_buffer;
 pub(crate) mod table;
