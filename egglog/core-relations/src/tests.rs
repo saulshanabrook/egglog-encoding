@@ -761,9 +761,8 @@ fn causal_capture_rebuild_rekeys_with_exact_landmark_and_noop_preserves_fact() {
                 (old_term, new_term)
             );
             let counters = view.counters();
-            assert_eq!(counters.rebuild_causes, 1);
+            assert_eq!(view.totals().rekeys, 1);
             assert_eq!(counters.rebuild_equalities, 1);
-            assert!(counters.rebuild_bytes > 0);
             Ok(())
         })
         .unwrap();
@@ -778,7 +777,7 @@ fn causal_capture_rebuild_rekeys_with_exact_landmark_and_noop_preserves_fact() {
     trace
         .with_view(|view| {
             assert_eq!(view.totals().facts, 1);
-            assert_eq!(view.counters().rebuild_causes, 1);
+            assert_eq!(view.totals().rekeys, 1);
             assert_eq!(view.counters().rebuild_equalities, 1);
             Ok(())
         })
@@ -1153,7 +1152,7 @@ fn causal_capture_rebuild_abort_is_atomic_across_target_tables() {
     db.finalize_trace_wave();
     trace
         .with_view(|view| {
-            assert_eq!(view.counters().rebuild_causes, 0);
+            assert_eq!(view.totals().rekeys, 0);
             assert_eq!(view.counters().rebuild_equalities, 0);
             Ok(())
         })
@@ -2096,11 +2095,6 @@ fn causal_trace_capture_exact_rhs_producer_term_not_global_alias() {
             assert_eq!(view.firing_terms(matched.id)?.as_ref(), &[exact_call]);
             assert_eq!(view.counters().logical_firing_term_handles, 1);
             assert_eq!(
-                view.counters().stored_firing_term_handles,
-                0,
-                "exact RHS syntax is reconstructed from the static mutation site"
-            );
-            assert_eq!(
                 trace.replay_term(exact_call),
                 Some(crate::ReplayTerm::Call {
                     sort: result_sort,
@@ -2963,7 +2957,6 @@ fn causal_presence_relation_remove_is_diagnostics_only() {
     trace
         .with_view(|view| {
             assert_eq!(view.totals().removals, 0);
-            assert_eq!(view.counters().effective_removals, 0);
             assert_eq!(view.counters().relation_removals, 1);
             Ok(())
         })
@@ -5239,11 +5232,6 @@ fn observed_match_ids_are_dense_before_effect_reachability() {
 
     trace
         .with_view(|view| {
-            assert_eq!(
-                view.counters().observed_firings,
-                4,
-                "every normal-return native input lane must have one dense observation"
-            );
             assert_eq!(
                 view.totals().firings,
                 4,

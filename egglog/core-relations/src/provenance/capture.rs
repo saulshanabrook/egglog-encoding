@@ -611,16 +611,6 @@ impl TraceArena {
         self.published_equalities += 1;
     }
 
-    fn record_firing_term_storage(&mut self, logical: usize, stored: usize) {
-        let logical = logical as u64;
-        let stored = stored as u64;
-        let handle_bytes = mem::size_of::<ReplayTermId>() as u64;
-        self.counters.logical_firing_term_handles += logical;
-        self.counters.stored_firing_term_handles += stored;
-        self.counters.logical_firing_term_bytes += logical * handle_bytes;
-        self.counters.stored_firing_term_bytes += stored * handle_bytes;
-    }
-
     fn has_fact(&self, id: FactId) -> bool {
         !id.is_missing()
             && self
@@ -788,7 +778,6 @@ pub(crate) struct CaptureBatch {
     merge_cell_origins: Vec<MergeCellOrigin>,
     equalities: Vec<(AppliedEqualityId, EqualityRecord)>,
     redundant_unions: u64,
-    unattributed_commits: u64,
     published: bool,
 }
 
@@ -802,7 +791,6 @@ impl CaptureBatch {
             merge_cell_origins: Vec::new(),
             equalities: Vec::new(),
             redundant_unions: 0,
-            unattributed_commits: 0,
             published: false,
         }
     }
@@ -974,7 +962,6 @@ impl CaptureBatch {
                 arena.install_equality(id, equality);
             }
             arena.counters.redundant_unions += self.redundant_unions;
-            arena.counters.unattributed_commits += self.unattributed_commits;
         }
         self.published = true;
         self.shared.open_fragments.fetch_sub(1, Ordering::Release);
@@ -991,7 +978,6 @@ impl Drop for CaptureBatch {
             || !self.merge_cell_origins.is_empty()
             || !self.equalities.is_empty()
             || self.redundant_unions != 0
-            || self.unattributed_commits != 0
         {
             self.shared
                 .abandoned_fragments
@@ -1710,7 +1696,6 @@ impl Trace {
             return;
         }
         let mut arena = self.0.arena.lock().unwrap();
-        arena.counters.effective_removals += tracked.len() as u64;
         arena.counters.relation_removals += relation_count;
         arena.removals.extend(tracked);
     }
@@ -1928,11 +1913,7 @@ impl Trace {
             },
             outcome,
         });
-        arena.counters.rebuild_causes += 1;
         arena.counters.rebuild_equalities += rekey.equalities.len() as u64;
-        arena.counters.rebuild_bytes += (mem::size_of::<RekeyRecord>()
-            + rekey.equalities.len() * mem::size_of::<TypedCellEquality>())
-            as u64;
     }
 
     /// Resolve the positional equality dependencies of one ordered container
@@ -2992,8 +2973,7 @@ impl Trace {
         }
         arena.published_firings += lanes as u64;
         arena.counters.premise_handles += premises.len() as u64;
-        arena.record_firing_term_storage(lanes * binding_arity, 0);
-        arena.counters.observed_firings += lanes as u64;
+        arena.counters.logical_firing_term_handles += (lanes * binding_arity) as u64;
     }
 
     pub fn install_source_row(
@@ -3882,13 +3862,6 @@ mod tests {
                     "lazy expansion must preserve the complete binding layout"
                 );
                 let counters = view.counters();
-                assert_eq!(counters.logical_firing_term_handles, 3);
-                assert_eq!(counters.stored_firing_term_handles, 0);
-                assert_eq!(
-                    counters.logical_firing_term_bytes,
-                    3 * mem::size_of::<ReplayTermId>() as u64
-                );
-                assert_eq!(counters.stored_firing_term_bytes, 0);
                 assert_eq!(counters.logical_firing_term_handles, 3);
                 Ok(())
             })

@@ -555,29 +555,14 @@ pub(crate) struct EqualityLandmark {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CaptureCounters {
-    /// Every normal-return native rule lane, including inert observations.
-    pub observed_firings: u64,
     pub premise_handles: u64,
     /// Logical firing-term handles exposed by [`TraceView::firing_terms`].
     pub logical_firing_term_handles: u64,
-    /// Firing-term handles physically retained by the trace arena.
-    pub stored_firing_term_handles: u64,
-    /// Logical bytes exposed by [`TraceView::firing_terms`].
-    pub logical_firing_term_bytes: u64,
-    /// Firing-term bytes physically retained by the trace arena.
-    pub stored_firing_term_bytes: u64,
-    pub unattributed_commits: u64,
     pub redundant_unions: u64,
-    /// Effective constructor/value-function removals retained for slicing.
-    pub effective_removals: u64,
     /// Effective presence-relation removals observed but not retained.
     pub relation_removals: u64,
-    /// Semantic rows for which an exact rebuild cause was captured.
-    pub rebuild_causes: u64,
     /// Changed typed cells stored across those rebuild causes.
     pub rebuild_equalities: u64,
-    /// Logical bytes of rebuild cause and changed-cell payload captured.
-    pub rebuild_bytes: u64,
     /// `Current` binding slots with a complete replay-safe structural recipe.
     pub supported_current_recipe_roots: u64,
     /// `Current` binding slots whose structural producer remains unsupported.

@@ -7177,7 +7177,6 @@ mod tests {
                 assert_eq!(root.wave.get(), 1);
                 assert!(!root.premises.is_empty());
                 assert!(root.equalities.is_empty());
-                assert_eq!(view.counters().unattributed_commits, 0);
                 Ok(())
             })
             .unwrap();
@@ -7435,12 +7434,6 @@ mod tests {
                             )
                     }));
                 }
-                Ok(())
-            })
-            .unwrap();
-        egraph
-            .with_trace_view(|view| {
-                assert_eq!(view.counters().unattributed_commits, 0);
                 Ok(())
             })
             .unwrap();

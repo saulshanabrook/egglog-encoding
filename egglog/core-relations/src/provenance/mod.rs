@@ -6,7 +6,6 @@
 
 use std::{
     any::TypeId,
-    mem,
     sync::{
         Arc, Mutex, OnceLock, RwLock,
         atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
