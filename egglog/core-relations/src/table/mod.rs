@@ -1296,7 +1296,10 @@ impl SortedWritesTable {
                                     });
                             }
                             if let Some(cause) = &incoming_cause {
-                                cause.record_merge_read(prior_fact);
+                                cause.record_merge_read(
+                                    exec_state.trace().expect("capture merge has no arena"),
+                                    prior_fact,
+                                );
                             }
                             let previous_cause = incoming_cause.clone().map(|cause| {
                                 exec_state.begin_deferred_merge_cause(
@@ -1518,7 +1521,10 @@ impl SortedWritesTable {
                                     });
                             }
                             if let Some(cause) = &incoming_cause {
-                                cause.record_merge_read(prior_fact);
+                                cause.record_merge_read(
+                                    exec_state.trace().expect("capture merge has no arena"),
+                                    prior_fact,
+                                );
                             }
                             let previous_cause = incoming_cause.clone().map(|cause| {
                                 exec_state.begin_deferred_merge_cause(

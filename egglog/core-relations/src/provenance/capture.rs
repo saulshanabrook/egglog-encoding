@@ -289,13 +289,17 @@ impl DeferredEqualityCause {
     }
 
     /// Attach a table merge callback's immutable predecessor to the incoming
-    /// rule lane without promoting it. Nested merge causes preserve the
-    /// original incoming firing as their attribution owner.
-    pub(crate) fn record_merge_read(&self, prior_fact: FactId) {
+    /// replay owner without promoting it. Nested merge causes preserve the
+    /// original incoming firing or source command as their attribution owner.
+    pub(crate) fn record_merge_read(&self, trace: &Trace, prior_fact: FactId) {
         match &self.0 {
-            DeferredEqualityCauseKind::Ready { .. } => {}
+            DeferredEqualityCauseKind::Ready { cause, .. } => {
+                trace.record_ready_merge_read(*cause, prior_fact)
+            }
             DeferredEqualityCauseKind::Pending(cause) => cause.record_merge_read(prior_fact),
-            DeferredEqualityCauseKind::Merge(cause) => cause.incoming.record_merge_read(prior_fact),
+            DeferredEqualityCauseKind::Merge(cause) => {
+                cause.incoming.record_merge_read(trace, prior_fact)
+            }
         }
     }
 
@@ -511,6 +515,8 @@ struct TraceArena {
     durable_premises: Vec<FactId>,
     /// Sparse because ordinary firings never invoke a merge callback.
     merge_reads: HashMap<FiringId, SmallVec<[FactId; 2]>>,
+    /// Sparse because most source action bundles never invoke a merge callback.
+    source_merge_reads: HashMap<SourceRef, SmallVec<[FactId; 2]>>,
     durable_fact_values: Vec<Value>,
     durable_merge_cell_origins: Vec<MergeCellOrigin>,
     /// Flat typed-cell equality slab shared by rebuild and container causes.
@@ -3272,6 +3278,30 @@ impl Trace {
             .unwrap()
             .merge_reads
             .entry(firing)
+            .or_default()
+            .push(prior_fact);
+    }
+
+    fn record_ready_merge_read(&self, cause: PackedCauseRef, prior_fact: FactId) {
+        if let Some(firing) = cause.firing() {
+            self.record_firing_merge_read(firing, prior_fact);
+            return;
+        }
+        assert!(
+            !prior_fact.is_missing(),
+            "capture-enabled table merge read a row without an immutable FactId"
+        );
+        let Some(node) = cause.cause_node() else {
+            return;
+        };
+        let mut arena = self.0.arena.lock().unwrap();
+        let source = match arena.durable_cause(node) {
+            Some(DurableCause::Source(source)) => source.clone(),
+            _ => return,
+        };
+        arena
+            .source_merge_reads
+            .entry(source)
             .or_default()
             .push(prior_fact);
     }

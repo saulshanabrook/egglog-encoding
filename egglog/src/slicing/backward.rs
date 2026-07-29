@@ -748,6 +748,7 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                     };
                     match view.cause(id)? {
                         RawCause::Source(source) => {
+                            let merge_reads = view.source_merge_reads(source).to_vec();
                             let source = source.clone();
                             selection.slice.source_roots.insert(source.clone());
                             mark_owner_visible(
@@ -757,6 +758,7 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                                 &mut work,
                                 &ReplayOwner::Source(source),
                             )?;
+                            work.extend(merge_reads.into_iter().map(Work::Fact));
                         }
                         RawCause::Rebuild {
                             prior_fact,

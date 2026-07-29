@@ -723,6 +723,18 @@ impl<'a> TraceView<'a> {
         })
     }
 
+    /// Borrow prior rows consulted by merge callbacks in one source action bundle.
+    ///
+    /// Replaying any selected effect from the bundle re-executes all of its
+    /// visible sibling effects, so their merge predecessors are dependencies
+    /// of the source carrier as a whole.
+    pub fn source_merge_reads(&self, source: &SourceRef) -> &[FactId] {
+        self.arena
+            .source_merge_reads
+            .get(source)
+            .map_or(&[], SmallVec::as_slice)
+    }
+
     /// Borrow one shared non-rule cause node without recursively expanding it.
     ///
     /// Source, rebuild, container, and merge causes expose only their immediate

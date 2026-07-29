@@ -718,6 +718,53 @@ fn merge_old_noop_is_retained_only_with_an_effective_sibling() {
 }
 
 #[test]
+fn source_merge_old_noop_retains_its_predecessor_with_an_effective_sibling() {
+    let mut egraph = EGraph::default();
+    serial_trace_pool()
+        .install(|| egraph.enable_trace())
+        .unwrap();
+    egraph
+        .parse_and_run_program(
+            None,
+            "(datatype E (A) (B))
+                 (function f () E :merge old)
+                 (relation Out ())
+                 (set (f) (A))
+                 (begin (Out) (set (f) (B)))
+                 (check (Out))",
+        )
+        .unwrap();
+
+    let slice = select_all_checks(&egraph).unwrap();
+    assert_eq!(
+        slice.source_roots.len(),
+        2,
+        "the selected source bundle must retain the prior row read by its merge"
+    );
+    let commands = crate::slicing::replay::build_replay_program(&egraph, &slice)
+        .unwrap()
+        .to_commands()
+        .unwrap();
+    drop(egraph);
+
+    for (mode, mut replay) in [
+        ("native", EGraph::default()),
+        ("term", EGraph::default().with_term_encoding_enabled()),
+        (
+            "proof",
+            EGraph::default().with_proofs_enabled().with_proof_testing(),
+        ),
+    ] {
+        serial_trace_pool()
+            .install(|| replay.run_program(commands.clone()))
+            .unwrap_or_else(|error| panic!("{mode} replay failed: {error}"));
+        replay
+            .parse_and_run_program(None, "(check (= value (f)) (= value (A)))")
+            .unwrap_or_else(|error| panic!("{mode} replay changed the merge result: {error}"));
+    }
+}
+
+#[test]
 fn same_term_child_occurrences_keep_their_native_bridge() {
     let mut egraph = EGraph::default();
     serial_trace_pool()
