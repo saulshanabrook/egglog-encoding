@@ -1,20 +1,46 @@
-//! Check-directed execution slicing.
+#![doc = include_str!("check_directed_replay.md")]
 //!
-//! Capture records causal evidence during an ordinary run. [`slice_all_checks`]
-//! selects the support of every successful check and renders an ordinary
-//! egglog program that replays that support on a fresh graph.
+//! ## Rust API reference
+//!
+//! [`slice_all_checks`] is the public in-process facade. Its input is the
+//! ordinary recording graph after [`EGraph::enable_trace`] was called before
+//! user declarations, rules, or input were installed. It selects every
+//! recorded successful check and returns graph-neutral egglog source that owns
+//! no handles or runtime values from that graph.
+//!
+//! The facade only selects, lowers, and renders. It does not run the returned
+//! program, validate replay, write a file, or claim that the selected support
+//! is globally minimal or is itself a proof. It requires a healthy capture on
+//! the concrete main backend and fails closed when selected history cannot be
+//! represented as ordinary source.
+//!
+//! Its error surface is the crate's existing [`enum@crate::Error`]. Internal trace,
+//! selection, catalog, input, lowering, and rendering failures are reported as
+//! [`crate::Error::BackendError`]; slicing introduces no public error type.
 
 mod backward;
 mod replay;
 
 use crate::{EGraph, Error};
 
-/// Render the causal support of every successful check in `egraph`.
+/// Render graph-neutral replay source for every successful check in `egraph`.
 ///
 /// Trace capture must have been enabled with [`EGraph::enable_trace`] on the
-/// serial main backend before user declarations or input were installed. The
-/// returned source is not run or validated; callers choose whether and under
-/// which execution mode to run it.
+/// serial main backend before user declarations or input were installed.
+/// Selection follows the
+/// recorded historical cutoffs, preserves complete visible effects of retained
+/// source commands and firings, and renders ordinary egglog source suitable for
+/// a fresh graph.
+///
+/// The returned program is not run, replay-validated, or written anywhere.
+/// Callers choose whether to execute it and under which execution mode.
+///
+/// # Errors
+///
+/// Returns the existing [`enum@crate::Error`] type. Missing or poisoned capture,
+/// unsupported backends or selected constructs, changed selected input, and
+/// invalid trace or lowering state are surfaced as
+/// [`crate::Error::BackendError`].
 pub fn slice_all_checks(egraph: &EGraph) -> Result<String, Error> {
     let invalid = |error: &dyn std::fmt::Display| Error::BackendError(error.to_string());
     let slice = backward::slice_all_checks(egraph).map_err(|error| invalid(&error))?;

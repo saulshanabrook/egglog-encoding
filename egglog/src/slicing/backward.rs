@@ -1,7 +1,28 @@
-//! Backward dynamic slicing from recorded criteria.
+//! Backward dynamic selection over the captured execution history.
 //!
-//! A slice selects one sound historical support cone. It does not claim global
-//! minimality and does not construct a proof.
+//! # Selection laws
+//!
+//! Selection starts from every recorded successful check and follows the exact
+//! historical fact, equality, rekey, cause, and firing dependencies that made
+//! those criteria true. All explanations are evaluated at their recorded edge
+//! horizon and history position; a later equality cannot justify an earlier
+//! read.
+//!
+//! The result deliberately separates *support* from *replay effects*. Support
+//! is the causal cone needed to justify criteria and grounded rule bindings.
+//! Once a source command or rule firing enters that cone, replay must expose
+//! the owner's complete visible action bundle, including facts, equalities, and
+//! removals that were not themselves evidence for the criterion. Equality
+//! effects additionally close over the history needed to reproduce the
+//! denotation of both endpoints.
+//!
+//! Finally, selection retains otherwise-unneeded removals when omitting one
+//! would leave a stale keyed row able to collide with a later selected row.
+//! Owner closure, equality-denotation closure, maintenance equalities, and
+//! interference removals are iterated until no new support is discovered.
+//!
+//! The result is one sound historical support cone. It is neither a claim of
+//! global minimality nor a reconstructed proof.
 
 use std::collections::VecDeque;
 
@@ -18,34 +39,65 @@ use crate::util::{HashMap, HashSet};
 use crate::EGraph;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// The closed selection consumed by replay lowering.
+///
+/// `facts`, `firings`, `equalities`, `rekeys`, `causes`, and `sources` record
+/// causal support. The replay-effect fields record what the fresh graph must
+/// observe after whole-owner and interference closure; they can therefore be
+/// strict supersets of the facts and equalities that directly justify a check.
 pub(crate) struct Slice {
+    /// Successful check criteria reproduced by the slice.
     pub(crate) checks: HashSet<u32>,
+    /// Facts used as causal support.
     pub(crate) facts: HashSet<FactId>,
+    /// Grounded rule firings used as causal support or retained for an effect.
     pub(crate) firings: HashSet<FiringId>,
+    /// Applied equalities used as causal support.
     pub(crate) equalities: HashSet<AppliedEqualityId>,
+    /// Facts made visible by selected sources and firings.
     pub(crate) replay_facts: HashSet<FactId>,
+    /// Removal effects needed by an owner or to prevent stale-row interference.
     pub(crate) replay_removals: HashSet<usize>,
+    /// Historical rekeys required by retained support explanations.
     pub(crate) rekeys: HashSet<HistoryPosition>,
+    /// Recorded cause nodes traversed by backward closure.
     pub(crate) causes: HashSet<CauseRef>,
+    /// Source commands and input rows needed by the selection.
     pub(crate) sources: HashSet<SourceRef>,
+    /// Structural terms paired with checked-alias schedules for each selected firing.
     pub(crate) firing_bindings: HashMap<FiringId, Box<[FiringBindingPlan]>>,
+    /// Owned projections of equality effects, indexed by recorded event id.
     pub(crate) equality_records: HashMap<AppliedEqualityId, ProjectedAppliedEquality>,
+    /// Equality effects whose endpoint denotations have already been closed.
     denotation_equalities: HashSet<AppliedEqualityId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// One grounded binding term and its child-first checked-alias schedule.
 pub(crate) struct FiringBindingPlan {
+    /// Graph-neutral structural term bound by the firing.
     pub(crate) term: ReplayTermId,
+    /// Capture bounds aligned with the term's child-first call occurrences.
     pub(crate) aliases: Box<[ReplayAliasPlan]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// A source-level unit whose complete visible effects execute together.
+///
+/// Rule causes belong to their grounded firing and source causes belong to the
+/// originating command or input row. Merge causes inherit the incoming owner;
+/// rebuild and container-maintenance causes do not manufacture an independent
+/// source-level owner.
 enum ReplayOwner {
     Firing(FiringId),
     Source(SourceRef),
 }
 
 #[derive(Clone, Debug, Default)]
+/// Every trace effect attributed to one replay owner.
+///
+/// Selecting the owner copies this whole bundle into the replay-effect sets;
+/// equality effects also enqueue endpoint-denotation closure.
 struct OwnerEffects {
     facts: Vec<FactId>,
     equalities: Vec<AppliedEqualityId>,
@@ -61,6 +113,11 @@ enum KeyCell {
 }
 
 #[derive(Default)]
+/// Equality closure visible in the selected replay, used only for key tests.
+///
+/// Interference analysis must not borrow equalities from the unselected
+/// execution, so this disjoint-set contains exactly the projected equality
+/// effects in `Slice::equality_records`.
 struct SelectedEqualityDsu {
     parent: HashMap<EqualityEndpoint, EqualityEndpoint>,
 }
@@ -98,6 +155,10 @@ impl SelectedEqualityDsu {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+/// Failures detected while selecting an internal [`Slice`].
+///
+/// The public facade does not expose this implementation type; it maps these
+/// failures into the crate's existing `crate::Error` result type.
 pub(crate) enum SliceError {
     #[error(transparent)]
     Trace(#[from] TraceViewError),
@@ -108,6 +169,11 @@ pub(crate) enum SliceError {
 }
 
 #[derive(Clone, Copy)]
+/// One obligation in the mixed-domain backward-closure worklist.
+///
+/// Keeping equality support and equality denotation as distinct work items
+/// lets effect selection separately trigger the history needed to name the
+/// equality's endpoints.
 enum Work {
     Fact(FactId),
     Firing(FiringId),
@@ -117,6 +183,7 @@ enum Work {
     Rekey(HistoryPosition),
 }
 
+/// Add one sufficient historical explanation to the closure worklist.
 fn enqueue_support(work: &mut VecDeque<Work>, support: RawEqualitySupport) {
     for id in &support.applied {
         work.push_back(Work::Equality(*id));
@@ -136,6 +203,11 @@ fn check_occurrence_cell(occurrence: CriterionEndpointOccurrence) -> Option<Fact
     }
 }
 
+/// Explain a grounded rule equality at the firing's recorded cutoff.
+///
+/// Premise occurrences retain their fact-cell provenance; constants are
+/// resolved as typed equality endpoints. Rekeys encountered while recovering
+/// either spelling become support obligations as well.
 fn explain_rule_equality(
     view: &mut TraceView<'_>,
     left: FiringEqualitySource,
@@ -177,6 +249,11 @@ fn explain_rule_equality(
     }
 }
 
+/// Resolve a trace cause to the source-level owner whose action emitted it.
+///
+/// The recursion follows merge provenance and rejects cause cycles. Native
+/// maintenance remains ownerless because its replay visibility is derived from
+/// the selected source-level effects that trigger it.
 fn replay_owner_for_cause(
     view: &TraceView<'_>,
     cause: CauseRef,
@@ -208,6 +285,7 @@ fn replay_owner_for_cause(
     Ok(owner)
 }
 
+/// Index the complete fact, equality, and removal bundle of every replay owner.
 fn build_owner_index(view: &TraceView<'_>) -> Result<OwnerIndex, TraceViewError> {
     let totals = view.totals();
     let mut index = OwnerIndex::default();
@@ -242,6 +320,7 @@ fn build_owner_index(view: &TraceView<'_>) -> Result<OwnerIndex, TraceViewError>
     Ok(index)
 }
 
+/// Select an equality effect and enqueue closure of its endpoint denotations.
 fn mark_replay_equality(
     view: &mut TraceView<'_>,
     slice: &mut Slice,
@@ -256,6 +335,11 @@ fn mark_replay_equality(
     Ok(())
 }
 
+/// Copy all effects of a selected owner into the replay-effect sets.
+///
+/// This is the boundary between causal support and action semantics: selecting
+/// one consequence of a source command or firing means replaying its other
+/// visible consequences too.
 fn mark_owner_visible(
     view: &mut TraceView<'_>,
     index: &OwnerIndex,
@@ -276,6 +360,7 @@ fn mark_owner_visible(
     Ok(())
 }
 
+/// Build the equality relation that the generated replay will actually see.
 fn selected_equality_dsu(slice: &Slice) -> SelectedEqualityDsu {
     let mut dsu = SelectedEqualityDsu::default();
     for event in slice.equality_records.values() {
@@ -284,6 +369,7 @@ fn selected_equality_dsu(slice: &Slice) -> SelectedEqualityDsu {
     dsu
 }
 
+/// Test whether every equality landmark is derivable from selected effects.
 fn equality_landmark_is_replay_visible(
     view: &mut TraceView<'_>,
     slice: &Slice,
@@ -315,6 +401,11 @@ fn equality_landmark_is_replay_visible(
     Ok(true)
 }
 
+/// Test whether a native maintenance cause follows from already-selected state.
+///
+/// Maintenance landmarks are historical cutoffs. Every equality they consult
+/// must precede the event being considered and already belong to the replay
+/// equality relation.
 fn maintenance_cause_is_replay_visible(
     view: &mut TraceView<'_>,
     slice: &Slice,
@@ -392,6 +483,13 @@ fn maintenance_cause_is_replay_visible(
     Ok(visible)
 }
 
+/// Retain implicit merge/congruence equalities implied by replay-visible state.
+///
+/// This extra pass is needed only for non-monotone traces. Applied equality ids
+/// follow execution chronology, and every maintenance event cites only earlier
+/// landmarks. Owner-selected equalities are already present, so a single
+/// forward scan is sufficient and avoids a quadratic fixpoint over a dense
+/// equality log.
 fn select_replay_maintenance_equalities(
     view: &mut TraceView<'_>,
     slice: &mut Slice,
@@ -430,6 +528,10 @@ fn select_replay_maintenance_equalities(
     Ok(selected_any)
 }
 
+/// Project a fact's keyed columns as they were addressable at `position`.
+///
+/// Equality-sort columns become typed endpoints compared through the selected
+/// equality relation; base-sort columns retain their exact values.
 fn replay_key_at(
     view: &mut TraceView<'_>,
     fact: FactId,
@@ -486,6 +588,13 @@ fn keys_equivalent(dsu: &mut SelectedEqualityDsu, left: &[KeyCell], right: &[Key
             .all(|(left, right)| dsu.equivalent(left, right))
 }
 
+/// Retain deletions whose omission could change a later selected insertion.
+///
+/// For each unselected removal of a replay-visible keyed fact, this compares
+/// the victim's pre-removal key with later replay facts in the same table using
+/// only selected equalities. A collision keeps both the removal and its owning
+/// firing, preventing a stale row from absorbing or merging with the later row.
+/// Presence relations are monotone for this purpose and need no such deletion.
 fn select_interfering_removals(
     view: &mut TraceView<'_>,
     slice: &mut Slice,
@@ -530,6 +639,11 @@ fn select_interfering_removals(
     Ok(selected_any)
 }
 
+/// Seed one successful check with its premises and exact equality support.
+///
+/// Endpoint-occurrence metadata is preserved so selection includes both the
+/// equality evidence and the historical support that made each recorded
+/// endpoint spelling available at the check.
 fn seed_check_root(
     view: &mut TraceView<'_>,
     slice: &mut Slice,
@@ -613,6 +727,12 @@ fn seed_check_root(
     Ok(())
 }
 
+/// Close successful criteria over causal support and replay-visible effects.
+///
+/// The inner worklist follows facts, firings, causes, equalities, endpoint
+/// denotations, and rekeys. After it drains, native maintenance equalities and
+/// interference removals may introduce new obligations; the outer loop repeats
+/// until both passes are stable, then validates every saved exact explanation.
 fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice, TraceViewError> {
     let owner_index = build_owner_index(view)?;
     let mut slice = Slice::default();
@@ -852,6 +972,7 @@ fn slice_view(view: &mut TraceView<'_>, check: u32) -> Result<Slice, TraceViewEr
     slice_roots(view, vec![view.check_root(check)?.clone()])
 }
 
+/// Select the union of the support cones for all recorded successful checks.
 fn slice_all_view(view: &mut TraceView<'_>) -> Result<Slice, TraceViewError> {
     let roots = view.check_roots().into_iter().cloned().collect();
     slice_roots(view, roots)
@@ -875,6 +996,11 @@ pub(crate) fn slice_check(egraph: &EGraph, check: u32) -> Result<Slice, SliceErr
         .map_err(SliceError::Trace)
 }
 
+/// Select all successful checks from a healthy concrete-backend capture.
+///
+/// This frontend boundary rejects missing or poisoned capture catalogs and
+/// non-native backends before borrowing a trace view. The public facade maps
+/// the resulting [`SliceError`] into `crate::Error`.
 pub(crate) fn slice_all_checks(egraph: &EGraph) -> Result<Slice, SliceError> {
     egraph
         .capture_catalog
