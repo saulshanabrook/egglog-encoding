@@ -85,6 +85,9 @@ fallback to the original program.
 Slicing currently supports one input file, one execution thread, and the main
 backend. A selected execution that reaches an unsupported scheduler, source,
 container, or mutation shape fails closed with a diagnostic.
+Source-authored `run-rule` schedules are currently unsupported; generated
+replay uses `run-rule` only for ordinary firings whose exact premises were
+captured at commit.
 Successful `check` commands are the only replay roots; `extract` and
 `multi-extract` output is not retained. The trace records effective source
 events, rule firings and their grounded premises, applied equality history and
@@ -93,13 +96,6 @@ construct the replay program, not itself a proof.
 
 Retained source `rewrite` and `birewrite` commands preserve their source form
 and receive deterministic names so grounded replay can select them exactly.
-
-One can also use `egglog` as a Rust library by adding the following to your `Cargo.toml`:
-
-```
-[dependencies]
-egglog = "2.0.0"
-```
 
 See also the [Python binding](https://github.com/egraphs-good/egglog-python) for using `egglog` in Python.
 

@@ -314,6 +314,14 @@ scheduler, source, literal, container, or mutation shapes similarly produce an
 error at the relevant capture or selection boundary. An unsupported path is
 never replaced by a prefix or by the original program.
 
+Source-authored `run-rule` schedules are one deliberate current boundary.
+Replay uses grounded `run-rule` for already-recorded ordinary firings, but
+capturing a source-authored grounded firing would also need its exact premise
+`FactId`s to publish atomically with the grounded mutation transaction. The
+existing grounded executor does not expose that commit-time carrier, so trace
+capture rejects the schedule instead of synthesizing premise identities or
+recording its effects as source facts.
+
 `--slice-output PATH` captures and slices, then writes the rendered source
 directly to `PATH`. By itself it does not replay the artifact. The write is an
 ordinary direct filesystem write: there is no production replay-validation
