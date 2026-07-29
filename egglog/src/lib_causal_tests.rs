@@ -41,6 +41,19 @@ fn trace_accepts_empty_declarations_installed_by_a_matching_replay_factory() {
     });
 }
 
+#[test]
+fn trace_extract_temporary_rule_is_replay_free() {
+    let mut egraph = EGraph::default();
+    enable_serial_trace(&mut egraph).unwrap();
+    let before = egraph.replay_term_counters().unwrap();
+
+    egraph
+        .parse_and_run_program(None, "(extract (+ 1 2))")
+        .unwrap();
+
+    assert_eq!(egraph.replay_term_counters().unwrap(), before);
+}
+
 fn find_container_canonicalization(
     view: &core_relations::TraceView<'_>,
     root: core_relations::CauseId,

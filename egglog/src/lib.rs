@@ -3368,7 +3368,7 @@ impl EGraph {
             &mut *self.backend,
             &self.functions,
             &self.type_info,
-            self.capture_catalog.as_ref(),
+            None,
             &mut self.unstable_fn_panic_ids,
             true, // global action: Read/Full contexts (may read the DB)
         );
