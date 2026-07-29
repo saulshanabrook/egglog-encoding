@@ -3346,27 +3346,32 @@ impl Trace {
             .collect()
     }
 
-    pub(crate) fn finalize_wave(&self) {
-        assert_eq!(
-            self.0.poisoned_rule_executions.load(Ordering::Acquire),
-            0,
-            "cannot finalize causal trace after a panicking rule execution"
-        );
-        assert_eq!(
-            self.0.open_fragments.load(Ordering::Acquire),
-            0,
-            "cannot finalize causal wave with open capture batches"
-        );
-        assert_eq!(
-            self.0.abandoned_fragments.load(Ordering::Acquire),
-            0,
-            "causal capture batch was dropped without publication"
-        );
-        assert_eq!(
-            self.0.open_native_leases.load(Ordering::Acquire),
-            0,
-            "cannot finalize causal wave with queued transactional native mutations"
-        );
+    /// Validate that the current synchronous wave is quiescent and completely
+    /// published.
+    ///
+    /// This check is read-only and repeatable at quiescence: observed firings
+    /// are already durable, so it neither promotes nor reclaims records.
+    /// Caller-controlled lifecycle violations are returned without changing
+    /// trace state.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a supposedly quiescent arena has a dense publication hole or
+    /// its mutex is poisoned. Those states indicate internal capture
+    /// corruption rather than a supported caller-controlled lifecycle state.
+    pub(crate) fn finalize_wave(&self) -> Result<(), TraceLifecycleError> {
+        if self.0.poisoned_rule_executions.load(Ordering::Acquire) != 0 {
+            return Err(TraceLifecycleError::PoisonedExecution);
+        }
+        if self.0.open_fragments.load(Ordering::Acquire) != 0 {
+            return Err(TraceLifecycleError::OpenCaptureBatches);
+        }
+        if self.0.abandoned_fragments.load(Ordering::Acquire) != 0 {
+            return Err(TraceLifecycleError::AbandonedCaptureBatch);
+        }
+        if self.0.open_native_leases.load(Ordering::Acquire) != 0 {
+            return Err(TraceLifecycleError::ActiveNativeLeases);
+        }
         let arena = self.0.arena.lock().unwrap();
         assert_eq!(
             arena.published_facts,
@@ -3388,6 +3393,7 @@ impl Trace {
             self.0.next_equality.load(Ordering::Acquire),
             "direct equality publication left an ID hole"
         );
+        Ok(())
     }
 
     /// Borrow a checked view of quiescent, publication-complete captured

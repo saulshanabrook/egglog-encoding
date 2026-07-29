@@ -587,6 +587,36 @@ pub struct TraceTotals {
     pub removals: u64,
 }
 
+/// Caller-visible failure to cross an execution-trace lifecycle boundary.
+///
+/// These variants describe recoverable lifecycle and capability states rather
+/// than internal publication corruption. Dense publication mismatches remain
+/// panics at the finalization boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum TraceLifecycleError {
+    /// Trace-only control was requested before capture activation.
+    #[error("trace capture is not enabled")]
+    CaptureDisabled,
+    /// The selected backend does not implement trace capture.
+    #[error("this backend does not support trace capture")]
+    UnsupportedBackend,
+    /// A requested wave would move the global stamp backwards.
+    #[error("trace waves must be globally monotone")]
+    WaveRegression,
+    /// Capture-enabled native execution failed before its publication barrier.
+    #[error("cannot finalize trace after native execution failed before publication")]
+    PoisonedExecution,
+    /// At least one commit-local capture batch has not yet been published or dropped.
+    #[error("cannot finalize trace while capture batches remain open")]
+    OpenCaptureBatches,
+    /// A commit-local capture batch containing records was dropped unpublished.
+    #[error("cannot finalize trace after a capture batch was abandoned")]
+    AbandonedCaptureBatch,
+    /// Transactional native work has not yet drained through its table queue.
+    #[error("cannot finalize trace while transactional native mutations remain queued")]
+    ActiveNativeLeases,
+}
+
 /// Replay-relevant interpretation of one physical native table.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReplayTableSchema {

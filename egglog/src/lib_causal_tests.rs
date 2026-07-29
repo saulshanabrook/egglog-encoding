@@ -69,6 +69,47 @@ fn failed_trace_activation_leaves_ordinary_execution_usable() {
 }
 
 #[test]
+fn failed_backend_wave_transition_does_not_consume_a_frontend_wave() {
+    serial_trace_pool().install(|| {
+        let mut egraph = EGraph::default();
+        egraph.enable_trace().unwrap();
+        egraph.backend.set_trace_wave(2).unwrap();
+        let pending = egraph.capture_catalog.as_ref().unwrap().next_wave;
+
+        let error = egraph.begin_trace_wave().unwrap_err();
+        assert!(matches!(
+            error,
+            Error::TraceLifecycle(TraceLifecycleError::WaveRegression)
+        ));
+        assert_eq!(
+            egraph.capture_catalog.as_ref().unwrap().next_wave,
+            pending,
+            "a rejected backend transition must not consume a catalog wave"
+        );
+    });
+}
+
+#[test]
+fn capture_enabled_frontend_clone_remains_unsupported_after_finalization() {
+    serial_trace_pool().install(|| {
+        let mut egraph = EGraph::default();
+        drop(egraph.clone());
+
+        egraph.enable_trace().unwrap();
+        egraph.enable_trace().unwrap();
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| egraph.clone())).is_err());
+
+        egraph
+            .parse_and_run_program(None, "(relation R (i64)) (R 1)")
+            .unwrap();
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| egraph.clone())).is_err(),
+            "a completed trace wave must not restore graph cloning"
+        );
+    });
+}
+
+#[test]
 fn reached_unsupported_base_merge_fails_before_native_mutation() {
     serial_trace_pool().install(|| {
         let mut egraph = EGraph::default();

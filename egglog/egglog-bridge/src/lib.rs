@@ -27,7 +27,7 @@ use crate::numeric_id::{DenseIdMap, DenseIdMapWithReuse, NumericId, define_id};
 use egglog_core_relations as core_relations;
 pub use egglog_core_relations::{
     ReplayCallSpec, ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTableKind, ReplayTermId, Trace,
-    TraceView, TraceViewError, Wave,
+    TraceLifecycleError, TraceView, TraceViewError, Wave,
 };
 use egglog_numeric_id as numeric_id;
 use egglog_reports::{IterationReport, PreMergeTiming, ReportLevel, RuleSetReport};
@@ -902,6 +902,18 @@ impl EGraph {
     }
 
     /// Enable compact trace capture before any rows are inserted.
+    ///
+    /// Activation is irreversible for this graph, repeated activation is a
+    /// no-op, and the active Rayon pool must contain exactly one thread. Clone
+    /// the graph before calling this method: cloning a capture-enabled graph is
+    /// unsupported and panics because it would fork native state while sharing
+    /// one trace arena. Cloning a standalone [`Trace`] handle remains supported
+    /// and shares that arena.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for parallel capture or if any native table already
+    /// contains rows or queued capture-disabled mutations.
     pub fn enable_trace(&mut self) -> Result<()> {
         if self.trace.is_none() {
             let threads = rayon::current_num_threads();
@@ -1119,8 +1131,10 @@ impl EGraph {
         Ok(trace.intern_literal(sort, literal, value))
     }
 
-    /// Inspect the finalized trace. Borrowed arena data cannot
-    /// escape `inspect`.
+    /// Inspect a quiescent, publication-complete trace. Borrowed arena data
+    /// cannot escape `inspect`.
+    ///
+    /// Capture must first be activated according to [`EGraph::enable_trace`].
     pub fn with_trace_view<R>(
         &self,
         inspect: impl for<'view> FnOnce(&mut TraceView<'view>) -> std::result::Result<R, TraceViewError>,
@@ -1132,29 +1146,49 @@ impl EGraph {
         trace.with_view(inspect)
     }
 
-    /// Promote the current trace wave after a synchronous native barrier.
-    pub fn finalize_trace_wave(&mut self) -> Result<()> {
+    /// Validate the current trace wave at a synchronous native barrier.
+    ///
+    /// Capture must first be activated according to [`EGraph::enable_trace`].
+    /// The error leaves the wave and trace unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured lifecycle error when capture is disabled, rule
+    /// execution failed, capture batches remain open or were abandoned, or
+    /// transactional native mutations remain queued.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if a quiescent trace has an internal dense-publication hole
+    /// or a poisoned arena mutex.
+    pub fn finalize_trace_wave(&mut self) -> std::result::Result<(), TraceLifecycleError> {
         if self.trace.is_none() {
-            anyhow::bail!("trace capture is not enabled");
+            return Err(TraceLifecycleError::CaptureDisabled);
         }
-        self.db.finalize_trace_wave();
-        Ok(())
+        self.db.finalize_trace_wave()
     }
 
     /// Set the globally monotone wave inherited by subsequently recorded rule
     /// effects.
     ///
-    /// Returns an error when trace capture is disabled or `wave` precedes the
-    /// current wave. Advancing the wave finalizes the previous synchronous
-    /// native barrier.
-    pub fn set_trace_wave(&mut self, wave: u64) -> Result<()> {
+    /// Capture must first be activated according to [`EGraph::enable_trace`].
+    /// Advancing the wave validates the previous synchronous native barrier;
+    /// any error leaves the current wave unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured lifecycle error when capture is disabled, `wave`
+    /// precedes the current wave, or the previous wave cannot be finalized.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if a quiescent trace has an internal dense-publication hole
+    /// or a poisoned arena mutex.
+    pub fn set_trace_wave(&mut self, wave: u64) -> std::result::Result<(), TraceLifecycleError> {
         if self.trace.is_none() {
-            anyhow::bail!("trace capture is not enabled");
+            return Err(TraceLifecycleError::CaptureDisabled);
         }
-        self.db
-            .try_set_trace_wave(Wave::new(wave))
-            .map_err(anyhow::Error::msg)?;
-        Ok(())
+        self.db.try_set_trace_wave(Wave::new(wave))
     }
 
     /// A handle to the live [`ActionRegistry`] for this EGraph.

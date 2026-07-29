@@ -21,7 +21,7 @@ use smallvec::SmallVec;
 use crate::ReplayTermId;
 use crate::{
     BaseValues, ContainerRebuildSummary, ContainerValues, PoolSet, QueryEntry, SourceRef, Trace,
-    TupleIndex, Value, Wave,
+    TraceLifecycleError, TupleIndex, Value, Wave,
     action::{
         Bindings, DbView,
         mask::{Mask, MaskIter, ValueSource},
@@ -382,6 +382,13 @@ pub struct Database {
 }
 
 impl Clone for Database {
+    /// Clone a capture-disabled database.
+    ///
+    /// # Panics
+    ///
+    /// Panics after [`Database::try_enable_trace`] succeeds. Cloning would
+    /// fork mutable native state while retaining handles into one shared trace
+    /// arena, which is not a supported capture lifecycle.
     fn clone(&self) -> Self {
         assert!(
             self.trace.is_none(),
@@ -414,6 +421,10 @@ impl Database {
     /// Enable compact native trace capture and return a read handle to the
     /// shared arena. Capture must be enabled before any source rows are loaded:
     /// existing rows have no exact source identity and are never backfilled.
+    /// Activation is irreversible and repeated calls return another handle to
+    /// the same arena. Cloning that [`Trace`] handle is supported and also
+    /// shares the arena; cloning the activated [`Database`] is not supported
+    /// and panics.
     pub fn try_enable_trace(&mut self) -> Result<Trace, &'static str> {
         if let Some(trace) = &self.trace {
             return Ok(trace.clone());
@@ -432,18 +443,25 @@ impl Database {
     /// Try to set the globally monotone user-wave stamp inherited by rule
     /// effects.
     ///
-    /// Returns an error instead of mutating the trace when `wave` precedes the
-    /// current stamp.
-    pub fn try_set_trace_wave(&mut self, wave: Wave) -> Result<(), &'static str> {
+    /// # Errors
+    ///
+    /// Returns an error without changing the stamp when `wave` precedes the
+    /// current stamp or the preceding wave is not ready to finalize.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a quiescent trace has a dense publication hole or a poisoned
+    /// arena mutex. Those conditions indicate internal capture corruption.
+    pub fn try_set_trace_wave(&mut self, wave: Wave) -> Result<(), TraceLifecycleError> {
         if wave < self.trace_wave {
-            return Err("trace waves must be globally monotone");
+            return Err(TraceLifecycleError::WaveRegression);
         }
         if wave > self.trace_wave
             && let Some(trace) = &self.trace
         {
             // Callers advance waves only after the preceding synchronous
             // native run/merge barrier has returned.
-            trace.finalize_wave();
+            trace.finalize_wave()?;
         }
         self.trace_wave = wave;
         Ok(())
@@ -453,19 +471,39 @@ impl Database {
     ///
     /// # Panics
     ///
-    /// Panics if `wave` precedes the current stamp. Fallible callers should
-    /// use [`Database::try_set_trace_wave`].
+    /// Panics if `wave` precedes the current stamp, if the preceding trace wave
+    /// has a caller-controlled lifecycle violation, or if finalization detects
+    /// internal capture corruption. Fallible callers should use
+    /// [`Database::try_set_trace_wave`].
     pub fn set_trace_wave(&mut self, wave: Wave) {
         self.try_set_trace_wave(wave)
             .unwrap_or_else(|reason| panic!("{reason}"));
     }
 
-    /// Promote effective roots from the completed synchronous native wave and
-    /// reclaim every unpromoted provisional match/cause.
-    pub fn finalize_trace_wave(&mut self) {
+    /// Validate that the current trace wave has reached a quiescent,
+    /// publication-complete synchronous barrier.
+    ///
+    /// The validation is read-only and may be repeated at quiescence; it does
+    /// not promote or reclaim trace records.
+    ///
+    /// Disabled capture is a no-op so ordinary database execution is
+    /// unchanged. On error, this method does not mutate the wave or trace.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`TraceLifecycleError`] for caller-controlled states such as
+    /// failed rule execution, open or abandoned capture batches, or queued
+    /// transactional native mutations.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a quiescent trace has a dense publication hole or a poisoned
+    /// arena mutex. Those conditions indicate internal capture corruption.
+    pub fn finalize_trace_wave(&mut self) -> Result<(), TraceLifecycleError> {
         if let Some(trace) = &self.trace {
-            trace.finalize_wave();
+            trace.finalize_wave()?;
         }
+        Ok(())
     }
 
     /// Stage one original source row together with producer-installed term

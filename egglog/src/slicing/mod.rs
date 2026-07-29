@@ -2,17 +2,17 @@
 //!
 //! ## Rust API reference
 //!
-//! [`slice_all_checks`] is the public in-process facade. Its input is the
-//! ordinary recording graph after [`EGraph::enable_trace`] was called before
-//! rules, facts, or input were installed. Empty declarations may already be
-//! present, but callers must replay with a fresh graph factory that installs
-//! the same declarations because commands installed before capture are not in
-//! its catalog. Declarations installed after capture begins are candidates for
-//! the returned program's transitive static dependency closure. The facade
-//! selects every recorded successful check and returns graph-neutral egglog
-//! commands that own no handles or runtime values from the recording graph.
-//! Selected input rows are materialized from captured literals, so the commands
-//! do not consult the original input files.
+//! [`slice_all_checks`] is the public in-process facade. Its input must satisfy
+//! the capture lifecycle and compatibility contract on [`EGraph::enable_trace`].
+//! Empty declarations may already be present, but callers must replay with a
+//! fresh graph factory that installs the same declarations because commands
+//! installed before capture are not in its catalog. Declarations installed
+//! after capture begins are candidates for the returned program's transitive
+//! static dependency closure. The facade selects every recorded successful
+//! check and returns graph-neutral egglog commands that own no handles or
+//! runtime values from the recording graph. Selected input rows are
+//! materialized from captured literals, so the commands do not consult the
+//! original input files.
 //!
 //! The facade only selects and lowers. It does not run the returned program,
 //! validate replay, write a file, or claim that the selected support is globally
@@ -33,15 +33,15 @@ use crate::{EGraph, Error};
 
 /// Build graph-neutral replay commands for every successful check in `egraph`.
 ///
-/// Trace capture must have been enabled with [`EGraph::enable_trace`] on the
-/// serial main backend before rules, facts, or input were installed. Empty
-/// declarations may precede capture only when the caller supplies the same
-/// declarations in the fresh replay graph; the returned program cannot include
-/// commands that preceded capture. Selection follows the recorded historical
-/// cutoffs, preserves complete visible effects of retained source commands and
-/// firings, embeds selected input rows, and retains the transitive captured
-/// declaration closure needed by those roots. It returns ordinary egglog
-/// commands suitable for a fresh, equivalently configured graph.
+/// The recording graph must satisfy the capture lifecycle and compatibility
+/// contract on [`EGraph::enable_trace`]. Empty declarations may precede capture
+/// only when the caller supplies the same declarations in the fresh replay
+/// graph; the returned program cannot include commands that preceded capture.
+/// Selection follows the recorded historical cutoffs, preserves complete
+/// visible effects of retained source commands and firings, embeds selected
+/// input rows, and retains the transitive captured declaration closure needed
+/// by those roots. It returns ordinary egglog commands suitable for a fresh,
+/// equivalently configured graph.
 ///
 /// The returned program is not run, replay-validated, or written anywhere.
 /// Callers choose whether to execute it and under which execution mode.

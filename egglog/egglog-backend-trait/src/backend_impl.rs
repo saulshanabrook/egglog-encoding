@@ -24,7 +24,7 @@ use crate::{
     ExternalFunction, ExternalFunctionId, FiringCaptureBinding, FunctionConfig, FunctionId,
     FunctionReplaySpec, IterationReport, ReplayLiteral, ReplaySortId, ReplayTermId, ReportLevel,
     RuleActionCall, RuleBodyCall, RuleCaptureSpec, RuleId, RuleSetRun, RuleSpec, RuleValue,
-    RuleVar, ScanEntry, Value,
+    RuleVar, ScanEntry, TraceLifecycleError, Value,
 };
 
 fn rule_entry(
@@ -310,11 +310,11 @@ impl Backend for EGraph {
         EGraph::intern_replay_literal(self, sort, literal, value)
     }
 
-    fn finalize_trace_wave(&mut self) -> Result<()> {
+    fn finalize_trace_wave(&mut self) -> std::result::Result<(), TraceLifecycleError> {
         EGraph::finalize_trace_wave(self)
     }
 
-    fn set_trace_wave(&mut self, wave: u64) -> Result<()> {
+    fn set_trace_wave(&mut self, wave: u64) -> std::result::Result<(), TraceLifecycleError> {
         EGraph::set_trace_wave(self, wave)
     }
 

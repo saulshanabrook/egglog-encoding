@@ -103,7 +103,7 @@ pub use egglog_bridge::{
 pub use egglog_core_relations::{
     BaseValue, BaseValueId, BaseValues, ContainerValue, ContainerValues, CounterId, ExecutionState,
     ExternalFunction, ExternalFunctionId, ReplayCallSpec, ReplayLiteral, ReplayOpId, ReplaySortId,
-    ReplayTableKind, ReplayTermId, SourceRef, Value,
+    ReplayTableKind, ReplayTermId, SourceRef, TraceLifecycleError, Value,
 };
 pub use egglog_reports::{IterationReport, PreMergeTiming, ReportLevel};
 
@@ -528,7 +528,12 @@ pub trait Backend: Send + Sync {
 
     // -- cloning ------------------------------------------------------------
 
-    /// Deep-clone the backend (used for push/pop snapshots).
+    /// Deep-clone the backend for push/pop snapshots and trace-activation
+    /// preflight.
+    ///
+    /// Trace-capable backends must support cloning before activation. Cloning
+    /// after activation may be unsupported and panic according to the
+    /// implementation's [`Backend::enable_trace`] contract.
     fn clone_boxed(&self) -> Box<dyn Backend>;
 
     // -- optional / advanced (default-provided) -----------------------------
@@ -563,8 +568,11 @@ pub trait Backend: Send + Sync {
 
     /// Enable trace capture before input rows or rule plans exist.
     ///
-    /// This capability is currently provided only by the in-memory reference
-    /// backend.
+    /// Activation is idempotent and irreversible for the backend. The frontend
+    /// first exercises this hook and all trace registrations on a disabled
+    /// clone, then activates the real backend. Implementations preserve native
+    /// execution semantics while adding causal sidecars. This capability is
+    /// currently provided only by the in-memory reference backend.
     fn enable_trace(&mut self) -> Result<()> {
         Err(anyhow::anyhow!(
             "this backend does not support trace capture"
@@ -609,19 +617,40 @@ pub trait Backend: Send + Sync {
         ))
     }
 
-    /// Promote all effective roots from the completed synchronous trace
-    /// wave. Call only at an existing native merge/rebuild barrier.
-    fn finalize_trace_wave(&mut self) -> Result<()> {
-        Err(anyhow::anyhow!(
-            "this backend does not support trace capture"
-        ))
+    /// Validate the completed trace wave at an existing native merge/rebuild
+    /// barrier.
+    ///
+    /// See [`Backend::enable_trace`] for the activation contract. A returned
+    /// error must leave the wave and trace unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured error for unsupported backends and
+    /// caller-controlled lifecycle violations.
+    ///
+    /// # Panics
+    ///
+    /// Implementations may panic only for internal capture corruption, not a
+    /// supported caller-controlled lifecycle violation.
+    fn finalize_trace_wave(&mut self) -> std::result::Result<(), TraceLifecycleError> {
+        Err(TraceLifecycleError::UnsupportedBackend)
     }
 
     /// Set the globally monotone wave inherited by subsequent native effects.
-    fn set_trace_wave(&mut self, _wave: u64) -> Result<()> {
-        Err(anyhow::anyhow!(
-            "this backend does not support trace capture"
-        ))
+    /// Advancing the stamp validates the preceding trace wave first and leaves
+    /// the current stamp unchanged on error.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured error for unsupported backends, a decreasing wave,
+    /// or a preceding wave that is not ready to finalize.
+    ///
+    /// # Panics
+    ///
+    /// Implementations may panic only for internal capture corruption, not a
+    /// supported caller-controlled lifecycle violation.
+    fn set_trace_wave(&mut self, _wave: u64) -> std::result::Result<(), TraceLifecycleError> {
+        Err(TraceLifecycleError::UnsupportedBackend)
     }
 
     // -- concrete-backend access (escape hatch) -----------------------------

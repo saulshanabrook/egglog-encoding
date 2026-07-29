@@ -21,7 +21,8 @@ use once_cell::sync::Lazy;
 
 use crate::{
     ColumnTy, DefaultVal, EGraph, FunctionConfig, FunctionId, GroundedRuleBinding, GroundedRuleRun,
-    MergeAction, MergeFn, QueryEntry, TableAction, Variable, add_expressions, define_rule,
+    MergeAction, MergeFn, QueryEntry, TableAction, TraceLifecycleError, Variable, add_expressions,
+    define_rule,
 };
 
 #[test]
@@ -59,6 +60,15 @@ fn trace_capture_rejects_parallel_bridge_activation() {
 }
 
 #[test]
+fn trace_finalization_reports_disabled_capture() {
+    let mut egraph = EGraph::default();
+    assert_eq!(
+        egraph.finalize_trace_wave(),
+        Err(TraceLifecycleError::CaptureDisabled)
+    );
+}
+
+#[test]
 fn trace_wave_rejects_decreasing_stamp_without_panicking() {
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(1)
@@ -69,7 +79,7 @@ fn trace_wave_rejects_decreasing_stamp_without_panicking() {
         egraph.enable_trace().unwrap();
         egraph.set_trace_wave(2).unwrap();
         let error = egraph.set_trace_wave(1).unwrap_err();
-        assert_eq!(error.to_string(), "trace waves must be globally monotone");
+        assert_eq!(error, TraceLifecycleError::WaveRegression);
     });
 }
 

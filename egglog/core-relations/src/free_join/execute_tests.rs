@@ -85,7 +85,7 @@ fn capture_witness_rejects_first_row_decoy_and_accepts_bound_row() {
     )
     .unwrap();
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
 
     let variable = Variable::new(0);
     let selected_atom = capture_test_atom(selected, variable);

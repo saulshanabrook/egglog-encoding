@@ -69,6 +69,30 @@ fn panicking_capture_view_callback_does_not_poison_capture_locks() {
 }
 
 #[test]
+fn trace_finalization_reports_open_and_abandoned_capture_batches() {
+    let trace = Trace::default();
+    let table = TableId::new_const(0);
+    let sort = ReplaySortId::new(1);
+    let row = [Value::new_const(7)];
+    trace.register_table_layout(table, &[Some(sort)]).unwrap();
+    let term = trace.intern_literal(sort, ReplayLiteral::I64(7), row[0]);
+    let origin = trace.install_source_row(table, &row, &[term]).unwrap();
+    let cause = trace.source_draft(SourceRef::Synthetic(0));
+    let mut batch = trace.new_batch();
+    batch.record_fact_with_origin(table, cause, &row, origin);
+
+    assert_eq!(
+        trace.finalize_wave(),
+        Err(TraceLifecycleError::OpenCaptureBatches)
+    );
+    drop(batch);
+    assert_eq!(
+        trace.finalize_wave(),
+        Err(TraceLifecycleError::AbandonedCaptureBatch)
+    );
+}
+
+#[test]
 fn physical_rekey_collision_with_same_fact_records_no_logical_transition() {
     let trace = Trace::default();
     let fact = FactId::new(17);
@@ -237,7 +261,7 @@ fn derived_fact_owns_the_terms_for_its_committed_row() {
     let mut source_batch = trace.new_batch();
     let source = source_batch.record_fact_with_origin(table, source_cause, &row, origin);
     source_batch.publish();
-    trace.finalize_wave();
+    trace.finalize_wave().unwrap();
     trace
         .with_view(|view| {
             assert_eq!(view.fact_terms(source)?.as_ref(), &terms);
@@ -267,7 +291,7 @@ fn derived_fact_owns_the_terms_for_its_committed_row() {
     let mut derived_batch = trace.new_batch();
     let derived = derived_batch.record_fact_with_origin(table, rule_cause, &row, origin);
     derived_batch.publish();
-    trace.finalize_wave();
+    trace.finalize_wave().unwrap();
 
     trace
         .with_view(|view| {
@@ -288,7 +312,7 @@ fn derived_fact_owns_the_terms_for_its_committed_row() {
     let mut next_batch = trace.new_batch();
     next_batch.record_fact_with_origin(table, next_cause, &row, origin);
     next_batch.publish();
-    trace.finalize_wave();
+    trace.finalize_wave().unwrap();
     let next_firing = next_cause
         .firing()
         .expect("registered firing lost its rule cause");
@@ -322,7 +346,7 @@ fn promoted_firings_reconstruct_current_terms_from_static_recipes() {
     let source_fact =
         source_batch.record_fact_with_origin(table, source_cause, &source_row, source_origin);
     source_batch.publish();
-    trace.finalize_wave();
+    trace.finalize_wave().unwrap();
 
     let constant_value = Value::new_const(8);
     let constant_term = trace.intern_literal(sort, ReplayLiteral::I64(8), constant_value);
@@ -363,7 +387,7 @@ fn promoted_firings_reconstruct_current_terms_from_static_recipes() {
     let mut derived_batch = trace.new_batch();
     derived_batch.record_fact_with_origin(table, rule_cause, &derived_row, derived_origin);
     derived_batch.publish();
-    trace.finalize_wave();
+    trace.finalize_wave().unwrap();
 
     trace
         .with_view(|view| {

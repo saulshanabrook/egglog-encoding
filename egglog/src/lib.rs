@@ -32,7 +32,9 @@ use core::{CoreActionContext, ResolvedAtomTerm};
 pub use core::{ResolvedCall, SpecializedPrimitive};
 #[cfg(test)]
 use core_relations::ReplayTerm;
-pub use core_relations::{BaseValue, ContainerValue, TraceContainerKind, Value};
+pub use core_relations::{
+    BaseValue, ContainerValue, TraceContainerKind, TraceLifecycleError, Value,
+};
 use core_relations::{ExecutionState, ExternalFunctionId, make_external_func};
 #[cfg(test)]
 use core_relations::{TraceView, TraceViewError};
@@ -1028,13 +1030,19 @@ impl CaptureCatalog {
         }
     }
 
-    fn begin_wave(&mut self) -> u64 {
-        let wave = self.next_wave;
-        self.next_wave = self
-            .next_wave
+    fn pending_wave(&self) -> u64 {
+        self.next_wave
             .checked_add(1)
             .expect("trace wave counter overflow");
-        wave
+        self.next_wave
+    }
+
+    fn commit_wave(&mut self, wave: u64) {
+        assert_eq!(
+            self.next_wave, wave,
+            "trace wave changed between backend validation and catalog commit"
+        );
+        self.next_wave += 1;
     }
 
     fn completed_wave(&self) -> u64 {
@@ -1524,17 +1532,49 @@ impl EGraph {
 
     /// Enable exact execution-trace capture for later [`slicing::slice_all_checks`].
     ///
-    /// Call this before registering rules or inserting facts or input rows.
-    /// Empty declarations may precede capture, but a fresh replay graph must
-    /// provide them again. Repeated calls after successful activation are
-    /// no-ops. The active Rayon pool must contain exactly one thread; this is
-    /// an API requirement as well as the command-line `--threads 1` boundary.
+    /// # Capture lifecycle and compatibility
+    ///
+    /// Call this on the final owned graph before registering rules or inserting
+    /// facts or input rows. Empty declarations may precede capture, but a fresh
+    /// replay graph must provide them again. Activation is irreversible for the
+    /// graph; repeated calls after successful activation are no-ops.
+    ///
+    /// Capture is compatible only with ordinary, non-proof, non-term-encoded
+    /// execution outside push/pop state on a backend that implements the trace
+    /// API. The active Rayon pool must contain exactly one thread; this is an
+    /// API requirement as well as the command-line `--threads 1` boundary.
+    /// Clone the graph before activation if a copy is needed: cloning an
+    /// activated graph is unsupported and panics because it would fork native
+    /// state while sharing one trace arena. Completing a wave does not restore
+    /// clone support.
+    ///
+    /// Capture preserves supported ordinary native execution while recording
+    /// causal sidecars. Every observed grounded rule match is published when
+    /// native head execution begins, whether or not its actions change state;
+    /// effective mutations publish through their normal commit barriers. Wave
+    /// finalization is a read-only, repeatable validation of quiescence and
+    /// dense publication completeness. It does not promote or reclaim firing
+    /// records or make the trace permanently finalized.
+    ///
+    /// Ruleset steps use globally monotone waves. A firing may cause mutations
+    /// only in the wave that observed it, although its durable record remains
+    /// inspectable afterward. After activation, use cataloged source-program
+    /// execution and the documented inspection and slicing APIs; operations
+    /// that bypass capture or reconfigure the graph are rejected or panic.
+    ///
+    /// Frontend execution entry points assign waves and validate a quiescent,
+    /// publication-complete trace at their synchronous native barriers. A
+    /// rejected wave advance leaves both backend and catalog stamps unchanged.
+    /// A later finalization error fails closed but does not roll back native
+    /// effects. Consume the trace through [`slicing::slice_all_checks`] only
+    /// after the recording commands have returned successfully.
     ///
     /// # Errors
     ///
     /// Returns an error for a proof- or term-encoded graph, push/pop state,
     /// existing rows or rules, parallel capture, an unsupported backend, or a
-    /// backend registration failure.
+    /// backend registration failure. Later trace lifecycle violations are
+    /// reported as [`Error::TraceLifecycle`].
     pub fn enable_trace(&mut self) -> Result<(), Error> {
         if self.capture_catalog.is_some() {
             return Ok(());
@@ -1641,14 +1681,19 @@ impl EGraph {
     }
 
     fn begin_trace_wave(&mut self) -> Result<(), Error> {
-        let Some(catalog) = self.capture_catalog.as_mut() else {
+        let Some(catalog) = self.capture_catalog.as_ref() else {
             return Ok(());
         };
         catalog.ensure_healthy()?;
-        let wave = catalog.begin_wave();
+        let wave = catalog.pending_wave();
         self.backend
             .set_trace_wave(wave)
-            .map_err(|error| Error::BackendError(error.to_string()))
+            .map_err(Error::TraceLifecycle)?;
+        self.capture_catalog
+            .as_mut()
+            .expect("trace catalog disappeared while beginning a wave")
+            .commit_wave(wave);
+        Ok(())
     }
 
     pub(crate) fn capture_registration_is_allowed(&self) -> bool {
@@ -1664,7 +1709,7 @@ impl EGraph {
         catalog.ensure_healthy()?;
         self.backend
             .finalize_trace_wave()
-            .map_err(|error| Error::BackendError(error.to_string()))
+            .map_err(Error::TraceLifecycle)
     }
 
     /// Enable testing of getting proofs for all `check` commands.
@@ -2962,7 +3007,7 @@ impl EGraph {
             .then(|| self.backend.finalize_trace_wave())
             .transpose();
         self.backend.free_rule(id);
-        finalize.map_err(|error| Error::BackendError(error.to_string()))?;
+        finalize.map_err(Error::TraceLifecycle)?;
 
         match result {
             Ok(_) => {
@@ -4463,7 +4508,7 @@ impl EGraph {
         if self.capture_catalog.is_some() {
             self.backend
                 .finalize_trace_wave()
-                .map_err(|error| Error::BackendError(error.to_string()))?;
+                .map_err(Error::TraceLifecycle)?;
         }
         if let Some((command, entry)) = pending_input_catalog {
             self.capture_catalog
@@ -6244,6 +6289,8 @@ pub enum Error {
     CombinedRulesetError(String, Span),
     #[error("{0}")]
     BackendError(String),
+    #[error(transparent)]
+    TraceLifecycle(#[from] TraceLifecycleError),
     #[error(
         "This backend requires term encoding. Build the e-graph with `EGraph::with_backend(..).with_term_encoding()`."
     )]

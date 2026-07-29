@@ -342,7 +342,7 @@ fn causal_trace_record_only_effective_constructor_and_union_commits() {
     db.set_trace_wave(Wave::new(1));
     let first = db.run_rule_set(&rule_set, ReportLevel::TimeOnly);
     assert!(first.changed);
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
 
     let (source_id, derived_id, node_term) = trace
         .with_view(|view| {
@@ -455,7 +455,7 @@ fn causal_trace_record_only_effective_constructor_and_union_commits() {
     db.set_trace_wave(Wave::new(2));
     let second = db.run_rule_set(&consumers, ReportLevel::TimeOnly);
     assert!(second.changed);
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
     trace
         .with_view(|view| {
             let consumed_fact = fact_for_table(view, consumed);
@@ -530,7 +530,7 @@ fn capture_database_clone_and_clear_fail_before_mutation() {
     )
     .unwrap();
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
     assert!(catch_unwind(AssertUnwindSafe(|| db.clone())).is_err());
     assert!(catch_unwind(AssertUnwindSafe(|| db.clear_table(table))).is_err());
     assert!(db.get_table(table).get_row(&[value]).is_some());
@@ -701,7 +701,7 @@ fn causal_capture_rebuild_rekeys_with_exact_landmark_and_noop_preserves_fact() {
 
     db.set_trace_wave(Wave::new(2));
     assert!(db.apply_rebuild(uf, &[rebuilt], Value::new(2)));
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
     let rebuilt_fact = committed_fact_id(&db, rebuilt, new);
     assert_eq!(
         rebuilt_fact, prior_fact,
@@ -757,7 +757,7 @@ fn causal_capture_rebuild_rekeys_with_exact_landmark_and_noop_preserves_fact() {
         !db.apply_rebuild(uf, &[rebuilt], Value::new(3)),
         "an already-canonical row is a rebuild no-op"
     );
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
     assert_eq!(committed_fact_id(&db, rebuilt, new), rebuilt_fact);
     trace
         .with_view(|view| {
@@ -785,7 +785,7 @@ fn causal_capture_rebuild_rekeys_with_exact_landmark_and_noop_preserves_fact() {
         Value::new(4),
     );
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
     trace
         .with_view(|view| {
             let first = view.applied_equality(crate::AppliedEqualityId::new(1))?;
@@ -842,7 +842,7 @@ fn trusted_exact_occurrences_extend_from_both_native_roots() {
         );
         assert!(db.merge_all());
     }
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
 
     trace
         .with_view(|view| {
@@ -957,7 +957,7 @@ fn causal_capture_rebuild_collision_records_exact_congruence() {
 
     db.set_trace_wave(Wave::new(2));
     assert!(db.apply_rebuild(uf, &[rebuilt], Value::new(2)));
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
 
     assert_eq!(
         committed_fact_id(&db, rebuilt, target_key),
@@ -1176,7 +1176,7 @@ fn typed_union_forest_is_immutable_across_native_path_compression_and_redundancy
         !db.merge_all(),
         "the third proposal is redundant in the native UF"
     );
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
 
     trace.with_view(|view| {
     assert_eq!(view.totals().applied_equalities, 2);
@@ -1277,7 +1277,7 @@ fn invalid_typed_union_staging_fails_before_native_mutation() {
         }));
         assert!(failed.is_err(), "{case} staging must fail closed");
         assert!(!db.merge_all(), "{case} staging mutated the native UF");
-        db.finalize_trace_wave();
+        db.finalize_trace_wave().unwrap();
         assert_eq!(native_uf_root(&db, uf, left), left);
         assert_eq!(native_uf_root(&db, uf, right), right);
         trace
@@ -1371,7 +1371,7 @@ fn merge_function_union_cites_one_match_and_immutable_prior_fact() {
     )
     .unwrap();
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
     let prior_fact = committed_fact_id(&db, target, key);
     let proposal_fact = committed_fact_id_for_key(&db, proposal, &[key, incoming]);
 
@@ -1403,7 +1403,7 @@ fn merge_function_union_cites_one_match_and_immutable_prior_fact() {
 
     db.set_trace_wave(Wave::new(1));
     assert!(db.run_rule_set(&rules, ReportLevel::TimeOnly).changed);
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
 
     trace
         .with_view(|view| {
@@ -1484,7 +1484,7 @@ fn invalid_merge_function_union_fails_before_replacing_its_parent_row() {
     )
     .unwrap();
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
     let prior_fact = committed_fact_id(&db, target, key);
 
     db.stage_source_row(
@@ -1511,9 +1511,10 @@ fn invalid_merge_function_union_fails_before_replacing_its_parent_row() {
             "a rule execution failed before trace publication"
         ))
     ));
-    assert!(
-        catch_unwind(AssertUnwindSafe(|| db.finalize_trace_wave())).is_err(),
-        "a caught capture-enabled merge panic must prevent finalization"
+    assert_eq!(
+        db.finalize_trace_wave(),
+        Err(crate::TraceLifecycleError::PoisonedExecution),
+        "a caught capture-enabled merge panic must make finalization fail closed"
     );
 }
 
@@ -1586,7 +1587,7 @@ fn causal_trace_reject_unsupported_merge_before_callback_effects() {
         db.get_table(table).get_row(&[two]).unwrap().vals.as_slice(),
         &[two, one]
     );
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
 
     let wave = Wave::new(1);
     db.set_trace_wave(wave);
@@ -1762,7 +1763,7 @@ fn assert_dynamic_merge_preflight(extra_dirty_tables: usize) {
     )
     .unwrap();
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
     db.set_trace_wave(Wave::new(1));
 
     // B is initially dirty only for a fresh key, so the batch-entry preflight
@@ -1878,7 +1879,7 @@ fn causal_trace_record_same_term_native_alias_without_equality_edge() {
         );
     }
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
 
     let alias_child = trace.with_view(|view| {
         assert_eq!(view.totals().applied_equalities, 1);
@@ -1926,7 +1927,7 @@ fn causal_trace_record_same_term_native_alias_without_equality_edge() {
         Value::new(2),
     );
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
 
     trace
         .with_view(|view| {
@@ -2000,7 +2001,7 @@ fn same_term_native_bridge_joins_distinct_historical_components() {
     db.stage_source_row(fact_table, &[right], &[shared], SourceRef::Synthetic(214))
         .unwrap();
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
     let prior_fact = committed_fact_id_for_key(&db, fact_table, &[right]);
     let site = |term| {
         trace.register_term_origin(TermOriginSpec {
@@ -2059,7 +2060,7 @@ fn same_term_native_bridge_joins_distinct_historical_components() {
         buffer.stage_typed_union_deferred(&[right, left, Value::new(2)], merge_cause, bridge);
     }
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
 
     trace
         .with_view(|view| {
@@ -2161,7 +2162,7 @@ fn same_batch_native_catch_up_matches_durable_component_behavior() {
     }
     let mut state = ExecutionState::new(db.read_only_view(), Default::default());
     assert!(uf.merge(&mut state).added);
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
 
     trace
         .with_view(|view| {
@@ -2287,7 +2288,7 @@ fn causal_trace_capture_exact_rhs_producer_term_not_global_alias() {
     let rules = rules.build();
     db.set_trace_wave(Wave::new(1));
     assert!(db.run_rule_set(&rules, ReportLevel::TimeOnly).changed);
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
 
     trace
         .with_view(|view| {
@@ -2538,7 +2539,7 @@ fn prior_or_incoming_uses_callback_result_not_opaque_value_order() {
     )
     .unwrap();
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
     let prior_fact = committed_fact_id_for_key(&db, table, &[key]);
 
     let incoming_origin = trace.register_row_origin(RowOriginSpec {
@@ -2561,7 +2562,7 @@ fn prior_or_incoming_uses_callback_result_not_opaque_value_order() {
         );
     }
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
     trace
         .with_view(|view| {
             let latest = fact_ids(view)
@@ -2670,7 +2671,7 @@ fn serial_compaction_preserves_live_and_historical_fact_ids() {
         .unwrap();
     }
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
 
     let survivor = Value::new(19);
     let survivor_fact = committed_fact_id(&db, table, survivor);
@@ -2699,7 +2700,7 @@ fn serial_compaction_preserves_live_and_historical_fact_ids() {
     }
     drop(updates);
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
 
     assert_ne!(version.major, db.get_table(table).version().major);
     assert_eq!(committed_fact_id(&db, table, survivor), survivor_fact);
@@ -2767,7 +2768,7 @@ fn decomposed_projected_capture_case(retain_existential: bool) {
             .unwrap();
     }
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
 
     let r_first =
         committed_fact_id_for_key(&db, r, &[Value::new(1), Value::new(10), Value::new(100)]);
@@ -2860,7 +2861,7 @@ fn decomposed_projected_capture_case(retain_existential: bool) {
 
     db.set_trace_wave(Wave::new(1));
     assert!(db.run_rule_set(&rule_set, ReportLevel::TimeOnly).changed);
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
     trace
         .with_view(|view| {
             let derived_facts = fact_ids(view)
@@ -3071,7 +3072,7 @@ fn causal_presence_relation_remove_is_not_retained() {
     )
     .unwrap();
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
 
     let mut rules = RuleSetBuilder::new(&mut db);
     let mut query = rules.new_rule();
@@ -3093,7 +3094,7 @@ fn causal_presence_relation_remove_is_not_retained() {
 
     db.set_trace_wave(Wave::new(1));
     db.run_rule_set(&rules, ReportLevel::TimeOnly);
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
     assert!(db.get_table(relation).get_row(&[key]).is_none());
     trace
         .with_view(|view| {
@@ -3126,7 +3127,7 @@ fn causal_remove_batch_preflights_all_causes_before_native_mutation() {
         .unwrap();
     }
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
 
     let wave = Wave::new(1);
     db.set_trace_wave(wave);
@@ -3186,7 +3187,7 @@ fn causal_same_wave_remove_precedes_replacement_write() {
     )
     .unwrap();
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
     let removed_fact = committed_fact_id(&db, table, key);
 
     let mut rules = RuleSetBuilder::new(&mut db);
@@ -3220,7 +3221,7 @@ fn causal_same_wave_remove_precedes_replacement_write() {
 
     db.set_trace_wave(Wave::new(1));
     db.run_rule_set(&rules, ReportLevel::TimeOnly);
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
     let row = db
         .get_table(table)
         .get_row(&[key])
@@ -3352,7 +3353,7 @@ fn check_trace_keep_distinct_premise_terms_for_the_same_runtime_equality_value()
         .unwrap();
     }
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
     let second_left_fact = committed_fact_id_for_key(&db, left_table, &[second_left, join]);
     let right_fact = committed_fact_id_for_key(&db, right_table, &[join, right]);
     db.stage_source_row(
@@ -3363,7 +3364,7 @@ fn check_trace_keep_distinct_premise_terms_for_the_same_runtime_equality_value()
     )
     .unwrap();
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
     let first_left_fact = committed_fact_id_for_key(&db, left_table, &[first_left, join]);
     assert!(
         second_left_fact < first_left_fact,
@@ -3420,7 +3421,7 @@ fn check_trace_keep_distinct_premise_terms_for_the_same_runtime_equality_value()
     }
     let rules = rules.build();
     assert!(!db.run_rule_set(&rules, ReportLevel::TimeOnly).changed);
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
 
     trace
         .with_view(|view| {
@@ -3589,7 +3590,7 @@ fn late_fact_rekey_attachment_case(reverse_equality_endpoints: bool) {
     trace
         .record_check_root(7900, Wave::new(99), &[fact], &[equality], landmark)
         .unwrap();
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
 
     trace
         .with_view(|view| {
@@ -3707,7 +3708,7 @@ fn effective_constructor_rebuild_inherits_prior_terms_over_competing_alias() {
     )
     .unwrap();
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
     let prior_fact = committed_fact_id(&db, constructor, exact_child);
 
     db.set_trace_wave(Wave::new(1));
@@ -3723,7 +3724,7 @@ fn effective_constructor_rebuild_inherits_prior_terms_over_competing_alias() {
     assert!(db.merge_all());
     db.set_trace_wave(Wave::new(2));
     assert!(db.apply_rebuild(uf, &[constructor], Value::new(2)));
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
 
     let rebuilt_fact = committed_fact_id(&db, constructor, canonical_child);
     assert_eq!(rebuilt_fact, prior_fact);
@@ -3766,7 +3767,7 @@ fn direct_rule_match_cannot_cross_a_causal_wave() {
     let first_wave = Wave::new(1);
     db.set_trace_wave(first_wave);
     let stale = empty_rule_cause(&trace, 902, first_wave);
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
 
     let second_wave = Wave::new(2);
     db.set_trace_wave(second_wave);
@@ -3895,7 +3896,7 @@ fn observed_match_ids_are_dense_before_effect_reachability() {
         );
     }
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
 
     trace
         .with_view(|view| {
@@ -3947,7 +3948,7 @@ fn promoted_match_ids_follow_native_batch_order_not_union_order() {
         }
     }
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
     trace
         .with_view(|view| {
             let cited = (1..=view.totals().applied_equalities)
@@ -4034,7 +4035,7 @@ fn promoted_match_order_follows_full_batch_then_tail_execution() {
         }
     }
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
 
     let mut rules = RuleSetBuilder::new(&mut db);
     for (input, rule, left, right, description) in [
@@ -4076,7 +4077,7 @@ fn promoted_match_order_follows_full_batch_then_tail_execution() {
     let rules = rules.build();
     db.set_trace_wave(Wave::new(1));
     assert!(db.run_rule_set(&rules, ReportLevel::TimeOnly).changed);
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
 
     trace
         .with_view(|view| {
@@ -4209,7 +4210,7 @@ fn causal_trace_merge_origin_selects_each_cell_without_value_alias_lookup() {
     )
     .unwrap();
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
 
     let incoming_origin = trace.register_row_origin(RowOriginSpec {
         table,
@@ -4236,7 +4237,7 @@ fn causal_trace_merge_origin_selects_each_cell_without_value_alias_lookup() {
         );
     }
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
 
     trace.with_view(|view| {
     let latest = fact_ids(view).filter_map(|id| view.fact(id).ok().map(|fact| (id, fact))).filter(|(_, fact)| fact.table == table).max_by_key(|(id, _)| *id).unwrap();
@@ -4316,14 +4317,18 @@ fn transactional_native_lease_blocks_wave_finalization_until_queue_drain() {
     transaction.commit();
     drop(transaction);
 
-    let before_publication = catch_unwind(AssertUnwindSafe(|| db.finalize_trace_wave()));
-    assert!(before_publication.is_err());
+    assert_eq!(
+        db.finalize_trace_wave(),
+        Err(crate::TraceLifecycleError::ActiveNativeLeases)
+    );
     drop(buffer);
-    let before_drain = catch_unwind(AssertUnwindSafe(|| db.finalize_trace_wave()));
-    assert!(before_drain.is_err());
+    assert_eq!(
+        db.finalize_trace_wave(),
+        Err(crate::TraceLifecycleError::ActiveNativeLeases)
+    );
 
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
     trace
         .with_view(|view| {
             let equality = view.applied_equality(crate::AppliedEqualityId::new(1))?;
@@ -4334,6 +4339,30 @@ fn transactional_native_lease_blocks_wave_finalization_until_queue_drain() {
             Ok(())
         })
         .unwrap();
+}
+
+#[test]
+fn trace_wave_advance_is_atomic_while_a_native_lease_is_active() {
+    let mut db = Database::default();
+    let trace = db.try_enable_trace().unwrap();
+    let current = Wave::new(1);
+    let requested = Wave::new(2);
+    db.set_trace_wave(current);
+    let transaction = MutationTransaction::pending_causal(&trace, current);
+
+    assert_eq!(
+        db.try_set_trace_wave(requested),
+        Err(crate::TraceLifecycleError::ActiveNativeLeases),
+        "an active native lease must reject wave advancement"
+    );
+    assert_eq!(
+        db.trace_wave, current,
+        "a rejected wave advance must leave the current stamp unchanged"
+    );
+
+    drop(transaction);
+    db.try_set_trace_wave(requested).unwrap();
+    assert_eq!(db.trace_wave, requested);
 }
 
 #[test]
@@ -4364,14 +4393,18 @@ fn transactional_table_lease_survives_buffer_publication_until_queue_drain() {
     transaction.commit();
     drop(transaction);
 
-    let while_buffer_holds_lease = catch_unwind(AssertUnwindSafe(|| db.finalize_trace_wave()));
-    assert!(while_buffer_holds_lease.is_err());
+    assert_eq!(
+        db.finalize_trace_wave(),
+        Err(crate::TraceLifecycleError::ActiveNativeLeases)
+    );
     drop(buffer);
-    let while_table_queue_holds_lease = catch_unwind(AssertUnwindSafe(|| db.finalize_trace_wave()));
-    assert!(while_table_queue_holds_lease.is_err());
+    assert_eq!(
+        db.finalize_trace_wave(),
+        Err(crate::TraceLifecycleError::ActiveNativeLeases)
+    );
 
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
     trace
         .with_view(|view| {
             let fact = view.fact(crate::FactId::new(1))?;
@@ -4517,7 +4550,7 @@ fn low_level_remove_fails_before_staging_when_trace_are_enabled() {
     )
     .unwrap();
     assert!(db.merge_all());
-    db.finalize_trace_wave();
+    db.finalize_trace_wave().unwrap();
 
     let mut exec_state = ExecutionState::new(db.read_only_view(), Default::default());
     let failure = catch_unwind(AssertUnwindSafe(|| {
