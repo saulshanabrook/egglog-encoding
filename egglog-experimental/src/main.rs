@@ -38,7 +38,7 @@ fn main() {
             Box::new(egglog_experimental_dd::EGraph::new()),
         ),
     };
-    egglog::cli_with_args_and_factory(
+    egglog::cli(
         egraph,
         args,
         egglog_experimental::new_experimental_egraph_for_proofs,

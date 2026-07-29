@@ -56,49 +56,39 @@ cargo run --release [-f fact-directory] [--to-dot] [--to-svg] [-j --threads <THR
 ### Check-directed slice replay
 
 `--slice-output` records one supported serial execution, retains the dynamic
-support needed by its successful `check` commands, and writes a smaller egglog
-program:
+support needed by its successful `check` commands, and, by itself, writes a
+smaller egglog program without replaying it:
 
 ```bash
 egglog --slice-output slice-replay.egg input.egg
 ```
 
-The output flag implies `--slice`; `--proofs` is separate. Add `--proofs` when
-you also want the replay to produce normal proof-mode output:
+The output flag implies slicing; `--slice` requests replay and is independent of
+the replay mode. For example, this records natively and replays with proofs:
 
 ```bash
 egglog --slice --proofs input.egg
 ```
 
-Bare `--slice` is rejected because it has no requested output. Use
-`--slice-output` to write a validated artifact without proof-mode output, or
-combine `--slice` with `--proofs`.
+Bare `--slice` replays normally. It can also be combined with proof testing,
+term encoding, proof extraction, naive execution, and graph serialization.
 
-Before publishing a file, egglog reparses the exact rendered bytes on a fresh
-graph with proofs and proof testing enabled. A capture, slicing, or replay
-failure exits without publishing a new artifact, and an existing destination
-is replaced atomically only after validation succeeds. There is no fallback to
-the original program.
+`--slice-output` writes the rendered program directly; the CLI does not run a
+second validation pass before writing. The test corpus strictly replays every
+supported artifact, while unsupported capture boundaries still fail before an
+artifact is produced. There is no fallback to the original program.
 
-Slicing currently supports one input file, one execution thread, the main
-backend, and ordinary seminaive execution. Proof testing, term encoding, naive
-execution, interactive/desugar modes, graph serialization, unsupported
-schedulers and unsupported mutation shapes fail closed with a diagnostic.
+Slicing currently supports one input file, one execution thread, and the main
+backend. Unsupported schedulers and unsupported mutation shapes fail closed
+with a diagnostic.
 Successful `check` commands are the only replay roots; `extract` and
 `multi-extract` output is not retained. The trace records effective source
 events, rule firings and their grounded premises, equality explanations,
 version changes, removals, and check positions. It is causal evidence used to
 construct the replay program, not itself a proof.
 
-Retained source `rewrite` commands remain rewrites in the artifact. When both
-directions of a retained `birewrite` are needed, the artifact emits one
-`birewrite`; when only one is needed, it emits an oriented, deterministically
-named `rewrite` so grounded replay can select it exactly.
-
-Rust callers that need to inspect capture directly can enable it before loading
-or declaring user state with `EGraph::enable_trace`, then use
-`EGraph::with_trace_view`. Borrowed trace records cannot escape the view
-callback.
+Retained source `rewrite` and `birewrite` commands preserve their source form
+and receive deterministic names so grounded replay can select them exactly.
 
 One can also use `egglog` as a Rust library by adding the following to your `Cargo.toml`:
 

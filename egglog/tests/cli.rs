@@ -42,8 +42,22 @@ fn egglog() -> Command {
     Command::new(env!("CARGO_BIN_EXE_egglog"))
 }
 
+fn run(directory: &Path, flags: &[&str]) -> std::process::Output {
+    let program = write_program(directory);
+    egglog().args(flags).arg(program).output().unwrap()
+}
+
+fn assert_success(output: &std::process::Output, description: &str) {
+    assert!(
+        output.status.success(),
+        "{description} failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
-fn slice_output_implies_slice_and_strictly_replays() {
+fn slice_output_writes_an_artifact_that_the_test_suite_strictly_replays() {
     let directory = TestDir::new();
     let program = write_program(directory.path());
     let artifact = directory.path().join("slice-replay.egg");
@@ -55,11 +69,7 @@ fn slice_output_implies_slice_and_strictly_replays() {
         .arg(&program)
         .output()
         .unwrap();
-    assert!(
-        output.status.success(),
-        "slice failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert_success(&output, "slice output");
     assert!(!std::fs::read_to_string(&artifact).unwrap().is_empty());
     assert_ne!(std::fs::read_to_string(&artifact).unwrap(), "old artifact");
 
@@ -68,11 +78,7 @@ fn slice_output_implies_slice_and_strictly_replays() {
         .arg(&artifact)
         .output()
         .unwrap();
-    assert!(
-        replay.status.success(),
-        "published artifact failed strict replay:\n{}",
-        String::from_utf8_lossy(&replay.stderr)
-    );
+    assert_success(&replay, "strict test replay of the written artifact");
 }
 
 #[test]
@@ -98,11 +104,7 @@ fn rewrite_root_collision_strictly_replays() {
         .arg(&program)
         .output()
         .unwrap();
-    assert!(
-        output.status.success(),
-        "slice failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert_success(&output, "rewrite-root slice");
     let artifact = std::fs::read_to_string(artifact).unwrap();
     assert!(
         artifact.contains(r#"(rewrite (A __rewrite_root) (B __rewrite_root) :name "colliding")"#)
@@ -111,78 +113,69 @@ fn rewrite_root_collision_strictly_replays() {
 }
 
 #[test]
-fn slice_requires_an_output_and_proofs_remains_optional() {
+fn bare_slice_replays_in_normal_mode() {
     let directory = TestDir::new();
-    let program = write_program(directory.path());
-    let proofs = egglog()
-        .args(["--slice", "--proofs"])
-        .arg(&program)
-        .output()
-        .unwrap();
-    assert!(
-        proofs.status.success(),
-        "--slice --proofs failed:\n{}",
-        String::from_utf8_lossy(&proofs.stderr)
-    );
-
-    let bare = egglog().arg("--slice").arg(&program).output().unwrap();
-    assert_eq!(bare.status.code(), Some(2));
-    assert!(
-        String::from_utf8_lossy(&bare.stderr)
-            .contains("--slice requires --proofs or --slice-output")
-    );
+    assert_success(&run(directory.path(), &["--slice"]), "normal slice replay");
 }
 
 #[test]
-fn slice_rejects_parallel_and_serialization_modes() {
+fn slice_composes_with_execution_modes() {
     let directory = TestDir::new();
-    let program = write_program(directory.path());
-    for (flags, diagnostic) in [
-        (
-            vec!["--slice", "--proofs", "--threads", "2"],
-            "--slice requires --threads 1",
-        ),
-        (
-            vec!["--slice", "--proofs", "--to-json"],
-            "--slice conflicts with --to-json, --to-dot, and --to-svg",
-        ),
+    for (name, flags) in [
+        ("proofs", &["--slice", "--proofs"][..]),
+        ("term encoding", &["--slice", "--term-encoding"]),
+        ("proof extraction", &["--slice", "--proof-extraction"]),
+        ("naive", &["--slice", "--naive"]),
+        ("no messages", &["--slice", "--mode", "no-messages"]),
+        ("desugar", &["--slice", "--mode", "desugar"]),
+        ("interactive", &["--slice", "--mode", "interactive"]),
     ] {
-        let output = egglog().args(flags).arg(&program).output().unwrap();
-        assert_eq!(output.status.code(), Some(2));
-        assert!(String::from_utf8_lossy(&output.stderr).contains(diagnostic));
+        assert_success(&run(directory.path(), flags), name);
     }
+
+    let proof_testing = run(directory.path(), &["--slice", "--proof-testing"]);
+    assert_success(&proof_testing, "proof testing");
+    assert!(
+        !proof_testing.stdout.is_empty(),
+        "proof testing must turn the artifact's checks into displayed proves"
+    );
 }
 
 #[test]
-fn slice_output_cannot_alias_an_input_or_report() {
+fn slice_composes_with_serialization() {
     let directory = TestDir::new();
     let program = write_program(directory.path());
-
-    let input_collision = egglog()
-        .arg("--slice-output")
-        .arg(&program)
+    let output = egglog()
+        .args(["--slice", "--to-json", "--to-dot"])
         .arg(&program)
         .output()
         .unwrap();
-    assert_eq!(input_collision.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&input_collision.stderr).contains("conflicts with input file"));
-    assert_eq!(
-        std::fs::read_to_string(&program).unwrap(),
-        "(relation R (i64)) (R 1) (check (R 1))"
-    );
+    assert_success(&output, "slice serialization");
+    assert!(program.with_extension("dot").exists());
+    let json = std::fs::read_to_string(program.with_extension("json")).unwrap();
+    serde_json::from_str::<serde_json::Value>(&json).unwrap();
+}
 
-    for report_flag in ["--save-report", "--timing-summary"] {
-        let output = egglog()
-            .arg("--slice-output")
-            .arg(directory.path().join("same.json"))
-            .arg(report_flag)
-            .arg(directory.path().join("same.json"))
-            .arg(&program)
-            .output()
-            .unwrap();
-        assert_eq!(output.status.code(), Some(2));
-        assert!(String::from_utf8_lossy(&output.stderr).contains(report_flag));
-    }
+#[test]
+fn slice_output_composes_without_requesting_replay() {
+    let directory = TestDir::new();
+    let artifact = directory.path().join("slice-replay.egg");
+    let program = write_program(directory.path());
+    let output = egglog()
+        .args(["--slice-output", artifact.to_str().unwrap(), "--naive"])
+        .arg(program)
+        .output()
+        .unwrap();
+    assert_success(&output, "naive output-only slice");
+    assert!(artifact.exists());
+}
+
+#[test]
+fn slice_rejects_parallel_capture() {
+    let directory = TestDir::new();
+    let output = run(directory.path(), &["--slice", "--threads", "2"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--slice requires --threads 1"));
 }
 
 #[test]

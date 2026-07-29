@@ -929,22 +929,9 @@ fn retained_rewrite_command(
                     "bidirectional rewrite surface command {surface_command} disagrees with its ruleset"
                 )));
             }
-            match (forward, reverse) {
-                (Some(_), Some(_)) => {
-                    rewrite.name = base_name;
-                    Ok(Command::BiRewrite(surface_ruleset, rewrite))
-                }
-                (Some(entry), None) => {
-                    rewrite.name.clone_from(&entry.replay_name);
-                    Ok(Command::Rewrite(surface_ruleset, rewrite, false))
-                }
-                (None, Some(entry)) => {
-                    std::mem::swap(&mut rewrite.lhs, &mut rewrite.rhs);
-                    rewrite.name.clone_from(&entry.replay_name);
-                    Ok(Command::Rewrite(surface_ruleset, rewrite, false))
-                }
-                (None, None) => unreachable!("rewrite direction presence was checked above"),
-            }
+            debug_assert!(forward.is_some() || reverse.is_some());
+            rewrite.name = base_name;
+            Ok(Command::BiRewrite(surface_ruleset, rewrite))
         }
         Command::Rewrite(..) | Command::BiRewrite(..) => Err(ReplayError::Invalid(format!(
             "rewrite surface command {surface_command} disagrees with its directionality"
@@ -2221,7 +2208,7 @@ mod tests {
     }
 
     #[test]
-    fn rendered_artifact_orients_single_retained_birewrite_direction() {
+    fn rendered_artifact_preserves_single_retained_birewrite_direction() {
         let (commands, rendered) = slice_commands(
             "(datatype E (A i64) (B i64))
              (let $a (A 1))
@@ -2232,14 +2219,15 @@ mod tests {
         assert!(
             commands.iter().any(|command| matches!(
                 command,
-                Command::Rewrite(_, rewrite, false) if rewrite.name.ends_with("=>")
+                Command::BiRewrite(_, rewrite)
+                    if rewrite.name.starts_with("__slice_replay_rule_s")
             )),
-            "single selected direction was not emitted as an oriented rewrite:\n{rendered}"
+            "single selected direction lost its source birewrite form:\n{rendered}"
         );
         assert!(
             !commands
                 .iter()
-                .any(|command| matches!(command, Command::BiRewrite(..)))
+                .any(|command| matches!(command, Command::Rewrite(..)))
         );
 
         let (commands, rendered) = slice_commands(
@@ -2252,12 +2240,12 @@ mod tests {
         assert!(
             commands.iter().any(|command| matches!(
                 command,
-                Command::Rewrite(_, rewrite, false)
-                    if rewrite.name.ends_with("<=")
-                        && rewrite.lhs.to_string() == "(B x)"
-                        && rewrite.rhs.to_string() == "(A x)"
+                Command::BiRewrite(_, rewrite)
+                    if rewrite.name.starts_with("__slice_replay_rule_s")
+                        && rewrite.lhs.to_string() == "(A x)"
+                        && rewrite.rhs.to_string() == "(B x)"
             )),
-            "reverse selected direction was not swapped into an oriented rewrite:\n{rendered}"
+            "reverse selected direction lost its original birewrite orientation:\n{rendered}"
         );
     }
 

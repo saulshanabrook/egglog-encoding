@@ -1,9 +1,7 @@
 use crate::*;
 use std::ffi::OsString;
-use std::fs::OpenOptions;
 use std::io::{self, BufRead, BufReader, IsTerminal, Read, Write};
 use std::str::FromStr;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use clap::Parser;
 use egglog_reports::TimingSummaryV2;
@@ -85,10 +83,10 @@ struct Args {
     /// Enable proof testing, turning all `check` statements into `prove` statements
     #[clap(long)]
     proof_testing: bool,
-    /// Record an ordinary run and validate a replay of the successful checks
+    /// Record an ordinary run and replay the support for its successful checks
     #[clap(long)]
     slice: bool,
-    /// Write the validated replay program. This implies `--slice`.
+    /// Write the replay program without running it. This implies `--slice`.
     #[clap(long)]
     slice_output: Option<PathBuf>,
     /// Extract proofs for all `check` statements without verifying them
@@ -96,150 +94,17 @@ struct Args {
     proof_extraction: bool,
 }
 
-fn path_identity(path: &Path) -> Result<PathBuf, String> {
-    if path.exists() {
-        return path
-            .canonicalize()
-            .map_err(|error| format!("cannot resolve `{}`: {error}", path.display()));
-    }
-
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let name = path
-        .file_name()
-        .ok_or_else(|| format!("path `{}` has no file name", path.display()))?;
-    parent
-        .canonicalize()
-        .map(|parent| parent.join(name))
-        .map_err(|error| format!("cannot resolve parent of `{}`: {error}", path.display()))
-}
-
-fn validate_slice_paths(args: &Args) -> Result<(), String> {
-    let Some(output) = args.slice_output.as_ref() else {
-        return Ok(());
-    };
-    let output_identity = path_identity(output)?;
-    let conflicts = [
-        ("input file", args.inputs.first()),
-        ("--save-report", args.save_report.as_ref()),
-        ("--timing-summary", args.timing_summary.as_ref()),
-    ];
-    for (label, candidate) in conflicts {
-        if let Some(candidate) = candidate
-            && path_identity(candidate)? == output_identity
-        {
-            return Err(format!(
-                "--slice-output `{}` conflicts with {label} `{}`",
-                output.display(),
-                candidate.display()
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn publish_slice_output(path: &Path, rendered: &str) -> io::Result<()> {
-    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
-
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-
-    let (temporary_path, mut temporary) = (0..128)
-        .find_map(|_| {
-            let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
-            let candidate = parent.join(format!(".egglog-slice-{}-{id}.tmp", std::process::id()));
-            match OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&candidate)
-            {
-                Ok(file) => Some(Ok((candidate, file))),
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => None,
-                Err(error) => Some(Err(error)),
-            }
-        })
-        .unwrap_or_else(|| {
-            Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "could not reserve a temporary slice artifact",
-            ))
-        })?;
-
-    let result = (|| {
-        temporary.write_all(rendered.as_bytes())?;
-        temporary.sync_all()?;
-        drop(temporary);
-        if std::fs::read(&temporary_path)? != rendered.as_bytes() {
-            return Err(io::Error::other(
-                "temporary artifact differs from the validated replay program",
-            ));
-        }
-        std::fs::rename(&temporary_path, path)
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(temporary_path);
-    }
-    result
-}
-
-fn validate_then_publish_slice<T>(
-    validate: impl FnOnce() -> Result<T, String>,
-    publish: impl FnOnce() -> Result<(), String>,
-) -> Result<T, String> {
-    let validated = validate()?;
-    publish()?;
-    Ok(validated)
-}
-
 /// Start a command-line interface for the E-graph.
 ///
-/// This is what vanilla egglog uses, and custom egglog builds (i.e., "egglog batteries included")
-/// should also call this function.
+/// `replay_factory` constructs a fresh graph with the same extensions as
+/// `egraph`. It is called only when `--slice` or another output mode needs to
+/// execute the generated replay program.
 #[allow(clippy::disallowed_macros)]
-pub fn cli(egraph: EGraph) {
-    cli_with_args_inner(egraph, std::env::args_os(), None);
-}
-
-/// Start a command-line interface with an explicit argv.
-///
-/// Custom binaries can pre-parse their own flags and pass the remaining
-/// arguments here while still using egglog's standard CLI behavior.
-#[allow(clippy::disallowed_macros)]
-pub fn cli_with_args<I, T>(egraph: EGraph, args: I)
+pub fn cli<I, T, F>(mut egraph: EGraph, args: I, replay_factory: F)
 where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
-{
-    cli_with_args_inner(egraph, args, None);
-}
-
-/// Start a command-line interface with a factory for the fresh validation graph
-/// used by `--slice`.
-///
-/// Custom binaries which install sorts, primitives, or command extensions
-/// must use this entrypoint so replay receives the same extensions as capture.
-#[allow(clippy::disallowed_macros)]
-pub fn cli_with_args_and_factory<I, T, F>(egraph: EGraph, args: I, replay_factory: F)
-where
-    I: IntoIterator<Item = T>,
-    T: Into<OsString> + Clone,
-    F: FnOnce() -> EGraph + 'static,
-{
-    cli_with_args_inner(egraph, args, Some(Box::new(replay_factory)));
-}
-
-#[allow(clippy::disallowed_macros)]
-fn cli_with_args_inner<I, T>(
-    mut egraph: EGraph,
-    args: I,
-    replay_factory: Option<Box<dyn FnOnce() -> EGraph>>,
-) where
-    I: IntoIterator<Item = T>,
-    T: Into<OsString> + Clone,
+    F: FnOnce() -> EGraph,
 {
     env_logger::Builder::from_env(Env::default().default_filter_or("warn"))
         .format_timestamp(None)
@@ -257,37 +122,12 @@ fn cli_with_args_inner<I, T>(
     if slice_requested {
         let invalid = if args.threads != 1 {
             Some("--slice requires --threads 1")
-        } else if args.slice && !args.proofs && args.slice_output.is_none() {
-            Some("--slice requires --proofs or --slice-output")
         } else if args.inputs.len() != 1 {
             Some("--slice requires exactly one input file")
-        } else if args.proof_testing {
-            Some("--slice conflicts with --proof-testing")
-        } else if args.proof_extraction {
-            Some("--slice conflicts with --proof-extraction")
-        } else if args.term_encoding {
-            Some("--slice conflicts with --term-encoding")
-        } else if args.naive {
-            Some("--slice does not support --naive")
-        } else if args.to_json || args.to_dot || args.to_svg {
-            Some("--slice conflicts with --to-json, --to-dot, and --to-svg")
-        } else if replay_factory.is_none() {
-            Some(
-                "--slice requires a fresh-graph factory; custom binaries must call cli_with_args_and_factory",
-            )
-        } else if matches!(
-            args.mode,
-            RunMode::Interactive | RunMode::ShowDesugaredEgglog
-        ) {
-            Some("--slice supports only normal and no-messages modes")
         } else {
             None
         };
         if let Some(message) = invalid {
-            log::error!("{message}");
-            std::process::exit(2);
-        }
-        if let Err(message) = validate_slice_paths(&args) {
             log::error!("{message}");
             std::process::exit(2);
         }
@@ -303,7 +143,7 @@ fn cli_with_args_inner<I, T>(
         egraph.set_strict_mode(true);
     }
 
-    if args.term_encoding {
+    if args.term_encoding && !slice_requested {
         egraph = egraph.with_term_encoding_enabled();
     }
 
@@ -311,12 +151,12 @@ fn cli_with_args_inner<I, T>(
         egraph = egraph.with_proofs_enabled();
     }
 
-    if args.proof_testing {
+    if args.proof_testing && !slice_requested {
         egraph = egraph.with_proofs_enabled();
         egraph = egraph.with_proof_testing();
     }
 
-    if args.proof_extraction {
+    if args.proof_extraction && !slice_requested {
         egraph = egraph.with_proof_extraction();
     }
 
@@ -367,64 +207,49 @@ fn cli_with_args_inner<I, T>(
             });
         let slice_time = slice_start.elapsed();
 
-        // Drop every runtime value and trace allocation before constructing
-        // fresh replay graphs. The rendered program is the phase boundary.
-        drop(egraph);
-        let mut replay_seed = replay_factory.expect("slice factory was validated")();
-        replay_seed.fact_directory.clone_from(&args.fact_directory);
-        replay_seed.seminaive = true;
-        replay_seed.no_decomp = args.no_decomp;
-        replay_seed.set_report_level(args.report_level);
-        if args.strict_mode {
-            replay_seed.set_strict_mode(true);
+        if let Some(path) = &args.slice_output {
+            std::fs::write(path, &rendered).unwrap_or_else(|error| {
+                log::error!(
+                    "cannot write slice replay artifact `{}`: {error}",
+                    path.display()
+                );
+                std::process::exit(1);
+            });
         }
-        let user_seed = args.proofs.then(|| replay_seed.clone());
-        let mut strict_graph = replay_seed.with_proofs_enabled().with_proof_testing();
-        let replay_start = std::time::Instant::now();
-        let ((final_graph, outputs), replay_time) = validate_then_publish_slice(
-            || {
-                strict_graph
-                    .parse_and_run_program(Some("generated slice replay".into()), &rendered)
-                    .map_err(|error| format!("slice replay validation failed: {error}"))?;
-                let validated = if let Some(user_seed) = user_seed {
-                    let mut user_graph = user_seed.with_proofs_enabled();
-                    let outputs = user_graph
-                        .parse_and_run_program(Some("generated slice replay".into()), &rendered)
-                        .map_err(|error| {
-                            if matches!(&error, crate::Error::CheckError(..)) {
-                                format!("slice replay check failed: {error}")
-                            } else {
-                                format!("slice replay execution failed: {error}")
-                            }
-                        })?;
-                    (user_graph, outputs)
-                } else {
-                    (strict_graph, Vec::new())
-                };
-                Ok((validated, replay_start.elapsed()))
-            },
-            || {
-                if let Some(path) = &args.slice_output {
-                    publish_slice_output(path, &rendered).map_err(|error| {
-                        format!(
-                            "cannot publish slice replay artifact `{}`: {error}",
-                            path.display()
-                        )
-                    })?;
-                }
-                Ok(())
-            },
-        )
-        .unwrap_or_else(|error| {
-            log::error!("{error}");
-            std::process::exit(1);
-        });
-        if args.mode != RunMode::NoMessages {
-            let mut output = io::stdout();
-            for message in outputs {
-                write!(output, "{message}").unwrap();
+
+        let replay_requested = args.slice
+            || args.proofs
+            || args.proof_testing
+            || args.term_encoding
+            || args.proof_extraction
+            || args.to_json
+            || args.to_dot
+            || args.to_svg
+            || matches!(
+                args.mode,
+                RunMode::Interactive | RunMode::ShowDesugaredEgglog
+            );
+        let replay_time = if replay_requested {
+            // The rendered program is the phase boundary: no captured runtime
+            // value or trace allocation can leak into replay.
+            drop(egraph);
+            egraph = configure_requested_mode(replay_factory(), &args);
+            let replay_start = std::time::Instant::now();
+            match run_commands(
+                &mut egraph,
+                Some("generated slice replay".into()),
+                &rendered,
+                io::stdout(),
+                args.mode,
+            ) {
+                Ok(None) => {}
+                _ => std::process::exit(1),
             }
-        }
+            replay_start.elapsed()
+        } else {
+            std::time::Duration::ZERO
+        };
+
         log::info!(
             "slice: capture={capture_time:?} slice={slice_time:?} replay={replay_time:?} facts={} firings={} equalities={} removals={} waves={} aliases={} replayed_firings={}",
             slice.facts.len(),
@@ -435,7 +260,9 @@ fn cli_with_args_inner<I, T>(
             replay_stats.aliases,
             replay_stats.firings,
         );
-        egraph = final_graph;
+        if args.to_json || args.to_dot || args.to_svg {
+            serialize_egraph(&egraph, input, &args);
+        }
     } else if args.inputs.is_empty() {
         match egraph.repl(args.mode) {
             Ok(()) => {}
@@ -463,49 +290,7 @@ fn cli_with_args_inner<I, T>(
             }
 
             if args.to_json || args.to_dot || args.to_svg {
-                let serialized_output = egraph.serialize(SerializeConfig {
-                    max_functions: Some(args.max_functions),
-                    max_calls_per_function: Some(args.max_calls_per_function),
-                    ..SerializeConfig::default()
-                });
-                if !serialized_output.is_complete() {
-                    log::warn!("{}", serialized_output.omitted_description());
-                }
-                let mut serialized = serialized_output.egraph;
-                if args.serialize_split_primitive_outputs {
-                    serialized.split_classes(|id, _| egraph.from_node_id(id).is_primitive())
-                }
-                for _ in 0..args.serialize_n_inline_leaves {
-                    serialized.inline_leaves();
-                }
-
-                // if we are splitting primitive outputs, add `-split` to the end of the file name
-                let serialize_filename = if args.serialize_split_primitive_outputs {
-                    input.with_file_name(format!(
-                        "{}-split",
-                        input.file_stem().unwrap().to_str().unwrap()
-                    ))
-                } else {
-                    input.clone()
-                };
-                if args.to_dot {
-                    let dot_path = serialize_filename.with_extension("dot");
-                    serialized
-                        .to_dot_file(dot_path.clone())
-                        .unwrap_or_else(|_| panic!("Failed to write dot file to {dot_path:?}"));
-                }
-                if args.to_svg {
-                    let svg_path = serialize_filename.with_extension("svg");
-                    serialized.to_svg_file(svg_path.clone()).unwrap_or_else( |_|
-                        panic!("Failed to write svg file to {svg_path:?}. Make sure you have the `dot` executable installed")
-                    );
-                }
-                if args.to_json {
-                    let json_path = serialize_filename.with_extension("json");
-                    serialized
-                        .to_json_file(json_path.clone())
-                        .unwrap_or_else(|_| panic!("Failed to write json file to {json_path:?}"));
-                }
+                serialize_egraph(&egraph, input, &args);
             }
         }
     }
@@ -537,6 +322,75 @@ fn cli_with_args_inner<I, T>(
 
     // no need to drop the egraph if we are going to exit
     std::mem::forget(egraph)
+}
+
+fn configure_requested_mode(mut egraph: EGraph, args: &Args) -> EGraph {
+    egraph.fact_directory.clone_from(&args.fact_directory);
+    egraph.seminaive = !args.naive;
+    egraph.no_decomp = args.no_decomp;
+    egraph.set_report_level(args.report_level);
+    if args.strict_mode {
+        egraph.set_strict_mode(true);
+    }
+    if args.term_encoding {
+        egraph = egraph.with_term_encoding_enabled();
+    }
+    if args.proofs {
+        egraph = egraph.with_proofs_enabled();
+    }
+    if args.proof_testing {
+        egraph = egraph.with_proofs_enabled().with_proof_testing();
+    }
+    if args.proof_extraction {
+        egraph = egraph.with_proof_extraction();
+    }
+    egraph
+}
+
+fn serialize_egraph(egraph: &EGraph, input: &Path, args: &Args) {
+    let serialized_output = egraph.serialize(SerializeConfig {
+        max_functions: Some(args.max_functions),
+        max_calls_per_function: Some(args.max_calls_per_function),
+        ..SerializeConfig::default()
+    });
+    if !serialized_output.is_complete() {
+        log::warn!("{}", serialized_output.omitted_description());
+    }
+    let mut serialized = serialized_output.egraph;
+    if args.serialize_split_primitive_outputs {
+        serialized.split_classes(|id, _| egraph.from_node_id(id).is_primitive())
+    }
+    for _ in 0..args.serialize_n_inline_leaves {
+        serialized.inline_leaves();
+    }
+
+    // if we are splitting primitive outputs, add `-split` to the end of the file name
+    let serialize_filename = if args.serialize_split_primitive_outputs {
+        input.with_file_name(format!(
+            "{}-split",
+            input.file_stem().unwrap().to_str().unwrap()
+        ))
+    } else {
+        input.to_owned()
+    };
+    if args.to_dot {
+        let dot_path = serialize_filename.with_extension("dot");
+        serialized
+            .to_dot_file(dot_path.clone())
+            .unwrap_or_else(|_| panic!("Failed to write dot file to {dot_path:?}"));
+    }
+    if args.to_svg {
+        let svg_path = serialize_filename.with_extension("svg");
+        serialized.to_svg_file(svg_path.clone()).unwrap_or_else( |_|
+            panic!("Failed to write svg file to {svg_path:?}. Make sure you have the `dot` executable installed")
+        );
+    }
+    if args.to_json {
+        let json_path = serialize_filename.with_extension("json");
+        serialized
+            .to_json_file(json_path.clone())
+            .unwrap_or_else(|_| panic!("Failed to write json file to {json_path:?}"));
+    }
 }
 
 impl EGraph {
@@ -681,38 +535,6 @@ impl FromStr for RunMode {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn failed_slice_validation_skips_publication() {
-        static NEXT_ID: AtomicU64 = AtomicU64::new(0);
-
-        let directory = std::env::temp_dir().join(format!(
-            "egglog-slice-validation-{}-{}",
-            std::process::id(),
-            NEXT_ID.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir(&directory).unwrap();
-        let existing = directory.join("existing.egg");
-        let fresh = directory.join("fresh.egg");
-        std::fs::write(&existing, "keep me").unwrap();
-
-        for path in [&existing, &fresh] {
-            let publish_called = std::cell::Cell::new(false);
-            let error = validate_then_publish_slice::<()>(
-                || Err("slice replay validation failed: injected failure".into()),
-                || {
-                    publish_called.set(true);
-                    publish_slice_output(path, "replacement").map_err(|error| error.to_string())
-                },
-            )
-            .unwrap_err();
-            assert_eq!(error, "slice replay validation failed: injected failure");
-            assert!(!publish_called.get());
-        }
-        assert_eq!(std::fs::read_to_string(&existing).unwrap(), "keep me");
-        assert!(!fresh.exists());
-        std::fs::remove_dir_all(directory).unwrap();
-    }
 
     #[test]
     fn proof_extraction_is_a_distinct_cli_mode() {

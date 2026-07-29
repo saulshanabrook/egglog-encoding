@@ -127,6 +127,7 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
             "core/tricky-type-checking.egg",
             "core/tuple-output.egg",
             "core/typed_primitive_unstable_app.egg",
+            "core/uf-extraction.egg",
             "core/unsafe-seminaive.egg",
             "core/vec.egg",
             "core/web-demo/bignum.egg",
@@ -319,13 +320,6 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
         },
     },
     AllowlistGroup {
-        paths: &["core/uf-extraction.egg"],
-        disposition: Disposition::Unsupported {
-            diagnostic: "sort has a :internal-uf annotation",
-            artifact: ArtifactExpectation::Absent,
-        },
-    },
-    AllowlistGroup {
         paths: &[
             "core/repro-unsound.egg",
             "core/web-demo/levenshtein-distance.egg",
@@ -441,6 +435,14 @@ pub fn validate_allowlist(prefix: &str, discovered: &[String], allowlist: &[Allo
 fn run_case(case: &CausalCase, resolve_roots: RootResolver) {
     let source_roots = resolve_roots(&case.path, &case.working_directory)
         .unwrap_or_else(|error| panic!("failed to resolve {}: {error}", case.path.display()));
+    if let Some(Disposition::StaticUnsupported { reason }) = case.allowlisted {
+        assert!(
+            !case.proof_supported,
+            "{} has stale static causal exclusion ({reason}): proof mode now supports it",
+            case.name
+        );
+        return;
+    }
     let extract_roots_unsupported =
         matches!(case.allowlisted, Some(Disposition::ExtractRootsUnsupported));
     let classified_runtime_failure =
@@ -476,14 +478,6 @@ fn run_case(case: &CausalCase, resolve_roots: RootResolver) {
             "{} has no positive check; classify it explicitly",
             case.name
         );
-    }
-    if let Some(Disposition::StaticUnsupported { reason }) = case.allowlisted {
-        assert!(
-            !case.proof_supported,
-            "{} has stale static causal exclusion ({reason}): proof mode now supports it",
-            case.name
-        );
-        return;
     }
     if !classified_runtime_failure && !extract_roots_unsupported {
         assert!(
