@@ -504,7 +504,7 @@ impl EqualityReason {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EqualityEndpoint {
     pub sort: ReplaySortId,
     pub term: ReplayTermId,

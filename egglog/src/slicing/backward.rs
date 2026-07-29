@@ -9,20 +9,13 @@ use crate::core_relations::{
     AppliedEqualityId, CauseRef, Criterion, CriterionEndpointOccurrence, EdgeHorizon,
     EqualityEndpoint, EqualityReason, FactCellRef, FactId, FiringEqualitySource, FiringId,
     HistoryPosition, ProjectedAppliedEquality, RawAliasWindow, RawCause, RawEqualityEndpoint,
-    RawEqualitySupport, ReplaySortId, ReplayTableKind, ReplayTermId, SourceRef, TableId, TraceView,
+    RawEqualitySupport, ReplayTableKind, ReplayTermId, SourceRef, TableId, TraceView,
     TraceViewError, TypedCellEquality, Value,
 };
 use crate::numeric_id::NumericId;
 use crate::util::{HashMap, HashSet};
 
 use crate::EGraph;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct SupportRequirement {
-    applied: Box<[AppliedEqualityId]>,
-    facts: Box<[FactId]>,
-    rekeys: Box<[HistoryPosition]>,
-}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Slice {
@@ -44,7 +37,7 @@ pub(crate) struct Slice {
     pub(crate) firing_term_windows: HashMap<FiringId, Box<[Box<[RawAliasWindow]>]>>,
     pub(crate) equality_records: HashMap<AppliedEqualityId, ProjectedAppliedEquality>,
     denotation_equalities: HashSet<AppliedEqualityId>,
-    requirements: Vec<SupportRequirement>,
+    requirements: Vec<RawEqualitySupport>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -63,25 +56,18 @@ struct OwnerEffects {
 type OwnerIndex = HashMap<ReplayOwner, OwnerEffects>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct TypedTerm {
-    sort: ReplaySortId,
-    term: ReplayTermId,
-    raw: Value,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum KeyCell {
     Base(Value),
-    Equality(TypedTerm),
+    Equality(EqualityEndpoint),
 }
 
 #[derive(Default)]
 struct SelectedEqualityDsu {
-    parent: HashMap<TypedTerm, TypedTerm>,
+    parent: HashMap<EqualityEndpoint, EqualityEndpoint>,
 }
 
 impl SelectedEqualityDsu {
-    fn find(&mut self, term: TypedTerm) -> TypedTerm {
+    fn find(&mut self, term: EqualityEndpoint) -> EqualityEndpoint {
         let parent = *self.parent.entry(term).or_insert(term);
         if parent == term {
             return term;
@@ -91,7 +77,7 @@ impl SelectedEqualityDsu {
         root
     }
 
-    fn union(&mut self, left: TypedTerm, right: TypedTerm) -> bool {
+    fn union(&mut self, left: EqualityEndpoint, right: EqualityEndpoint) -> bool {
         let left = self.find(left);
         let right = self.find(right);
         if left == right {
@@ -176,11 +162,7 @@ fn enqueue_support(slice: &mut Slice, work: &mut VecDeque<Work>, support: RawEqu
     for position in &support.rekeys {
         work.push_back(Work::Rekey(*position));
     }
-    slice.requirements.push(SupportRequirement {
-        applied: support.applied,
-        facts: support.facts,
-        rekeys: support.rekeys,
-    });
+    slice.requirements.push(support);
 }
 
 fn check_occurrence_cell(occurrence: CriterionEndpointOccurrence) -> Option<FactCellRef> {
@@ -385,18 +367,7 @@ fn selected_equality_dsu(slice: &Slice) -> SelectedEqualityDsu {
     let mut dsu = SelectedEqualityDsu::default();
     for id in &slice.replay_equalities {
         let event = &slice.equality_records[id];
-        dsu.union(
-            TypedTerm {
-                sort: event.left.sort,
-                term: event.left.term,
-                raw: event.left.raw,
-            },
-            TypedTerm {
-                sort: event.right.sort,
-                term: event.right.term,
-                raw: event.right.raw,
-            },
-        );
+        dsu.union(event.left, event.right);
     }
     dsu
 }
@@ -573,11 +544,7 @@ fn replay_key_at(
                     position,
                 )?
                 .endpoint;
-            key.push(KeyCell::Equality(TypedTerm {
-                sort: endpoint.sort,
-                term: endpoint.term,
-                raw: endpoint.raw,
-            }));
+            key.push(KeyCell::Equality(endpoint));
         } else {
             let value = values.get(column).copied().ok_or_else(|| {
                 TraceViewError::Invalid(format!("fact {fact:?} has no key column {column}"))
