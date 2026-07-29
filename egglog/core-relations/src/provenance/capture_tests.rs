@@ -27,6 +27,38 @@ fn capture_view_rejects_reentrancy_without_poisoning_capture() {
 }
 
 #[test]
+fn table_schema_requires_layout_kind_and_key_arity_but_not_constructor() {
+    let table = TableId::new(4);
+    let sort = ReplaySortId::new(3);
+    let trace = Trace::default();
+    trace.register_table_layout(table, &[Some(sort)]).unwrap();
+    trace
+        .register_table_kind(table, ReplayTableKind::ValueFunction)
+        .unwrap();
+    trace.register_table_key_columns(table, 0).unwrap();
+    trace
+        .with_view(|view| {
+            assert_eq!(
+                view.table_schema(table)?,
+                ReplayTableSchema {
+                    kind: ReplayTableKind::ValueFunction,
+                    key_columns: 0,
+                    columns: Arc::from([Some(sort)]),
+                }
+            );
+            Ok(())
+        })
+        .unwrap();
+
+    let partial = Trace::default();
+    partial.register_table_layout(table, &[Some(sort)]).unwrap();
+    let error = partial
+        .with_view(|view| view.table_schema(table).map(drop))
+        .unwrap_err();
+    assert_eq!(error, TraceViewError::UnknownTable(table));
+}
+
+#[test]
 fn panicking_capture_view_callback_does_not_poison_capture_locks() {
     let trace = Trace::default();
     let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -73,6 +105,57 @@ fn physical_rekey_collision_with_same_fact_records_no_logical_transition() {
     trace.commit_prepared_rekey(prepared(), RekeyOutcome::Absorbed(FactId::new(18)));
     assert_eq!(trace.0.arena.lock().unwrap().rekeys.len(), 1);
     assert_eq!(trace.history_boundary(), HistoryPosition::new(1));
+}
+
+#[test]
+fn trace_view_reports_duplicate_rekey_positions_as_invalid_history() {
+    let trace = Trace::default();
+    let fact = FactId::new(17);
+    let sort = ReplaySortId::new(3);
+    let pair = TypedCellEquality {
+        column: crate::ColumnId::new(0),
+        left: EqualityEndpoint {
+            sort,
+            term: ReplayTermId::MISSING,
+            raw: Value::new(20),
+        },
+        right: EqualityEndpoint {
+            sort,
+            term: ReplayTermId::MISSING,
+            raw: Value::new(10),
+        },
+    };
+    let prepared = || {
+        PreparedRekey::from_staged(
+            TableId::new(4),
+            Wave::new(2),
+            fact,
+            HistoryPosition::new(0),
+            &[pair],
+        )
+    };
+    trace.commit_prepared_rekey(prepared(), RekeyOutcome::Absorbed(FactId::new(18)));
+    trace.commit_prepared_rekey(prepared(), RekeyOutcome::Absorbed(FactId::new(19)));
+
+    let duplicate = {
+        let mut arena = trace.0.arena.lock().unwrap();
+        let duplicate = arena.rekeys[0].position;
+        arena.rekeys[1].position = duplicate;
+        duplicate
+    };
+    trace
+        .with_view(|view| {
+            for _ in 0..2 {
+                let error = view.rekey_at(duplicate).unwrap_err();
+                assert!(
+                    matches!(error, TraceViewError::Invalid(ref message)
+                        if message.contains("two logical rekeys share history position")),
+                    "duplicate history positions must stay on the checked error path: {error:?}"
+                );
+            }
+            Ok(())
+        })
+        .unwrap();
 }
 
 #[test]

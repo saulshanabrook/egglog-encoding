@@ -520,7 +520,7 @@ pub struct TraceView<'a> {
     pub(super) projector: TermProjector<'a>,
     pub(super) history_boundary: HistoryPosition,
     pub(super) equality_index: Option<ExplanationForest>,
-    pub(super) rekey_index: Option<VersionChain>,
+    pub(super) rekey_index: Option<Result<VersionChain, TraceViewError>>,
     pub(super) constructor_occurrence_index: Option<ConstructorOccurrenceIndex>,
     pub(super) occurrence_support_cache:
         HashMap<StructuralOccurrenceQuery, Option<RawEqualitySupport>>,
@@ -670,27 +670,36 @@ impl<'a> TraceView<'a> {
         })
     }
 
-    fn rekey_index(&mut self) -> &VersionChain {
+    fn rekey_index(&mut self) -> Result<&VersionChain, TraceViewError> {
         if self.rekey_index.is_none() {
             let mut by_fact = HashMap::<FactId, Vec<usize>>::default();
             let mut by_position = HashMap::default();
             by_position.reserve(self.arena.rekeys.len());
+            let mut duplicate = None;
             for (index, rekey) in self.arena.rekeys.iter().enumerate() {
                 by_fact.entry(rekey.fact).or_default().push(index);
-                assert!(
-                    by_position.insert(rekey.position, index).is_none(),
-                    "two logical rekeys share one history position"
-                );
+                if by_position.insert(rekey.position, index).is_some() {
+                    duplicate = Some(rekey.position);
+                    break;
+                }
             }
-            self.rekey_index = Some(VersionChain {
-                by_fact: by_fact
-                    .into_iter()
-                    .map(|(fact, indexes)| (fact, Arc::from(indexes)))
-                    .collect(),
-                by_position,
+            self.rekey_index = Some(match duplicate {
+                Some(position) => Err(TraceViewError::Invalid(format!(
+                    "two logical rekeys share history position {position:?}"
+                ))),
+                None => Ok(VersionChain {
+                    by_fact: by_fact
+                        .into_iter()
+                        .map(|(fact, indexes)| (fact, Arc::from(indexes)))
+                        .collect(),
+                    by_position,
+                }),
             });
         }
-        self.rekey_index.as_ref().unwrap()
+        match self.rekey_index.as_ref().unwrap() {
+            Ok(index) => Ok(index),
+            Err(error) => Err(error.clone()),
+        }
     }
 
     /// Borrow one observed rule firing and its exact grounded dependencies.
@@ -864,7 +873,7 @@ impl<'a> TraceView<'a> {
         position: HistoryPosition,
     ) -> Result<RawRekeyRecord<'a>, TraceViewError> {
         let index = self
-            .rekey_index()
+            .rekey_index()?
             .by_position
             .get(&position)
             .copied()
@@ -901,9 +910,10 @@ impl<'a> TraceView<'a> {
 
     /// Return the registered replay schema for one physical table.
     ///
-    /// The schema combines keyed-row semantics, key arity, logical column
-    /// sorts, and optional structural constructor metadata. Missing any
-    /// required catalog component is reported as an unknown table.
+    /// The schema combines keyed-row semantics, key arity, and logical column
+    /// sorts. Structural constructor metadata is retained separately and is
+    /// not part of [`ReplayTableSchema`]. Missing any required schema component
+    /// is reported as an unknown table.
     pub fn table_schema(&self, table: TableId) -> Result<ReplayTableSchema, TraceViewError> {
         let columns = self
             .replay_terms
@@ -1223,7 +1233,7 @@ impl<'a> TraceView<'a> {
         let mut raw = creation_raw;
         let mut rekeys = Vec::new();
         let fact_rekeys = self
-            .rekey_index()
+            .rekey_index()?
             .by_fact
             .get(&occurrence.fact)
             .cloned()
