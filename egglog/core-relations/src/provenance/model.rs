@@ -101,7 +101,7 @@ handle!(
 ///
 /// Constructor and value-function removals can change a later grounded write
 /// or lookup-or-insert. Presence relations have no merge-bearing cell, so
-/// their removals are retained only as diagnostics.
+/// their removals are not retained.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ReplayTableKind {
     /// Set-like table whose removals cannot affect a later merge-bearing value.
@@ -410,7 +410,7 @@ impl RuleBindingSpec {
 }
 
 impl FiringCaptureSpec {
-    /// Creates capture metadata for ordinary variables in source order.
+    /// Creates capture metadata with the complete source-ordered binding layout.
     pub fn new(
         rule: u32,
         premises: impl IntoIterator<Item = AtomId>,
@@ -586,7 +586,7 @@ pub enum CriterionEndpointOccurrence {
         /// Fact-and-column occurrence needed for liveness and equality support.
         FactCellRef,
     ),
-    /// The endpoint came from match-time state and has no fact-cell occurrence.
+    /// The endpoint has no historical fact-cell occurrence, for example a source constant.
     Current,
 }
 
@@ -709,7 +709,7 @@ pub struct RawEqualitySupport {
     pub rekeys: Box<[HistoryPosition]>,
 }
 
-/// The exact support and capture lower bounds for one structural checked
+/// One sufficient support set and the capture lower bounds for one structural checked
 /// alias. Once established, the persistent alias lets a later grounded firing
 /// reuse an e-class value after its constructor row has been deleted.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -722,8 +722,8 @@ pub struct RawTermAvailability {
 
 /// Replay schedule for capturing one structural call occurrence as a
 /// persistent checked alias. Entries are emitted child-first in structural
-/// occurrence order; the term itself is carried by the schedule entry that
-/// owns this plan.
+/// occurrence order. Each plan aligns with the corresponding call occurrence
+/// in the enclosing firing binding's structural term.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ReplayAliasPlan {
     /// Exact constructor-row occurrence used to justify this alias. Pure and
