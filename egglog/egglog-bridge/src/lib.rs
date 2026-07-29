@@ -279,20 +279,28 @@ fn validate_replay_merge_origins(
 /// before registering it with the native trace.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FunctionReplaySpec {
+    /// Logical sort of each user-visible key and value column, in table order.
     pub logical_sorts: Box<[ReplaySortId]>,
+    /// Structural call that constructs the result of a constructor table.
+    /// Value functions have no constructor recipe.
     pub constructor: Option<ReplayCallSpec>,
+    /// Replay semantics of the registered table.
     pub table_kind: ReplayTableKind,
 }
 
 /// One fully parsed source row ready for trace input staging.
 #[derive(Clone, Debug)]
 pub struct SourceInputRow {
+    /// Stable identity of the source command or embedded input row.
     pub source: core_relations::SourceRef,
+    /// Native values staged into the function table.
     pub values: Box<[Value]>,
+    /// Exact structural term corresponding to each native value.
     pub terms: Box<[ReplayTermId]>,
 }
 
 impl SourceInputRow {
+    /// Collect a parsed source row and its exact structural terms.
     pub fn new(
         source: core_relations::SourceRef,
         values: impl IntoIterator<Item = Value>,
@@ -307,6 +315,10 @@ impl SourceInputRow {
 }
 
 impl FunctionReplaySpec {
+    /// Describe a constructor or value-function table.
+    ///
+    /// A present `constructor` selects [`ReplayTableKind::Constructor`]; an
+    /// absent constructor selects [`ReplayTableKind::ValueFunction`].
     pub fn new(
         logical_sorts: impl IntoIterator<Item = ReplaySortId>,
         constructor: Option<ReplayCallSpec>,
@@ -322,6 +334,7 @@ impl FunctionReplaySpec {
         }
     }
 
+    /// Override the table semantics inferred by [`FunctionReplaySpec::new`].
     pub fn with_table_kind(mut self, table_kind: ReplayTableKind) -> Self {
         self.table_kind = table_kind;
         self
@@ -990,6 +1003,11 @@ impl EGraph {
         Ok(())
     }
 
+    /// Register the child-sort layout used to reconstruct one container sort.
+    ///
+    /// Trace capture must already be enabled. Container values remain native
+    /// values; this metadata only explains their structural children during
+    /// slicing and replay.
     pub fn register_container_replay_sort(
         &mut self,
         sort: ReplaySortId,
@@ -1123,11 +1141,19 @@ impl EGraph {
         Ok(())
     }
 
+    /// Set the globally monotone wave inherited by subsequently recorded rule
+    /// effects.
+    ///
+    /// Returns an error when trace capture is disabled or `wave` precedes the
+    /// current wave. Advancing the wave finalizes the previous synchronous
+    /// native barrier.
     pub fn set_trace_wave(&mut self, wave: u64) -> Result<()> {
         if self.trace.is_none() {
             anyhow::bail!("trace capture is not enabled");
         }
-        self.db.set_trace_wave(Wave::new(wave));
+        self.db
+            .try_set_trace_wave(Wave::new(wave))
+            .map_err(anyhow::Error::msg)?;
         Ok(())
     }
 

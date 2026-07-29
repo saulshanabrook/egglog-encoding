@@ -59,6 +59,21 @@ fn trace_capture_rejects_parallel_bridge_activation() {
 }
 
 #[test]
+fn trace_wave_rejects_decreasing_stamp_without_panicking() {
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .unwrap();
+    pool.install(|| {
+        let mut egraph = EGraph::default();
+        egraph.enable_trace().unwrap();
+        egraph.set_trace_wave(2).unwrap();
+        let error = egraph.set_trace_wave(1).unwrap_err();
+        assert_eq!(error.to_string(), "trace waves must be globally monotone");
+    });
+}
+
+#[test]
 fn trace_capture_rejects_unsupported_merge_before_table_allocation() {
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(1)

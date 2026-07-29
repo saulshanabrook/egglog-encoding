@@ -429,12 +429,15 @@ impl Database {
         Ok(trace)
     }
 
-    /// Set the globally monotone user-wave stamp inherited by rule effects.
-    pub fn set_trace_wave(&mut self, wave: Wave) {
-        assert!(
-            wave >= self.trace_wave,
-            "causal waves must be globally monotone"
-        );
+    /// Try to set the globally monotone user-wave stamp inherited by rule
+    /// effects.
+    ///
+    /// Returns an error instead of mutating the trace when `wave` precedes the
+    /// current stamp.
+    pub fn try_set_trace_wave(&mut self, wave: Wave) -> Result<(), &'static str> {
+        if wave < self.trace_wave {
+            return Err("trace waves must be globally monotone");
+        }
         if wave > self.trace_wave
             && let Some(trace) = &self.trace
         {
@@ -443,6 +446,18 @@ impl Database {
             trace.finalize_wave();
         }
         self.trace_wave = wave;
+        Ok(())
+    }
+
+    /// Set the globally monotone user-wave stamp inherited by rule effects.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `wave` precedes the current stamp. Fallible callers should
+    /// use [`Database::try_set_trace_wave`].
+    pub fn set_trace_wave(&mut self, wave: Wave) {
+        self.try_set_trace_wave(wave)
+            .unwrap_or_else(|reason| panic!("{reason}"));
     }
 
     /// Promote effective roots from the completed synchronous native wave and
