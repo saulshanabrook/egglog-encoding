@@ -24,7 +24,6 @@ pub(crate) struct Slice {
     pub(crate) firings: HashSet<FiringId>,
     pub(crate) equalities: HashSet<AppliedEqualityId>,
     pub(crate) replay_facts: HashSet<FactId>,
-    pub(crate) replay_equalities: HashSet<AppliedEqualityId>,
     pub(crate) replay_removals: HashSet<usize>,
     pub(crate) rekeys: HashSet<HistoryPosition>,
     pub(crate) causes: HashSet<CauseRef>,
@@ -335,7 +334,7 @@ fn mark_replay_equality(
     work: &mut VecDeque<Work>,
     id: AppliedEqualityId,
 ) -> Result<(), TraceViewError> {
-    if slice.replay_equalities.insert(id) {
+    if !slice.equality_records.contains_key(&id) {
         let event = view.project_applied_equality(id)?;
         slice.equality_records.insert(id, event);
         work.push_back(Work::EqualityDenotation(id));
@@ -365,8 +364,7 @@ fn mark_owner_visible(
 
 fn selected_equality_dsu(slice: &Slice) -> SelectedEqualityDsu {
     let mut dsu = SelectedEqualityDsu::default();
-    for id in &slice.replay_equalities {
-        let event = &slice.equality_records[id];
+    for event in slice.equality_records.values() {
         dsu.union(event.left, event.right);
     }
     dsu
@@ -395,7 +393,7 @@ fn equality_landmark_is_replay_visible(
         if support
             .applied
             .iter()
-            .any(|edge| !slice.replay_equalities.contains(edge))
+            .any(|edge| !slice.equality_records.contains_key(edge))
         {
             return Ok(false);
         }
@@ -498,7 +496,7 @@ fn select_replay_maintenance_equalities(
     // necessary; a fixpoint would turn a dense event log into quadratic work.
     for raw in 1..=view.totals().applied_equalities {
         let id = AppliedEqualityId::new(raw);
-        if slice.replay_equalities.contains(&id) {
+        if slice.equality_records.contains_key(&id) {
             continue;
         }
         let event = view.applied_equality(id)?;

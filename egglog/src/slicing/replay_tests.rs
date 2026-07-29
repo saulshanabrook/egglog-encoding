@@ -372,12 +372,12 @@ fn run_endpoint_case(case: EndpointCase) -> Result<(), String> {
         .map_err(|error| format!("capture: {error}"))?;
     let slice = slice_all_checks(&recorder).map_err(|error| format!("slice: {error}"))?;
     let anchor = crate::core_relations::AppliedEqualityId::new(u64::from(case.noise) + 1);
-    if !slice.equalities.contains(&anchor) || !slice.replay_equalities.contains(&anchor) {
+    if !slice.equalities.contains(&anchor) || !slice.equality_records.contains_key(&anchor) {
         return Err(format!("missing denotation anchor {anchor:?}"));
     }
     if case.noise {
         let noise = crate::core_relations::AppliedEqualityId::new(1);
-        if slice.equalities.contains(&noise) || slice.replay_equalities.contains(&noise) {
+        if slice.equalities.contains(&noise) || slice.equality_records.contains_key(&noise) {
             return Err("disconnected noise equality was retained".into());
         }
     }

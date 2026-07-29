@@ -104,7 +104,7 @@ fn interfering_same_wave_delete_retains_its_independent_firing() {
     );
     assert_eq!(slice.checks.len(), 1);
     assert!(slice.equalities.is_empty());
-    assert!(slice.replay_equalities.is_empty());
+    assert!(slice.equality_records.is_empty());
     assert_eq!(slice.replay_removals.len(), 1);
 }
 
@@ -466,7 +466,7 @@ fn post_deletion_equality_cannot_select_stale_child_producer() {
     // The late old-A=B equality is irrelevant. In particular, it must not
     // make the dead old A occurrence win over the recreated A occurrence
     // that addressed H's key while H was still live.
-    assert_eq!(slice.replay_equalities.len(), 1);
+    assert_eq!(slice.equality_records.len(), 1);
     assert_eq!(slice.replay_removals.len(), 2);
     let h_windows = slice
         .firing_term_windows
