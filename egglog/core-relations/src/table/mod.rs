@@ -297,6 +297,7 @@ struct Buffer {
     trace_enabled: bool,
 }
 
+#[derive(Default)]
 struct CaptureBuffer {
     causes: DenseIdMap<ShardId, Vec<Option<DeferredEqualityCause>>>,
     row_rekeys: DenseIdMap<ShardId, Vec<Option<u32>>>,
@@ -327,17 +328,7 @@ impl MutationBuffer for Buffer {
                     .all(|(_, rows)| rows.len() == 0),
             "a rebuild commit guard must be installed before staging mutations"
         );
-        let capture = self.capture.get_or_insert_with(|| {
-            Box::new(CaptureBuffer {
-                causes: DenseIdMap::default(),
-                row_rekeys: DenseIdMap::default(),
-                rekeys: DenseIdMap::default(),
-                rekey_equalities: DenseIdMap::default(),
-                origins: DenseIdMap::default(),
-                removal_causes: DenseIdMap::default(),
-                transaction: None,
-            })
-        });
+        let capture = self.capture.get_or_insert_with(Default::default);
         assert!(
             capture.transaction.replace(transaction).is_none(),
             "a mutation buffer received more than one rebuild commit guard"
@@ -359,17 +350,7 @@ impl MutationBuffer for Buffer {
             .pending_rows
             .get_or_insert(shard, || RowBuffer::new(self.n_cols as _))
             .len();
-        let capture = self.capture.get_or_insert_with(|| {
-            Box::new(CaptureBuffer {
-                causes: DenseIdMap::default(),
-                row_rekeys: DenseIdMap::default(),
-                rekeys: DenseIdMap::default(),
-                rekey_equalities: DenseIdMap::default(),
-                origins: DenseIdMap::default(),
-                removal_causes: DenseIdMap::default(),
-                transaction: None,
-            })
-        });
+        let capture = self.capture.get_or_insert_with(Default::default);
         let causes = capture.causes.get_or_insert(shard, || {
             assert_eq!(rows, 0, "capture causes were enabled after ordinary rows");
             Vec::new()
@@ -395,17 +376,7 @@ impl MutationBuffer for Buffer {
             .pending_rows
             .get_or_insert(shard, || RowBuffer::new(self.n_cols as _))
             .len();
-        let capture = self.capture.get_or_insert_with(|| {
-            Box::new(CaptureBuffer {
-                causes: DenseIdMap::default(),
-                row_rekeys: DenseIdMap::default(),
-                rekeys: DenseIdMap::default(),
-                rekey_equalities: DenseIdMap::default(),
-                origins: DenseIdMap::default(),
-                removal_causes: DenseIdMap::default(),
-                transaction: None,
-            })
-        });
+        let capture = self.capture.get_or_insert_with(Default::default);
         let causes = capture.causes.get_or_insert(shard, || {
             assert_eq!(rows, 0, "capture causes were enabled after ordinary rows");
             Vec::new()
@@ -435,17 +406,7 @@ impl MutationBuffer for Buffer {
             .pending_rows
             .get_or_insert(shard, || RowBuffer::new(self.n_cols as _))
             .len();
-        let capture = self.capture.get_or_insert_with(|| {
-            Box::new(CaptureBuffer {
-                causes: DenseIdMap::default(),
-                row_rekeys: DenseIdMap::default(),
-                rekeys: DenseIdMap::default(),
-                rekey_equalities: DenseIdMap::default(),
-                origins: DenseIdMap::default(),
-                removal_causes: DenseIdMap::default(),
-                transaction: None,
-            })
-        });
+        let capture = self.capture.get_or_insert_with(Default::default);
         let causes = capture.causes.get_or_insert(shard, || {
             assert_eq!(rows, 0, "capture causes were enabled after ordinary rows");
             Vec::new()
@@ -466,17 +427,7 @@ impl MutationBuffer for Buffer {
             .pending_rows
             .get_or_insert(shard, || RowBuffer::new(self.n_cols as _))
             .len();
-        let capture = self.capture.get_or_insert_with(|| {
-            Box::new(CaptureBuffer {
-                causes: DenseIdMap::default(),
-                row_rekeys: DenseIdMap::default(),
-                rekeys: DenseIdMap::default(),
-                rekey_equalities: DenseIdMap::default(),
-                origins: DenseIdMap::default(),
-                removal_causes: DenseIdMap::default(),
-                transaction: None,
-            })
-        });
+        let capture = self.capture.get_or_insert_with(Default::default);
         let causes = capture.causes.get_or_insert(shard, || {
             assert_eq!(rows, 0, "capture causes were enabled after ordinary rows");
             Vec::new()
@@ -531,17 +482,7 @@ impl MutationBuffer for Buffer {
             .pending_removals
             .get_or_insert(shard, || ArbitraryRowBuffer::new(self.n_keys as _))
             .len();
-        let capture = self.capture.get_or_insert_with(|| {
-            Box::new(CaptureBuffer {
-                causes: DenseIdMap::default(),
-                row_rekeys: DenseIdMap::default(),
-                rekeys: DenseIdMap::default(),
-                rekey_equalities: DenseIdMap::default(),
-                origins: DenseIdMap::default(),
-                removal_causes: DenseIdMap::default(),
-                transaction: None,
-            })
-        });
+        let capture = self.capture.get_or_insert_with(Default::default);
         let causes = capture.removal_causes.get_or_insert(shard, || {
             assert_eq!(
                 rows, 0,
@@ -559,13 +500,8 @@ impl MutationBuffer for Buffer {
             capture: self.capture.as_ref().and_then(|capture| {
                 capture.transaction.as_ref().map(|transaction| {
                     Box::new(CaptureBuffer {
-                        causes: DenseIdMap::default(),
-                        row_rekeys: DenseIdMap::default(),
-                        rekeys: DenseIdMap::default(),
-                        rekey_equalities: DenseIdMap::default(),
-                        origins: DenseIdMap::default(),
-                        removal_causes: DenseIdMap::default(),
                         transaction: Some(transaction.clone()),
+                        ..Default::default()
                     })
                 })
             }),
@@ -1723,18 +1659,6 @@ impl SortedWritesTable {
         changed
     }
 
-    fn parallel_insert<C: OrderingChecker>(
-        &mut self,
-        exec_state: &ExecutionState,
-        checker: C,
-    ) -> bool {
-        assert!(
-            exec_state.trace().is_none() && !self.trace_enabled && self.data.fact_ids.is_none(),
-            "parallel insertion requires trace capture to be disabled"
-        );
-        self.parallel_insert_mode(exec_state, checker)
-    }
-
     /// Preserve whole-batch atomicity for the fail-closed structural-origin
     /// boundary. Supported tables stay on the ordinary one-pass path; only a
     /// table with missing/Unsupported merge metadata pays for a keyed scan.
@@ -1760,10 +1684,7 @@ impl SortedWritesTable {
             let mut proposed = HashSet::<Vec<Value>>::default();
             while let Some(batch) = queue.pop() {
                 if !collision {
-                    for row in batch.rows.iter() {
-                        if row.first().is_some_and(|value| value.is_stale()) {
-                            continue;
-                        }
+                    for row in batch.rows.non_stale() {
                         let key = &row[..self.n_keys];
                         if self.get_row(key).is_some() || !proposed.insert(key.to_vec()) {
                             collision = true;
@@ -1789,11 +1710,15 @@ impl SortedWritesTable {
         }
     }
 
-    fn parallel_insert_mode<C: OrderingChecker>(
+    fn parallel_insert<C: OrderingChecker>(
         &mut self,
         exec_state: &ExecutionState,
         checker: C,
     ) -> bool {
+        assert!(
+            exec_state.trace().is_none() && !self.trace_enabled && self.data.fact_ids.is_none(),
+            "parallel insertion requires trace capture to be disabled"
+        );
         const BATCH_SIZE: usize = 1 << 18;
         // Parallel insert uses one giant parallel foreach. We have updates
         // pre-sharded, and one logical thread can process updates for each
@@ -1913,10 +1838,7 @@ impl SortedWritesTable {
                     // We create a read_handle once per batch to avoid blocking
                     // too many threads if someone needs to resize the row
                     // writer.
-                    for row in buf.rows.iter() {
-                        if row.first().is_some_and(|value| value.is_stale()) {
-                            continue;
-                        }
+                    for row in buf.rows.non_stale() {
                         staged.insert(row, |cur, new, out| {
                             (self.merge)(&mut exec_state, cur, new, out)
                         });
@@ -2151,7 +2073,8 @@ impl SortedWritesTable {
             .for_each(|(shard_id, shard)| {
                 let shard_id = ShardId::from_usize(shard_id);
                 let scratch_ptr = self.data.scratch.raw_rows();
-                let mut progress = HashMap::<Value, RowId>::default();
+                let mut progress =
+                    HashMap::<Value /* timestamp */, RowId /* next row */>::default();
                 progress.reserve(results.len());
                 for stats in &results {
                     let Some(start) = stats.histogram.get(shard_id) else {
@@ -2166,6 +2089,7 @@ impl SortedWritesTable {
                         .expect("shard should not map to a stale value");
                     let val = row[sort_by.index()];
                     let next = progress[&val];
+                    // SAFETY: see above longer comment.
                     unsafe {
                         std::ptr::copy_nonoverlapping(
                             row.as_ptr(),
@@ -2560,7 +2484,6 @@ impl StagedOutputs {
     fn rows(&self) -> impl Iterator<Item = &[Value]> {
         self.rows.iter()
     }
-
     fn new(n_keys: usize, n_cols: usize, capacity: usize) -> Self {
         let mut res = with_pool_set(|ps| StagedOutputs {
             shard_data: ShardData::new(1),
@@ -2574,13 +2497,11 @@ impl StagedOutputs {
         res.rows.reserve(capacity);
         res
     }
-
     fn clear(&mut self) {
         self.hash.clear();
         self.rows.clear();
         self.n_stale = 0;
     }
-
     fn len(&self) -> usize {
         self.rows.len() - self.n_stale
     }
@@ -2605,12 +2526,10 @@ impl StagedOutputs {
         );
         match entry {
             Entry::Occupied(mut occupied_entry) => {
-                let prior_row = occupied_entry.get().row;
-                let cur = self.rows.get_row(prior_row);
-                let changed = merge_fn(cur, row, &mut self.scratch);
-                if changed {
+                let cur = self.rows.get_row(occupied_entry.get().row);
+                if merge_fn(cur, row, &mut self.scratch) {
                     let new = self.rows.add_row(&self.scratch);
-                    self.rows.set_stale(prior_row);
+                    self.rows.set_stale(occupied_entry.get().row);
                     self.n_stale += 1;
                     occupied_entry.get_mut().row = new;
                 }
@@ -2626,6 +2545,8 @@ impl StagedOutputs {
         }
     }
 
+    /// Write the contents of the staged outputs to the given writer, returning the initial RowId
+    /// of the new output. Returns the number of stale values in the buffer that was appended.
     fn write_output(&self, output: &ParallelRowBufWriter) -> (RowId, usize) {
         (output.append_contents(&self.rows), self.n_stale)
     }

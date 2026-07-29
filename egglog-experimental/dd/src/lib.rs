@@ -278,22 +278,6 @@ impl EGraph {
         report
     }
 
-    fn iteration_report(result: interpret::IterationResult) -> IterationReport {
-        let mut report = IterationReport::default();
-        report.rule_set_report.changed = result.changed;
-        report.rule_set_report.pre_merge = PreMergeTiming::Split {
-            search: result.search_time,
-            apply: result.apply_time,
-            unattributed: Duration::ZERO,
-        };
-        report.rule_set_report.merge_time = result.merge_time;
-        // The DD backend has no native union-find rebuild phase. Term/proof
-        // canonicalization is expressed as ordinary rules and is therefore
-        // already included in the ruleset timings.
-        report.rebuild_time = Duration::ZERO;
-        report
-    }
-
     pub(crate) fn info(&self, f: FunctionId) -> &RelationInfo {
         self.relations
             .get(f.rep() as usize)
@@ -2537,26 +2521,16 @@ impl Backend for EGraph {
 
     // -- rule management ----------------------------------------------------
 
-    fn add_rule(&mut self, mut rule: RuleSpec) -> Result<RuleId> {
+    fn add_rule(&mut self, rule: RuleSpec) -> Result<RuleId> {
         if let Err(error) = self.validate_rule(&rule) {
-            for func in rule.owned_external_funcs.drain(..) {
+            for func in rule.owned_external_funcs {
                 self.db.free_external_function(func);
             }
             return Err(error);
         }
-        if let Some((idx, slot)) = self
-            .rules
-            .iter_mut()
-            .enumerate()
-            .find(|(_, slot)| slot.is_none())
-        {
-            *slot = Some(rule);
-            return Ok(RuleId::new(idx as u32));
-        }
-
-        let idx = self.rules.len();
+        let id = RuleId::new(self.rules.len() as u32);
         self.rules.push(Some(rule));
-        Ok(RuleId::new(idx as u32))
+        Ok(id)
     }
 
     fn fresh_id(&mut self) -> Value {
@@ -2588,19 +2562,20 @@ impl Backend for EGraph {
     }
 
     fn free_rule(&mut self, id: RuleId) {
-        let i = id.rep() as usize;
-        let Some(rule) = self.rules.get_mut(i).and_then(Option::take) else {
-            return;
-        };
-
-        self.seen.remove(&i);
-        // Any fused ruleset that included this rule is now stale: drop it so
-        // it is rebuilt (without the freed rule) on the next `run_rules`.
-        self.dd_fused.retain(|key| !key.contains(&i));
-        self.dd_fused_fed_versions
-            .retain(|key, _| !key.contains(&i));
-        for func in rule.owned_external_funcs {
-            self.db.free_external_function(func);
+        if let Some(slot) = self.rules.get_mut(id.rep() as usize) {
+            let rule = slot.take();
+            let i = id.rep() as usize;
+            self.seen.remove(&i);
+            // Any fused ruleset that included this rule is now stale: drop it so
+            // it is rebuilt (without the freed rule) on the next `run_rules`.
+            self.dd_fused.retain(|key| !key.contains(&i));
+            self.dd_fused_fed_versions
+                .retain(|key, _| !key.contains(&i));
+            if let Some(rule) = rule {
+                for func in rule.owned_external_funcs {
+                    self.db.free_external_function(func);
+                }
+            }
         }
     }
 
@@ -2634,7 +2609,20 @@ impl Backend for EGraph {
             return Err(anyhow!(message));
         }
         let result = result?;
-        Ok(Self::iteration_report(result))
+
+        let mut report = IterationReport::default();
+        report.rule_set_report.changed = result.changed;
+        report.rule_set_report.pre_merge = PreMergeTiming::Split {
+            search: result.search_time,
+            apply: result.apply_time,
+            unattributed: Duration::ZERO,
+        };
+        report.rule_set_report.merge_time = result.merge_time;
+        // The DD backend has no native union-find rebuild phase. Term/proof
+        // canonicalization is expressed as ordinary rules and is therefore
+        // already included in the ruleset timings.
+        report.rebuild_time = Duration::ZERO;
+        Ok(report)
     }
 
     fn flush_updates(&mut self) -> Result<bool> {

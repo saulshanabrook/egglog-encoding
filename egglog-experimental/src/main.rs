@@ -29,8 +29,8 @@ fn main() {
     } else {
         args
     };
+    let proof_mode = proof_mode && !slice_requested;
     let egraph = match backend {
-        Backend::Main if slice_requested => egglog_experimental::new_experimental_egraph(),
         Backend::Main if proof_mode => egglog_experimental::new_experimental_egraph_for_proofs(),
         Backend::Main => egglog_experimental::new_experimental_egraph(),
         #[cfg(feature = "dd-backend")]

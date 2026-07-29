@@ -135,6 +135,12 @@ pub fn run_iteration(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<Ite
     // call advances it, the O(1) signal that a new term row was created.
     let next_id_at_start = eg.db.read_counter(eg.id_counter);
 
+    let mut writes: Vec<Write> = Vec::new();
+    // Iteration-scoped `key -> outputs` index for `lookup_or_create` (eq-sort
+    // constructor hash-cons). Built lazily per function so repeated lookups in
+    // one iteration are O(1) instead of rescanning the growing mirror each time.
+    let mut lookup_index = LookupIndex::new();
+
     // Compute every rule's binding envs FIRST (so the whole atom-bearing ruleset
     // runs on one fused DD worker via `fused_bindings`), THEN
     // apply head actions in the original rule firing order. Atom-less rules
@@ -143,31 +149,6 @@ pub fn run_iteration(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<Ite
     let search_timer = Instant::now();
     let envs_by_rule = fused_bindings(eg, rules)?;
     let search_time = search_timer.elapsed();
-
-    let (changed, apply_time, merge_time) =
-        apply_materialized_envs(eg, rules, envs_by_rule, next_id_at_start)?;
-
-    Ok(IterationResult {
-        changed,
-        search_time,
-        apply_time,
-        merge_time,
-    })
-}
-
-/// Apply an already-materialized set of rule environments and resolve all
-/// writes.
-fn apply_materialized_envs(
-    eg: &mut EGraph,
-    rules: &[(usize, RuleSpec)],
-    envs_by_rule: Vec<Vec<Env>>,
-    next_id_at_start: usize,
-) -> Result<(bool, Duration, Duration)> {
-    let mut writes: Vec<Write> = Vec::new();
-    // Iteration-scoped `key -> outputs` index for `lookup_or_create` (eq-sort
-    // constructor hash-cons). Built lazily per function so repeated lookups in
-    // one iteration are O(1) instead of rescanning the growing mirror each time.
-    let mut lookup_index = LookupIndex::new();
 
     let apply_timer = Instant::now();
     for ((_, rule), envs) in rules.iter().zip(envs_by_rule) {
@@ -228,7 +209,12 @@ fn apply_materialized_envs(
     }
 
     let merge_time = merge_timer.elapsed();
-    Ok((changed, apply_time, merge_time))
+    Ok(IterationResult {
+        changed,
+        search_time,
+        apply_time,
+        merge_time,
+    })
 }
 
 /// Compute every rule's binding envs in ONE fused pass: the whole atom-bearing
