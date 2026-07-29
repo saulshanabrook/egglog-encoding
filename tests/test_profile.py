@@ -83,6 +83,10 @@ def record_profile(
     )
 
 
+def allow_profile_capabilities(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(profile_runner, "require_profile_capabilities", lambda *_args: None)
+
+
 def test_parse_args_dispatches_profile_without_changing_benchmark_defaults() -> None:
     benchmark_args = benchmark.parse_benchmark_args(["--rounds", "1", "file.egg"])
     profile_args = profile_runner.parse_profile_args(["file.egg"])
@@ -156,6 +160,34 @@ def test_profile_accepts_explicit_main_proof_extraction(tmp_path: Path) -> None:
 
     assert request.backend == "main"
     assert request.treatment == "proof-extraction"
+
+
+def test_profile_preflight_requires_exact_treatment_options(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[list[str], tuple[str, ...]]] = []
+
+    def preflight(
+        command: list[str],
+        _checkout_path: Path,
+        _timeout_sec: int,
+        required_output: tuple[str, ...],
+    ) -> processes.TimingResult:
+        calls.append((command, required_output))
+        return processes.TimingResult(
+            "failure",
+            processes.TimingRow(),
+            processes.ErrorRow("successful process output did not contain '--slice'"),
+        )
+
+    monkeypatch.setattr(profile_runner, "run_command", preflight)
+    with pytest.raises(ValueError, match=r"candidate preflight failed.*--slice"):
+        profile_runner.require_profile_capabilities(
+            Path("egglog"),
+            ROOT,
+            "sliced-proofs",
+            120,
+            "candidate",
+        )
+    assert calls == [(["egglog", "--help"], ("--slice", "--proofs"))]
 
 
 def test_target_resolvers_share_materialization_and_select_build_profile(
@@ -601,6 +633,7 @@ def test_profile_explicit_iterations_skip_calibration_and_bypass_cache(
         return make_profile_data()
 
     mock_profile_resolution(monkeypatch, request, target)
+    allow_profile_capabilities(monkeypatch)
     monkeypatch.setattr(
         profile_runner, "run_command", lambda *args, **kwargs: pytest.fail("calibration should not run")
     )
@@ -623,6 +656,7 @@ def test_profile_auto_calibrates_once_and_uses_derived_iterations(
         return make_profile_data()
 
     mock_profile_resolution(monkeypatch, request, target)
+    allow_profile_capabilities(monkeypatch)
     monkeypatch.setattr(
         profile_runner,
         "run_command",
@@ -642,6 +676,7 @@ def test_profile_auto_calibration_failure_stops_before_samply(
 ) -> None:
     request, target, _ = make_profile_case(tmp_path, force_run=True, show_summary=False)
     mock_profile_resolution(monkeypatch, request, target)
+    allow_profile_capabilities(monkeypatch)
     monkeypatch.setattr(
         profile_runner,
         "run_command",
@@ -660,6 +695,7 @@ def test_profile_auto_iteration_cap_prints_warning(
 ) -> None:
     request, target, _ = make_profile_case(tmp_path, force_run=True, show_summary=False)
     mock_profile_resolution(monkeypatch, request, target)
+    allow_profile_capabilities(monkeypatch)
     monkeypatch.setattr(
         profile_runner,
         "run_command",

@@ -191,6 +191,12 @@ def test_run_command_can_require_capability_output() -> None:
         120,
         required_output=("--timing-summary", "--proof-extraction"),
     )
+    similarly_named = processes.run_command(
+        [sys.executable, "-c", "print('--timing-summary PATH --slice-output PATH')"],
+        ROOT,
+        120,
+        required_output=("--timing-summary", "--slice"),
+    )
 
     assert present.status == "success"
     assert missing.status == "failure"
@@ -199,6 +205,9 @@ def test_run_command_can_require_capability_output() -> None:
     assert extraction_missing.status == "failure"
     assert extraction_missing.error is not None
     assert "--proof-extraction" in extraction_missing.error.message
+    assert similarly_named.status == "failure"
+    assert similarly_named.error is not None
+    assert similarly_named.error.message == "successful process output did not contain '--slice'"
 
 
 def test_timing_from_usage_records_peak_rss() -> None:

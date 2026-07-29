@@ -8,6 +8,7 @@ target materialization belongs in :mod:`benchmarking.targets`.
 from __future__ import annotations
 
 import os
+import re
 import resource
 import signal
 import subprocess
@@ -90,14 +91,15 @@ def run_command(
         timing = timing_from_usage(usage, wall_sec)
         stdout = read_tempfile(stdout_file)
         stderr = read_tempfile(stderr_file)
-    if return_code == 0 and isinstance(required_output, str) and required_output not in stdout + stderr:
+    output = stdout + stderr
+    if return_code == 0 and isinstance(required_output, str) and not contains_required_output(output, required_output):
         return TimingResult(
             status="failure",
             timing=timing,
             error=ErrorRow(message=f"successful process output did not contain {required_output!r}"),
         )
     if return_code == 0 and required_output is not None and not isinstance(required_output, str):
-        missing_output = next((value for value in required_output if value not in stdout + stderr), None)
+        missing_output = next((value for value in required_output if not contains_required_output(output, value)), None)
         if missing_output is not None:
             return TimingResult(
                 status="failure",
@@ -114,6 +116,14 @@ def run_command(
         timing=timing,
         error=ErrorRow(exit_code=exit_code, signal=signal_number, message=message[-1000:]),
     )
+
+
+def contains_required_output(output: str, required: str) -> bool:
+    """Match CLI options as complete tokens and other requirements literally."""
+
+    if not required.startswith("--"):
+        return required in output
+    return re.search(rf"(?<![A-Za-z0-9_-]){re.escape(required)}(?![A-Za-z0-9_-])", output) is not None
 
 
 def terminate_process_group(process: subprocess.Popen[str] | subprocess.Popen[bytes]) -> None:

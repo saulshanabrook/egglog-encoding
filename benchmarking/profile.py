@@ -33,7 +33,13 @@ from .models import (
     validate_backend_treatment,
 )
 from .processes import run_command, terminate_process_group
-from .targets import git_root_for_path, parse_target, resolve_profile_target, workload_command
+from .targets import (
+    git_root_for_path,
+    parse_target,
+    resolve_profile_target,
+    treatment_capability_options,
+    workload_command,
+)
 from .workloads import require_workload_unchanged, resolve_files
 
 DEFAULT_PROFILES_DIR = ".profiles"
@@ -358,6 +364,29 @@ def resolve_profile_request(args: argparse.Namespace, invocation_cwd: Path) -> P
     return request
 
 
+def require_profile_capabilities(
+    binary_path: Path,
+    checkout_path: Path,
+    treatment: Treatment,
+    timeout_sec: int,
+    target_label: str,
+) -> None:
+    """Reject a profiling target before measurement if its CLI is too old."""
+
+    required = treatment_capability_options(treatment)
+    if not required:
+        return
+    result = run_command(
+        [str(binary_path), "--help"],
+        checkout_path,
+        timeout_sec,
+        required_output=required,
+    )
+    if result.status != "success":
+        detail = result.error.message if result.error is not None else result.status
+        raise ValueError(f"target {target_label} preflight failed: {detail}")
+
+
 def run_profile(args: argparse.Namespace, console: Console, invocation_cwd: Path, repo_root: Path) -> None:
     request = resolve_profile_request(args, invocation_cwd)
     target = resolve_profile_target(request.target_request, request.backend, invocation_cwd, repo_root, console)
@@ -386,6 +415,13 @@ def run_profile(args: argparse.Namespace, console: Console, invocation_cwd: Path
             console.print(Text.assemble(("Profile cache hit", "bold"), " ", str(artifact)))
 
     if profile is None:
+        require_profile_capabilities(
+            target.binary_path,
+            checkout_path,
+            request.treatment,
+            request.timeout_sec,
+            target.display_label,
+        )
         iterations = request.mode.iterations
         if iterations is None:
             assert request.mode.profile_seconds is not None

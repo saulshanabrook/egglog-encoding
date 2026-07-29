@@ -396,7 +396,7 @@ def test_preflight_requires_slice_for_fresh_sliced_proofs(monkeypatch: pytest.Mo
             planned_run(treatment="proofs", required=1),
             planned_run(treatment="sliced-proofs", required=1),
         ),
-    ) == [("--timing-summary", "--slice")]
+    ) == [("--timing-summary", "--proofs", "--slice")]
 
 
 def test_preflight_ignores_cached_sliced_treatment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -406,7 +406,7 @@ def test_preflight_ignores_cached_sliced_treatment(monkeypatch: pytest.MonkeyPat
             planned_run(treatment="sliced-proofs", required=1, cached=("success",)),
             planned_run(treatment="proofs", required=1),
         ),
-    ) == [("--timing-summary",)]
+    ) == [("--timing-summary", "--proofs")]
 
 
 def test_fully_cached_plan_skips_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -479,7 +479,10 @@ def test_preflight_requires_extraction_capability_only_for_fresh_rows(
     with pytest.raises(ValueError, match=r"preflight failed.*--proof-extraction"):
         collection.preflight_collection(collection.CollectionPlan(target, (fresh,)), 120)
 
-    assert calls == [("--timing-summary",), ("--timing-summary", "--proof-extraction")]
+    assert calls == [
+        ("--timing-summary",),
+        ("--timing-summary", "--proof-extraction"),
+    ]
 
 
 def test_collect_rows_rejects_unsupported_timing_summary_before_append(

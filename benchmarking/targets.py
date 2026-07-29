@@ -36,6 +36,12 @@ def treatment_flags(treatment: Treatment) -> list[str]:
     return ["--proofs"]
 
 
+def treatment_capability_options(treatment: Treatment) -> tuple[str, ...]:
+    """Return the CLI options a binary must advertise for one treatment."""
+
+    return tuple(flag for flag in treatment_flags(treatment) if flag.startswith("--"))
+
+
 def backend_flags(backend: Backend) -> list[str]:
     return list(backend_spec(backend).flags)
 
