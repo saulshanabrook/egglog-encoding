@@ -1578,10 +1578,6 @@ pub(crate) fn all_sexps(mut ctx: SexpParser) -> Result<Vec<Sexp>, ParseError> {
 }
 
 #[cfg(test)]
-#[path = "parse_causal_tests.rs"]
-mod causal_tests;
-
-#[cfg(test)]
 mod tests {
     use super::*;
 

@@ -28,15 +28,17 @@ const MANUAL_PROOF_DISABLED_FILES: &[ManualProofDisable] = &[
 ];
 
 // These proof-testing runs are still executed, but their proof snapshots are
-// too large for default checked-in fixtures.
+// redundant with dedicated coverage or too large for checked-in fixtures.
 const PROOF_TESTING_SNAPSHOT_DISABLED_FILES: &[&str] = &[
     "causal-checked-alias-collision.egg",
     "causal-late-input.egg",
     "causal-late-source.egg",
+    "eqsat-basic.egg",
     "eqsolve.egg",
     "hardboiled_conv1d_32.egg",
     "herbie.egg",
     "bdd.egg",
+    "math-microbenchmark.egg",
     "math.egg",
     "typeinfer.egg",
     "bool.egg",

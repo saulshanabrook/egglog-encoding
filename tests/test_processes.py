@@ -173,9 +173,6 @@ def test_run_command_can_require_capability_output() -> None:
     assert missing.status == "failure"
     assert missing.error is not None
     assert missing.error.message == "successful process output did not contain '--timing-summary'"
-
-
-def test_run_command_can_require_capability_outputs() -> None:
     present = processes.run_command(
         [sys.executable, "-c", "print('--timing-summary PATH --slice --proof-extraction')"],
         ROOT,

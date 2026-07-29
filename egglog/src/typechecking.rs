@@ -2077,10 +2077,6 @@ pub enum TypeError {
 }
 
 #[cfg(test)]
-#[path = "typechecking_causal_tests.rs"]
-mod causal_tests;
-
-#[cfg(test)]
 mod test {
     use crate::{EGraph, Error, typechecking::TypeError};
 

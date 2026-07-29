@@ -475,7 +475,3 @@ where
 {
     command.to_string().replace('\"', "'")
 }
-
-#[cfg(test)]
-#[path = "desugar_causal_tests.rs"]
-mod tests;

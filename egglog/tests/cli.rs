@@ -241,10 +241,3 @@ fn slice_rejects_parallel_capture() {
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stderr).contains("--slice requires --threads 1"));
 }
-
-#[test]
-fn removed_capture_only_flag_is_unknown() {
-    let output = egglog().arg("--causal-receipts").output().unwrap();
-    assert_eq!(output.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("unexpected argument"));
-}

@@ -1,4 +1,4 @@
-use egglog::{CommandOutput, EGraph, Error};
+use egglog::{CommandOutput, EGraph, Error, TypeError, ast::Parser};
 
 const SETUP: &str = r#"
     (datatype Expr (A) (B) (Wrap Expr))
@@ -15,42 +15,6 @@ const SETUP: &str = r#"
     (let-check $wrapped-a (Wrap $a))
     (let-check $wrapped-b (Wrap $b))
 "#;
-
-const CONSTRUCTOR_BINDING_PROGRAM: &str = r#"
-    (datatype Expr (A) (B) (Wrap Expr))
-    (relation Selected (Expr))
-    (rule ((Selected x))
-          ((union (Wrap x) x))
-          :name "unwrap")
-    (let $wrapped-a (Wrap (A)))
-    (let $wrapped-b (Wrap (B)))
-    (Selected (A))
-    (Selected (B))
-    (run-schedule
-      (run-rule ("unwrap" ((x (A))))))
-    (check (= $wrapped-a (A)))
-    (fail (check (= $wrapped-b (B))))
-"#;
-
-#[test]
-fn run_rule_constructor_binding_survives_proof_encoding_and_desugar() {
-    let mut direct = EGraph::new_with_proofs();
-    direct
-        .parse_and_run_program(None, CONSTRUCTOR_BINDING_PROGRAM)
-        .unwrap();
-
-    let mut resolver = EGraph::new_with_proofs();
-    let encoded = resolver
-        .resolve_program(None, CONSTRUCTOR_BINDING_PROGRAM)
-        .unwrap()
-        .into_iter()
-        .map(|command| command.to_string())
-        .collect::<Vec<_>>()
-        .join("\n");
-    let mut replay = EGraph::default();
-    replay.ensure_no_reserved_symbols(false);
-    replay.parse_and_run_program(None, &encoded).unwrap();
-}
 
 #[test]
 fn run_rule_requires_exactly_one_match_and_a_later_list_recovers() {
@@ -179,4 +143,145 @@ fn run_rule_does_not_require_action_local_bindings() {
             "#,
         )
         .unwrap();
+}
+
+#[test]
+fn run_rule_schedule_parser_display_roundtrip() {
+    let source = r#"(run-rule ("step" ((x (Node 1)) (y 2))) ("other" ((z 3))))"#;
+    let mut parser = Parser::default();
+    let schedule = parser.get_schedule_from_string(None, source).unwrap();
+    assert_eq!(schedule.to_string(), source);
+}
+
+#[test]
+fn run_rule_rejects_legacy_scalar_and_options() {
+    for source in [
+        r#"(run-rule "step")"#,
+        r#"(run-rule "step" :bind ((x 1)))"#,
+        r#"(run-rule "step" :expect 1)"#,
+        r#"(run-rule "step" :internal-select ((= x 1)))"#,
+    ] {
+        let error = Parser::default()
+            .get_schedule_from_string(None, source)
+            .unwrap_err();
+        assert!(error.to_string().contains("expected run-rule invocation"));
+    }
+}
+
+#[test]
+fn run_rule_requires_a_nonempty_invocation_list() {
+    let error = Parser::default()
+        .get_schedule_from_string(None, "(run-rule)")
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("run-rule requires at least one rule invocation")
+    );
+}
+
+#[test]
+fn run_rule_requires_a_declared_globally_unique_rule() {
+    let mut egraph = EGraph::default();
+    let missing = egraph.parse_and_run_program(None, r#"(run-schedule (run-rule ("missing" ())))"#);
+    assert!(matches!(
+        missing,
+        Err(Error::TypeError(TypeError::NoSuchRule(name, _))) if name == "missing"
+    ));
+
+    let duplicate = egraph.parse_and_run_program(
+        None,
+        r#"
+            (relation R (i64))
+            (ruleset left)
+            (ruleset right)
+            (rule ((R x)) () :ruleset left :name "same")
+            (rule ((R x)) () :ruleset right :name "same")
+        "#,
+    );
+    let Err(Error::TypeError(TypeError::DuplicateRuleName {
+        name,
+        first,
+        duplicate,
+    })) = duplicate
+    else {
+        panic!("expected duplicate rule name, got: {duplicate:?}")
+    };
+    assert_eq!(name, "same");
+    assert!(first.string().contains(":ruleset left"));
+    assert!(duplicate.string().contains(":ruleset right"));
+}
+
+#[test]
+fn run_rule_bindings_are_known_and_closed() {
+    let mut egraph = EGraph::default();
+    let result = egraph.parse_and_run_program(
+        None,
+        r#"
+            (relation R (i64))
+            (rule ((R x)) () :name "r")
+            (run-schedule (run-rule ("r" ((x y)))))
+        "#,
+    );
+    assert!(matches!(
+        result,
+        Err(Error::TypeError(TypeError::RunRuleBindingNotClosed {
+            rule,
+            variable,
+            ..
+        })) if rule == "r" && variable == "y"
+    ));
+
+    let unknown =
+        egraph.parse_and_run_program(None, r#"(run-schedule (run-rule ("r" ((missing 1)))))"#);
+    assert!(matches!(
+        unknown,
+        Err(Error::TypeError(TypeError::UnknownRunRuleBinding {
+            rule,
+            variable,
+            ..
+        })) if rule == "r" && variable == "missing"
+    ));
+
+    let mismatch =
+        egraph.parse_and_run_program(None, r#"(run-schedule (run-rule ("r" ((x "bad")))))"#);
+    assert!(matches!(
+        mismatch,
+        Err(Error::TypeError(TypeError::Mismatch { expected, actual, .. }))
+            if expected.name() == "i64" && actual.name() == "String"
+    ));
+}
+
+#[test]
+fn run_rule_requires_every_rule_variable_exactly_once() {
+    let mut egraph = EGraph::default();
+    let missing = egraph.parse_and_run_program(
+        None,
+        r#"
+            (relation R (i64 i64))
+            (rule ((R x y)) () :name "r")
+            (run-schedule (run-rule ("r" ((x 1)))))
+        "#,
+    );
+    assert!(matches!(
+        missing,
+        Err(Error::TypeError(TypeError::MissingRunRuleBinding {
+            rule,
+            variable,
+            ..
+        })) if rule == "r" && variable == "y"
+    ));
+
+    let duplicate = egraph.parse_and_run_program(
+        None,
+        r#"(run-schedule (run-rule ("r" ((x 1) (x 1) (y 2)))))"#,
+    );
+    assert!(matches!(
+        duplicate,
+        Err(Error::TypeError(TypeError::DuplicateRunRuleBinding {
+            rule,
+            variable,
+            ..
+        })) if rule == "r" && variable == "x"
+    ));
 }

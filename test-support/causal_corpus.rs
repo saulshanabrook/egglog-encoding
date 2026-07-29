@@ -15,21 +15,10 @@ pub struct ReplayRoots {
     pub extracts: usize,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ArtifactExpectation {
-    Absent,
-    Present,
-}
-
 #[derive(Clone, Copy, Debug)]
 pub enum Disposition {
-    StaticUnsupported {
-        reason: &'static str,
-    },
-    Unsupported {
-        diagnostic: &'static str,
-        artifact: ArtifactExpectation,
-    },
+    StaticUnsupported { reason: &'static str },
+    Unsupported { diagnostic: &'static str },
     NoReplayRoot,
     ExtractRootsUnsupported,
     ChecksOnly,
@@ -160,14 +149,12 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
         ],
         disposition: Disposition::Unsupported {
             diagnostic: "trace capture does not support push/pop state",
-            artifact: ArtifactExpectation::Absent,
         },
     },
     AllowlistGroup {
         paths: &["experimental/web-demo/multi-extract.egg"],
         disposition: Disposition::Unsupported {
             diagnostic: "trace capture does not support user-defined command `multi-extract`",
-            artifact: ArtifactExpectation::Absent,
         },
     },
     AllowlistGroup {
@@ -187,7 +174,6 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
         ],
         disposition: Disposition::Unsupported {
             diagnostic: "causal equality checks currently require constructor/function-call endpoints",
-            artifact: ArtifactExpectation::Absent,
         },
     },
     AllowlistGroup {
@@ -201,7 +187,6 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
         ],
         disposition: Disposition::Unsupported {
             diagnostic: "causal equality checks do not support primitive or tuple endpoints",
-            artifact: ArtifactExpectation::Absent,
         },
     },
     AllowlistGroup {
@@ -220,7 +205,6 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
         ],
         disposition: Disposition::Unsupported {
             diagnostic: "trace capture does not support push/pop state",
-            artifact: ArtifactExpectation::Absent,
         },
     },
     AllowlistGroup {
@@ -240,21 +224,18 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
         ],
         disposition: Disposition::Unsupported {
             diagnostic: "trace capture does not support nested fail commands",
-            artifact: ArtifactExpectation::Absent,
         },
     },
     AllowlistGroup {
         paths: &["core/proofs/run-rule-selected.egg"],
         disposition: Disposition::Unsupported {
             diagnostic: "trace capture does not support source run-rule schedules",
-            artifact: ArtifactExpectation::Absent,
         },
     },
     AllowlistGroup {
         paths: &["core/run-rule.egg"],
         disposition: Disposition::Unsupported {
             diagnostic: "checked aliases are replay-only and cannot be recorded as trace sources",
-            artifact: ArtifactExpectation::Absent,
         },
     },
     AllowlistGroup {
@@ -270,7 +251,6 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
         ],
         disposition: Disposition::Unsupported {
             diagnostic: "merge reached an unsupported structural result expression",
-            artifact: ArtifactExpectation::Absent,
         },
     },
     AllowlistGroup {
@@ -280,21 +260,18 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
         ],
         disposition: Disposition::Unsupported {
             diagnostic: "trace capture does not support rebuilding container type `egglog::sort::set::SetContainer`",
-            artifact: ArtifactExpectation::Absent,
         },
     },
     AllowlistGroup {
         paths: &["core/factoring-multisets.egg"],
         disposition: Disposition::Unsupported {
             diagnostic: "typed equality endpoint has no structural producer",
-            artifact: ArtifactExpectation::Absent,
         },
     },
     AllowlistGroup {
         paths: &["core/repro-738-fn-sort.egg"],
         disposition: Disposition::Unsupported {
             diagnostic: "capture-enabled action requires exact match witnesses",
-            artifact: ArtifactExpectation::Absent,
         },
     },
     AllowlistGroup {
@@ -492,12 +469,13 @@ fn run_case(case: &CausalCase, resolve_roots: RootResolver) {
             assert_success("slice capture", &case.name, &capture)
         }
         Some(Disposition::StaticUnsupported { .. }) => unreachable!(),
-        Some(Disposition::Unsupported {
-            diagnostic,
-            artifact: expected,
-        }) => {
+        Some(Disposition::Unsupported { diagnostic }) => {
             assert_expected_failure(&case.name, &capture, diagnostic);
-            assert_artifact(&case.name, &artifact, expected);
+            assert!(
+                !artifact.exists(),
+                "{} unsupported capture unexpectedly left an artifact",
+                case.name
+            );
             return;
         }
         Some(Disposition::NoReplayRoot) => unreachable!(),
@@ -553,14 +531,6 @@ fn assert_expected_failure(name: &str, output: &Output, diagnostic: &str) {
     assert!(
         !stderr.contains("panicked at"),
         "{name} is classified unsupported but panicked:\n{stderr}"
-    );
-}
-
-fn assert_artifact(name: &str, artifact: &Path, expected: ArtifactExpectation) {
-    assert_eq!(
-        artifact.exists(),
-        expected == ArtifactExpectation::Present,
-        "{name} changed whether failure leaves an artifact"
     );
 }
 

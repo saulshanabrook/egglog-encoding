@@ -384,54 +384,6 @@ fn run_endpoint_case(case: EndpointCase) -> Result<(), String> {
     Ok(())
 }
 
-fn retain_failing_endpoint_candidate(
-    case: &mut EndpointCase,
-    error: &mut String,
-    probes: &mut usize,
-    candidate: EndpointCase,
-) {
-    if *probes == 128 {
-        return;
-    }
-    *probes += 1;
-    if let Err(candidate_error) = run_endpoint_case(candidate) {
-        *case = candidate;
-        *error = candidate_error;
-    }
-}
-
-fn shrink_endpoint_failure(mut case: EndpointCase, mut error: String) -> (EndpointCase, String) {
-    let mut probes = 0usize;
-
-    if case.noise {
-        let candidate = EndpointCase {
-            noise: false,
-            ..case
-        };
-        retain_failing_endpoint_candidate(&mut case, &mut error, &mut probes, candidate);
-    }
-    if !case.compact {
-        let candidate = EndpointCase {
-            compact: true,
-            ..case
-        };
-        retain_failing_endpoint_candidate(&mut case, &mut error, &mut probes, candidate);
-    }
-    let canonical = ["A", "B", "C", "NoiseL", "NoiseR"];
-    for (target, canonical_name) in canonical.iter().enumerate() {
-        let Some(current) = case.order.iter().position(|name| name == canonical_name) else {
-            continue;
-        };
-        if current == target {
-            continue;
-        }
-        let mut candidate = case;
-        candidate.order.swap(target, current);
-        retain_failing_endpoint_candidate(&mut case, &mut error, &mut probes, candidate);
-    }
-    (case, error)
-}
-
 #[test]
 fn endpoint_denotation_is_complete_across_carriers_and_allocation_orders() {
     let carriers = [
@@ -450,10 +402,9 @@ fn endpoint_denotation_is_complete_across_carriers_and_allocation_orders() {
             compact: false,
         };
         if let Err(error) = run_endpoint_case(case) {
-            let (minimal, error) = shrink_endpoint_failure(case, error);
             panic!(
-                "endpoint denotation property failed for {minimal:?}: {error}\nminimal program:\n{}",
-                endpoint_case_program(minimal)
+                "endpoint denotation property failed for {case:?}: {error}\nprogram:\n{}",
+                endpoint_case_program(case)
             );
         }
     }
