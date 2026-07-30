@@ -54,6 +54,7 @@ ENDPOINTS: tuple[Endpoint, ...] = (
     ("main", "term"),
     ("main", "proofs"),
     ("main", "proof-extraction"),
+    ("main", "sliced-proofs"),
 )
 
 # Every endpoint is measured against ordinary mode on its own checkout, so the
