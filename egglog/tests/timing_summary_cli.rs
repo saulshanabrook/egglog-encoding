@@ -71,8 +71,9 @@ fn timing_summary_is_compact_and_works_with_every_report_level() {
         assert!(!bytes[..bytes.len() - 1].contains(&b'\n'));
 
         let summary: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(summary.as_object().unwrap().len(), 2);
-        assert_eq!(summary["schema_version"], 2);
+        // schema_version, rulesets, outside_rulesets
+        assert_eq!(summary.as_object().unwrap().len(), 3);
+        assert_eq!(summary["schema_version"], 3);
         let rulesets = summary["rulesets"].as_array().unwrap();
         assert_eq!(
             rulesets
@@ -82,7 +83,8 @@ fn timing_summary_is_compact_and_works_with_every_report_level() {
             ["alpha", "zeta"]
         );
         for ruleset in rulesets {
-            assert_eq!(ruleset.as_object().unwrap().len(), 6);
+            assert_eq!(ruleset.as_object().unwrap().len(), 7);
+            assert!(ruleset["assembly_ns"].is_u64());
             assert!(ruleset["search_ns"].is_u64());
             assert!(ruleset["apply_ns"].is_u64());
             assert!(ruleset["unattributed_ns"].is_u64());
@@ -196,7 +198,7 @@ fn stdin_program_writes_timing_summary() {
     let bytes = std::fs::read(&summary_path).unwrap();
     assert_eq!(bytes.last(), Some(&b'\n'));
     let summary: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(summary["schema_version"], 2);
+    assert_eq!(summary["schema_version"], 3);
     assert!(summary["rulesets"].is_array());
     std::fs::remove_dir_all(directory).unwrap();
 }

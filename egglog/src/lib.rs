@@ -343,6 +343,8 @@ pub struct EGraph {
     proof_check_program: Vec<ResolvedNCommand>,
     /// Which row of its sort's shared table each eq-sort global occupies.
     global_slots: remove_globals::GlobalSlots,
+    /// Where wall time outside rule-set execution went.
+    phase_timings: phase_timers::PhaseTimings,
 }
 
 /// A user-defined command allows users to inject custom command that can be called
@@ -471,6 +473,7 @@ impl EGraph {
             parser,
             names: Default::default(),
             global_slots: Default::default(),
+            phase_timings: Default::default(),
             pushed_egraph: Default::default(),
             functions: Default::default(),
             rulesets: Default::default(),
@@ -1077,12 +1080,6 @@ impl EGraph {
     }
 
     fn declare_function(&mut self, decl: &ResolvedFunctionDecl) -> Result<(), Error> {
-        crate::phase_timers::time(&crate::phase_timers::DECLARE_FUNCTION, || {
-            self.declare_function_timed(decl)
-        })
-    }
-
-    fn declare_function_timed(&mut self, decl: &ResolvedFunctionDecl) -> Result<(), Error> {
         let get_sort = |name: &String| match self.type_info.get_sort_by_name(name) {
             Some(sort) => Ok(sort.clone()),
             None => Err(Error::TypeError(TypeError::UndefinedSort(
@@ -1437,13 +1434,6 @@ impl EGraph {
     }
 
     fn add_rule(&mut self, rule: ast::ResolvedRule) -> Result<String, Error> {
-        crate::phase_timers::time(&crate::phase_timers::BACKEND_ADD_RULE, || {
-            self.add_rule_timed(rule)
-        })
-    }
-
-    fn add_rule_timed(&mut self, rule: ast::ResolvedRule) -> Result<String, Error> {
-        crate::phase_timers::N_RULES_ADDED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // The `:naive` rule option opts a single rule out of seminaive
         // evaluation. This widens primitive-context selection from
         // Pure/Write to Read/Full, so primitives that read or write the
@@ -2031,32 +2021,49 @@ impl EGraph {
         }
     }
 
+    /// Which phase a command's execution is charged to. A `run` is charged to
+    /// neither: its time is the rule-set timings.
     fn run_command(&mut self, command: ResolvedNCommand) -> Result<Vec<CommandOutput>, Error> {
-        crate::phase_timers::time(&crate::phase_timers::RUN_COMMAND, || {
-            self.run_command_timed(command)
-        })
+        #[derive(Clone, Copy)]
+        enum Charge {
+            Install,
+            Actions,
+            Extraction,
+            Schedule,
+            None,
+        }
+        let charge = match &command {
+            ResolvedNCommand::Function(_)
+            | ResolvedNCommand::NormRule { .. }
+            | ResolvedNCommand::Index { .. }
+            | ResolvedNCommand::Sort { .. } => Charge::Install,
+            ResolvedNCommand::CoreAction(_) | ResolvedNCommand::CoreActions(_) => Charge::Actions,
+            ResolvedNCommand::ProveExists(..) => Charge::Extraction,
+            ResolvedNCommand::RunSchedule(_) => Charge::Schedule,
+            _ => Charge::None,
+        };
+        let start = std::time::Instant::now();
+        let recorded_before = self.get_overall_run_report().total_ruleset_time();
+        let out = self.run_command_inner(command);
+        let elapsed = start.elapsed();
+        match charge {
+            Charge::Install => self.phase_timings.install += elapsed,
+            Charge::Actions => self.phase_timings.actions += elapsed,
+            Charge::Extraction => self.phase_timings.proof_extraction += elapsed,
+            // A schedule's own cost is what it spends beyond the rule sets it ran.
+            Charge::Schedule => {
+                let recorded = self.get_overall_run_report().total_ruleset_time() - recorded_before;
+                self.phase_timings.schedule += elapsed.saturating_sub(recorded);
+            }
+            Charge::None => {}
+        }
+        out
     }
 
-    fn run_command_timed(
+    fn run_command_inner(
         &mut self,
         command: ResolvedNCommand,
     ) -> Result<Vec<CommandOutput>, Error> {
-        use crate::phase_timers as pt;
-        let counter = match &command {
-            ResolvedNCommand::Function(_) => &pt::RUN_CMD_FUNCTION,
-            ResolvedNCommand::NormRule { .. } => &pt::RUN_CMD_RULE,
-            ResolvedNCommand::CoreAction(_) | ResolvedNCommand::CoreActions(_) => {
-                &pt::RUN_CMD_ACTION
-            }
-            ResolvedNCommand::Index { .. } => &pt::RUN_CMD_INDEX,
-            ResolvedNCommand::Sort { .. } => &pt::RUN_CMD_SORT,
-            ResolvedNCommand::RunSchedule(_) => &pt::RUN_CMD_SCHEDULE,
-            _ => &pt::RUN_CMD_OTHER,
-        };
-        pt::time(counter, || self.run_command_kind(command))
-    }
-
-    fn run_command_kind(&mut self, command: ResolvedNCommand) -> Result<Vec<CommandOutput>, Error> {
         match command {
             // Sorts are already declared during typechecking
             ResolvedNCommand::Sort {
@@ -2640,10 +2647,7 @@ impl EGraph {
         if let Some(original_typechecking) = self.proof_state.original_typechecking.as_mut() {
             // Typecheck using the original egraph
             // TODO this is ugly- we don't need an entire e-graph just for type information.
-            let typechecked =
-                crate::phase_timers::time(&crate::phase_timers::TYPECHECK_ORIGINAL, || {
-                    original_typechecking.typecheck_program(&desugared)
-                })?;
+            let typechecked = original_typechecking.typecheck_program(&desugared)?;
 
             for command in &typechecked {
                 if let Err(reason) = command_supports_proof_encoding(
@@ -2682,12 +2686,23 @@ impl EGraph {
     /// Leverages previous type information in the [`EGraph`] to do so, adding new type information.
     /// When will_run is true, adds to `desugared_commands_run_so_far`, which is used for proof checking.
     fn resolve_command(&mut self, command: Command) -> Result<ResolvedNCommands, Error> {
-        crate::phase_timers::time(&crate::phase_timers::RESOLVE_COMMAND, || {
-            self.resolve_command_timed(command)
-        })
+        // Whatever resolving a command costs beyond the phases it nests is
+        // desugaring: `remove_globals`, macro expansion, shadowing checks.
+        let start = std::time::Instant::now();
+        let before = (
+            self.phase_timings.typecheck,
+            self.phase_timings.encode,
+            self.parser.parse_time,
+        );
+        let resolved = self.resolve_command_inner(command);
+        let nested = (self.phase_timings.typecheck - before.0)
+            + (self.phase_timings.encode - before.1)
+            + (self.parser.parse_time - before.2);
+        self.phase_timings.desugar += start.elapsed().saturating_sub(nested);
+        resolved
     }
 
-    fn resolve_command_timed(&mut self, command: Command) -> Result<ResolvedNCommands, Error> {
+    fn resolve_command_inner(&mut self, command: Command) -> Result<ResolvedNCommands, Error> {
         let resolved_before_proofs = self.resolve_command_before_proofs(command)?;
 
         // Add term encoding when it is enabled
@@ -2735,27 +2750,24 @@ impl EGraph {
                 self.names.check_shadowing(command)?;
             }
 
+            let start = std::time::Instant::now();
+            let parse_before = self.parser.parse_time;
             let term_encoding_added =
-                crate::phase_timers::time(&crate::phase_timers::ENCODER_ADD_TERM_ENCODING, || {
-                    ProofInstrumentor::add_term_encoding(self, typechecked_no_globals)
-                })?;
+                ProofInstrumentor::add_term_encoding(self, typechecked_no_globals);
+            // The encoder parses the text it emits, which is the `parse` phase.
+            let nested_parse = self.parser.parse_time - parse_before;
+            self.phase_timings.encode += start.elapsed().saturating_sub(nested_parse);
+            let term_encoding_added = term_encoding_added?;
             let mut new_typechecked = vec![];
             for new_cmd in term_encoding_added {
                 let desugared =
-                    crate::phase_timers::time(&crate::phase_timers::DESUGAR_ENCODED, || {
-                        desugar_command(new_cmd, &mut self.parser, self.proof_state.proof_testing)
-                    })?;
+                    desugar_command(new_cmd, &mut self.parser, self.proof_state.proof_testing)?;
                 for cmd in &desugared {
                     log::trace!("Desugared term encoding: {}", cmd.to_command());
                 }
 
                 // Now typecheck using self, adding term type information.
-                crate::phase_timers::N_ENCODED_CMDS
-                    .fetch_add(desugared.len() as u64, std::sync::atomic::Ordering::Relaxed);
-                let desugared_typechecked =
-                    crate::phase_timers::time(&crate::phase_timers::TYPECHECK_ENCODED, || {
-                        self.typecheck_program(&desugared)
-                    })?;
+                let desugared_typechecked = self.typecheck_program(&desugared)?;
                 // Remove the globals the term encoding itself introduced (its minted
                 // `let`s), the same way source-level globals were removed above.
                 let key_sort = self.global_key_sort();
@@ -2894,6 +2906,17 @@ impl EGraph {
     ) -> Result<Vec<CommandOutput>, Error> {
         let parsed = self.parser.get_program_from_string(filename, input)?;
         self.run_program(parsed)
+    }
+
+    /// Where wall time outside rule-set execution went, for this e-graph.
+    ///
+    /// The parse phase is kept on the parser, which also serves the REPL, so it
+    /// is read back here rather than accumulated with the rest.
+    pub fn phase_timings(&self) -> phase_timers::PhaseTimings {
+        phase_timers::PhaseTimings {
+            parse: self.parser.parse_time,
+            ..self.phase_timings
+        }
     }
 
     /// Get the number of tuples in the database.

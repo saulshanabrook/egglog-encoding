@@ -56,8 +56,9 @@ PHASE_CAPTION = (
     "Endpoint cells show a 95% CI (or one-round point) and that phase's share of endpoint wall time. "
     "Delta is the signed candidate − baseline mean; Δ contribution is the phase's share of the wall-time "
     "change and may be negative or exceed 100% when phases offset. Execution overhead is stored per-ruleset "
-    "unattributed time. Outside recorded rulesets is wall time minus all five recorded phases; ! marks a negative "
-    "residual."
+    "unattributed time. Rule-set assembly is re-deriving each rule's plan for an iteration, before its "
+    "search begins. The phases from Parse through Proof extraction run outside every ruleset. "
+    "Unattributed is wall time minus every phase above it; ! marks a negative residual."
 )
 RULESET_CAPTION = (
     "Totals show a 95% CI or one-round point. S/A/Exec/M/R are signed candidate − baseline mean deltas for "
@@ -65,12 +66,21 @@ RULESET_CAPTION = (
 )
 
 PHASE_LABELS: dict[PhaseName, str] = {
+    "assembly": "Rule-set assembly",
     "search": "Search",
     "apply": "Apply",
     "unattributed": "Execution overhead",
     "merge": "Merge",
     "rebuild": "Rebuild",
-    "outside": "Outside recorded rulesets",
+    "parse": "Parse",
+    "typecheck": "Typecheck",
+    "desugar": "Desugar",
+    "encode": "Proof/term encoding",
+    "install": "Declare and compile",
+    "actions": "Top-level actions",
+    "schedule": "Schedule",
+    "proof_extraction": "Proof extraction",
+    "outside": "Unattributed",
 }
 
 

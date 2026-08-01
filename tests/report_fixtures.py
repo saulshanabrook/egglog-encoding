@@ -65,6 +65,7 @@ def make_ruleset_timing(
     name: str = "rules",
     *,
     search_ns: int = 400_000_000,
+    assembly_ns: int = 0,
     apply_ns: int = 200_000_000,
     unattributed_ns: int = 0,
     merge_ns: int = 200_000_000,
@@ -74,6 +75,7 @@ def make_ruleset_timing(
 
     return {
         "name": name,
+        "assembly_ns": assembly_ns,
         "search_ns": search_ns,
         "apply_ns": apply_ns,
         "unattributed_ns": unattributed_ns,
@@ -83,11 +85,21 @@ def make_ruleset_timing(
 
 
 def make_timing_summary(*rulesets: RulesetTimingRecord) -> TimingSummaryRecord:
-    """Construct a valid v2 timing-summary fixture."""
+    """Construct a valid v3 timing-summary fixture."""
 
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "rulesets": list(rulesets or (make_ruleset_timing(),)),
+        "outside_rulesets": {
+            "parse_ns": 0,
+            "typecheck_ns": 0,
+            "desugar_ns": 0,
+            "encode_ns": 0,
+            "install_ns": 0,
+            "actions_ns": 0,
+            "schedule_ns": 0,
+            "proof_extraction_ns": 0,
+        },
     }
 
 

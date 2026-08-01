@@ -299,25 +299,49 @@ def test_phase_rows_are_exhaustive_and_outside_is_wall_residual(tmp_path: Path) 
     phases = analyze_pair(ReportStore(report), comparison, "phases").phases
 
     assert [row.phase for row in phases] == [
+        "assembly",
         "search",
         "apply",
         "unattributed",
         "merge",
         "rebuild",
+        "parse",
+        "typecheck",
+        "desugar",
+        "encode",
+        "install",
+        "actions",
+        "schedule",
+        "proof_extraction",
         "outside",
     ]
+    # The fixture records no time outside the rulesets, so `outside` stays the
+    # whole residual and the new phases are zero.
     assert [(row.baseline.timing.point, row.candidate.timing.point) for row in phases] == [
+        (0.0, 0.0),
         (100.0, 200.0),
         (200.0, 100.0),
         (17.0, 23.0),
         (300.0, 600.0),
         (400.0, 200.0),
+        *[(0.0, 0.0)] * 8,
         (483.0, 877.0),
     ]
-    assert [row.delta_ns for row in phases] == [100.0, -100.0, 6.0, 300.0, -200.0, 394.0]
-    assert [row.wall_delta_contribution for row in phases] == pytest.approx([0.2, -0.2, 0.012, 0.6, -0.4, 0.788])
+    assert [row.delta_ns for row in phases] == [
+        0.0,
+        100.0,
+        -100.0,
+        6.0,
+        300.0,
+        -200.0,
+        *[0.0] * 8,
+        394.0,
+    ]
+    assert [row.wall_delta_contribution for row in phases] == pytest.approx(
+        [0.0, 0.2, -0.2, 0.012, 0.6, -0.4, *[0.0] * 8, 0.788]
+    )
     assert sum(row.wall_delta_contribution or 0.0 for row in phases) == pytest.approx(1.0)
-    assert phases[0].baseline.wall_share == pytest.approx(100.0 / 1_500.0)
+    assert phases[1].baseline.wall_share == pytest.approx(100.0 / 1_500.0)
     assert phases[-1].candidate.wall_share == pytest.approx(877.0 / 2_000.0)
 
 
@@ -343,7 +367,8 @@ def test_phase_endpoints_have_student_t_intervals_and_wall_context(tmp_path: Pat
             )
     write_report(report, *records)
 
-    search = analyze_pair(ReportStore(report), comparison, "phases").phases[0]
+    phases = analyze_pair(ReportStore(report), comparison, "phases").phases
+    search = next(row for row in phases if row.phase == "search")
     half_width = 12.706204736432095 * 100.0
 
     assert search.baseline.timing.point == 200

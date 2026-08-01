@@ -547,17 +547,13 @@ impl EGraph {
     }
 
     fn typecheck_command(&mut self, command: &NCommand) -> Result<ResolvedNCommand, TypeError> {
-        use crate::phase_timers as pt;
-        let counter = match command {
-            NCommand::Function(_) => &pt::TC_CMD_FUNCTION,
-            NCommand::NormRule { .. } => &pt::TC_CMD_RULE,
-            NCommand::CoreAction(_) | NCommand::CoreActions(_) => &pt::TC_CMD_ACTION,
-            _ => &pt::TC_CMD_OTHER,
-        };
-        pt::time(counter, || self.typecheck_command_kind(command))
+        let start = std::time::Instant::now();
+        let resolved = self.typecheck_command_inner(command);
+        self.phase_timings.typecheck += start.elapsed();
+        resolved
     }
 
-    fn typecheck_command_kind(
+    fn typecheck_command_inner(
         &mut self,
         command: &NCommand,
     ) -> Result<ResolvedNCommand, TypeError> {
@@ -579,13 +575,13 @@ impl EGraph {
                         (resolved.name.clone(), ft.input.clone(), ft.outputs.clone());
                     crate::proofs::proof_fresh::register_set_if_empty(self, &name, input, outputs);
                 }
-                // If this is a let binding, add it to global_sorts
-                // This preserves bahavior for lets after desugaring
                 if resolved.internal_global_table {
                     self.type_info.global_tables.insert(fdecl.name.clone());
                 }
-                // A term relation carries the flag only to mark what its rows name;
-                // it is a relation, never a global binding.
+                // If this is a let binding, add it to global_sorts
+                // This preserves bahavior for lets after desugaring. A term
+                // relation carries the flag only to mark what its rows name; it
+                // is a relation, never a global binding.
                 if resolved.internal_let
                     && !resolved.internal_global_table
                     && !resolved.internal_term_node
@@ -1280,51 +1276,35 @@ impl TypeInfo {
             (Context::Pure, Context::Write)
         };
 
-        let (query, mapped_query, actions, mapped_action) = crate::phase_timers::time(
-            &crate::phase_timers::TC_LOWER_TO_CORE,
-            || -> Result<_, TypeError> {
-                let (query, mapped_query) = Facts(body.clone()).to_query(self, symbol_gen);
-                constraints.extend(query.get_constraints(self, query_ctx)?);
+        let (query, mapped_query) = Facts(body.clone()).to_query(self, symbol_gen);
+        constraints.extend(query.get_constraints(self, query_ctx)?);
 
-                let mut binding = query.vars().collect::<IndexSet<_>>();
-                // We lower to core actions with `union_to_set_optimization`
-                // later in the pipeline. For typechecking we do not need it.
-                let mut ctx = CoreActionContext::new(self, &mut binding, symbol_gen, false);
-                let (actions, mapped_action) = head.to_core_actions(&mut ctx)?;
-                Ok((query, mapped_query, actions, mapped_action))
-            },
-        )?;
+        let mut binding = query.vars().collect::<IndexSet<_>>();
+        // We lower to core actions with `union_to_set_optimization`
+        // later in the pipeline. For typechecking we do not need it.
+        let mut ctx = CoreActionContext::new(self, &mut binding, symbol_gen, false);
+        let (actions, mapped_action) = head.to_core_actions(&mut ctx)?;
 
         let mut problem = Problem::default();
-        crate::phase_timers::time(&crate::phase_timers::TC_BUILD_PROBLEM, || {
-            problem.add_rule(
-                &CoreRule {
-                    span: span.clone(),
-                    body: query,
-                    head: actions,
-                },
-                self,
-                symbol_gen,
-                query_ctx,
-                action_ctx,
-            )
-        })?;
-
-        let assignment = crate::phase_timers::time(&crate::phase_timers::TC_SOLVE, || {
-            problem.solve(|sort: &ArcSort| sort.name())
-        })
-        .map_err(|e| e.to_type_error())?;
-
-        let (body, actions) = crate::phase_timers::time(
-            &crate::phase_timers::TC_ANNOTATE,
-            || -> Result<_, TypeError> {
-                let body: Vec<ResolvedFact> =
-                    assignment.annotate_facts(&mapped_query, self, query_ctx);
-                let actions: ResolvedActions =
-                    assignment.annotate_actions(&mapped_action, self, action_ctx)?;
-                Ok((body, actions))
+        problem.add_rule(
+            &CoreRule {
+                span: span.clone(),
+                body: query,
+                head: actions,
             },
+            self,
+            symbol_gen,
+            query_ctx,
+            action_ctx,
         )?;
+
+        let assignment = problem
+            .solve(|sort: &ArcSort| sort.name())
+            .map_err(|e| e.to_type_error())?;
+
+        let body: Vec<ResolvedFact> = assignment.annotate_facts(&mapped_query, self, query_ctx);
+        let actions: ResolvedActions =
+            assignment.annotate_actions(&mapped_action, self, action_ctx)?;
 
         // Function lookups in actions need the `Full` action context; the
         // `Write` context (`!read_contexts`) can't express them.
@@ -1414,36 +1394,22 @@ impl TypeInfo {
             binding.keys().copied().map(str::to_string).collect();
         // We lower to core actions with `union_to_set_optimization`
         // later in the pipeline. For typechecking we do not need it.
-        let (actions, mapped_action) = crate::phase_timers::time(
-            &crate::phase_timers::TCA_LOWER_TO_CORE,
-            || -> Result<_, TypeError> {
-                let mut ctx = CoreActionContext::new(self, &mut binding_set, symbol_gen, false);
-                actions.to_core_actions(&mut ctx)
-            },
-        )?;
+        let mut ctx = CoreActionContext::new(self, &mut binding_set, symbol_gen, false);
+        let (actions, mapped_action) = actions.to_core_actions(&mut ctx)?;
         let mut problem = Problem::default();
 
-        crate::phase_timers::time(
-            &crate::phase_timers::TCA_BUILD_PROBLEM,
-            || -> Result<_, TypeError> {
-                problem.add_actions(&actions, self, symbol_gen, context)?;
-                // add bindings from the context
-                for (var, (span, sort)) in binding {
-                    problem.assign_local_var_type(var, span.clone(), sort.clone())?;
-                }
-                Ok(())
-            },
-        )?;
+        problem.add_actions(&actions, self, symbol_gen, context)?;
 
-        let assignment = crate::phase_timers::time(&crate::phase_timers::TCA_SOLVE, || {
-            problem.solve(|sort: &ArcSort| sort.name())
-        })
-        .map_err(|e| e.to_type_error())?;
+        // add bindings from the context
+        for (var, (span, sort)) in binding {
+            problem.assign_local_var_type(var, span.clone(), sort.clone())?;
+        }
 
-        let annotated_actions =
-            crate::phase_timers::time(&crate::phase_timers::TCA_ANNOTATE, || {
-                assignment.annotate_actions(&mapped_action, self, context)
-            })?;
+        let assignment = problem
+            .solve(|sort: &ArcSort| sort.name())
+            .map_err(|e| e.to_type_error())?;
+
+        let annotated_actions = assignment.annotate_actions(&mapped_action, self, context)?;
         Ok(annotated_actions)
     }
 

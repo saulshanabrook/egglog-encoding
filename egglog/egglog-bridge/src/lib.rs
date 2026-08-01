@@ -808,7 +808,7 @@ impl EGraph {
         let ts = self.next_ts();
 
         let uf_size_before = self.db.get_table(self.uf_table).len();
-        let rule_set_report =
+        let (assembly_time, rule_set_report) =
             run_rules_impl(&mut self.db, &mut self.rules, rules, ts, self.report_level)?;
         if let Some(message) = self.panic_message.lock().unwrap().take() {
             return Err(PanicError(message).into());
@@ -817,6 +817,7 @@ impl EGraph {
         let mut iteration_report = IterationReport {
             rule_set_report,
             rebuild_time: Duration::ZERO,
+            assembly_time,
         };
         let uf_size_after = self.db.get_table(self.uf_table).len();
         if uf_size_before == uf_size_after {
@@ -933,6 +934,7 @@ impl EGraph {
                                 ts,
                                 ReportLevel::TimeOnly,
                             )?
+                            .1
                             .changed;
                         }
                         // Reset the rule we did not run. These two should be equivalent.
@@ -948,6 +950,7 @@ impl EGraph {
                             ts,
                             ReportLevel::TimeOnly,
                         )?
+                        .1
                         .changed;
                         for rule in &info.incremental_rebuild_rules {
                             self.rules[*rule].last_run_at = ts;
@@ -1021,6 +1024,7 @@ impl EGraph {
                 ts,
                 ReportLevel::TimeOnly,
             )?
+            .1
             .changed;
             scratch.clear();
             let ts = self.next_ts();
@@ -1037,6 +1041,7 @@ impl EGraph {
                     ts,
                     ReportLevel::TimeOnly,
                 )?
+                .1
                 .changed;
                 scratch.clear();
             }
@@ -2128,23 +2133,23 @@ impl UnionAction {
     }
 }
 
-/// TEMPORARY diagnostic counter for the untimed per-iteration rule-set rebuild.
-pub static RULESET_BUILD_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
 fn run_rules_impl(
     db: &mut Database,
     rule_info: &mut DenseIdMapWithReuse<RuleId, RuleInfo>,
     rules: &[RuleId],
     next_ts: Timestamp,
     report_level: ReportLevel,
-) -> Result<RuleSetReport> {
+) -> Result<(Duration, RuleSetReport)> {
+    // Planning a rule happens once and assembling it happens every iteration;
+    // both are getting rules ready to run, and neither is covered by the search,
+    // merge or rebuild timers.
+    let assembly_timer = Instant::now();
     for rule in rules {
         let info = &mut rule_info[*rule];
         if info.cached_plan.is_none() {
             info.cached_plan = Some(info.query.build_cached_plan(db, &info.desc)?);
         }
     }
-    let build_start = std::time::Instant::now();
     let mut rsb = db.new_rule_set();
     for rule in rules {
         let info = &mut rule_info[*rule];
@@ -2154,11 +2159,8 @@ fn run_rules_impl(
         info.last_run_at = next_ts;
     }
     let ruleset = rsb.build();
-    RULESET_BUILD_NS.fetch_add(
-        build_start.elapsed().as_nanos() as u64,
-        std::sync::atomic::Ordering::Relaxed,
-    );
-    Ok(db.run_rule_set(&ruleset, report_level))
+    let assembly = assembly_timer.elapsed();
+    Ok((assembly, db.run_rule_set(&ruleset, report_level)))
 }
 
 // These markers are just used to make it easy to distinguish time spent in

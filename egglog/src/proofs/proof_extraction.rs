@@ -93,10 +93,10 @@ impl ProofInstrumentor<'_> {
             .lookup_id(proof_function.backend_id, &[witness_value])
             .unwrap_or_else(|| panic!("no proof recorded for constructor {}", func.name));
 
-        let proof_term_id = crate::phase_timers::time(&crate::phase_timers::EXTRACT_ROOT, || {
-            extract_root(self.egraph, &mut termdag, proof_value, proof_sort)
-        })
-        .unwrap_or_else(|| panic!("failed to extract proof term for constructor {}", func.name));
+        let proof_term_id = extract_root(self.egraph, &mut termdag, proof_value, proof_sort)
+            .unwrap_or_else(|| {
+                panic!("failed to extract proof term for constructor {}", func.name)
+            });
 
         let container_normalizers = self
             .egraph
@@ -122,24 +122,18 @@ impl ProofInstrumentor<'_> {
                 prim_value_constructors.insert(head);
             }
         }
-        let (mut proof_store, proof_id) =
-            crate::phase_timers::time(&crate::phase_timers::PROOF_STORE_FROM_TERM, || {
-                proof_store_from_term(
-                    &self.egraph.proof_state.proof_names,
-                    termdag,
-                    proof_term_id,
-                    &self.egraph.proof_check_program,
-                    container_normalizers,
-                    prim_value_constructors,
-                )
-            });
+        let (mut proof_store, proof_id) = proof_store_from_term(
+            &self.egraph.proof_state.proof_names,
+            termdag,
+            proof_term_id,
+            &self.egraph.proof_check_program,
+            container_normalizers,
+            prim_value_constructors,
+        );
 
         // Remove globals from the proof
         if let Result::Err(e) =
-            crate::phase_timers::time(&crate::phase_timers::PROOF_REMOVE_GLOBALS, || {
-                proof_store
-                    .remove_globals(&self.egraph.proof_check_program, &self.egraph.global_slots)
-            })
+            proof_store.remove_globals(&self.egraph.proof_check_program, &self.egraph.global_slots)
         {
             panic!("Failed to remove globals from proof: {e}");
         }
@@ -171,10 +165,7 @@ impl ProofInstrumentor<'_> {
         }
 
         // simplify the proof
-        let simplified_proof =
-            crate::phase_timers::time(&crate::phase_timers::PROOF_SIMPLIFY, || {
-                proof_store.simplify(extra_rule_removed)
-            });
+        let simplified_proof = proof_store.simplify(extra_rule_removed);
 
         // Check the proof after simplification
         if self.egraph.proof_state.verify_proofs {
