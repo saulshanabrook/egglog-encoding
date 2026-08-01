@@ -117,9 +117,10 @@ fn test_single_macro_with_desugar_program() {
         "Expected rule name to be prefixed with test_: {output}"
     );
 
-    // Check that let is desugared correctly
+    // Check that let is desugared correctly: an eq-sort global becomes one row
+    // of its sort's shared table
     assert!(
-        output.contains("(set (a) (Num 1))"),
+        output.contains("(set (Globals_Math 0) (Num 1))"),
         "Expected let desugared"
     );
 }
@@ -222,7 +223,7 @@ fn test_macro_adds_commands_after_rules() {
 
     // The let should still be there, unaffected
     assert!(
-        output.contains("(set (a) (Num 1))"),
+        output.contains("(set (Globals_Math 0) (Num 1))"),
         "Expected desugared a: {output}"
     );
 }

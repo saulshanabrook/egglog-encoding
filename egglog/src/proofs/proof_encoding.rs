@@ -900,11 +900,20 @@ impl<'a> ProofInstrumentor<'a> {
         // The deferred delete/subsume markers are keyed on children with no output,
         // so they are plain `Unit` relations (not term nodes) — the encoding mints
         // no e-class there and extraction never reads them as terms.
+        //
+        // A global's term relation is marked `:internal-let` as well, so extraction
+        // knows the row only names the e-class and reconstructs the term it was
+        // bound to instead.
+        let term_flags = if fdecl.internal_let {
+            " :internal-let"
+        } else {
+            ""
+        };
         self.parse_program(&format!(
             "
             {fresh_sort_decl}
             {to_ast_view_sort}
-            (function {name} ({term_sorts} {view_sort}) Unit :no-merge :internal-hidden :internal-term-node)
+            (function {name} ({term_sorts} {view_sort}) Unit :no-merge :internal-hidden :internal-term-node{term_flags})
             {packed_decl}{view_decl}
             {index_decls}
             (function {to_delete_name} ({in_sorts}) Unit :no-merge :internal-hidden)

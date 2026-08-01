@@ -14,7 +14,8 @@ type Key = (Value, String);
 /// Unlike the public extractor, this does not compute globally optimal costs
 /// for the whole e-graph. It searches for any reconstructable term for the
 /// requested root, ignoring `:unextractable` and hidden constructor flags, and
-/// skips view tables so proof terms use their original constructor names. A term
+/// skips view tables and globals' rows so proof terms use their original
+/// constructor names. A term
 /// of any depth extracts without overflowing the stack.
 struct RootExtractor {
     cache: HashMap<Key, Option<TermId>>,
@@ -186,10 +187,14 @@ impl EqStage {
             // Term/proof relations (function-to-Unit, id in the last input) and
             // ordinary constructors both reconstruct here; views and the
             // delete/subsume markers (`is_relation_term` is false for markers) are
-            // skipped.
+            // skipped. So is a global's row: a global only aliases the term it was
+            // bound to, so naming it here would state the proof over a name for the
+            // e-class rather than over the term the rest of the proof is built
+            // from, and the two would not line up at a congruence step.
             if (func.decl.subtype != FunctionSubtype::Constructor && !func.is_relation_term())
                 || func.extraction_output_sort().name() != sort.name()
                 || func.decl.term_constructor.is_some()
+                || func.decl.internal_let
             {
                 continue;
             }

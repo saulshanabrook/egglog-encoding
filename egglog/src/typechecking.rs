@@ -570,7 +570,12 @@ impl EGraph {
                 if resolved.internal_global_table {
                     self.type_info.global_tables.insert(fdecl.name.clone());
                 }
-                if resolved.internal_let && !resolved.internal_global_table {
+                // A term relation carries the flag only to mark what its rows name;
+                // it is a relation, never a global binding.
+                if resolved.internal_let
+                    && !resolved.internal_global_table
+                    && !resolved.internal_term_node
+                {
                     let output_sort = self.type_info.sorts.get(fdecl.schema.output()).unwrap();
                     self.type_info
                         .global_sorts

@@ -11,7 +11,7 @@ use egglog_ast::generic_ast::{GenericAction, GenericExpr, GenericFact, GenericRu
 
 /// Name of the one table holding every eq-sort global of `sort`.
 pub(crate) fn global_table_name(sort: &str) -> String {
-    format!("@Globals_{sort}")
+    format!("Globals_{sort}")
 }
 
 /// Where each eq-sort global lives: a row of its sort's shared table.
