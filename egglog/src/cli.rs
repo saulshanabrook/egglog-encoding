@@ -17,17 +17,20 @@ struct Args {
     /// Turns off the seminaive optimization
     #[clap(long)]
     naive: bool,
-    /// Skips tree-decomposition during query planning. Tree decomposition
-    /// tries to decompose complex queries into smaller independent subqueries,
-    /// and evaluate them separately. It has a better theoretical guarantee,
-    /// but sometimes the decomposed subqueries (called "bags") can be much larger
-    /// than the final output, which leads to worse performance sometimes.
+    /// Uses tree decomposition during query planning, which is off by default.
+    /// Tree decomposition splits a complex query into smaller independent
+    /// subqueries and evaluates them separately. It has a better theoretical
+    /// guarantee, but a bag's materialized boundary is routinely wider than the
+    /// split saves, so without this flag the planner evaluates each query as a
+    /// single bag.
     ///
-    /// Setting this flag forces the query planner to skip tree decomposition and
-    /// evaluate the query as a single bag.
-    ///
-    /// You can also disable tree decomposition on a per-rule basis with the `:no-decomp` label
-    /// on rules.
+    /// The `:no-decomp` label on a rule keeps decomposition off for that rule
+    /// even when this flag is set.
+    #[clap(long, conflicts_with = "no_decomp")]
+    decomp: bool,
+    /// Accepted and ignored: tree decomposition is already off by default. Kept
+    /// so one command line can drive this build and an older one that still
+    /// decomposes unless told not to.
     #[clap(long)]
     no_decomp: bool,
     /// Prints extra information, which can be useful for debugging
@@ -140,7 +143,7 @@ where
     EGraph::set_num_threads(args.threads);
     egraph.fact_directory.clone_from(&args.fact_directory);
     egraph.seminaive = !args.naive;
-    egraph.no_decomp = args.no_decomp;
+    egraph.no_decomp = !args.decomp;
     egraph.set_report_level(args.report_level);
     if args.strict_mode {
         egraph.set_strict_mode(true);

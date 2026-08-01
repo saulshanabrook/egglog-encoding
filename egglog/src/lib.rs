@@ -453,7 +453,7 @@ impl EGraph {
             rulesets: Default::default(),
             fact_directory: None,
             seminaive: true,
-            no_decomp: false,
+            no_decomp: true,
             overall_run_report: Default::default(),
             type_info: Default::default(),
             schedulers: Default::default(),
@@ -1934,7 +1934,7 @@ impl EGraph {
             name: fresh_name.clone(),
             ruleset: fresh_ruleset.clone(),
             eval_mode: RuleEvalMode::default(),
-            no_decomp: false,
+            no_decomp: true,
             include_subsumed: false,
         };
         let core_rule = rule.to_canonicalized_core_rule(
