@@ -44,6 +44,26 @@ use crate::{EGraph, TableDefault, ViewOp};
 pub(crate) type Env = HashMap<u32, u32>;
 
 type DdDeltaRows = HashMap<ReadKey, Vec<(Vec<u32>, isize)>>;
+
+/// The occurrence view of `base`: for each row, one derived row `(value, row…)`
+/// per distinct value the row holds in `read`'s columns. A value sitting in two
+/// of them yields one derived row, not two — distinct base rows always give
+/// distinct derived rows, so the map keys deduplicate exactly.
+fn occurrence_view(base: &HashMap<Row, u64>, read: ReadKey) -> HashMap<Row, u64> {
+    let mut out = HashMap::new();
+    for (row, version) in base {
+        for col in read.occurrence_columns() {
+            let Some(&val) = row.get(col) else {
+                continue;
+            };
+            let mut derived = Vec::with_capacity(row.len() + 1);
+            derived.push(val);
+            derived.extend_from_slice(row);
+            out.insert(derived.into_boxed_slice(), *version);
+        }
+    }
+    out
+}
 type LookupIndex = HashMap<FunctionId, HashMap<Row, Row>>;
 
 /// Retractions batched per function: the key length plus the set of keys to
@@ -219,7 +239,7 @@ pub fn run_iteration(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<Ite
 
 /// Compute every rule's binding envs in ONE fused pass: the whole atom-bearing
 /// ruleset's body joins run on a SINGLE shared timely worker
-/// ([`dd_native::FusedDdJoin`]) clocked once this iteration, then each rule's
+/// ([`crate::dd_native::FusedDdJoin`]) clocked once this iteration, then each rule's
 /// host-side body primitives are re-run over its own bindings. Atom-less rules
 /// (`(rule () …)`) have no input relation to drive the DD dataflow, so they are
 /// fired once host-side. Returns a `Vec<Vec<Env>>` parallel to `rules` (same
@@ -321,13 +341,22 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<Vec<Ve
     {
         let fed = eg.dd_fused_fed_versions.entry(key.clone()).or_default();
         for &read in &all_reads {
-            let cur = match read.mode {
+            let base = match read.mode {
                 ReadMode::Live => eg.live_versions.get(&read.func),
                 ReadMode::Subsumed => eg.subsumed_versions.get(&read.func),
                 ReadMode::All => eg.all_versions.get(&read.func),
             };
             let cur_empty: HashMap<Row, u64> = HashMap::new();
-            let cur = cur.unwrap_or(&cur_empty);
+            let base = base.unwrap_or(&cur_empty);
+            // An occurrence read is a view over the same rows, so deriving it
+            // here lets the delta diff below stay exactly the same.
+            let occurrence_rows;
+            let cur: &HashMap<Row, u64> = if read.occurrence_cols == 0 {
+                base
+            } else {
+                occurrence_rows = occurrence_view(base, read);
+                &occurrence_rows
+            };
             let prev = fed.entry(read).or_default();
             if prev == cur {
                 continue;

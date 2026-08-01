@@ -71,12 +71,19 @@ pub(crate) struct ScanSpec {
     pub to_index: SubAtom,
     // Only yield rows where the given constraints match.
     pub constraints: Vec<Constraint>,
+    /// Set when this scan reaches the atom through its occurrence variable: the
+    /// columns to read disjunctively (see [`Atom::occurrence`]).
+    pub occurrence_cols: Option<SmallVec<[ColumnId; 4]>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SingleScanSpec {
     pub atom: AtomId,
     pub column: ColumnId,
+    /// Set when this scan binds the atom's occurrence variable: the columns to
+    /// read disjunctively (see [`Atom::occurrence`]). `column` is then only the
+    /// first of them.
+    pub occurrence_cols: Option<SmallVec<[ColumnId; 4]>>,
     pub cs: Vec<Constraint>,
 }
 
@@ -156,6 +163,19 @@ pub(crate) enum JoinStage {
     },
 }
 
+/// The occurrence columns this subatom reads, if it is the atom's occurrence
+/// variable rather than one of its column variables.
+fn occurrence_cols_of(
+    atoms: &DenseIdMap<AtomId, Atom>,
+    subatom: &SubAtom,
+) -> Option<SmallVec<[ColumnId; 4]>> {
+    atoms[subatom.atom]
+        .occurrence
+        .as_ref()
+        .filter(|occ| occ.cols.as_slice() == subatom.vars.as_slice())
+        .map(|occ| occ.cols.clone())
+}
+
 /// Merge every `FusedIntersect { to_intersect: [] }` into the first earlier such stage on the
 /// same cover atom, so each atom contributes at most one single-scan stage. Same-atom no-
 /// `to_intersect` covers can always be merged: their projections share an atom and any
@@ -231,9 +251,7 @@ impl Plan {
     pub(crate) fn to_report(&self, _symbol_map: &SymbolMap) -> egglog_reports::Plan {
         match self {
             Plan::SinglePlan(p) => p.to_report(_symbol_map),
-            Plan::DecomposedPlan(_) => {
-                todo!()
-            }
+            Plan::DecomposedPlan(p) => p.to_report(_symbol_map),
         }
     }
 
@@ -289,11 +307,21 @@ pub(crate) struct DecomposedPlan {
     pub actions: ActionId,
 }
 
-impl SinglePlan {
-    pub(crate) fn to_report(&self, symbol_map: &SymbolMap) -> egglog_reports::Plan {
+/// Render one run of join instructions as report stages, numbering each stage's
+/// successor from `offset` so several runs can be concatenated into one plan.
+fn stages_to_report(
+    stages: &JoinStages,
+    atoms: &DenseIdMap<AtomId, Atom>,
+    symbol_map: &SymbolMap,
+    offset: usize,
+) -> Vec<(
+    egglog_reports::Stage,
+    Option<egglog_reports::StageStats>,
+    Vec<usize>,
+)> {
+    {
         use egglog_reports::{
-            Plan as ReportPlan, Scan as ReportScan, SingleScan as ReportSingleScan,
-            Stage as ReportStage,
+            Scan as ReportScan, SingleScan as ReportSingleScan, Stage as ReportStage,
         };
         const INTERNAL_PREFIX: &str = "@";
         let get_var = |var: Variable| {
@@ -310,8 +338,8 @@ impl SinglePlan {
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| format!("{INTERNAL_PREFIX}R{atom:?}"))
         };
-        let mut stages = Vec::new();
-        for (i, stage) in self.stages.instrs.iter().enumerate() {
+        let mut out = Vec::new();
+        for (i, stage) in stages.instrs.iter().enumerate() {
             let report_stage = match stage {
                 JoinStage::Intersect { var, scans } => {
                     let var_name = get_var(*var);
@@ -340,8 +368,10 @@ impl SinglePlan {
                         .vars
                         .iter()
                         .map(|col| {
-                            let var_name =
-                                get_var(self.atoms[cover.to_index.atom].get_var(*col).unwrap());
+                            let var_name = atoms[cover.to_index.atom]
+                                .get_var(*col)
+                                .map(get_var)
+                                .unwrap_or_else(|| format!("{INTERNAL_PREFIX}c{col:?}"));
                             (var_name, col.index() as i64)
                         })
                         .collect();
@@ -353,9 +383,12 @@ impl SinglePlan {
                             let cols: Vec<(String, i64)> = key_spec
                                 .iter()
                                 .map(|col| {
-                                    let var_name = get_var(
-                                        self.atoms[scan.to_index.atom].get_var(*col).unwrap(),
-                                    );
+                                    // `key_spec` indexes the cover, so it need not
+                                    // name a column of the probed atom.
+                                    let var_name = atoms[scan.to_index.atom]
+                                        .get_var(*col)
+                                        .map(get_var)
+                                        .unwrap_or_else(|| format!("{INTERNAL_PREFIX}c{col:?}"));
                                     (var_name, col.index() as i64)
                                 })
                                 .collect();
@@ -367,23 +400,85 @@ impl SinglePlan {
                         to_intersect: report_to_intersect,
                     }
                 }
+                // The cover is an intermediate materialization rather than a
+                // table, so it is named for the materialization it reads and its
+                // columns are the ones it binds.
                 JoinStage::FusedIntersectMat {
-                    cover: _,
-                    mode: _,
-                    bind: _,
-                    to_intersect: _,
+                    cover,
+                    mode,
+                    bind,
+                    to_intersect,
                 } => {
-                    todo!("materialization")
+                    let cover_cols: Vec<(String, i64)> = bind
+                        .iter()
+                        .map(|(col, var)| (get_var(*var), col.index() as i64))
+                        .collect();
+                    let report_cover = ReportScan(
+                        format!("{INTERNAL_PREFIX}mat{cover:?}[{mode:?}]"),
+                        cover_cols,
+                    );
+                    let report_to_intersect = to_intersect
+                        .iter()
+                        .map(|(scan, key_spec)| {
+                            let atom_name = get_atom(scan.to_index.atom);
+                            let cols: Vec<(String, i64)> = key_spec
+                                .iter()
+                                .map(|col| {
+                                    // `key_spec` indexes the cover, so it need not
+                                    // name a column of the probed atom.
+                                    let var_name = atoms[scan.to_index.atom]
+                                        .get_var(*col)
+                                        .map(get_var)
+                                        .unwrap_or_else(|| format!("{INTERNAL_PREFIX}c{col:?}"));
+                                    (var_name, col.index() as i64)
+                                })
+                                .collect();
+                            ReportScan(atom_name, cols)
+                        })
+                        .collect();
+                    ReportStage::FusedIntersect {
+                        cover: report_cover,
+                        to_intersect: report_to_intersect,
+                    }
                 }
             };
-            let next = if i == self.stages.instrs.len() - 1 {
+            let next = if i == stages.instrs.len() - 1 {
                 vec![]
             } else {
-                vec![i + 1]
+                vec![offset + i + 1]
             };
-            stages.push((report_stage, None, next));
+            out.push((report_stage, None, next));
         }
-        ReportPlan { stages }
+        out
+    }
+}
+
+impl SinglePlan {
+    pub(crate) fn to_report(&self, symbol_map: &SymbolMap) -> egglog_reports::Plan {
+        egglog_reports::Plan {
+            stages: stages_to_report(&self.stages, &self.atoms, symbol_map, 0),
+        }
+    }
+}
+
+impl DecomposedPlan {
+    /// Every bag's instructions in order, then the block that joins their
+    /// materialized results. Stages are numbered across blocks, so a block's last
+    /// stage has no successor: the bags are independent by construction.
+    pub(crate) fn to_report(&self, symbol_map: &SymbolMap) -> egglog_reports::Plan {
+        let mut stages = Vec::new();
+        for (block, _mat_spec) in &self.stages.blocks {
+            let offset = stages.len();
+            stages.extend(stages_to_report(block, &self.atoms, symbol_map, offset));
+        }
+        let offset = stages.len();
+        stages.extend(stages_to_report(
+            &self.result_block,
+            &self.atoms,
+            symbol_map,
+            offset,
+        ));
+        egglog_reports::Plan { stages }
     }
 }
 
@@ -428,8 +523,9 @@ fn next_var_to_eliminate(
         .map(|(var, vinfo)| {
             let subquery_vars = atoms
                 .iter()
-                // every atom that contains this variable
-                .filter(|(_, atom)| atom.get_col(var).is_some())
+                // every atom that contains this variable, as a column or as the
+                // value an occurrence index is read by
+                .filter(|(_, atom)| atom.binds(var))
                 // every variable of those atoms
                 .flat_map(|(_, atom)| atom.vars());
 
@@ -445,16 +541,19 @@ fn next_var_to_eliminate(
             let size_estimation = vinfo
                 .occurrences
                 .iter()
-                .filter_map(|occ| {
+                .flat_map(|occ| {
                     let atom = &atoms[occ.atom];
                     let table = atom.table;
                     if table.is_dummy() {
-                        return None;
+                        return SmallVec::<[ColUniqueness; 4]>::new();
                     }
-                    let col = atom.get_col(var).unwrap();
+                    // An occurrence variable is not a column of its atom, so it is
+                    // estimated from the columns it can occur in.
                     // TODO: plan header before query decomposition so we know the exact
                     // subset we are handling
-                    Some(col_est.col_uniqueness(table, col))
+                    atom.columns_bound_by(var)
+                        .map(|col| col_est.col_uniqueness(table, col))
+                        .collect()
                 })
                 .fold(ColUniqueness::default(), |a, b| a.join(&b));
             ((occ, size_estimation), var, subquery_vars)
@@ -527,6 +626,7 @@ fn update_hypergraph(
         var_columns,
         constraints: ProcessedConstraints::dummy(),
         table: TableId::dummy(),
+        occurrence: None,
     });
 
     // Update variable occurrences to include the covering atom
@@ -927,6 +1027,11 @@ fn plan_single_bag(
                                             vars: smallvec![],
                                         },
                                         constraints: vec![],
+                                        // This path merges subatoms across an
+                                        // atom's variables, which an occurrence
+                                        // read cannot share; such a query is
+                                        // planned without decomposition.
+                                        occurrence_cols: None,
                                     },
                                     smallvec![],
                                 ));
@@ -1062,11 +1167,13 @@ fn fuse_last_stage(
 ///
 /// For example, in the following, looking up of `r` can be lifted up before `z`
 ///
+/// ```text
 /// for x in R isec S:
 ///  R = R[x]; S = S[x]
 ///  for z in R:
 ///   if r in Mat[x]:
 ///     yield
+/// ```
 fn loop_lifting(stages: JoinStages) -> JoinStages {
     let mut instrs = Arc::unwrap_or_clone(stages.instrs);
     for i in 1..instrs.len() {
@@ -1610,9 +1717,14 @@ fn compile_stage(
                 .chain(filters.iter().map(|(x, _)| x))
                 .map(|subatom| {
                     let atom = subatom.atom;
+                    // A subatom whose columns are the atom's occurrence set binds
+                    // the occurrence variable, so the scan reads them
+                    // disjunctively instead of collapsing to `vars[0]`.
+                    let occurrence_cols = occurrence_cols_of(&ctx.atoms, subatom);
                     SingleScanSpec {
                         atom,
                         column: subatom.vars[0],
+                        occurrence_cols,
                         cs: take_atom_constraints_if_new(ctx, state, atom),
                     }
                 }),
@@ -1628,19 +1740,29 @@ fn compile_stage(
     let atom = cover.atom;
 
     let cover_spec = ScanSpec {
+        occurrence_cols: occurrence_cols_of(&ctx.atoms, &cover),
         to_index: cover,
         constraints: take_atom_constraints_if_new(ctx, state, atom),
     };
 
     let mut bind = SmallVec::new();
     for var in vars {
-        bind.push((ctx.atoms[atom].get_col(var).unwrap(), var));
+        // Scanning a cover binds each variable from the column it occupies; an
+        // occurrence variable has none, so a plan that covers it is unsupported.
+        let col = ctx.atoms[atom].get_col(var).unwrap_or_else(|| {
+            panic!(
+                "unsupported plan: {var:?} is bound by scanning an atom where it \
+                 occupies no column"
+            )
+        });
+        bind.push((col, var));
     }
 
     let mut to_intersect = Vec::with_capacity(filters.len());
     for (subatom, key_spec) in filters {
         let atom = subatom.atom;
         let scan = ScanSpec {
+            occurrence_cols: occurrence_cols_of(&ctx.atoms, &subatom),
             to_index: subatom,
             constraints: take_atom_constraints_if_new(ctx, state, atom),
         };

@@ -16,7 +16,7 @@ use crate::{
     core::ResolvedCall,
     proofs::proof_format::{Justification, ProofId, ProofStore, Proposition},
     typechecking::FuncType,
-    util::{HashMap, HashSet, SymbolGen},
+    util::{HashMap, HashSet, IndexMap, SymbolGen},
 };
 use thiserror::Error;
 
@@ -565,9 +565,12 @@ fn format_term(term_dag: &TermDag, term_id: TermId) -> String {
 }
 
 /// Helper function to format a substitution as a string
-fn format_substitution(term_dag: &TermDag, substitution: &HashMap<String, TermId>) -> String {
+fn format_substitution<'a>(
+    term_dag: &TermDag,
+    substitution: impl IntoIterator<Item = (&'a String, &'a TermId)>,
+) -> String {
     substitution
-        .iter()
+        .into_iter()
         .map(|(k, v)| format!("{} -> {}", k, format_term(term_dag, *v)))
         .collect::<Vec<_>>()
         .join(", ")
@@ -1269,7 +1272,7 @@ impl ProofStore {
     fn check_rule_produces_equality(
         &mut self,
         rule: &crate::ast::GenericRule<ResolvedCall, crate::ast::ResolvedVar>,
-        substitution: &HashMap<String, TermId>,
+        substitution: &IndexMap<String, TermId>,
         subst_with_globals: &HashMap<String, TermId>,
         claimed: &Proposition,
         rule_name: &str,

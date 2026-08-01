@@ -319,6 +319,28 @@ impl EGraph {
 
         for atom in &rule.core.body.atoms {
             match atom.head {
+                RuleBodyCall::IndexTable { id, ref any_of, .. } => {
+                    let info = relation(id, "rule body")?;
+                    // The occurring value, the base row, and the index relation's
+                    // own unit output.
+                    let expected = info.arity + 2;
+                    if atom.args.len() != expected {
+                        bail!(
+                            "DD backend cannot add rule {:?}: index atom over `{}` has {} columns, expected {expected}",
+                            rule.name,
+                            info.name,
+                            atom.args.len()
+                        );
+                    }
+                    if let Some(col) = any_of.iter().find(|c| **c >= info.arity) {
+                        bail!(
+                            "DD backend cannot add rule {:?}: index atom over `{}` reads column {col}, but it has arity {}",
+                            rule.name,
+                            info.name,
+                            info.arity
+                        );
+                    }
+                }
                 RuleBodyCall::Table { id, .. } => {
                     if atom.args.len() > dd_native::W {
                         bail!(

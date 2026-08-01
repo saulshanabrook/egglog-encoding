@@ -60,6 +60,22 @@ impl SortedWritesTable {
             // Incremental rebuilds are possible if we can scan the subset of the columns that are
             // relevant.
             let to_scan = self.subset_tracker.recent_updates(table_id, table);
+            if std::env::var_os("EGGLOG_REBUILD_TRACE").is_some() {
+                log::info!(
+                    "REBUILD_TRACE branch={} diff={} table_size={}",
+                    if incremental_rebuild(
+                        to_scan.size(),
+                        self.data.next_row().index(),
+                        parallelize_rebuild(to_scan.size())
+                    ) {
+                        "incremental"
+                    } else {
+                        "fullscan"
+                    },
+                    to_scan.size(),
+                    self.data.next_row().index()
+                );
+            }
             if incremental_rebuild(
                 to_scan.size(),
                 self.data.next_row().index(),

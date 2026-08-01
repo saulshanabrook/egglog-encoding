@@ -17,7 +17,7 @@ use crate::{
     QueryEntry, TableId, Variable,
     action::{
         Bindings, ExecutionState,
-        mask::{Mask, MaskIter, ValueSource},
+        mask::{Mask, MaskIter},
     },
     common::Value,
     hash_index::{ColumnIndex, IndexBase, TupleIndex},
@@ -286,7 +286,7 @@ pub trait Table: Any + Send + Sync {
     }
 
     /// Returns true if the table contains any stale rows (rows whose first column
-    /// has been set to [`Value::stale()`]). The default implementation returns `true`
+    /// has been set to `Value::stale()`). The default implementation returns `true`
     /// (conservative). Tables that track stale-row counts should override this.
     fn has_stale_rows(&self) -> bool {
         true
@@ -431,7 +431,7 @@ impl<T: Table> TableWrapper for WrapperImpl<T> {
             inner: table,
             wrapper: self,
         };
-        ColumnIndex::build_for_subset(wrapped, subset, col)
+        ColumnIndex::build_for_subset(wrapped, subset, &[col])
     }
     fn group_by_key(&self, table: &dyn Table, subset: SubsetRef, cols: &[ColumnId]) -> TupleIndex {
         let table = table.as_any().downcast_ref::<T>().unwrap();

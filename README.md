@@ -30,6 +30,7 @@ make rust-nits      # rustfmt check and Clippy only
 make proof-tests    # proof-focused subset of the workspace tests
 make benchmark-smoke
 make nightly        # benchmark the nightly endpoints and publish nightly/output/
+make nightly-local  # the same run at one round, for trying it out
 make update-snapshots
 make format         # apply Ruff and rustfmt formatting
 ```
@@ -380,6 +381,9 @@ failing the run, and the output directory is only overwritten after a
 successful run. Edit `TARGETS` and `ENDPOINTS` in `scripts/nightly_bench.py` to
 change what is measured.
 
+`make nightly-local` is the same run at `--rounds 1`, for trying the whole
+pipeline out without waiting for a full nightly.
+
 The [egraphs-good nightly service](https://nightly.cs.washington.edu) checks out
 this repository, runs `make nightly`, and serves `nightly/output/`, matching the
 `report=` entry in the nightly configuration. Two things that runner does not
@@ -389,6 +393,10 @@ when uv is missing from `PATH` (uv then downloads its own CPython; bump
 the box has none. The runner also leaves rustup's `~/.cargo/bin` off `PATH`,
 which would leave cargo resolving to Ubuntu's — too old for
 `rust-toolchain.toml`'s pin — so `nightly_bench.py` puts those shims first.
+
+Both installers run `curl … | sh`, so on a developer box prefer installing uv
+and rustup yourself: `make nightly` and `make nightly-local` skip each one that
+is already there. Only a bare CI runner needs them.
 
 ### CPU profiling
 

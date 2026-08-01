@@ -167,6 +167,17 @@ pub(crate) fn desugar_command(
             proof_constructors,
             unionable,
         }],
+        Command::Index {
+            span,
+            name,
+            function,
+            any_of,
+        } => vec![NCommand::Index {
+            span,
+            name,
+            function,
+            any_of,
+        }],
         Command::AddRuleset(span, name) => vec![NCommand::AddRuleset(span, name)],
         Command::UnstableCombinedRuleset(span, name, subrulesets) => {
             vec![NCommand::UnstableCombinedRuleset(span, name, subrulesets)]

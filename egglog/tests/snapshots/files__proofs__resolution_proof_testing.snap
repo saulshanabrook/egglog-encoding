@@ -1,45 +1,38 @@
 ---
 source: egglog/tests/files.rs
-assertion_line: 279
 expression: proof_snapshot
 ---
 (Fiat (= () ()))
-(let t0 (myor (negate (p 0)) (myor (FalseConst) (FalseConst))))
-(let t1 (myor (negate (p 0)) (FalseConst)))
-(let t2 (a (negate (p 0))))
+(let t0 (myor (negate (p 0)) (FalseConst)))
 (let prf0
   (Rule
-                  (= t1 (negate (p 0)))
-                  (name "(rewrite (myor a $False) a)")
-                  (premises (Fiat (= t1 t1)))
-                  (substitution t2 (@rewrite_var__5 t1))))
-(let prf1 (Sym (= (negate (p 0)) t1) prf0))
-(let t3 (myor (p 2) t1))
-(let prop0
-  (=
-                  (TrueConst)
-                  (myor (negate (p 2)) (myor (FalseConst) (FalseConst)))))
-(let t4 (myor (negate (p 2)) (FalseConst)))
-(let t5 (myor (p 1) t4))
-(let t6
-  (premises
-                      (Congr
-                        (= (TrueConst) (myor (FalseConst) t4))
-                        (Sym (= (TrueConst) t5) (Fiat (= t5 (TrueConst))))
-                        (Fiat (= (p 1) (FalseConst)))
-                        0)))
-(let prf2
+            (= t0 (negate (p 0)))
+            (name "(rewrite (myor a $False) a)")
+            (premises (Fiat (= t0 t0)))
+            (substitution (@rewrite_var__5 t0) (a (negate (p 0))))))
+(let t1 (myor (p 2) t0))
+(let t2 (myor (negate (p 2)) (FalseConst)))
+(let prop0 (= (TrueConst) t2))
+(let t3 (myor (p 1) t2))
+(let prf1
   (Rule
-                        (= t4 (negate (p 2)))
-                        (name "(rewrite (myor a $False) a)")
-                        (premises (Fiat (= t4 t4)))
-                        (substitution (a (negate (p 2))) (@rewrite_var__5 t4))))
-(let prf3
-  (Rule
-                      (= t4 (TrueConst))
+                      (= t2 (TrueConst))
                       (name "(rewrite (myor $False a) a)")
-                      t6
-                      (substitution (@rewrite_var__4 (TrueConst)) (a t4))))
+                      (premises
+                        (Congr
+                          (= (TrueConst) (myor (FalseConst) t2))
+                          (Sym (= (TrueConst) t3) (Fiat (= t3 (TrueConst))))
+                          (Fiat (= (p 1) (FalseConst)))
+                          0))
+                      (substitution (@rewrite_var__4 (TrueConst)) (a t2))))
+(let prf2 (Sym prop0 prf1))
+(let prf3 (Fiat (= t2 t2)))
+(let prf4
+  (Rule
+                          (= t2 (negate (p 2)))
+                          (name "(rewrite (myor a $False) a)")
+                          (premises prf3)
+                          (substitution (@rewrite_var__5 t2) (a (negate (p 2))))))
 (Rule
   (= (p 0) (FalseConst))
   (name
@@ -49,15 +42,7 @@ expression: proof_snapshot
   (premises
     (Trans
       (= (negate (p 0)) (TrueConst))
-      (Rule
-        (= (negate (p 0)) t0)
-        (name "(rewrite (myor (myor a b) c) (myor a (myor b c)))")
-        (premises (Congr (= (negate (p 0)) (myor t1 (FalseConst))) prf1 prf1 0))
-        (substitution
-          (c (FalseConst))
-          t2
-          (b (FalseConst))
-          (@rewrite_var__ (negate (p 0)))))
+      (Sym (= (negate (p 0)) t0) prf0)
       (Sym
         (= t0 (TrueConst))
         (Rule
@@ -70,38 +55,25 @@ expression: proof_snapshot
           (premises
             (Congr
               (= (TrueConst) (myor (p 2) (negate (p 0))))
-              (Sym (= (TrueConst) t3) (Fiat (= t3 (TrueConst))))
+              (Sym (= (TrueConst) t1) (Fiat (= t1 (TrueConst))))
               prf0
               1)
             (Congr
               prop0
-              (Congr
-                (=
-                  (TrueConst)
-                  (myor (TrueConst) (myor (FalseConst) (FalseConst))))
-                (Rule
-                  prop0
-                  (name "(rewrite (myor a (myor b c)) (myor b (myor a c)))")
-                  t6
-                  (substitution
-                    (@rewrite_var__1 (TrueConst))
-                    (a (FalseConst))
-                    (b (negate (p 2)))
-                    (c (FalseConst))))
-                (Trans
-                  (= (negate (p 2)) (TrueConst))
-                  (Sym (= (negate (p 2)) t4) prf2)
-                  prf3)
-                0)
               (Trans
-                (= (TrueConst) (negate (p 2)))
-                (Sym (= (TrueConst) t4) prf3)
-                prf2)
+                (= (TrueConst) (myor (TrueConst) (FalseConst)))
+                prf2
+                (Congr
+                  (= t2 (myor (TrueConst) (FalseConst)))
+                  prf3
+                  (Trans
+                    (= (negate (p 2)) (TrueConst))
+                    (Sym (= (negate (p 2)) t2) prf4)
+                    prf1)
+                  0))
+              (Trans (= (TrueConst) (negate (p 2))) prf2 prf4)
               0))
-          (substitution
-            (bs (myor (FalseConst) (FalseConst)))
-            (a (p 2))
-            (as (negate (p 0))))))))
+          (substitution (a (p 2)) (as (negate (p 0))) (bs (FalseConst)))))))
   (substitution (p (p 0))))
 (let t0 (myor (negate (p 2)) (FalseConst)))
 (let t1 (myor (p 1) t0))
@@ -120,7 +92,7 @@ expression: proof_snapshot
           (= t0 (negate (p 2)))
           (name "(rewrite (myor a $False) a)")
           (premises (Fiat (= t0 t0)))
-          (substitution (a (negate (p 2))) (@rewrite_var__5 t0))))
+          (substitution (@rewrite_var__5 t0) (a (negate (p 2))))))
       (Rule
         (= t0 (TrueConst))
         (name "(rewrite (myor $False a) a)")

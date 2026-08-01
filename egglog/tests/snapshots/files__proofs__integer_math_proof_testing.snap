@@ -28,9 +28,9 @@ expression: proof_snapshot
             (= t2 (Const 0))
             (name "(rewrite (Sub a a) (Const 0))")
             (premises (Fiat (= t2 t2)))
-            (substitution (a t1) (@rewrite_var__15 t2)))
+            (substitution (@rewrite_var__15 t2) (a t1)))
           1))
-      (substitution (a (Var "c")) (@rewrite_var__12 t3)))
+      (substitution (@rewrite_var__12 t3) (a (Var "c"))))
     1)
   (Sym
     (= t9 t8)
@@ -45,7 +45,7 @@ expression: proof_snapshot
             (= t0 t5)
             (name "(rewrite (Mul x (Pow (Const 2) y)) (LShift x y))")
             (premises (Fiat (= t0 t0)))
-            (substitution (y (Const 3)) (@rewrite_var__24 t0) (x (Var "a")))))
+            (substitution (@rewrite_var__24 t0) (x (Var "a")) (y (Const 3)))))
         0)
       (Rule
         (= t7 (Var "c"))
@@ -60,5 +60,5 @@ expression: proof_snapshot
               (premises (Fiat (= t6 t6)))
               (substitution (@rewrite_var__26 t6) (x (Const 1))))
             1))
-        (substitution (a (Var "c")) (@rewrite_var__14 t7)))
+        (substitution (@rewrite_var__14 t7) (a (Var "c"))))
       1)))

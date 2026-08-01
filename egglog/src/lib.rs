@@ -954,7 +954,7 @@ impl EGraph {
         }
     }
 
-    /// Lower a resolved `:merge` (a value-producing action block) to a backend [`MergeFn`], keeping
+    /// Lower a resolved `:merge` (a value-producing action block) to a backend [`egglog_bridge::MergeFn`], keeping
     /// the existing merge interpreter. The `result` produces the merged value(s); any `actions` run
     /// first as effects.
     /// `self_ref` names the function this merge belongs to and its (peeked) backend id,
@@ -999,7 +999,7 @@ impl EGraph {
         })
     }
 
-    /// Lower a single resolved merge action to a backend [`MergeAction`]. Supports `set`, `let`, and
+    /// Lower a single resolved merge action to a backend [`egglog_bridge::MergeAction`]. Supports `set`, `let`, and
     /// `union`; other actions (`delete`/`panic`/`extract`/...) are not meaningful during a merge.
     fn translate_merge_action(
         &self,
@@ -2033,6 +2033,12 @@ impl EGraph {
                 self.declare_function(&fdecl)?;
                 log::info!("Declared {} {}.", fdecl.subtype, fdecl.name)
             }
+            ResolvedNCommand::Index { name, function, .. } => {
+                // Nothing to build: the backend creates the occurrence index the
+                // first time a rule probes it. Typechecking already registered
+                // the relation the atoms resolve against.
+                log::info!("Declared index {name} over {function}.");
+            }
             ResolvedNCommand::AddRuleset(_span, name) => {
                 self.add_ruleset(name.clone());
                 log::info!("Declared ruleset {name}.");
@@ -2635,11 +2641,8 @@ impl EGraph {
                 self.names.check_shadowing(command)?;
             }
 
-            // Share repeated constructor applications (see `ast::cse`).
-            let deduped =
-                ast::cse::cse_program(typechecked_no_globals, &mut self.parser.symbol_gen);
-
-            let term_encoding_added = ProofInstrumentor::add_term_encoding(self, deduped)?;
+            let term_encoding_added =
+                ProofInstrumentor::add_term_encoding(self, typechecked_no_globals)?;
             let mut new_typechecked = vec![];
             for new_cmd in term_encoding_added {
                 let desugared =
@@ -3001,7 +3004,7 @@ impl EGraph {
     }
 
     /// Run a pattern query: bind the variables in `vars` against
-    /// `facts` and return one [`HashMap`] per match, keyed by variable
+    /// `facts` and return one `HashMap` per match, keyed by variable
     /// name. Values stay raw — convert via [`EGraph::value_to_base`].
     ///
     /// With zero vars, returns at most one empty map (so `.len()` is 1
@@ -3377,21 +3380,79 @@ impl<'a> BackendRule<'a> {
         args.into_iter().map(|term| self.entry(term)).collect()
     }
 
+    /// An index atom is probed, never scanned, so the value it is looked up by
+    /// must be bound elsewhere in the query.
+    fn check_index_value_is_bound(
+        &self,
+        index: &crate::typechecking::FuncType,
+        atom: &core::GenericAtom<ResolvedCall, ResolvedVar>,
+        query: &core::Query<ResolvedCall, ResolvedVar>,
+    ) -> Result<(), Error> {
+        let Some(core::GenericAtomTerm::Var(span, value)) = atom.args.first() else {
+            return Ok(());
+        };
+        // The value may sit at a column of this very atom, which both binds it and
+        // makes the occurrence redundant — the atom is then an ordinary one.
+        if atom
+            .args
+            .iter()
+            .skip(1)
+            .any(|arg| matches!(arg, core::GenericAtomTerm::Var(_, v) if v.name == value.name))
+        {
+            return Ok(());
+        }
+        let bound_elsewhere = query.atoms.iter().any(|other| {
+            !std::ptr::eq(other, atom)
+                && !matches!(&other.head,
+                    ResolvedCall::Func(f) if self.type_info.indexes.contains_key(&f.name))
+                && other.args.iter().any(
+                    |arg| matches!(arg, core::GenericAtomTerm::Var(_, v) if v.name == value.name),
+                )
+        });
+        if bound_elsewhere {
+            return Ok(());
+        }
+        Err(
+            TypeError::IndexValueUnbound(index.name.clone(), value.name.clone(), span.clone())
+                .into(),
+        )
+    }
+
     fn query(
         &mut self,
         query: &core::Query<ResolvedCall, ResolvedVar>,
         include_subsumed: bool,
     ) -> Result<(), Error> {
         for atom in &query.atoms {
+            let read = if include_subsumed {
+                ReadMode::All
+            } else {
+                ReadMode::Live
+            };
             let (head, args) = match &atom.head {
+                // An atom on a declared index reads the rows of the indexed
+                // function, reached through the value its first argument binds.
+                ResolvedCall::Func(f) if self.type_info.indexes.contains_key(&f.name) => {
+                    self.check_index_value_is_bound(f, atom, query)?;
+                    let index = self.type_info.indexes[&f.name].clone();
+                    let indexed = self
+                        .type_info
+                        .get_func_type(&index.function)
+                        .expect("index target checked at declaration")
+                        .clone();
+                    (
+                        RuleBodyCall::IndexTable {
+                            id: self.func(&indexed),
+                            any_of: index.any_of,
+                            read,
+                        },
+                        self.args(&atom.args)?,
+                    )
+                }
                 ResolvedCall::Func(f) => (
                     RuleBodyCall::Table {
                         id: self.func(f),
-                        read: if include_subsumed {
-                            ReadMode::All
-                        } else {
-                            ReadMode::Live
-                        },
+                        read,
                     },
                     self.args(&atom.args)?,
                 ),
@@ -3420,8 +3481,27 @@ impl<'a> BackendRule<'a> {
         Ok(())
     }
 
+    /// A declared index is a view the database maintains, so an action writing
+    /// to one is rejected.
+    fn reject_index_write(&self, call: &ResolvedCall, span: &Span) -> Result<(), Error> {
+        if let ResolvedCall::Func(f) = call
+            && self.type_info.indexes.contains_key(&f.name)
+        {
+            return Err(TypeError::IndexIsReadOnly(f.name.clone(), span.clone()).into());
+        }
+        Ok(())
+    }
+
     fn actions(&mut self, actions: &core::ResolvedCoreActions) -> Result<(), Error> {
         for action in &actions.0 {
+            match action {
+                core::GenericCoreAction::Let(span, _, f, _)
+                | core::GenericCoreAction::Set(span, f, _, _)
+                | core::GenericCoreAction::Change(span, _, f, _) => {
+                    self.reject_index_write(f, span)?;
+                }
+                _ => {}
+            }
             match action {
                 core::GenericCoreAction::Let(span, v, f, args) => {
                     let (call, args) = match f {

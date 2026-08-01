@@ -1,0 +1,20 @@
+;; A custom function whose output is an eq-sort: when that output's e-class
+;; moves, the row is rebuilt by rewriting the output child, so its row proof
+;; composes by `Congr` at the output position. A constructor's value column is
+;; the term's own e-class and composes the other way round, and applying that
+;; shape here produces a proof the checker rejects.
+
+(datatype Math (Num i64) (W Math))
+(function f (Math) Math :merge old)
+(ruleset r)
+(rule ((= o (f k))) ((union (W k) o)) :ruleset r)
+
+(let $a (Num 1))
+(let $b (Num 2))
+(let $c (Num 3))
+(set (f $a) $c)
+(union $b $c)
+
+(run-schedule (saturate (run)))
+(run-schedule (saturate (run r)))
+(check (= (W $a) $b))

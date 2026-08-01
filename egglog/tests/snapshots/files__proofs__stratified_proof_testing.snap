@@ -28,4 +28,4 @@ expression: proof_snapshot
       (premises (Fiat (= (edge 1 2) (edge 1 2))))
       (substitution (x 1) (y 2)))
     (Fiat (= (edge 2 3) (edge 2 3))))
-  (substitution (z 3) (x 1) (y 2)))
+  (substitution (x 1) (y 2) (z 3)))

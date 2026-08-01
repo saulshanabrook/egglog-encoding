@@ -145,6 +145,17 @@ pub enum RuleBodyCall {
         id: FunctionId,
         read: ReadMode,
     },
+    /// An atom over a declared index: the rows of `id` reached through the value
+    /// occurring in *some* one of `any_of`. Its arguments are that value followed
+    /// by the whole row of `id`.
+    ///
+    /// The atom can only be probed, so the leading value must be bound elsewhere
+    /// in the query.
+    IndexTable {
+        id: FunctionId,
+        any_of: Vec<usize>,
+        read: ReadMode,
+    },
     Primitive {
         id: ExternalFunctionId,
         name: Box<str>,

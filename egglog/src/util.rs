@@ -5,6 +5,7 @@ pub(crate) type HashMap<K, V> = hashbrown::HashMap<K, V, BuildHasher>;
 pub(crate) type HashSet<K> = hashbrown::HashSet<K, BuildHasher>;
 pub(crate) type HEntry<'a, A, B> = hashbrown::hash_map::Entry<'a, A, B, BuildHasher>;
 pub type IndexMap<K, V> = indexmap::IndexMap<K, V, BuildHasher>;
+pub(crate) type IEntry<'a, A, B> = indexmap::map::Entry<'a, A, B>;
 pub type IndexSet<K> = indexmap::IndexSet<K, BuildHasher>;
 
 pub use egglog_ast::generic_ast_helpers::INTERNAL_SYMBOL_PREFIX;

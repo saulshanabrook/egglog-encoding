@@ -1,9 +1,9 @@
 .PHONY: \
 	check nits test python-check python-nits rust-check rust-nits \
-	proof-tests benchmark-smoke nightly nightly-uv nightly-rustup \
+	proof-tests benchmark-smoke nightly nightly-local nightly-uv nightly-rustup \
 	update-snapshots format \
 	python-lock python-format-check python-lint python-typecheck python-test \
-	rust-format-check rust-clippy rust-test
+	rust-format-check rust-clippy rust-doc-links rust-test
 
 BENCHMARK_SMOKE_REPORT ?= /tmp/egglog-encoding-bench-smoke.jsonl
 
@@ -47,7 +47,7 @@ python-test:
 
 rust-check: rust-nits rust-test
 
-rust-nits: rust-format-check rust-clippy
+rust-nits: rust-format-check rust-clippy rust-doc-links
 
 rust-format-check:
 	cargo fmt --all -- --check
@@ -59,6 +59,12 @@ rust-test:
 rust-clippy:
 	cargo clippy --workspace --all-targets -- -D warnings
 	cargo clippy -p egglog-experimental --features dd-backend --all-targets -- -D warnings
+
+# Clippy does not resolve doc links, and plain `cargo doc` skips the private
+# items most of this codebase documents, so a rename leaves stale links behind
+# unless rustdoc is run over them too.
+rust-doc-links:
+	RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items --workspace
 
 # This is a name-filtered subset of rust-test, useful for proof iteration.
 proof-tests:
@@ -74,12 +80,12 @@ benchmark-smoke:
 		'from pathlib import Path; import sys; from benchmarking.reports.store import ReportStore; assert ReportStore(Path(sys.argv[1])).row_count > 0' \
 		"$(BENCHMARK_SMOKE_REPORT)"
 
-# Benchmark every endpoint on this checkout and on main, then copy eval-live's
-# interactive report to nightly/output/. The egraphs-good nightly service
-# (nightly.cs.washington.edu) runs this target and serves that directory,
-# matching `report=` in the nightly configuration.
+# Benchmark each endpoint in nightly_bench.py's ENDPOINTS on this checkout and on
+# main, then copy eval-live's interactive report to nightly/output/. The
+# egraphs-good nightly service (nightly.cs.washington.edu) runs this target and
+# serves that directory, matching `report=` in the nightly configuration.
 nightly: nightly-uv nightly-rustup
-	$(NIGHTLY_UV) run --locked python scripts/nightly_bench.py
+	CARGO_HOME="$(CARGO_HOME_DIR)" $(NIGHTLY_UV) run --locked python scripts/nightly_bench.py
 
 nightly-uv:
 	@command -v uv >/dev/null || test -x "$(UV_BOOTSTRAP_DIR)/uv" || \
@@ -91,6 +97,11 @@ nightly-rustup:
 		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 			| env CARGO_HOME="$(CARGO_HOME_DIR)" sh -s -- \
 				-y --no-modify-path --default-toolchain none
+
+# The nightly host's run at one round, for trying it locally. nightly/output/ is
+# git-ignored, so this writes it just as the host does.
+nightly-local: nightly-uv nightly-rustup
+	CARGO_HOME="$(CARGO_HOME_DIR)" $(NIGHTLY_UV) run --locked python scripts/nightly_bench.py --rounds 1
 
 update-snapshots:
 	uv run --locked pytest -q --snapshot-update --snapshot-details

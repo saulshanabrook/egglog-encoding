@@ -103,7 +103,7 @@ pub(crate) struct Query {
     id_counter: CounterId,
     ts_counter: CounterId,
     vars: DenseIdMap<VariableId, VarInfo>,
-    atoms: Vec<(TableId, Vec<QueryEntry>, SchemaMath)>,
+    atoms: Vec<QueryAtom>,
     /// The builders for queries in this module essentially wrap the lower-level
     /// builders from the `core_relations` crate. A single egglog rule can turn
     /// into N core-relations rules. The code is structured by constructing a
@@ -409,7 +409,12 @@ impl RuleBuilder<'_> {
             },
         );
         let res = AtomId::from_usize(self.query.atoms.len());
-        self.query.atoms.push((table, atom, schema_math));
+        self.query.atoms.push(QueryAtom {
+            table,
+            entries: atom,
+            schema: schema_math,
+            occurrence: None,
+        });
         res
     }
 
@@ -470,6 +475,34 @@ impl RuleBuilder<'_> {
             }),
             entries,
         ))
+    }
+
+    /// Add a table atom that additionally binds `indexed` to a value occurring in
+    /// *some* one of `cols`, serviced by an occurrence index over those columns.
+    ///
+    /// This is the "which rows mention this value" access pattern. It differs
+    /// from repeating a variable across `cols`, which instead constrains those
+    /// columns to be equal. `cols` are the function's own column indices, and
+    /// `indexed` is not one of `entries`.
+    ///
+    /// The atom can only be probed, so `indexed` must be bound elsewhere in the
+    /// query. `is_subsumed` constrains the subsumption column exactly as it does
+    /// for [`Self::query_table`], so an index reads the same rows the function
+    /// itself would.
+    pub fn query_table_by_occurrence(
+        &mut self,
+        func: FunctionId,
+        entries: &[QueryEntry],
+        indexed: QueryEntry,
+        cols: &[usize],
+        is_subsumed: Option<bool>,
+    ) -> Result<AtomId> {
+        let atom = self.query_table(func, entries, is_subsumed)?;
+        self.query.atoms[atom.index()].occurrence = Some((
+            indexed,
+            cols.iter().copied().map(ColumnId::from_usize).collect(),
+        ));
+        Ok(atom)
     }
 
     /// Add the given primitive atom to query. As elsewhere in the crate, the last
@@ -787,8 +820,15 @@ impl Query {
         let mut rsb = RuleSetBuilder::new(db);
         let (mut qb, mut inner) = self.query_state(&mut rsb);
         let mut atom_mapping = Vec::with_capacity(self.atoms.len());
-        for (table, entries, _schema_info) in &self.atoms {
-            atom_mapping.push(add_atom(&mut qb, *table, entries, &[], &mut inner)?);
+        for atom in &self.atoms {
+            atom_mapping.push(add_atom(
+                &mut qb,
+                atom.table,
+                &atom.entries,
+                atom.occurrence.as_ref(),
+                &[],
+                &mut inner,
+            )?);
         }
         let rule_id = self.run_rules_and_build(qb, inner, desc)?;
         let rs = rsb.build();
@@ -816,7 +856,7 @@ impl Query {
         }
         if let Some(focus_atom) = self.sole_focus {
             // There is a single "focus" atom that we will constrain to look at new values.
-            let (_, _, schema_info) = &self.atoms[focus_atom];
+            let schema_info = &self.atoms[focus_atom].schema;
             let ts_col = ColumnId::from_usize(schema_info.ts_col());
             let _ = rsb.add_rule_from_cached_plan(
                 &cached_plan.plan,
@@ -844,7 +884,7 @@ impl Query {
             // constraints in order, and the focus atom may have an empty delta, which
             // will let it bail early.
             {
-                let (_, _, schema_info) = &self.atoms[focus_atom];
+                let schema_info = &self.atoms[focus_atom].schema;
                 let ts_col = ColumnId::from_usize(schema_info.ts_col());
                 constraints.push((
                     cached_plan.atom_mapping[focus_atom],
@@ -854,7 +894,11 @@ impl Query {
                     },
                 ))
             }
-            for (i, (_, _, schema_info)) in self.atoms[0..focus_atom].iter().enumerate() {
+            for (i, schema_info) in self.atoms[0..focus_atom]
+                .iter()
+                .map(|a| &a.schema)
+                .enumerate()
+            {
                 if mid_ts == Timestamp::new(0) {
                     continue 'outer;
                 }
@@ -897,10 +941,24 @@ impl Bindings {
     }
 }
 
+/// One atom of a rule's query, as staged before the core-relations query is built.
+#[derive(Clone)]
+struct QueryAtom {
+    table: TableId,
+    /// The function's columns followed by the table's timestamp / subsume columns.
+    entries: Vec<QueryEntry>,
+    schema: SchemaMath,
+    /// Set for an occurrence atom: the variable bound to a value appearing in
+    /// *some* one of `cols` (function-column indices), rather than at a fixed
+    /// column. See `core_relations::Atom::occurrence`.
+    occurrence: Option<(QueryEntry, SmallVec<[ColumnId; 4]>)>,
+}
+
 fn add_atom(
     qb: &mut QueryBuilder,
     table: TableId,
     entries: &[QueryEntry],
+    occurrence: Option<&(QueryEntry, SmallVec<[ColumnId; 4]>)>,
     constraints: &[Constraint],
     inner: &mut Bindings,
 ) -> Result<core_relations::AtomId> {
@@ -910,5 +968,13 @@ fn add_atom(
         }
     }
     let vars = inner.convert_all(entries);
-    Ok(qb.add_atom(table, &vars, constraints)?)
+    let Some((occ_entry, cols)) = occurrence else {
+        return Ok(qb.add_atom(table, &vars, constraints)?);
+    };
+    let DstVar::Var(occ_var) = inner.convert(occ_entry) else {
+        return Err(anyhow::anyhow!(
+            "an occurrence atom's indexed value must be a variable, not a constant"
+        ));
+    };
+    Ok(qb.add_occurrence_atom(table, &vars, occ_var, cols, constraints)?)
 }
