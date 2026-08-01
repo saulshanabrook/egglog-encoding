@@ -7,6 +7,9 @@
 //! unexplained residual.
 //!
 //! These phases are disjoint and are charged to the [`EGraph`] that did the work.
+//! What they leave over — a `check`, a print, teardown — is the summary's
+//! unattributed residual, so a phase growing to swallow the residual would be a
+//! worse report, not a better one.
 //!
 //! [`EGraph`]: crate::EGraph
 
@@ -15,7 +18,9 @@ use std::time::Duration;
 /// Time spent turning commands into database updates, by phase.
 ///
 /// Disjoint: where one phase nests inside another — the encoder parses the text
-/// it generates — the time is charged to the inner one only.
+/// it generates, a user-defined command runs commands of its own — the time is
+/// charged to the inner one only. Rule-set time is not a phase here; it is
+/// subtracted the same way, since it is reported per rule set instead.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct PhaseTimings {
     /// Text to AST, for the source program and for the text the encoder emits.
@@ -31,9 +36,11 @@ pub struct PhaseTimings {
     pub install: Duration,
     /// Running top-level actions: the writes that build the initial graph.
     pub actions: Duration,
-    /// Driving rule sets from outside them: interpreting a `run-schedule`, or
-    /// running a user-defined command (which may replace `run-schedule`
-    /// entirely), excluding the rule-set time either one drives.
+    /// Deciding what to run: interpreting a `run-schedule`, or a user-defined
+    /// command that may replace `run-schedule` entirely. Only the deciding —
+    /// the rule sets it drives are the per-ruleset timings, and the commands it
+    /// runs in turn are charged to their own phase. Expect it to be small; a
+    /// large value means an interpreter doing real work between iterations.
     pub schedule: Duration,
     /// Converting a recorded justification into a proof, at a `check`/`prove`.
     pub proof_extraction: Duration,

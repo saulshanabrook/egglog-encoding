@@ -6,6 +6,12 @@
 //! user-defined command by [`new_experimental_egraph`](crate::new_experimental_egraph)
 //! and is the experimental counterpart to core egglog's built-in `run-schedule`.
 //!
+//! It is *not* registered under the term/proof encoding, which cannot encode a
+//! user-defined command: there `run-schedule` is core egglog's, so a schedule
+//! using anything below beyond `run`/`seq`/`saturate`/`repeat` is a parse error,
+//! and a `repeat` means core's (see its entry). Comparing an encoded run against
+//! a native one therefore compares two schedulers as well as two encodings.
+//!
 //! # Schedule expressions
 //!
 //! A schedule expression is one of:
@@ -23,7 +29,10 @@
 //! - **`(seq step...)`** — run each step once, in order.
 //! - **`(saturate step...)`** — repeatedly run the body until it makes no further
 //!   progress (the accumulated report's `can_stop` is set).
-//! - **`(repeat n step...)`** — run the body `n` times.
+//! - **`(repeat n step...)`** — run the body `n` times. Unlike core egglog's
+//!   `repeat`, this does not stop early once the body stops changing the
+//!   database: the body may hold commands whose effect is not a database change
+//!   (`push`/`pop`, `eval`, `keep-best`), so the count is taken literally.
 //! - **`(eval expr...)`** — evaluate each `expr` in the full read/write
 //!   (FullState) context and add the resulting terms to the e-graph, the
 //!   schedule-step analogue of a top-level expression like `(Add (Num 1) (Num 2))`.
