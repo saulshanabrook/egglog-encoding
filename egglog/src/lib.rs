@@ -2041,6 +2041,22 @@ impl EGraph {
         &mut self,
         command: ResolvedNCommand,
     ) -> Result<Vec<CommandOutput>, Error> {
+        use crate::phase_timers as pt;
+        let counter = match &command {
+            ResolvedNCommand::Function(_) => &pt::RUN_CMD_FUNCTION,
+            ResolvedNCommand::NormRule { .. } => &pt::RUN_CMD_RULE,
+            ResolvedNCommand::CoreAction(_) | ResolvedNCommand::CoreActions(_) => {
+                &pt::RUN_CMD_ACTION
+            }
+            ResolvedNCommand::Index { .. } => &pt::RUN_CMD_INDEX,
+            ResolvedNCommand::Sort { .. } => &pt::RUN_CMD_SORT,
+            ResolvedNCommand::RunSchedule(_) => &pt::RUN_CMD_SCHEDULE,
+            _ => &pt::RUN_CMD_OTHER,
+        };
+        pt::time(counter, || self.run_command_kind(command))
+    }
+
+    fn run_command_kind(&mut self, command: ResolvedNCommand) -> Result<Vec<CommandOutput>, Error> {
         match command {
             // Sorts are already declared during typechecking
             ResolvedNCommand::Sort {

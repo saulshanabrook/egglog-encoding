@@ -547,6 +547,20 @@ impl EGraph {
     }
 
     fn typecheck_command(&mut self, command: &NCommand) -> Result<ResolvedNCommand, TypeError> {
+        use crate::phase_timers as pt;
+        let counter = match command {
+            NCommand::Function(_) => &pt::TC_CMD_FUNCTION,
+            NCommand::NormRule { .. } => &pt::TC_CMD_RULE,
+            NCommand::CoreAction(_) | NCommand::CoreActions(_) => &pt::TC_CMD_ACTION,
+            _ => &pt::TC_CMD_OTHER,
+        };
+        pt::time(counter, || self.typecheck_command_kind(command))
+    }
+
+    fn typecheck_command_kind(
+        &mut self,
+        command: &NCommand,
+    ) -> Result<ResolvedNCommand, TypeError> {
         let symbol_gen = &mut self.parser.symbol_gen;
 
         let command: ResolvedNCommand = match command {
@@ -1266,35 +1280,51 @@ impl TypeInfo {
             (Context::Pure, Context::Write)
         };
 
-        let (query, mapped_query) = Facts(body.clone()).to_query(self, symbol_gen);
-        constraints.extend(query.get_constraints(self, query_ctx)?);
+        let (query, mapped_query, actions, mapped_action) = crate::phase_timers::time(
+            &crate::phase_timers::TC_LOWER_TO_CORE,
+            || -> Result<_, TypeError> {
+                let (query, mapped_query) = Facts(body.clone()).to_query(self, symbol_gen);
+                constraints.extend(query.get_constraints(self, query_ctx)?);
 
-        let mut binding = query.vars().collect::<IndexSet<_>>();
-        // We lower to core actions with `union_to_set_optimization`
-        // later in the pipeline. For typechecking we do not need it.
-        let mut ctx = CoreActionContext::new(self, &mut binding, symbol_gen, false);
-        let (actions, mapped_action) = head.to_core_actions(&mut ctx)?;
-
-        let mut problem = Problem::default();
-        problem.add_rule(
-            &CoreRule {
-                span: span.clone(),
-                body: query,
-                head: actions,
+                let mut binding = query.vars().collect::<IndexSet<_>>();
+                // We lower to core actions with `union_to_set_optimization`
+                // later in the pipeline. For typechecking we do not need it.
+                let mut ctx = CoreActionContext::new(self, &mut binding, symbol_gen, false);
+                let (actions, mapped_action) = head.to_core_actions(&mut ctx)?;
+                Ok((query, mapped_query, actions, mapped_action))
             },
-            self,
-            symbol_gen,
-            query_ctx,
-            action_ctx,
         )?;
 
-        let assignment = problem
-            .solve(|sort: &ArcSort| sort.name())
-            .map_err(|e| e.to_type_error())?;
+        let mut problem = Problem::default();
+        crate::phase_timers::time(&crate::phase_timers::TC_BUILD_PROBLEM, || {
+            problem.add_rule(
+                &CoreRule {
+                    span: span.clone(),
+                    body: query,
+                    head: actions,
+                },
+                self,
+                symbol_gen,
+                query_ctx,
+                action_ctx,
+            )
+        })?;
 
-        let body: Vec<ResolvedFact> = assignment.annotate_facts(&mapped_query, self, query_ctx);
-        let actions: ResolvedActions =
-            assignment.annotate_actions(&mapped_action, self, action_ctx)?;
+        let assignment = crate::phase_timers::time(&crate::phase_timers::TC_SOLVE, || {
+            problem.solve(|sort: &ArcSort| sort.name())
+        })
+        .map_err(|e| e.to_type_error())?;
+
+        let (body, actions) = crate::phase_timers::time(
+            &crate::phase_timers::TC_ANNOTATE,
+            || -> Result<_, TypeError> {
+                let body: Vec<ResolvedFact> =
+                    assignment.annotate_facts(&mapped_query, self, query_ctx);
+                let actions: ResolvedActions =
+                    assignment.annotate_actions(&mapped_action, self, action_ctx)?;
+                Ok((body, actions))
+            },
+        )?;
 
         // Function lookups in actions need the `Full` action context; the
         // `Write` context (`!read_contexts`) can't express them.

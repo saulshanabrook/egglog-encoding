@@ -53,6 +53,21 @@ counters!(
     PROOF_STORE_FROM_TERM,
     PROOF_REMOVE_GLOBALS,
     PROOF_SIMPLIFY,
+    RUN_CMD_FUNCTION,
+    RUN_CMD_RULE,
+    RUN_CMD_ACTION,
+    RUN_CMD_INDEX,
+    RUN_CMD_SORT,
+    RUN_CMD_SCHEDULE,
+    RUN_CMD_OTHER,
+    TC_LOWER_TO_CORE,
+    TC_BUILD_PROBLEM,
+    TC_SOLVE,
+    TC_ANNOTATE,
+    TC_CMD_FUNCTION,
+    TC_CMD_RULE,
+    TC_CMD_ACTION,
+    TC_CMD_OTHER,
 );
 
 /// Counts (not nanos): how many encoded commands/rules the pipeline processed.
