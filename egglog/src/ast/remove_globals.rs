@@ -19,6 +19,8 @@ pub(crate) fn global_table_name(sort: &str) -> String {
 pub(crate) struct GlobalSlots {
     /// Global name -> (table, slot id).
     slots: HashMap<String, (String, i64)>,
+    /// (table, slot id) -> global name, for reading a slotted global back out.
+    names: HashMap<(String, i64), String>,
     /// Table -> next unused slot id, which is also its declared-yet marker.
     next_id: HashMap<String, i64>,
     /// Globals slotted since the last [`Self::take_new`]. A slotted global has no
@@ -29,6 +31,13 @@ pub(crate) struct GlobalSlots {
 impl GlobalSlots {
     fn slot(&self, global: &str) -> Option<&(String, i64)> {
         self.slots.get(global)
+    }
+
+    /// The global stored at `id` of `table`, if that row holds one.
+    pub(crate) fn global_at(&self, table: &str, id: i64) -> Option<&str> {
+        self.names
+            .get(&(table.to_owned(), id))
+            .map(std::string::String::as_str)
     }
 
     /// The globals slotted since the last call, which the caller must name-check.
@@ -47,6 +56,8 @@ impl GlobalSlots {
         *id += 1;
         self.slots
             .insert(global.to_owned(), (table.clone(), assigned));
+        self.names
+            .insert((table.clone(), assigned), global.to_owned());
         (table, assigned, first)
     }
 }

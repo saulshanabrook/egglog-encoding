@@ -137,7 +137,8 @@ impl ProofInstrumentor<'_> {
         // Remove globals from the proof
         if let Result::Err(e) =
             crate::phase_timers::time(&crate::phase_timers::PROOF_REMOVE_GLOBALS, || {
-                proof_store.remove_globals(&self.egraph.proof_check_program)
+                proof_store
+                    .remove_globals(&self.egraph.proof_check_program, &self.egraph.global_slots)
             })
         {
             panic!("Failed to remove globals from proof: {e}");
