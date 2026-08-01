@@ -56,8 +56,9 @@ PHASE_CAPTION = (
     "Endpoint cells show a 95% CI (or one-round point) and that phase's share of endpoint wall time. "
     "Delta is the signed candidate − baseline mean; Δ contribution is the phase's share of the wall-time "
     "change and may be negative or exceed 100% when phases offset. Execution overhead is stored per-ruleset "
-    "unattributed time. Rule-set assembly is re-deriving each rule's plan for an iteration, before its "
-    "search begins. The phases from Parse through Proof extraction run outside every ruleset. "
+    "unattributed time. Rule-set assembly is planning a rule the first time it runs and re-deriving its "
+    "plan for each iteration, both before that iteration's search begins. The phases from Parse "
+    "through Proof extraction run outside every ruleset. "
     "Unattributed is wall time minus every phase above it; ! marks a negative residual."
 )
 RULESET_CAPTION = (
