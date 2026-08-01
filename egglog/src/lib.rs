@@ -78,6 +78,7 @@ use std::iter::once;
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 pub use termdag::{OrdTerm, Term, TermDag, TermId};
 use thiserror::Error;
 use typechecking::FuncType;
@@ -1398,6 +1399,10 @@ impl EGraph {
     /// This applies every match it finds (under semi-naive).
     /// See [`EGraph::step_rules_with_scheduler`] for more fine-grained control.
     ///
+    /// The iteration is recorded in the overall run report. Every path that runs
+    /// rules ends up here, so this is where they are counted, whether the caller
+    /// is a `run-schedule`, a user-defined command, or Rust calling in directly.
+    ///
     /// This will return an error if an egglog primitive returns None in an action.
     pub fn step_rules(&mut self, ruleset: &str) -> Result<RunReport, Error> {
         fn collect_rule_ids(
@@ -1430,7 +1435,9 @@ impl EGraph {
             })
             .map_err(|e| Error::BackendError(e.to_string()))?;
 
-        Ok(RunReport::singleton(ruleset, iteration_report))
+        let report = RunReport::singleton(ruleset, iteration_report);
+        self.overall_run_report.union(report.clone());
+        Ok(report)
     }
 
     fn add_rule(&mut self, rule: ast::ResolvedRule) -> Result<String, Error> {
@@ -2021,8 +2028,12 @@ impl EGraph {
         }
     }
 
-    /// Which phase a command's execution is charged to. A `run` is charged to
-    /// neither: its time is the rule-set timings.
+    /// Runs a command, charging what it costs to the phase it belongs to.
+    ///
+    /// A command is charged only its own cost: the rule sets it drove are the
+    /// rule-set timings, and any command it ran in turn is charged to that
+    /// command's phase. Commands outside every phase (a `check`, a print) leave
+    /// their time in the summary's unattributed residual.
     fn run_command(&mut self, command: ResolvedNCommand) -> Result<Vec<CommandOutput>, Error> {
         #[derive(Clone, Copy)]
         enum Charge {
@@ -2046,18 +2057,19 @@ impl EGraph {
         };
         let start = std::time::Instant::now();
         let recorded_before = self.get_overall_run_report().total_ruleset_time();
+        let accounted_before = self.accounted_time();
         let out = self.run_command_inner(command);
-        let elapsed = start.elapsed();
+        // A command's own cost is what it spends beyond the rule sets it ran and
+        // the commands it ran in turn. A user-defined command may do both: the
+        // extended scheduler drives rule sets and re-enters the command loop.
+        let nested = (self.get_overall_run_report().total_ruleset_time() - recorded_before)
+            + (self.accounted_time() - accounted_before);
+        let own = start.elapsed().saturating_sub(nested);
         match charge {
-            Charge::Install => self.phase_timings.install += elapsed,
-            Charge::Actions => self.phase_timings.actions += elapsed,
-            Charge::Extraction => self.phase_timings.proof_extraction += elapsed,
-            // A schedule's own cost is what it spends beyond the rule sets it ran.
-            // Same for a user-defined command, which may run rule sets of its own.
-            Charge::Schedule => {
-                let recorded = self.get_overall_run_report().total_ruleset_time() - recorded_before;
-                self.phase_timings.schedule += elapsed.saturating_sub(recorded);
-            }
+            Charge::Install => self.phase_timings.install += own,
+            Charge::Actions => self.phase_timings.actions += own,
+            Charge::Extraction => self.phase_timings.proof_extraction += own,
+            Charge::Schedule => self.phase_timings.schedule += own,
             Charge::None => {}
         }
         out
@@ -2132,7 +2144,7 @@ impl EGraph {
                 let report = self.run_schedule(&sched)?;
                 log::info!("Ran schedule {sched}.");
                 log::info!("Report: {report}");
-                self.overall_run_report.union(report.clone());
+                // Already recorded by `step_rules`, per iteration.
                 return Ok(vec![CommandOutput::RunSchedule(report)]);
             }
             ResolvedNCommand::PrintOverallStatistics(span, file) => match file {
@@ -2692,15 +2704,9 @@ impl EGraph {
         // Whatever resolving a command costs beyond the phases it nests is
         // desugaring: `remove_globals`, macro expansion, shadowing checks.
         let start = std::time::Instant::now();
-        let before = (
-            self.phase_timings.typecheck,
-            self.phase_timings.encode,
-            self.parser.parse_time,
-        );
+        let accounted_before = self.accounted_time();
         let resolved = self.resolve_command_inner(command);
-        let nested = (self.phase_timings.typecheck - before.0)
-            + (self.phase_timings.encode - before.1)
-            + (self.parser.parse_time - before.2);
+        let nested = self.accounted_time() - accounted_before;
         self.phase_timings.desugar += start.elapsed().saturating_sub(nested);
         resolved
     }
@@ -2909,6 +2915,14 @@ impl EGraph {
     ) -> Result<Vec<CommandOutput>, Error> {
         let parsed = self.parser.get_program_from_string(filename, input)?;
         self.run_program(parsed)
+    }
+
+    /// Total time charged to some phase so far.
+    ///
+    /// A phase wrapper reads this before and after the work it times, so that
+    /// what a nested phase already claimed is not charged to the outer one too.
+    fn accounted_time(&self) -> Duration {
+        self.phase_timings().total()
     }
 
     /// Where wall time outside rule-set execution went, for this e-graph.
