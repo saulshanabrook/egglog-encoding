@@ -239,6 +239,8 @@ pub struct TypeInfo {
     primitives: HashMap<String, Vec<PrimitiveWithId>>,
     func_types: HashMap<String, FuncType>,
     pub(crate) global_sorts: HashMap<String, ArcSort>,
+    /// Names of the shared per-sort tables holding eq-sort globals.
+    pub(crate) global_tables: HashSet<String>,
     /// Sorts that do not allow union (e.g., from `:no-union` sorts or relations).
     pub(crate) non_unionable_sorts: HashSet<String>,
     /// Declared indexes, by the name their atoms are written with.
@@ -565,6 +567,9 @@ impl EGraph {
                 }
                 // If this is a let binding, add it to global_sorts
                 // This preserves bahavior for lets after desugaring
+                if resolved.internal_global_table {
+                    self.type_info.global_tables.insert(fdecl.name.clone());
+                }
                 if resolved.internal_let && !resolved.internal_global_table {
                     let output_sort = self.type_info.sorts.get(fdecl.schema.output()).unwrap();
                     self.type_info
@@ -1511,6 +1516,12 @@ impl TypeInfo {
 
     pub fn is_global(&self, sym: &str) -> bool {
         self.global_sorts.contains_key(sym)
+    }
+
+    /// Whether `sym` is a shared per-sort table holding eq-sort globals, whose
+    /// rows are written like a global's rather than minted as terms.
+    pub(crate) fn is_global_table(&self, sym: &str) -> bool {
+        self.global_tables.contains(sym)
     }
 
     /// Check if an expression contains non-global function lookups (FunctionSubtype::Custom calls).

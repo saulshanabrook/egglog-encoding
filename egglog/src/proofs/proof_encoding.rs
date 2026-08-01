@@ -947,23 +947,34 @@ impl<'a> ProofInstrumentor<'a> {
                 );
                 let run = emit.head.claim(HeadPosition::Set);
 
-                // Global definition `(set (x) e)`: x is a nullary `:internal-let`
-                // function aliasing e. Store e's value+proof directly in x's FD view
-                // (x's e-class *is* e's) — no term mint, which would use the wrong
-                // arity for x's term relation (its output is the eclass, so it has
-                // no separate output column).
-                if generic_exprs.is_empty() && self.egraph.type_info.is_global(&func_type.name) {
+                // Global definition `(set (x k…) e)`: the row aliases e, either as a
+                // nullary `:internal-let` function or as one row of its sort's shared
+                // global table. Store e's value+proof directly in the FD view (the
+                // row's e-class *is* e's) — no term mint, which would use the wrong
+                // arity for the term relation (its output is the eclass, so it has no
+                // separate output column).
+                let is_global_row = self.egraph.type_info.is_global_table(&func_type.name)
+                    || (generic_exprs.is_empty()
+                        && self.egraph.type_info.is_global(&func_type.name));
+                if is_global_row {
                     let e_value = exprs.pop().expect("a set has a value");
                     let proof = if self.proofs_enabled() {
                         self.global_value_proof(emit, func_type, &e_value)
                     } else {
                         "()".to_string()
                     };
-                    // Term row (`x`'s e-class is e's) + the FD view `() -> (val, proof)`.
+                    // Term row (the row's e-class is e's) + the FD view
+                    // `(keys) -> (val, proof)`.
+                    let keys: Vec<String> = exprs.iter().map(|a| a.value.clone()).collect();
                     let e_value = e_value.value;
-                    emit.stmts
-                        .push(format!("(set ({} {e_value}) ())", func_type.name));
-                    let update = self.update_fd_view(&func_type.name, &[], &e_value, &proof);
+                    let mut row = keys.clone();
+                    row.push(e_value.clone());
+                    emit.stmts.push(format!(
+                        "(set ({} {}) ())",
+                        func_type.name,
+                        ListDisplay(&row, " ")
+                    ));
+                    let update = self.update_fd_view(&func_type.name, &keys, &e_value, &proof);
                     emit.stmts.push(update);
                     return;
                 }
@@ -1357,7 +1368,7 @@ impl<'a> ProofInstrumentor<'a> {
     ///
     /// The signature requires the fallback pair, so both are bare fresh ids: no
     /// row says anything about either, since nothing ever reads them.
-    fn lookup_global(&mut self, name: &str, res: &mut Vec<String>) -> String {
+    fn lookup_global(&mut self, name: &str, keys: &[String], res: &mut Vec<String>) -> String {
         let view = self.view_name(name);
         let set_if_empty = crate::proofs::proof_fresh::set_if_empty_prim_name(&view);
         let view_sort = self.term_sort(name);
@@ -1369,8 +1380,12 @@ impl<'a> ProofInstrumentor<'a> {
             "()".to_string()
         };
         let vx = self.fresh_var();
+        let mut row = keys.to_vec();
+        row.push(fresh_e);
+        row.push(fallback_proof);
         res.push(format!(
-            "(let {vx} ({set_if_empty} {fresh_e} {fallback_proof}))"
+            "(let {vx} ({set_if_empty} {}))",
+            ListDisplay(&row, " ")
         ));
         vx
     }
@@ -1752,12 +1767,21 @@ impl<'a> ProofInstrumentor<'a> {
                     ResolvedCall::Func(func_type) => {
                         if func_type.subtype == FunctionSubtype::Custom {
                             // Proof normal form bans looking up custom functions in
-                            // actions, except encoded globals: a nullary
-                            // `:internal-let` function whose value is read from its
-                            // FD view (see `lookup_global`). This is the only custom
-                            // lookup allowed here.
-                            if self.egraph.type_info.is_global(&func_type.name) {
-                                Operand::plain(self.lookup_global(&func_type.name, emit.stmts))
+                            // actions, except encoded globals, whose value is read
+                            // from their FD view (see `lookup_global`) — either a
+                            // nullary `:internal-let` function or one row of a shared
+                            // global table. This is the only custom lookup allowed
+                            // here.
+                            if self.egraph.type_info.is_global(&func_type.name)
+                                || self.egraph.type_info.is_global_table(&func_type.name)
+                            {
+                                let keys: Vec<String> =
+                                    args.iter().map(|a| a.value.clone()).collect();
+                                Operand::plain(self.lookup_global(
+                                    &func_type.name,
+                                    &keys,
+                                    emit.stmts,
+                                ))
                             } else {
                                 panic!(
                                     "Found a function lookup in actions, should have been prevented by typechecking"

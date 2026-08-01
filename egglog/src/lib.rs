@@ -444,6 +444,17 @@ impl EGraph {
     /// (`egglog_bridge::EGraph`); downstream crates can supply their own
     /// backend (e.g. a differential-dataflow engine) by implementing
     /// [`Backend`] and passing it here.
+    /// Name-check the globals `remove_globals` just gave a shared-table row.
+    /// They have no function declaration of their own, so nothing else would
+    /// register the name or the alias that pattern variables must not shadow.
+    fn check_slotted_global_names(&mut self) -> Result<(), Error> {
+        for (name, span) in self.global_slots.take_new() {
+            self.names.check(name.clone(), span.clone())?;
+            self.names.track_global_alias(&name, &span);
+        }
+        Ok(())
+    }
+
     /// The key column of every shared global table.
     fn global_key_sort(&self) -> ArcSort {
         self.type_info
@@ -2643,6 +2654,7 @@ impl EGraph {
                 key_sort,
                 true,
             );
+            self.check_slotted_global_names()?;
             for command in &typechecked {
                 self.names.check_shadowing(command)?;
             }
@@ -2684,6 +2696,7 @@ impl EGraph {
                 key_sort,
                 true,
             );
+            self.check_slotted_global_names()?;
             // The term encoder runs before the encoded program is typechecked, so it
             // can't rely on the later typecheck to populate `global_sorts`. Register
             // the new global functions' sorts eagerly so `is_global` recognizes them
@@ -2693,9 +2706,13 @@ impl EGraph {
                     && fdecl.internal_let
                     && let Some(output_sort) = self.type_info.sorts.get(fdecl.schema.output())
                 {
-                    self.type_info
-                        .global_sorts
-                        .insert(fdecl.name.clone(), output_sort.clone());
+                    if fdecl.internal_global_table {
+                        self.type_info.global_tables.insert(fdecl.name.clone());
+                    } else {
+                        self.type_info
+                            .global_sorts
+                            .insert(fdecl.name.clone(), output_sort.clone());
+                    }
                 }
             }
             for command in &typechecked_no_globals {

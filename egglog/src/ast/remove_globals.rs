@@ -19,10 +19,11 @@ pub(crate) fn global_table_name(sort: &str) -> String {
 pub(crate) struct GlobalSlots {
     /// Global name -> (table, slot id).
     slots: HashMap<String, (String, i64)>,
-    /// (table, slot id) -> global name, for display and serialization.
-    names: HashMap<(String, i64), String>,
     /// Table -> next unused slot id, which is also its declared-yet marker.
     next_id: HashMap<String, i64>,
+    /// Globals slotted since the last [`Self::take_new`]. A slotted global has no
+    /// function declaration of its own, so name checking reads them from here.
+    newly_slotted: Vec<(String, Span)>,
 }
 
 impl GlobalSlots {
@@ -30,16 +31,15 @@ impl GlobalSlots {
         self.slots.get(global)
     }
 
-    /// The global stored at `id` of `table`, if that row holds one.
-    pub(crate) fn global_at(&self, table: &str, id: i64) -> Option<&str> {
-        self.names
-            .get(&(table.to_owned(), id))
-            .map(std::string::String::as_str)
+    /// The globals slotted since the last call, which the caller must name-check.
+    pub(crate) fn take_new(&mut self) -> Vec<(String, Span)> {
+        std::mem::take(&mut self.newly_slotted)
     }
 
     /// Reserve `global` a row of its sort's table, returning the row and whether
     /// the table still needs declaring.
-    fn assign(&mut self, global: &str, sort: &str) -> (String, i64, bool) {
+    fn assign(&mut self, global: &str, sort: &str, span: &Span) -> (String, i64, bool) {
+        self.newly_slotted.push((global.to_owned(), span.clone()));
         let table = global_table_name(sort);
         let first = !self.next_id.contains_key(&table);
         let id = self.next_id.entry(table.clone()).or_default();
@@ -47,8 +47,6 @@ impl GlobalSlots {
         *id += 1;
         self.slots
             .insert(global.to_owned(), (table.clone(), assigned));
-        self.names
-            .insert((table.clone(), assigned), global.to_owned());
         (table, assigned, first)
     }
 }
@@ -203,7 +201,7 @@ impl GlobalRemover<'_> {
         value: ResolvedExpr,
     ) -> Vec<ResolvedNCommand> {
         if self.share_tables && ty.is_eq_sort() {
-            let (table, id, needs_decl) = self.slots.assign(&name, ty.name());
+            let (table, id, needs_decl) = self.slots.assign(&name, ty.name(), &span);
             let call = table_call(&table, &self.key_sort, ty);
             let mut out = vec![];
             if needs_decl {
