@@ -565,7 +565,7 @@ impl EGraph {
                 }
                 // If this is a let binding, add it to global_sorts
                 // This preserves bahavior for lets after desugaring
-                if resolved.internal_let {
+                if resolved.internal_let && !resolved.internal_global_table {
                     let output_sort = self.type_info.sorts.get(fdecl.schema.output()).unwrap();
                     self.type_info
                         .global_sorts
@@ -1131,6 +1131,7 @@ impl TypeInfo {
             term_constructor: fdecl.term_constructor.clone(),
             identity_vals: fdecl.identity_vals,
             internal_term_node: fdecl.internal_term_node,
+            internal_global_table: fdecl.internal_global_table,
         })
     }
 

@@ -842,6 +842,13 @@ mod tests {
         let removed = remove_globals(
             checker.proof_check_program.clone(),
             &mut SymbolGen::new("premise_order".to_string()),
+            &mut Default::default(),
+            checker
+                .type_info()
+                .get_sort_by_name("i64")
+                .expect("the i64 sort is always registered")
+                .clone(),
+            true,
         );
         let mut compared = 0;
         for command in &removed {

@@ -1495,6 +1495,10 @@ where
     /// Proof extraction reconstructs these; views and plain bookkeeping relations
     /// (e.g. delete/subsume markers) are unmarked and never read as terms.
     pub internal_term_node: bool,
+    /// The one table holding every eq-sort global of a single sort, keyed by the
+    /// global's slot id. Set together with `internal_let`, which stays true so the
+    /// encoding still treats the output column as an e-class.
+    pub internal_global_table: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -1595,6 +1599,7 @@ impl FunctionDecl {
             term_constructor: None,
             identity_vals: None,
             internal_term_node: false,
+            internal_global_table: false,
         }
     }
 
@@ -1621,6 +1626,7 @@ impl FunctionDecl {
             term_constructor: None,
             identity_vals: None,
             internal_term_node: false,
+            internal_global_table: false,
         }
     }
 }
@@ -1648,6 +1654,7 @@ where
             term_constructor: self.term_constructor,
             identity_vals: self.identity_vals,
             internal_term_node: self.internal_term_node,
+            internal_global_table: self.internal_global_table,
         }
     }
 }

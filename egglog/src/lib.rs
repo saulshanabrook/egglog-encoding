@@ -341,6 +341,8 @@ pub struct EGraph {
     proof_state: EncodingState,
     /// In proof mode, this is the program before proof instrumentation and the version we use for proof checking.
     proof_check_program: Vec<ResolvedNCommand>,
+    /// Which row of its sort's shared table each eq-sort global occupies.
+    global_slots: remove_globals::GlobalSlots,
 }
 
 /// A user-defined command allows users to inject custom command that can be called
@@ -442,6 +444,14 @@ impl EGraph {
     /// (`egglog_bridge::EGraph`); downstream crates can supply their own
     /// backend (e.g. a differential-dataflow engine) by implementing
     /// [`Backend`] and passing it here.
+    /// The key column of every shared global table.
+    fn global_key_sort(&self) -> ArcSort {
+        self.type_info
+            .get_sort_by_name("i64")
+            .expect("the i64 sort is always registered")
+            .clone()
+    }
+
     pub fn with_backend(backend: Box<dyn Backend>) -> Self {
         let mut parser = Parser::default();
         let proof_state = EncodingState::new(&mut parser.symbol_gen);
@@ -449,6 +459,7 @@ impl EGraph {
             backend,
             parser,
             names: Default::default(),
+            global_slots: Default::default(),
             pushed_egraph: Default::default(),
             functions: Default::default(),
             rulesets: Default::default(),
@@ -1739,7 +1750,12 @@ impl EGraph {
             output_sort,
             context,
         )?;
-        Ok(remove_globals::remove_globals_expr(resolved))
+        let key_sort = self.global_key_sort();
+        Ok(remove_globals::remove_globals_expr(
+            resolved,
+            &self.global_slots,
+            &key_sort,
+        ))
     }
 
     /// Replace literal `(unstable-fn "...")` targets with hidden evaluator bindings.
@@ -2619,7 +2635,14 @@ impl EGraph {
         } else {
             let mut typechecked = self.typecheck_program(&desugared)?;
 
-            typechecked = remove_globals::remove_globals(typechecked, &mut self.parser.symbol_gen);
+            let key_sort = self.global_key_sort();
+            typechecked = remove_globals::remove_globals(
+                typechecked,
+                &mut self.parser.symbol_gen,
+                &mut self.global_slots,
+                key_sort,
+                true,
+            );
             for command in &typechecked {
                 self.names.check_shadowing(command)?;
             }
@@ -2653,8 +2676,14 @@ impl EGraph {
             // natively at run time by `EGraph::native_input` straight into the
             // encoded tables. Globals get the same function-style desugaring
             // (`remove_globals`) as the non-encoding path.
-            let typechecked_no_globals =
-                remove_globals::remove_globals(resolved_before_proofs, &mut self.parser.symbol_gen);
+            let key_sort = self.global_key_sort();
+            let typechecked_no_globals = remove_globals::remove_globals(
+                resolved_before_proofs,
+                &mut self.parser.symbol_gen,
+                &mut self.global_slots,
+                key_sort,
+                true,
+            );
             // The term encoder runs before the encoded program is typechecked, so it
             // can't rely on the later typecheck to populate `global_sorts`. Register
             // the new global functions' sorts eagerly so `is_global` recognizes them
@@ -2696,9 +2725,13 @@ impl EGraph {
                     })?;
                 // Remove the globals the term encoding itself introduced (its minted
                 // `let`s), the same way source-level globals were removed above.
+                let key_sort = self.global_key_sort();
                 let desugared_typechecked = remove_globals::remove_globals(
                     desugared_typechecked,
                     &mut self.parser.symbol_gen,
+                    &mut self.global_slots,
+                    key_sort,
+                    false,
                 );
 
                 new_typechecked.extend(desugared_typechecked);
