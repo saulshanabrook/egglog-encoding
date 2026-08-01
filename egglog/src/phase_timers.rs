@@ -7,9 +7,12 @@
 //! unexplained residual.
 //!
 //! These phases are disjoint and are charged to the [`EGraph`] that did the work.
-//! What they leave over — a `check`, a print, teardown — is the summary's
-//! unattributed residual, so a phase growing to swallow the residual would be a
-//! worse report, not a better one.
+//! What they leave over is the summary's unattributed residual: mostly the
+//! driver loop's own per-command work, which grows with the command count and
+//! so is largest under the encodings, plus whatever runs under no phase at all
+//! (a `check`, a print). A runner measuring a whole process also has its startup
+//! in there. So the residual is not a constant small term, and a phase grown to
+//! swallow it would be a worse report, not a better one.
 //!
 //! [`EGraph`]: crate::EGraph
 

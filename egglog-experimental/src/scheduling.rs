@@ -7,10 +7,10 @@
 //! and is the experimental counterpart to core egglog's built-in `run-schedule`.
 //!
 //! It is *not* registered under the term/proof encoding, which cannot encode a
-//! user-defined command: there `run-schedule` is core egglog's, so a schedule
-//! using anything below beyond `run`/`seq`/`saturate`/`repeat` is a parse error,
-//! and a `repeat` means core's (see its entry). Comparing an encoded run against
-//! a native one therefore compares two schedulers as well as two encodings.
+//! user-defined command. There `run-schedule` is core egglog's: anything beyond
+//! `run`/`seq`/`saturate`/`repeat` is a parse error, and `repeat` means core's
+//! (see its entry). So an encoded run and a native one differ by a scheduler as
+//! well as an encoding.
 //!
 //! # Schedule expressions
 //!

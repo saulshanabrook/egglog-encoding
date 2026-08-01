@@ -2140,9 +2140,7 @@ fn run_rules_impl(
     next_ts: Timestamp,
     report_level: ReportLevel,
 ) -> Result<(Duration, RuleSetReport)> {
-    // Planning a rule happens once and assembling it happens every iteration;
-    // both are getting rules ready to run, and neither is covered by the search,
-    // merge or rebuild timers.
+    // Both loops get rules ready to run, and no other timer covers them.
     let assembly_timer = Instant::now();
     for rule in rules {
         let info = &mut rule_info[*rule];
