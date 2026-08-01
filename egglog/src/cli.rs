@@ -244,6 +244,8 @@ where
         log::info!("Saved timing summary to {summary_path:?}");
     }
 
+    crate::phase_timers::dump();
+
     // no need to drop the egraph if we are going to exit
     std::mem::forget(egraph)
 }

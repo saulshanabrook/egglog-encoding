@@ -8,6 +8,7 @@ pub mod constraint;
 mod core;
 mod exec_state;
 pub mod extract;
+pub mod phase_timers;
 pub mod prelude;
 mod proofs;
 
@@ -1054,6 +1055,12 @@ impl EGraph {
     }
 
     fn declare_function(&mut self, decl: &ResolvedFunctionDecl) -> Result<(), Error> {
+        crate::phase_timers::time(&crate::phase_timers::DECLARE_FUNCTION, || {
+            self.declare_function_timed(decl)
+        })
+    }
+
+    fn declare_function_timed(&mut self, decl: &ResolvedFunctionDecl) -> Result<(), Error> {
         let get_sort = |name: &String| match self.type_info.get_sort_by_name(name) {
             Some(sort) => Ok(sort.clone()),
             None => Err(Error::TypeError(TypeError::UndefinedSort(
@@ -1408,6 +1415,13 @@ impl EGraph {
     }
 
     fn add_rule(&mut self, rule: ast::ResolvedRule) -> Result<String, Error> {
+        crate::phase_timers::time(&crate::phase_timers::BACKEND_ADD_RULE, || {
+            self.add_rule_timed(rule)
+        })
+    }
+
+    fn add_rule_timed(&mut self, rule: ast::ResolvedRule) -> Result<String, Error> {
+        crate::phase_timers::N_RULES_ADDED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // The `:naive` rule option opts a single rule out of seminaive
         // evaluation. This widens primitive-context selection from
         // Pure/Write to Read/Full, so primitives that read or write the
@@ -1991,6 +2005,15 @@ impl EGraph {
     }
 
     fn run_command(&mut self, command: ResolvedNCommand) -> Result<Vec<CommandOutput>, Error> {
+        crate::phase_timers::time(&crate::phase_timers::RUN_COMMAND, || {
+            self.run_command_timed(command)
+        })
+    }
+
+    fn run_command_timed(
+        &mut self,
+        command: ResolvedNCommand,
+    ) -> Result<Vec<CommandOutput>, Error> {
         match command {
             // Sorts are already declared during typechecking
             ResolvedNCommand::Sort {
@@ -2574,7 +2597,10 @@ impl EGraph {
         if let Some(original_typechecking) = self.proof_state.original_typechecking.as_mut() {
             // Typecheck using the original egraph
             // TODO this is ugly- we don't need an entire e-graph just for type information.
-            let typechecked = original_typechecking.typecheck_program(&desugared)?;
+            let typechecked =
+                crate::phase_timers::time(&crate::phase_timers::TYPECHECK_ORIGINAL, || {
+                    original_typechecking.typecheck_program(&desugared)
+                })?;
 
             for command in &typechecked {
                 if let Err(reason) = command_supports_proof_encoding(
@@ -2605,6 +2631,12 @@ impl EGraph {
     /// Leverages previous type information in the [`EGraph`] to do so, adding new type information.
     /// When will_run is true, adds to `desugared_commands_run_so_far`, which is used for proof checking.
     fn resolve_command(&mut self, command: Command) -> Result<ResolvedNCommands, Error> {
+        crate::phase_timers::time(&crate::phase_timers::RESOLVE_COMMAND, || {
+            self.resolve_command_timed(command)
+        })
+    }
+
+    fn resolve_command_timed(&mut self, command: Command) -> Result<ResolvedNCommands, Error> {
         let resolved_before_proofs = self.resolve_command_before_proofs(command)?;
 
         // Add term encoding when it is enabled
@@ -2642,17 +2674,26 @@ impl EGraph {
             }
 
             let term_encoding_added =
-                ProofInstrumentor::add_term_encoding(self, typechecked_no_globals)?;
+                crate::phase_timers::time(&crate::phase_timers::ENCODER_ADD_TERM_ENCODING, || {
+                    ProofInstrumentor::add_term_encoding(self, typechecked_no_globals)
+                })?;
             let mut new_typechecked = vec![];
             for new_cmd in term_encoding_added {
                 let desugared =
-                    desugar_command(new_cmd, &mut self.parser, self.proof_state.proof_testing)?;
+                    crate::phase_timers::time(&crate::phase_timers::DESUGAR_ENCODED, || {
+                        desugar_command(new_cmd, &mut self.parser, self.proof_state.proof_testing)
+                    })?;
                 for cmd in &desugared {
                     log::trace!("Desugared term encoding: {}", cmd.to_command());
                 }
 
                 // Now typecheck using self, adding term type information.
-                let desugared_typechecked = self.typecheck_program(&desugared)?;
+                crate::phase_timers::N_ENCODED_CMDS
+                    .fetch_add(desugared.len() as u64, std::sync::atomic::Ordering::Relaxed);
+                let desugared_typechecked =
+                    crate::phase_timers::time(&crate::phase_timers::TYPECHECK_ENCODED, || {
+                        self.typecheck_program(&desugared)
+                    })?;
                 // Remove the globals the term encoding itself introduced (its minted
                 // `let`s), the same way source-level globals were removed above.
                 let desugared_typechecked = remove_globals::remove_globals(

@@ -305,9 +305,11 @@ impl Parser {
         filename: Option<String>,
         input: &str,
     ) -> Result<Vec<Command>, ParseError> {
-        let sexps = all_sexps(SexpParser::new(filename, input))?;
-        let nested: Vec<Vec<_>> = map_fallible(&sexps, self, Self::parse_command)?;
-        Ok(nested.into_iter().flatten().collect())
+        crate::phase_timers::time(&crate::phase_timers::PARSE_TEXT_TO_AST, || {
+            let sexps = all_sexps(SexpParser::new(filename, input))?;
+            let nested: Vec<Vec<_>> = map_fallible(&sexps, self, Self::parse_command)?;
+            Ok(nested.into_iter().flatten().collect())
+        })
     }
 
     // currently only used for testing, but no reason it couldn't be used elsewhere later

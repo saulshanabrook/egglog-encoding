@@ -2128,6 +2128,9 @@ impl UnionAction {
     }
 }
 
+/// TEMPORARY diagnostic counter for the untimed per-iteration rule-set rebuild.
+pub static RULESET_BUILD_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn run_rules_impl(
     db: &mut Database,
     rule_info: &mut DenseIdMapWithReuse<RuleId, RuleInfo>,
@@ -2141,6 +2144,7 @@ fn run_rules_impl(
             info.cached_plan = Some(info.query.build_cached_plan(db, &info.desc)?);
         }
     }
+    let build_start = std::time::Instant::now();
     let mut rsb = db.new_rule_set();
     for rule in rules {
         let info = &mut rule_info[*rule];
@@ -2150,6 +2154,10 @@ fn run_rules_impl(
         info.last_run_at = next_ts;
     }
     let ruleset = rsb.build();
+    RULESET_BUILD_NS.fetch_add(
+        build_start.elapsed().as_nanos() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
     Ok(db.run_rule_set(&ruleset, report_level))
 }
 
