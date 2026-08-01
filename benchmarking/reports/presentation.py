@@ -78,7 +78,7 @@ PHASE_LABELS: dict[PhaseName, str] = {
     "encode": "Proof/term encoding",
     "install": "Declare and compile",
     "actions": "Top-level actions",
-    "schedule": "Schedule",
+    "schedule": "Schedule and user commands",
     "proof_extraction": "Proof extraction",
     "outside": "Unattributed",
 }

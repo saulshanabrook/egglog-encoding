@@ -31,8 +31,9 @@ pub struct PhaseTimings {
     pub install: Duration,
     /// Running top-level actions: the writes that build the initial graph.
     pub actions: Duration,
-    /// Interpreting a `run-schedule` — picking rulesets, deciding when a
-    /// saturating loop stops — excluding the rule-set time it drives.
+    /// Driving rule sets from outside them: interpreting a `run-schedule`, or
+    /// running a user-defined command (which may replace `run-schedule`
+    /// entirely), excluding the rule-set time either one drives.
     pub schedule: Duration,
     /// Converting a recorded justification into a proof, at a `check`/`prove`.
     pub proof_extraction: Duration,

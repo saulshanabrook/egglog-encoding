@@ -2039,7 +2039,9 @@ impl EGraph {
             | ResolvedNCommand::Sort { .. } => Charge::Install,
             ResolvedNCommand::CoreAction(_) | ResolvedNCommand::CoreActions(_) => Charge::Actions,
             ResolvedNCommand::ProveExists(..) => Charge::Extraction,
-            ResolvedNCommand::RunSchedule(_) => Charge::Schedule,
+            ResolvedNCommand::RunSchedule(_) | ResolvedNCommand::UserDefined(..) => {
+                Charge::Schedule
+            }
             _ => Charge::None,
         };
         let start = std::time::Instant::now();
@@ -2051,6 +2053,7 @@ impl EGraph {
             Charge::Actions => self.phase_timings.actions += elapsed,
             Charge::Extraction => self.phase_timings.proof_extraction += elapsed,
             // A schedule's own cost is what it spends beyond the rule sets it ran.
+            // Same for a user-defined command, which may run rule sets of its own.
             Charge::Schedule => {
                 let recorded = self.get_overall_run_report().total_ruleset_time() - recorded_before;
                 self.phase_timings.schedule += elapsed.saturating_sub(recorded);
