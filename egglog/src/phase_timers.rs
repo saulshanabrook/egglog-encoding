@@ -68,6 +68,10 @@ counters!(
     TC_CMD_RULE,
     TC_CMD_ACTION,
     TC_CMD_OTHER,
+    TCA_LOWER_TO_CORE,
+    TCA_BUILD_PROBLEM,
+    TCA_SOLVE,
+    TCA_ANNOTATE,
 );
 
 /// Counts (not nanos): how many encoded commands/rules the pipeline processed.

@@ -1414,22 +1414,36 @@ impl TypeInfo {
             binding.keys().copied().map(str::to_string).collect();
         // We lower to core actions with `union_to_set_optimization`
         // later in the pipeline. For typechecking we do not need it.
-        let mut ctx = CoreActionContext::new(self, &mut binding_set, symbol_gen, false);
-        let (actions, mapped_action) = actions.to_core_actions(&mut ctx)?;
+        let (actions, mapped_action) = crate::phase_timers::time(
+            &crate::phase_timers::TCA_LOWER_TO_CORE,
+            || -> Result<_, TypeError> {
+                let mut ctx = CoreActionContext::new(self, &mut binding_set, symbol_gen, false);
+                actions.to_core_actions(&mut ctx)
+            },
+        )?;
         let mut problem = Problem::default();
 
-        problem.add_actions(&actions, self, symbol_gen, context)?;
+        crate::phase_timers::time(
+            &crate::phase_timers::TCA_BUILD_PROBLEM,
+            || -> Result<_, TypeError> {
+                problem.add_actions(&actions, self, symbol_gen, context)?;
+                // add bindings from the context
+                for (var, (span, sort)) in binding {
+                    problem.assign_local_var_type(var, span.clone(), sort.clone())?;
+                }
+                Ok(())
+            },
+        )?;
 
-        // add bindings from the context
-        for (var, (span, sort)) in binding {
-            problem.assign_local_var_type(var, span.clone(), sort.clone())?;
-        }
+        let assignment = crate::phase_timers::time(&crate::phase_timers::TCA_SOLVE, || {
+            problem.solve(|sort: &ArcSort| sort.name())
+        })
+        .map_err(|e| e.to_type_error())?;
 
-        let assignment = problem
-            .solve(|sort: &ArcSort| sort.name())
-            .map_err(|e| e.to_type_error())?;
-
-        let annotated_actions = assignment.annotate_actions(&mapped_action, self, context)?;
+        let annotated_actions =
+            crate::phase_timers::time(&crate::phase_timers::TCA_ANNOTATE, || {
+                assignment.annotate_actions(&mapped_action, self, context)
+            })?;
         Ok(annotated_actions)
     }
 
