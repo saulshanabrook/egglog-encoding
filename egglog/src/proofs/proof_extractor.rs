@@ -1,5 +1,5 @@
 use crate::ast::FunctionSubtype;
-use crate::extract::find_canonical;
+use crate::extract::{find_aux_canonical, find_canonical};
 use crate::termdag::{TermDag, TermId};
 use crate::util::{HashMap, HashSet};
 use crate::{ArcSort, EGraph, Value};
@@ -40,6 +40,16 @@ impl RootExtractor {
         }
 
         let mut term = self.extract_exact(egraph, termdag, value, sort);
+        // An id that lost a same-iteration hash-cons collision has no row of its
+        // own; `AuxUF` maps it to the structurally identical surviving id, so try
+        // that before the real union-find, whose leader may be a differently-shaped
+        // term (which would silently change this node's shape).
+        if term.is_none() {
+            let aux = find_aux_canonical(egraph, value, sort);
+            if aux != value {
+                term = self.extract(egraph, termdag, aux, sort);
+            }
+        }
         if term.is_none() {
             let canonical = find_canonical(egraph, value, sort);
             if canonical != value {

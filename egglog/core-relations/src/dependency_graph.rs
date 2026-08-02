@@ -42,7 +42,16 @@ impl DependencyGraph {
         );
         let level = match read_deps
             .into_iter()
-            .map(|dep| *self.to_level.get(dep).unwrap())
+            .map(|dep| {
+                *self.to_level.get(dep).unwrap_or_else(|| {
+                    panic!(
+                        "table {table:?} declares a read dependency on {dep:?}, which is not in \
+                         the graph yet: a read dependency must be registered before the table \
+                         that reads it, and the dependencies must form a DAG (a cycle cannot be \
+                         stratified)"
+                    )
+                })
+            })
             .max()
         {
             Some(level) => level.inc(),

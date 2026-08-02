@@ -123,7 +123,8 @@ impl ProofInstrumentor<'_> {
                     let rebuild_pf = self.fresh_var();
                     let cproof = self.term_proof_name(ty.name());
                     // proof_lets: bind the container rebuild proof, then mint the congr proof.
-                    let mut lets = vec![format!("(let {rebuild_pf} ({proof_prim} {ci}))")];
+                    let mut lets = Vec::new();
+                    lets.push(format!("(let {rebuild_pf} ({proof_prim} {ci}))"));
                     let new_pf = self.mint(
                         &mut lets,
                         &congr,
@@ -131,7 +132,7 @@ impl ProofInstrumentor<'_> {
                         &proof_sort,
                     );
                     // cproof_set: mint (Sym rebuild_pf), (Trans .. rebuild_pf), then record it.
-                    let mut cproof_stmts = vec![];
+                    let mut cproof_stmts = Vec::new();
                     let sym_pf = self.mint(&mut cproof_stmts, &sym, &rebuild_pf, &proof_sort);
                     let trans_pf = self.mint(
                         &mut cproof_stmts,
@@ -156,7 +157,7 @@ impl ProofInstrumentor<'_> {
                 if proofs {
                     let congr = self.proof_names().congr_constructor.clone();
                     let proof_sort = self.proof_sort();
-                    let mut lets = vec![];
+                    let mut lets = Vec::new();
                     let new_pf = self.mint(
                         &mut lets,
                         &congr,
@@ -236,7 +237,7 @@ impl ProofInstrumentor<'_> {
         let uf_prf = self.fresh_var();
         let (proof_lets, pf_arg) = if self.proofs_enabled() {
             let proof_sort = self.proof_sort();
-            let mut lets = vec![];
+            let mut lets = Vec::new();
             let pf = match kind {
                 ValueRebuild::Eclass => {
                     let sym = self.proof_names().eq_sym_constructor.clone();
@@ -305,14 +306,15 @@ impl ProofInstrumentor<'_> {
             let proof_prim = self.container_rebuild_proof_prim(&out_ty);
             let rebuild_pf = self.fresh_var();
             let cproof = self.term_proof_name(out_ty.name());
-            let mut lets = vec![format!("(let {rebuild_pf} ({proof_prim} {value_var}))")];
+            let mut lets = Vec::new();
+            lets.push(format!("(let {rebuild_pf} ({proof_prim} {value_var}))"));
             let new_pf = self.mint(
                 &mut lets,
                 &congr,
                 &format!("{view_prf} {out_idx} {rebuild_pf}"),
                 &proof_sort,
             );
-            let mut cproof_stmts = vec![];
+            let mut cproof_stmts = Vec::new();
             let sym_pf = self.mint(&mut cproof_stmts, &sym, &rebuild_pf, &proof_sort);
             let trans_pf = self.mint(
                 &mut cproof_stmts,

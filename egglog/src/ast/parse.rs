@@ -390,6 +390,7 @@ impl Parser {
                         presort_and_args: None,
                         uf: None,
                         proof_func: None,
+                        aux_uf: None,
                         container_rebuild: None,
                         proof_constructors: None,
                         unionable: true,
@@ -427,6 +428,7 @@ impl Parser {
                             )),
                             uf: None,
                             proof_func,
+                            aux_uf: None,
                             container_rebuild,
                             proof_constructors: None,
                             unionable: true,
@@ -437,11 +439,15 @@ impl Parser {
                         // :internal-proof-names global proof-constructor record.
                         let mut uf: Option<(String, Option<String>)> = None;
                         let mut proof_func = None;
+                        let mut aux_uf = None;
                         let mut proof_constructors = None;
                         for (key, val) in self.parse_options(rest)? {
                             match (key, val) {
                                 (":internal-uf", [uf_ctor]) => {
                                     uf = Some((uf_ctor.expect_atom("uf constructor name")?, None));
+                                }
+                                (":internal-aux-uf", [aux]) => {
+                                    aux_uf = Some(aux.expect_atom("aux-uf function name")?);
                                 }
                                 (":internal-uf", [uf_ctor, uf_index]) => {
                                     uf = Some((
@@ -482,6 +488,7 @@ impl Parser {
                             presort_and_args: None,
                             uf,
                             proof_func,
+                            aux_uf,
                             container_rebuild: None,
                             proof_constructors,
                             unionable: true,

@@ -151,6 +151,10 @@ impl Backend for EGraph {
         EGraph::table_size(self, table)
     }
 
+    fn forbid_native_rebuild(&mut self) {
+        EGraph::forbid_native_rebuild(self);
+    }
+
     fn clear_table(&mut self, func: FunctionId) {
         EGraph::clear_table(self, func);
     }

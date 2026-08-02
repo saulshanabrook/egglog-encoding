@@ -228,6 +228,14 @@ pub trait Backend: Send + Sync {
     /// Number of rows currently in the given function's table.
     fn table_size(&self, table: FunctionId) -> usize;
 
+    /// Announce that the frontend resolves equality itself, so nothing it
+    /// lowers will ever stage a union in a backend-native union-find.
+    ///
+    /// The frontend calls this when it enables the term/proof encoding. A
+    /// backend with a native union-find may use it to assert that its own
+    /// rebuilding never has anything to do; one without may ignore it.
+    fn forbid_native_rebuild(&mut self) {}
+
     /// Remove every row from the given function's table.
     fn clear_table(&mut self, func: FunctionId);
 

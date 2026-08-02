@@ -288,7 +288,7 @@ impl ProofInstrumentor<'_> {
         facts: &[ResolvedFact],
     ) -> (Vec<String>, Vec<String>, String) {
         let mut res = vec![];
-        let mut action_lookups = vec![];
+        let mut action_lookups = Vec::new();
         let mut proof = vec![];
 
         for fact in facts.iter() {

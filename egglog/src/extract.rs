@@ -673,7 +673,8 @@ impl<C: Cost + Ord + Eq + Clone + Debug> Extractor<C> {
 }
 
 /// Find the canonical representative of a value using the sort's `:internal-uf`
-/// union-find, or return the value unchanged if the sort has none.
+/// union-find, falling back to [`find_aux_canonical`] and finally to the value
+/// unchanged.
 ///
 /// The encoding's union-find is a function keyed by the element
 /// (`UF_<Sort> : (S) -> (S, {Unit|Proof})`). Rebuild saturates path compression,
@@ -682,32 +683,50 @@ impl<C: Cost + Ord + Eq + Clone + Debug> Extractor<C> {
 /// user-provided `:internal-uf`, see `tests/uf-extraction.egg`), resolved with a
 /// one-hop scan.
 pub(crate) fn find_canonical(egraph: &EGraph, value: Value, sort: &ArcSort) -> Value {
-    let Some(uf_name) = egraph.proof_state.uf_parent.get(sort.name()) else {
-        return value;
-    };
-
-    let Some(uf_func) = egraph.functions.get(uf_name) else {
-        return value;
-    };
-
-    if uf_func.schema.input.len() == 1 {
-        return egraph
-            .backend
-            .lookup_id(uf_func.backend_id, &[value])
-            .unwrap_or(value);
+    if let Some(uf_name) = egraph.proof_state.uf_parent.get(sort.name())
+        && let Some(uf_func) = egraph.functions.get(uf_name)
+    {
+        let canonical = if uf_func.schema.input.len() == 1 {
+            egraph
+                .backend
+                .lookup_id(uf_func.backend_id, &[value])
+                .unwrap_or(value)
+        } else {
+            // Two-key `(child, parent)` relation: one-hop lookup.
+            let mut canonical = value;
+            egraph
+                .backend
+                .for_each(uf_func.backend_id, |row: egglog_bridge::ScanEntry| {
+                    if row.vals[0] == value {
+                        canonical = row.vals[1];
+                    }
+                });
+            canonical
+        };
+        if canonical != value {
+            return canonical;
+        }
     }
 
-    // Two-key `(child, parent)` relation: one-hop lookup.
-    let mut canonical = value;
-    egraph
-        .backend
-        .for_each(uf_func.backend_id, |row: egglog_bridge::ScanEntry| {
-            if row.vals[0] == value {
-                canonical = row.vals[1];
-            }
-        });
+    find_aux_canonical(egraph, value, sort)
+}
 
-    canonical
+/// Resolve a term/proof id through the sort's auxiliary union-find
+/// `AuxUF_<Sort>` only: an id that lost a same-iteration `set-if-empty`
+/// collision has no row of its own, and `AuxUF` maps it to the surviving,
+/// *structurally identical* id. Unlike [`find_canonical`] this never crosses a
+/// real `union`, so it preserves the node's term shape — which is what proof
+/// extraction needs.
+pub(crate) fn find_aux_canonical(egraph: &EGraph, value: Value, sort: &ArcSort) -> Value {
+    if let Some(aux_name) = egraph.proof_state.aux_uf_parent.get(sort.name())
+        && let Some(aux_func) = egraph.functions.get(aux_name)
+    {
+        return egraph
+            .backend
+            .lookup_id(aux_func.backend_id, &[value])
+            .unwrap_or(value);
+    }
+    value
 }
 
 impl Function {
@@ -723,10 +742,10 @@ impl Function {
         self.decl.term_constructor.is_some() && self.schema.outputs.len() > 1
     }
 
-    /// A term/proof/AST/proof-list node relation created by the term/proof
-    /// encoding, marked `:internal-term-node`. Its rows are reconstructed during
-    /// extraction with the minted id as the last input column and the earlier
-    /// inputs as the term's children. Views (which carry `term_constructor` and a
+    /// A term/proof/AST/proof-list node table created by the term/proof encoding,
+    /// marked `:internal-term-node`. It is hash-consed on its children: keyed on
+    /// the children with the interned id in its output column, so extraction reads
+    /// it like a constructor. Views (which carry `term_constructor` and a
     /// non-`Unit` output) and plain bookkeeping relations such as the
     /// delete/subsume markers are unmarked, so extraction never reads them as
     /// terms.
@@ -734,10 +753,10 @@ impl Function {
         self.decl.internal_term_node
     }
 
-    /// True when the id is the last input column (old-form views and encoding
-    /// relations), rather than a real output column.
+    /// True when the id is the last input column (old-form views), rather than a
+    /// real output column.
     fn id_is_last_input(&self) -> bool {
-        (self.decl.term_constructor.is_some() && !self.is_fd_view()) || self.is_relation_term()
+        self.decl.term_constructor.is_some() && !self.is_fd_view()
     }
 
     /// For view tables (with term_constructor), the effective output sort is the last input column

@@ -28,3 +28,6 @@ tests/*.json
 lcov.info
 
 __pycache__/
+
+# insta pending-snapshot artifacts
+*.snap.new

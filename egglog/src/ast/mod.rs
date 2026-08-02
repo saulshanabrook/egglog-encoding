@@ -99,6 +99,10 @@ where
         /// The name of the proof function for this sort.
         /// Set by proof desugaring to record where proofs are stored for this sort.
         proof_func: Option<String>,
+        /// The auxiliary union-find `AuxUF_<E>` for this sort, carried as the
+        /// `:internal-aux-uf` annotation so a re-parsed encoded program restores
+        /// `proof_state.aux_uf_parent`.
+        aux_uf: Option<String>,
         /// For container sorts under the term/proof encoding: the spec for the
         /// container's rebuild primitives (see [`ContainerRebuildSpec`]), carried
         /// as the `:internal-container-rebuild` annotation.
@@ -171,6 +175,7 @@ where
                 presort_and_args,
                 uf,
                 proof_func,
+                aux_uf,
                 container_rebuild,
                 proof_constructors,
                 unionable,
@@ -180,6 +185,7 @@ where
                 presort_and_args: presort_and_args.clone(),
                 uf: uf.clone(),
                 proof_func: proof_func.clone(),
+                aux_uf: aux_uf.clone(),
                 container_rebuild: container_rebuild.clone(),
                 proof_constructors: proof_constructors.clone(),
                 unionable: *unionable,
@@ -314,6 +320,7 @@ where
                 presort_and_args,
                 uf,
                 proof_func,
+                aux_uf,
                 container_rebuild,
                 proof_constructors,
                 unionable,
@@ -323,6 +330,7 @@ where
                 presort_and_args,
                 uf,
                 proof_func,
+                aux_uf,
                 container_rebuild,
                 proof_constructors,
                 unionable,
@@ -643,6 +651,10 @@ where
         /// The name of the proof function for this sort.
         /// Set by proof desugaring to record where proofs are stored for this sort.
         proof_func: Option<String>,
+        /// The auxiliary union-find `AuxUF_<E>` for this sort, carried as the
+        /// `:internal-aux-uf` annotation so a re-parsed encoded program restores
+        /// `proof_state.aux_uf_parent`.
+        aux_uf: Option<String>,
         /// For container sorts under the term/proof encoding: the spec for the
         /// container's rebuild primitives (see [`ContainerRebuildSpec`]), carried
         /// as the `:internal-container-rebuild` annotation.
@@ -1085,6 +1097,7 @@ where
                 presort_and_args: None,
                 uf,
                 proof_func,
+                aux_uf,
                 proof_constructors,
                 ..
             } => {
@@ -1097,6 +1110,9 @@ where
                 }
                 if let Some(pf) = proof_func {
                     write!(f, " :internal-proof-func {pf}")?;
+                }
+                if let Some(aux) = aux_uf {
+                    write!(f, " :internal-aux-uf {aux}")?;
                 }
                 if let Some(pc) = proof_constructors {
                     write!(
@@ -1901,6 +1917,7 @@ where
                 presort_and_args,
                 uf,
                 proof_func,
+                aux_uf,
                 container_rebuild,
                 proof_constructors,
                 unionable,
@@ -1910,6 +1927,7 @@ where
                 presort_and_args,
                 uf: uf.map(|(ctor, index)| (fun(ctor), index.map(&mut *fun))),
                 proof_func: proof_func.map(&mut *fun),
+                aux_uf: aux_uf.map(&mut *fun),
                 container_rebuild,
                 proof_constructors,
                 unionable,
@@ -2208,6 +2226,7 @@ where
                 presort_and_args,
                 uf,
                 proof_func,
+                aux_uf,
                 container_rebuild,
                 proof_constructors,
                 unionable,
@@ -2217,6 +2236,7 @@ where
                 presort_and_args,
                 uf,
                 proof_func,
+                aux_uf,
                 container_rebuild,
                 proof_constructors,
                 unionable,

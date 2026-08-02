@@ -1,6 +1,5 @@
 ---
 source: egglog/tests/files.rs
-assertion_line: 279
 expression: proof_snapshot
 ---
 (let t0 (f (f (Var "a3"))))
@@ -166,4 +165,4 @@ expression: proof_snapshot
           (x3 (Var "b3"))
           t2)))
     (Fiat (= () ())))
-  (substitution (@v610 t0) (@v611 t3)))
+  (substitution (@v868 t3) (@v867 t0)))

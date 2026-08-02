@@ -487,6 +487,15 @@ impl EGraph {
                         (resolved.name.clone(), ft.input.clone(), ft.outputs.clone());
                     crate::proofs::proof_fresh::register_set_if_empty(self, &name, input, outputs);
                 }
+                // Term-node tables (`:internal-term-node`) need the same primitive:
+                // they are hash-consed, interned by `set-if-empty` on their children.
+                if resolved.internal_term_node
+                    && let ResolvedCall::Func(ft) = &resolved.resolved_schema
+                {
+                    let (name, input, outputs) =
+                        (resolved.name.clone(), ft.input.clone(), ft.outputs.clone());
+                    crate::proofs::proof_fresh::register_set_if_empty(self, &name, input, outputs);
+                }
                 // If this is a let binding, add it to global_sorts
                 // This preserves bahavior for lets after desugaring
                 if resolved.internal_let {
@@ -508,6 +517,7 @@ impl EGraph {
                 presort_and_args,
                 uf,
                 proof_func,
+                aux_uf,
                 container_rebuild,
                 proof_constructors,
                 unionable,
@@ -532,6 +542,11 @@ impl EGraph {
                     self.proof_state
                         .proof_func_parent
                         .insert(name.clone(), pf.clone());
+                }
+                if let Some(aux) = aux_uf {
+                    self.proof_state
+                        .aux_uf_parent
+                        .insert(name.clone(), aux.clone());
                 }
                 // The Proof sort records the global proof constructors; restore
                 // them into proof_state so container rebuild can recover them
@@ -558,6 +573,7 @@ impl EGraph {
                     presort_and_args: presort_and_args.clone(),
                     uf: uf.clone(),
                     proof_func: proof_func.clone(),
+                    aux_uf: aux_uf.clone(),
                     container_rebuild: container_rebuild.clone(),
                     proof_constructors: proof_constructors.clone(),
                     unionable: *unionable,

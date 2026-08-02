@@ -139,6 +139,12 @@ pub struct EGraph {
     // depends on that sequence, so a `HashMap` here would needlessly shift it.
     // Lookups are by a small integer id, so a `BTreeMap` is more than fast enough.
     panic_func_ids: BTreeMap<ExternalFunctionId, String>,
+    /// Tables each external function touches when invoked, declared at
+    /// registration (see [`EGraph::declare_external_func_table_deps`]).
+    // `BTreeMap`, not `HashMap`, for the same reason as `panic_func_ids`: it adds
+    // no randomly-seeded hasher, so the seed sequence of the other hash tables —
+    // and with it the row iteration order proof extraction reads — is unchanged.
+    external_func_deps: BTreeMap<ExternalFunctionId, ExternalFuncTableDeps>,
     report_level: ReportLevel,
     /// Live registry of name-indexed action handles. Shared (via
     /// `Arc<RwLock<_>>`) with state wrappers and primitive callbacks
@@ -146,6 +152,8 @@ pub struct EGraph {
     /// [`WriteState`] / [`FullState`] can resolve table actions at
     /// invoke time. Mutated in place from [`add_table`](EGraph::add_table).
     action_registry: Arc<std::sync::RwLock<ActionRegistry>>,
+    /// See [`EGraph::forbid_native_rebuild`].
+    forbid_native_rebuild: bool,
 }
 
 pub type Result<T> = std::result::Result<T, anyhow::Error>;
@@ -154,6 +162,15 @@ pub type Result<T> = std::result::Result<T, anyhow::Error>;
 struct CachedPanic {
     id: ExternalFunctionId,
     references: usize,
+}
+
+/// The tables an external function reads and writes when invoked, by name (see
+/// [`EGraph::declare_external_func_table_deps`]). Names are resolved against the
+/// [`ActionRegistry`] when a merge referencing the function is built.
+#[derive(Clone, Default)]
+struct ExternalFuncTableDeps {
+    reads: Vec<String>,
+    writes: Vec<String>,
 }
 
 impl Default for EGraph {
@@ -210,8 +227,10 @@ impl Default for EGraph {
             panic_message,
             panic_funcs,
             panic_func_ids,
+            external_func_deps: Default::default(),
             report_level: Default::default(),
             action_registry,
+            forbid_native_rebuild: false,
         }
     }
 }
@@ -328,6 +347,54 @@ impl EGraph {
         self.db.add_external_function(func)
     }
 
+    /// Declare the tables `func` touches when invoked, by function name.
+    ///
+    /// A `:merge` body calling `func` folds these tables into the calling table's
+    /// dependency-graph entry, which places a reading table strictly above what it
+    /// reads: the read targets merge in an earlier stratum and so are still present
+    /// in the database when the reader's merge runs, and the write targets get a
+    /// pre-allocated mutation buffer.
+    ///
+    /// Names, not ids: primitives are registered while the program is typechecked,
+    /// before the tables exist. Every declared read target must therefore be
+    /// declared *before* the table whose merge calls `func`.
+    ///
+    /// Read dependencies must stay acyclic — a cycle cannot be stratified, and
+    /// `DependencyGraph::add_table` rejects one. (The term/proof encoding stays
+    /// acyclic because a `:merge` body can only build constructor applications and
+    /// call primitives; a custom-function lookup in an action is rejected up front.)
+    pub fn declare_external_func_table_deps(
+        &mut self,
+        func: ExternalFunctionId,
+        reads: impl IntoIterator<Item = String>,
+        writes: impl IntoIterator<Item = String>,
+    ) {
+        let entry = self.external_func_deps.entry(func).or_default();
+        entry.reads.extend(reads);
+        entry.writes.extend(writes);
+    }
+
+    /// Resolve a declared external-function table dependency to its [`TableId`].
+    ///
+    /// # Panics
+    /// If no table named `name` has been created yet. That means a merge that
+    /// reaches `name` is being built before `name`'s own table, which the
+    /// dependency graph cannot stratify.
+    fn resolve_dep_table(&self, name: &str, func: ExternalFunctionId) -> TableId {
+        self.action_registry
+            .read()
+            .unwrap()
+            .lookup_table(name)
+            .unwrap_or_else(|| {
+                panic!(
+                    "external function {func:?} declares a dependency on table `{name}`, \
+                     which has not been created yet; a merge reaching `{name}` must be \
+                     built after it"
+                )
+            })
+            .table
+    }
+
     /// Register the term encoder's `set-if-empty` canonicalize op for the FD
     /// view table named `view_name` (`n_keys` key columns), returning the
     /// [`ExternalFunctionId`] its mint sites resolve to. At invoke: look up
@@ -341,7 +408,8 @@ impl EGraph {
         _out_arity: usize,
     ) -> ExternalFunctionId {
         let registry = self.action_registry.clone();
-        self.register_external_func(Box::new(make_external_func(
+        let target = view_name.clone();
+        let id = self.register_external_func(Box::new(make_external_func(
             move |state: &mut ExecutionState, args: &[Value]| {
                 let registry = registry.read().unwrap();
                 let action = registry.lookup_table(&view_name)?.clone();
@@ -354,7 +422,11 @@ impl EGraph {
                 action.insert(state, args.iter().copied());
                 Some(args[n_keys])
             },
-        )))
+        )));
+        // The op both reads (the lookup) and writes (the insert on a miss) its
+        // target.
+        self.declare_external_func_table_deps(id, [target.clone()], [target]);
+        id
     }
 
     /// Register a reader for output column `col_idx` of the FD view named
@@ -368,7 +440,8 @@ impl EGraph {
         col_idx: usize,
     ) -> ExternalFunctionId {
         let registry = self.action_registry.clone();
-        self.register_external_func(Box::new(make_external_func(
+        let target = view_name.clone();
+        let id = self.register_external_func(Box::new(make_external_func(
             move |state: &mut ExecutionState, args: &[Value]| {
                 let registry = registry.read().unwrap();
                 let action = registry.lookup_table(&view_name)?.clone();
@@ -378,7 +451,10 @@ impl EGraph {
                     None => fallback,
                 })
             },
-        )))
+        )));
+        // Read-only: no insert, so no write dependency.
+        self.declare_external_func_table_deps(id, [target], []);
+        id
     }
 
     pub fn free_external_func(&mut self, func: ExternalFunctionId) {
@@ -400,6 +476,9 @@ impl EGraph {
             }
         }
         if free {
+            // External function ids are reused, so drop any declared table deps
+            // along with the function itself.
+            self.external_func_deps.remove(&func);
             self.db.free_external_function(func);
         }
     }
@@ -790,6 +869,18 @@ impl EGraph {
         &self.action_registry
     }
 
+    /// Assert that nothing ever stages a union into this EGraph's union-find.
+    ///
+    /// For a caller that resolves equality itself (e.g. the egglog crate's
+    /// term/proof encoding): with no `MergeFn::UnionId` table and no union
+    /// action, the native union-find stays empty and rebuilding has nothing to
+    /// do. Setting this turns a violation of that contract into a panic when
+    /// rebuilding runs, instead of a silent divergence between the two notions
+    /// of equality.
+    pub fn forbid_native_rebuild(&mut self) {
+        self.forbid_native_rebuild = true;
+    }
+
     /// Run the given rules, returning whether the database changed.
     ///
     /// If the given rules are malformed, this method can return an error.
@@ -833,6 +924,14 @@ impl EGraph {
     }
 
     fn rebuild(&mut self) -> Result<()> {
+        // Only reachable once the union-find has grown; see
+        // [`EGraph::forbid_native_rebuild`].
+        assert!(
+            !self.forbid_native_rebuild,
+            "native rebuild ran on an EGraph that forbids it: {} unions reached the native \
+             union-find, but all equality reasoning was supposed to be done by ordinary rules",
+            self.db.get_table(self.uf_table).len()
+        );
         let do_parallel = rayon::current_num_threads() > 1;
         if self.db.get_table(self.uf_table).rebuilder(&[]).is_some() {
             // The UF implementation supports "native"  rebuilding.
@@ -1315,10 +1414,21 @@ impl MergeFn {
     ) {
         use MergeFn::*;
         match self {
-            Primitive(_, args) => {
+            Primitive(id, args) => {
                 args.iter()
                     .for_each(|arg| arg.fill_deps(egraph, read_deps, write_deps));
                 write_deps.insert(egraph.uf_table);
+                // A primitive that touches tables (e.g. the term encoder's
+                // `set-if-empty` interning op) declares them at registration; see
+                // `EGraph::declare_external_func_table_deps`.
+                if let Some(deps) = egraph.external_func_deps.get(id) {
+                    for name in &deps.reads {
+                        read_deps.insert(egraph.resolve_dep_table(name, *id));
+                    }
+                    for name in &deps.writes {
+                        write_deps.insert(egraph.resolve_dep_table(name, *id));
+                    }
+                }
             }
             Function(func, args) => {
                 read_deps.insert(egraph.funcs[*func].table);

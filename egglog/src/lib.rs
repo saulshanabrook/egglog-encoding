@@ -603,6 +603,9 @@ impl EGraph {
     /// Enable the term/proof encoding pipeline with `typechecker` as the head of
     /// the re-typechecking chain.
     fn enable_term_encoding(&mut self, typechecker: EGraph) {
+        // The encoding removes every `union` and declares no constructor, so
+        // nothing it lowers can stage a union in the backend's own union-find.
+        self.backend.forbid_native_rebuild();
         self.proof_state.original_typechecking = Some(Box::new(typechecker));
     }
 
@@ -1997,6 +2000,7 @@ impl EGraph {
                 name,
                 uf,
                 proof_func,
+                aux_uf,
                 proof_constructors,
                 ..
             } => {
@@ -2005,6 +2009,11 @@ impl EGraph {
                     self.proof_state
                         .uf_parent
                         .insert(name.clone(), uf_ctor.clone());
+                }
+                if let Some(aux) = aux_uf {
+                    self.proof_state
+                        .aux_uf_parent
+                        .insert(name.clone(), aux.clone());
                 }
                 // If the sort has a :internal-proof-func field, store the mapping for proof lookup.
                 // This annotation is set by proof instrumentation and consumed here.
@@ -2435,18 +2444,17 @@ impl EGraph {
     ///   proof)`; the proof lives only in the view (a custom's fresh term sort has
     ///   no `<Sort>Proof`).
     fn native_input(&mut self, span: Span, func_name: &str, file: String) -> Result<(), Error> {
-        // The encoded term relation keeps the user's original name. Its last input
-        // column is the minted term id; the columns before it are the CSV base
-        // columns (children, plus a custom function's output value).
+        // The encoded term table keeps the user's original name. It is hash-consed:
+        // keyed on the CSV base columns (children, plus a custom function's output
+        // value) with the minted term id in its OUTPUT column.
         let term = self
             .functions
             .get(func_name)
             .unwrap_or_else(|| panic!("Unrecognized function name {func_name}"));
         let f_id = term.backend_id;
-        let term_input = term.schema.input.clone();
-        let n_term_input = term_input.len();
-        let term_id_sort = term_input[n_term_input - 1].name().to_string();
-        let csv_sorts: Vec<ArcSort> = term_input[..n_term_input - 1].to_vec();
+        let csv_sorts: Vec<ArcSort> = term.schema.input.clone();
+        let n_term_input = csv_sorts.len();
+        let term_id_sort = term.schema.output().name().to_string();
 
         // Locate the view by its `:internal-term-constructor` back-reference (as
         // extraction / print-size do) and read the encoded shape off it.
@@ -2460,10 +2468,10 @@ impl EGraph {
         // Proofs are on for this relation iff the view's proof column (its last
         // output) is not `Unit`; term-encoding-only mode uses `Unit` there.
         let proofs = view.schema.outputs.last().unwrap().name() != "Unit";
-        // Constructor iff the FD view keys on all children and the term relation
-        // adds exactly the term id; a custom's (`:merge` or `:no-merge`) term
-        // relation also carries the output column.
-        let is_constructor = view.is_fd_view() && n_term_input == view_n_inputs + 1;
+        // Constructor iff the FD view keys on all children and the term table is
+        // keyed on exactly those children (its id is the output); a custom's term
+        // table also keys on the output column, so it has one more key column.
+        let is_constructor = view.is_fd_view() && n_term_input == view_n_inputs;
 
         let rows = Self::read_input_rows(self.fact_directory.as_deref(), &csv_sorts, &span, &file)?;
         let unit_val = self.backend.base_values().get(());
@@ -2487,7 +2495,7 @@ impl EGraph {
             .collect();
 
         // Proof tables: `Fiat` from the `Proof` sort's `:internal-proof-names`,
-        // the term-id sort's AST constructor by its `(<sort> <Ast>) -> Unit`
+        // the term-id sort's AST constructor by its `(<sort>) -> <Ast>`
         // signature, and (constructors only) `<Sort>Proof` from the term-id
         // sort's `:internal-proof-func`.
         let proof_tables = proofs.then(|| {
@@ -2500,10 +2508,9 @@ impl EGraph {
                 .values()
                 .find(|g| {
                     g.decl.internal_hidden
-                        && g.schema.input.len() == 2
+                        && g.schema.input.len() == 1
                         && g.schema.input[0].name() == term_id_sort
-                        && g.schema.input[1].name() == ast_sort
-                        && g.schema.output().name() == "Unit"
+                        && g.schema.output().name() == ast_sort
                 })
                 .unwrap_or_else(|| panic!("no AST constructor for sort {term_id_sort}"))
                 .backend_id;
@@ -2518,20 +2525,19 @@ impl EGraph {
         let mut batch: Vec<(egglog_bridge::FunctionId, Vec<Value>)> = Vec::new();
         for value_row in value_rows {
             let fv = self.backend.fresh_id();
-            // Term-relation row: CSV columns (children [+ output]) + term id + Unit.
+            // Hash-consed term-table row: CSV columns (children [+ output]) are the
+            // key, the minted term id is the output column.
             let mut frow = value_row.clone();
             frow.push(fv);
-            frow.push(unit_val);
             batch.push((f_id, frow));
 
             let view_proof = if let Some((ast_id, fiat_id, proof_func_id)) = proof_tables {
-                // Fiat proof of the base fact: `@Fiat(ast(fv), ast(fv))`.
-                let a1 = self.backend.fresh_id();
-                batch.push((ast_id, vec![fv, a1, unit_val]));
-                let a2 = self.backend.fresh_id();
-                batch.push((ast_id, vec![fv, a2, unit_val]));
+                // Fiat proof of the base fact: `@Fiat(ast(fv), ast(fv))`. The AST
+                // table is hash-consed, so `ast(fv)` is one id used on both sides.
+                let ast = self.backend.fresh_id();
+                batch.push((ast_id, vec![fv, ast]));
                 let pf = self.backend.fresh_id();
-                batch.push((fiat_id, vec![a1, a2, pf, unit_val]));
+                batch.push((fiat_id, vec![ast, ast, pf]));
                 if let Some(proof_func_id) = proof_func_id {
                     batch.push((proof_func_id, vec![fv, pf]));
                 }

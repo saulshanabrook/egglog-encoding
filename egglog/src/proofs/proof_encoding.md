@@ -20,7 +20,7 @@ a proof column that is `()` (of sort `Unit`) when proofs are off, and a real
 The rest of this document is organized as:
 
 - **[Data structures](#data-structures)** — the per-sort union-find and the
-  per-constructor term relation and view that every command reads and writes.
+  per-constructor term table and view that every command reads and writes.
 - **[Actions](#actions)** — how term construction, `union`, and `delete` lower,
   including how a nested term is built over canonical ids with proofs.
 - **[Queries](#queries)** — how rule bodies and `check`/`prove` read the views.
@@ -50,10 +50,12 @@ prefix (e.g. `AddView`, not `__AddView`), and fresh ids are given readable names
 ## Union-find
 
 ```text
-(sort Math :internal-uf UF_Math)
+(sort Math :internal-uf UF_Math :internal-aux-uf AuxUF_Math)
 (function UF_Math (Math) (Math Unit)
     :merge ((set (UF_Math (ordering-max old0 new0)) (values (ordering-min old0 new0) ()))
             (values (ordering-min old0 new0) ()))
+    :unextractable :internal-hidden :internal-identity-vals 1)
+(function AuxUF_Math (Math) Math :merge (ordering-min old new)
     :unextractable :internal-hidden :internal-identity-vals 1)
 ```
 
@@ -74,13 +76,21 @@ an existing edge does not re-stage the same union forever. This is about making
 re-writes idempotent — it is *not* a key; the value column is not a unique index,
 and many keys can point at the same parent.
 
-## Term relation and view
+`AuxUF_<Sort>` is a second, *auxiliary* union-find, recorded on the sort by the
+`:internal-aux-uf` annotation so a re-parsed encoded program restores it. It
+never carries a real `union`: it only relates ids that denote the same
+hash-consed node (see [Term table and view](#term-table-and-view)).
 
-Each constructor expands to a **term relation** (`Add`), a **view** (`AddView`),
+## Term table and view
+
+Each constructor expands to a **term table** (`Add`), a **view** (`AddView`),
 and deferred-deletion helpers:
 
 ```text
-(function Add (i64 i64 Math) Unit :no-merge :unextractable :internal-hidden :internal-term-node)
+(function Add (i64 i64) Math
+    :merge ((set (AuxUF_Math (ordering-max old new)) (ordering-min old new))
+            (ordering-min old new))
+    :internal-hidden :internal-term-node :internal-identity-vals 1)
 (function AddView (i64 i64) (Math Unit)
     :merge ((set (UF_Math (ordering-max old0 new0)) (values (ordering-min old0 new0) ()))
             (values (ordering-min old0 new0) ()))
@@ -89,34 +99,60 @@ and deferred-deletion helpers:
 (function to_subsume_Add (i64 i64) Unit :no-merge :internal-hidden)
 ```
 
-The term relation carries `:internal-term-node`: its rows are term nodes (the
-minted id is the last input), which proof extraction reconstructs. The
-deferred-deletion helpers are plain `Unit` relations keyed on the children (a
-`(delete (Add 1 2))` inserts `to_delete_Add(1, 2)`, which the delete ruleset
-consumes); they carry no minted id and no `:internal-term-node`, so extraction
-never reads them as terms.
+The term table is **hash-consed**: it is keyed on the children, with the term's
+own id in its output column, and a node is interned with the `set-if-empty`
+primitive (get-or-insert), which returns the id already stored under those
+children. So every occurrence of `(Add 1 2)` shares one node. Nothing is ever
+removed from the table, which lets proofs refer to terms even after they leave
+the e-graph.
 
-The term relation `Add(child0, child1, eclass)` stores every application as a
-row whose last column is the term's own id (minted with `get-fresh!`); nothing is
-ever removed from it, which lets proofs refer to terms even after they leave the
-e-graph. The **view** is a functional dependency `children -> (eclass, proof)`
-mapping a term's *canonicalized* children to its e-class representative. Two view
-rows that collide on the same children are congruent, so the view's `:merge`
-resolves congruence directly — it keeps the smaller e-class and unions the two in
+`set-if-empty` only sees rows committed by the *previous* iteration, so two rules
+that build the same term within one iteration each insert their own freshly
+minted candidate id. Their children key then collides at merge time, and the term
+table's `:merge` keeps the smaller id and records `larger -> smaller` in
+`AuxUF_<Sort>`. Unlike a real `union`'s endpoints, the two ids denote the *same*
+term — hence the separate table. Proof extraction resolves an id that has no term
+row of its own through `AuxUF` first, which preserves the node's shape, and only
+then falls back to the real union-find, whose leader may be a differently-shaped
+term.
+
+A `:merge` body interns the same way. Merges run a whole stratum at once, with
+every table in the stratum taken out of the database for the duration, so
+`set-if-empty`'s table read would fail if its target shared the stratum. It never
+does: `set-if-empty` declares a read dependency on its target
+(`egglog_bridge::EGraph::declare_external_func_table_deps`), and the backend's
+dependency graph places a reader strictly above what it reads — the target is
+merged in an earlier stratum and is back in the database when the reader's merge
+runs.
+
+The term table carries `:internal-term-node`: its rows are term nodes, which
+proof extraction reconstructs. The deferred-deletion helpers are plain `Unit`
+relations keyed on the children (a `(delete (Add 1 2))` inserts
+`to_delete_Add(1, 2)`, which the delete ruleset consumes); they hold no id and no
+`:internal-term-node`, so extraction never reads them as terms.
+
+The **view** is a functional dependency `children -> (eclass, proof)` mapping a
+term's *canonicalized* children to its e-class representative. Two view rows that
+collide on the same children are congruent, so the view's `:merge` resolves
+congruence directly — it keeps the smaller e-class and unions the two in
 `UF_<Sort>`, so no separate congruence rule is needed. All queries read the view;
-the term relation is write-only after creation.
+the term table is write-only after creation.
 
 ## Proof tables (proof mode)
 
 With proofs enabled, the encoding first emits a header defining the proof format
 (corresponding to [`RawProof`](crate::proofs::RawProof); see
-`proof_encoding_helpers.rs`): the `Proof`, `Ast`, and `ProofList` sorts and the
-proof-node relations `Rule`, `Fiat`, `Trans`, `Sym`, `Congr`, `CongrAll`,
-`Merge…`, `ContainerNormalize`, `Eval` (each a `(function … Unit :no-merge)`, not
-a constructor), plus `AstMath` (one `Ast<Sort>` per sort) and:
+`proof_encoding_helpers.rs`): the `Proof`, `Ast`, and `ProofList` sorts, the
+proof nodes `Rule`, `Fiat`, `Trans`, `Sym`, `Congr`, `CongrAll`, `Merge…`,
+`ContainerNormalize`, `Eval`, the proof-list nodes `PCons`/`PNil`, and `AstMath`
+(one `Ast<Sort>` per sort). Every one of these is a node table with the same
+shape as a term table — arguments as key, interned id in the output column,
+`:internal-term-node`, and a `:merge` folding a same-iteration duplicate into the
+id sort's `AuxUF` — so building the same proof twice yields one node. Each sort
+also gets:
 
 ```text
-(function MathProof (Math) Proof :merge old :unextractable :internal-hidden)
+(function MathProof (Math) Proof :merge old :internal-hidden)
 ```
 
 `MathProof` records, for each term `t`, a proof of the proposition `t = t`
@@ -136,28 +172,32 @@ column now carries a real `Proof`:
 If term `k` has parent `p`, `(UF_Math k)` returns `(values p proof)` where `proof`
 proves `k = p` (the key on the left). `proof-of-min`/`proof-of-max` pair the
 proof with the smaller/larger parent; the displaced edge stores
-`Trans (Sym hi_pf_) lo_pf_` (proving `larger = smaller`). The view's proof column
-instead proves `eclass = f(children)` (the eclass on the left), so its `:merge`
-composes `Trans hi_pf_ (Sym lo_pf_)` — flipped relative to the union-find's.
+`Trans (Sym hi_pf_) lo_pf_` (proving `larger = smaller`). A view row's proof
+column instead proves `eclass = f(children)` over *that row's own key columns*
+(the eclass on the left), so its `:merge` composes `Trans hi_pf_ (Sym lo_pf_)` —
+flipped relative to the union-find's. Every reader and writer of a view relies on
+that orientation.
 
 # Actions
 
 ## Building a term
 
-Evaluating a constructor application adds to both the term relation and the view.
-Top-level `(Add 1 2)` lowers to (globals `x`, `y` name the two ids; see
-[Globals](#globals)):
+Evaluating a constructor application interns a term node, then interns that node
+into the view. Top-level `(Add 1 2)` lowers to (globals `x`, `y`, `z` name the
+three ids; see [Globals](#globals)):
 
 ```text
-(set (x) (get-fresh! "Math"))          ;; mint a fresh id for the new term
-(set (Add 1 2 (x)) ())                 ;; the term-relation row
-(set (y) (set-if-empty-AddView! 1 2 (x) ()))   ;; intern into the view; (y) is canonical
+(set (x) (get-fresh! "Math"))                  ;; candidate id for the node
+(set (y) (set-if-empty-Add! 1 2 (x)))          ;; the term node; (y) is its id
+(set (z) (set-if-empty-AddView! 1 2 (y) ()))   ;; intern into the view; (z) is canonical
 ```
 
-`get-fresh!` mints a new id; `set-if-empty-<View>!` interns the application into
-its view and returns the view's **existing** e-class if the term was already
-there, so `(y)` is always the canonical id. The new term needs no `UF_<Sort>`
-row — identity-on-miss makes it its own representative.
+`get-fresh!` mints the candidate id and `set-if-empty-<Table>!` interns it,
+returning the id already stored under the key and discarding the candidate on a
+hit. So `(y)` is the node shared by every `(Add 1 2)`, and `(z)` is the view's
+e-class for those children — `(y)` itself the first time the term is built. The
+new term needs no `UF_<Sort>` row — identity-on-miss makes it its own
+representative.
 
 ## Union in a rule
 
@@ -165,9 +205,9 @@ A `union` of two e-classes writes one `UF_<Sort>` edge from the larger endpoint
 to the smaller (the exact row and its `ordering-max`/`ordering-min` convention
 are in [Union-find](#union-find)). Each operand that is itself a term is built
 first (as in [Building a term](#building-a-term)) to obtain its e-class. In proof
-mode this is the whole story for `union` — both operands are built and
-canonicalized so an equality proof can be threaded through each step (see
-[Building nested terms with proofs](#building-nested-terms-with-proofs)).
+mode the edge also carries an equality proof, threaded through each operand's
+construction
+(see [Building nested terms with proofs](#building-nested-terms-with-proofs)).
 
 ## Optimization: building a union operand into an e-class
 
@@ -189,20 +229,22 @@ The commutativity rule builds `(Add b a)` into `(Add a b)`'s e-class:
 
 ```text
 (rule ((= (values e p) (AddView a b)))
-      ((let ab (get-fresh! "Math"))
-       (set (Add a b ab) ())
+      ((let cand (get-fresh! "Math"))
+       (let ab (set-if-empty-Add! a b cand))
        (let ab_canon (set-if-empty-AddView! a b ab ()))
-       (set (Add b a ab_canon) ())
+       (set (Add b a) ab_canon)
        (set (AddView b a) (values ab_canon ())))
        :name "commutativity")
 ```
 
-- **Target.** `(Add a b)` is built normally (mint + `set-if-empty`), yielding
-  its canonical e-class `ab_canon`.
-- **Guest → target.** The view is `set` to point at `ab_canon`
-  (`(set (AddView b a) (values ab_canon ()))`), so `(Add b a)` *is* `ab_canon`.
-  No fresh e-class and no `UF_Math` edge. The guest's variable is bound to
-  `ab_canon`, so a later reuse (e.g. a subsequent `(Add r a)`) shares it.
+- **Target.** `(Add a b)` is built normally (intern the node, then intern it into
+  the view), yielding its canonical e-class `ab_canon`.
+- **Guest → target.** The guest's node and view row are written at `ab_canon`
+  with a plain `set` instead of a fresh id, so `(Add b a)` *is* `ab_canon`. No
+  fresh e-class and no `UF_Math` edge. The guest's variable is bound to
+  `ab_canon`, so a later reuse (e.g. a subsequent `(Add r a)`) shares it. If
+  `(Add b a)` was already interned under another id, the term table's `:merge`
+  folds the two into `AuxUF_Math` as usual.
 - **Congruence handles collisions.** If `(Add b a)` already exists under a
   different e-class, the plain view `set` collides on children key `b a` and the
   view's congruence `:merge` unions the two e-classes in `UF_Math` — exactly the
@@ -215,11 +257,10 @@ variables keeps the plain `UF_<Sort>` edge above.
 from the union's rule proof (`ab_canon = (Add b a)` is the rule's RHS) extended
 by a `Congr` chain over any canonicalized children (see
 [Building nested terms with proofs](#building-nested-terms-with-proofs)).
-Crucially, the guest's term keeps **its own** minted id — the view *value* is
-`ab_canon`, but the term-relation row stays on the guest's natural node. Proof
-reconstruction reads term rows (not views), so writing the guest's shape under
-`ab_canon` would give that e-class two shapes and make its `@Ast` ambiguous;
-keeping the term on its own id avoids that.
+Crucially, the guest's term node then keeps **its own** id — only the view
+*value* is `ab_canon`. Proof reconstruction reads term rows (not views), so
+interning the guest's shape at `ab_canon` would give that e-class two shapes and
+make its `@Ast` ambiguous.
 
 ## Building nested terms with proofs
 
@@ -243,61 +284,72 @@ The head first **flattens** to one constructor application per step:
 
 The body match binds `a b c rewrite_var` and yields the rule's premise proof,
 collected into a one-element list `prems = (PCons body_proof (PNil))`; every proof
-minted below is justified by `(Rule rule_name prems lhs rhs)`. Term, AST, and
-proof nodes are all relations, so a new node is a fresh id plus a row `set`
-(written inline below — e.g. `(Rule …)` means "mint a proof id and `set` its
-`Rule` row").
+built below is justified by `(Rule rule_name prems lhs rhs)`. Term, AST, and proof
+nodes all live in hash-consed tables, so building one interns it and yields its id
+(written inline below — e.g. `(Rule …)` means "intern that `Rule` node and use its
+id").
 
-For each subterm we track up to three ids and the proofs between them:
+For each subterm we track two ids, one intermediate term shape, and the proofs
+between them:
 
-- **`e`** — the *natural* term, built with its children's as-built ids.
-- **`e'`** — the same term over **canonical children** (each child replaced by its
-  representative). It differs from `e` only when a child moved, and the proof
-  `e_to_e'` is a `Congr` rewriting those children.
-- **`e''`** — the view's **representative** for `e'`, returned by `set-if-empty`;
-  the view supplies the proof `e'_to_e''`.
+- **`e`** — the *natural* node: the application interned at its children's
+  as-built ids.
+- **`e'`** — the same application over **canonical children** (each child replaced
+  by its representative). This is a term shape, not a node of its own: it differs
+  from `e`'s shape only when a child moved, and `e_to_e'` is a `Congr` chain
+  rewriting those children.
+- **`e''`** — the view's **representative** for `e'`: the e-class stored under the
+  canonical children, obtained by `set-if-empty`-ing the pair `(e, e_to_e')` into
+  the view. It is `e` itself on a fresh key; otherwise the view supplies the proof
+  `e'_to_e''` of `e'' = e'`.
 
-The connector handed up to the parent is `e_to_e''` (their composition). The
-natural node `e` is deliberately never interned, so its `Rule` proof keeps
-pointing at the shape the rule head wrote.
+The connector handed up to the parent is `e_to_e''`, their composition. Seeding
+the view with the natural node is what keeps `e''` extractable: interning a
+*second* node at the canonical children would, whenever the two children lists
+coincide, put two candidate ids under one key in the same iteration — the term
+table would keep one while the view kept the other, leaving the view's e-class
+with no term row at all.
 
 ### Line 1 — `(let d (Add b c))`
 
 `b` and `c` are already canonical (they came from the body match), so there is no
-child to rewrite: `d' = d`, and the connector is just the view proof.
+child to rewrite: `d'` is `d`'s own shape and the connector is the view proof
+alone. `view-proof` takes the seed proof as its fallback, so on a fresh key it
+returns `d_prf` and the connector collapses to a reflexive `d = d`.
 
 ```text
 ;; natural d = (Add b c), with its `d = d` rule proof
-(let d (get-fresh! "Math"))
-(set (Add b c d) ())
+(let d_cand (get-fresh! "Math"))
+(let d (set-if-empty-Add! b c d_cand))
 (let d_prf (Rule rule_name prems (AstMath d) (AstMath d)))
 (set (MathProof d) d_prf)
 
-;; intern (Add b c); d' is the representative the view returns
-(let d' (set-if-empty-AddView! b c d d_prf))
-(let d'_prf (view-proof-AddView b c …))                  ;; proves `d' = (Add b c)`
-(let d_to_d' (Trans d_prf (Sym d'_prf)))                 ;; `d = d'`
+;; seed the view with (d, d_prf); d'' is the e-class it returns
+(let d'' (set-if-empty-AddView! b c d d_prf))
+(let d'_to_d'' (view-proof-AddView b c d_prf))           ;; proves `d'' = (Add b c)`
+(let d_to_d'' (Trans d_prf (Sym d'_to_d'')))             ;; connector `d = d''`
 ```
 
 ### Line 2 — `(let e (Add a d))`
 
-`d` was canonicalized to `d'`, so the natural `e = (Add a d)` is rewritten to
-`e' = (Add a d')` with a `Congr` at child index 1, then interned.
+`d` was canonicalized to `d''`, so the natural `e = (Add a d)` is rewritten to
+`e' = (Add a d'')` with a `Congr` at child index 1. The view row is keyed at the
+canonical children but still seeded with the natural node.
 
 ```text
 ;; natural e = (Add a d), over d's as-built id
-(let e (get-fresh! "Math"))
-(set (Add a d e) ())
+(let e_cand (get-fresh! "Math"))
+(let e (set-if-empty-Add! a d e_cand))
 (let e_prf (Rule rule_name prems (AstMath e) (AstMath e)))
 (set (MathProof e) e_prf)
 
-;; e' = (Add a d'): rewrite child 1 (d -> d')
-(let e_to_e' (Congr e_prf 1 d_to_d'))                    ;; `e = e'`
+;; e' = (Add a d''): rewrite child 1 (d -> d'')
+(let e_to_e' (Congr e_prf 1 d_to_d''))                   ;; `e = e'`
 
-;; intern (Add a d'); e'' is the representative
-(let e'' (set-if-empty-AddView! a d' e' e_to_e'))
-(let e'_to_e'' (view-proof-AddView a d' …))              ;; proves `e'' = (Add a d')`
-(let e_to_e'' (Trans e_to_e' e'_to_e''))                 ;; connector `e = e''`
+;; seed the view at children `a d''`; e'' is the e-class it returns
+(let e'' (set-if-empty-AddView! a d'' e e_to_e'))
+(let e'_to_e'' (view-proof-AddView a d'' e_to_e'))       ;; proves `e'' = (Add a d'')`
+(let e_to_e'' (Trans e_to_e' (Sym e'_to_e'')))           ;; connector `e = e''`
 ```
 
 ### Line 3 — `(let f (Neg e))`
@@ -305,16 +357,16 @@ child to rewrite: `d' = d`, and the connector is just the view proof.
 Same shape with one child: rewrite `e -> e''` at index 0.
 
 ```text
-(let f (get-fresh! "Math"))
-(set (Neg e f) ())
+(let f_cand (get-fresh! "Math"))
+(let f (set-if-empty-Neg! e f_cand))
 (let f_prf (Rule rule_name prems (AstMath f) (AstMath f)))
 (set (MathProof f) f_prf)
 
 (let f_to_f' (Congr f_prf 0 e_to_e''))                   ;; f' = (Neg e''), `f = f'`
 
-(let f'' (set-if-empty-NegView! e'' f' f_to_f'))
-(let f'_to_f'' (view-proof-NegView e'' …))               ;; proves `f'' = (Neg e'')`
-(let f_to_f'' (Trans f_to_f' f'_to_f''))                 ;; connector `f = f''`
+(let f'' (set-if-empty-NegView! e'' f f_to_f'))
+(let f'_to_f'' (view-proof-NegView e'' f_to_f'))         ;; proves `f'' = (Neg e'')`
+(let f_to_f'' (Trans f_to_f' (Sym f'_to_f'')))           ;; connector `f = f''`
 ```
 
 ### The union — `(union rewrite_var f)`
@@ -330,12 +382,12 @@ the union-find's `larger -> smaller` convention with `proof-of-max`/`proof-of-mi
      (values (ordering-min rewrite_var f'') <rw_to_f'' oriented via proof-of-max/min>))
 ```
 
-The discipline is the same at every level: build the natural term, `Congr` each
-child that moved to its representative, intern with `set-if-empty` to get the
-representative id, and hand a `natural = representative` connector up to the
-parent. Only representative ids reach the views; the union-find sees a natural
-only as the key of a `natural = representative` edge, written when a container
-captures the natural (see [Containers](#containers)).
+The discipline is the same at every level: intern the natural node, `Congr` each
+child that moved to its representative, seed the view at the canonical children to
+get the representative id, and hand a `natural = representative` connector up to
+the parent. Only representative ids appear in view keys; the union-find sees a
+natural only as the key of a `natural = representative` edge, written when a
+container captures the natural (see [Containers](#containers)).
 
 ## Delete and subsume
 
@@ -355,13 +407,13 @@ captures the natural (see [Containers](#containers)).
 
 Deletions and subsumptions are deferred: `(delete (Add 1 2))` records
 `(to_delete_Add 1 2)`, and the `delete_subsume_ruleset` (run during maintenance)
-removes the view row. Only the view is deleted/subsumed — the term relation is
+removes the view row. Only the view is deleted/subsumed — the term table is
 never queried, so keeping its rows lets proofs still refer to deleted terms.
 
 # Queries
 
 All queries — rule bodies, `check`, and `prove` — read the **view**, never the
-term relation. A view read binds both the e-class and the proof column:
+term table. A view read binds both the e-class and the proof column:
 
 ```text
 (= (values e p) (AddView a b))
@@ -383,6 +435,12 @@ view's proof composed with a `Congr` for each child that carries its own subproo
 mirroring the construction side.
 
 # Rebuilding
+
+Rebuilding is entirely the encoding's job. Because the encoding removes every
+`union` and declares every table as a plain function (never a constructor),
+nothing it lowers reaches the backend's own union-find, so the backend's native
+rebuilding — including its container rebuilding — never runs. The frontend
+asserts this via `egglog_bridge::EGraph::forbid_native_rebuild`.
 
 Between the original program's commands, the encoding runs maintenance rules that
 restore the invariants egglog normally maintains during rebuilding:
@@ -467,8 +525,8 @@ The global is a nullary `:internal-let` function `set` to its value (no `union`
 at the top level), so it gets a view and rebuild rules like any other function;
 references to `g1` become the lookup `(g1)`. The `(Add 1 2)` and `(Add 3 4)`
 constructions above are the same [term construction](#building-a-term) shown
-earlier — the term-building sites in the encoding wrap their minted ids in such
-`:internal-let` functions.
+earlier — at the top level, the ids those sites bind become such `:internal-let`
+functions.
 
 # Containers
 

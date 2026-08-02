@@ -4,7 +4,6 @@ mod tests {
         Literal, ResolvedAction, ResolvedCommand, ResolvedExpr, RuleEvalMode,
         sanitize_internal_names,
     };
-    use crate::core::ResolvedCall;
     use crate::proofs::proof_extraction::ProveExistsError;
     use crate::{
         CommandOutput, EGraph, Error, ProofEncodingUnsupportedReason, TermDag, TermId,
@@ -180,17 +179,18 @@ mod tests {
         );
         let rule_name_var = rule_name_vars[0];
 
-        // Proof constructors are relations, so each `Rule` proof is emitted as a
-        // `(set (@Rule <rule-name> <proof-list> <ast> <ast> <id>) ())` action, not a
-        // call expression. Count those set actions and check they reuse the hoisted
+        // Proof nodes are hash-consed, so each `Rule` proof is emitted as a
+        // `(let <id> (set-if-empty-@Rule! <rule-name> <proof-list> <ast> <ast>
+        // <candidate>))` action. Count those and check they reuse the hoisted
         // rule-name variable as their first argument.
+        let rule_intern = crate::proofs::proof_fresh::set_if_empty_prim_name(&rule_constructor);
         let rule_uses = rule
             .head
             .0
             .iter()
             .filter(|action| match action {
-                ResolvedAction::Set(_, ResolvedCall::Func(func), args, _)
-                    if func.name == rule_constructor =>
+                ResolvedAction::Let(_, _, ResolvedExpr::Call(_, call, args))
+                    if call.name() == rule_intern =>
                 {
                     assert!(
                         matches!(

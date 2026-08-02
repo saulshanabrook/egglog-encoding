@@ -38,6 +38,10 @@ enum CarriedProofs {
 #[derive(Clone)]
 pub(crate) struct EncodingState {
     pub uf_parent: HashMap<String, String>,
+    /// Maps sort name -> its auxiliary union-find `AuxUF_<Sort>`, which relates
+    /// ids denoting the same term rather than real `union`s (see
+    /// `ProofInstrumentor::aux_uf_name`).
+    pub aux_uf_parent: HashMap<String, String>,
     /// Maps sort name -> proof function name (set from :internal-proof-func annotation).
     pub proof_func_parent: HashMap<String, String>,
     /// Maps container sort name -> the name of its registered container-rebuild
@@ -67,6 +71,7 @@ impl EncodingState {
     pub(crate) fn new(symbol_gen: &mut SymbolGen) -> Self {
         Self {
             uf_parent: HashMap::default(),
+            aux_uf_parent: HashMap::default(),
             proof_func_parent: HashMap::default(),
             container_rebuild_name: HashMap::default(),
             container_rebuild_proof_name: HashMap::default(),
@@ -409,8 +414,10 @@ impl<'a> ProofInstrumentor<'a> {
             .collect();
 
         if !self.proofs_enabled() {
+            // Writing the guest's node at `target` rather than a fresh candidate
+            // is what puts `F(args)` in `target`'s e-class.
             res.push(format!(
-                "(set ({ctor_name} {} {target}) ())",
+                "(set ({ctor_name} {}) {target})",
                 ListDisplay(&child_vals, " ")
             ));
             res.push(self.update_fd_view(&ctor_name, &child_vals, target, "()"));
@@ -459,9 +466,9 @@ impl<'a> ProofInstrumentor<'a> {
             None => to_dedup,
         };
         // The guest's term keeps its own id (`fv_nat`); only the view VALUE uses
-        // the target. Emitting `(F dedup_args target)` would add the guest's
-        // shape to `target`'s term relation, making `target`'s `@Ast` ambiguous
-        // during proof reconstruction (which reads term rows, not views).
+        // the target. Emitting `(F dedup_args target)` would give `target` a
+        // second shape, making its `@Ast` ambiguous during proof reconstruction
+        // (which reads term rows, not views).
         let dedup_disp = ListDisplay(&dedup_args, " ").to_string();
         res.push(format!(
             "(set ({view} {dedup_disp}) (values {target} {view_proof}))"
@@ -517,7 +524,7 @@ impl<'a> ProofInstrumentor<'a> {
         let trans = self.proof_names().eq_trans_constructor.clone();
         let sym = self.proof_names().eq_sym_constructor.clone();
         let proof_sort = self.proof_sort();
-        let mut mints = vec![];
+        let mut mints = Vec::new();
         let displaced_pf = match carried {
             CarriedProofs::KeyToParent => {
                 let sym_pf = self.mint(&mut mints, &sym, "hi_pf_", &proof_sort);
@@ -547,6 +554,7 @@ impl<'a> ProofInstrumentor<'a> {
     fn declare_sort_eq(&mut self, sort_name: &str) -> Vec<Command> {
         let proofs = self.proofs_enabled();
         let uf_name = self.uf_name(sort_name);
+        let aux_uf_name = self.aux_uf_name(sort_name);
         let proof_type = self.proof_type_str().to_string();
         let fresh_name = self.egraph.parser.symbol_gen.fresh("uf_path_compress");
         let path_compress_ruleset_name = self.proof_names().path_compress_ruleset_name.clone();
@@ -572,7 +580,7 @@ impl<'a> ProofInstrumentor<'a> {
         let (compressed_proof_lets, compressed_proof) = if proofs {
             let trans = self.proof_names().eq_trans_constructor.clone();
             let proof_sort = self.proof_sort();
-            let mut mints = vec![];
+            let mut mints = Vec::new();
             let pf = self.mint(&mut mints, &trans, &format!("{pb} {pc}"), &proof_sort);
             (mints.join("\n                    "), pf)
         } else {
@@ -582,6 +590,7 @@ impl<'a> ProofInstrumentor<'a> {
         let code = format!(
             "{proof_tables}
              (function {uf_name} ({sort_name}) ({sort_name} {proof_type}) :merge {uf_merge} :unextractable :internal-hidden :internal-identity-vals 1)
+             (function {aux_uf_name} ({sort_name}) {sort_name} :merge (ordering-min old new) :unextractable :internal-hidden :internal-identity-vals 1)
              (rule ((= (values {b} {pb}) ({uf_name} {a}))
                     (= (values {c} {pc}) ({uf_name} {b}))
                     (!= {b} {c}))
@@ -629,7 +638,7 @@ impl<'a> ProofInstrumentor<'a> {
             .as_ref()
             .expect("custom FD view requires a :merge");
 
-        let mut body_code = vec![];
+        let mut body_code = Vec::new();
         let mut idx = 0usize;
         let merged = self.instrument_merge_body(
             &merge.result,
@@ -755,24 +764,40 @@ impl<'a> ProofInstrumentor<'a> {
                 "(function {view_name} ({in_sorts}) ({out_type} {proof_type}) :no-merge :internal-term-constructor {name}{view_flags} :internal-identity-vals 1)"
             )
         };
+        let aux_uf = self.aux_uf_name(&view_sort);
         // `fresh_sort` is the term's e-class sort only for a custom function whose
         // output is a distinct value (see `view_sort` above); a constructor/global
-        // reuses its output sort, leaving `fresh_sort` unused.
+        // reuses its output sort, leaving `fresh_sort` unused. It carries
+        // `:internal-aux-uf` for the same reason an eq-sort does.
         let fresh_sort_decl = if output_is_eclass {
             String::new()
         } else {
-            format!("(sort {fresh_sort})")
+            format!("(sort {fresh_sort} :internal-aux-uf {aux_uf})")
         };
-        // The term relation is a term node (`:internal-term-node`): its rows are
-        // reconstructed by proof extraction, with the minted id as the last input.
-        // The deferred delete/subsume markers are keyed on children with no output,
-        // so they are plain `Unit` relations (not term nodes) — the encoding mints
-        // no e-class there and extraction never reads them as terms.
+        // The term table is a term node (`:internal-term-node`) hash-consed on its
+        // children, its `:merge` folding a same-iteration duplicate id into
+        // `AuxUF_<view_sort>` (see proof_encoding.md, "Term table and view"). The
+        // deferred delete/subsume markers hold no id, so they are plain `Unit`
+        // relations (not term nodes).
+        // Single-output function, so the merge binds `old`/`new` (not `old0`/`new0`).
+        let term_merge = format!(
+            "((set ({aux_uf} (ordering-max old new)) (ordering-min old new)) (ordering-min old new))"
+        );
+        // A real eq-sort's `AuxUF_<Sort>` is declared by `declare_sort_eq`; a custom
+        // function's throwaway `fresh_sort` id-sort has none, so declare it here.
+        let aux_uf_decl = if output_is_eclass {
+            String::new()
+        } else {
+            format!(
+                "(function {aux_uf} ({view_sort}) {view_sort} :merge (ordering-min old new) :unextractable :internal-hidden :internal-identity-vals 1)"
+            )
+        };
         self.parse_program(&format!(
             "
             {fresh_sort_decl}
+            {aux_uf_decl}
             {to_ast_view_sort}
-            (function {name} ({term_sorts} {view_sort}) Unit :no-merge :internal-hidden :internal-term-node)
+            (function {name} ({term_sorts}) {view_sort} :merge {term_merge} :internal-hidden :internal-term-node :internal-identity-vals 1)
             {view_decl}
             (function {to_delete_name} ({in_sorts}) Unit :no-merge :internal-hidden)
             (function {subsumed_name} ({in_sorts}) Unit :no-merge :internal-hidden)
@@ -785,15 +810,13 @@ impl<'a> ProofInstrumentor<'a> {
     fn instrument_action(
         &mut self,
         action: &ResolvedAction,
+        res: &mut Vec<String>,
         justification: &Justification,
         nat_conn: &mut NatConn,
-    ) -> Vec<String> {
-        let mut res = vec![];
-
+    ) {
         match action {
             ResolvedAction::Let(_span, v, generic_expr) => {
-                let v2 =
-                    self.instrument_action_expr(generic_expr, &mut res, justification, nat_conn);
+                let v2 = self.instrument_action_expr(generic_expr, res, justification, nat_conn);
                 // Carry the canonicalization info onto the let-bound name. `v2` is
                 // the built term's deduped e-class var, keyed in `nat_conn` by that
                 // fresh var; without this, a later reference to `v.name` (e.g. the
@@ -819,37 +842,27 @@ impl<'a> ProofInstrumentor<'a> {
                 // arity for x's term relation (its output is the eclass, so it has
                 // no separate output column).
                 if generic_exprs.is_empty() && self.egraph.type_info.is_global(&func_type.name) {
-                    let e_value = self.instrument_action_expr(
-                        generic_expr,
-                        &mut res,
-                        justification,
-                        nat_conn,
-                    );
+                    let e_value =
+                        self.instrument_action_expr(generic_expr, res, justification, nat_conn);
                     let proof = if self.proofs_enabled() {
-                        self.global_value_proof(
-                            &mut res,
-                            func_type,
-                            &e_value,
-                            justification,
-                            nat_conn,
-                        )
+                        self.global_value_proof(res, func_type, &e_value, justification, nat_conn)
                     } else {
                         "()".to_string()
                     };
                     // Term row (`x`'s e-class is e's) + the FD view `() -> (val, proof)`.
-                    res.push(format!("(set ({} {e_value}) ())", func_type.name));
+                    // The nullary term table `(x) -> id` stores the aliased value
+                    // directly as its output; no `set-if-empty` (there is only one).
+                    res.push(format!("(set ({}) {e_value})", func_type.name));
                     res.push(self.update_fd_view(&func_type.name, &[], &e_value, &proof));
-                    return res;
+                    return;
                 }
 
                 let mut exprs = vec![];
                 for e in generic_exprs.iter().chain(std::iter::once(generic_expr)) {
-                    exprs.push(self.instrument_action_expr(e, &mut res, justification, nat_conn));
+                    exprs.push(self.instrument_action_expr(e, res, justification, nat_conn));
                 }
 
-                let (add_code, _fv) =
-                    self.add_term_and_view(func_type, &exprs, justification, nat_conn);
-                res.extend(add_code);
+                self.add_term_and_view(res, func_type, &exprs, justification, nat_conn);
             }
             ResolvedAction::Change(_span, change, h, generic_exprs) => {
                 if let ResolvedCall::Func(func_type) = h {
@@ -859,7 +872,7 @@ impl<'a> ProofInstrumentor<'a> {
                     };
                     let children = generic_exprs
                         .iter()
-                        .map(|e| self.instrument_action_expr(e, &mut res, justification, nat_conn))
+                        .map(|e| self.instrument_action_expr(e, res, justification, nat_conn))
                         .collect::<Vec<_>>();
 
                     // The marker is a `Unit` relation, so insert a row keyed on the
@@ -878,24 +891,20 @@ impl<'a> ProofInstrumentor<'a> {
                 // A union whose operand is a freshly-built constructor term is
                 // optimized upstream in `instrument_actions`; this arm handles
                 // the remaining general unions.
-                let v1 =
-                    self.instrument_action_expr(generic_expr, &mut res, justification, nat_conn);
-                let v2 =
-                    self.instrument_action_expr(generic_expr1, &mut res, justification, nat_conn);
+                let v1 = self.instrument_action_expr(generic_expr, res, justification, nat_conn);
+                let v2 = self.instrument_action_expr(generic_expr1, res, justification, nat_conn);
                 let ot = generic_expr.output_type();
                 let type_name = ot.name();
-                let unioned = self.union(&mut res, type_name, &v1, &v2, justification, nat_conn);
+                let unioned = self.union(res, type_name, &v1, &v2, justification, nat_conn);
                 res.push(unioned);
             }
             ResolvedAction::Panic(..) => {
                 res.push(format!("{action}"));
             }
             ResolvedAction::Expr(_span, generic_expr) => {
-                self.instrument_action_expr(generic_expr, &mut res, justification, nat_conn);
+                self.instrument_action_expr(generic_expr, res, justification, nat_conn);
             }
         }
-
-        res
     }
 
     /// Build the proof term that justifies a freshly-created term `fv`
@@ -1026,11 +1035,8 @@ impl<'a> ProofInstrumentor<'a> {
         )
     }
 
-    /// Mint a fresh id of `out_sort` and assert the relation row
-    /// `({name} {args_joined} <fresh>)`, appending the `let`/`set` onto `stmts`
-    /// and returning the fresh variable. Terms and proofs are relations rather
-    /// than constructors, so an id is minted explicitly here rather than by a
-    /// constructor call; every minted id keeps its row (nothing is merged away).
+    /// Intern the term/proof/AST/proof-list node `{name}(args_joined)` and return
+    /// its id. Alias of [`Self::hash_cons`].
     pub(crate) fn mint(
         &mut self,
         stmts: &mut Vec<String>,
@@ -1038,12 +1044,30 @@ impl<'a> ProofInstrumentor<'a> {
         args_joined: &str,
         out_sort: &str,
     ) -> String {
-        let v = self.fresh_var();
-        // The generic `get-fresh!` takes the target sort as a string literal so it
-        // types its output without per-sort primitives (its runtime ignores the arg).
+        self.hash_cons(stmts, name, args_joined, out_sort)
+    }
+
+    /// Intern the node `{name}(args_joined)` into its children-keyed table and
+    /// return its id, so identical nodes share one id. Emits a `get-fresh!`
+    /// candidate and a `set-if-empty`, which returns the already-interned id on a
+    /// hit.
+    ///
+    /// Usable inside a `:merge` body: `set-if-empty` declares a read dependency on
+    /// the table it interns into, so the backend merges that table in an earlier
+    /// stratum (see `egglog_bridge::EGraph::declare_external_func_table_deps`).
+    pub(crate) fn hash_cons(
+        &mut self,
+        stmts: &mut Vec<String>,
+        name: &str,
+        args_joined: &str,
+        out_sort: &str,
+    ) -> String {
         let get_fresh = crate::proofs::proof_fresh::GET_FRESH_PRIM_NAME;
-        stmts.push(format!("(let {v} ({get_fresh} \"{out_sort}\"))"));
-        stmts.push(format!("(set ({name} {args_joined} {v}) ())"));
+        let cand = self.fresh_var();
+        stmts.push(format!("(let {cand} ({get_fresh} \"{out_sort}\"))"));
+        let set_if_empty = crate::proofs::proof_fresh::set_if_empty_prim_name(name);
+        let v = self.fresh_var();
+        stmts.push(format!("(let {v} ({set_if_empty} {args_joined} {cand}))"));
         v
     }
 
@@ -1082,18 +1106,18 @@ impl<'a> ProofInstrumentor<'a> {
         self.proof_names().proof_datatype.clone()
     }
 
-    /// Return some code adding to the term and view tables, and a variable for
-    /// the created term. For constructors, `args` excludes the eclass of the
-    /// resulting term (it may not exist yet); for custom functions, `args`
+    /// Emit the code adding to the term and view tables onto `res`, returning a
+    /// variable for the created term. For constructors, `args` excludes the eclass
+    /// of the resulting term (it may not exist yet); for custom functions, `args`
     /// includes all arguments, output included.
     fn add_term_and_view(
         &mut self,
+        res: &mut Vec<String>,
         func_type: &FuncType,
         args: &[String],
         justification: &Justification,
         nat_conn: &mut NatConn,
-    ) -> (Vec<String>, String) {
-        let mut res = vec![];
+    ) -> String {
         let view_sort = self
             .egraph
             .proof_state
@@ -1103,21 +1127,20 @@ impl<'a> ProofInstrumentor<'a> {
             .expect("term sort recorded in term_and_view")
             .clone();
 
-        let var = if func_type.subtype != FunctionSubtype::Constructor {
-            self.add_custom_row(&mut res, func_type, args, justification, &view_sort)
+        if func_type.subtype != FunctionSubtype::Constructor {
+            self.add_custom_row(res, func_type, args, justification, &view_sort)
         } else if !self.egraph.proof_state.proofs_enabled {
-            self.add_constructor_term_only(&mut res, func_type, args, &view_sort)
+            self.add_constructor_term_only(res, func_type, args, &view_sort)
         } else {
             self.add_constructor_with_proof(
-                &mut res,
+                res,
                 func_type,
                 args,
                 justification,
                 nat_conn,
                 &view_sort,
             )
-        };
-        (res, var)
+        }
     }
 
     /// Custom functions: mint the term-relation row and record its term proof.
@@ -1130,7 +1153,7 @@ impl<'a> ProofInstrumentor<'a> {
         justification: &Justification,
         view_sort: &str,
     ) -> String {
-        let fv = self.mint(
+        let fv = self.hash_cons(
             res,
             &func_type.name,
             &ListDisplay(args, " ").to_string(),
@@ -1165,7 +1188,7 @@ impl<'a> ProofInstrumentor<'a> {
     ) -> String {
         let view = self.view_name(&func_type.name);
         let set_if_empty = crate::proofs::proof_fresh::set_if_empty_prim_name(&view);
-        let fv = self.mint(
+        let fv = self.hash_cons(
             res,
             &func_type.name,
             &ListDisplay(args, " ").to_string(),
@@ -1179,7 +1202,7 @@ impl<'a> ProofInstrumentor<'a> {
         canon
     }
 
-    /// Mint a constructor's *natural* node (children at their as-built ids) and
+    /// Intern a constructor's *natural* node (children at their as-built ids) and
     /// build a `Congr` chain proving `fv_nat = f(deduped children)`. Returns
     /// `(deduped children, fv_nat, nat_prf, nat_to_dedup)`, where `nat_prf` is
     /// `fv_nat`'s term proof (the caller anchors it) and `nat_to_dedup` is the
@@ -1228,13 +1251,12 @@ impl<'a> ProofInstrumentor<'a> {
         (dedup_args, fv_nat, nat_prf, nat_to_dedup)
     }
 
-    /// Proof-mode constructors: build the *natural* term (children at their
-    /// as-built ids) and the *canonical* term (children at their view-deduped
-    /// ids), connect them with a `Congr` chain over the changed children, then
-    /// `set-if-empty` to the view's deduped e-class and stitch on the view-dedup
-    /// edge. Return the deduped e-class (so parents and views stay canonical)
-    /// and record `(natural, connector : natural = deduped)` in `nat_conn` for
-    /// the parent's `Congr` and the root `union`.
+    /// Proof-mode constructors: intern the *natural* term (children at their
+    /// as-built ids), prove `natural = f(deduped children)` with a `Congr` chain
+    /// over the changed children, then `set-if-empty` that pair into the view to
+    /// get the deduped e-class. Return the deduped e-class (so parents and views
+    /// stay canonical) and record `(natural, connector : natural = deduped)` in
+    /// `nat_conn` for the parent's `Congr` and the root `union`.
     fn add_constructor_with_proof(
         &mut self,
         res: &mut Vec<String>,
@@ -1251,11 +1273,8 @@ impl<'a> ProofInstrumentor<'a> {
         let sym = self.proof_names().eq_sym_constructor.clone();
         let term_proof_constructor = self.term_proof_name(func_type.output().name());
 
-        // `fv_nat` stays *unseeded* (only `fv_can` is written to the view) so it is
-        // never pulled into the view's congruence `:merge`; its `@Rule` endpoint
-        // therefore keeps the as-built shape the rule head produced. `fv_can` is
-        // always a separate node (even when no child changed) with the reflexive
-        // proof `fv_can = fv_can`, exempt from the rule-head check.
+        // `fv_nat` is the node at the as-built children, so its `@Rule` endpoint
+        // keeps the shape the rule head produced.
         let (dedup_args, fv_nat, nat_prf, nat_to_dedup_term) = self.build_natural_with_congr(
             res,
             &func_type.name,
@@ -1264,22 +1283,14 @@ impl<'a> ProofInstrumentor<'a> {
             justification,
             nat_conn,
         );
-        let fv_can = self.mint(
-            res,
-            &func_type.name,
-            &ListDisplay(&dedup_args, " ").to_string(),
-            view_sort,
-        );
-        let sym_ntd = self.mint(res, &sym, &nat_to_dedup_term, &proof_sort);
-        let can_prf = self.mint(
-            res,
-            &trans,
-            &format!("{sym_ntd} {nat_to_dedup_term}"),
-            &proof_sort,
-        );
-
-        // Anchor both term proofs, dedup `fv_can` to the view e-class, and read the
-        // view's stored proof (`dedup = f(children)`).
+        // Anchor the natural term's proof, then seed the view with
+        // `(fv_nat, nat_to_dedup_term)` — a row proof whose RHS is `f(children)`,
+        // as every view reader requires — and read back the row's committed proof
+        // (`dedup = f(children)`; the fallback is the seed, so a fresh row's
+        // connector collapses to reflexive). The natural node must be the seed, and
+        // the only node interned here: interning a second one at the deduped
+        // children can leave the view's e-class with no term row (see
+        // proof_encoding.md, "Building nested terms with proofs").
         let dedup = self.fresh_var();
         let vprf = self.fresh_var();
         let view_proof = crate::proofs::proof_fresh::view_proof_prim_name(&view);
@@ -1288,13 +1299,10 @@ impl<'a> ProofInstrumentor<'a> {
             "(set ({term_proof_constructor} {fv_nat}) {nat_prf})"
         ));
         res.push(format!(
-            "(set ({term_proof_constructor} {fv_can}) {can_prf})"
+            "(let {dedup} ({set_if_empty} {dedup_args} {fv_nat} {nat_to_dedup_term}))"
         ));
         res.push(format!(
-            "(let {dedup} ({set_if_empty} {dedup_args} {fv_can} {can_prf}))"
-        ));
-        res.push(format!(
-            "(let {vprf} ({view_proof} {dedup_args} {can_prf}))"
+            "(let {vprf} ({view_proof} {dedup_args} {nat_to_dedup_term}))"
         ));
 
         // connector `fv_nat = dedup` = Trans(nat_to_dedup, Sym(dedup = f(children))).
@@ -1373,9 +1381,7 @@ impl<'a> ProofInstrumentor<'a> {
                     "new1".to_string(),
                     my_idx,
                 );
-                let (code, fv) = self.add_term_and_view(func_type, &arg_vars, &just, nat_conn);
-                res.extend(code);
-                fv
+                self.add_term_and_view(res, func_type, &arg_vars, &just, nat_conn)
             }
             // A container-producing primitive (e.g. `set-intersect`): build the
             // container over the recursively-built args and anchor a term-free
@@ -1443,10 +1449,7 @@ impl<'a> ProofInstrumentor<'a> {
                                 )
                             }
                         } else {
-                            let (add_code, fv) =
-                                self.add_term_and_view(func_type, &args, proof, nat_conn);
-                            res.extend(add_code);
-                            fv
+                            self.add_term_and_view(res, func_type, &args, proof, nat_conn)
                         }
                     }
                     ResolvedCall::Primitive(specialized_primitive) => {
@@ -1506,10 +1509,11 @@ impl<'a> ProofInstrumentor<'a> {
         // Repeated constructor applications are already shared `let`s (see
         // `ast::cse`). Normalize union operands to variables, then build each
         // freshly-constructed union operand directly into the other operand's
-        // e-class (see proof_encoding.md, "Union in a rule").
+        // e-class (see proof_encoding.md, "Optimization: building a union operand
+        // into an e-class").
         let normalized = self.normalize_union_operands(actions);
         let (construct_into, dropped) = Self::plan_construct_into(&normalized);
-        let mut res = vec![];
+        let mut res = Vec::new();
         for (i, action) in normalized.iter().enumerate() {
             if dropped.contains(&i) {
                 continue;
@@ -1526,7 +1530,7 @@ impl<'a> ProofInstrumentor<'a> {
                         nat_conn,
                     );
                 }
-                _ => res.extend(self.instrument_action(action, justification, nat_conn)),
+                _ => self.instrument_action(action, &mut res, justification, nat_conn),
             }
         }
         res
@@ -1594,7 +1598,7 @@ impl<'a> ProofInstrumentor<'a> {
                     {ruleset_opt} {eval_opt}
                     :name \"{name}\")",
             ListDisplay(facts, " "),
-            ListDisplay(actions, " "),
+            ListDisplay(&actions, " "),
         );
         self.parse_program(&instrumented)
     }
@@ -1733,6 +1737,14 @@ impl<'a> ProofInstrumentor<'a> {
                 } else {
                     Some((self.uf_name(name), None))
                 };
+                // Non-container eq-sorts get an auxiliary union-find (declared by
+                // `declare_sort`), recorded via `:internal-aux-uf` so a re-parse
+                // restores `aux_uf_parent`.
+                let aux_uf = if is_container {
+                    None
+                } else {
+                    Some(self.aux_uf_name(name))
+                };
                 // Every sort (containers included) records its `<Sort>Proof`
                 // table via `:internal-proof-func` so container rebuild can
                 // recover the per-container proof tables without a per-container
@@ -1767,6 +1779,7 @@ impl<'a> ProofInstrumentor<'a> {
                     presort_and_args: presort_and_args.clone(),
                     uf: uf_name,
                     proof_func,
+                    aux_uf,
                     unionable: *unionable,
                     container_rebuild,
                     // The Proof sort (which carries :internal-proof-names) is
@@ -1828,7 +1841,7 @@ impl<'a> ProofInstrumentor<'a> {
             }
             ResolvedNCommand::Extract(span, expr, variants) => {
                 // Instrument the expressions to use view tables (like actions, not facts)
-                let mut action_stmts = vec![];
+                let mut action_stmts = Vec::new();
                 let mut nat_conn = NatConn::default();
                 let instrumented_expr = self.instrument_action_expr(
                     expr,

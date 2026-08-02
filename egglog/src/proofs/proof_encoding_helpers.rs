@@ -115,6 +115,28 @@ impl ProofInstrumentor<'_> {
         }
     }
 
+    /// The auxiliary union-find `AuxUF_<sort>` for term-node ids. A hash-consed
+    /// term table's `:merge` records `new -> old` here when two same-iteration
+    /// inserts collide on the same children, so proof extraction can recover the
+    /// canonical term. Separate from [`Self::uf_name`] so it never mixes with the
+    /// normal union-find's real `union`s.
+    pub(crate) fn aux_uf_name(&mut self, sort: &str) -> String {
+        if let Some(name) = self.egraph.proof_state.aux_uf_parent.get(sort) {
+            name.clone()
+        } else {
+            let fresh_name = self
+                .egraph
+                .parser
+                .symbol_gen
+                .fresh(&format!("AuxUF_{sort}"));
+            self.egraph
+                .proof_state
+                .aux_uf_parent
+                .insert(sort.to_string(), fresh_name.clone());
+            fresh_name
+        }
+    }
+
     pub(crate) fn parse_program(&mut self, input: &str) -> Vec<Command> {
         self.egraph.parser.ensure_no_reserved_symbols = false;
         let res = self.egraph.parser.get_program_from_string(None, input);
@@ -306,9 +328,14 @@ impl ProofInstrumentor<'_> {
                 .proof_names
                 .sort_to_ast_constructor
                 .insert(sort.to_string(), to_ast_constructor.clone());
-            let ast_sort = &self.proof_names().ast_sort;
+            let ast_sort = self.proof_names().ast_sort.clone();
+            // Hash-consed AST node: keyed on the term, id in the output column.
+            let aux_ast = self.aux_uf_name(&ast_sort);
+            let amerge = format!(
+                "((set ({aux_ast} (ordering-max old new)) (ordering-min old new)) (ordering-min old new))"
+            );
             format!(
-                "(function {to_ast_constructor} ({sort} {ast_sort}) Unit :no-merge :internal-hidden :internal-term-node)"
+                "(function {to_ast_constructor} ({sort}) {ast_sort} :merge {amerge} :internal-hidden :internal-term-node :internal-identity-vals 1)"
             )
         } else {
             "".to_string()
@@ -358,6 +385,38 @@ impl ProofInstrumentor<'_> {
     /// Header string for proof encoding, defining sorts and constructors.
     /// Correspondings to [`RawProof`] in the Rust code.
     pub(crate) fn proof_header(&mut self) -> String {
+        // Owned copies so we can still call `&mut self` helpers (`aux_uf_name`).
+        let names = self.proof_names().clone();
+        let proof_list_sort = names.proof_list_sort;
+        let ast_sort = names.ast_sort;
+        let proof_datatype = names.proof_datatype;
+        let fiat_constructor = names.fiat_constructor;
+        let rule_constructor = names.rule_constructor;
+        let merge_fn_idx_constructor = names.merge_fn_idx_constructor;
+        let merge_fn_row_constructor = names.merge_fn_row_constructor;
+        let eq_trans_constructor = names.eq_trans_constructor;
+        let eq_sym_constructor = names.eq_sym_constructor;
+        let congr_constructor = names.congr_constructor;
+        let congr_all_constructor = names.congr_all_constructor;
+        let container_normalize_constructor = names.container_normalize_constructor;
+        let eval_constructor = names.eval_constructor;
+        let pcons = names.pcons;
+        let pnil = names.pnil;
+
+        // A hash-consed node table's `:merge` folds a same-iteration duplicate id
+        // into its id sort's auxiliary union-find.
+        let aux_proof = self.aux_uf_name(&proof_datatype);
+        let aux_list = self.aux_uf_name(&proof_list_sort);
+        let aux_ast = self.aux_uf_name(&ast_sort);
+        let merge = |aux: &str| {
+            format!(
+                "((set ({aux} (ordering-max old new)) (ordering-min old new)) (ordering-min old new))"
+            )
+        };
+        let pmerge = merge(&aux_proof);
+        let lmerge = merge(&aux_list);
+        let amerge = merge(&aux_ast);
+
         let mut to_ast_constructors = Vec::new();
         // need to build a Ast{lit} for each lit sort in self
         for sort_name in self.egraph.type_info.sorts.keys().clone() {
@@ -377,87 +436,80 @@ impl ProofInstrumentor<'_> {
                     .sort_to_ast_constructor
                     .insert(sort_name.clone(), ast_constructor.clone());
                 to_ast_constructors.push(format!(
-                    "(function {ast_constructor} ({sort_name} {}) Unit :no-merge :internal-hidden :internal-term-node)",
-                    self.proof_names().ast_sort
+                    "(function {ast_constructor} ({sort_name}) {ast_sort} :merge {amerge} :internal-hidden :internal-term-node :internal-identity-vals 1)"
                 ));
             }
         }
         let to_ast_str = to_ast_constructors.join("\n");
 
-        let EncodingNames {
-            ref proof_list_sort,
-            ref ast_sort,
-            ref proof_datatype,
-            ref fiat_constructor,
-            ref rule_constructor,
-            ref merge_fn_idx_constructor,
-            ref merge_fn_row_constructor,
-            ref eq_trans_constructor,
-            ref eq_sym_constructor,
-            ref congr_constructor,
-            ref congr_all_constructor,
-            ref container_normalize_constructor,
-            ref eval_constructor,
-            ref pcons,
-            ref pnil,
-            ..
-        } = *self.proof_names();
+        let aux_decl = |aux: &str, sort: &str| {
+            format!(
+                "(function {aux} ({sort}) {sort} :merge (ordering-min old new) :unextractable :internal-hidden :internal-identity-vals 1)"
+            )
+        };
+        let aux_proof_decl = aux_decl(&aux_proof, &proof_datatype);
+        let aux_list_decl = aux_decl(&aux_list, &proof_list_sort);
+        let aux_ast_decl = aux_decl(&aux_ast, &ast_sort);
 
         format!(
             "
-(sort {proof_list_sort})
-(sort {ast_sort}) ;; wrap sorts in this for proofs
+(sort {proof_list_sort} :internal-aux-uf {aux_list})
+(sort {ast_sort} :internal-aux-uf {aux_ast}) ;; wrap sorts in this for proofs
 ;; The proof datatype records the global proof constructor names so container
 ;; rebuild can recover them on re-parse (see ContainerRebuildSpec).
-(sort {proof_datatype} :internal-proof-names {congr_constructor} {congr_all_constructor} {eq_trans_constructor} {eq_sym_constructor} {container_normalize_constructor} {fiat_constructor})
+(sort {proof_datatype} :internal-proof-names {congr_constructor} {congr_all_constructor} {eq_trans_constructor} {eq_sym_constructor} {container_normalize_constructor} {fiat_constructor} :internal-aux-uf {aux_proof})
 
-;; Proof/AST/ProofList terms are relations, not constructors: the encoding mints
-;; a fresh id (`get-fresh!`) and asserts the row, so congruent duplicates are
-;; kept (never merged away) rather than relying on native congruence. The final
-;; column of each relation is the minted output id.
-(function {pcons} ({proof_datatype} {proof_list_sort} {proof_list_sort}) Unit :no-merge :internal-hidden :internal-term-node)
-(function {pnil} ({proof_list_sort}) Unit :no-merge :internal-hidden :internal-term-node)
+;; Auxiliary union-finds for the proof/AST/proof-list id sorts: a hash-consed
+;; node table's `:merge` records same-iteration duplicate ids here.
+{aux_proof_decl}
+{aux_list_decl}
+{aux_ast_decl}
+
+;; Proof/AST/ProofList node tables are hash-consed on their arguments: the id is
+;; the output column, built with `set-if-empty`, so identical nodes share one id.
+(function {pcons} ({proof_datatype} {proof_list_sort}) {proof_list_sort} :merge {lmerge} :internal-hidden :internal-term-node :internal-identity-vals 1)
+(function {pnil} () {proof_list_sort} :merge {lmerge} :internal-hidden :internal-term-node :internal-identity-vals 1)
 
 {to_ast_str}
 
 ;; Fiat justification for globals and primitives, gives two terms t1 = t2 for the proposition being justified
-(function {fiat_constructor} ({ast_sort} {ast_sort} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
+(function {fiat_constructor} ({ast_sort} {ast_sort}) {proof_datatype} :merge {pmerge} :internal-hidden :internal-term-node :internal-identity-vals 1)
 ;; name of rule, one proof per fact in the query, proposition being proven t1 = t2
-(function {rule_constructor} (String {proof_list_sort} {ast_sort} {ast_sort} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
+(function {rule_constructor} (String {proof_list_sort} {ast_sort} {ast_sort}) {proof_datatype} :merge {pmerge} :internal-hidden :internal-term-node :internal-identity-vals 1)
 
 ;; term-free merge justification for an FD custom-function view subexpression:
 ;; name of function, two premise proofs, and the pre-order index of the merge-body
 ;; subexpression whose conclusion is reconstructed during proof conversion
-(function {merge_fn_idx_constructor} (String {proof_datatype} {proof_datatype} i64 {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
+(function {merge_fn_idx_constructor} (String {proof_datatype} {proof_datatype} i64) {proof_datatype} :merge {pmerge} :internal-hidden :internal-term-node :internal-identity-vals 1)
 ;; term-free merge justification for an FD custom-function view row:
 ;; name of function and two premise proofs; the whole-row conclusion is
 ;; reconstructed during proof conversion by running the whole merge body
-(function {merge_fn_row_constructor} (String {proof_datatype} {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
+(function {merge_fn_row_constructor} (String {proof_datatype} {proof_datatype}) {proof_datatype} :merge {pmerge} :internal-hidden :internal-term-node :internal-identity-vals 1)
 
 ;; transitivity of equality proofs
-(function {eq_trans_constructor} ({proof_datatype} {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
+(function {eq_trans_constructor} ({proof_datatype} {proof_datatype}) {proof_datatype} :merge {pmerge} :internal-hidden :internal-term-node :internal-identity-vals 1)
 
 ;; symmetry of equality proofs
-(function {eq_sym_constructor} ({proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
+(function {eq_sym_constructor} ({proof_datatype}) {proof_datatype} :merge {pmerge} :internal-hidden :internal-term-node :internal-identity-vals 1)
 ;; given a proof that t1 = f(..., ci, ...)
 ;; and the child index i of ci in the term f(..., ci, ...)
 ;; and a proof that ci = c2,
 ;; produces a justification that t1 = f(..., c2, ...)
-(function {congr_constructor} ({proof_datatype} i64 {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
+(function {congr_constructor} ({proof_datatype} i64 {proof_datatype}) {proof_datatype} :merge {pmerge} :internal-hidden :internal-term-node :internal-identity-vals 1)
 
 ;; element-matching congruence (used by container rebuilds): given a proof that
 ;; t1 = c and a proof that a = b, produces a justification that t1 = c with
 ;; every child of c equal to a replaced by b.
-(function {congr_all_constructor} ({proof_datatype} {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
+(function {congr_all_constructor} ({proof_datatype} {proof_datatype}) {proof_datatype} :merge {pmerge} :internal-hidden :internal-term-node :internal-identity-vals 1)
 
 ;; given a proof that t1 = c, where c is a container term, produces a proof that
 ;; t1 = normalize(c) (the container's canonicalization: sort/dedup for sets,
 ;; last-write-wins for maps, sort for multisets)
-(function {container_normalize_constructor} ({proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
+(function {container_normalize_constructor} ({proof_datatype}) {proof_datatype} :merge {pmerge} :internal-hidden :internal-term-node :internal-identity-vals 1)
 
 ;; marks the proof of a container side condition. Carries nothing: the side
 ;; condition is re-evaluated against the rule body when checked.
-(function {eval_constructor} ({proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
+(function {eval_constructor} () {proof_datatype} :merge {pmerge} :internal-hidden :internal-term-node :internal-identity-vals 1)
                 "
         )
     }

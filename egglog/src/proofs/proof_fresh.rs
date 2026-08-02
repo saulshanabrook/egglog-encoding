@@ -1,12 +1,13 @@
 //! The term/proof encoding's mint + canonicalize primitives.
 //!
-//! With terms and proofs encoded as relations (rather than constructors), an
-//! e-node / proof-node id is no longer minted by a constructor call. Instead the
-//! encoding mints a fresh id explicitly and asserts the relation row:
+//! Term and proof node tables are hash-consed on their children, so a node is
+//! interned rather than minted by a constructor call: the encoding mints a
+//! candidate id and `set-if-empty` returns the already-interned id on a hit,
+//! discarding the candidate.
 //!
 //! ```text
-//! (let fresh (get-fresh! "Math"))
-//! (Add a b fresh)
+//! (let cand (get-fresh! "Math"))
+//! (let v (set-if-empty-Add! a b cand))
 //! ```
 //!
 //! These primitives (`get-fresh!`, `set-if-empty`, and its proof-column reader)
