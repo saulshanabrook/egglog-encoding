@@ -32,6 +32,8 @@ pub(crate) struct NewSlot {
     pub(crate) name: String,
     pub(crate) span: Span,
     displaced: Option<(String, i64)>,
+    /// The sort whose table this reservation declared, if it declared one.
+    declared: Option<String>,
 }
 
 impl GlobalSlots {
@@ -56,7 +58,8 @@ impl GlobalSlots {
     }
 
     /// Release rows reserved for a command that was then rejected, restoring what
-    /// each name meant before it. Their ids are not reused.
+    /// each name meant before it. Their ids are not reused. A table the command
+    /// declared goes with it, so the next global of that sort declares one again.
     pub(crate) fn give_back(&mut self, slots: Vec<NewSlot>) {
         for slot in slots.into_iter().rev() {
             if let Some((table, id)) = self.slots.remove(&slot.name) {
@@ -65,6 +68,11 @@ impl GlobalSlots {
             if let Some(displaced) = slot.displaced {
                 self.names.insert(displaced.clone(), slot.name.clone());
                 self.slots.insert(slot.name, displaced);
+            }
+            if let Some(sort) = slot.declared
+                && let Some(table) = self.tables.remove(&sort)
+            {
+                self.next_id.remove(&table);
             }
         }
     }
@@ -96,6 +104,7 @@ impl GlobalSlots {
             name: global.to_owned(),
             span: span.clone(),
             displaced,
+            declared: first.then(|| sort.to_owned()),
         });
         (table, assigned, first)
     }

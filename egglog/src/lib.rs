@@ -447,6 +447,21 @@ impl EGraph {
     /// (`egglog_bridge::EGraph`); downstream crates can supply their own
     /// backend (e.g. a differential-dataflow engine) by implementing
     /// [`Backend`] and passing it here.
+    /// Register the shared global tables a program declares, wherever it declares
+    /// them. `remove_globals` keeps a wrapped command's expansion inside its
+    /// `fail`, so the first global of a sort can declare the table from there.
+    fn register_global_tables(&mut self, commands: &[ResolvedNCommand]) {
+        for command in commands {
+            match command {
+                GenericNCommand::Function(fdecl) if fdecl.internal_global_table => {
+                    self.type_info.global_tables.insert(fdecl.name.clone());
+                }
+                GenericNCommand::Fail(_, wrapped) => self.register_global_tables(wrapped),
+                _ => {}
+            }
+        }
+    }
+
     /// Name-check the globals `remove_globals` just gave a shared-table row.
     /// They have no function declaration of their own, so nothing else registers
     /// the name or the alias that pattern variables must not shadow. On error the
@@ -1225,7 +1240,7 @@ impl EGraph {
         };
 
         let (f, termdag, terms_and_outputs) = match self.global_slots.slot(sym) {
-            Some((table, id)) => self.global_row_to_dag(sym, &table.to_owned(), id)?,
+            Some((table, id)) => self.global_row_to_dag(sym, table, id)?,
             None => {
                 let (terms, outputs, termdag) = self.function_to_dag(sym, n, true)?;
                 let f = self
@@ -1234,7 +1249,11 @@ impl EGraph {
                     // function_to_dag should have checked this
                     .unwrap()
                     .clone();
-                (f, termdag, terms.into_iter().zip(outputs.unwrap()).collect())
+                (
+                    f,
+                    termdag,
+                    terms.into_iter().zip(outputs.unwrap()).collect(),
+                )
             }
         };
         let output = CommandOutput::PrintFunction(f, termdag, terms_and_outputs, mode);
@@ -2738,13 +2757,7 @@ impl EGraph {
             self.check_slotted_global_names()?;
             // `remove_globals` runs after typechecking, so the tables it declares
             // are registered here rather than by a later typecheck.
-            for command in &typechecked {
-                if let GenericNCommand::Function(fdecl) = command
-                    && fdecl.internal_global_table
-                {
-                    self.type_info.global_tables.insert(fdecl.name.clone());
-                }
-            }
+            self.register_global_tables(&typechecked);
             for command in &typechecked {
                 self.names.check_shadowing(command)?;
             }
@@ -4399,12 +4412,39 @@ mod tests {
         match resolved {
             ResolvedExpr::Call(_, ResolvedCall::Func(func), children) => {
                 assert_eq!(func.name, table);
+                assert!(
+                    table.starts_with(INTERNAL_SYMBOL_PREFIX),
+                    "{table} is reserved"
+                );
+                assert_eq!(func.input.len(), 1, "the table is keyed by a slot id");
                 assert_eq!(func.output().name(), I64Sort.name());
                 assert!(
-                    matches!(children.as_slice(), [ResolvedExpr::Lit(_, Literal::Int(key))] if *key == id)
+                    matches!(children.as_slice(), [ResolvedExpr::Lit(_, Literal::Int(key))] if *key == id),
+                    "expected a read of row {id} of {table}, got {children:?}",
                 );
             }
             other => panic!("expected global function call rewrite, got {other:?}"),
+        }
+    }
+
+    /// A rejected command hands its rows back, and a table it declared with them,
+    /// so the next global of that sort still declares one to write into.
+    #[test]
+    fn test_rejected_first_global_of_a_sort_leaves_no_stranded_table() {
+        for (shadowed, rejected, accepted) in [
+            ("(relation foo ())", "(let foo 3)", "(let $y 4)"),
+            (
+                "(datatype Math (Num i64)) (relation bar ())",
+                "(let bar (Num 1))",
+                "(let $z (Num 2))",
+            ),
+        ] {
+            let mut egraph = EGraph::default();
+            egraph.parse_and_run_program(None, shadowed).unwrap();
+            egraph
+                .parse_and_run_program(None, rejected)
+                .expect_err("shadowing a declared name is rejected");
+            egraph.parse_and_run_program(None, accepted).unwrap();
         }
     }
 

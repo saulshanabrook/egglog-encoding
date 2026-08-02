@@ -1495,7 +1495,7 @@ where
     /// Proof extraction reconstructs these; views and plain bookkeeping relations
     /// (e.g. delete/subsume markers) are unmarked and never read as terms.
     pub internal_term_node: bool,
-    /// The one table holding every eq-sort global of a single sort, keyed by the
+    /// The one table holding every global of a single sort, keyed by the
     /// global's slot id. Set alongside `internal_let`, which stays true.
     pub internal_global_table: bool,
 }

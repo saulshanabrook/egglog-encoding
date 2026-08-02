@@ -239,7 +239,7 @@ pub struct TypeInfo {
     primitives: HashMap<String, Vec<PrimitiveWithId>>,
     func_types: HashMap<String, FuncType>,
     pub(crate) global_sorts: HashMap<String, ArcSort>,
-    /// Names of the shared per-sort tables holding eq-sort globals.
+    /// Names of the shared per-sort tables holding globals.
     pub(crate) global_tables: HashSet<String>,
     /// Sorts that do not allow union (e.g., from `:no-union` sorts or relations).
     pub(crate) non_unionable_sorts: HashSet<String>,
@@ -1533,8 +1533,8 @@ impl TypeInfo {
         self.global_sorts.contains_key(sym)
     }
 
-    /// Whether `sym` is a shared per-sort table holding eq-sort globals, whose
-    /// rows are written like a global's rather than minted as terms.
+    /// Whether `sym` is a shared per-sort table holding globals, whose rows are
+    /// written like a global's rather than minted as terms.
     pub(crate) fn is_global_table(&self, sym: &str) -> bool {
         self.global_tables.contains(sym)
     }

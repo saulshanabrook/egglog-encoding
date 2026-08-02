@@ -12,6 +12,7 @@ eggcc-extraction.egg
 eqsat-basic-multiset.egg
 extract-vec-bench.egg
 factoring-multisets.egg
+fail-global-primitive.egg
 fusion.egg
 hardboiled_conv1d_128.egg
 herbie-tutorial.egg
