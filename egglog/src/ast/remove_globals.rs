@@ -1,6 +1,5 @@
 //! Remove global variables from the program by translating them into table
-//! reads: eq-sort globals into a row of one shared table per sort, base-sort
-//! globals into a function with no arguments.
+//! reads: each global becomes one row of its sort's shared table.
 //! This requires type information, so it is done after type checking.
 //! When a globally-bound primitive value is used in the actions of a rule,
 //! we add a new variable to the query bound to the primitive value.
@@ -9,11 +8,12 @@ use crate::*;
 use crate::{core::ResolvedCall, typechecking::FuncType};
 use egglog_ast::generic_ast::{GenericAction, GenericExpr, GenericFact, GenericRule};
 
-/// Where each eq-sort global lives: a row of its sort's shared table.
+/// Where each global lives: a row of its sort's shared table.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct GlobalSlots {
     /// Sort -> the one table its globals share. Named by the fresh generator, so
-    /// no program can declare a function that collides with it.
+    /// no program can declare a function that collides with it, and so it does
+    /// not count towards the size of the program's own data.
     tables: HashMap<String, String>,
     /// Global name -> (table, slot id).
     slots: HashMap<String, (String, i64)>,
@@ -35,7 +35,7 @@ pub(crate) struct NewSlot {
 }
 
 impl GlobalSlots {
-    /// The row `global` was written to, if it is an eq-sort global.
+    /// The row `global` was written to.
     pub(crate) fn slot(&self, global: &str) -> Option<(&str, i64)> {
         self.slots
             .get(global)
@@ -106,37 +106,26 @@ struct GlobalRemover<'a> {
     slots: &'a mut GlobalSlots,
     /// The `i64` sort, for the shared tables' key column.
     key_sort: ArcSort,
-    /// Whether eq-sort globals may share one table per sort. False once the
-    /// program has been encoded, where a new shared table would get no view.
+    /// Whether globals may share one table per sort. False once the program has
+    /// been encoded, where a new shared table would get no view.
     share_tables: bool,
 }
 
 /// Removes all globals from a program.
 /// No top level lets are allowed after this pass,
 /// nor any variable that references a global.
-/// Every reference becomes a read of the table the global was written to.
-///
-/// A base-sort global gets a function of its own, since it never goes stale:
-/// ```ignore
-/// (let x 3)
-/// (Add x x)
-/// ```
-/// becomes
-/// ```ignore
-/// (function x () i64)
-/// (set (x) 3)
-/// (Add (x) (x))
-/// ```
-///
-/// An eq-sort global instead takes a row of its sort's one shared table, so the
-/// schema is emitted once per sort rather than once per global:
+/// Every reference becomes a read of the row the global was written to. Globals
+/// of a sort share one table, so its schema is emitted once per sort rather than
+/// once per global:
 /// ```ignore
 /// (let e (Num 3))
+/// (Add e e)
 /// ```
 /// becomes
 /// ```ignore
 /// (function @Globals_Math (i64) Math :no-merge)
 /// (set (@Globals_Math 0) (Num 3))
+/// (Add (@Globals_Math 0) (@Globals_Math 0))
 /// ```
 ///
 /// If later, a global is referenced in a rule:
@@ -194,8 +183,7 @@ fn table_call(table: &str, key_sort: &ArcSort, output: &ArcSort) -> ResolvedCall
 }
 
 /// The expression a reference to `var` reads its value from: a row of the sort's
-/// shared table when `var` has a slot, and the global's own nullary function
-/// otherwise (base-sort globals, which need no shared table).
+/// shared table, or the global's own nullary function if it has no slot.
 ///
 /// TODO (yz) it would be better to implement replace_global_var
 /// as a function from ResolvedVar to ResolvedExpr
@@ -254,8 +242,7 @@ impl GlobalRemover<'_> {
     }
 
     /// The commands defining global `name` as `value`, ending with the `set` that
-    /// writes it. Eq-sort globals share one table per sort, declared on first use;
-    /// a base-sort global keeps its own nullary function.
+    /// writes it. Globals of a sort share one table, declared on first use.
     fn bind(
         &mut self,
         span: Span,
@@ -263,7 +250,7 @@ impl GlobalRemover<'_> {
         ty: &ArcSort,
         value: ResolvedExpr,
     ) -> Vec<ResolvedNCommand> {
-        if self.share_tables && ty.is_eq_sort() {
+        if self.share_tables {
             let (table, id, needs_decl) = self.slots.assign(&name, ty.name(), &span, self.fresh);
             let call = table_call(&table, &self.key_sort, ty);
             let mut out = vec![];

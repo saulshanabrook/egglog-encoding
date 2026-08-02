@@ -342,7 +342,7 @@ pub struct EGraph {
     proof_state: EncodingState,
     /// In proof mode, this is the program before proof instrumentation and the version we use for proof checking.
     proof_check_program: Vec<ResolvedNCommand>,
-    /// Which row of its sort's shared table each eq-sort global occupies.
+    /// Which row of its sort's shared table each global occupies.
     global_slots: remove_globals::GlobalSlots,
     /// Where wall time outside rule-set execution went.
     phase_timings: phase_timers::PhaseTimings,
@@ -1174,8 +1174,8 @@ impl EGraph {
     /// For functions, the output column is usually useful
     /// Print up to `n` the tuples in a given function.
     /// Print all tuples if `n` is not provided.
-    /// The row an eq-sort global was written to, shown under the global's own
-    /// name rather than the shared table's.
+    /// The row a global was written to, shown under the global's own name rather
+    /// than the shared table's.
     fn global_row_to_dag(
         &self,
         global: &str,
@@ -2736,6 +2736,15 @@ impl EGraph {
                 true,
             );
             self.check_slotted_global_names()?;
+            // `remove_globals` runs after typechecking, so the tables it declares
+            // are registered here rather than by a later typecheck.
+            for command in &typechecked {
+                if let GenericNCommand::Function(fdecl) = command
+                    && fdecl.internal_global_table
+                {
+                    self.type_info.global_tables.insert(fdecl.name.clone());
+                }
+            }
             for command in &typechecked {
                 self.names.check_shadowing(command)?;
             }
@@ -4386,11 +4395,14 @@ mod tests {
             )
             .unwrap();
 
+        let (table, id) = egraph.global_slots.slot("$x").expect("$x is a global");
         match resolved {
             ResolvedExpr::Call(_, ResolvedCall::Func(func), children) => {
-                assert_eq!(func.name, "$x");
-                assert!(children.is_empty());
+                assert_eq!(func.name, table);
                 assert_eq!(func.output().name(), I64Sort.name());
+                assert!(
+                    matches!(children.as_slice(), [ResolvedExpr::Lit(_, Literal::Int(key))] if *key == id)
+                );
             }
             other => panic!("expected global function call rewrite, got {other:?}"),
         }

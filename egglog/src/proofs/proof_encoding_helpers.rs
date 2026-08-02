@@ -1220,7 +1220,11 @@ fn command_supports_proof_encoding_impl(
         }
         // After global desugar it may look like this
         ResolvedCommand::Action(ResolvedAction::Set(_span, head, _children, expr)) => {
-            if !type_info.is_global(head.name()) || expr.output_type().is_eq_sort() {
+            // A global writes either its own function or a row of its sort's
+            // shared table.
+            let binds_global =
+                type_info.is_global(head.name()) || type_info.is_global_table(head.name());
+            if !binds_global || expr.output_type().is_eq_sort() {
                 Ok(())
             } else {
                 Err(ProofEncodingUnsupportedReason::LetBindingWithNonEqSort)
