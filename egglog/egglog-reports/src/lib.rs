@@ -348,7 +348,6 @@ impl RunReport {
         self.union(RunReport::singleton(ruleset, iteration));
     }
 
-    /// Merge two reports.
     /// Every ruleset's recorded time, summed.
     pub fn total_ruleset_time(&self) -> Duration {
         self.ruleset_timings
@@ -359,6 +358,7 @@ impl RunReport {
             .sum()
     }
 
+    /// Merge two reports.
     pub fn union(&mut self, other: Self) {
         self.iterations.extend(other.iterations);
         self.updated |= other.updated;
@@ -404,7 +404,6 @@ pub struct TimingSummaryV3 {
     pub schema_version: u32,
     pub rulesets: Vec<RulesetTimingV3>,
     /// Work outside rule-set execution, which no ruleset timer covers.
-    #[serde(default)]
     pub outside_rulesets: OutsidePhasesV3,
 }
 

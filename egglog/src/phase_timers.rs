@@ -8,11 +8,12 @@
 //!
 //! These phases are disjoint and are charged to the [`EGraph`] that did the work.
 //! What they leave over is the summary's unattributed residual: mostly the
-//! driver loop's own per-command work, which grows with the command count and
-//! so is largest under the encodings, plus whatever runs under no phase at all
-//! (a `check`, a print). A runner measuring a whole process also has its startup
-//! in there. So the residual is not a constant small term, and a phase grown to
-//! swallow it would be a worse report, not a better one.
+//! driver loop's own per-command work, which grows with the command count and so
+//! is largest under the encodings, plus the commands under no phase at all — a
+//! `check`, a print, and `extract`, which can be the expensive one. A runner
+//! measuring a whole process also has its startup in there. So the residual is
+//! not a constant small term, and a phase grown to swallow it would be a worse
+//! report, not a better one.
 //!
 //! [`EGraph`]: crate::EGraph
 
@@ -39,11 +40,12 @@ pub struct PhaseTimings {
     pub install: Duration,
     /// Running top-level actions: the writes that build the initial graph.
     pub actions: Duration,
-    /// Deciding what to run: interpreting a `run-schedule`, or a user-defined
-    /// command that may replace `run-schedule` entirely. Only the deciding —
-    /// the rule sets it drives are the per-ruleset timings, and the commands it
-    /// runs in turn are charged to their own phase. Expect it to be small; a
-    /// large value means an interpreter doing real work between iterations.
+    /// Deciding what to run: interpreting a `run-schedule`, and every other
+    /// user-defined command, since one can replace `run-schedule` entirely. The
+    /// rule sets it drives are the per-ruleset timings and the commands it runs
+    /// in turn are charged to their own phase, so a schedule that only drives
+    /// rule sets is small. A user-defined command that does its own work —
+    /// extracting, say — is charged here in full, and is then the larger part.
     pub schedule: Duration,
     /// Converting a recorded justification into a proof, at a `check`/`prove`.
     pub proof_extraction: Duration,

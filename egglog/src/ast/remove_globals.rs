@@ -1,7 +1,7 @@
-//! Remove global variables from the program by translating
-//! them into functions with no arguments.
+//! Remove global variables from the program by translating them into table
+//! reads: eq-sort globals into a row of one shared table per sort, base-sort
+//! globals into a function with no arguments.
 //! This requires type information, so it is done after type checking.
-//! Primitives are translated into functions with a primitive output.
 //! When a globally-bound primitive value is used in the actions of a rule,
 //! we add a new variable to the query bound to the primitive value.
 
@@ -25,7 +25,15 @@ pub(crate) struct GlobalSlots {
     next_id: HashMap<String, i64>,
     /// Globals slotted since the last [`Self::take_new`]. A slotted global has no
     /// function declaration of its own, so name checking reads them from here.
-    newly_slotted: Vec<(String, Span)>,
+    newly_slotted: Vec<NewSlot>,
+}
+
+/// A row reserved for a global, and what the name meant before.
+#[derive(Clone, Debug)]
+pub(crate) struct NewSlot {
+    pub(crate) name: String,
+    pub(crate) span: Span,
+    displaced: Option<(String, i64)>,
 }
 
 impl GlobalSlots {
@@ -40,24 +48,45 @@ impl GlobalSlots {
             .map(std::string::String::as_str)
     }
 
-    /// The globals slotted since the last call, which the caller must name-check.
-    pub(crate) fn take_new(&mut self) -> Vec<(String, Span)> {
+    /// The globals slotted since the last call, which the caller must name-check
+    /// and then either keep or hand back to [`Self::give_back`].
+    pub(crate) fn take_new(&mut self) -> Vec<NewSlot> {
         std::mem::take(&mut self.newly_slotted)
+    }
+
+    /// Release rows reserved for a command that was then rejected, restoring what
+    /// each name meant before it. Their ids are not reused, so no later global
+    /// lands on a row the rejected command would have written.
+    pub(crate) fn give_back(&mut self, slots: Vec<NewSlot>) {
+        for slot in slots.into_iter().rev() {
+            if let Some((table, id)) = self.slots.remove(&slot.name) {
+                self.names.remove(&(table, id));
+            }
+            if let Some(displaced) = slot.displaced {
+                self.names.insert(displaced.clone(), slot.name.clone());
+                self.slots.insert(slot.name, displaced);
+            }
+        }
     }
 
     /// Reserve `global` a row of its sort's table, returning the row and whether
     /// the table still needs declaring.
     fn assign(&mut self, global: &str, sort: &str, span: &Span) -> (String, i64, bool) {
-        self.newly_slotted.push((global.to_owned(), span.clone()));
         let table = global_table_name(sort);
         let first = !self.next_id.contains_key(&table);
         let id = self.next_id.entry(table.clone()).or_default();
         let assigned = *id;
         *id += 1;
-        self.slots
+        let displaced = self
+            .slots
             .insert(global.to_owned(), (table.clone(), assigned));
         self.names
             .insert((table.clone(), assigned), global.to_owned());
+        self.newly_slotted.push(NewSlot {
+            name: global.to_owned(),
+            span: span.clone(),
+            displaced,
+        });
         (table, assigned, first)
     }
 }
@@ -76,10 +105,9 @@ struct GlobalRemover<'a> {
 /// Removes all globals from a program.
 /// No top level lets are allowed after this pass,
 /// nor any variable that references a global.
-/// Adds new functions for global variables
-/// and replaces references to globals with
-/// references to the new functions.
-/// e.g.
+/// Every reference becomes a read of the table the global was written to.
+///
+/// A base-sort global gets a function of its own, since it never goes stale:
 /// ```ignore
 /// (let x 3)
 /// (Add x x)
@@ -91,7 +119,18 @@ struct GlobalRemover<'a> {
 /// (Add (x) (x))
 /// ```
 ///
-/// If later, this global is referenced in a rule:
+/// An eq-sort global instead takes a row of its sort's one shared table, so the
+/// schema is emitted once per sort rather than once per global:
+/// ```ignore
+/// (let e (Num 3))
+/// ```
+/// becomes
+/// ```ignore
+/// (function Globals_Math (i64) Math :no-merge)
+/// (set (Globals_Math 0) (Num 3))
+/// ```
+///
+/// If later, a global is referenced in a rule:
 /// ```ignore
 /// (rule ((Neg y))
 ///       ((Add x x)))
@@ -122,6 +161,11 @@ pub(crate) fn remove_globals(
 
 /// The call a nullary-function global is read through.
 fn nullary_call(var: &ResolvedVar) -> ResolvedCall {
+    assert!(
+        var.is_global_ref,
+        "{} is not a global reference",
+        var.name.clone()
+    );
     ResolvedCall::Func(FuncType {
         name: var.name.clone(),
         subtype: FunctionSubtype::Custom,

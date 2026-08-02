@@ -129,7 +129,7 @@ class PhaseValues(NamedTuple):
 
 
 class RulesetDelta(NamedTuple):
-    """One exact total delta and its five timing-component deltas."""
+    """One exact total delta and the per-phase deltas that make it up."""
 
     total: float
     phases: PhaseValues

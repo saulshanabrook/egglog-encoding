@@ -9,7 +9,7 @@ from typing import cast
 import pytest
 
 from benchmarking import models
-from benchmarking.reports.analysis import analyze_pair
+from benchmarking.reports.analysis import OutsidePhaseName, analyze_pair
 from benchmarking.reports.store import ReportRecord, ReportStore
 
 from .report_fixtures import make_record, make_ruleset_timing, make_target, make_timing_summary, write_report
@@ -343,6 +343,59 @@ def test_phase_rows_are_exhaustive_and_outside_is_wall_residual(tmp_path: Path) 
     assert sum(row.wall_delta_contribution or 0.0 for row in phases) == pytest.approx(1.0)
     assert phases[1].baseline.wall_share == pytest.approx(100.0 / 1_500.0)
     assert phases[-1].candidate.wall_share == pytest.approx(877.0 / 2_000.0)
+
+
+def test_outside_phases_are_subtracted_from_the_residual(tmp_path: Path) -> None:
+    """Every outside phase leaves `outside`, so dropping one would inflate it."""
+
+    report = tmp_path / "report.jsonl"
+    comparison = _comparison(tmp_path)
+    outside: list[tuple[OutsidePhaseName, int]] = [
+        ("parse", 11),
+        ("typecheck", 13),
+        ("desugar", 17),
+        ("encode", 19),
+        ("install", 23),
+        ("actions", 29),
+        ("schedule", 31),
+        ("proof_extraction", 37),
+    ]
+    timing = make_timing_summary(
+        make_ruleset_timing(
+            assembly_ns=41,
+            search_ns=100,
+            apply_ns=200,
+            unattributed_ns=0,
+            merge_ns=0,
+            rebuild_ns=0,
+        ),
+        **{f"{phase}_ns": value for phase, value in outside},
+    )
+    write_report(
+        report,
+        make_record(
+            0,
+            started_at="2026-07-15T12:00:00Z",
+            binary_sha256="sha256:baseline",
+            wall_sec=0.000001,
+            timing_summary=timing,
+        ),
+        make_record(
+            1,
+            started_at="2026-07-15T12:00:01Z",
+            binary_sha256="sha256:candidate",
+            wall_sec=0.000001,
+            timing_summary=timing,
+        ),
+    )
+
+    phases = {row.phase: row for row in analyze_pair(ReportStore(report), comparison, "phases").phases}
+
+    for phase, value in outside:
+        assert phases[phase].baseline.timing.point == float(value)
+    assert phases["assembly"].baseline.timing.point == 41.0
+    # 1000 ns of wall, less the 341 recorded and the 180 outside.
+    assert phases["outside"].baseline.timing.point == pytest.approx(1_000.0 - 341.0 - 180.0)
 
 
 def test_phase_endpoints_have_student_t_intervals_and_wall_context(tmp_path: Path) -> None:

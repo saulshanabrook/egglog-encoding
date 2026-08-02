@@ -55,32 +55,47 @@ fn scheduling_costs_less_than_the_rule_sets_it_drives() {
         .unwrap();
 
     let recorded = egraph.get_overall_run_report().total_ruleset_time();
+    let schedule = egraph.phase_timings().schedule;
     assert!(recorded > std::time::Duration::ZERO);
+    // Not just `< recorded`, which a dead counter would also satisfy.
+    assert!(schedule > std::time::Duration::ZERO);
     assert!(
-        egraph.phase_timings().schedule < recorded,
-        "schedule {:?} should be under the {recorded:?} of rule sets it drove",
-        egraph.phase_timings().schedule,
+        schedule < recorded,
+        "schedule {schedule:?} should be under the {recorded:?} of rule sets it drove",
     );
 }
 
 /// Time spent inside a `push`/`pop` scope was still spent. Phase timings only
-/// ever go up, which the phase wrappers rely on to measure what they nest.
+/// ever go up, which the phase wrappers rely on to measure what they nest —
+/// and which a `Duration` subtraction would panic over if they did not.
 #[test]
 fn timings_survive_a_pop() {
     let mut egraph = egglog_experimental::new_experimental_egraph();
     egraph.parse_and_run_program(None, PROGRAM).unwrap();
-    let before = egraph.phase_timings().total();
-    let recorded_before = egraph.get_overall_run_report().total_ruleset_time();
 
+    // Read the timings from inside the scope, so that restoring the state as it
+    // was at `(push)` would lose the work between the two.
+    egraph.parse_and_run_program(None, "(push)").unwrap();
     egraph
-        .parse_and_run_program(
-            None,
-            "(push)\n(run-schedule (saturate (run grow)))\n(pop)\n(run-schedule (saturate (run copy)))",
-        )
+        .parse_and_run_program(None, "(run-schedule (saturate (run grow)))")
         .unwrap();
+    let inside = egraph.phase_timings().total();
+    let recorded_inside = egraph.get_overall_run_report().total_ruleset_time();
 
-    assert!(egraph.phase_timings().total() >= before);
-    assert!(egraph.get_overall_run_report().total_ruleset_time() >= recorded_before);
+    egraph.parse_and_run_program(None, "(pop)").unwrap();
+
+    assert!(
+        egraph.phase_timings().total() >= inside,
+        "pop dropped {:?} of the {inside:?} spent before it",
+        inside.saturating_sub(egraph.phase_timings().total()),
+    );
+    assert!(egraph.get_overall_run_report().total_ruleset_time() >= recorded_inside);
+
+    // A pop must also leave the counters usable: the phase wrappers subtract
+    // them, so going backwards here used to abort the process.
+    egraph
+        .parse_and_run_program(None, "(run-schedule (saturate (run copy)))")
+        .unwrap();
     assert_eq!(
         ruleset_names(egraph.get_overall_run_report()),
         ["copy", "grow"]

@@ -450,10 +450,17 @@ impl EGraph {
     /// Name-check the globals `remove_globals` just gave a shared-table row.
     /// They have no function declaration of their own, so nothing else would
     /// register the name or the alias that pattern variables must not shadow.
+    ///
+    /// A rejected command never writes its rows, so on error they go back and
+    /// each name means what it did before.
     fn check_slotted_global_names(&mut self) -> Result<(), Error> {
-        for (name, span) in self.global_slots.take_new() {
-            self.names.check(name.clone(), span.clone())?;
-            self.names.track_global_alias(&name, &span);
+        let slotted = self.global_slots.take_new();
+        for slot in &slotted {
+            if let Err(err) = self.names.check(slot.name.clone(), slot.span.clone()) {
+                self.global_slots.give_back(slotted.clone());
+                return Err(err);
+            }
+            self.names.track_global_alias(&slot.name, &slot.span);
         }
         Ok(())
     }
@@ -2768,7 +2775,7 @@ impl EGraph {
             let term_encoding_added =
                 ProofInstrumentor::add_term_encoding(self, typechecked_no_globals);
             // The encoder parses the text it emits, which is the `parse` phase.
-            let nested_parse = self.parser.parse_time - parse_before;
+            let nested_parse = self.parser.parse_time.saturating_sub(parse_before);
             self.phase_timings.encode += start.elapsed().saturating_sub(nested_parse);
             let term_encoding_added = term_encoding_added?;
             let mut new_typechecked = vec![];

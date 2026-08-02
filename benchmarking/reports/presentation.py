@@ -62,8 +62,9 @@ PHASE_CAPTION = (
     "Unattributed is wall time minus every phase above it; ! marks a negative residual."
 )
 RULESET_CAPTION = (
-    "Totals show a 95% CI or one-round point. S/A/Exec/M/R are signed candidate − baseline mean deltas for "
-    "Search, Apply, Execution overhead (stored unattributed time), Merge, and Rebuild."
+    "Totals show a 95% CI or one-round point. Asm/S/A/Exec/M/R are signed candidate − baseline mean deltas for "
+    "Rule-set assembly, Search, Apply, Execution overhead (stored unattributed time), Merge, and Rebuild, "
+    "and together they make up Total Δ."
 )
 
 PHASE_LABELS: dict[PhaseName, str] = {
@@ -394,13 +395,25 @@ def _rulesets_section(
                     "baseline",
                     "candidate",
                     "delta",
+                    "assembly_delta",
                     "search_delta",
                     "apply_delta",
                     "execution_delta",
                     "merge_delta",
                     "rebuild_delta",
                 ),
-                ("Ruleset", "Baseline total", "Candidate total", "Total Δ", "S Δ", "A Δ", "Exec Δ", "M Δ", "R Δ"),
+                (
+                    "Ruleset",
+                    "Baseline total",
+                    "Candidate total",
+                    "Total Δ",
+                    "Asm Δ",
+                    "S Δ",
+                    "A Δ",
+                    "Exec Δ",
+                    "M Δ",
+                    "R Δ",
+                ),
                 tuple(
                     _row(
                         report_id("row", "rulesets", file.sha256, file.fact_directory_sha256, row.name),
@@ -408,6 +421,7 @@ def _rulesets_section(
                         _duration_estimate_cell(row.baseline),
                         _duration_estimate_cell(row.candidate),
                         text_cell(row.delta.total, format_duration(row.delta.total, signed=True)),
+                        text_cell(row.delta.phases.assembly, format_duration(row.delta.phases.assembly, signed=True)),
                         text_cell(row.delta.phases.search, format_duration(row.delta.phases.search, signed=True)),
                         text_cell(row.delta.phases.apply, format_duration(row.delta.phases.apply, signed=True)),
                         text_cell(
@@ -420,7 +434,18 @@ def _rulesets_section(
                     for row in rulesets
                 ),
                 caption=caption,
-                alignments=("left", "right", "right", "right", "right", "right", "right", "right", "right"),
+                alignments=(
+                    "left",
+                    "right",
+                    "right",
+                    "right",
+                    "right",
+                    "right",
+                    "right",
+                    "right",
+                    "right",
+                    "right",
+                ),
             )
         )
     return ReportSection("rulesets", "Ruleset comparison", tuple(blocks))

@@ -84,21 +84,31 @@ def make_ruleset_timing(
     }
 
 
-def make_timing_summary(*rulesets: RulesetTimingRecord) -> TimingSummaryRecord:
+def make_timing_summary(
+    *rulesets: RulesetTimingRecord,
+    parse_ns: int = 0,
+    typecheck_ns: int = 0,
+    desugar_ns: int = 0,
+    encode_ns: int = 0,
+    install_ns: int = 0,
+    actions_ns: int = 0,
+    schedule_ns: int = 0,
+    proof_extraction_ns: int = 0,
+) -> TimingSummaryRecord:
     """Construct a valid v3 timing-summary fixture."""
 
     return {
         "schema_version": 3,
         "rulesets": list(rulesets or (make_ruleset_timing(),)),
         "outside_rulesets": {
-            "parse_ns": 0,
-            "typecheck_ns": 0,
-            "desugar_ns": 0,
-            "encode_ns": 0,
-            "install_ns": 0,
-            "actions_ns": 0,
-            "schedule_ns": 0,
-            "proof_extraction_ns": 0,
+            "parse_ns": parse_ns,
+            "typecheck_ns": typecheck_ns,
+            "desugar_ns": desugar_ns,
+            "encode_ns": encode_ns,
+            "install_ns": install_ns,
+            "actions_ns": actions_ns,
+            "schedule_ns": schedule_ns,
+            "proof_extraction_ns": proof_extraction_ns,
         },
     }
 
