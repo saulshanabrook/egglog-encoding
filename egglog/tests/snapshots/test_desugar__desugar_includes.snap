@@ -1,11 +1,11 @@
 ---
-source: tests/test_desugar.rs
+source: egglog/tests/test_desugar.rs
 expression: snapshot
 ---
 (sort Main)
 (constructor Test2 () Main)
 (sort Math)
 (constructor Test () Math)
-(function Globals_Math (i64) Math :no-merge :unextractable :internal-let)
-(set (Globals_Math 0) (Test))
-(set (Globals_Math 1) (Test))
+(function @Globals_Math (i64) Math :no-merge :unextractable :internal-let)
+(set (@Globals_Math 0) (Test))
+(set (@Globals_Math 1) (Test))

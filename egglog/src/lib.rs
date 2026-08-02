@@ -1176,6 +1176,38 @@ impl EGraph {
     /// For functions, the output column is usually useful
     /// Print up to `n` the tuples in a given function.
     /// Print all tuples if `n` is not provided.
+    /// The single row an eq-sort global was written to, shown under the global's
+    /// own name rather than the name of the table its sort shares.
+    fn global_row_to_dag(
+        &self,
+        global: &str,
+        table: &str,
+        id: i64,
+    ) -> Result<(Function, TermDag, Vec<(TermId, TermId)>), Error> {
+        let (keys, values, mut termdag) = self.function_to_dag(table, usize::MAX, true)?;
+        let bound = keys
+            .into_iter()
+            .zip(values.expect("asked for the output column"))
+            .find_map(|(key, value)| match termdag.get(key) {
+                Term::App(_, children) if children.len() == 1 => {
+                    matches!(termdag.get(children[0]), Term::Lit(Literal::Int(k)) if *k == id)
+                        .then_some(value)
+                }
+                _ => None,
+            });
+        let named = termdag.app(global.to_owned(), vec![]);
+        let function = self
+            .functions
+            .get(table)
+            .expect("function_to_dag checked the table")
+            .clone();
+        Ok((
+            function,
+            termdag,
+            bound.map(|value| (named, value)).into_iter().collect(),
+        ))
+    }
+
     pub fn print_function(
         &mut self,
         sym: &str,
@@ -1194,14 +1226,20 @@ impl EGraph {
             }
         };
 
-        let (terms, outputs, termdag) = self.function_to_dag(sym, n, true)?;
-        let f = self
-            .functions
-            .get(sym)
-            // function_to_dag should have checked this
-            .unwrap();
-        let terms_and_outputs: Vec<_> = terms.into_iter().zip(outputs.unwrap()).collect();
-        let output = CommandOutput::PrintFunction(f.clone(), termdag, terms_and_outputs, mode);
+        let (f, termdag, terms_and_outputs) = match self.global_slots.slot(sym) {
+            Some((table, id)) => self.global_row_to_dag(sym, &table.to_owned(), id)?,
+            None => {
+                let (terms, outputs, termdag) = self.function_to_dag(sym, n, true)?;
+                let f = self
+                    .functions
+                    .get(sym)
+                    // function_to_dag should have checked this
+                    .unwrap()
+                    .clone();
+                (f, termdag, terms.into_iter().zip(outputs.unwrap()).collect())
+            }
+        };
+        let output = CommandOutput::PrintFunction(f, termdag, terms_and_outputs, mode);
         match file {
             Some(mut file) => {
                 log::info!("Writing output to file");

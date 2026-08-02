@@ -10,15 +10,17 @@
 (let start-b (Step (SeedB)))
 
 ; Each application of this rewrite doubles the nesting depth of `Step`.
-; The schedule below uses :until to stop once the total node count hits 8.
+; The schedule below uses :until to stop once the total node count hits 6.
+; A `let` binds a name to an existing node rather than adding one, so the two
+; bindings above do not count towards the size.
 (rewrite (Step x)
          (Step (Step x))
          :ruleset node-limit-demo)
 
-; Run the ruleset repeatedly via saturate, exiting as soon as `(get-size!) >= 8`.
-(run-schedule (saturate (run node-limit-demo :until (<= 8 (get-size!)))))
+; Run the ruleset repeatedly via saturate, exiting as soon as `(get-size!) >= 6`.
+(run-schedule (saturate (run node-limit-demo :until (<= 6 (get-size!)))))
 
 (print-size)
 
-(check (= (get-size!) 8))
-(fail (check (< (get-size!) 8)))
+(check (= (get-size!) 6))
+(fail (check (< (get-size!) 6)))

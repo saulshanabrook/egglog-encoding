@@ -9,19 +9,17 @@ use crate::*;
 use crate::{core::ResolvedCall, typechecking::FuncType};
 use egglog_ast::generic_ast::{GenericAction, GenericExpr, GenericFact, GenericRule};
 
-/// Name of the one table holding every eq-sort global of `sort`.
-pub(crate) fn global_table_name(sort: &str) -> String {
-    format!("Globals_{sort}")
-}
-
 /// Where each eq-sort global lives: a row of its sort's shared table.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct GlobalSlots {
+    /// Sort -> the one table its globals share. Named by the fresh generator, so
+    /// no program can declare a function that collides with it.
+    tables: HashMap<String, String>,
     /// Global name -> (table, slot id).
     slots: HashMap<String, (String, i64)>,
     /// (table, slot id) -> global name, for reading a slotted global back out.
     names: HashMap<(String, i64), String>,
-    /// Table -> next unused slot id, which is also its declared-yet marker.
+    /// Table -> next unused slot id.
     next_id: HashMap<String, i64>,
     /// Globals slotted since the last [`Self::take_new`]. A slotted global has no
     /// function declaration of its own, so name checking reads them from here.
@@ -37,8 +35,11 @@ pub(crate) struct NewSlot {
 }
 
 impl GlobalSlots {
-    fn slot(&self, global: &str) -> Option<&(String, i64)> {
-        self.slots.get(global)
+    /// The row `global` was written to, if it is an eq-sort global.
+    pub(crate) fn slot(&self, global: &str) -> Option<(&str, i64)> {
+        self.slots
+            .get(global)
+            .map(|(table, id)| (table.as_str(), *id))
     }
 
     /// The global stored at `id` of `table`, if that row holds one.
@@ -71,9 +72,19 @@ impl GlobalSlots {
 
     /// Reserve `global` a row of its sort's table, returning the row and whether
     /// the table still needs declaring.
-    fn assign(&mut self, global: &str, sort: &str, span: &Span) -> (String, i64, bool) {
-        let table = global_table_name(sort);
-        let first = !self.next_id.contains_key(&table);
+    fn assign(
+        &mut self,
+        global: &str,
+        sort: &str,
+        span: &Span,
+        fresh: &mut SymbolGen,
+    ) -> (String, i64, bool) {
+        let first = !self.tables.contains_key(sort);
+        let table = self
+            .tables
+            .entry(sort.to_owned())
+            .or_insert_with(|| fresh.fresh(&format!("Globals_{sort}")))
+            .clone();
         let id = self.next_id.entry(table.clone()).or_default();
         let assigned = *id;
         *id += 1;
@@ -126,8 +137,8 @@ struct GlobalRemover<'a> {
 /// ```
 /// becomes
 /// ```ignore
-/// (function Globals_Math (i64) Math :no-merge)
-/// (set (Globals_Math 0) (Num 3))
+/// (function @Globals_Math (i64) Math :no-merge)
+/// (set (@Globals_Math 0) (Num 3))
 /// ```
 ///
 /// If later, a global is referenced in a rule:
@@ -202,7 +213,7 @@ fn read_global(
         Some((table, id)) => GenericExpr::Call(
             span.clone(),
             table_call(table, key_sort, &var.sort),
-            vec![GenericExpr::Lit(span, Literal::Int(*id))],
+            vec![GenericExpr::Lit(span, Literal::Int(id))],
         ),
         None => GenericExpr::Call(span, nullary_call(var), vec![]),
     }
@@ -256,7 +267,7 @@ impl GlobalRemover<'_> {
         value: ResolvedExpr,
     ) -> Vec<ResolvedNCommand> {
         if self.share_tables && ty.is_eq_sort() {
-            let (table, id, needs_decl) = self.slots.assign(&name, ty.name(), &span);
+            let (table, id, needs_decl) = self.slots.assign(&name, ty.name(), &span, self.fresh);
             let call = table_call(&table, &self.key_sort, ty);
             let mut out = vec![];
             if needs_decl {
