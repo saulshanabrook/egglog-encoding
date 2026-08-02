@@ -157,9 +157,8 @@ impl EGraph {
                 let out = &row.vals[n_keys];
                 let class_id = self.value_to_class_id(function.schema.output(), *out);
                 if function.decl.internal_let {
-                    // Eq-sort globals share one table per sort, so the row's key
-                    // says which global it is; a base-sort global still has a
-                    // table to itself and is named by it.
+                    // Eq-sort globals share a table, so the key says which one this
+                    // is; a base-sort global has a table to itself, named for it.
                     let bound = inps
                         .first()
                         .map(|key| self.backend.base_values().unwrap::<i64>(*key))

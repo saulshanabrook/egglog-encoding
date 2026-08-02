@@ -188,9 +188,8 @@ impl RuleSetReport {
 pub struct IterationReport {
     pub rule_set_report: RuleSetReport,
     pub rebuild_time: Duration,
-    /// Getting rules ready to run: planning each rule the first time it is seen,
-    /// then re-deriving its plan under this iteration's seminaive timestamp.
-    /// Runs before the search timer starts.
+    /// Getting rules ready to run, before the search timer starts: planning each
+    /// rule once, then re-deriving its plan for this iteration.
     pub assembly_time: Duration,
 }
 

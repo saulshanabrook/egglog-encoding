@@ -56,8 +56,7 @@ impl GlobalSlots {
     }
 
     /// Release rows reserved for a command that was then rejected, restoring what
-    /// each name meant before it. Their ids are not reused, so no later global
-    /// lands on a row the rejected command would have written.
+    /// each name meant before it. Their ids are not reused.
     pub(crate) fn give_back(&mut self, slots: Vec<NewSlot>) {
         for slot in slots.into_iter().rev() {
             if let Some((table, id)) = self.slots.remove(&slot.name) {
@@ -107,9 +106,8 @@ struct GlobalRemover<'a> {
     slots: &'a mut GlobalSlots,
     /// The `i64` sort, for the shared tables' key column.
     key_sort: ArcSort,
-    /// Whether eq-sort globals may share one table per sort. False when the
-    /// program has already been encoded, where a new shared table would never be
-    /// given a term relation or a view.
+    /// Whether eq-sort globals may share one table per sort. False once the
+    /// program has been encoded, where a new shared table would get no view.
     share_tables: bool,
 }
 
@@ -257,8 +255,7 @@ impl GlobalRemover<'_> {
 
     /// The commands defining global `name` as `value`, ending with the `set` that
     /// writes it. Eq-sort globals share one table per sort, declared on first use;
-    /// a base-sort global keeps its own nullary function, since it never goes
-    /// stale and so is given no view or rebuild rule to share.
+    /// a base-sort global keeps its own nullary function.
     fn bind(
         &mut self,
         span: Span,

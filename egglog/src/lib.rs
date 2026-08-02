@@ -448,11 +448,9 @@ impl EGraph {
     /// backend (e.g. a differential-dataflow engine) by implementing
     /// [`Backend`] and passing it here.
     /// Name-check the globals `remove_globals` just gave a shared-table row.
-    /// They have no function declaration of their own, so nothing else would
-    /// register the name or the alias that pattern variables must not shadow.
-    ///
-    /// A rejected command never writes its rows, so on error they go back and
-    /// each name means what it did before.
+    /// They have no function declaration of their own, so nothing else registers
+    /// the name or the alias that pattern variables must not shadow. On error the
+    /// rows go back, since a rejected command never writes them.
     fn check_slotted_global_names(&mut self) -> Result<(), Error> {
         let slotted = self.global_slots.take_new();
         for slot in &slotted {
@@ -1176,8 +1174,8 @@ impl EGraph {
     /// For functions, the output column is usually useful
     /// Print up to `n` the tuples in a given function.
     /// Print all tuples if `n` is not provided.
-    /// The single row an eq-sort global was written to, shown under the global's
-    /// own name rather than the name of the table its sort shares.
+    /// The row an eq-sort global was written to, shown under the global's own
+    /// name rather than the shared table's.
     fn global_row_to_dag(
         &self,
         global: &str,
@@ -2077,10 +2075,9 @@ impl EGraph {
 
     /// Runs a command, charging what it costs to the phase it belongs to.
     ///
-    /// A command is charged only its own cost: the rule sets it drove are the
-    /// rule-set timings, and any command it ran in turn is charged to that
-    /// command's phase. A command under no phase (a `check`, a print) leaves its
-    /// time in the summary's unattributed residual.
+    /// A command is charged only its own cost, excluding the rule sets it drove
+    /// and any command it ran in turn. A command under no phase (a `check`, a
+    /// print) leaves its time in the unattributed residual.
     fn run_command(&mut self, command: ResolvedNCommand) -> Result<Vec<CommandOutput>, Error> {
         #[derive(Clone, Copy)]
         enum Charge {

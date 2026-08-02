@@ -956,12 +956,9 @@ impl<'a> ProofInstrumentor<'a> {
                 );
                 let run = emit.head.claim(HeadPosition::Set);
 
-                // Global definition `(set (x k…) e)`: the row aliases e, either as a
-                // nullary `:internal-let` function or as one row of its sort's shared
-                // global table. Store e's value+proof directly in the FD view (the
-                // row's e-class *is* e's) — no term mint, which would use the wrong
-                // arity for the term relation (its output is the eclass, so it has no
-                // separate output column).
+                // Global definition `(set (x k…) e)`: the row aliases e, so store
+                // e's value+proof directly in the FD view. Minting a term would use
+                // the wrong arity, the term relation having no output column.
                 let is_global_row = self.egraph.type_info.is_global_table(&func_type.name)
                     || (generic_exprs.is_empty()
                         && self.egraph.type_info.is_global(&func_type.name));
@@ -1776,11 +1773,8 @@ impl<'a> ProofInstrumentor<'a> {
                     ResolvedCall::Func(func_type) => {
                         if func_type.subtype == FunctionSubtype::Custom {
                             // Proof normal form bans looking up custom functions in
-                            // actions, except encoded globals, whose value is read
-                            // from their FD view (see `lookup_global`) — either a
-                            // nullary `:internal-let` function or one row of a shared
-                            // global table. This is the only custom lookup allowed
-                            // here.
+                            // actions. An encoded global is the one exception: its
+                            // value is read from its FD view (see `lookup_global`).
                             if self.egraph.type_info.is_global(&func_type.name)
                                 || self.egraph.type_info.is_global_table(&func_type.name)
                             {

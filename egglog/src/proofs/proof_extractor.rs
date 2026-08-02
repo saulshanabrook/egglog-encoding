@@ -187,10 +187,9 @@ impl EqStage {
             // Term/proof relations (function-to-Unit, id in the last input) and
             // ordinary constructors both reconstruct here; views and the
             // delete/subsume markers (`is_relation_term` is false for markers) are
-            // skipped. So is a global's row: a global only aliases the term it was
-            // bound to, so naming it here would state the proof over a name for the
-            // e-class rather than over the term the rest of the proof is built
-            // from, and the two would not line up at a congruence step.
+            // skipped. So is a global's row: it only aliases the term it was bound
+            // to, so naming it here would state the proof over the alias rather than
+            // the term, and the two would not line up at a congruence step.
             if (func.decl.subtype != FunctionSubtype::Constructor && !func.is_relation_term())
                 || func.extraction_output_sort().name() != sort.name()
                 || func.decl.term_constructor.is_some()

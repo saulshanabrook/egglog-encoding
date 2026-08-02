@@ -66,8 +66,7 @@ fn scheduling_costs_less_than_the_rule_sets_it_drives() {
 }
 
 /// Time spent inside a `push`/`pop` scope was still spent. Phase timings only
-/// ever go up, which the phase wrappers rely on to measure what they nest —
-/// and which a `Duration` subtraction would panic over if they did not.
+/// ever go up, which the phase wrappers rely on to measure what they nest.
 #[test]
 fn timings_survive_a_pop() {
     let mut egraph = egglog_experimental::new_experimental_egraph();

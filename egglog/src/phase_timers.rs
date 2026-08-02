@@ -7,13 +7,9 @@
 //! unexplained residual.
 //!
 //! These phases are disjoint and are charged to the [`EGraph`] that did the work.
-//! What they leave over is the summary's unattributed residual: mostly the
-//! driver loop's own per-command work, which grows with the command count and so
-//! is largest under the encodings, plus the commands under no phase at all — a
-//! `check`, a print, and `extract`, which can be the expensive one. A runner
-//! measuring a whole process also has its startup in there. So the residual is
-//! not a constant small term, and a phase grown to swallow it would be a worse
-//! report, not a better one.
+//! What they leave over is the summary's unattributed residual: the driver loop's
+//! own per-command work, which grows with the command count, and the commands
+//! under no phase at all (a `check`, a print, `extract`).
 //!
 //! [`EGraph`]: crate::EGraph
 
@@ -21,10 +17,9 @@ use std::time::Duration;
 
 /// Time spent turning commands into database updates, by phase.
 ///
-/// Disjoint: where one phase nests inside another — the encoder parses the text
-/// it generates, a user-defined command runs commands of its own — the time is
-/// charged to the inner one only. Rule-set time is not a phase here; it is
-/// subtracted the same way, since it is reported per rule set instead.
+/// Disjoint: where one phase nests inside another, the time is charged to the
+/// inner one only. Rule-set time is subtracted the same way, being reported per
+/// rule set instead.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct PhaseTimings {
     /// Text to AST, for the source program and for the text the encoder emits.
@@ -40,12 +35,10 @@ pub struct PhaseTimings {
     pub install: Duration,
     /// Running top-level actions: the writes that build the initial graph.
     pub actions: Duration,
-    /// Deciding what to run: interpreting a `run-schedule`, and every other
-    /// user-defined command, since one can replace `run-schedule` entirely. The
-    /// rule sets it drives are the per-ruleset timings and the commands it runs
-    /// in turn are charged to their own phase, so a schedule that only drives
-    /// rule sets is small. A user-defined command that does its own work —
-    /// extracting, say — is charged here in full, and is then the larger part.
+    /// Interpreting a `run-schedule`, and every other user-defined command, since
+    /// one can replace `run-schedule` entirely. Excludes the rule sets it drives
+    /// and the commands it runs, so a user-defined command that does its own work
+    /// (extracting, say) is the larger part of this.
     pub schedule: Duration,
     /// Converting a recorded justification into a proof, at a `check`/`prove`.
     pub proof_extraction: Duration,
