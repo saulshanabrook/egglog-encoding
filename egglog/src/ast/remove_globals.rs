@@ -34,6 +34,9 @@ pub(crate) struct NewSlot {
     displaced: Option<(String, i64)>,
     /// The sort whose table this reservation declared, if it declared one.
     declared: Option<String>,
+    /// Whether the global's name has been registered for shadow checking, and so
+    /// has to be unregistered if the command is rejected.
+    pub(crate) named: bool,
 }
 
 impl GlobalSlots {
@@ -55,6 +58,13 @@ impl GlobalSlots {
     /// and then either keep or hand back to [`Self::give_back`].
     pub(crate) fn take_new(&mut self) -> Vec<NewSlot> {
         std::mem::take(&mut self.newly_slotted)
+    }
+
+    /// Return a batch from [`Self::take_new`], to be resolved once the whole
+    /// command has either been accepted or rejected.
+    pub(crate) fn put_back(&mut self, slots: Vec<NewSlot>) {
+        let pending = std::mem::replace(&mut self.newly_slotted, slots);
+        self.newly_slotted.extend(pending);
     }
 
     /// Release rows reserved for a command that was then rejected, restoring what
@@ -105,6 +115,7 @@ impl GlobalSlots {
             span: span.clone(),
             displaced,
             declared: first.then(|| sort.to_owned()),
+            named: false,
         });
         (table, assigned, first)
     }
@@ -424,13 +435,25 @@ impl GlobalRemover<'_> {
             }
             // Handle the corner case where a global command is wrapped in (fail).
             // Remove globals from every wrapped command and keep the whole flattened
-            // result inside the `fail`.
+            // result inside the `fail` — except the shared tables, which are hoisted
+            // out. A `fail` asserts that a binding fails and stops at the first
+            // command that does, so a table left inside might never be declared
+            // while a later global still expects it to exist.
             GenericNCommand::Fail(span, cmds) => {
+                let mut tables = vec![];
                 let mut removed = vec![];
                 for cmd in cmds {
-                    removed.extend(self.remove_globals_cmd(cmd));
+                    for cmd in self.remove_globals_cmd(cmd) {
+                        match &cmd {
+                            GenericNCommand::Function(fdecl) if fdecl.internal_global_table => {
+                                tables.push(cmd)
+                            }
+                            _ => removed.push(cmd),
+                        }
+                    }
                 }
-                vec![GenericNCommand::Fail(span, removed)]
+                tables.push(GenericNCommand::Fail(span, removed));
+                tables
             }
             _ => {
                 let slots = &*self.slots;

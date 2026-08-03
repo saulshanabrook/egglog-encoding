@@ -913,17 +913,24 @@ pub fn program_supports_proofs(commands: &[ResolvedCommand], type_info: &TypeInf
     // scopes. `type_info.global_sorts` reflects only the final scope (each `pop`
     // unregisters its globals), so checking against it alone misreads a popped
     // global's action-side lookup as an unsupported function lookup.
-    let let_globals: HashSet<String> = commands
-        .iter()
-        .filter_map(|c| match c {
-            GenericCommand::Function {
-                name,
-                let_binding: true,
-                ..
-            } => Some(name.clone()),
-            _ => None,
-        })
-        .collect();
+    fn collect_let_globals(commands: &[ResolvedCommand], out: &mut HashSet<String>) {
+        for command in commands {
+            match command {
+                GenericCommand::Function {
+                    name,
+                    let_binding: true,
+                    ..
+                } => {
+                    out.insert(name.clone());
+                }
+                // A `fail` can wrap the command that declares one.
+                GenericCommand::Fail(_, wrapped) => collect_let_globals(wrapped, out),
+                _ => {}
+            }
+        }
+    }
+    let mut let_globals: HashSet<String> = HashSet::default();
+    collect_let_globals(commands, &mut let_globals);
     for command in commands {
         if let Err(reason) = command_supports_proof_encoding_impl(command, type_info, &let_globals)
         {

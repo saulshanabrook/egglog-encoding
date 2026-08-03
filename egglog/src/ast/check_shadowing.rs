@@ -16,6 +16,16 @@ impl Names {
         }
     }
 
+    /// Undo a [`Self::check`] and [`Self::track_global_alias`] for `name`, for a
+    /// command that was rejected after they ran. Both only ever add a name that
+    /// was absent, so dropping it restores what the name meant before.
+    pub(crate) fn forget(&mut self, name: &str) {
+        self.seen.remove(name);
+        if let Some(stripped) = name.strip_prefix(GLOBAL_NAME_PREFIX) {
+            self.global_aliases.remove(stripped);
+        }
+    }
+
     pub(crate) fn track_global_alias(&mut self, name: &str, span: &Span) {
         if let Some(stripped) = name.strip_prefix(GLOBAL_NAME_PREFIX) {
             self.global_aliases

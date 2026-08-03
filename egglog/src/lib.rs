@@ -441,41 +441,60 @@ impl Default for EGraph {
 }
 
 impl EGraph {
-    /// Construct an `EGraph` backed by the given [`Backend`] implementation.
-    ///
-    /// [`EGraph::default`] uses the in-memory reference backend
-    /// (`egglog_bridge::EGraph`); downstream crates can supply their own
-    /// backend (e.g. a differential-dataflow engine) by implementing
-    /// [`Backend`] and passing it here.
-    /// Register the shared global tables a program declares, wherever it declares
-    /// them. `remove_globals` keeps a wrapped command's expansion inside its
-    /// `fail`, so the first global of a sort can declare the table from there.
-    fn register_global_tables(&mut self, commands: &[ResolvedNCommand]) {
+    /// Register the globals a program declares. `remove_globals` runs after
+    /// typechecking, so nothing else registers what it declares, and it hoists a
+    /// shared table out of any `fail` wrapping the binding that declared it, so
+    /// every declaration is reachable here.
+    fn register_declared_globals(&mut self, commands: &[ResolvedNCommand]) {
         for command in commands {
-            match command {
-                GenericNCommand::Function(fdecl) if fdecl.internal_global_table => {
+            if let GenericNCommand::Function(fdecl) = command
+                && fdecl.internal_let
+            {
+                if fdecl.internal_global_table {
                     self.type_info.global_tables.insert(fdecl.name.clone());
+                } else if let Some(sort) = self.type_info.sorts.get(fdecl.schema.output()) {
+                    let sort = sort.clone();
+                    self.type_info.global_sorts.insert(fdecl.name.clone(), sort);
                 }
-                GenericNCommand::Fail(_, wrapped) => self.register_global_tables(wrapped),
-                _ => {}
             }
         }
     }
 
     /// Name-check the globals `remove_globals` just gave a shared-table row.
     /// They have no function declaration of their own, so nothing else registers
-    /// the name or the alias that pattern variables must not shadow. On error the
-    /// rows go back, since a rejected command never writes them.
+    /// the name or the alias that pattern variables must not shadow.
+    ///
+    /// The reservations stay pending until [`Self::resolve_command`] either keeps
+    /// or discards them, so that a rejection anywhere later in resolving the same
+    /// command still unwinds them.
     fn check_slotted_global_names(&mut self) -> Result<(), Error> {
-        let slotted = self.global_slots.take_new();
-        for slot in &slotted {
-            if let Err(err) = self.names.check(slot.name.clone(), slot.span.clone()) {
-                self.global_slots.give_back(slotted.clone());
-                return Err(err);
+        let mut slotted = self.global_slots.take_new();
+        let mut checked = Ok(());
+        for slot in &mut slotted {
+            if slot.named {
+                continue;
             }
+            if let Err(err) = self.names.check(slot.name.clone(), slot.span.clone()) {
+                checked = Err(err);
+                break;
+            }
+            slot.named = true;
             self.names.track_global_alias(&slot.name, &slot.span);
         }
-        Ok(())
+        self.global_slots.put_back(slotted);
+        checked
+    }
+
+    /// Undo the rows and names reserved while resolving a command that was then
+    /// rejected, so that nothing it named or declared outlives it.
+    fn discard_slotted_globals(&mut self) {
+        let slotted = self.global_slots.take_new();
+        for slot in &slotted {
+            if slot.named {
+                self.names.forget(&slot.name);
+            }
+        }
+        self.global_slots.give_back(slotted);
     }
 
     /// The key column of every shared global table.
@@ -486,6 +505,12 @@ impl EGraph {
             .clone()
     }
 
+    /// Construct an `EGraph` backed by the given [`Backend`] implementation.
+    ///
+    /// [`EGraph::default`] uses the in-memory reference backend
+    /// (`egglog_bridge::EGraph`); downstream crates can supply their own
+    /// backend (e.g. a differential-dataflow engine) by implementing
+    /// [`Backend`] and passing it here.
     pub fn with_backend(backend: Box<dyn Backend>) -> Self {
         let mut parser = Parser::default();
         let proof_state = EncodingState::new(&mut parser.symbol_gen);
@@ -2757,7 +2782,7 @@ impl EGraph {
             self.check_slotted_global_names()?;
             // `remove_globals` runs after typechecking, so the tables it declares
             // are registered here rather than by a later typecheck.
-            self.register_global_tables(&typechecked);
+            self.register_declared_globals(&typechecked);
             for command in &typechecked {
                 self.names.check_shadowing(command)?;
             }
@@ -2774,6 +2799,13 @@ impl EGraph {
         let start = std::time::Instant::now();
         let accounted_before = self.accounted_time();
         let resolved = self.resolve_command_inner(command);
+        // Whatever rows and names the command reserved are its own: keep them if it
+        // resolved, and unwind them if any stage rejected it.
+        if resolved.is_err() {
+            self.discard_slotted_globals();
+        } else {
+            self.global_slots.take_new();
+        }
         let nested = self.accounted_time().saturating_sub(accounted_before);
         self.phase_timings.desugar += start.elapsed().saturating_sub(nested);
         resolved
@@ -2806,23 +2838,8 @@ impl EGraph {
             );
             self.check_slotted_global_names()?;
             // The term encoder runs before the encoded program is typechecked, so it
-            // can't rely on the later typecheck to populate `global_sorts`. Register
-            // the new global functions' sorts eagerly so `is_global` recognizes them
-            // while encoding.
-            for command in &typechecked_no_globals {
-                if let GenericNCommand::Function(fdecl) = command
-                    && fdecl.internal_let
-                    && let Some(output_sort) = self.type_info.sorts.get(fdecl.schema.output())
-                {
-                    if fdecl.internal_global_table {
-                        self.type_info.global_tables.insert(fdecl.name.clone());
-                    } else {
-                        self.type_info
-                            .global_sorts
-                            .insert(fdecl.name.clone(), output_sort.clone());
-                    }
-                }
-            }
+            // can't rely on the later typecheck to register these.
+            self.register_declared_globals(&typechecked_no_globals);
             for command in &typechecked_no_globals {
                 self.names.check_shadowing(command)?;
             }
@@ -4425,6 +4442,46 @@ mod tests {
             }
             other => panic!("expected global function call rewrite, got {other:?}"),
         }
+    }
+
+    /// A command rejected *after* its globals were name-checked also has to give
+    /// them back: the name has to be bindable again, and the table it declared has
+    /// to be declared again by whoever needs it next.
+    #[test]
+    fn test_rejection_after_name_checking_releases_the_globals() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(None, "(datatype Math (Num i64)) (relation y ())")
+            .unwrap();
+        // Rejected by shadow checking, which runs after the globals are named.
+        egraph
+            .parse_and_run_program(None, "(let $x (begin (let y 1) (Num 2)))")
+            .expect_err("the block's local `y` shadows the relation");
+        // The table `$x` reserved must still get declared for `$z`.
+        egraph
+            .parse_and_run_program(None, "(let $z (Num 3)) (check (= $z (Num 3)))")
+            .unwrap();
+        // And `$x` itself must be free to bind.
+        egraph
+            .parse_and_run_program(None, "(let $x (Num 4)) (check (= $x (Num 4)))")
+            .unwrap();
+    }
+
+    /// One command can reserve rows for several globals, and a rejection has to
+    /// release every one of them, not just the row that failed.
+    #[test]
+    fn test_rejection_releases_every_global_the_command_reserved() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(None, "(datatype Math (Num i64)) (relation b ())")
+            .unwrap();
+        egraph
+            .parse_and_run_program(None, "(fail (let $a (Num 1)) (let b (Num 2)))")
+            .expect_err("`b` shadows the relation");
+        // `$a` was named before `b` was rejected, so it has to be unburned.
+        egraph
+            .parse_and_run_program(None, "(let $a (Num 5)) (check (= $a (Num 5)))")
+            .unwrap();
     }
 
     /// A rejected command hands its rows back, and a table it declared with them,

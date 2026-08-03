@@ -1,0 +1,10 @@
+; `(fail c1 c2)` stops at the first command that fails, so the `let` here never
+; runs. Global removal hoists the shared table it writes to out of the `fail`, so
+; the table is still declared and the next global of that sort — which declares
+; nothing itself — has somewhere to write.
+(datatype Math (Num i64))
+
+(fail (check (Num 1)) (let $x (Num 2)))
+
+(let $y (Num 3))
+(check (= $y (Num 3)))

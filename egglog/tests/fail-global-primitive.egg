@@ -1,16 +1,13 @@
 ; A `let` binding a primitive is not representable in the term/proof encoding,
 ; so this file must be reported as not supporting proofs.
 ;
-; The binding that matters is the second one. Global removal keeps the first
-; one's expansion — including the declaration of the shared table both of them
-; write to — inside the `fail`, so a check that only looks at the top level
-; never learns the table is one, and stops recognizing the second binding as a
-; global one at all.
+; The binding is wrapped in `(fail …)`, which is what makes it a regression test:
+; global removal used to leave the declaration of the shared table the binding
+; writes to inside the `fail`, where a scan of only the top level never found it,
+; so nothing recognized the write as a global binding at all.
 (datatype Math (Num i64))
 
 (fail (let $bad (/ 1 0)))
-
-(let $limit 5)
 
 (Num 1)
 (check (Num 1))
