@@ -86,7 +86,7 @@ rules, or proof size.
 
 ## Terminology and semantic model
 
-The design distinguishes four IDs that must not be conflated.
+The design distinguishes several identities that must not be conflated.
 
 ### Physical `RowId`
 
@@ -97,14 +97,15 @@ index coordinate.
 ### `StableRowId`
 
 A `StableRowId` identifies a logical row lineage in one semantic table. A full
-reference is scoped and table-qualified:
+reference is table-qualified:
 
 ```text
-StableRowRef = (TraceScopeId, TableId, StableRowId)
+StableRowRef = (TableId, StableRowId)
 ```
 
-The scope is carried by the trace/session handle rather than repeated in each
-physical row. A numeric stable ID has no meaning outside its table and scope.
+The owning `CausalSession` is the implicit namespace and is never encoded in a
+semantic or causal row. A numeric stable ID has no meaning outside its owning
+table and session.
 
 The stable ID survives:
 
@@ -124,8 +125,8 @@ IDs are never reused, including after `clear`.
 ### `EventId`
 
 An `EventId` names one causal event or one version of a logical row. Event IDs
-are unique within a trace scope and are opaque. Their numerical order is never
-used as a causal relation.
+are unique within the owning `CausalSession` and are opaque. Their numerical
+order is never used as a causal relation.
 
 Preserving a stable row ID across a rekey does not erase the change: the rekey
 creates a new row-state event. In causal mode, that exact state event is a
@@ -171,12 +172,11 @@ timestamp. Availability means graph ancestry from one of those heads. The
 common unbranched case has one head, while clone/future join points can have
 more without imposing an order between them.
 
-`TraceScopeId` identifies one causal-session epoch. A capture-aware database
-clone does not invent a new scope for rows that still contain the parent's
-event IDs. Instead, it forks a new branch frontier within the same scope. The
-session, catalog, and ID allocators are shared; frontier ancestry determines
-which inherited or branch-local events a later wave may consume. Sibling-only
-events are rejected even though their numeric IDs share a scope.
+A capture-aware database clone shares its parent's `CausalSession` and forks a
+new branch frontier. The catalog and ID allocators are therefore shared;
+frontier ancestry determines which inherited or branch-local events a later
+wave may consume. Sibling-only events are rejected even though their numeric
+IDs come from the same session allocator.
 
 ### `MergeTranscriptId`
 
@@ -465,10 +465,10 @@ This separation is intentional. It prevents causal rows from changing:
 Writers use fresh mutation-buffer handles and the same sharded pending queues as
 ordinary tables. Rule workers and parallel merge shards can therefore emit
 causal rows without a shared trace mutex. Each captured buffer carries a
-scope/wave generation token and registers as a live writer. Publication refuses
-to proceed until all writers explicitly flush/close and the live count reaches
-zero. A buffer dropped or flushed after its generation closes discards its
-pending rows and permanently invalidates the session; an unscoped public
+session/wave generation token and registers as a live writer. Publication
+refuses to proceed until all writers explicitly flush/close and the live count
+reaches zero. A buffer dropped or flushed after its generation closes discards
+its pending rows and permanently invalidates the session; an ordinary public
 `Box<dyn MutationBuffer>` is never allowed to smuggle an old `PendingCause`
 into a published wave.
 
@@ -495,9 +495,9 @@ Every causal table disables both stable-row identity and causal capture.
 The exact column encodings should remain private, but the logical schema is:
 
 ```text
-runs(run -> source_schedule_id, scope)
-branches(branch -> scope, fork_frontier)
-frontiers(frontier -> scope)
+runs(run -> source_schedule_id)
+branches(branch -> fork_frontier)
+frontiers(frontier)
 frontier_heads(frontier, ordinal -> wave)
 waves(wave -> run, branch, kind, input_frontier)
 wave_committed(wave -> output_frontier)
@@ -1171,10 +1171,10 @@ branch frontier from the current committed frontier. The two databases may
 diverge. The ordinary infallible `Clone` path is unavailable/fails closed while
 causal capture is active; plain and stable-ID-only clones retain their normal
 behavior. An event from one sibling branch is unavailable to the other unless
-an explicit future API joins their frontiers. A detached clone into a fresh
-scope is unsupported until it can copy and translate the reachable causal
-closure; minting snapshot source events would incorrectly turn derived state
-into axioms.
+an explicit future API joins their frontiers. A detached clone into a new
+causal session is unsupported until it can copy and translate the reachable
+causal closure; minting snapshot source events would incorrectly turn derived
+state into axioms.
 
 Initially, the shared `CausalSession` grants an exclusive wave lease to one
 branch at a time. A wave still uses the ordinary parallel rule and table paths,
@@ -1189,7 +1189,7 @@ Push/pop is strictly unsupported in the initial implementation and is rejected
 at preflight. Frontier chronology alone is insufficient: the current proof
 checker treats its resolved global-action context non-temporally, so discarded-
 branch globals could incorrectly authorize a proof after `pop`. Future support
-requires both same-scope branch frontiers (save/restore semantic state and
+requires both same-session branch frontiers (save/restore semantic state and
 frontier without rewinding allocators) and a branch-filtered checker context
 that excludes discarded globals.
 
@@ -1297,7 +1297,7 @@ Fail closed with structured diagnostics for:
 - stable/event/auxiliary ID exhaustion;
 - a late mutation buffer, incomplete publication, or invalidated session;
 - missing stable premise identity;
-- missing or cross-scope row state;
+- missing or wrong-session row state;
 - a sibling-branch event outside the consumer frontier;
 - an event dependency on an uncommitted/future frontier;
 - a causal cycle;
@@ -1338,7 +1338,7 @@ boundaries:
 - `core-relations/src/action/mod.rs` and `free_join/execute.rs`: pending causal
   context, causal hit/miss lookup, and firing recorder integration, without a
   second witness representation;
-- one focused `core-relations/src/causal.rs` module: session/scope IDs,
+- one focused `core-relations/src/causal.rs` module: session ownership,
   auxiliary table schemas, arity-family registry, wave writers, and integrity
   audit;
 - `core-relations/src/free_join/mod.rs`: database capture state and the
@@ -1380,7 +1380,7 @@ a subsystem, the design should be revisited before continuing.
 
 - Add `CausalSession`, `CausalStore`, the fixed tables, and preflight-frozen
   arity families.
-- Add branch frontiers, ordered publication, scope checks,
+- Add branch frontiers, ordered publication, session/branch checks,
   referential-integrity audit, and graph cycle detection.
 - Record source, commit, per-key merge transcript, retirement, and current-row-
   state transitions.
@@ -1456,7 +1456,7 @@ capture before replay/proof integration.
   or wraparound, publishes no partial row/event/transcript, and never reuses an
   ID.
 - Capture-aware clone succeeds only at a quiescent barrier, shares the session
-  and allocators, and forks frontier ancestry; a dangling cross-scope or
+  and allocators, and forks frontier ancestry; a dangling wrong-session or
   sibling-branch event is rejected.
 - The exclusive branch-wave lease permits parallel work within one wave but
   rejects a concurrent sibling wave before mutation; sequential sibling
@@ -1777,7 +1777,7 @@ these points:
    fast-path properties, not support requirements. Constructor `UnionId` and
    normalization merges instead use their dedicated causal witnesses and
    ordinary fresh proof maintenance.
-9. Capture-aware clones share one causal scope and fork the frontier DAG;
+9. Capture-aware clones share one causal session and fork the frontier DAG;
    detached causal clones and push/pop are unsupported. Future push/pop support
    additionally requires a branch-filtered proof-checker context.
 10. Conservative replay contracts are fail-by-default reviewed built-ins in
