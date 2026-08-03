@@ -36,8 +36,9 @@ The design has four deliberate properties:
    no bespoke trace arena and no global history-position log.
 4. Ordering is represented only at real stable-state boundaries. A bounded
    ruleset execution and each causally feed-forward rebuild stratum form waves.
-   Firings in a user wave are peers; local same-key reductions are explicit
-   edges rather than positions in a total order.
+   Firings in a user wave are peers. The one deliberate local linearization is
+   the ordered transcript of merge-callback invocations for a common table key;
+   no order is introduced between unrelated keys or firings.
 
 The first replay implementation may conservatively run every selected source
 rule once in each selected wave. The action-exact replay path should reuse the
@@ -62,8 +63,9 @@ rules, or proof size.
   slicing is disabled.
 - Preserve exact same-wave semantics: all selected user firings in a wave read
   the same input frontier.
-- Represent effective merges, rebuilding, and congruence as causal events with
-  explicit operands.
+- Represent merge callbacks, rebuilding, and congruence as causal events with
+  explicit operands; replay algebraically arbitrary proof-compatible value
+  merges from an exact local per-key transcript.
 - Fail closed when a table, primitive, backend, or source mutation cannot
   provide the evidence required for a valid replay.
 - Make PR #42 usable as a contemporaneous performance and code-structure
@@ -71,8 +73,10 @@ rules, or proof size.
 
 ## Non-goals
 
-- A total order over rule matches, writes, or all database mutations.
-- Reconstructing every transient or rejected write.
+- A total order over rule matches, unrelated keys, or all database mutations.
+  Per-key merge callback transcripts are intentionally ordered.
+- Reconstructing proposals discarded before merge semantics. Invoked per-key
+  merge steps, including no-op results, are recorded for exact local replay.
 - Global proof minimization, top-k explanations, or shortest-proof search.
 - A public, stable trace serialization format in the first implementation.
 - DD-backend support in the first implementation.
@@ -140,10 +144,10 @@ overlay.
 ### Equality obligations
 
 An equality obligation is a typed pair of values plus the committed input
-frontier at which they had to be equal. It is not itself proof that they are
-equal and it does not select one hot-path union edge. Rebuild, congruence, rule,
-and check records refer to obligations; the cold slicer chooses a supporting
-path of semantic equality events available at the required frontier.
+frontier at which they had to be equal. It is not itself proof that the values
+are equal and it does not select one hot-path union edge. Rebuild, congruence,
+rule, and check records refer to obligations; the cold slicer chooses a
+supporting path of semantic equality events available at the required frontier.
 
 ### `RunId` and `WaveId`
 
@@ -173,6 +177,22 @@ event IDs. Instead, it forks a new branch frontier within the same scope. The
 session, catalog, and ID allocators are shared; frontier ancestry determines
 which inherited or branch-local events a later wave may consume. Sibling-only
 events are rejected even though their numeric IDs share a scope.
+
+### `MergeTranscriptId`
+
+A `MergeTranscriptId` names the merge work for one `(wave, table, key)` commit
+group. Its steps linearly order only actual `MergeFn` invocations for that key.
+Each step also names its ordered left/right operands, so the transcript can
+represent the actual binary reduction tree even when independent subtrees were
+built in parallel. The local ordinal is replay control, not a timestamp or a
+cross-key order.
+
+The static table catalog classifies a transcript's replay semantics. A
+proof-compatible user value merge uses exact callback replay. Constructor
+`UnionId` and container-normalization merges retain callback operands for audit
+and causality but use their dedicated equality/congruence or normalization
+witness during fresh replay; raw union-find representatives are not portable
+value-merge results.
 
 ## The causal graph
 
@@ -308,6 +328,7 @@ absorb, or replacement outcome atomically.
 | Fresh key accepted | allocate fresh | commit caused by source/firing; store new event ID in row |
 | Existing key, merge is no-op | retain existing | no new state event |
 | Existing key, merge changes row | allocate fresh result | merge depends on old state and incoming cause |
+| Existing key, callback reports changed with equal projection | allocate fresh result | replacement commit records the authoritative callback outcome |
 | Delete | retire | retirement depends on deleting cause and last state |
 | Recreate same key/value | allocate fresh | new commit |
 | Pure rebuild rekey, no collision | preserve | replace row event ID with rekey depending on prior state/equalities |
@@ -360,7 +381,8 @@ handles. Parallel merge shards reserve blocks only while committing effective
 outcomes. Allocation checks exhaustion before reaching the `Value` stale
 sentinel or wrapping; unused entries in a reserved block may create opaque
 gaps, but IDs are never reused. Event allocation follows the same checked
-rule. Uniqueness matters; allocation order does not.
+rule, as do auxiliary transcript/obligation IDs encoded as `Value`s.
+Uniqueness matters; allocation order does not.
 
 ## Exact premise capture through free-join
 
@@ -410,10 +432,16 @@ row-state hit or frontier-scoped miss observed by every head action that
 consults a keyed table. This includes an existing row read by a merge that
 ultimately returns no-op. Such an observation is attached to the firing even
 when no output event points back to it; otherwise omitting that old row could
-turn a captured no-op sibling action into an insertion during replay. This does
-not retain every rejected write globally—only the complete-head preconditions
-of captured firings. Action-local tickets connect a later head operation to an
-earlier staged result when the language permits that dataflow.
+turn a captured no-op sibling action into an insertion during replay. Capture
+retains invoked merge steps but does not promote them to row states or retain
+proposals discarded before any callback/commit semantics. Action-local tickets
+connect a later head operation to an earlier staged result when the language
+permits that dataflow.
+
+When table commit assigns a candidate to a transcript leaf, its mutation ticket
+publishes the reverse `action_merge_leaf` row. Backward closure can therefore
+start from either a committed result or a selected complete-head action and
+recover the exact common-key group in both directions.
 
 Rules that require a table without stable identity fail capture preflight
 unless that occurrence has a dedicated sound witness mechanism.
@@ -485,8 +513,17 @@ wave_row_delta(wave, table, stable_row_id -> event_or_retired)
 
 firing_P_B(event -> rule, premise_state[0..P], binding[0..B])
 source_event(event -> source_catalog_id, source_row_ordinal)
-merge_draft_N(event -> table, left_cause, right_cause, result_values[0..N])
-commit_event(event -> table, prior_state_or_absent, accepted_cause)
+action_merge_leaf(owner_event, action_ordinal, occurrence_ordinal
+                  -> transcript, leaf_ordinal)
+merge_transcript_K(transcript -> wave, table, key[0..K],
+                   prior_state_or_absent)
+merge_leaf_N(transcript, leaf_ordinal -> cause, origin_ordinal,
+             occurrence_ordinal, values[0..N])
+merge_step_N(event -> transcript, step_ordinal,
+             ordered_left_ref, ordered_right_ref,
+             changed, result_values[0..N])
+merge_outcome(transcript -> root_ref, committed_state_or_noop)
+commit_event(event -> table, prior_state_or_absent, accepted_ref)
 read_hit_K(owner_event, ordinal -> table, key[0..K], row_state)
 read_miss_K(owner_event, ordinal -> table, key[0..K], required_frontier)
 equality_obligation(obligation -> sort, lhs, rhs, required_frontier)
@@ -499,7 +536,7 @@ congruence_C(event -> left_row_state, right_row_state,
 check_P_B(event -> check_catalog_id, premise_state[0..P], binding[0..B])
 ```
 
-`N`, `P`, `B`, `R`, and `C` are prospective arities known from table/rule
+`N`, `K`, `P`, `B`, `R`, and `C` are prospective arities known from table/rule
 registration. `ArityTableFamily` is a thin registry that creates one
 `SortedWritesTable` per required physical schema. Families may be populated
 lazily only during single-threaded registration/preflight, when mutable
@@ -508,6 +545,16 @@ registry frozen before the first wave. Workers never add tables. This packs hot
 firing and archive rows without adding a bespoke variable-length allocation.
 Fixed or genuinely unbounded lists use normalized
 `(owner, ordinal, value)` tables.
+
+Merge operand/root references are tagged references to the prior committed row,
+a candidate leaf, or an earlier step in the same transcript. `left` and
+`right` preserve the callback's `old`/`new` orientation. Step ordinals form a
+topological linearization local to the transcript: every referenced step is
+earlier, while independent subtree callbacks may be numbered in either order.
+`changed` and `result_values` archive the observed callback result for replay
+validation; for `changed = false`, the result signature is the retained `old`
+operand rather than unused output scratch. They are evidence, never values that
+replay may inject as facts.
 
 Static table IDs and premise occurrence layouts do not need to be repeated in
 every firing row; the rule catalog supplies them.
@@ -531,31 +578,45 @@ archive-on-identity-retirement.
 Workers reserve blocks of opaque event IDs from a session counter. A block is
 only a uniqueness optimization; it is not a time interval.
 
-Captured table buffers preserve row/cause alignment. Parallel same-key
-reduction records the actual local reduction tree:
+Captured table buffers preserve candidate ticket/cause alignment. Every
+candidate that participates in a merge group becomes a transcript leaf, and
+every actual callback invocation becomes a `merge_step_N`, including a
+`changed = false` step. This is necessary because a no-op action may later be
+part of a selected firing's complete head.
 
-- a staged candidate is represented by its firing/source cause and logical
-  values, not by a row state;
-- an effective candidate/candidate reduction creates a `merge_draft_N` event
-  depending on its two causes, and a later candidate may depend on that draft;
-- after resolving the final draft against the live shard, an effective
-  `commit_event` allocates the final metadata and is the only event inserted
-  into `row_state` for that outcome;
-- a rejected/no-op final result creates no new row state, although its prior
-  read remains attached to a selected complete-head firing.
+Current `SortedWritesTable` ownership already serializes actual callbacks for a
+key inside its hash shard, so capture can assign local ordinals without a lock.
+`StagedOutputs` carries candidate batches and any precombined operand subtree;
+when the owning shard resolves the live collision, it stitches that material
+into the `(wave, table, key)` transcript, remaps temporary references,
+and assigns topological local ordinals. The format also remains correct if a
+future reducer builds independent same-key subtrees in parallel: ordered
+operand references preserve the actual tree even though publication is a
+linear list of callback invocations.
 
-Draft event IDs never carry `StableRowId`s and never appear in semantic rows.
-They exist only to retain the local reduction operands (and nested effective
-writes) until a final commit either makes them reachable or leaves them
-unselected.
+After resolving the transcript root against the live row, an effective
+`commit_event` allocates final metadata and is the only event inserted into
+`row_state` for that outcome. Merge-step event IDs never carry `StableRowId`s
+and never appear in semantic rows. A no-op outcome has no new row state, but its
+transcript remains available if closure reaches one of its candidate owners or
+dedicated equality/normalization effects.
 
-Only same-key reduction and action-local dataflow impose within-wave order.
-Unrelated shards and firings remain unordered.
+Only a common-key transcript and action-local dataflow impose within-wave
+order. Unrelated keys, shards, and firings remain unordered. For the exact
+user-value path, the initial proof-slicing gate rejects callbacks with
+user-semantic database reads, nested user writes, or shared mutable state, so
+the transcript remains key-local. This restriction does not reject the built-in
+constructor `UnionId`/union-find or container-normalization paths: they use the
+dedicated equality, congruence, and normalization events described below and
+ordinary fresh proof rebuild. If the proof gate later admits other effects, the
+current step can serve as their owner/cause, but a wider visibility-boundary
+design is required before enabling them. Gaps in event IDs are valid.
 
-If a merge callback writes another table, its `ExecutionState` carries the
-current merge draft as the pending cause. The draft is published if it changes
-the target row or produces a nested effective write. Gaps in event IDs are
-valid.
+Publication audit also checks that transcript keys match every leaf/result,
+candidate tickets occur with the captured multiplicity, step ordinals are
+unique, operand-step references point backward, the prior row belongs to the
+input frontier, exactly one outcome names a valid root, and only a commit/rekey
+event—not a step—appears in `row_state`.
 
 ## Wave semantics
 
@@ -674,26 +735,30 @@ reasoning rather than a new axiom.
 ### Containers and custom merges
 
 Container rebuild records structural element equality dependencies and a
-normalization kind. Pure custom merges record both old and incoming causes plus
-the static merge expression. A merge that returns an existing value may retain
-that value's row state when it is semantically a no-op; otherwise it creates a
-fresh state.
+normalization kind. Custom merges use the same ordered step transcript and
+retain the resolved static merge expression/configuration. A final merge that
+returns the existing logical row produces a no-op outcome; otherwise ordinary
+commit creates a fresh row state. No algebraic declaration is required for the
+exact path.
 
 An external function or custom table that reads hidden database state must
 declare a causal-read contract. Without one, any slice reaching it is
 unsupported. It must never be converted silently to a source/fiat event.
 
-This rule also covers built-in action-side reads that do not appear as LHS
-atoms: keyed write collisions (including no-op merges), `Lookup*` instructions,
-and lookup/function merge expressions. A causal lookup variant returns the
-logical value together with its stable and row-state IDs and attaches a
-`read_hit_K` dependency to the current firing/merge draft.
+The prior row in an ordinary keyed collision—including a no-op merge—is an
+explicit transcript operand and is supported without a separate read contract.
+Other built-in action-side reads that do not appear as LHS atoms, such as
+`Lookup*` instructions, need a causal lookup variant that returns the logical
+value together with its stable and row-state IDs and attaches a `read_hit_K`
+dependency to the current firing.
 A miss records `read_miss_K` at the exact input frontier; replay must revalidate
 that absence before applying the selected action, and conservative over-firing
 is disallowed if it could fill the key. A lookup that stages a default insert
 links the miss and its mutation ticket. Until these hit/miss paths and their
 proof-mode behavior exist, preflight rejects every such built-in read rather
 than relying on public lookup APIs that project the hidden event column away.
+Lookup/function expressions inside `MergeFn` remain initially rejected by the
+merge purity and existing proof-support gates.
 
 ## Root selection and backward slicing
 
@@ -725,12 +790,17 @@ equality obligations:
 
 1. Seed with a successful check witness.
 2. A row state adds its producing commit or rekey event.
-3. A firing adds all recorded premise row states, equality obligations, and
-   action-side read obligations.
-4. A source event selects the exact source action or input row.
-5. A commit adds its prior row state, if any, and its accepted proposal/draft
-   cause.
-6. A merge draft adds its left and right causes.
+3. A firing adds all recorded premise row states, equality obligations,
+   action-side read obligations, and complete-head merge-leaf occurrences.
+4. A source event selects the exact source action/input row and its merge-leaf
+   occurrences.
+5. A commit adds its prior row state, if any, and its accepted candidate or
+   merge-transcript outcome.
+6. A selected merge outcome or leaf promotes its containing transcript. The
+   transcript adds its prior state and every leaf/step needed for the observed
+   group outcome; steps add ordered operands plus any dedicated equality or
+   normalization dependencies, and leaves add their firing/source action
+   occurrences.
 7. A rekey adds the prior row state and resolves its equality/container
    obligations at the required frontier.
 8. An equality path adds each explicit union cause or congruence dependency.
@@ -754,7 +824,9 @@ The policy chooses one producer for each current row state and one supported
 equality/check alternative according to the cold cost heuristic. The result is
 a causally sufficient support under the supported replay contract; it is not
 guaranteed minimal even within that policy, and is not a globally smallest
-database, smallest rule set, or shortest proof.
+database, smallest rule set, or shortest proof. Selecting a merge outcome—or a
+candidate from a selected complete head—may intentionally pull the whole
+common-key transcript required to reproduce that action group.
 
 ## Cold syntax reconstruction
 
@@ -767,6 +839,9 @@ The slicer converts only selected typed values to `ReplayValue`s:
   normalization recipe;
 - source input rows retain parsed literals or are regenerated from the selected
   row values;
+- merge leaves and intermediate results use their typed operand/read origins
+  plus the resolved merge expression to form portable validation signatures;
+  a raw equality-sort `Value` is never treated as a portable result;
 - unsupported opaque values stop extraction with a typed error.
 
 Hash-cons these values into a slice-local syntax DAG. This is the "weird syntax
@@ -793,6 +868,8 @@ The internal `SlicePlan` contains:
 - selected source actions and exact selected input rows;
 - selected source rules;
 - selected firings grouped by original user waves;
+- selected per-key merge transcripts, candidate occurrence mappings, and
+  portable intermediate-result signatures;
 - the required maintenance boundaries;
 - the final check/prove root;
 - portable replay binding signatures for action-visible selection;
@@ -854,11 +931,14 @@ primitive reachable from them. The first implementation has a sealed whitelist
 of reviewed built-in `ReplayEffectContract`s (for example, set insertion and
 other effects with a defined semantic preorder, extension closure,
 determinism, causal-read behavior, and duplicate behavior). An unclassified
-custom merge, primitive, external function, or custom table is unsupported.
-A future extension registration may supply the same explicit trusted contract,
-but an annotation with no implementation-specific review and conformance tests
-is insufficient. A frozen corpus records every accepted and rejected rule
-shape so classifier drift is visible.
+effect is unavailable to conservative whole-rule replay. A merge may instead
+use selected-action plus exact local-transcript replay if it is deterministic
+under captured operands/reads; arbitrary primitives, external functions, and
+custom tables still need an explicit replay contract. A future extension
+registration may supply the relevant trusted contract, but an annotation with
+no implementation-specific review and conformance tests is insufficient. A
+frozen corpus records every accepted and rejected rule shape for each replay
+path so classifier drift is visible.
 
 Within that certified fragment, over-firing only enlarges the replay and proof
 without invalidating the target. The resulting independently checked proof is
@@ -931,21 +1011,85 @@ cleanup, path-compression, rebuild, and delete/subsume schedule. Calling the
 backend through `step_rules_with_scheduler` does not append that frontend
 maintenance automatically. Maintenance remains unfiltered.
 
-Until this selected-action path is implemented, replay preflight accepts only
-rules and merges classified as rule-granular extension-safe. It does not
-silently fall back to the full original program.
+Until selected-action and local-transcript replay are implemented, replay
+preflight accepts only rules and merges classified as rule-granular extension-
+safe. It does not silently fall back to the full original program.
 
-Selected-action binding does not by itself reproduce the reduction order of an
-arbitrary order-sensitive merge. Recording the actual per-key merge tree is
-necessary for causality and diagnosis, but a parallel replay may choose a
-different tree. The initial supported contract therefore requires either an
-associative and commutative merge for fixed-candidate order independence, or a
-separately validated path that supplies the exact candidate multiset and
-deterministic reduction order. Idempotence may be useful for duplicate
-candidates but is not a substitute for associativity or commutativity; `old`
-and `new` require the exact-candidate/deterministic-order path. Arbitrary
-order-sensitive merges fail replay preflight; they are not made sound merely
-by switching capture or replay to one thread.
+### Exact local value-merge replay
+
+For selected-action replay of a proof-compatible user value merge,
+`SortedWritesTable` receives a cold `PerKeyMergeReplayPlan` alongside its
+ordinary pending candidates. This is a controller for the existing merge path,
+not a second table or grounded-rule executor:
+
+1. Every replayed source/action occurrence stages its logical candidate with
+   the captured transcript/leaf token. Multiplicity is exact.
+2. At the merge barrier, the table verifies the replay-local prior row against
+   the captured prior-state signature and verifies the exact candidate-leaf
+   multiset. A missing, extra, or mis-keyed leaf fails replay.
+3. The controller walks `merge_step_N` in local ordinal order. Operand
+   references select the replay-local prior row, candidate value, or actual
+   result of an earlier step. It invokes the corresponding fresh replay graph's
+   proof-instrumented `MergeFn`, derived from the same catalog declaration,
+   with the same ordered operands and a proof-mode `ExecutionState`.
+4. Each invocation must reproduce the captured changed/no-op bit and portable
+   user-semantic result projection. Proof-generated IDs and term/proof-table
+   writes have no ordinary-capture counterpart and remain unfiltered. Captured
+   result values are comparison evidence only; they are never copied into the
+   semantic or proof graph.
+5. The verified root is committed through the ordinary append/version/index
+   path. Fresh replay-local stable/event IDs may differ from capture.
+
+Direct outcomes are explicit: an absent prior plus one leaf commits that leaf
+without invoking `MergeFn`; `changed = false` aliases the prior row and appends
+nothing; `changed = true` takes the ordinary replacement path even when the
+user-semantic projected values happen to compare equal. Validation always
+projects away replay-only proof columns, IDs, and timestamps.
+
+The same controller covers source/user commits and ordinary value-table
+collisions produced by a selected rebuild maintenance wave. User candidates map
+by source/firing action occurrence; pure value-rebuild candidates map by
+portable prior-row/rebuild-obligation signatures. Fresh proof-mode rebuild
+still re-derives those candidates; the plan controls only their merge
+invocations once they exist.
+
+This must replay the recorded operand tree, not merely left-fold raw
+candidates. For a non-associative merge, `old ⊗ (a ⊗ b)` is not interchangeable
+with `(old ⊗ a) ⊗ b`. Different keys may still replay in parallel; no database-
+wide merge sequence is introduced.
+
+"Arbitrary" here means no associativity, commutativity, or idempotence
+requirement for a user value merge. It includes `old`, `new`, and deterministic
+non-associative or non-commutative merge expressions. The initial callback must
+still be pure and key-separable: its user-semantic result may depend on its
+ordered operands and immutable captured configuration, but not on shared
+`PredictedVals`, counters, early-stop state, mutable extensions, database reads,
+or nested user writes. Time, randomness, I/O, and opaque Rust closures are
+likewise rejected. These are already outside today's proof-encoding gate; local
+ordering removes algebraic restrictions, not the checker/language gate.
+
+If full proof mode later admits declared merge reads or nested semantic writes,
+the causal model must add their real table-dependency visibility boundary and
+hold nested buffers until that boundary completes. That wider cross-key
+schedule is deliberately not machinery paid by the initial pure-merge path.
+Generated proof-helper writes use the existing unfiltered maintenance path and
+do not become semantic transcript leaves.
+
+`UnionId` is not treated as a forbidden arbitrary side-effecting merge. Its
+collision records the two constructor/value causes and the resulting typed
+equality event. Backward closure follows that equality/congruence witness, and
+fresh proof replay runs the ordinary proof union-find and rebuild. Likewise,
+container normalization follows its specialized structural witness. These
+paths may retain local callback records for integrity diagnostics, but the
+controller neither forces nor compares raw representative IDs, and it does not
+replace the dedicated congruence proof with a captured merge result.
+
+Associative/commutative certification remains useful only as an optional fast
+path that lets replay use the ordinary reducer after checking the candidate
+multiset. It is not the soundness or language-support boundary. Proof soundness
+comes from re-executing the catalog-equivalent merge under fresh proof
+instrumentation and checking the resulting proof; the captured transcript
+controls evaluation but is not a proof axiom.
 
 ### Performance hypothesis
 
@@ -989,10 +1133,14 @@ Parallel capture is a design requirement, not a serial fallback.
 - Numeric stable/event IDs may differ with thread count.
 
 Tests and debug output compare normalized semantic records, never raw allocation
-order. Capture records the actual per-key reduction tree as local causality,
-not a database-wide linearization. As described above, that record is not a
-promise that ordinary replay can reproduce an arbitrary order-sensitive merge;
-such a merge remains unsupported without a dedicated deterministic contract.
+order. Capture records each actual per-key reduction tree as an ordered local
+transcript, not a database-wide linearization. Exact value-merge replay drives
+the existing merge callback from that transcript; specialized equality and
+normalization merges follow their dedicated witnesses. Algebraically
+order-sensitive value results may legitimately differ across executions if the
+base engine exposes a different candidate tree; each captured proof must
+reproduce and justify the observed run, while capture instrumentation must not
+itself change that run's tree.
 
 ## Special operations
 
@@ -1027,6 +1175,15 @@ an explicit future API joins their frontiers. A detached clone into a fresh
 scope is unsupported until it can copy and translate the reachable causal
 closure; minting snapshot source events would incorrectly turn derived state
 into axioms.
+
+Initially, the shared `CausalSession` grants an exclusive wave lease to one
+branch at a time. A wave still uses the ordinary parallel rule and table paths,
+but sibling branches cannot open or publish waves concurrently; a competing
+branch receives a typed busy error before mutation. This keeps auxiliary-table
+publication and the shared marker protocol unambiguous without imposing a
+worker-level trace lock. Concurrent sibling-wave publication is a future
+extension requiring branch-isolated staging and a tested atomic publication
+protocol.
 
 Push/pop is strictly unsupported in the initial implementation and is rejected
 at preflight. Frontier chronology alone is insufficient: the current proof
@@ -1108,9 +1265,9 @@ The implementation should maintain and test these invariants.
    physical movement preserves it; retirement prevents reuse.
 3. **Frontier consistency.** Every firing premise resolves to the row-state
    event visible at the firing wave's input frontier.
-4. **Event soundness.** Every row-state commit, merge draft, rekey, equality,
-   and congruence event names its exact effective causes; drafts never masquerade
-   as committed row states.
+4. **Event soundness.** Every row-state commit, merge step, rekey, equality,
+   and congruence event names its exact effective causes; merge steps never
+   masquerade as committed row states.
 5. **Acyclic causality.** Cross-wave edges point to predecessor frontiers;
    within-wave edges follow action-local or same-key dataflow. Event-ID order is
    irrelevant.
@@ -1121,7 +1278,13 @@ The implementation should maintain and test these invariants.
 8. **Replay fidelity.** Selected source events and action-visible bindings run
    in the same wave grouping with complete rule heads and existing maintenance
    semantics. A valid alternative body witness may supply a selected action.
-9. **Independent proof validity.** The existing proof checker accepts the
+9. **Merge fidelity.** Each selected exact value-merge key has the prior state,
+   candidate occurrences, ordered callback operands/results, and final outcome
+   reproduced by the catalog-equivalent replay merge after semantic projection.
+   Specialized union/congruence and normalization merges reproduce their typed
+   causal obligations through ordinary proof-mode maintenance, never by
+   importing a captured representative or result.
+10. **Independent proof validity.** The existing proof checker accepts the
    replay-produced certificate against the stored resolved observation prefix.
 
 ## Error policy
@@ -1131,7 +1294,7 @@ Fail closed with structured diagnostics for:
 - activation after semantic state already exists;
 - unsupported backend or table;
 - push/pop in sliced mode;
-- stable/event ID exhaustion;
+- stable/event/auxiliary ID exhaustion;
 - a late mutation buffer, incomplete publication, or invalidated session;
 - missing stable premise identity;
 - missing or cross-scope row state;
@@ -1143,7 +1306,11 @@ Fail closed with structured diagnostics for:
 - a replayed frontier that violates a captured read-miss obligation;
 - a rule outside the extension-safe fragment before selected-action binding
   replay exists;
-- an order-sensitive merge without a validated replay contract;
+- a missing/extra merge leaf, prior-state mismatch, invalid operand reference,
+  or callback result mismatch during local transcript replay;
+- a user value merge with nondeterministic, cross-key/shared mutable, nested
+  user-effect, or other observations outside its initial pure proof-compatible
+  contract;
 - malformed source catalogs or a replay rule differing from its source;
 - no successful check witness;
 - proof replay or independent proof-check failure.
@@ -1162,7 +1329,8 @@ boundaries:
   and default causal-mutation capability;
 - `core-relations/src/table/mod.rs`: optional physical column, commit-time ID
   allocation, cause-preserving insert/remove buffers, pre-append collision
-  resolution, merge outcomes, generation-checked writers, and compaction;
+  resolution, local transcript capture/replay around the existing `MergeFn`,
+  merge outcomes, generation-checked writers, and compaction;
 - `core-relations/src/table/rebuild.rs`: explicit preserve/rekey versus replace
   outcomes;
 - `core-relations/src/query.rs` and `free_join/plan.rs`: private stable-ID atom
@@ -1204,6 +1372,8 @@ a subsystem, the design should be revisited before continuing.
   version/index/subset update paths.
 - Resolve live collisions before final physical append in identified/traced
   parallel `StagedOutputs`.
+- Preserve ordered merge operands/results in serial buffers and stitch/remap
+  parallel `StagedOutputs` mini-transcripts at the owning key shard.
 - Implement atomic block allocators and threshold-crossing concurrent tests.
 
 ### Phase 3: relational causal store
@@ -1212,8 +1382,8 @@ a subsystem, the design should be revisited before continuing.
   arity families.
 - Add branch frontiers, ordered publication, scope checks,
   referential-integrity audit, and graph cycle detection.
-- Record source, commit, merge-draft, retirement, and current-row-state
-  transitions.
+- Record source, commit, per-key merge transcript, retirement, and current-row-
+  state transitions.
 
 ### Phase 4: premise and check capture
 
@@ -1222,7 +1392,9 @@ a subsystem, the design should be revisited before continuing.
   direct and decomposed joins.
 - Capture built-in action-side read hits/misses or reject them at preflight.
 - Record successful check witnesses.
-- Verify ordinary outputs are unchanged across thread counts.
+- Verify capture projection against capture-off semantics under deterministic
+  schedules, and verify each order-sensitive captured run against its own
+  observed result without assuming cross-thread merge invariance.
 
 ### Phase 5: equality and maintenance events
 
@@ -1240,14 +1412,16 @@ a subsystem, the design should be revisited before continuing.
   and proof e-graphs.
 - Require independent proof checking and record amplification metrics.
 
-### Phase 7: selected-action scheduler replay
+### Phase 7: selected-action and local merge replay
 
 - Map captured source bindings through proof instrumentation.
 - Add `CausalReplayScheduler` to choose selected action-visible bindings per
   wave.
-- Enable supported delete/subsume programs only after their action-exact replay
-  fixtures pass. Order-sensitive merges remain gated on a separate exact-
-  candidate/deterministic-order contract.
+- Add `PerKeyMergeReplayPlan` to verify leaves and drive the existing merge
+  callback through captured ordered operand steps.
+- Enable delete/subsume plus algebraically arbitrary pure/key-separable user
+  value merges only after their action-exact/transcript fixtures pass; retain
+  dedicated proof rebuild for `UnionId` and normalization merges.
 
 ### Phase 8: product and benchmark integration
 
@@ -1278,11 +1452,15 @@ capture before replay/proof integration.
   every superseded row state.
 - A deterministic state-machine test compares a small reference map after each
   operation.
-- Stable/Event allocator exhaustion fails before the stale sentinel or
-  wraparound, publishes no partial row/event, and never reuses an ID.
+- Stable/event/auxiliary allocator exhaustion fails before the stale sentinel
+  or wraparound, publishes no partial row/event/transcript, and never reuses an
+  ID.
 - Capture-aware clone succeeds only at a quiescent barrier, shares the session
   and allocators, and forks frontier ancestry; a dangling cross-scope or
   sibling-branch event is rejected.
+- The exclusive branch-wave lease permits parallel work within one wave but
+  rejects a concurrent sibling wave before mutation; sequential sibling
+  publications remain causally isolated.
 - Clear with an outstanding old-generation buffer cannot repopulate the table
   and invalidates the session if that buffer later attempts to flush.
 
@@ -1295,11 +1473,15 @@ capture before replay/proof integration.
   rekeys, and compaction.
 - Force the parallel live-collision path and assert metadata is allocated only
   after the final logical result is known and appended.
-- For two or more same-key candidates, permute inputs under 1/2/4/32 threads:
-  associative/commutative fixed-multiset results agree, multiplicity is
-  preserved for non-idempotent merges, and any future `old`/`new` path must
-  reproduce the recorded candidate sequence rather than merely run serially.
-- Assert uniqueness and normalized causal structure, not raw ID ordering.
+- For two or more same-key candidates, exercise `old`, `new`, a deliberately
+  non-associative/non-commutative merge, and a non-idempotent sum under
+  1/2/4/32 threads. Each replay must reproduce its captured operand tree,
+  multiplicity, intermediate signatures, and final result; different captured
+  trees are not required to agree semantically.
+- Compare the optional associative/commutative fast path against exact
+  transcript replay for the same captured candidate multiset.
+- Assert ID uniqueness and normalized transcript integrity, not equality of raw
+  IDs or local ordinals across executions.
 - Verify no event is visible before its wave is committed.
 - Inject failure after semantic commit but before causal publication; assert
   that the session is invalidated and no later extraction or capture can treat
@@ -1309,6 +1491,7 @@ capture before replay/proof integration.
 ### Causal and wave fixtures
 
 - one source fact and one rule;
+- a source action block with local bindings and multiple same-key writes;
 - irrelevant source and rule branches;
 - same-wave enablement trap;
 - genuine multi-wave recursion;
@@ -1337,6 +1520,9 @@ capture before replay/proof integration.
   `ReplayEffectContract` classifier;
 - a sliced hot pass that proves the eager proof encoding was neither installed
   nor executed.
+- invalid proof-strategy/flag combinations, an unsupported backend, and sliced
+  activation after preexisting semantic state all fail during eager preflight
+  without mutating the database.
 
 Every successful fixture runs:
 
@@ -1349,6 +1535,11 @@ Every successful fixture runs:
 7. proposition comparison and independent proof checking.
 
 Negative fixtures assert a typed error and no full-program fallback.
+Today that includes merge action blocks, function-lookup merges, tuple-output
+forms, and opaque Rust closures wherever the existing proof gate rejects them;
+local transcript ordering does not widen that gate. Declared merge reads and
+nested user writes remain future negative fixtures until both proof checking
+and a wider visibility-boundary design support them.
 
 ### Replay and checker fixtures
 
@@ -1361,6 +1552,20 @@ Negative fixtures assert a typed error and no full-program fallback.
   wave and is consumed once; unselected residuals never leak into later waves.
 - Projection retains the complete proof-instrumented tuple used for action
   instantiation even though filtering compares only action-visible slots.
+- A parallel candidate subtree whose captured shape is
+  `old ⊗ (a ⊗ b)` replays that shape rather than a raw-candidate left fold.
+- `old`, `new`, non-associative, non-commutative, and changed-false transcripts
+  replay through the catalog-equivalent proof-instrumented merge and produce
+  independently checked proofs.
+- A constructor `UnionId` collision and a container-normalization collision use
+  their dedicated equality/congruence or structural witness under fresh proof
+  maintenance; replay neither forces nor compares captured raw representatives.
+- Direct root cases cover absent-prior/single-leaf without callback,
+  changed-false prior alias with no append, and changed-true replacement with
+  an equal user-semantic projection.
+- Deleting/reordering a leaf, swapping operand orientation, changing
+  multiplicity/prior state, or corrupting an intermediate value-merge result
+  produces a typed replay failure rather than a captured-value insert.
 - A missing equality-sort selector anchor fails without constructing a term,
   top-level Fiat, or semantic row.
 - Explicit proof/term maintenance between waves makes the next selected
@@ -1370,12 +1575,18 @@ Negative fixtures assert a typed error and no full-program fallback.
   stored wrapper once for both single- and multi-fact final checks. A negative
   fixture places a global action after the check and proves it cannot authorize
   a Fiat for the earlier observation.
-- Classifier positives demonstrate the extension-closure property. Negatives
-  include conflicting `old`/`new` candidates and an associative,
-  commutative, idempotent merge that is order-independent but not extension-
-  safe for the selected result.
+- Conservative-classifier positives demonstrate extension closure. Negatives
+  include `old`/`new` and an associative, commutative, idempotent merge that is
+  order-independent but not extension-safe for the selected result; the same
+  deterministic merges are positive cases for selected-action/local-
+  transcript replay.
 - A selected native input row replays from its immutable snapshot after the
   original graph is dropped and the original file is changed or deleted.
+- A clean replay factory remaps catalog identities to different runtime
+  `TableId`/external-function assignments and still succeeds. A nonempty or
+  registration-mismatched factory, inherited mutable extension state, or
+  uncaptured nondeterministic configuration fails before installing selected
+  source state.
 
 ### Repository validation
 
@@ -1436,6 +1647,8 @@ include the exact flags. Reports and any copied fact inputs must live under
 - wall time and peak RSS;
 - capture, closure, replay, extraction, and checking phases;
 - stable and event row counts/bytes;
+- merge transcript/leaf/step counts and bytes, maximum per-key step count, and
+  time spent in locally serialized transcript replay;
 - total versus selected sources/rules/firings/facts/waves;
 - replayed matches versus selected firings;
 - proof node count and replay-program size;
@@ -1454,7 +1667,8 @@ both modes.
 Because the public benchmark path is effectively single-threaded for this
 purpose, run a separate causal-capture scaling experiment at 1, 2, 4, and 32
 threads. It measures semantic equivalence, wall/RSS, trace rows/bytes, and
-allocation/contention scaling; it does not get mixed into the primary j=1
+allocation/contention scaling. Include a hot-key arbitrary-merge case so local
+serialization is visible; it does not get mixed into the primary j=1
 comparison.
 
 The initial fixed tripwires are:
@@ -1491,8 +1705,9 @@ mode reference.
 ### A global arena plus `HistoryPosition`
 
 Rejected. It duplicates table storage and imposes an order stronger than rule
-semantics require. Wave frontiers plus explicit merge/rebuild dependencies are
-sufficient.
+semantics require. Wave frontiers plus explicit rebuild dependencies and exact
+key-local merge transcripts are sufficient; the transcript is the narrow place
+where actual callback order can affect semantics.
 
 ### Eager proof terms with compact evidence payloads
 
@@ -1535,16 +1750,19 @@ these points:
 4. The initial replay milestone accepts only rule-granular extension-safe
    programs; the existing scheduler is the action-exact path for supported
    delete, subsume, and high-amplification cases. Exact dynamic-premise replay
-   remains deferred, and captured action multiplicity is preserved.
+   remains deferred, captured action multiplicity is preserved, and exact
+   key-local transcripts handle algebraically arbitrary user value merges.
 5. Proof production always occurs through a fresh full-proof replay and the
    existing independent checker, rather than direct causal-to-proof
    materialization.
 6. Initial backend/language support is a strict subset of the intersection of
    the reference backend and existing proof-encoding gate: every premise table
    needs stable identity or a specialized witness, action-side reads need an
-   explicit causal contract, replay needs an extension-safe or selected-action
-   path, and merges need a supported order contract. Push/pop is outside the
-   initial support gate.
+   explicit causal contract, and replay needs an extension-safe or
+   selected-action path. User value merges must be proof-compatible,
+   pure/key-separable, and deterministic under their captured transcript;
+   `UnionId` and normalization merges use their specialized proof-maintenance
+   paths. Push/pop is outside the initial support gate.
 7. Before relying on selected-action scheduler replay, a focused spike must
    demonstrate that scheduler-generated query/action rules under proof
    instrumentation retain justifications checkable as instances of the
@@ -1552,10 +1770,13 @@ these points:
    If they do not, action-exact replay needs a narrower selected-binding hook in
    the existing rule executor; it must not silently introduce selector axioms
    or a general grounded executor.
-8. Recording a local merge tree is causal evidence, not replay control.
-   Initially support only fixed candidate sets with an associative/commutative
-   merge or a validated exact-candidate/deterministic-order path; neither
-   idempotence nor serial execution alone is sufficient.
+8. For a proof-compatible user value merge, the recorded key-local callback
+   transcript is both causal evidence and replay control. Replay re-invokes the
+   catalog-equivalent proof-instrumented merge on its exact ordered operand tree
+   and validates every semantic result; associativity/commutativity are optional
+   fast-path properties, not support requirements. Constructor `UnionId` and
+   normalization merges instead use their dedicated causal witnesses and
+   ordinary fresh proof maintenance.
 9. Capture-aware clones share one causal scope and fork the frontier DAG;
    detached causal clones and push/pop are unsupported. Future push/pop support
    additionally requires a branch-filtered proof-checker context.
