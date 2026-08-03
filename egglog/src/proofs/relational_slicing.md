@@ -34,12 +34,14 @@ The design has four deliberate properties:
    witnesses.
 3. Causal records are fixed-width rows in auxiliary append-only
    `FlatStorageTable`s built from the existing row-buffer and index primitives.
-   There is no semantic merge/rebuild machinery, bespoke trace arena, or global
+   All-match consumers deduplicate exact rows, union additive evidence, and
+   decode selected occurrence-addressed controls locally. There is no semantic
+   merge/rebuild machinery, global integrity audit, bespoke trace arena, or
    history-position log.
 4. Causality is an event DAG with no semantic run, wave, frontier, or global
-   history position. The one deliberate local linearization is the ordered
-   transcript of merge-callback invocations for a common table key; no order is
-   introduced between unrelated keys or firings.
+   history position. A common-key merge transcript records the exact operand DAG
+   and each callback's left/right orientation, but introduces no total order
+   among independent steps, unrelated keys, or firings.
 
 Replay reuses the existing `Scheduler`/`Matches` abstraction to choose captured
 action-visible bindings once their causal parents are available. Reproducing
@@ -75,7 +77,8 @@ rules, or proof size.
 ## Non-goals
 
 - A total order over rule matches, unrelated keys, or all database mutations.
-  Per-key merge callback transcripts are intentionally ordered.
+  Per-key merge transcripts retain operand dependencies and left/right roles,
+  not a callback sequence.
 - Reconstructing proposals discarded before merge semantics. Invoked per-key
   merge steps, including no-op results, are recorded for exact local replay.
 - Global proof minimization, top-k explanations, or shortest-proof search.
@@ -166,17 +169,18 @@ read/equality causes retain every ordering that can affect selected semantics.
 
 ### `MergeTranscriptId`
 
-A `MergeTranscriptId` names one merge group for a `(table, key)`. Its steps
-linearly order only actual `MergeFn` invocations for that key.
-Each step also names its ordered left/right operands, so the transcript can
-represent the actual binary reduction tree even when independent subtrees were
-built in parallel. The local ordinal is replay control, not a timestamp or a
-cross-key order.
+A `MergeTranscriptId` names one merge group for a `(table, key)`. Every actual
+`MergeFn` invocation gets an opaque step `EventId` and names its ordered
+left/right operands. References to leaves or other step IDs encode the exact
+binary reduction DAG even when independent subtrees were built in parallel.
+Replay uses a dependency postorder of that DAG; no step number, timestamp, or
+cross-key order is recorded.
 
 The static table catalog classifies a transcript's replay semantics. A
 proof-compatible user value merge uses exact callback replay. Constructor
-`UnionId` and container-normalization merges retain callback operands for audit
-and causality but use their dedicated equality/congruence or normalization
+`UnionId` and container-normalization merges retain callback operands for
+causal closure and replay diagnostics but use their dedicated
+equality/congruence or normalization
 witness during fresh replay; raw union-find representatives are not portable
 value-merge results.
 
@@ -275,9 +279,10 @@ Stable IDs are allocated only when merge commits an effective fresh or
 replacement row.
 
 Captured mutation buffers carry an opaque `PendingCause` beside each candidate.
-The cause may be a firing, source action, or local merge/rebuild draft. If
-synchronous correlation is useful, the API may expose an opaque
-`MutationTicket`; it must never expose a `StableRowId` before commit.
+The cause is the exact head/source effect or maintenance producer event, not
+merely its enclosing firing/action block. If synchronous correlation is useful,
+the API may expose an opaque `MutationTicket`; it must never expose a
+`StableRowId` before commit.
 
 The mutation-buffer extension is deliberately defaultable for custom tables:
 
@@ -312,9 +317,9 @@ absorb, or replacement outcome atomically.
 
 | Operation | Stable identity | Row-state event |
 |---|---|---|
-| Fresh key accepted | allocate fresh | commit caused by source/firing; store new event ID in row |
+| Fresh key accepted | allocate fresh | commit caused by exact effect; store new event ID in row |
 | Existing key, merge is no-op | retain existing | no new state event |
-| Existing key, merge changes row | allocate fresh result | merge depends on old state and incoming cause |
+| Existing key, merge changes row | allocate fresh result | merge depends on old state and incoming effect/maintenance producer |
 | Existing key, callback reports changed with equal projection | allocate fresh result | replacement commit records the authoritative callback outcome |
 | Delete | retire | retirement depends on deleting cause and last state |
 | Recreate same key/value | allocate fresh | new commit |
@@ -401,43 +406,58 @@ or decomposed materializations.
 
 When a rule match is materialized, the row-state column names the exact
 committed state read by that match. The firing recorder stores those event IDs
-and validates that their stable/table metadata agree. Duplicate occurrences
-remain distinct by ordinal even if they name the same row state.
+and checks their stable/table metadata directly from the co-resident hidden
+columns and typed capture handles; it does not read the flat store. Duplicate
+matches remain distinct by firing `EventId` even if they name the same row
+state.
 
 The static capture specification for a rule contains:
 
 - a stable catalog ID, not just a possibly duplicated rule name;
-- the table and source occurrence corresponding to each private ID;
-- source-order free-variable slots and types;
+- the table and static source-atom site corresponding to each private ID;
+- catalog-declared free-variable slots and types;
 - recipes for equality and primitive witnesses;
-- a complete-head action layout identifying every keyed write/read and its
-  action ordinal;
+- a complete-head layout identifying keyed writes/reads by opaque catalog site
+  IDs and declaring its fixed effect/read arities;
 - the original resolved rule needed for replay.
 
-A match may allocate its opaque firing `EventId` before running the complete
-head, but it remains an `EventDraft`. Its immutable `events` and
-`event_causes_D` rows are appended only after all LHS premise states, equality
-witnesses, and action-side hit/miss observations are known. The catalog
-predeclares each possible final cause arity. This avoids mutating a flat causal
-row after publication while still letting action-local tickets name their owner.
-Every positive keyed LHS premise also registers a key-state observation for
-cold scheduling.
+A match allocates an opaque firing `EventId` and finalizes its immutable
+`events` and `event_causes_D` rows from the LHS premise states and equality
+witnesses before its complete head is committed. The catalog predeclares that
+fixed cause arity. Head effects and reads receive their own event IDs, so later
+observations never require mutating the firing row. Every positive keyed LHS
+premise also registers a key-state observation for cold scheduling.
+
+Each supported complete-head effect gets its own `EventId`; the firing's
+`owner_effects_A` row packs those IDs into one fixed-arity dense row. Each effect
+causally depends on its firing/source owner. Each explicit hit/miss likewise
+gets a read `EventId` that depends on the observed key state; the consuming
+effect depends on that read. These identities distinguish repeated effects and
+reads without ordering them. The event descriptor's catalog origin identifies
+the static action/read site; no dynamic site number is stored.
 
 Selecting one firing replays its complete head, so capture records the prior
 row-state hit or supported key-local absence witness observed by every head
 action that consults a keyed table. This includes an existing row read by a
-merge that ultimately returns no-op. Such an observation is attached to the
-firing even when no output event points back to it; otherwise omitting that old
-row could turn a captured no-op sibling action into an insertion during replay.
-Capture retains invoked merge steps but does not promote them to row states or
-retain proposals discarded before any callback/commit semantics. Action-local
-tickets connect a later head operation to an earlier staged result when the
-language permits that dataflow.
+merge that ultimately returns no-op. Such an observation is a parent of the
+corresponding effect even when no output event points back to it; otherwise
+omitting that old row could turn a captured no-op sibling action into an
+insertion during replay. Capture retains invoked merge steps but does not
+promote them to row states or retain proposals discarded before any
+callback/commit semantics. Action-local tickets are owned by effect IDs; a
+later effect that consumes an earlier staged result names that producer effect
+as an `event_causes_D` parent. The ordinary complete-head executor reconstructs
+the typed local dataflow while replaying the original actions; the causal store
+does not archive or inject the intermediate value. Constructs whose dataflow
+cannot be reconstructed from the original head plus the producer dependency are
+rejected at preflight.
 
 When table commit assigns a candidate to a transcript leaf, its mutation ticket
-publishes the reverse `action_merge_leaf` row. Backward closure can therefore
-start from either a committed result or a selected complete-head action and
-recover the exact common-key group in both directions.
+emits `action_merge_leaf(effect_event -> leaf)`, and the leaf names that exact
+effect as its `producer_event`. Non-action candidates likewise name their exact
+source or rebuild producer. Backward closure can therefore start from either a
+committed result or a selected complete-head action and recover the exact
+common-key group in both directions.
 
 Rules that require a table without stable identity fail capture preflight
 unless that occurrence has a dedicated sound witness mechanism.
@@ -448,36 +468,30 @@ unless that occurrence has a dedicated sound witness mechanism.
 `CausalSession`. It is not a semantic core-relations `Database`.
 
 `FlatStorageTable` is intentionally smaller than `Table` and
-`SortedWritesTable`. It stores one fixed-width schema in published `RowBuffer`
-segments and provides only:
+`SortedWritesTable`. It stores one fixed-width schema in `RowBuffer` storage and
+provides only:
 
-- fresh storage-transaction-checked append handles;
-- append into one worker-local `RowBuffer` per handle, followed by explicit
-  `finish`;
-- candidate-private consolidation of completed buffers using the existing
-  `ParallelRowBufWriter` machinery;
-- seal one immutable table-local candidate segment, scan, and count rows;
-- lookup returning every match from lazily built indexes over requested column
-  tuples.
-
-`CausalStore`, not an individual flat table, owns the one atomic manifest
-publication across all schemas.
+- fresh worker-local append buffers backed by the existing concurrent
+  pending-buffer pattern;
+- quiescent drain/consolidation using `ParallelRowBufWriter` when worthwhile;
+- freeze, scan, and row-count operations;
+- cold indexes over requested column tuples that return every matching row.
 
 It has no key/value split, functional dependency, merge callback, timestamp,
-stale row, deletion, seminaive version, rebuild, or `ExecutionState`. Logical
-uniqueness constraints such as one `events` row per `EventId` are checked by the
-causal integrity audit rather than implemented as table merge semantics. The
-type reuses `RowBuffer`, `RowId`, column tuples, the parallel writer, and hash
-index builders; it should not implement the full semantic `Table` trait merely
-to inherit operations the causal log must forbid.
+stale row, deletion, seminaive version, rebuild, or `ExecutionState`. Physical
+relations are bags. Consumers deduplicate exact rows, union additive evidence,
+and locally decode occurrence-addressed replay controls only when selected. The
+type reuses `RowBuffer`, column tuples, the parallel writer, and hash-index
+builders; it should not implement the full semantic `Table` trait merely to
+inherit operations the causal log does not need.
 
 The existing lower `TupleIndex` storage can be reused after a small refactor
-that separates row ingestion from the current
-`WrappedTableRef`/`TableVersion` refresh wrapper. `ColumnIndex` is suitable only
-for a single indexed column; its multi-column operation is a union, not an exact
-tuple key. Flat indexes ingest newly published table-local row offsets in
-increasing order. This is lower-level index reuse, not an emulation of table
-versions.
+that separates row ingestion from the current `WrappedTableRef`/`TableVersion`
+refresh wrapper. `ColumnIndex` is suitable only for a single indexed column; its
+multi-column operation is a union, not an exact tuple key. The simplest first
+implementation freezes one consolidated `RowBuffer` per physical schema and
+builds indexes lazily on that immutable buffer. This is lower-level index reuse,
+not an emulation of table versions.
 
 This separation is intentional. It prevents causal rows from changing:
 
@@ -489,133 +503,165 @@ This separation is intentional. It prevents causal rows from changing:
 - clear/rebuild behavior;
 - trace recursion.
 
-Rule workers and parallel merge shards append through fresh `FlatWriteBuffer`
-handles, so they do not contend on semantic table shards or a shared trace
-mutex. Each handle carries a private session/publication token, registers as a
-live writer, and owns its local rows. `finish` is explicit: it validates the
-token and enqueues the complete buffer. Dropping an unfinished handle, or
-finishing one after its token closes, discards its rows and permanently
-invalidates the session. In particular, `FlatWriteBuffer` does not inherit the
-semantic `MutationBuffer` behavior of enqueueing on `Drop`; an ordinary
-semantic buffer can never smuggle an old `PendingCause` into the causal store.
-Append validates physical row width in release builds before touching the local
-buffer.
+Rule workers and parallel merge shards append through scoped
+`FlatWriteBuffer`s, so they do not contend on semantic table shards or a shared
+trace mutex. Each worker owns one local `RowBuffer` and returns it after its task
+joins. Physical row width is checked before append. Pending buffers may be
+consolidated at ordinary engine barriers for memory use, but capture never reads
+that mutable storage. Where the execution API cannot borrow scoped writers, a
+fresh `Arc<PendingBatch>` plus `Arc::try_unwrap` before draining provides the
+same join check: a retained writer prevents the drain without generation
+tokens, live-writer counters, or a recovery protocol.
 
-Publication at an existing semantic commit barrier is ordered:
+`CausalSession::finish_root` requires every sharing database instance to be at a
+quiescent barrier, drains all remaining buffers, and freezes the store before
+closure begins. Frozen flat storage has no mutation, stale marking, clear, or
+compaction API. The first implementation makes this terminal for the capture
+session. Supporting later capture can add immutable segments and snapshot their
+directories, but is not required for proof slicing.
 
-1. join rule/source workers and close their semantic proposal and causal
-   writers;
-2. merge/commit the semantic tables while merge/rebuild shards emit through
-   their own transaction-scoped causal writers;
-3. join those shards, atomically move the publication token from `OPEN` to
-   `CLOSING` so no new writer can register, and close every remaining writer;
-4. require the live-writer count to be zero, sum and validate all candidate row
-   counts, then consolidate completed worker-local buffers with
-   `ParallelRowBufWriter` into candidate segments that remain private and have
-   no overlapping readers;
-5. build the temporary lookup indexes needed to audit event headers,
-   fixed-arity parent rows, payloads, key-state transitions, and transcript
-   references;
-6. publish all tables with one `CausalStore` manifest swap and
-   extend/invalidate cold indexes.
+There is no causal publication transaction, store-wide candidate manifest, or
+integrity-audit phase. Missing data, a reachable cycle, or unusable replay
+control is discovered only if the selected slice reaches it. Those conditions
+produce a local extraction/replay error; they do not justify validating every
+unselected causal row. Normal storage bounds such as physical arity and
+`RowBuffer`/index capacity remain checked by the flat table API.
 
-The publication token and segment manifest are private storage-transaction
-state, not causal rows or columns, replay batches, timestamps, or availability
-relations. Readers hold a published manifest snapshot and can never see
-candidate segments. An aborted candidate is discarded. If failure occurs after
-semantic rows containing new event IDs have committed, the causal session is
-invalidated rather than allowing later capture to follow unpublished state.
+This does not move proof soundness into the flat store. Causal rows only select
+authenticated source/rule work and control re-executed operations; archived
+results are never injected as axioms. Extra additive rows can only enlarge the
+slice, while missing or incompatible selected data causes local
+extraction/replay failure. The independent proof checker remains authoritative.
+A structural whole-store audit could not prove that capture recorded every
+semantic cause anyway.
 
-Each flat table assigns monotonically increasing table-local row offsets across
-its immutable segments; the manifest resolves an offset to a segment and local
-physical `RowId`. The pre-consolidation count check requires total table rows to
-remain below the index implementation's reserved `u32::MAX` sentinel; supporting
-more rows requires a wider flat-row ID and different indexes. Published segments
-are `Arc<FrozenRows>` wrappers with no mutation, stale marking, clear, or
-compaction API. A cached index is scoped to a manifest ID and extended
-incrementally or kept as per-segment deltas rather than rebuilt over the full
-history after every publication. Index construction preserves increasing
-table-local offset order, and lookup returns all matching rows, including
-duplicates, so integrity audit—not the storage layer—detects violated logical
-uniqueness.
-
-Flat causal tables cannot enable stable-row identity or causal capture.
+Flat causal tables themselves never opt into stable-row identity or recursively
+capture their own writes.
 
 ### Core relations
 
 The exact column encodings should remain private, but the logical schema is:
 
 ```text
-events(event -> kind, static_origin, cause_arity)
+events(event -> kind, catalog_origin)
 event_causes_0(event)
-event_causes_1(event -> parent_0)
-event_causes_2(event -> parent_0, parent_1)
+event_causes_1(event -> parent)
+event_causes_2(event -> parents{2})
 ...
-event_causes_D(event -> parent[0..D])
+event_causes_D(event -> parents{D})
 
 row_state(event -> table, stable_row_id)
-row_state_value_N(event -> typed logical values...)       // cold/archive form
+row_state_value_N(event -> logical_values{N})             // cold/archive form
 row_retired(event -> table, stable_row_id, prior_state)
-key_state_K(state_event, key_ordinal -> table, key[0..K], presence,
-            row_state_or_absent)
-key_transition(state_event, key_ordinal -> prior_key_state_or_initial)
+initial_absence_K(state_event -> table, key{K})
+key_transition_K(event -> table, key{K}, prior_key_state,
+                 next_presence, next_row_state_or_absent)
 
-firing_P_B(event -> rule, premise_state[0..P], binding[0..B])
-source_event(event -> source_catalog_id, source_row_ordinal)
-action_merge_leaf(owner_event, action_ordinal, occurrence_ordinal
-                  -> transcript, leaf_ordinal)
-merge_transcript_K(transcript -> table, key[0..K], observed_key_state,
+firing_P_B(event -> rule, premise_states{P}, bindings{B})
+source_event(event -> source_item_id)
+owner_effects_A(owner_event -> effect_events{A})
+action_merge_leaf(effect_event -> leaf)
+merge_transcript_K(transcript -> table, key{K}, observed_key_state,
                    outcome_event)
-merge_leaf_N(transcript, leaf_ordinal -> cause, origin_ordinal,
-             occurrence_ordinal, values[0..N])
-merge_step_N(event -> transcript, step_ordinal,
-             ordered_left_ref, ordered_right_ref,
-             changed, result_values[0..N])
+merge_leaf_N(leaf -> transcript, producer_event, values{N})
+merge_step_N(step_event -> transcript,
+             left_ref, right_ref, changed, result_values{N})
 merge_outcome(event -> transcript, root_ref, next_key_state_or_noop)
 commit_event(event -> table, prior_state_or_absent, accepted_ref)
-read_hit_K(owner_event, ordinal -> table, key[0..K], present_key_state)
-read_miss_K(owner_event, ordinal -> table, key[0..K], absent_key_state)
+read_hit_K(read_event -> table, key{K}, present_key_state)
+read_miss_K(read_event -> table, key{K}, absent_key_state)
 equality_witness(event -> sort, lhs, rhs)
-rekey_R(event -> table, row, prior_state, witness[0..R])
+rekey_R(event -> table, row, prior_state, witnesses{R})
 
 equality_event(event -> sort, lhs_term_ref, rhs_term_ref, reason)
 congruence_C(event -> left_row_state, right_row_state,
-                        child_witness[0..C])
+                        child_witnesses{C})
 
-check_P_B(event -> check_catalog_id, premise_state[0..P], binding[0..B])
+check_P_B(event -> check_catalog_id, premise_states{P}, bindings{B})
 ```
 
 The arrows in this logical notation only separate lookup/discriminator columns
 from payload columns for readability. `FlatStorageTable` treats every column as
-ordinary data and enforces neither keys nor functional dependencies.
+ordinary data and enforces neither keys nor functional dependencies. Braces
+abbreviate that many physical columns in one concrete fixed-width schema; no
+count, position, or item-number column is stored in a row.
 
-`D`, `N`, `K`, `P`, `B`, `R`, and `C` are prospective arities known from
+Every lookup is all-match. Exact duplicates are idempotent. Distinct rows in an
+additive evidence relation add parents or constraints; they do not compete for
+a privileged definition. Dynamic action multiplicity never comes from row
+count; it is carried by distinct firing/effect/read/step `EventId`s and opaque
+merge-leaf IDs.
+
+Positive evidence such as cause rows, equality witnesses, and observation
+constraints is additive. Addressed replay controls are different: after exact-
+row deduplication, two incompatible operational descriptors for one event,
+archived values for one row state, normalized `owner_effects_A` sets for one
+owner, a transcript header/outcome, or records for one step ID, leaf ID, effect
+event, read event, or `(transition_event, table, key)` cannot both define one
+exact replay. That conflict is rejected only if the selected slice reaches it.
+It is not a reason to impose uniqueness on all flat relations or validate
+unrelated rows.
+
+Every dynamic firing, source item, head effect, explicit read, and merge
+callback has an opaque identity; identity preserves multiplicity without
+implying order. `owner_effects_A` stores the fixed complete-head effect set in
+one arity-specific dense row. Each effect descriptor's `catalog_origin` carries
+its action-site identity, so the packing columns have no identity or ordering
+meaning. For a selected owner, the consumer normalizes matching rows to a set,
+requires one effect identity for each expected catalog action site, and rejects
+incompatible sets locally. Read events are causal parents of their consuming
+effects, and their `catalog_origin` identifies the static read site, so no
+owner/read-position row is needed. A runtime-variable list, if a supported
+construct needs one, is represented by a fixed-fan-in list DAG rather than
+normalized position/item rows. A selected effect executes once per effect
+`EventId`, regardless of how many physical rows repeat its descriptor.
+
+`catalog_origin` is an opaque typed catalog identity: depending on `kind`, it
+names a rule, source item, action site, read site, table/merge declaration, or
+maintenance recipe. Its numeric representation has no ordering meaning.
+
+Selected effect decoding enforces reciprocal identity coherence locally. An
+effect ID belongs to exactly one dynamic owner set, that owner is one of the
+effect's causal parents, and the effect's catalog action site is valid for the
+owner layout. Read-event parents must realize the catalog-declared read-site
+layout for that effect; singleton sites have exactly one dynamic read ID, while
+explicitly repeatable sites use distinct read IDs. If
+`action_merge_leaf(effect, leaf)` exists, the selected `merge_leaf_N` row must
+name the same effect as `producer_event`, and the static action kind determines
+whether zero or one candidate leaf is expected. Any mismatch fails only when
+the effect or leaf is selected. Exact duplicate physical rows remain
+idempotent.
+
+`D`, `N`, `K`, `P`, `B`, `R`, `C`, and `A` are prospective arities known from
 table/rule registration. `ArityTableFamily` is a thin registry that creates one
 `FlatStorageTable` per required physical schema during single-threaded
 registration/preflight; the registry is frozen before capture and workers never
 add tables. In the event-cause family, arity `D` has physical width `D + 1`:
 one child event followed by `D` parent events.
 
-Event parents deliberately use one dense row in `event_causes_D`, not normalized
-`(event, ordinal, parent)` rows. The child event is the indexed lookup column;
-parent position preserves semantic role and multiplicity and is not a temporal
-ordinal. Closure does one `events` directory lookup followed by one lookup that
-must return exactly one row from the selected arity table. A runtime-unbounded
-conjunction is expressed as a balanced DAG of fixed-fan-in cause events, so
-capture never mutates the table registry. Other genuinely unbounded non-causal
-payload lists may still use normalized tables.
+Event parents deliberately use a dense row in `event_causes_D` for each captured
+parent tuple, not normalized edge rows. The child event is the indexed lookup
+column; the remaining columns are dense packing only. Closure probes every
+preflight-registered cause family for the selected event and unions every parent
+`EventId` from every matching row, so repeated parents and packing permutations
+are idempotent. Semantic roles such as merge left/right belong in the
+kind-specific payload, not the generic cause row.
+A runtime-unbounded conjunction is expressed as a balanced DAG of fixed-fan-in
+cause events, so capture never mutates the table registry. Other genuinely
+unbounded non-causal payload lists use the same fixed-fan-in list-DAG pattern.
 
 Merge operand/root references are tagged references to the prior committed row,
-a candidate leaf, or an earlier step in the same transcript. `left` and
-`right` preserve the callback's `old`/`new` orientation. Step ordinals form a
-topological linearization local to the transcript: every referenced step is
-earlier, while independent subtree callbacks may be numbered in either order.
+a candidate leaf, or another step in the same transcript. `left` and
+`right` preserve the callback's `old`/`new` orientation. Each step `EventId`
+names one callback result, and operand references form the local dependency DAG.
+The root reference determines exactly which steps matter; replay evaluates them
+in dependency postorder, with no sequence number between independent subtrees.
 `changed` and `result_values` archive the observed callback result for replay
 validation; for `changed = false`, the result signature is the retained `old`
 operand rather than unused output scratch. They are evidence, never values that
 replay may inject as facts.
 
-Static table IDs and premise occurrence layouts do not need to be repeated in
+Static table IDs and premise-site layouts do not need to be repeated in
 every firing row; the rule catalog supplies them.
 
 The `table` fields above encode a stable semantic `CatalogTableId`. Flat-store
@@ -637,24 +683,32 @@ archive-on-identity-retirement.
 The event DAG records positive causality, but a replay scheduler must also avoid
 moving a selected read of an old or absent key state after a selected transition
 away from that state. Traced keyed tables therefore expose a local MVCC-style
-state event:
+state reference:
+
+```text
+KeyStateRef = (state_event, table, logical_key)
+```
 
 - a present state names the committed row-state event;
-- an absent state is allocated lazily when absence is first observed or becomes
-  the result of delete/rekey;
+- an initially absent state is allocated lazily and described by
+  `initial_absence_K`; an absence produced by delete/rekey is described by that
+  transition's `key_transition_K` row;
 - every read hit, supported miss, and merge transcript names the exact state it
   observed;
 - every effective insert, replacement, delete, or rekey records the state
   transition it performed.
 
-The next key state is the transition event itself. Most events advance one key;
-rekey/coalescence may emit several `(state_event, key_ordinal)` rows, such as an
-old-key-to-absent and new-key-to-present transition. Present LHS premise rows are
-observations just like explicit action-side hits. The traced semantic table
-keeps its current key-state event alongside its existing key index; a durable
-causal-mode tombstone map retains absent states across delete, clear, and
-quiescent clone. This cursor is mutable table state, not part of the append-only
-causal log.
+For the row's full `(table, key)` address, the transition `EventId` becomes the
+next key-state token; `next_row_state_or_absent` says whether that state exposes
+a present semantic row and, if so, which row-state event. Most events advance
+one key; rekey/coalescence may emit several `key_transition_K` rows for the same
+event, such as old-key-to-absent and new-key-to-present transitions. Their full
+addresses distinguish them without ordering the affected keys. Present LHS
+premise rows are observations just like explicit action-side hits. The traced
+semantic table keeps its current `KeyStateRef` alongside its existing key index;
+a durable causal-mode tombstone map retains absent states across delete, clear,
+and quiescent clone. This cursor is mutable table state, not part of the
+append-only causal log.
 
 During cold replay planning, all selected observations of state `S` are
 scheduled before any selected transition `S -> S'`. That is a key-local
@@ -662,7 +716,7 @@ anti-dependency, not a global history edge, and it does not cause backward
 closure to retain unrelated observations. Until a table can provide this
 contract, action-side misses are rejected at preflight.
 
-### Event allocation and parallel publication
+### Event allocation and parallel capture
 
 Workers reserve blocks of opaque event IDs from a session counter. A block is
 only a uniqueness optimization; it is not a time interval.
@@ -674,14 +728,14 @@ every actual callback invocation becomes a `merge_step_N`, including a
 part of a selected firing's complete head.
 
 Current `SortedWritesTable` ownership already serializes actual callbacks for a
-key inside its hash shard, so capture can assign local ordinals without a lock.
-`StagedOutputs` carries candidate batches and any precombined operand subtree;
-when the owning shard resolves the live collision, it stitches that material
-into the `(table, key)` transcript, remaps temporary references, and assigns
-topological local ordinals. The format also remains correct if a
-future reducer builds independent same-key subtrees in parallel: ordered
-operand references preserve the actual tree even though publication is a
-linear list of callback invocations.
+key inside its hash shard, so capture can allocate opaque leaf/step identities
+and connect operands without another lock. `StagedOutputs` carries candidate
+batches and any precombined operand subtree; when the owning shard resolves the
+live collision, it stitches that material into the `(table, key)` transcript and
+remaps temporary references to final leaf and step IDs. The format also remains
+correct if a future reducer builds independent same-key subtrees in parallel:
+explicit left/right references preserve the actual DAG even though flat rows
+have no sequence.
 
 After resolving the transcript root against the live row, an effective
 `commit_event` allocates final metadata and is the only event inserted into
@@ -695,22 +749,21 @@ dataflow impose replay order. Unrelated keys, shards, and firings remain
 unordered. For the exact user-value path, the initial proof-slicing gate rejects
 callbacks with user-semantic database reads, nested user writes, or shared
 mutable state, so the transcript remains key-local. This restriction does not
-reject the built-in
-constructor `UnionId`/union-find or container-normalization paths: they use the
+reject the built-in constructor `UnionId`/union-find or container-normalization
+paths: they use the
 dedicated equality, congruence, and normalization events described below and
 ordinary fresh proof rebuild. If the proof gate later admits other effects, the
 current step can serve as their owner/cause, but a wider visibility-boundary
 design is required before enabling them. Gaps in event IDs are valid.
 
-Publication audit also checks that transcript keys match every leaf/result,
-candidate tickets occur with the captured multiplicity, and step ordinals are
-unique with operand-step references pointing backward. Every `EventId` has
-exactly one `events` header, exactly one cause row in its declared arity family
-and none in another family, and the required kind-specific payload cardinality.
-Every parent event is in the published manifest or current candidate segments;
-the combined event graph is acyclic; key-state transitions are well formed;
-exactly one merge outcome names a valid root; and only a commit/rekey event—not
-a step—appears in `row_state`.
+There is no whole-store integrity audit. During backward slicing, a selected
+event must have at least one interpretable descriptor, every selected parent
+must resolve, and every matching additive record is followed. The selected
+scheduler detects cycles in the resulting union graph. When a selected merge,
+key-state transition, or other addressed replay structure is decoded, its
+identities, references, multiplicity, and result shape are validated before use.
+An unreachable missing or conflicting record is irrelevant; an exact duplicate
+is idempotent; and a distinct additive duplicate only enlarges the slice.
 
 ## Execution boundaries
 
@@ -721,10 +774,12 @@ events that produced it. Feed-forward rebuild work likewise records explicit
 parents from container normalization, table rekey, equality, and congruence.
 
 Top-level action blocks and native input rows retain resolved actions or parsed
-values in the static source catalog; a filename alone is not sufficient
-provenance. A capture-aware check records its successful witnesses after the
-state it observes. Multiple checks may have shared support cones, but source
-command order is checker-context metadata rather than causal availability.
+values as stable `SourceItemId` entries in the source catalog; a filename alone
+is not sufficient provenance. Each dynamic source item gets its own `EventId`,
+so repeated inputs/effects need no row position to preserve multiplicity. A
+capture-aware check records its successful witnesses after the state it
+observes. Multiple checks may have shared support cones, but source command order
+is checker-context metadata rather than causal availability.
 
 ## Equality, congruence, and rebuilding
 
@@ -801,7 +856,7 @@ reasoning rather than a new axiom.
 ### Containers and custom merges
 
 Container rebuild records structural element equality dependencies and a
-normalization kind. Custom merges use the same ordered step transcript and
+normalization kind. Custom merges use the same identified operand DAG and
 retain the resolved static merge expression/configuration. A final merge that
 returns the existing logical row produces a no-op outcome; otherwise ordinary
 commit creates a fresh row state. No algebraic declaration is required for the
@@ -815,15 +870,16 @@ The prior row in an ordinary keyed collision—including a no-op merge—is an
 explicit transcript operand and is supported without a separate read contract.
 Other built-in action-side reads that do not appear as LHS atoms, such as
 `Lookup*` instructions, need a causal lookup variant that returns the logical
-value together with its stable and row-state IDs and attaches a `read_hit_K`
-dependency to the current firing.
-A miss records `read_miss_K` against the exact absent key-state event; replay
-must run the observation before a selected successor transition and revalidate
-absence before applying the action. A lookup that stages a default insert links
-the miss, its mutation ticket, and the absent-to-present transition. Until these
-hit/miss paths and their proof-mode behavior exist, preflight rejects every such
-built-in read rather than relying on public lookup APIs that project the hidden
-event column away.
+value together with its stable and row-state IDs. It allocates a read `EventId`,
+records `read_hit_K`, makes the observed state a cause of that read, and makes
+the read a cause of the consuming effect. A miss does the same with
+`read_miss_K` and the exact absent key-state event. Replay recomputes the real
+key and performs the lookup against the fresh table; the captured row only
+schedules and validates the observation and never authorizes a synthesized
+default or result. A default insert links its effect ID, read ID, mutation
+ticket, and absent-to-present transition. Until these hit/miss paths and their
+proof-mode behavior exist, preflight rejects every such built-in read rather
+than relying on public lookup APIs that project the hidden event column away.
 Lookup/function expressions inside `MergeFn` remain initially rejected by the
 merge purity and existing proof-support gates.
 
@@ -850,7 +906,7 @@ Within that invocation-local set, a cold index deduplicates normalized typed
 bindings and stable-row references before choosing deterministically by causal
 cost and then a semantic lexicographic tie break; raw event allocation order is
 excluded, as are raw stable-ID values. The tie signature uses typed values,
-static catalog/source ordinals, and normalized structural provenance; two
+static catalog/source IDs, declared layout slots, and normalized structural provenance; two
 witnesses identical under that signature are observationally interchangeable.
 If retaining every witness proves too expensive, any bounded policy must itself
 be deterministic and exposed as explicit truncation, not an asynchronous
@@ -863,22 +919,32 @@ event-to-event AND edges. The slicer maintains event and static-declaration
 worklists:
 
 1. Seed with a successful check witness.
-2. Look up `events[event]`, select `event_causes_D` from `cause_arity`, fetch its
-   single row, and enqueue every parent column.
-3. The kind-specific payload adds its static rule/source/table declaration and
-   any non-event replay control such as a transcript or portable value.
-4. A firing or source event also follows its reverse `action_merge_leaf`
-   occurrences so complete-head actions are retained.
-5. A selected merge outcome or leaf promotes its containing transcript. The
-   transcript adds its prior state and every leaf/step needed for the observed
-   group outcome; their causal `EventId` operands are already traversed through
-   the cause rows.
+2. Exact-deduplicate the matching `events[event]` headers and require them to
+   agree before kind dispatch. Then probe every registered `event_causes_D`
+   family and enqueue the union of every matching row's parent columns.
+3. Every matching additive kind-specific payload adds its static
+   rule/source/table declaration and non-event replay obligations. Addressed
+   operational payloads are exact-row deduplicated and must agree if selected.
+4. A firing or source event follows its dense `owner_effects_A` row so the
+   complete head is retained. The normalized effect set must agree with the
+   static owner layout, and every effect must reciprocally name that owner as a
+   cause and satisfy its declared read-site layout. Each effect then follows its
+   addressed payload and its coherently decoded `action_merge_leaf` mapping, if
+   that effect staged a candidate.
+5. A selected merge outcome or leaf exact-deduplicates the matching transcript
+   controls. Coherent rows locate its transcript; incompatible addressed rows
+   fail local decoding. The transcript adds its prior state and every leaf/step
+   needed for the observed group outcome. Each selected leaf explicitly
+   enqueues its `producer_event`; for an action leaf that producer is the exact
+   effect `EventId`. Step-event causal parents are traversed through the cause
+   rows, while tagged operand references drive the exact local DAG traversal.
 6. A selected read observation adds its present/absent key-state scheduling
    constraint to `SlicePlan` without pulling unrelated observations of that
    state into closure.
 7. Repeat until no new events or declarations are selected.
 
-A visited set makes closure linear in the selected graph after root choice.
+A visited `EventId` set and exact-row sets make duplicate evidence idempotent
+and closure linear in the distinct selected graph after root choice.
 Parent-before-child postorder supplies the causal base order. Cold planning then
 adds key-state observation-before-transition edges and transcript/complete-head
 cluster constraints, collapses co-stageable strongly connected components, and
@@ -941,7 +1007,7 @@ The internal `SlicePlan` contains:
 - selected source actions and exact selected input rows;
 - selected source rules;
 - selected firings in causal parent-before-child order;
-- selected per-key merge transcripts, candidate occurrence mappings, and
+- selected per-key merge transcripts, effect/leaf identity mappings, and
   portable intermediate-result signatures;
 - selected present/absent key-state observations and transitions;
 - replay clusters derived from transcript incidence and complete-head coupling;
@@ -973,13 +1039,15 @@ executor:
 1. Create a semantically empty e-graph from the captured deterministic replay
    configuration, enable the existing full proof encoding, and install the
    static declaration closure.
-2. Load the selected action-visible binding signatures and occurrence
-   multiplicities already converted to portable replay terms by cold slicing.
+2. Load one selected action-visible binding request per captured firing
+   `EventId`, already converted to portable replay terms by cold slicing, along
+   with its locally decoded catalog-site-to-effect-ID map. The opaque firing ID
+   is a selector token, not a replay order.
 3. Replay source events once their causal parents are satisfied.
 4. After replaying a firing's selected causal producers, resolve its terms
    read-only in the fresh proof-mode e-graph and obtain its local typed values.
 5. A `CausalReplayScheduler` receives the existing `Matches` for a rule and
-   chooses only the selected action-visible binding occurrences in the next
+   satisfies only the selected firing-token/binding requests in the next
    causally ready replay cluster.
 6. `step_rules_with_scheduler` applies the chosen matches with their complete
    original rule heads. Generated proof/rebuild maintenance remains unfiltered.
@@ -1014,24 +1082,27 @@ This is **action-exact**, not an exact replay of the captured dynamic body
 witness. If multiple body witnesses have the same action-visible binding, the
 scheduler may use any deterministic witness available in the reduced replay
 because it instantiates the same complete rule head and the resulting proof is
-checked independently. It must still apply the action exactly as many times as
-captured. That multiplicity matters for non-idempotent effects such as an
-associative/commutative sum merge. If a body distinction can change any action,
-the capture specification must include it in the selector. Exact dynamic-
-premise replay is deferred unless premise-occurrence selectors are also carried
-into the replay executor.
+checked independently. It must still apply each selected firing/effect identity
+exactly once. Distinct identities preserve multiplicity for non-idempotent
+effects such as an associative/commutative sum merge, while duplicate physical
+rows never multiply execution. If a body distinction can change any action, the
+capture specification must include it in the selector. Exact dynamic-premise
+replay is deferred unless premise identities are also carried into the replay
+executor.
 
 The existing scheduler needs a narrow replay extension rather than a fork:
 
-- represent zero-action-variable matches with an explicit occurrence count or
-  sentinel instead of dividing a zero-length tuple;
+- carry the selected firing `EventId` as a private request token, so even a
+  zero-action-variable match has a nonempty identity-bearing selector row;
 - project source-visible selector slots while retaining the complete
   proof-instrumented match tuple for action instantiation;
-- add an internal occurrence ordinal to the scheduler's decided relation so
-  ordinary set semantics do not collapse repeated action-visible tuples;
-- choose body witnesses deterministically while preserving the captured action
-  multiplicity; deduplication is permitted only for an effect certified
-  duplicate-idempotent;
+- retain the firing token in the scheduler's decided relation so ordinary set
+  semantics do not collapse repeated action-visible tuples;
+- choose body witnesses deterministically while consuming every distinct
+  selected firing token exactly once;
+- pass the firing's catalog-site-to-effect-ID map through the existing action
+  executor, so staged candidates and read validators receive opaque identities
+  by static site rather than by runtime position;
 - retain each selected binding occurrence that appears early as a residual
   until its causal parents and replay cluster are ready, then consume it exactly
   once;
@@ -1056,15 +1127,18 @@ ordinary pending candidates. This is a controller for the existing merge path,
 not a second table or grounded-rule executor:
 
 1. Every replayed source/action occurrence stages its logical candidate with
-   the captured transcript/leaf token. Multiplicity is exact.
+   the captured transcript and opaque leaf ID. Multiplicity is the set of
+   distinct effect/leaf identities.
 2. At the merge barrier, the table verifies the replay-local prior row against
    the captured prior-state signature and verifies the exact candidate-leaf
    multiset. A missing, extra, or mis-keyed leaf fails replay.
-3. The controller walks `merge_step_N` in local ordinal order. Operand
-   references select the replay-local prior row, candidate value, or actual
-   result of an earlier step. It invokes the corresponding fresh replay graph's
-   proof-instrumented `MergeFn`, derived from the same catalog declaration,
-   with the same ordered operands and a proof-mode `ExecutionState`.
+3. Starting at the transcript root reference, the controller evaluates the
+   selected `merge_step_N` operand DAG in dependency postorder and memoizes each
+   step `EventId`. Operand references select the replay-local prior row,
+   candidate value, or actual result of another step. It invokes the
+   corresponding fresh replay graph's proof-instrumented `MergeFn`, derived from
+   the same catalog declaration, with the same left/right operand orientation
+   and a proof-mode `ExecutionState`.
 4. Each invocation must reproduce the captured changed/no-op bit and portable
    user-semantic result projection. Proof-generated IDs and term/proof-table
    writes have no ordinary-capture counterpart and remain unfiltered. Captured
@@ -1081,12 +1155,12 @@ projects away replay-only proof columns, IDs, and timestamps.
 
 The same controller covers source/user commits and ordinary value-table
 collisions produced by selected rebuild maintenance. User candidates map by
-source/firing action occurrence; pure value-rebuild candidates map by portable
-prior-row/rebuild-witness signatures. Fresh proof-mode rebuild still re-derives
-those candidates; the plan controls only their merge invocations once they
-exist.
+their exact effect/leaf identities; pure value-rebuild candidates map by
+portable prior-row/rebuild-witness signatures. Fresh proof-mode rebuild still
+re-derives those candidates; the plan controls only their merge invocations once
+they exist.
 
-This must replay the recorded operand tree, not merely left-fold raw
+This must replay the recorded operand DAG, not merely left-fold raw
 candidates. For a non-associative merge, `old ⊗ (a ⊗ b)` is not interchangeable
 with `(old ⊗ a) ⊗ b`. Different keys may still replay in parallel; no database-
 wide merge sequence is introduced.
@@ -1095,11 +1169,12 @@ wide merge sequence is introduced.
 requirement for a user value merge. It includes `old`, `new`, and deterministic
 non-associative or non-commutative merge expressions. The initial callback must
 still be pure and key-separable: its user-semantic result may depend on its
-ordered operands and immutable captured configuration, but not on shared
+left/right-oriented operands and immutable captured configuration, but not on shared
 `PredictedVals`, counters, early-stop state, mutable extensions, database reads,
 or nested user writes. Time, randomness, I/O, and opaque Rust closures are
-likewise rejected. These are already outside today's proof-encoding gate; local
-ordering removes algebraic restrictions, not the checker/language gate.
+likewise rejected. These are already outside today's proof-encoding gate; exact
+operand-DAG replay removes algebraic restrictions, not the checker/language
+gate.
 
 If full proof mode later admits declared merge reads or nested semantic writes,
 the causal model must add their real table-dependency visibility boundary and
@@ -1113,7 +1188,7 @@ collision records the two constructor/value causes and the resulting typed
 equality event. Backward closure follows that equality/congruence witness, and
 fresh proof replay runs the ordinary proof union-find and rebuild. Likewise,
 container normalization follows its specialized structural witness. These
-paths may retain local callback records for integrity diagnostics, but the
+paths may retain local callback records for replay diagnostics, but the
 controller neither forces nor compares raw representative IDs, and it does not
 replace the dedicated congruence proof with a captured merge result.
 
@@ -1160,20 +1235,21 @@ Parallel capture is a design requirement, not a serial fallback.
 - Each worker/shard uses a fresh flat causal append handle.
 - Pending row/cause metadata remains aligned through sharding and local
   same-key reduction.
-- All tasks join and candidate segments pass integrity audit before their
-  manifest is published.
-- Causal readers only inspect immutable published segment manifests.
+- A scoped or uniquely owned `PendingBatch` ensures every producing task joins
+  before its buffers are drained; no live reader overlaps consolidation.
+- Causal readers inspect only the final immutable store returned by
+  `finish_root`.
 - Numeric stable/event IDs may differ with thread count.
 
 Tests and debug output compare normalized semantic records, never raw allocation
-order. Capture records each actual per-key reduction tree as an ordered local
-transcript, not a database-wide linearization. Exact value-merge replay drives
-the existing merge callback from that transcript; specialized equality and
-normalization merges follow their dedicated witnesses. Algebraically
-order-sensitive value results may legitimately differ across executions if the
-base engine exposes a different candidate tree; each captured proof must
-reproduce and justify the observed run, while capture instrumentation must not
-itself change that run's tree.
+order. Capture records each actual per-key reduction DAG with explicit
+left/right orientation, not a local or database-wide linearization. Exact
+value-merge replay drives the existing merge callback from that transcript;
+specialized equality and normalization merges follow their dedicated witnesses.
+Algebraically order-sensitive value results may legitimately differ across
+executions if the base engine exposes a different candidate reduction; each
+captured proof must reproduce and justify the observed run, while capture
+instrumentation must not itself change that reduction.
 
 ## Special operations
 
@@ -1191,17 +1267,18 @@ drops never-effective pending candidates, performs the existing clear, and does
 not reset the table-local allocator. It first reaches a verified no-live-buffer
 barrier, then replaces the pending-state generation so an old weak buffer
 cannot repopulate the cleared table on `Drop`. The allocator lives outside that
-replaceable pending state and remains monotone. A late old-generation buffer
-poisons the causal session. Direct `Table::clear` is unsupported while an exact
-causal capture is active because it lacks the session context.
+replaceable pending state and remains monotone. A late old-generation semantic
+buffer is rejected and cannot repopulate the table. Flat records from abandoned
+work remain harmless bag rows unless a selected root reaches an incomplete
+addressed record, which then fails locally. Direct `Table::clear` is unsupported
+while exact causal capture is active because it lacks the session context.
 
 ### Clone, push, and pop
 
-`Database::try_clone_causal` first requires merged pending queues, no live flat
-writers, and no unpublished candidate transaction. It preserves hidden stable
-and row-state IDs, UF causal metadata, and present/absent key-state cursors while
-sharing the causal session, append-only store with immutable published
-manifests, catalog, and allocators. The clone receives a fresh private
+`Database::try_clone_causal` first requires merged semantic pending queues and a
+quiescent causal append batch. It preserves hidden stable and row-state IDs, UF
+causal metadata, and present/absent key-state cursors while sharing the causal
+session, append-only store, catalog, and allocators. The clone receives a fresh private
 database-instance token and the two semantic databases may then diverge.
 `PendingCause` and `CheckEventHandle` are unforgeable, instance-bound handles,
 so one sibling cannot attach the other's new event as a cause or select its
@@ -1214,12 +1291,11 @@ A detached clone into a new causal session is unsupported until it can copy and
 translate the reachable causal closure; minting snapshot source events would
 incorrectly turn derived state into axioms.
 
-Initially, the shared `CausalSession` grants an exclusive publication lease to
-one database instance at a time. The holder still uses ordinary parallel rule,
-merge, and flat-append paths, but a sibling cannot open a competing causal
-transaction and receives a typed busy error before mutation. Concurrent sibling
-publication is a future extension requiring branch-isolated candidate manifests
-and a tested atomic store-wide publish protocol.
+There is no per-instance publication lease. Siblings may submit disjoint,
+instance-bound causal records through the same concurrent flat store. Freezing
+for `finish_root` is session-wide and requires every sibling capture operation
+and append batch to be quiescent; after that terminal freeze, further capture is
+rejected.
 
 Push/pop is strictly unsupported in the initial implementation and is rejected
 at preflight. Event causality alone is insufficient because the current proof
@@ -1302,10 +1378,12 @@ The implementation should maintain and test these invariants.
 3. **Observation fidelity.** Every firing premise, equality test, keyed hit/miss,
    and merge names the exact row, witness, or present/absent key state it
    observed.
-4. **Event soundness.** Every event has exactly one header, one dense cause row
-   in its declared arity family, and its required kind-specific payloads. Every
-   row-state commit, merge step, rekey, equality, and congruence event names its
-   exact effective causes. Merge steps never masquerade as committed row states.
+4. **Relational event soundness.** Capture emits interpretable descriptors,
+   dense cause rows, and kind-specific payloads for each effective event. Closure
+   unions all matching additive evidence; selected addressed controls
+   exact-deduplicate and must decode coherently. Every row-state commit, merge
+   step, rekey, equality, and congruence event names its exact effective causes.
+   Merge steps never masquerade as committed row states.
 5. **Acyclic causality.** Event parent edges form a DAG independent of numeric
    `EventId` order. Replay augments it only with key-local observation-before-
    transition and co-staging constraints; an unsatisfiable augmented schedule
@@ -1313,20 +1391,22 @@ The implementation should maintain and test these invariants.
 6. **Root completeness.** An instance-bound successful check handle has at least
    one complete invocation-local witness and all exact equality witnesses needed
    to justify it.
-7. **Closure sufficiency.** Following all required event operands reaches the
-   source facts/rules needed to recreate the selected root.
+7. **Closure sufficiency.** Following the union of matching additive operands
+   and every coherently decoded selected control reaches the source facts/rules
+   needed to recreate the selected root.
 8. **Replay fidelity.** Selected source events and action-visible bindings run
    in an augmented causal topological schedule with complete rule heads, exact
    transcript clusters, key-state constraints, and maintenance only at safe
    cuts. A valid alternative body witness may supply a selected action.
 9. **Merge fidelity.** Each selected exact value-merge key has the prior state,
-   candidate occurrences, ordered callback operands/results, and final outcome
-   reproduced by the catalog-equivalent replay merge after semantic projection.
-   Specialized union/congruence and normalization merges reproduce their typed
-   causal obligations through ordinary proof-mode maintenance, never by
-   importing a captured representative or result.
-10. **Atomic visibility.** Flat candidate segments become visible only as one
-    audited store-wide manifest; failed or partial publication is unreachable.
+   candidate leaf/effect identities, oriented callback operands/results, and
+   final outcome reproduced by the catalog-equivalent replay merge after
+   semantic projection. Specialized union/congruence and normalization merges
+   reproduce their typed causal obligations through ordinary proof-mode
+   maintenance, never by importing a captured representative or result.
+10. **Quiescent visibility.** Flat buffers are drained only after their producers
+    join, and slicing reads only the terminal immutable store returned by
+    `finish_root`.
 11. **Independent proof validity.** The existing proof checker accepts the
    replay-produced certificate against the stored resolved observation prefix.
 
@@ -1338,15 +1418,18 @@ Fail closed with structured diagnostics for:
 - unsupported backend or table;
 - push/pop in sliced mode;
 - stable/event/auxiliary ID exhaustion;
-- a wrong-width flat row, flat `RowId` exhaustion, late append handle,
-  incomplete publication, or invalidated session;
+- a wrong-width flat row, flat `RowId` exhaustion, non-quiescent freeze, or
+  append after terminal freeze;
 - missing stable premise identity;
 - missing or wrong-session row state;
 - a wrong-instance `PendingCause` or check-root handle;
-- a duplicate/missing event header, malformed kind-payload cardinality,
-  missing/orphan/multi-family event-cause row, unregistered arity, or parent
-  outside the published/candidate segment set;
-- a causal cycle or unschedulable augmented replay constraint graph;
+- a write to an unregistered fixed-arity cause/effect schema family;
+- no interpretable descriptor/cause/payload for a selected event or an
+  unresolved selected parent;
+- incompatible selected addressed controls, including event headers, archives,
+  owner-effect sets, reads, merge mappings/transcripts, initial absences, or
+  key-state transitions;
+- a selected causal cycle or unschedulable augmented replay constraint graph;
 - an opaque source value that cannot become a replay term;
 - an external function without the required causal-read/validator contract;
 - a present/absent key-state mismatch or violated read-miss observation;
@@ -1374,8 +1457,8 @@ boundaries:
 - `core-relations/src/table/mod.rs`: optional physical column, commit-time ID
   allocation, cause-preserving insert/remove buffers, pre-append collision
   resolution, local transcript capture/replay around the existing `MergeFn`,
-  key-state/tombstone cursors, merge outcomes, generation-checked writers, and
-  compaction;
+  key-state/tombstone cursors, merge outcomes, semantic clear-generation-checked
+  writers, and compaction;
 - `core-relations/src/table/rebuild.rs`: explicit preserve/rekey versus replace
   outcomes;
 - `core-relations/src/query.rs` and `free_join/plan.rs`: private stable-ID atom
@@ -1384,10 +1467,12 @@ boundaries:
   context, causal hit/miss lookup, and firing recorder integration, without a
   second witness representation;
 - one focused `core-relations/src/flat_storage.rs` module: append-only row
-  segments, parallel append handles, store-wide candidate manifests, scans, and
-  lazy indexes, deliberately outside the semantic `Table` trait;
+  buffers, scoped parallel pending batches, quiescent consolidation/freeze,
+  scans, and cold all-match indexes, deliberately outside the semantic `Table`
+  trait;
 - one focused `core-relations/src/causal.rs` module: session ownership, flat
-  schemas, fixed-arity cause families, event drafts, and integrity audit;
+  schemas, fixed-arity cause families, event drafts, and selected
+  addressed-control decoding;
 - `core-relations/src/free_join/mod.rs`: database capture state and the
   quiescent, fallible branch-clone boundary;
 - `egglog-bridge/src/lib.rs`, `rule.rs`, and the UF/rebuild integration points:
@@ -1408,7 +1493,8 @@ a subsystem, the design should be revisited before continuing.
 - Implement the disabled, identified, and traced `SortedWritesTable` layouts.
 - Cover fresh/no-op/effective merge, delete/recreate, clear, clone, rehash, and
   compaction semantics.
-- Add checked table-owned allocators and generation-checked buffer lifetimes.
+- Add checked table-owned allocators and semantic clear-generation-checked
+  buffer lifetimes.
 - Keep physical IDs out of public function rows and merge callbacks.
 
 ### Phase 2: rebuild and parallel identity
@@ -1419,30 +1505,33 @@ a subsystem, the design should be revisited before continuing.
   version/index/subset update paths.
 - Resolve live collisions before final physical append in identified/traced
   parallel `StagedOutputs`.
-- Preserve ordered merge operands/results in serial buffers and stitch/remap
-  parallel `StagedOutputs` mini-transcripts at the owning key shard.
+- Preserve each callback's left/right-oriented operands and result in merge
+  buffers, and stitch/remap parallel `StagedOutputs` operand sub-DAGs at the
+  owning key shard.
 - Implement atomic block allocators and threshold-crossing concurrent tests.
 
 ### Phase 3: flat relational causal store
 
-- Add non-`Table` `FlatStorageTable`, explicit-finish parallel append handles,
-  immutable `FrozenRows` segments, manifest-scoped lazy indexes, and
-  `CausalStore`-wide audited publication.
-- Add the race-free `OPEN -> CLOSING` writer-token transition, checked row
-  widths/counts, and table-local offsets across segments.
+- Add non-`Table` `FlatStorageTable`, worker-local append handles, scoped pending
+  batches, quiescent consolidation, terminal immutable storage, and cold
+  all-match indexes.
+- Add checked physical widths/capacity and a freeze that cannot succeed while a
+  producing task still owns a pending-batch handle.
 - Add preflight-frozen payload and dense `event_causes_D` arity families.
-- Add private instance-bound handles, exact-one cause-row integrity checks, and
-  graph cycle detection without event-ID ordering.
-- Record source, commit, per-key merge transcript, retirement, and present/
-  absent key-state transitions.
+- Add private instance-bound handles, exact-row deduplication, additive-evidence
+  union, and selected addressed-control decoding.
+- Record opaque source/effect/read/leaf/step identities, dense
+  `owner_effects_A` families, commit/per-key merge/retirement records, initial
+  absence descriptors, and present/absent key-state transitions.
 
 ### Phase 4: premise and check capture
 
 - Add hidden-ID atom binding to query construction.
 - Generate `RuleCaptureSpec`s and record exact firing premises/bindings through
   direct and decomposed joins.
-- Finalize immutable firing event drafts only after complete-head observations
-  are known.
+- Finalize each firing's LHS event before head commit, then emit its locally
+  addressed effect set and make each effect depend on its owner, reads, and any
+  action-local producer effects.
 - Capture built-in action-side read hits/misses or reject them at preflight.
 - Record successful check witnesses.
 - Verify capture projection against capture-off semantics under deterministic
@@ -1459,6 +1548,8 @@ a subsystem, the design should be revisited before continuing.
 ### Phase 6: closure and causal action replay
 
 - Build `SlicePlan`, static declaration closure, and slice-local replay terms.
+- Union every matching selected additive cause/payload row, coherently decode
+  only reached addressed controls, and detect cycles without event-ID ordering.
 - Build the augmented schedule from event causes, key-state anti-dependencies,
   complete-head/transcript clusters, SCC co-staging, and maintenance-safe cuts.
 - Add the semantically empty deterministic replay-factory contract and
@@ -1470,7 +1561,8 @@ a subsystem, the design should be revisited before continuing.
 
 - Map captured source bindings through proof instrumentation.
 - Add `PerKeyMergeReplayPlan` to verify leaves and drive the existing merge
-  callback through captured ordered operand steps.
+  callback through the captured operand DAG with explicit left/right
+  references.
 - Enable delete/subsume plus algebraically arbitrary pure/key-separable user
   value merges only after their action-exact/transcript fixtures pass; retain
   dedicated proof rebuild for `UnionId` and normalization merges.
@@ -1505,17 +1597,18 @@ capture before replay/proof integration.
 - A deterministic state-machine test compares a small reference map after each
   operation.
 - Stable/event/auxiliary allocator exhaustion fails before the stale sentinel
-  or wraparound, publishes no partial row/event/transcript, and never reuses an
-  ID.
+  or wraparound, prevents the associated semantic outcome from being appended,
+  and never reuses an ID. Flat prefixes from abandoned event/transcript drafts
+  may remain physically present. Unreachable prefixes are ignored; any prefix
+  reached from a selected root must decode completely or fail locally.
 - Capture-aware clone succeeds only at a quiescent barrier, shares the session
   and allocators, copies UF/key-state cursors, and uses instance-bound handles;
   a wrong-instance or sibling-root handle is rejected.
-- The exclusive publication lease permits parallel work within one causal
-  transaction but rejects a concurrent sibling transaction before mutation;
-  sequential sibling publications remain isolated by instance-bound causes and
-  root handles.
-- Clear with an outstanding old-generation buffer cannot repopulate the table
-  and invalidates the session if that buffer later attempts to flush.
+- Concurrent siblings may append to the shared flat store, but terminal freeze
+  fails while either sibling owns an active capture batch; instance-bound causes
+  and root handles keep their selected cones isolated.
+- Clear with an outstanding old-generation semantic buffer cannot repopulate
+  the table; a late flush is rejected without changing unrelated causal rows.
 
 ### Concurrency tests
 
@@ -1528,34 +1621,40 @@ capture before replay/proof integration.
   after the final logical result is known and appended.
 - For two or more same-key candidates, exercise `old`, `new`, a deliberately
   non-associative/non-commutative merge, and a non-idempotent sum under
-  1/2/4/32 threads. Each replay must reproduce its captured operand tree,
+  1/2/4/32 threads. Each replay must reproduce its captured operand DAG,
   multiplicity, intermediate signatures, and final result; different captured
-  trees are not required to agree semantically.
+  DAGs are not required to agree semantically.
 - Compare the optional associative/commutative fast path against exact
   transcript replay for the same captured candidate multiset.
-- Assert ID uniqueness and normalized transcript integrity, not equality of raw
-  IDs or local ordinals across executions.
-- Concurrent flat writers append exactly one intact row per input, preserve
-  duplicates for audit, and require explicit `finish`; unfinished or late
-  writers discard their segment and invalidate the session.
-- Race new writer registration against `OPEN -> CLOSING`; either the writer is
-  counted and must finish or registration fails without appending.
-- Exercise 0/1/2/high-arity cause-family routing, duplicate parent positions,
-  frozen-arity rejection, diamond closure, cold reverse-index construction, and
-  corrupt duplicate/missing event headers or payloads plus
-  missing/orphan/wrong-family/multi-family/cyclic cause rows.
-- Candidate flat segments remain invisible until one store-wide manifest swap;
-  scans and single-/multi-column exact-tuple indexes return all duplicates across
-  multiple immutable segments. Wrong row width and reserved-sentinel row-count
-  overflow fail before consolidation or publication.
-- Inject failure after semantic commit but before causal publication; assert
-  that the session is invalidated and no later extraction or capture can treat
-  candidate rows as published.
+- Assert ID uniqueness and normalized transcript replay fidelity, not equality
+  of raw IDs or incidental topological traversal order across executions.
+- Concurrent flat writers append one intact row per input and preserve physical
+  duplicates. Scoped or uniquely owned pending batches prevent terminal freeze
+  until every writer has submitted its local buffer.
+- Exercise 0/1/2/high-arity cause-family routing, repeated parent IDs, permuted
+  dense parent packing, frozen-arity rejection, diamond closure, and cold
+  reverse-index construction.
+- Exact duplicate evidence is idempotent; distinct cause rows and rows in
+  several arity families for one event union all parents; matching additive
+  payloads are followed, while selected addressed descriptors must agree.
+- A missing selected descriptor/parent/payload, selected cycle, or incompatible
+  addressed transcript record fails locally. The same unreachable bad row does
+  not make extraction fail.
+- Selected-control corruption covers effect reuse across owners, a missing owner
+  cause, missing/duplicate singleton read sites, and a nonreciprocal
+  effect-to-leaf/leaf-to-producer mapping. The same unreachable corruption is
+  ignored.
+- Frozen scans and single-/multi-column exact-tuple indexes return all physical
+  duplicates. Wrong row width and reserved-sentinel row-count overflow fail
+  before consolidation or freeze.
 
 ### Causal DAG fixtures
 
 - one source fact and one rule;
 - a source action block with local bindings and multiple same-key writes;
+- a multi-action head whose later effect consumes an earlier action-local
+  result, reconstructed by the ordinary executor under an explicit producer
+  effect dependency;
 - irrelevant source and rule branches;
 - unrelated peer-firing enablement trap with no recorded execution batch;
 - genuine multi-step causal recursion;
@@ -1594,24 +1693,26 @@ Every successful fixture runs:
 1. original ordinary execution;
 2. current full proof testing;
 3. ordinary execution with causal capture;
-4. slice integrity audit;
+4. all-match backward closure and selected addressed-control decoding;
 5. slice replay on a fresh ordinary graph;
-6. slice replay under proof testing;
-7. proposition comparison and independent proof checking.
+6. slice replay under proof testing, proposition comparison, and independent
+   proof checking.
 
 Negative fixtures assert a typed error and no full-program fallback.
 Today that includes merge action blocks, function-lookup merges, tuple-output
 forms, and opaque Rust closures wherever the existing proof gate rejects them;
-local transcript ordering does not widen that gate. Declared merge reads and
+exact operand-DAG replay does not widen that gate. Declared merge reads and
 nested user writes remain future negative fixtures until both proof checking
 and a wider visibility-boundary design support them.
 
 ### Replay and checker fixtures
 
-- A zero-action-variable rule retains an explicit match count or sentinel.
+- A zero-action-variable rule retains its private firing `EventId` in the
+  scheduler request and decided relation; no count or sentinel is needed.
 - Duplicate existential/body witnesses for one action-visible tuple preserve
-  the exact captured occurrence count, including a non-idempotent
-  associative/commutative merge; only duplicate-idempotent effects may dedup.
+  every distinct captured firing/effect identity, including for a
+  non-idempotent associative/commutative merge. Exact duplicate physical rows
+  are idempotent, and each selected identity is consumed once.
 - Repeated equal bindings in distinct causal firing events remain distinct
   occurrences. A selected occurrence discovered early remains residual until
   its causal parents and replay cluster are ready and is consumed once;
@@ -1629,9 +1730,10 @@ and a wider visibility-boundary design support them.
 - Direct root cases cover absent-prior/single-leaf without callback,
   changed-false prior alias with no append, and changed-true replacement with
   an equal user-semantic projection.
-- Deleting/reordering a leaf, swapping operand orientation, changing
-  multiplicity/prior state, or corrupting an intermediate value-merge result
-  produces a typed replay failure rather than a captured-value insert.
+- Deleting a referenced leaf, redirecting a leaf/step reference, swapping
+  operand orientation, changing multiplicity/prior state, or corrupting an
+  intermediate value-merge result produces a typed replay failure rather than
+  a captured-value insert.
 - A missing equality-sort selector anchor fails without constructing a term,
   top-level Fiat, or semantic row.
 - Proof/term maintenance at a derived safe cut makes the next selected binding
@@ -1715,10 +1817,11 @@ include the exact flags. Reports and any copied fact inputs must live under
 - capture, closure, replay, extraction, and checking phases;
 - stable and event row counts/bytes;
 - merge transcript/leaf/step counts and bytes, maximum per-key step count, and
-  time spent in locally serialized transcript replay;
+  time spent in exact per-key operand-DAG replay;
 - total versus selected sources/rules/firings/facts/events/cause rows;
-- flat segment/index bytes, key-state observations/transitions, replay clusters,
-  augmented-graph SCCs, and maintenance-safe-cut delays;
+- flat row/index bytes, physical versus distinct causal-row counts, key-state
+  observations/transitions, replay clusters, augmented-graph SCCs, and
+  maintenance-safe-cut delays;
 - scheduler matches considered versus selected firings;
 - proof node count and replay-program size;
 - binary SHA, workload/fact hashes, compiler, threads, and platform.
@@ -1774,8 +1877,8 @@ mode reference.
 ### A global arena plus `HistoryPosition`
 
 Rejected. It duplicates table storage and imposes an order stronger than rule
-semantics require. Exact event parents, key-local state versions, and merge
-transcripts retain only causally or conflict-relevant order.
+semantics require. Exact event parents, merge operand orientation, and key-state
+observation constraints retain only the dependencies that replay needs.
 
 ### Eager proof terms with compact evidence payloads
 
@@ -1799,12 +1902,19 @@ proof-erasure rule is trusted.
 
 ### Use `SortedWritesTable` for the causal log
 
-Rejected. Causal evidence is append-only and has no functional dependency,
-timestamp, merge, stale row, deletion, or rebuild semantics. `SortedWritesTable`
-would hash and conflict-resolve every row, retain unused indexes/version state,
-and could deduplicate malformed duplicate event IDs before the integrity audit
-observes them. `FlatStorageTable` reuses the lower row/index primitives without
-pretending the log is a semantic relation.
+Viable, but not the recommended first choice. With the complete tuple as its
+key and a no-op conflict merge, `SortedWritesTable` would give the same storage
+semantics: exact duplicate tuples may coalesce, while distinct tuples remain
+available to all-match consumers. Additive relations would still union their
+matches, and incompatible selected addressed controls would still fail local
+decoding. No correctness argument depends on preserving physical duplicates.
+
+The cost is carrying a primary hash, table versions, stale/delete/rebuild hooks,
+and semantic `Table` integration for relations that only append, freeze, scan,
+and build cold indexes. `FlatStorageTable` is proposed as the smaller storage
+specialization, not as a soundness requirement. The implementation comparison
+must measure it; if the flat abstraction recreates comparable machinery or does
+not improve capture cost, using all-key `SortedWritesTable`s is the fallback.
 
 `SortedWritesTable` remains the right abstraction for semantic relations and
 fresh replay tables: those genuinely need keyed lookup, merge behavior,
@@ -1830,6 +1940,8 @@ these points:
 2. Causal relations live in a separate append-only `CausalStore` of
    non-`Table` `FlatStorageTable`s. It reuses row-buffer/parallel-writer/index
    primitives but has no FD, timestamp, merge, delete, or rebuild semantics.
+   Lookups exact-deduplicate physical rows, union additive relations, and decode
+   selected addressed controls locally; there is no global integrity audit.
 3. Parallel capture is required; IDs are nondeterministic and have no ordering
    meaning.
 4. The causal schema has no run, wave, or frontier identity. Action-exact replay
@@ -1856,20 +1968,22 @@ these points:
    or a general grounded executor.
 8. For a proof-compatible user value merge, the recorded key-local callback
    transcript is both causal evidence and replay control. Replay re-invokes the
-   catalog-equivalent proof-instrumented merge on its exact ordered operand tree
-   and validates every semantic result; associativity/commutativity are optional
-   fast-path properties, not support requirements. Constructor `UnionId` and
-   normalization merges instead use their dedicated causal witnesses and
-   ordinary fresh proof maintenance.
+   catalog-equivalent proof-instrumented merge on its exact operand DAG with
+   explicit left/right orientation and validates every semantic result;
+   associativity/commutativity are optional fast-path properties, not support
+   requirements. Constructor `UnionId` and normalization merges instead use
+   their dedicated causal witnesses and ordinary fresh proof maintenance.
 9. Capture-aware clones share one causal session/store, copy semantic/UF/key-
    state cursors, and isolate new causes and roots with private instance-bound
    handles. Detached causal clones and push/pop are unsupported.
 10. Event parents use one preflight-frozen `event_causes_D` flat table per
-    concrete arity. Parent column position preserves role/multiplicity; there is
-    no normalized general dependency-edge table.
-11. Flat candidate segments publish store-wide only after exact-one cause-row,
-    referential-integrity, key-state, transcript, and acyclicity audit. Unknown
-    effects and built-in action-side reads without hit/miss capture are rejected
-    at preflight.
+    concrete arity. Dense parent columns are packing only; all matching rows
+    contribute a set of parent `EventId`s, and there is no normalized general
+    dependency-edge table.
+11. `finish_root` freezes flat storage only at session-wide quiescence. Missing
+    selected records, selected cycles, and incompatible selected addressed
+    controls fail during closure/replay; unrelated rows are not validated.
+    Unknown effects and built-in action-side reads without hit/miss capture are
+    rejected at preflight.
 
 These decisions are the boundary between this design and PR #42's approach.
