@@ -2347,9 +2347,8 @@ fn command_skips_rebuild(command: &ResolvedNCommand) -> bool {
     }
 }
 
-/// Whether values of `sort` are, or contain, e-classes — so a row holding one
-/// goes stale and needs the encoding's term and rebuild machinery. False only for
-/// a sort whose values stand alone, which a global of that sort can be stored as.
+/// Whether values of `sort` are, or contain, e-classes, so a row holding one goes
+/// stale and needs the encoding's term and rebuild machinery.
 pub(super) fn holds_eclasses(sort: &ArcSort) -> bool {
     sort.is_eq_sort() || sort.is_container_sort()
 }

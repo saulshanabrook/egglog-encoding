@@ -1069,8 +1069,6 @@ impl<'a> MergeTransaction<'a> {
         let key: Row = args[..n_keys].into();
         match self.current_row(view, n_keys, &key) {
             Some(current) => Ok(current.values[op.col_idx]),
-            // A strict read takes no fallback argument, so there is nothing to
-            // return for a key the view does not hold.
             None if op.strict => Err(anyhow!(
                 "view `{}` holds no row for the key read by column {}",
                 op.view_name,

@@ -65,9 +65,6 @@ pub(crate) fn register_set_if_empty(
         move |backend, _| backend.register_set_if_empty(name.clone(), n_keys, out_arity),
     );
 
-    // A view whose value column holds a value rather than an e-class is read by
-    // key with no fallback: the caller reading one knows the row was written, and
-    // a base sort has no value to default to.
     if !out_sorts[0].is_eq_sort() {
         let view_value = ViewValue {
             name: view_value_prim_name(view_name),

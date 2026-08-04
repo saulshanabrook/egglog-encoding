@@ -72,10 +72,9 @@ impl ProofInstrumentor<'_> {
                     "()".to_string()
                 } else if self.names_a_global(head.name(), args) && !holds_eclasses(head.output()) {
                     let value = v.name.clone();
-                    // As in `instrument_fact_expr`: a global holding a value is
-                    // justified by the value. A custom function with a base-sort
-                    // output is not — its row is established, so it keeps the
-                    // row's proof.
+                    // As in `instrument_fact_expr`. A custom function with a
+                    // base-sort output keeps the row's proof: its row is
+                    // established, where a global's only records a value.
                     self.reflexive_fiat_proof(head.output().name(), &value)
                 } else {
                     let mut proof = proof_var;
@@ -210,10 +209,9 @@ impl ProofInstrumentor<'_> {
                             if !self.proofs_enabled() {
                                 "()".to_string()
                             } else if !holds_eclasses(func_type.output()) {
-                                // The row's own term names the slot as well as the
-                                // value, so it lines up with nothing else in the
-                                // proof. The value stands for itself, exactly as the
-                                // same fact written as a literal would.
+                                // The row's term names the slot as well as the
+                                // value, so it lines up with nothing else. The value
+                                // stands for itself, as a literal would.
                                 self.reflexive_fiat_proof(func_type.output().name(), &fv)
                             } else {
                                 let mut proof = view_proof_var;

@@ -431,10 +431,8 @@ pub trait Backend: Send + Sync {
     }
 
     /// Like [`Backend::register_view_column_read`], but with no fallback:
-    /// `(keys) -> column`, failing the action when the key is absent. For a
-    /// caller that knows the row was written, so there is no value to default to
-    /// — reading a global whose sort has no e-classes, whose column holds a value
-    /// rather than an id. The default registers a panic.
+    /// `(keys) -> column`, failing the action when the key is absent. The default
+    /// registers a panic.
     fn register_view_column_lookup(
         &mut self,
         view_name: String,
