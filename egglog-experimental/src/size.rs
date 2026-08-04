@@ -38,6 +38,9 @@ impl ReadPrim for GetSizePrimitive {
             tables => tables
                 .iter()
                 .map(|value| state.base_values().unwrap::<S>(*value).0)
+                // Reserved tables are not part of the program's own data, as in
+                // the no-argument case above.
+                .filter(|name| !name.starts_with(INTERNAL_SYMBOL_PREFIX))
                 .filter_map(|name| state.table_size(&name))
                 .sum(),
         };

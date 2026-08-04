@@ -1739,6 +1739,15 @@ impl<'a> ProofInstrumentor<'a> {
                     .iter()
                     .map(|a| self.instrument_merge_body(emit, a, fname, idx))
                     .collect::<Vec<_>>();
+                // A global here is read, not built: it already has a row, and
+                // building one would write the merge's own term relation with the
+                // global's key in place of an argument.
+                if self.names_a_global(&func_type.name, args) {
+                    let keys: Vec<String> = arg_vars.iter().map(|a| a.value.clone()).collect();
+                    let holds_eclass = holds_eclasses(func_type.output());
+                    let read = self.lookup_global(&func_type.name, &keys, holds_eclass, emit.stmts);
+                    return Operand::plain(read);
+                }
                 self.add_term_and_view(&mut emit.justified_by(&node), func_type, &arg_vars, None)
             }
             // A container-producing primitive (e.g. `set-intersect`): build the

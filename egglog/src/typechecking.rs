@@ -575,6 +575,9 @@ impl EGraph {
                         (resolved.name.clone(), ft.input.clone(), ft.outputs.clone());
                     crate::proofs::proof_fresh::register_set_if_empty(self, &name, input, outputs);
                 }
+                // `remove_globals` runs after typechecking and registers what it
+                // declares, so this and the `global_sorts` arm below only matter
+                // for a decl reaching typechecking some other way.
                 if resolved.internal_global_table {
                     self.type_info.global_tables.insert(fdecl.name.clone());
                 }

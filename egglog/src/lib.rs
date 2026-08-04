@@ -1212,15 +1212,14 @@ impl EGraph {
     /// Extract rows of a table using the default cost model with name sym
     /// The `include_output` parameter controls whether the output column is always extracted
     /// For functions, the output column is usually useful
-    /// Print up to `n` the tuples in a given function.
-    /// Print all tuples if `n` is not provided.
     /// The row a global was written to, shown under the global's own name rather
-    /// than the shared table's.
+    /// than the shared table's. Empty when `n` is 0.
     fn global_row_to_dag(
         &self,
         global: &str,
         table: &str,
         id: i64,
+        n: usize,
     ) -> Result<(Function, TermDag, Vec<(TermId, TermId)>), Error> {
         let (keys, values, mut termdag) = self.function_to_dag(table, usize::MAX, true)?;
         let bound = keys
@@ -1242,10 +1241,17 @@ impl EGraph {
         Ok((
             function,
             termdag,
-            bound.map(|value| (named, value)).into_iter().collect(),
+            bound
+                .filter(|_| n > 0)
+                .map(|value| (named, value))
+                .into_iter()
+                .collect(),
         ))
     }
 
+    /// Print up to `n` of the tuples in a given function, or all of them if `n`
+    /// is not provided. A global is one row of its sort's shared table, and is
+    /// printed under its own name.
     pub fn print_function(
         &mut self,
         sym: &str,
@@ -1265,7 +1271,7 @@ impl EGraph {
         };
 
         let (f, termdag, terms_and_outputs) = match self.global_slots.slot(sym) {
-            Some((table, id)) => self.global_row_to_dag(sym, table, id)?,
+            Some((table, id)) => self.global_row_to_dag(sym, table, id, n)?,
             None => {
                 let (terms, outputs, termdag) = self.function_to_dag(sym, n, true)?;
                 let f = self
@@ -4442,6 +4448,31 @@ mod tests {
             }
             other => panic!("expected global function call rewrite, got {other:?}"),
         }
+    }
+
+    /// `print-function` and `get-size!` report a global under its own name, and do
+    /// not report the shared table it lives in.
+    #[test]
+    fn test_globals_are_reported_under_their_own_name() {
+        let mut egraph = EGraph::default();
+        let out = egraph
+            .parse_and_run_program(
+                None,
+                "(datatype Math (Num i64))
+                 (let $x (Num 1))
+                 (let $n 2)
+                 (print-function $x 10)
+                 (print-function $x 0)
+                 (print-function $n 10)",
+            )
+            .unwrap()
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>();
+        assert!(out[0].contains("($x) -> (Num 1)"), "{out:?}");
+        // `n` bounds a global's row as it bounds any other function's.
+        assert!(!out[1].contains("$x"), "{out:?}");
+        assert!(out[2].contains("($n) -> 2"), "{out:?}");
     }
 
     /// A command rejected *after* its globals were name-checked also has to give
