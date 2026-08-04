@@ -1485,6 +1485,13 @@ impl ScalarActionPlan {
 
     pub(crate) fn owner_checks(&self) -> Vec<(FunctionId, usize, bool)> {
         let mut checks = Vec::new();
+        // A standalone UF aliases the effect target and displaced target. Both
+        // occurrences must request the stronger non-subsumed owner invariant.
+        let displaced_targets = self
+            .graphs
+            .iter()
+            .map(|graph| graph.displaced.target)
+            .collect::<BTreeSet<_>>();
         for slot in &self.slots {
             match &slot.source {
                 ScalarActionSlotSource::Read(read) => {
@@ -1499,11 +1506,13 @@ impl ScalarActionPlan {
                 | ScalarActionSlotSource::Expression { .. } => {}
             }
         }
-        checks.extend(
-            self.effects
-                .iter()
-                .map(|effect| (effect.target, effect.n_keys, false)),
-        );
+        checks.extend(self.effects.iter().map(|effect| {
+            (
+                effect.target,
+                effect.n_keys,
+                displaced_targets.contains(&effect.target),
+            )
+        }));
         checks.extend(
             self.graphs
                 .iter()

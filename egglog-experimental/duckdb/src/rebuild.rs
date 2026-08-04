@@ -980,8 +980,9 @@ pub(crate) fn validate_scalar_mixed_ordered_union(
 }
 
 /// Validate an ordered-union target admitted from the general scalar action
-/// language. This is intentionally the same closed structural graph as the
-/// exact transcript, with a distinct diagnostic boundary.
+/// language. Subsumable targets retain the exact two-node View graph;
+/// non-subsumable targets must be the exact self-displacing UF and represent
+/// that singleton component by aliasing the graph's root and displaced plan.
 pub(crate) fn validate_scalar_action_ordered_union(
     base_values: &BaseValues,
     storage: &Storage,
@@ -990,15 +991,40 @@ pub(crate) fn validate_scalar_action_ordered_union(
     rule_name: &str,
     target: FunctionId,
 ) -> Result<OrderedUnionGraph> {
-    validate_view_ordered_union_graph(
-        base_values,
-        storage,
-        native_primitives,
-        fresh_tokens,
-        rule_name,
-        target,
-    )
-    .map_err(|error| {
+    let validate = || -> Result<OrderedUnionGraph> {
+        let info = storage.table_info(target)?;
+        if info.can_subsume {
+            return validate_view_ordered_union_graph(
+                base_values,
+                storage,
+                native_primitives,
+                fresh_tokens,
+                rule_name,
+                target,
+            );
+        }
+
+        validate_union_find_table(base_values, rule_name, &info)?;
+        let root = validate_ordered_union(
+            base_values,
+            storage,
+            native_primitives,
+            fresh_tokens,
+            rule_name,
+            target,
+            &info,
+            Some(target),
+            OrderedUnionOrientation::KeyToParent,
+        )?;
+        Ok(OrderedUnionGraph {
+            root: root.plan.clone(),
+            displaced: root.plan,
+            fresh_token: root.fresh_token,
+            fresh_label: root.fresh_label,
+        })
+    };
+
+    validate().map_err(|error| {
         anyhow!(
             "DuckDB scalar rule `{rule_name}` has an incompatible ordered-union target {}: {error:#}",
             target.rep()

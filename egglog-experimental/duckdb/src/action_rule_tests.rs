@@ -447,6 +447,23 @@ impl<B: Backend> Fixture<B> {
         }
     }
 
+    fn standalone_uf_scalar_rule(&self, name: &str, candidate_owner: u32) -> RuleSpec {
+        assert_eq!(self.key_count, 1);
+        let mut rule = self.scalar_rule(name);
+        let RuleBodyCall::Table { id, .. } = &mut rule.core.body.atoms[0].head else {
+            unreachable!("fixture body remains a table atom")
+        };
+        *id = self.uf;
+        let GenericCoreAction::Set(_, RuleActionCall::Table { id, .. }, _, values) =
+            &mut rule.core.head.0[42]
+        else {
+            unreachable!("exact lowered fixture action 42 is logical deferred Set 28")
+        };
+        *id = self.uf;
+        values[0] = literal(Value::new(candidate_owner), ColumnTy::Id);
+        rule
+    }
+
     fn variable_key_rule(&self, name: &str) -> RuleSpec {
         assert_eq!(self.key_count, 2);
         let mut rule = self.scalar_rule(name);
@@ -624,6 +641,88 @@ fn ordered_union(
     }
 }
 
+fn standalone_uf_rejection(
+    label: &str,
+    mutate: impl FnOnce(&mut FunctionConfig, FunctionId, FunctionId, &mut Fixture<EGraph>),
+) -> Result<()> {
+    let mut fixture = Fixture::new_with_key_count(EGraph::new()?, &format!("{label} fixture"), 1)?;
+    let source = assert_eq_unit_table(
+        &mut fixture.backend,
+        &format!("{label} standalone candidate source"),
+        vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
+        fixture.types.unit,
+    );
+    let wrong_proof = fixture.backend.add_table(FunctionConfig {
+        schema: vec![
+            ColumnTy::Id,
+            ColumnTy::Id,
+            ColumnTy::Base(fixture.types.unit),
+        ],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::Old,
+        name: format!("{label} wrong proof policy"),
+        can_subsume: false,
+    });
+    let target = fixture.backend.peek_next_function_id();
+    let mut config = FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
+        n_vals: 2,
+        n_identity_vals: Some(1),
+        default: DefaultVal::Fail,
+        merge: ordered_union(
+            fixture.primitives,
+            fixture.merge_label,
+            fixture.types,
+            fixture.unit_value,
+            fixture.sym,
+            fixture.trans,
+            target,
+            false,
+        ),
+        name: format!("{label} renamed standalone UF target"),
+        can_subsume: false,
+    };
+    mutate(&mut config, target, wrong_proof, &mut fixture);
+    assert_eq!(fixture.backend.add_table(config), target);
+
+    let unit_ty = ColumnTy::Base(fixture.types.unit);
+    let error = fixture
+        .backend
+        .add_rule(single_deferred_uf_rule(
+            source,
+            target,
+            unit_ty,
+            fixture.unit_value,
+            &format!("{label} invalid standalone UF rule"),
+        ))
+        .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("DuckDB scalar rule"),
+        "{label} escaped standalone UF admission: {error:#}"
+    );
+    assert_eq!(
+        fixture.backend.add_rule(single_deferred_uf_rule(
+            source,
+            fixture.uf,
+            unit_ty,
+            fixture.unit_value,
+            &format!("{label} valid standalone UF rule"),
+        ))?,
+        RuleId::new(0),
+        "{label} consumed a RuleId"
+    );
+    Ok(())
+}
+
+fn ordered_union_actions_mut(config: &mut FunctionConfig) -> &mut Vec<MergeAction> {
+    let MergeFn::Block { actions, .. } = &mut config.merge else {
+        unreachable!("standalone rejection fixture starts as an ordered-union Block")
+    };
+    actions
+}
+
 fn binding(id: u32, name: &str, ty: ColumnTy) -> RuleVar {
     RuleVar {
         id,
@@ -679,6 +778,46 @@ fn single_deferred_view_rule(old: FunctionId, view: FunctionId, name: &str) -> R
                 view,
                 vec![variable(key.clone()), variable(value.clone())],
                 vec![variable(key), variable(value)],
+            )]),
+        },
+    }
+}
+
+fn single_deferred_uf_rule(
+    source: FunctionId,
+    target: FunctionId,
+    unit_ty: ColumnTy,
+    unit_value: Value,
+    name: &str,
+) -> RuleSpec {
+    let key = binding(920, "standalone UF key", ColumnTy::Id);
+    let candidate = binding(921, "standalone UF candidate", ColumnTy::Id);
+    let payload = binding(922, "standalone UF payload", ColumnTy::Id);
+    RuleSpec {
+        name: name.to_string(),
+        seminaive: true,
+        no_decomp: false,
+        core: GenericCoreRule {
+            span: Span::Panic,
+            body: Query {
+                atoms: vec![GenericAtom {
+                    span: Span::Panic,
+                    head: RuleBodyCall::Table {
+                        id: source,
+                        read: ReadMode::Live,
+                    },
+                    args: vec![
+                        variable(key.clone()),
+                        variable(candidate.clone()),
+                        variable(payload.clone()),
+                        literal(unit_value, unit_ty),
+                    ],
+                }],
+            },
+            head: GenericCoreActions::new(vec![set_action(
+                target,
+                vec![variable(key)],
+                vec![variable(candidate), variable(payload)],
             )]),
         },
     }
@@ -790,6 +929,15 @@ struct Transcript {
     next_fresh: u32,
 }
 
+#[derive(Debug, Eq, PartialEq)]
+struct StandaloneUfTranscript {
+    changed: bool,
+    sym: Vec<Vec<u32>>,
+    trans: Vec<Vec<u32>>,
+    uf: Vec<Vec<u32>>,
+    next_fresh: u32,
+}
+
 fn scan_values(backend: &impl Backend, table: FunctionId) -> Vec<Vec<Value>> {
     let mut rows = Vec::new();
     backend.for_each_while_dyn(table, &mut |entry| {
@@ -885,6 +1033,80 @@ fn execute_seeded<B: Backend>(
     Ok(collect_transcript(fixture))
 }
 
+fn execute_standalone_uf<B: Backend>(
+    fixture: &mut Fixture<B>,
+    uf_rows: &[[u32; 3]],
+    candidates: &[[u32; 3]],
+) -> Result<StandaloneUfTranscript> {
+    let unit_ty = ColumnTy::Base(fixture.types.unit);
+    let source = assert_eq_unit_table(
+        &mut fixture.backend,
+        "renamed standalone UF candidate source",
+        vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
+        fixture.types.unit,
+    );
+    let mut values = uf_rows
+        .iter()
+        .map(|row| {
+            (
+                fixture.uf,
+                row.iter().copied().map(Value::new).collect::<Vec<_>>(),
+            )
+        })
+        .collect::<Vec<_>>();
+    values.extend(candidates.iter().map(|row| {
+        let mut values = row.iter().copied().map(Value::new).collect::<Vec<_>>();
+        values.push(fixture.unit_value);
+        (source, values)
+    }));
+    fixture.backend.add_values(values)?;
+    let rule = fixture.backend.add_rule(single_deferred_uf_rule(
+        source,
+        fixture.uf,
+        unit_ty,
+        fixture.unit_value,
+        "renamed standalone self-displacing UF rule",
+    ))?;
+    let changed = fixture
+        .backend
+        .run_rules(RuleSetRun {
+            name: Some("standalone self-displacing UF schedule"),
+            rules: &[rule],
+        })?
+        .changed();
+    Ok(StandaloneUfTranscript {
+        changed,
+        sym: id_rows(&fixture.backend, fixture.sym, true, fixture.unit_value),
+        trans: id_rows(&fixture.backend, fixture.trans, true, fixture.unit_value),
+        uf: id_rows(&fixture.backend, fixture.uf, false, fixture.unit_value),
+        next_fresh: fixture.backend.fresh_id().rep(),
+    })
+}
+
+fn execute_standalone_scalar<B: Backend>(fixture: &mut Fixture<B>) -> Result<Transcript> {
+    fixture.advance_fresh_to_100();
+    fixture.backend.add_values(vec![
+        (
+            fixture.uf,
+            vec![Value::new(1), Value::new(20), Value::new(70)],
+        ),
+        (fixture.old, vec![Value::new(20), Value::new(71)]),
+    ])?;
+    let rule = fixture.backend.add_rule(
+        fixture.standalone_uf_scalar_rule("renamed complete standalone UF scalar rule", 10),
+    )?;
+    assert!(
+        fixture
+            .backend
+            .run_rules(RuleSetRun {
+                name: Some("complete standalone UF scalar schedule"),
+                rules: &[rule],
+            })?
+            .changed()
+    );
+    Ok(collect_transcript(fixture))
+}
+
 fn collect_transcript<B: Backend>(fixture: &mut Fixture<B>) -> Transcript {
     Transcript {
         sym: id_rows(&fixture.backend, fixture.sym, true, fixture.unit_value),
@@ -948,6 +1170,32 @@ fn expected_old_min_owner() -> Transcript {
     expected.uf = vec![vec![20, 10, 115]];
     expected.next_fresh = 116;
     expected
+}
+
+fn expected_standalone_scalar() -> Transcript {
+    Transcript {
+        sym: vec![vec![70, 114], vec![71, 100], vec![111, 112]],
+        trans: vec![
+            vec![100, 70, 101],
+            vec![107, 112, 113],
+            vec![110, 107, 111],
+            vec![114, 111, 115],
+        ],
+        nil: vec![vec![102]],
+        cons: vec![vec![101, 102, 103]],
+        term: vec![vec![1, 104]],
+        ast: vec![
+            vec![20, 108],
+            vec![104, 105],
+            vec![104, 106],
+            vec![104, 109],
+        ],
+        rule: vec![vec![103, 105, 106, 107], vec![103, 108, 109, 110]],
+        old: vec![vec![20, 71], vec![104, 107]],
+        view: vec![],
+        uf: vec![vec![1, 10, 111], vec![20, 10, 115]],
+        next_fresh: 116,
+    }
 }
 
 fn execute_two_matches<B: Backend>(fixture: &mut Fixture<B>) -> Result<Transcript> {
@@ -1679,33 +1927,635 @@ fn scalar_plan_reauthenticates_ordered_union_merge_tokens_after_same_kind_reuse(
 }
 
 #[test]
-fn non_subsumable_self_displacing_uf_continues_through_general_admission() -> Result<()> {
-    let mut fixture = Fixture::new_with_key_count(EGraph::new()?, "duckdb non-subsume owner", 1)?;
-    let mut rule = fixture.scalar_rule("non-subsume self-displacing near shape");
-    let RuleBodyCall::Table { id, .. } = &mut rule.core.body.atoms[0].head else {
-        unreachable!()
-    };
-    *id = fixture.uf;
-    let GenericCoreAction::Set(_, RuleActionCall::Table { id, .. }, _, _) =
-        &mut rule.core.head.0[42]
-    else {
-        unreachable!()
-    };
-    *id = fixture.uf;
+fn standalone_uf_missing_noop_min_duplicate_and_recursive_cases_match_reference() -> Result<()> {
+    let cases = [
+        (
+            "missing owner",
+            Vec::<[u32; 3]>::new(),
+            vec![[1, 20, 70]],
+            StandaloneUfTranscript {
+                changed: true,
+                sym: vec![],
+                trans: vec![],
+                uf: vec![vec![1, 20, 70]],
+                next_fresh: 0,
+            },
+        ),
+        (
+            "same parent no-op",
+            vec![[1, 20, 70]],
+            vec![[1, 20, 71]],
+            StandaloneUfTranscript {
+                changed: false,
+                sym: vec![],
+                trans: vec![],
+                uf: vec![vec![1, 20, 70]],
+                next_fresh: 0,
+            },
+        ),
+        (
+            "old minimum",
+            vec![[1, 10, 70]],
+            vec![[1, 20, 80]],
+            StandaloneUfTranscript {
+                changed: true,
+                sym: vec![vec![80, 0]],
+                trans: vec![vec![0, 70, 1]],
+                uf: vec![vec![1, 10, 70], vec![20, 10, 1]],
+                next_fresh: 2,
+            },
+        ),
+        (
+            "new minimum",
+            vec![[1, 20, 70]],
+            vec![[1, 10, 80]],
+            StandaloneUfTranscript {
+                changed: true,
+                sym: vec![vec![70, 0]],
+                trans: vec![vec![0, 80, 1]],
+                uf: vec![vec![1, 10, 80], vec![20, 10, 1]],
+                next_fresh: 2,
+            },
+        ),
+        (
+            "duplicate candidates",
+            vec![],
+            vec![[1, 20, 80], [1, 30, 90]],
+            StandaloneUfTranscript {
+                changed: true,
+                sym: vec![vec![90, 0]],
+                trans: vec![vec![0, 80, 1]],
+                uf: vec![vec![1, 20, 80], vec![30, 20, 1]],
+                next_fresh: 2,
+            },
+        ),
+        (
+            "recursive self displacement",
+            vec![[1, 30, 70], [30, 25, 80], [25, 10, 81]],
+            vec![[1, 20, 72]],
+            StandaloneUfTranscript {
+                changed: true,
+                sym: vec![vec![3, 4], vec![70, 0], vec![80, 2]],
+                trans: vec![vec![0, 72, 1], vec![2, 1, 3], vec![4, 81, 5]],
+                uf: vec![
+                    vec![1, 20, 72],
+                    vec![20, 10, 5],
+                    vec![25, 10, 81],
+                    vec![30, 20, 1],
+                ],
+                next_fresh: 6,
+            },
+        ),
+    ];
 
-    let error = fixture.backend.add_rule(rule).unwrap_err().to_string();
-    assert!(error.contains("DuckDB scalar rule"), "{error}");
-    assert!(
-        error.contains("incompatible ordered-union target"),
-        "{error}"
+    for (label, seeds, candidates, expected) in cases {
+        let mut reference = Fixture::new_with_key_count(
+            egglog_bridge::EGraph::default(),
+            &format!("reference standalone {label}"),
+            1,
+        )?;
+        let mut duckdb =
+            Fixture::new_with_key_count(EGraph::new()?, &format!("duckdb standalone {label}"), 1)?;
+        assert_eq!(
+            execute_standalone_uf(&mut reference, &seeds, &candidates)?,
+            expected,
+            "reference {label}"
+        );
+        assert_eq!(
+            execute_standalone_uf(&mut duckdb, &seeds, &candidates)?,
+            expected,
+            "DuckDB {label}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn complete_standalone_uf_scalar_uses_head_then_self_wave_fresh_order() -> Result<()> {
+    let mut reference = Fixture::new_with_key_count(
+        egglog_bridge::EGraph::default(),
+        "reference complete standalone UF",
+        1,
+    )?;
+    let mut duckdb =
+        Fixture::new_with_key_count(EGraph::new()?, "duckdb complete standalone UF", 1)?;
+    let expected = expected_standalone_scalar();
+    assert_eq!(execute_standalone_scalar(&mut reference)?, expected);
+    assert_eq!(execute_standalone_scalar(&mut duckdb)?, expected);
+    assert_eq!(duckdb.backend.last_rule_match_counts(), &[1]);
+    assert_eq!(duckdb.backend.last_rule_insert_counts(), &[15]);
+
+    let trace = duckdb.backend.storage.latest_rule_sql().join("\n");
+    assert!(trace.contains("egglog_scalar_queue_"));
+    assert!(trace.contains("CAST('1' AS UBIGINT)"));
+    for forbidden in [
+        "CAST(NULL",
+        "TRY(",
+        "Appender",
+        "Arrow",
+        "CREATE FUNCTION",
+        "callback",
+        "host row",
+    ] {
+        assert!(!trace.contains(forbidden), "trace contains {forbidden}");
+    }
+    Ok(())
+}
+
+#[test]
+fn standalone_uf_structural_mutations_fail_before_rule_id() -> Result<()> {
+    standalone_uf_rejection("wrong schema", |config, _, _, fixture| {
+        config.schema[2] = ColumnTy::Base(fixture.types.unit);
+    })?;
+    standalone_uf_rejection("wrong identity count", |config, _, _, _| {
+        config.n_identity_vals = Some(2);
+    })?;
+    standalone_uf_rejection("wrong default", |config, _, _, fixture| {
+        config.default = DefaultVal::Const(fixture.unit_value);
+    })?;
+    standalone_uf_rejection("wrong subsumption", |config, _, _, _| {
+        config.can_subsume = true;
+    })?;
+    standalone_uf_rejection("wrong orientation", |config, target, _, fixture| {
+        config.merge = ordered_union(
+            fixture.primitives,
+            fixture.merge_label,
+            fixture.types,
+            fixture.unit_value,
+            fixture.sym,
+            fixture.trans,
+            target,
+            true,
+        );
+    })?;
+    standalone_uf_rejection("wrong displaced target", |config, _, _, fixture| {
+        let actions = ordered_union_actions_mut(config);
+        let MergeAction::Set(displaced, _) = &mut actions[6] else {
+            unreachable!()
+        };
+        *displaced = fixture.uf;
+    })?;
+    standalone_uf_rejection("wrong action order", |config, _, _, _| {
+        ordered_union_actions_mut(config).swap(3, 4);
+    })?;
+    standalone_uf_rejection("wrong displaced action", |config, _, _, _| {
+        ordered_union_actions_mut(config)[6] =
+            MergeAction::Union(MergeFn::OldCol(0), MergeFn::NewCol(0));
+    })?;
+    standalone_uf_rejection("wrong proof target", |config, _, wrong_proof, _| {
+        let actions = ordered_union_actions_mut(config);
+        let MergeAction::Set(target, _) = &mut actions[3] else {
+            unreachable!()
+        };
+        *target = wrong_proof;
+    })?;
+    standalone_uf_rejection("wrong primitive tag", |config, _, _, fixture| {
+        let actions = ordered_union_actions_mut(config);
+        let MergeAction::Let { value, .. } = &mut actions[0] else {
+            unreachable!()
+        };
+        let MergeFn::Primitive { id, .. } = value else {
+            unreachable!()
+        };
+        *id = fixture.primitives.ordering_max;
+    })?;
+    standalone_uf_rejection("wrong fresh authority", |config, _, _, fixture| {
+        let ordinary = fixture
+            .backend
+            .new_panic("ordinary callback cannot mint merge proofs".to_string());
+        let actions = ordered_union_actions_mut(config);
+        let MergeAction::Let { value, .. } = &mut actions[2] else {
+            unreachable!()
+        };
+        let MergeFn::Primitive { id, .. } = value else {
+            unreachable!()
+        };
+        *id = ordinary;
+    })?;
+    Ok(())
+}
+
+#[test]
+fn standalone_uf_plan_reauthenticates_native_and_fresh_tokens() -> Result<()> {
+    for stale_fresh in [false, true] {
+        let label = if stale_fresh {
+            "standalone fresh ABA"
+        } else {
+            "standalone native ABA"
+        };
+        let mut fixture = Fixture::new_with_key_count(EGraph::new()?, label, 1)?;
+        let source = assert_eq_unit_table(
+            &mut fixture.backend,
+            &format!("{label} candidate source"),
+            vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
+            fixture.types.unit,
+        );
+        let unit_ty = ColumnTy::Base(fixture.types.unit);
+        let rule = fixture.backend.add_rule(single_deferred_uf_rule(
+            source,
+            fixture.uf,
+            unit_ty,
+            fixture.unit_value,
+            label,
+        ))?;
+        let stale = if stale_fresh {
+            fixture.primitives.fresh
+        } else {
+            fixture.primitives.proof_max
+        };
+        let generation = fixture.backend.storage.generation()?;
+        let retained_watermark = watermark(&fixture.backend, rule);
+        let trace = fixture.backend.storage.latest_rule_sql();
+
+        fixture.backend.free_external_func(stale);
+        let replacement = if stale_fresh {
+            fixture.backend.register_get_fresh()
+        } else {
+            fixture
+                .backend
+                .register_native_primitive(NativePrimitive::SelectMaxPayload)
+        };
+        assert_eq!(replacement, stale, "{label} must exercise same-id reuse");
+        let error = fixture
+            .backend
+            .run_rules(RuleSetRun {
+                name: Some(label),
+                rules: &[rule],
+            })
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("freed or reused authority token"),
+            "{label}: {error:#}"
+        );
+        assert_eq!(fixture.backend.storage.generation()?, generation);
+        assert_eq!(fixture.backend.storage.next_fresh_id()?, 0);
+        assert_eq!(watermark(&fixture.backend, rule), retained_watermark);
+        assert_eq!(fixture.backend.storage.latest_rule_sql(), trace);
+        assert_eq!(scalar_scratch_count(&fixture.backend)?, 0);
+    }
+    Ok(())
+}
+
+#[test]
+fn standalone_uf_generation_and_quiescence_are_stable() -> Result<()> {
+    let mut fixture =
+        Fixture::new_with_key_count(EGraph::new()?, "standalone stable generation", 1)?;
+    let source = assert_eq_unit_table(
+        &mut fixture.backend,
+        "standalone stable candidate source",
+        vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
+        fixture.types.unit,
     );
-    assert!(!error.contains("scalar-mixed"), "{error}");
-    assert_eq!(
+    fixture.backend.add_values(vec![(
+        source,
+        vec![
+            Value::new(1),
+            Value::new(20),
+            Value::new(70),
+            fixture.unit_value,
+        ],
+    )])?;
+    let rule = fixture.backend.add_rule(single_deferred_uf_rule(
+        source,
+        fixture.uf,
+        ColumnTy::Base(fixture.types.unit),
+        fixture.unit_value,
+        "standalone stable generation rule",
+    ))?;
+    let generation = fixture.backend.storage.generation()?;
+    assert!(
         fixture
             .backend
-            .add_rule(fixture.scalar_rule("valid after non-subsume fallthrough"))?,
-        RuleId::new(0)
+            .run_rules(RuleSetRun {
+                name: Some("standalone first wave"),
+                rules: &[rule],
+            })?
+            .changed()
     );
+    assert_eq!(fixture.backend.storage.generation()?, generation + 1);
+    assert_eq!(fixture.backend.storage.next_fresh_id()?, 0);
+    let retained_watermark = watermark(&fixture.backend, rule);
+    assert_ne!(retained_watermark, 0);
+    assert!(
+        !fixture
+            .backend
+            .run_rules(RuleSetRun {
+                name: Some("standalone unchanged rerun"),
+                rules: &[rule],
+            })?
+            .changed()
+    );
+    assert_eq!(fixture.backend.storage.generation()?, generation + 1);
+    assert_eq!(fixture.backend.storage.next_fresh_id()?, 0);
+    assert_eq!(watermark(&fixture.backend, rule), generation + 1);
+    assert!(watermark(&fixture.backend, rule) > retained_watermark);
+    assert_eq!(fixture.backend.last_rule_match_counts(), &[0]);
+    assert_eq!(scalar_scratch_count(&fixture.backend)?, 0);
+    Ok(())
+}
+
+#[test]
+fn standalone_uf_subsumed_owner_rejects_then_retries_exactly() -> Result<()> {
+    let mut fixture = Fixture::new_with_key_count(EGraph::new()?, "standalone subsumed owner", 1)?;
+    let source = assert_eq_unit_table(
+        &mut fixture.backend,
+        "standalone subsumed owner candidate source",
+        vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
+        fixture.types.unit,
+    );
+    fixture.backend.add_values(vec![
+        (
+            fixture.uf,
+            vec![Value::new(1), Value::new(20), Value::new(70)],
+        ),
+        (
+            source,
+            vec![
+                Value::new(1),
+                Value::new(10),
+                Value::new(80),
+                fixture.unit_value,
+            ],
+        ),
+    ])?;
+    let rule = fixture.backend.add_rule(single_deferred_uf_rule(
+        source,
+        fixture.uf,
+        ColumnTy::Base(fixture.types.unit),
+        fixture.unit_value,
+        "standalone subsumed owner rule",
+    ))?;
+    let generation = fixture.backend.storage.generation()?;
+    fixture.backend.storage.with_connection(|connection| {
+        connection.execute(
+            &format!(
+                "UPDATE {} SET __subsumed = TRUE WHERE c0 = CAST('1' AS UBIGINT)",
+                sql_table(fixture.uf)
+            ),
+            [],
+        )?;
+        Ok(())
+    })?;
+    let uf = fixture.uf;
+    let physical_owner = |backend: &EGraph| -> Result<(u64, u64, u64, u64, bool)> {
+        backend.storage.with_connection(|connection| {
+            connection
+                .query_row(
+                    &format!(
+                        "SELECT c0, c1, c2, __generation, __subsumed FROM {}
+                         WHERE c0 = CAST('1' AS UBIGINT)",
+                        sql_table(uf)
+                    ),
+                    [],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                        ))
+                    },
+                )
+                .map_err(Into::into)
+        })
+    };
+    let owner_before = physical_owner(&fixture.backend)?;
+    let trace = fixture.backend.storage.latest_rule_sql();
+    let error = fixture
+        .backend
+        .run_rules(RuleSetRun {
+            name: Some("standalone subsumed owner rejection"),
+            rules: &[rule],
+        })
+        .unwrap_err();
+    assert!(error.to_string().contains("subsumed UF owner"), "{error:#}");
+    assert_eq!(fixture.backend.storage.generation()?, generation);
+    assert_eq!(fixture.backend.storage.next_fresh_id()?, 0);
+    assert_eq!(watermark(&fixture.backend, rule), 0);
+    assert_eq!(fixture.backend.storage.latest_rule_sql(), trace);
+    assert_eq!(physical_owner(&fixture.backend)?, owner_before);
+    assert_eq!(fixture.backend.table_size(fixture.uf), 1);
+    assert_eq!(fixture.backend.table_size(fixture.sym), 0);
+    assert_eq!(fixture.backend.table_size(fixture.trans), 0);
+    assert_eq!(fixture.backend.last_rule_match_counts(), &[]);
+    assert_eq!(fixture.backend.last_rule_insert_counts(), &[]);
+    assert_eq!(scalar_scratch_count(&fixture.backend)?, 0);
+
+    fixture.backend.storage.with_connection(|connection| {
+        connection.execute(
+            &format!(
+                "UPDATE {} SET __subsumed = FALSE WHERE c0 = CAST('1' AS UBIGINT)",
+                sql_table(fixture.uf)
+            ),
+            [],
+        )?;
+        Ok(())
+    })?;
+    assert!(
+        fixture
+            .backend
+            .run_rules(RuleSetRun {
+                name: Some("standalone retry after clearing subsumption"),
+                rules: &[rule],
+            })?
+            .changed()
+    );
+    assert_eq!(fixture.backend.storage.generation()?, generation + 1);
+    assert_eq!(fixture.backend.storage.next_fresh_id()?, 2);
+    assert_eq!(
+        id_rows(&fixture.backend, fixture.sym, true, fixture.unit_value),
+        vec![vec![70, 0]]
+    );
+    assert_eq!(
+        id_rows(&fixture.backend, fixture.trans, true, fixture.unit_value),
+        vec![vec![0, 80, 1]]
+    );
+    assert_eq!(
+        id_rows(&fixture.backend, fixture.uf, false, fixture.unit_value),
+        vec![vec![1, 10, 80], vec![20, 10, 1]]
+    );
+    assert_eq!(scalar_scratch_count(&fixture.backend)?, 0);
+    Ok(())
+}
+
+#[test]
+fn standalone_uf_late_conflict_and_exhaustion_roll_back_then_retry() -> Result<()> {
+    {
+        let mut fixture =
+            Fixture::new_with_key_count(EGraph::new()?, "standalone late conflict", 1)?;
+        let source = assert_eq_unit_table(
+            &mut fixture.backend,
+            "standalone conflict candidate source",
+            vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
+            fixture.types.unit,
+        );
+        fixture.backend.add_values(vec![
+            (
+                fixture.uf,
+                vec![Value::new(1), Value::new(20), Value::new(70)],
+            ),
+            (
+                source,
+                vec![
+                    Value::new(1),
+                    Value::new(10),
+                    Value::new(80),
+                    fixture.unit_value,
+                ],
+            ),
+        ])?;
+        let rule = fixture.backend.add_rule(single_deferred_uf_rule(
+            source,
+            fixture.uf,
+            ColumnTy::Base(fixture.types.unit),
+            fixture.unit_value,
+            "standalone late conflict rule",
+        ))?;
+        let generation = fixture.backend.storage.generation()?;
+        let trace = fixture.backend.storage.latest_rule_sql();
+        fixture.backend.storage.with_connection(|connection| {
+            connection.execute(
+                &format!(
+                    "INSERT INTO {} VALUES (
+                        CAST('70' AS UBIGINT), CAST('0' AS UBIGINT), FALSE,
+                        CAST('{generation}' AS UBIGINT), FALSE
+                    )",
+                    sql_table(fixture.sym)
+                ),
+                [],
+            )?;
+            Ok(())
+        })?;
+
+        let error = fixture
+            .backend
+            .run_rules(RuleSetRun {
+                name: Some("standalone late conflict"),
+                rules: &[rule],
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains("AssertEq conflict"), "{error:#}");
+        assert_eq!(fixture.backend.storage.generation()?, generation);
+        assert_eq!(fixture.backend.storage.next_fresh_id()?, 0);
+        assert_eq!(watermark(&fixture.backend, rule), 0);
+        assert_eq!(fixture.backend.storage.latest_rule_sql(), trace);
+        assert_eq!(
+            id_rows(&fixture.backend, fixture.uf, false, fixture.unit_value),
+            vec![vec![1, 20, 70]]
+        );
+        assert!(id_rows(&fixture.backend, fixture.trans, true, fixture.unit_value).is_empty());
+        assert_eq!(scalar_scratch_count(&fixture.backend)?, 0);
+
+        fixture.backend.storage.with_connection(|connection| {
+            connection.execute(
+                &format!(
+                    "DELETE FROM {} WHERE c0 = CAST('70' AS UBIGINT)
+                     AND c1 = CAST('0' AS UBIGINT)",
+                    sql_table(fixture.sym)
+                ),
+                [],
+            )?;
+            Ok(())
+        })?;
+        assert!(
+            fixture
+                .backend
+                .run_rules(RuleSetRun {
+                    name: Some("standalone retry after conflict"),
+                    rules: &[rule],
+                })?
+                .changed()
+        );
+        assert_eq!(fixture.backend.storage.generation()?, generation + 1);
+        assert_eq!(fixture.backend.storage.next_fresh_id()?, 2);
+        assert_eq!(
+            id_rows(&fixture.backend, fixture.sym, true, fixture.unit_value),
+            vec![vec![70, 0]]
+        );
+        assert_eq!(
+            id_rows(&fixture.backend, fixture.trans, true, fixture.unit_value),
+            vec![vec![0, 80, 1]]
+        );
+        assert_eq!(
+            id_rows(&fixture.backend, fixture.uf, false, fixture.unit_value),
+            vec![vec![1, 10, 80], vec![20, 10, 1]]
+        );
+    }
+
+    {
+        let mut fixture =
+            Fixture::new_with_key_count(EGraph::new()?, "standalone fresh exhaustion", 1)?;
+        let source = assert_eq_unit_table(
+            &mut fixture.backend,
+            "standalone exhaustion candidate source",
+            vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
+            fixture.types.unit,
+        );
+        fixture.backend.add_values(vec![
+            (
+                fixture.uf,
+                vec![Value::new(1), Value::new(20), Value::new(70)],
+            ),
+            (
+                source,
+                vec![
+                    Value::new(1),
+                    Value::new(10),
+                    Value::new(80),
+                    fixture.unit_value,
+                ],
+            ),
+        ])?;
+        let first_fresh = u64::from(u32::MAX) - 1;
+        fixture.backend.storage.set_next_fresh_id(first_fresh)?;
+        let rule = fixture.backend.add_rule(single_deferred_uf_rule(
+            source,
+            fixture.uf,
+            ColumnTy::Base(fixture.types.unit),
+            fixture.unit_value,
+            "standalone fresh exhaustion rule",
+        ))?;
+        let generation = fixture.backend.storage.generation()?;
+        let trace = fixture.backend.storage.latest_rule_sql();
+        let error = fixture
+            .backend
+            .run_rules(RuleSetRun {
+                name: Some("standalone fresh exhaustion"),
+                rules: &[rule],
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains("merge collisions"), "{error:#}");
+        assert_eq!(fixture.backend.storage.generation()?, generation);
+        assert_eq!(fixture.backend.storage.next_fresh_id()?, first_fresh);
+        assert_eq!(watermark(&fixture.backend, rule), 0);
+        assert_eq!(fixture.backend.storage.latest_rule_sql(), trace);
+        assert_eq!(fixture.backend.table_size(fixture.sym), 0);
+        assert_eq!(fixture.backend.table_size(fixture.trans), 0);
+        assert_eq!(
+            id_rows(&fixture.backend, fixture.uf, false, fixture.unit_value),
+            vec![vec![1, 20, 70]]
+        );
+        assert_eq!(scalar_scratch_count(&fixture.backend)?, 0);
+
+        fixture.backend.storage.set_next_fresh_id(0)?;
+        assert!(
+            fixture
+                .backend
+                .run_rules(RuleSetRun {
+                    name: Some("standalone retry after exhaustion"),
+                    rules: &[rule],
+                })?
+                .changed()
+        );
+        assert_eq!(fixture.backend.storage.next_fresh_id()?, 2);
+        assert_eq!(
+            id_rows(&fixture.backend, fixture.uf, false, fixture.unit_value),
+            vec![vec![1, 10, 80], vec![20, 10, 1]]
+        );
+    }
     Ok(())
 }
 

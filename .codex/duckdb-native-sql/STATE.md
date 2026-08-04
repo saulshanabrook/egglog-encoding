@@ -2495,3 +2495,269 @@ configuration reached by Math/Luminal and (2) the exact `All` rule shapes
 reached by Eggcc/Pointer/Hardboiled. No implementation writer is authorized
 until those read-only circles separate a bounded native SQL slice from any
 container, callback, host matcher/merge, or private-API requirement.
+
+## Proposal formation after scalar checkpoint
+
+The accepted scalar checkpoint is local commit
+`b94da058fe57ca195f2efc752ee3ab9db720e98b`; the source worktree was clean
+immediately after commit. Nothing was pushed. The current frontier contains
+two independently observed fail-closed surfaces, so implementation pauses for
+one bounded Understand -> Explore -> Decide round.
+
+| Circle/domain | Aim | Authority | Expected output | Stop |
+| --- | --- | --- | --- | --- |
+| target-22 `View` census | Explain the exact Math/Luminal standard-rebuild configuration rejected as an ordered-union target | Read-only `b94da05`; inspect source/ledger only; no edits, builds, tests, workloads, network, or agent contact | exact functions/types/config/merge topology, why existing admission rejects it, Design A and B, minimum canaries and workload-moving verdict | Stop at the first callback/container/private-API requirement or once one bounded public-SQL lowering is exact |
+| `ReadMode::All` census | Classify the first All rule in Eggcc, Pointer, and Hardboiled and determine whether one bounded family covers them | Read-only `b94da05`; inspect source/fixtures/ledger only; no edits, builds, tests, workloads, network, or agent contact | exact rule/body/action/read shapes, subsumed-row semantics, overlap/divergence, minimum native SQL contract and canaries | Stop when the three shapes diverge beyond one honest checkpoint or require host enumeration/callbacks |
+| next-checkpoint architecture/oracles | Select ordering and architecture for the two frontiers without weakening fail-closed ownership | Read-only `b94da05`; inspect source/fixtures/causal-testing evidence already present in the repo/ledger only; no edits, builds, tests, workloads, network, or agent contact | Design A/B, authority/transaction/generation/rollback contract, discriminating tests, write set, statement/cost observations, early-exit rule | Stop after a bounded public-API native-SQL proposal passes, or prove the next goal unreachable under locked constraints |
+
+No writer is authorized while these circles run. Their verdicts must identify
+which frontier moves the largest part of the frozen corpus without combining
+unrelated semantics merely to reduce checkpoint count. Performance is
+descriptive and every later command remains capped at 110 seconds.
+
+## Frozen standalone-UF scalar target contract
+
+All three read-only proposal circles completed against committed HEAD
+`b94da058fe57ca195f2efc752ee3ab9db720e98b` with only this coordinator ledger
+dirty. None edited source, built, tested, ran workloads, accessed the network,
+or contacted another agent. They independently agree to fix the standalone UF
+admission gap before implementing `ReadMode::All`.
+
+### Exact reached shape and workload leverage
+
+The diagnostic target 22 is allocation-order evidence only. In Math it is
+`@UF_Math`; in Luminal it is `@UF_Expression`. Each is a typed equality-sort
+UF table with schema `[Id, Id, Id]`, one key, two values, one identity value,
+`DefaultVal::Fail`, `can_subsume=false`, `WriteCapability::Deferred`,
+`KeyToParent` orientation, and a self-displaced target equal to itself.
+
+Its authenticated seven-action merge selects max/min payloads, mints Sym and
+Trans proof IDs, writes the ordinary Sym and Trans AssertEq tables, recursively
+sets the displaced maximum into the same UF, and retains the minimum parent
+with the corresponding proof payload. Primitive/fresh authority, exact
+signatures, schemas, proof targets, action order, and topology authorize this
+shape; function IDs, rule names, diagnostic names, proof labels, and workload
+paths never do.
+
+The scalar compiler currently sends every deferred Set through the
+subsumable-View graph validator. Constructor Views correctly use the existing
+two-node View -> UF graph, while native input already admits the exact
+non-subsumable self-UF. This is therefore an admission/representation gap, not
+missing SQL execution.
+
+Static workload evidence finds four direct variable-RHS UF rewrites in Math
+and ten direct UF Sets across Luminal's Expression, EList, and IR sorts. The
+same capability is expected later in Eggcc. Pointer and Hardboiled currently
+contain no later standalone direct source UF. Fresh capped probes remain the
+runtime gate.
+
+### Selected Design A
+
+Extend `validate_scalar_action_ordered_union` with the structural
+`can_subsume` split already used by native input:
+
+- a subsumable target retains the existing View plus distinct displaced-UF
+  validation;
+- a non-subsumable target must pass the exact UF schema validator and the exact
+  self-displacing `KeyToParent` ordered-union validator with displaced target
+  equal to itself.
+
+Represent the standalone component using the existing `OrderedUnionGraph`
+with `root == displaced`. Existing scalar storage deduplicates graph targets
+by FunctionId, maps self-displacement back to the same queue, and drains
+generated candidates at the following wave to a public-SQL fixed point. No
+storage or executor change is authorized initially.
+
+Design B, authorized only if a reduced witness disproves that singleton-alias
+invariant, replaces the fixed pair with an explicit component containing one
+or two plans. It is not a second production mode. Host recursion, host merge,
+UDFs, callbacks, benchmark-specific authorization, or private APIs are never
+fallbacks.
+
+### Semantic and test gate
+
+The existing transaction contract remains exact: authenticate before RuleId,
+freeze every body/slot/effect before mutation, reject owner/subsumption
+conflicts before counters, apply direct actions in schedule/action/match order,
+drain global merge queues including self-waves, advance generation once iff a
+physical change occurred, commit before publishing run ID/watermarks/trace/
+telemetry, and on any failure restore rows, proof IDs, counters, generation,
+watermarks, telemetry, trace, and scratch so retry reuses the same IDs.
+
+Blocking focused witnesses cover:
+
+1. Reference/DuckDB missing-owner, identity no-op, old-min, new-min, duplicate
+   candidates, and a recursive self-displacing chain of at least two waves.
+2. Exact Sym/Trans proof rows, strict comparison/right-tie payload behavior,
+   explicit-head-before-collision fresh order, stable prewave, generation, and
+   unchanged reruns.
+3. Wrong schema, identity count, default, subsumption flag, orientation,
+   displaced target, proof targets, action order, primitive tag/signature,
+   fresh token, freed/reused token, and same-kind ABA rejection before RuleId.
+4. Late AssertEq conflict and fresh exhaustion rollback followed by a
+   deterministic successful retry.
+5. Structural SQL evidence excluding host enumeration/merge, callbacks/UDFs,
+   Arrow/Appender, private APIs, `NULL`, and `TRY`.
+6. Separately capped fresh Math and Luminal proof-mode probes. A timeout is
+   censored; if neither workload moves beyond target 22, stop and recensus.
+
+One implementation writer owns only `rebuild.rs` and focused general/action
+tests; `action_rule.rs` may change only if admission wiring or a precise
+diagnostic requires it. It may not edit this ledger, storage, frontend/SPI,
+fixtures, manifests, loaders, benchmarks, other plan families, committed
+history, or remote state. It runs only separately capped focused checks and
+freezes a deterministic source digest. Three read-only reviews and at most one
+evidence-driven repair follow.
+
+Stop Design A plus one repair rather than broaden it. Design B may be tried
+once only on proof that graph representation caused the failure. If both
+designs fail the same reduced differential or exact semantics require a host
+callback/row/merge, container, UDF, private API, or second transaction, stop
+the checkpoint and return to proposal formation. Performance remains
+descriptive.
+
+### Recorded later frontiers
+
+`ReadMode::All` is shared visibility plumbing but the first three sites are not
+one honest semantic family. Pointer is a pure two-table existential check and
+justifies a later authenticated SQL-native `MatchObservationPlan`; it should
+complete Pointer. Eggcc immediately needs a separate custom scalar merge plus
+mixed rebuild Set/Delete. Hardboiled immediately needs a public typed-container
+descriptor and native container-proof effects; it remains intentionally
+fail-closed while public `ColumnTy::Id` cannot distinguish containers. These
+frontiers must not be laundered into the standalone-UF checkpoint.
+
+## Frozen standalone-UF Design A candidate
+
+The sole writer completed against unchanged committed HEAD
+`b94da058fe57ca195f2efc752ee3ab9db720e98b`. The coordinator independently
+reproduced deterministic source digest
+`e003a9c62e3996decf6fee4c4c07f995bec99cc630ae57128bb76cb9aa62f59b`.
+The exact source dirty set is `rebuild.rs`, `action_rule.rs`, and
+`action_rule_tests.rs`; this ledger is the only other dirty path.
+
+Design A now splits scalar ordered-union validation by `can_subsume`, aliases
+the exact standalone `KeyToParent` UF plan as root and displaced, and gives a
+self-aliased UF effect the stronger non-subsumed owner check consistently at
+both compiler occurrences. Storage, queue execution, public SPI, fixtures,
+manifests, loaders, benchmarks, and other plan families are unchanged.
+
+Writer-owned separately capped evidence is green: standalone-UF witnesses
+6/6, action-rule tests 29/29, generalized-action tests 8/8, scalar-expression
+tests 9/9, DuckDB all-target check, `-D warnings` clippy, formatting, and diff
+checks. No command timed out, no public workload or proof suite ran, and
+nothing was committed or pushed.
+
+The candidate preserves the pre-existing queue SQL's physical outer-join
+sentinel `old_generation IS NULL`. It adds no semantic NULL value, `CAST(NULL`,
+`TRY`, callback/UDF, Arrow, Appender, unsafe, private API, or host row/merge
+path. The frozen prohibition on SQL NULL as semantic absence does not require
+an unrelated rewrite of an existing physical join sentinel; reviewers must
+still verify this distinction rather than waive it by assertion.
+
+The source is frozen. Three independent read-only reviews now own (1)
+structural admission/authority/owner checks, (2) self-queue SQL semantics,
+transaction/order/rollback and the NULL-sentinel boundary, and (3) test
+discrimination/scope/workload movement. No source writer is active;
+coordinator gates and public probes remain pending.
+
+### Standalone-UF review verdicts and sole repair
+
+All three reviewers authenticated HEAD, source digest
+`e003a9c62e3996decf6fee4c4c07f995bec99cc630ae57128bb76cb9aa62f59b`,
+and the exact frozen dirty set before and after review. None edited, built,
+tested, ran workloads, accessed the network, or contacted another agent.
+
+- Structural admission/authority: **PASS**. Exact table/merge topology,
+  descriptor and fresh authority, proof targets, epoch reauthentication,
+  RuleId preservation, stronger self-UF owner checks, and unchanged View
+  admission all pass.
+- Queue/transaction/SQL: **PASS**. Root/displaced dedup creates one queue;
+  recursive wave ordering, payload retention, Sym-before-Trans fresh order,
+  freeze/mutation/commit/publication/rollback, generation, telemetry, and
+  scratch semantics pass. `old_generation IS NULL` is confirmed to be only
+  scratch-local outer-join match detection over NOT NULL durable/queue
+  columns; no semantic or persisted NULL, callback/UDF, host row/merge,
+  Arrow/Appender, unsafe/private path was added.
+- Tests/scope: **REVISE** for one blocking witness gap. The new stronger
+  standalone-UF owner check has no focused test with a physically subsumed UF
+  owner. Configuration mutation and the opposite subsumed-View policy cannot
+  discriminate a regression that weakens both aliased occurrences.
+
+The sole repair is test-only in `action_rule_tests.rs`: seed a UF owner and
+candidate, mark that durable UF row subsumed, prove failure before fresh IDs,
+generation, watermark, trace, rows, or scratch change, clear subsumption, and
+retry to the exact Sym/Trans/UF rows using fresh IDs 0 and 1. Production files,
+this ledger, all other tests, storage, SPI, fixtures, manifests, loaders,
+benchmarks, commits, and remotes are outside repair authority. The original
+reviewer must confirm the new witness after the repaired source digest freezes.
+
+Nonblocking follow-ups record a future mixed View plus standalone-UF schedule
+sharing one UF, strongest-owner-check aggregation if a future FD slot can read
+the same UF, and wording insert telemetry as ordered-union rather than View
+telemetry. None is reached or required by this checkpoint.
+
+The sole test-only repair completed against unchanged HEAD. The coordinator
+independently reproduced repaired source digest
+`43223186edec6457b06bb327a6ea83872edfcd1c281f72d53344cfa58a4d7736`;
+the source dirty set remains the same three files, and only
+`action_rule_tests.rs` changed during repair.
+
+`standalone_uf_subsumed_owner_rejects_then_retries_exactly` now seeds a
+physical UF owner/candidate, marks the owner subsumed, requires failure while
+generation, fresh counter, watermark, trace, rows, telemetry, and scratch stay
+unchanged, clears only subsumption, and retries to exact `Sym(70, 0)`,
+`Trans(0, 80, 1)`, and UF rows `[1,10,80]` plus `[20,10,1]`. It reuses fresh
+IDs 0 and 1 and would fail if both aliased owner checks were weakened.
+
+Repair evidence is green: exact witness 1/1, standalone-UF witnesses 7/7,
+action-rule tests 30/30, formatting, and diff checks; no timeout. Production,
+this ledger, storage, other tests, manifests, committed history, and remote
+state were untouched by the repair. The source is frozen again pending the
+original test reviewer's confirmation, coordinator gates, and public probes.
+
+## Accepted standalone-UF scalar checkpoint
+
+The original test reviewer independently authenticated repaired source digest
+`43223186edec6457b06bb327a6ea83872edfcd1c281f72d53344cfa58a4d7736`
+and returned **PASS**. The repaired witness physically subsumes a UF owner,
+requires the specific owner rejection with all state unchanged, clears only
+subsumption, and retries to exact rows using fresh IDs 0 and 1. No review
+blocker remains.
+
+Coordinator-owned separately capped gates are green:
+
+- exact subsumed-owner witness 1/1;
+- standalone-UF witnesses 7/7 and complete action-rule module 30/30;
+- full DuckDB library tests 132/132;
+- DuckDB all-target `-D warnings` clippy;
+- formatting and diff checks; and
+- a fresh DuckDB-feature CLI build in 13.15 seconds.
+
+The preceding scalar checkpoint already established complete split proof-suite
+coverage at committed HEAD `b94da05`. This checkpoint changes only DuckDB
+admission/compiler code and DuckDB-local tests; no frontend, proof encoder,
+shared SPI, fixture, or other backend changed, so the unchanged proof suite was
+not redundantly rebuilt. Full DuckDB differentials and fresh proof-mode public
+probes are the relevant runtime gates.
+
+Fresh primary-corpus results are:
+
+| Workload | Exit and wall | Maximum RSS | Frontier |
+| --- | --- | --- | --- |
+| Math | exit 124 at 110s | not published by killed process | no target-22 rejection; native execution continued until the watchdog, so result is censored |
+| Luminal | exit 1, 0.07s | 68,190,208 bytes | moved beyond target 22 to `@rebuild_rule73` requesting `ReadMode::All` |
+| Eggcc | exit 1, 2.95s | 102,137,856 bytes | unchanged `@rebuild_rule166` `ReadMode::All` boundary |
+| Pointer | exit 1, 5.17s | 349,503,488 bytes | unchanged `check_facts` `ReadMode::All` boundary |
+| Hardboiled | exit 1, 0.04s | 45,154,304 bytes | unchanged `@rebuild_rule64` `ReadMode::All` boundary |
+
+No workload crashed, fell back to host execution, regressed to an earlier
+boundary, or published a partial report artifact. Math's timeout is censored
+performance data, not correctness evidence in either direction. Luminal
+provides the required positive workload movement; the other three remain at
+their previously classified explicit frontier.
+
+This checkpoint is accepted for a local commit. The next bounded checkpoint is
+Pointer's authenticated SQL-native MatchObservation plus exact `All`
+visibility, because it should complete one frozen benchmark without conflating
+Eggcc custom-merge rebuilds or Hardboiled typed containers. Nothing is pushed.
