@@ -1,14 +1,15 @@
 ; A global bound to a container is not representable in the term/proof encoding:
-; its elements go stale as the e-graph merges, and a global's own row has no
-; rebuild. So this file must be reported as not supporting proofs — a global bound
-; to a primitive, by contrast, now is.
+; a global's own row has no rebuild, so a container holding e-classes would go
+; stale as the e-graph merges. So this file must be reported as not supporting
+; proofs — a global bound to a primitive, by contrast, now is.
 ;
 ; The binding is wrapped in `(fail …)`, so the shared table it writes to is
 ; declared from inside the `fail`. Global removal hoists that declaration out,
 ; which is what lets the write still be recognized as a global one.
-(sort MathVec (Vec i64))
+(datatype Math (Num i64))
+(sort MathVec (Vec Math))
 
-(fail (let $bad (vec-of 1 (/ 1 0))))
+(fail (let $bad (vec-of (Num 1) (Num (/ 1 0)))))
 
-(let $v (vec-of 1 2))
-(check (= $v (vec-of 1 2)))
+(let $v (vec-of (Num 1) (Num 2)))
+(check (= $v (vec-of (Num 1) (Num 2))))

@@ -4467,6 +4467,48 @@ mod tests {
         }
     }
 
+    /// Serialization names a global by the global, not by the table its sort shares.
+    #[test]
+    fn test_serialization_names_a_global_not_its_table() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(None, "(datatype Math (Num i64)) (let $mine (Num 7))")
+            .unwrap();
+        let serialized = egraph.serialize(SerializeConfig::default());
+        let bindings: Vec<&String> = serialized
+            .egraph
+            .class_data
+            .values()
+            .filter_map(|class| class.extra.get("let"))
+            .collect();
+        assert_eq!(bindings, vec!["$mine"], "{bindings:?}");
+    }
+
+    /// A desugared program is printed so it can be re-parsed, and the encoding has
+    /// to accept the replay. `:internal-global-table` is not surface syntax, so a
+    /// replayed shared table arrives as a plain `:internal-let` function.
+    #[test]
+    fn test_desugared_globals_replay_under_the_encoding() {
+        let source = "(datatype Math (Num i64))
+                      (let $m (Num 4))
+                      (let $n 7)
+                      (check (= $m (Num 4)))";
+        let desugared = {
+            let mut egraph = EGraph::default();
+            let resolved = egraph.resolve_program(None, source).unwrap();
+            crate::ast::sanitize_internal_names(&resolved)
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        for mut egraph in [EGraph::default(), EGraph::new_with_term_encoding()] {
+            egraph
+                .parse_and_run_program(None, &desugared)
+                .unwrap_or_else(|err| panic!("replay failed: {err}\n{desugared}"));
+        }
+    }
+
     /// `print-function` and `get-size!` report a global under its own name, and do
     /// not report the shared table it lives in.
     #[test]

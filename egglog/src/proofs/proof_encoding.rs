@@ -729,10 +729,14 @@ impl<'a> ProofInstrumentor<'a> {
     }
 
     /// Whether the call names a global: a row of a shared table, or the global's
-    /// own nullary function.
-    pub(super) fn names_a_global(&self, name: &str, args: &[ResolvedExpr]) -> bool {
-        self.egraph.type_info.is_global_table(name)
-            || (args.is_empty() && self.egraph.type_info.is_global(name))
+    /// own function.
+    ///
+    /// Both spellings are needed because `:internal-global-table` is not part of
+    /// the surface syntax: a desugared program replayed from text declares its
+    /// shared tables as plain `:internal-let` functions, which register as
+    /// globals rather than as global tables.
+    pub(super) fn names_a_global(&self, name: &str, _args: &[ResolvedExpr]) -> bool {
+        self.egraph.type_info.is_global_table(name) || self.egraph.type_info.is_global(name)
     }
 
     /// Whether the function's output value *is* its e-class, so the term relation

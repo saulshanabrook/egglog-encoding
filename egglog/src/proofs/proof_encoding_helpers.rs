@@ -880,7 +880,7 @@ pub enum ProofEncodingUnsupportedReason {
     #[error("`fail` wrapping an `input` command is not supported by proof encoding.")]
     FailInputCommand,
     #[error(
-        "let binding a container. A container global's elements go stale as the e-graph merges, and the encoding has no rebuild for a global's own row; bind it inside a rule, or run on the native backend."
+        "let binding a container. The encoding has no rebuild for a global's own row, so a container holding e-classes would go stale; every container global is rejected rather than only those. Bind it inside a rule, or run on the native backend."
     )]
     LetBindingWithContainer,
     #[error(
