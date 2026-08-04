@@ -497,6 +497,15 @@ impl EGraph {
                 span.clone(),
             ));
         }
+        // An index is a view over a function's table; it has no table of its own
+        // for a second index to read.
+        if self.type_info.indexes.contains_key(function) {
+            return Err(TypeError::IndexOfIndex(
+                name.to_owned(),
+                function.to_owned(),
+                span.clone(),
+            ));
+        }
         let ft = self
             .type_info
             .get_func_type(function)
@@ -1580,11 +1589,15 @@ pub enum TypeError {
     #[error("{3}\nIndex {0} mixes columns of sort {1} and {2}; an index reads one sort")]
     IndexColumnSortMismatch(String, String, String, Span),
     #[error(
-        "{2}\nIndex {0} is looked up by {1}, which no other atom binds. An index atom is probed, so its value must be bound elsewhere in the query."
+        "{2}\nIndex {0} is looked up by {1}, which no other function atom binds. An index atom is probed, so its value must be bound elsewhere in the query by a function's rows; a body primitive runs after the join, so it cannot bind it."
     )]
     IndexValueUnbound(String, String, Span),
     #[error("{1}\nIndex {0} is maintained by the database and cannot be written to")]
     IndexIsReadOnly(String, Span),
+    #[error(
+        "{2}\nIndex {0} indexes {1}, which is itself an index; an index has no rows of its own"
+    )]
+    IndexOfIndex(String, String, Span),
     #[error("{1}\nUnbound symbol {0}")]
     Unbound(String, Span),
     #[error(

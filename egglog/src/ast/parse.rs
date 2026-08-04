@@ -682,7 +682,7 @@ impl Parser {
                     }
                     vec![Command::Index {
                         span,
-                        name: name.expect_atom("index name")?,
+                        name: self.parse_name(name, "index name")?,
                         function: function.expect_atom("indexed function name")?,
                         any_of: map_fallible(cols, self, |_, sexp| {
                             sexp.expect_uint("index column")

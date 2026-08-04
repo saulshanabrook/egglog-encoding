@@ -16,6 +16,7 @@ fusion.egg
 hardboiled_conv1d_128.egg
 herbie-tutorial.egg
 index_any.egg
+index_probe.egg
 interval.egg
 lambda.egg
 levenshtein-distance.egg

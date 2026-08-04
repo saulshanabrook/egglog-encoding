@@ -485,8 +485,9 @@ impl RuleBuilder<'_> {
     /// columns to be equal. `cols` are the function's own column indices, and
     /// `indexed` is not one of `entries`.
     ///
-    /// The atom can only be probed, so `indexed` must be bound elsewhere in the
-    /// query. `is_subsumed` constrains the subsumption column exactly as it does
+    /// A variable `indexed` must be bound elsewhere in the query, since the atom
+    /// is probed rather than scanned; a constant is already known and needs no
+    /// binder. `is_subsumed` constrains the subsumption column exactly as it does
     /// for [`Self::query_table`], so an index reads the same rows the function
     /// itself would.
     pub fn query_table_by_occurrence(
@@ -497,6 +498,18 @@ impl RuleBuilder<'_> {
         cols: &[usize],
         is_subsumed: Option<bool>,
     ) -> Result<AtomId> {
+        // The backing table carries a timestamp (and a subsumption column), which
+        // an index must not reach; only this layer knows where the schema ends.
+        let n_cols = self.resources.egraph.funcs[func].schema.len();
+        if let Some(col) = cols.iter().find(|c| **c >= n_cols) {
+            return Err(anyhow::Error::from(RuleBuilderError::ArityMismatch {
+                expected: n_cols,
+                got: col + 1,
+            }))
+            .with_context(|| {
+                format!("query_table_by_occurrence: column {col} is not one of the function's")
+            });
+        }
         let atom = self.query_table(func, entries, is_subsumed)?;
         self.query.atoms[atom.index()].occurrence = Some((
             indexed,
@@ -971,10 +984,5 @@ fn add_atom(
     let Some((occ_entry, cols)) = occurrence else {
         return Ok(qb.add_atom(table, &vars, constraints)?);
     };
-    let DstVar::Var(occ_var) = inner.convert(occ_entry) else {
-        return Err(anyhow::anyhow!(
-            "an occurrence atom's indexed value must be a variable, not a constant"
-        ));
-    };
-    Ok(qb.add_occurrence_atom(table, &vars, occ_var, cols, constraints)?)
+    Ok(qb.add_occurrence_atom(table, &vars, inner.convert(occ_entry), cols, constraints)?)
 }

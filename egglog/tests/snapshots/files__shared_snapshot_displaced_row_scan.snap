@@ -1,0 +1,12 @@
+---
+source: egglog-experimental/dd/tests/files.rs
+expression: out
+---
+((deleted 0)
+ (f 2)
+ (g 1)
+ (h 1)
+ (h-matched 1)
+ (k 1)
+ (kept 1)
+ (matched 0))

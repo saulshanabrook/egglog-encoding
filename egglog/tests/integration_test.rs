@@ -1292,3 +1292,46 @@ fn clear_function_unknown_function_errors() {
         other => panic!("expected UnboundFunction, got {other:?}"),
     }
 }
+
+/// A declared index has a function type but no table of its own, so `input`
+/// errors instead of panicking on the missing table. All-`i64` columns, so the
+/// error comes from the index check and not from `input`'s sort support check.
+#[test]
+fn input_into_index_errors() {
+    let mut egraph = EGraph::default();
+    egraph
+        .parse_and_run_program(
+            None,
+            "(function f (i64 i64) i64 :merge old)\n(index FOcc f (any 0 1 2))",
+        )
+        .unwrap();
+    let err = egraph
+        .parse_and_run_program(None, "(input FOcc \"rows.tsv\")")
+        .unwrap_err();
+    match err {
+        Error::TypeError(TypeError::IndexIsReadOnly(name, _)) => assert_eq!(name, "FOcc"),
+        other => panic!("expected IndexIsReadOnly, got {other:?}"),
+    }
+}
+
+/// An index reads a function's rows; another index has none to read. Rejected
+/// at the declaration rather than when a rule first queries it.
+#[test]
+fn index_over_index_errors() {
+    let mut egraph = EGraph::default();
+    egraph
+        .parse_and_run_program(
+            None,
+            "(function f (i64 i64) i64 :merge old)\n(index FOcc f (any 0 1 2))",
+        )
+        .unwrap();
+    let err = egraph
+        .parse_and_run_program(None, "(index FOcc2 FOcc (any 0))")
+        .unwrap_err();
+    match err {
+        Error::TypeError(TypeError::IndexOfIndex(name, indexed, _)) => {
+            assert_eq!((name.as_str(), indexed.as_str()), ("FOcc2", "FOcc"));
+        }
+        other => panic!("expected IndexOfIndex, got {other:?}"),
+    }
+}

@@ -151,8 +151,16 @@ pub struct ReadKey {
 }
 
 impl ReadKey {
-    /// The columns the occurrence view reads, empty for an ordinary read.
-    pub fn occurrence_columns(&self) -> impl Iterator<Item = usize> + '_ {
-        (0..u64::BITS as usize).filter(|c| self.occurrence_cols & (1u64 << c) != 0)
+    /// The columns the occurrence view reads, ascending; empty for an ordinary
+    /// read.
+    pub fn occurrence_columns(&self) -> impl Iterator<Item = usize> {
+        let mut bits = self.occurrence_cols;
+        std::iter::from_fn(move || {
+            (bits != 0).then(|| {
+                let col = bits.trailing_zeros() as usize;
+                bits &= bits - 1;
+                col
+            })
+        })
     }
 }

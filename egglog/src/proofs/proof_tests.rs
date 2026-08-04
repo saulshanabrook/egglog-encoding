@@ -1231,4 +1231,31 @@ mod tests {
 
         insta::assert_snapshot!("doc_example_add_function1", snapshot);
     }
+
+    /// `doc_example_add_function1` with the same shape over eq-sort children, so
+    /// the snapshot shows what a view's child columns cost: one declared index
+    /// and one rebuild rule per eq-sort column, rather than only the output's.
+    #[test]
+    fn doc_example_add_eqsort_children() {
+        let commands = term_encode(
+            r#"
+(sort Math)
+(constructor Num (i64) Math)
+(constructor Add (Math Math) Math)
+(Add (Num 1) (Num 2))
+(rule ((Add a b))
+      ((union (Add a b) (Add b a)))
+     :name "commutativity")
+(check (= (Add (Num 1) (Num 2)) (Add (Num 2) (Num 1))))
+            "#,
+        );
+
+        let snapshot = sanitize_internal_names(&commands)
+            .iter()
+            .map(|cmd| cmd.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        insta::assert_snapshot!("doc_example_add_eqsort_children", snapshot);
+    }
 }

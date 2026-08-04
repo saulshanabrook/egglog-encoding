@@ -60,7 +60,7 @@ use crate::{
     common::{HashMap, HashSet, IndexSet},
     offsets::Subset,
     pool::Pooled,
-    query::{Atom, Query, VarColumnMap},
+    query::{Atom, OccurrenceKey, Query, VarColumnMap},
     table_spec::Constraint,
 };
 
@@ -165,6 +165,8 @@ pub(crate) enum JoinStage {
 
 /// The occurrence columns this subatom reads, if it is the atom's occurrence
 /// variable rather than one of its column variables.
+///
+/// A constant occurrence binds nothing, so no scan reads its columns.
 fn occurrence_cols_of(
     atoms: &DenseIdMap<AtomId, Atom>,
     subatom: &SubAtom,
@@ -172,6 +174,7 @@ fn occurrence_cols_of(
     atoms[subatom.atom]
         .occurrence
         .as_ref()
+        .filter(|occ| matches!(occ.key, OccurrenceKey::Var(_)))
         .filter(|occ| occ.cols.as_slice() == subatom.vars.as_slice())
         .map(|occ| occ.cols.clone())
 }
@@ -1423,7 +1426,13 @@ fn plan_headers<'a, 'b>(
                 &atom_info.constraints.slow,
             ),
         );
-        if !atom_info.constraints.fast.is_empty() {
+        // An atom restricted by a constant occurrence needs a header even with no
+        // fast constraints, since that restriction lives only in its subset.
+        let const_occurrence = atom_info
+            .occurrence
+            .as_ref()
+            .is_some_and(|occ| matches!(occ.key, OccurrenceKey::Const(_)));
+        if !atom_info.constraints.fast.is_empty() || const_occurrence {
             header.push(JoinHeader {
                 atom,
                 constraints: Pooled::cloned(&atom_info.constraints.fast),

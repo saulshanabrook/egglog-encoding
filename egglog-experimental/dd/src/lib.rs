@@ -343,6 +343,7 @@ impl EGraph {
                             info.arity
                         );
                     }
+                    validate_terms(&atom.args, "rule body")?;
                 }
                 RuleBodyCall::Table { id, .. } => {
                     if atom.args.len() > dd_native::W {

@@ -11,11 +11,9 @@
 //! of each subterm the head interned. A row's column indexes straight into what
 //! comes back.
 //!
-//! [`HeadPlan`] is the head as the encoder lowers it, read by both walks. The
-//! compositions themselves are written once, over [`ProofAlgebra`]: this walk
-//! applies them to proof nodes, and the encoder to the proof variables it emits
-//! wherever it composes rather than records — a top-level action or a merge
-//! body. [`Head`] says which of those two the encoder is doing.
+//! [`HeadPlan`] is the head as the encoder lowers it, read by both walks;
+//! [`ProofAlgebra`] holds the compositions they share, and [`Head`] says which
+//! of the encoder's two composing sites it is at (see `proof_encoding.md`).
 
 use crate::{
     TermId,

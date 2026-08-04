@@ -10,14 +10,15 @@ use smallvec::SmallVec;
 use thiserror::Error;
 
 use crate::{
-    BaseValueId, CounterId, ExternalFunctionId, PoolSet,
+    BaseValueId, CounterId, ExternalFunctionId, PoolSet, Value,
     action::{Instr, QueryEntry, WriteVal},
     common::HashMap,
     free_join::{
         ActionId, AtomId, Database, ProcessedConstraints, SubAtom, TableId, TableInfo, VarInfo,
-        Variable,
+        Variable, get_occurrence_index_from_tableinfo,
         plan::{JoinHeader, JoinStages, Plan, PlanStrategy},
     },
+    offsets::Subset,
     pool::{Pooled, with_pool_set},
     table_spec::{ColumnId, Constraint},
 };
@@ -132,16 +133,24 @@ impl<'outer> RuleSetBuilder<'outer> {
 
     fn reprocess_constraints(
         &self,
-        table: TableId,
+        atom_info: &Atom,
         atom: AtomId,
         constraints: &[Constraint],
     ) -> Option<JoinHeader> {
-        let processed = self.db.process_constraints(table, constraints);
+        let table = atom_info.table;
+        let mut processed = self.db.process_constraints(table, constraints);
         if !processed.slow.is_empty() {
             panic!(
                 "Cached plans only support constraints with a fast pushdown. \
                  Got: {constraints:?} for table {table:?}",
             );
+        }
+        // A constant occurrence restricts the atom to the rows holding the value,
+        // which the cached subset cannot carry: the table has grown since.
+        if let Some(occ) = &atom_info.occurrence
+            && let OccurrenceKey::Const(val) = occ.key
+        {
+            restrict_to_occurrences(self.db, table, &occ.cols, val, &mut processed.subset);
         }
         if processed.subset.size() == 0 {
             return None;
@@ -161,9 +170,8 @@ impl<'outer> RuleSetBuilder<'outer> {
     ) -> Option<()> {
         for (atom_id, constraint) in extra_constraints {
             let atom_info = atoms.get(*atom_id).expect("atom must exist in plan");
-            let table = atom_info.table;
             headers.push(self.reprocess_constraints(
-                table,
+                atom_info,
                 *atom_id,
                 std::slice::from_ref(constraint),
             )?);
@@ -182,8 +190,7 @@ impl<'outer> RuleSetBuilder<'outer> {
         } in existing
         {
             let atom_info = atoms.get(*atom).expect("atom must exist in plan");
-            let table = atom_info.table;
-            headers.push(self.reprocess_constraints(table, *atom, constraints)?);
+            headers.push(self.reprocess_constraints(atom_info, *atom, constraints)?);
         }
         Some(())
     }
@@ -463,21 +470,24 @@ impl<'outer, 'a> QueryBuilder<'outer, 'a> {
         Ok(self.query.atoms.push(atom))
     }
 
-    /// Add an atom that additionally binds `occurrence_var` to a value occurring
+    /// Add an atom that additionally matches only rows where `occurrence` appears
     /// in *some* one of `occurrence_cols`. `vars` covers the table's columns as in
-    /// [`Self::add_atom`]; `occurrence_var` is not one of them, and the columns
-    /// are read disjunctively — unlike a variable repeated across them, which
-    /// constrains them to be equal.
+    /// [`Self::add_atom`]; the columns are read disjunctively — unlike a variable
+    /// repeated across them, which constrains them to be equal.
     ///
-    /// The atom can only be probed, so `occurrence_var` must be bound elsewhere
-    /// in the query: scanning this atom would have to yield one binding per
-    /// distinct occurring value, which the join does not express. Whether that
-    /// holds is checked when the query is built.
+    /// A variable `occurrence` is probed rather than scanned, so it must be bound
+    /// elsewhere in the query; whether that holds is checked when the query is
+    /// built. A constant needs no binder.
+    ///
+    /// Errors if `occurrence_cols` is empty or names a column beyond the table's
+    /// arity, or if a variable `occurrence` also sits at a row column that
+    /// several `occurrence_cols` do not cover: that pairing is a per-row
+    /// disjunction, which is not expressible.
     pub fn add_occurrence_atom<'b>(
         &mut self,
         table_id: TableId,
         vars: &[QueryEntry],
-        occurrence_var: Variable,
+        occurrence: QueryEntry,
         occurrence_cols: &[ColumnId],
         cs: impl IntoIterator<Item = &'b Constraint>,
     ) -> Result<AtomId, QueryError> {
@@ -492,39 +502,124 @@ impl<'outer, 'a> QueryBuilder<'outer, 'a> {
                 got: col.index() + 1,
             });
         }
-        let atom_id = self.add_atom(table_id, vars, cs)?;
         let cols: SmallVec<[ColumnId; 4]> = SmallVec::from_slice(occurrence_cols);
-        // The variable may also sit at a column of this atom. If that column is
-        // one of `cols` the value provably occurs, so the constraint is implied
-        // and the atom is an ordinary one.
-        if let Some(col) = self.query.atoms[atom_id]
-            .var_columns
-            .get_col(occurrence_var)
-        {
-            if cols.contains(&col) {
-                return Ok(atom_id);
-            }
-            return Err(QueryError::OccurrenceVarAtUnindexedColumn {
-                table: table_id,
-                column: col.index(),
-            });
+        let mut cs: Vec<Constraint> = cs.into_iter().cloned().collect();
+        // Every column the value itself occupies. It may occupy several, and one
+        // of `cols` among them provably occurs, so the occurrence is implied and
+        // the atom is an ordinary one.
+        let at_cols: SmallVec<[ColumnId; 4]> = vars
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| match (entry, &occurrence) {
+                (QueryEntry::Var(l), QueryEntry::Var(r)) => l == r,
+                (QueryEntry::Const(l), QueryEntry::Const(r)) => l == r,
+                _ => false,
+            })
+            .map(|(col, _)| ColumnId::from_usize(col))
+            .collect();
+        if at_cols.iter().any(|col| cols.contains(col)) {
+            return self.add_atom(table_id, vars, &cs);
         }
-        self.query.atoms[atom_id].occurrence = Some(Occurrence {
-            var: occurrence_var,
+        let at_col = at_cols.first().copied();
+        // A single indexed column turns "occurs in one of `cols`" into an
+        // equality on that column, which needs no occurrence index.
+        if let [col] = cols[..] {
+            match (occurrence, at_col) {
+                (QueryEntry::Const(val), _) => cs.push(Constraint::EqConst { col, val }),
+                (QueryEntry::Var(_), Some(at)) => cs.push(Constraint::Eq {
+                    l_col: col,
+                    r_col: at,
+                }),
+                // The value occupies no column here, so the equality is against a
+                // variable of another atom: probe the column as usual.
+                (QueryEntry::Var(var), None) => {
+                    let atom_id = self.add_atom(table_id, vars, &cs)?;
+                    self.set_occurrence(atom_id, OccurrenceKey::Var(var), cols);
+                    return Ok(atom_id);
+                }
+            }
+            return self.add_atom(table_id, vars, &cs);
+        }
+        let key = match occurrence {
+            QueryEntry::Const(val) => {
+                // Restricting to the rows holding a constant reads a cached index,
+                // which a column whose values change underneath it cannot serve.
+                let spec = &self.rsb.db.tables[table_id].spec;
+                if let Some(col) = cols
+                    .iter()
+                    .find(|c| *spec.uncacheable_columns.get(**c).unwrap_or(&false))
+                {
+                    return Err(QueryError::UncacheableOccurrenceConstant {
+                        table: table_id,
+                        column: col.index(),
+                    });
+                }
+                OccurrenceKey::Const(val)
+            }
+            QueryEntry::Var(var) => {
+                // The value is bound at a column outside the indexed set, so the
+                // occurrence is a per-row disjunction over `cols` rather than a
+                // probe: neither an ordinary constraint nor an index expresses it.
+                if let Some(col) = at_col {
+                    return Err(QueryError::OccurrenceVarAtUnindexedColumn {
+                        table: table_id,
+                        column: col.index(),
+                        indexed: cols.iter().map(|c| c.index()).collect(),
+                    });
+                }
+                OccurrenceKey::Var(var)
+            }
+        };
+        let atom_id = self.add_atom(table_id, vars, &cs)?;
+        self.set_occurrence(atom_id, key, cols);
+        Ok(atom_id)
+    }
+
+    /// Record `key` as the value `atom`'s rows are reached through (see
+    /// [`Atom::occurrence`]).
+    fn set_occurrence(&mut self, atom: AtomId, key: OccurrenceKey, cols: SmallVec<[ColumnId; 4]>) {
+        self.query.atoms[atom].occurrence = Some(Occurrence {
+            key,
             cols: cols.clone(),
         });
-        // Register the occurrence columns as this variable's foothold in the
-        // atom, so the planner probes the atom once the variable is bound.
-        self.query
-            .var_info
-            .get_mut(occurrence_var)
-            .expect("all variables must be bound in current query")
-            .occurrences
-            .push(SubAtom {
-                atom: atom_id,
-                vars: cols.iter().copied().collect(),
-            });
-        Ok(atom_id)
+        match key {
+            // The rows holding the value are the atom's subset from the start.
+            // Cached plans recompute it per run, since which rows those are
+            // changes as the table grows.
+            OccurrenceKey::Const(val) => {
+                let table = self.query.atoms[atom].table;
+                let subset = &mut self.query.atoms[atom].constraints.subset;
+                restrict_to_occurrences(self.rsb.db, table, &cols, val, subset);
+            }
+            // Register the occurrence columns as this variable's foothold in the
+            // atom, so the planner probes the atom once the variable is bound.
+            OccurrenceKey::Var(var) => self
+                .query
+                .var_info
+                .get_mut(var)
+                .expect("all variables must be bound in current query")
+                .occurrences
+                .push(SubAtom {
+                    atom,
+                    vars: cols.iter().copied().collect(),
+                }),
+        }
+    }
+}
+
+/// Cut `subset` down to the rows of `table` where `val` appears in one of `cols`.
+pub(crate) fn restrict_to_occurrences(
+    db: &Database,
+    table: TableId,
+    cols: &[ColumnId],
+    val: Value,
+    subset: &mut Subset,
+) {
+    let index = get_occurrence_index_from_tableinfo(db.get_table_info(table), cols);
+    match index.get().unwrap().get_subset(&val) {
+        Some(rows) => with_pool_set(|ps| subset.intersect(rows, &ps.get_pool())),
+        // No row holds the value, so the atom matches nothing.
+        None => *subset = Subset::empty(),
     }
 }
 
@@ -559,9 +654,18 @@ pub enum QueryError {
     EmptyOccurrenceIndex { table: TableId },
 
     #[error(
-        "occurrence atom on table {table:?} also binds its indexed value at column {column}, which is not one of the indexed columns"
+        "occurrence atom on table {table:?} also binds its indexed value at column {column}, which is not one of the indexed columns {indexed:?}. Over several indexed columns that is a per-row disjunction, which is not supported; index a single column, or one that includes {column}, instead"
     )]
-    OccurrenceVarAtUnindexedColumn { table: TableId, column: usize },
+    OccurrenceVarAtUnindexedColumn {
+        table: TableId,
+        column: usize,
+        indexed: Vec<usize>,
+    },
+
+    #[error(
+        "occurrence atom on table {table:?} is probed by a constant over column {column}, whose values are not cacheable"
+    )]
+    UncacheableOccurrenceConstant { table: TableId, column: usize },
 
     #[error("table {table:?} expected {expected:?} columns but got {got:?}")]
     BadArity {
@@ -607,35 +711,36 @@ impl RuleBuilder<'_, '_> {
     fn assert_occurrence_vars_bound(&self) {
         let atoms = &self.qb.query.atoms;
         for (id, atom) in atoms.iter() {
-            let Some(occ) = &atom.occurrence else {
+            let Some(var) = atom.occurrence_var() else {
                 continue;
             };
             let bound_elsewhere = atoms
                 .iter()
-                .any(|(other, a)| other != id && a.var_columns.get_col(occ.var).is_some());
+                .any(|(other, a)| other != id && a.var_columns.get_col(var).is_some());
             assert!(
                 bound_elsewhere,
-                "occurrence variable {:?} of the atom on table {:?} is not bound by \
+                "occurrence variable {var:?} of the atom on table {:?} is not bound by \
                  another atom; an occurrence atom can only be probed",
-                occ.var, atom.table
+                atom.table
             );
         }
     }
 
-    /// Plan a query containing an occurrence atom whole, with generic join.
+    /// Plan a query containing an occurrence *variable* whole, with generic join.
     ///
     /// Tree decomposition and the free-join planners reason about an atom's
     /// variables through its columns, and an occurrence variable has none, so
     /// they cannot see the edge between such an atom and the one binding its
-    /// value. Applied at build, so [`QueryBuilder::set_plan_strategy`] cannot
-    /// override it.
+    /// value. A constant occurrence has no such variable, so it leaves the choice
+    /// of planner alone. Applied at build, so
+    /// [`QueryBuilder::set_plan_strategy`] cannot override it.
     fn force_whole_query_generic_join(&mut self) {
         if self
             .qb
             .query
             .atoms
             .iter()
-            .any(|(_, atom)| atom.occurrence.is_some())
+            .any(|(_, atom)| atom.occurrence_var().is_some())
         {
             self.qb.query.no_decomp = true;
             self.qb.query.plan_strategy = PlanStrategy::Gj;
@@ -1014,8 +1119,16 @@ pub(crate) struct Atom {
 /// See [`Atom::occurrence`].
 #[derive(Debug, Clone)]
 pub(crate) struct Occurrence {
-    pub(crate) var: Variable,
+    pub(crate) key: OccurrenceKey,
     pub(crate) cols: SmallVec<[ColumnId; 4]>,
+}
+
+/// The value an occurrence index is read by: a variable another atom binds, or a
+/// constant, which needs no binder.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum OccurrenceKey {
+    Var(Variable),
+    Const(Value),
 }
 
 impl Atom {
@@ -1039,7 +1152,17 @@ impl Atom {
     }
 
     fn occurrence_of(&self, var: Variable) -> Option<&Occurrence> {
-        self.occurrence.as_ref().filter(|occ| occ.var == var)
+        self.occurrence
+            .as_ref()
+            .filter(|occ| matches!(occ.key, OccurrenceKey::Var(v) if v == var))
+    }
+
+    /// The variable this atom's rows are reached through, if it has one.
+    pub(crate) fn occurrence_var(&self) -> Option<Variable> {
+        match self.occurrence.as_ref()?.key {
+            OccurrenceKey::Var(var) => Some(var),
+            OccurrenceKey::Const(_) => None,
+        }
     }
 
     pub(crate) fn get_var(&self, col: ColumnId) -> Option<Variable> {

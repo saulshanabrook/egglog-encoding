@@ -26,7 +26,7 @@ make test           # Python and Rust tests
 make python-check   # complete Python validation
 make rust-check     # complete Rust validation
 make python-nits    # Python hygiene only
-make rust-nits      # rustfmt check and Clippy only
+make rust-nits      # rustfmt check, Clippy, and doc-link check only
 make proof-tests    # proof-focused subset of the workspace tests
 make benchmark-smoke
 make nightly        # benchmark the nightly endpoints and publish nightly/output/

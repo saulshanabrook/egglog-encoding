@@ -255,12 +255,12 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<Vec<Ve
     let mut atom_positions: Vec<usize> = Vec::new();
     let mut atom_rule_idxs: Vec<usize> = Vec::new();
     for (pos, (idx, rule)) in rules.iter().enumerate() {
-        let has_atoms = rule
-            .core
-            .body
-            .atoms
-            .iter()
-            .any(|atom| matches!(atom.head, RuleBodyCall::Table { .. }));
+        let has_atoms = rule.core.body.atoms.iter().any(|atom| {
+            matches!(
+                atom.head,
+                RuleBodyCall::Table { .. } | RuleBodyCall::IndexTable { .. }
+            )
+        });
         if has_atoms {
             atom_positions.push(pos);
             atom_rule_idxs.push(*idx);

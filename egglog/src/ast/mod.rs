@@ -845,21 +845,6 @@ where
         term_node: bool,
     },
 
-    /// Using the `ruleset` command, defines a new
-    /// ruleset that can be added to in [`Command::Rule`]s.
-    /// Rulesets are used to group rules together
-    /// so that they can be run together in a [`Schedule`].
-    ///
-    /// Example:
-    /// Ruleset allows users to define a ruleset- a set of rules
-    ///
-    /// ```text
-    /// (ruleset myrules)
-    /// (rule ((edge x y))
-    ///       ((path x y))
-    ///       :ruleset myrules)
-    /// (run myrules 2)
-    /// ```
     /// Declare a named index over an existing function's columns.
     ///
     /// ```text
@@ -882,6 +867,22 @@ where
         function: String,
         any_of: Vec<usize>,
     },
+
+    /// Using the `ruleset` command, defines a new
+    /// ruleset that can be added to in [`Command::Rule`]s.
+    /// Rulesets are used to group rules together
+    /// so that they can be run together in a [`Schedule`].
+    ///
+    /// Example:
+    /// Ruleset allows users to define a ruleset- a set of rules
+    ///
+    /// ```text
+    /// (ruleset myrules)
+    /// (rule ((edge x y))
+    ///       ((path x y))
+    ///       :ruleset myrules)
+    /// (run myrules 2)
+    /// ```
     AddRuleset(Span, String),
     /// Using the `combined-ruleset` command, construct another ruleset
     /// which runs all the rules in the given rulesets.
