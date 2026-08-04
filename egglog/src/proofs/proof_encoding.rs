@@ -718,11 +718,21 @@ impl<'a> ProofInstrumentor<'a> {
         self.parse_program(&code)
     }
 
-    /// A global is a `:internal-let` function; in the encoding it is treated like a
+    /// A global whose value is an e-class; in the encoding it is treated like a
     /// nullary constructor (FD view, congruence merge, readable value+proof) rather
     /// than a `:no-merge` custom function.
+    ///
+    /// A global of a base sort holds a value rather than naming a term, so it has
+    /// no e-class to be congruent over and encodes as an ordinary custom function.
     pub(super) fn is_encoded_global(&self, fdecl: &ResolvedFunctionDecl) -> bool {
-        fdecl.internal_let
+        fdecl.internal_let && holds_eclasses(fdecl.resolved_schema.output())
+    }
+
+    /// Whether the call names a global: a row of a shared table, or the global's
+    /// own nullary function.
+    pub(super) fn names_a_global(&self, name: &str, args: &[ResolvedExpr]) -> bool {
+        self.egraph.type_info.is_global_table(name)
+            || (args.is_empty() && self.egraph.type_info.is_global(name))
     }
 
     /// Whether the function's output value *is* its e-class, so the term relation
@@ -959,9 +969,11 @@ impl<'a> ProofInstrumentor<'a> {
                 // Global definition `(set (x k…) e)`: the row aliases e, so store
                 // e's value+proof directly in the FD view. Minting a term would use
                 // the wrong arity, the term relation having no output column.
-                let is_global_row = self.egraph.type_info.is_global_table(&func_type.name)
-                    || (generic_exprs.is_empty()
-                        && self.egraph.type_info.is_global(&func_type.name));
+                //
+                // Only when e is an e-class. A global of a base sort holds a value,
+                // so its row carries one like any custom function's does.
+                let is_global_row = self.names_a_global(&func_type.name, generic_exprs)
+                    && holds_eclasses(func_type.output());
                 if is_global_row {
                     let e_value = exprs.pop().expect("a set has a value");
                     let proof = if self.proofs_enabled() {
@@ -1374,8 +1386,22 @@ impl<'a> ProofInstrumentor<'a> {
     ///
     /// The signature requires the fallback pair, so both are bare fresh ids: no
     /// row says anything about either, since nothing ever reads them.
-    fn lookup_global(&mut self, name: &str, keys: &[String], res: &mut Vec<String>) -> String {
+    fn lookup_global(
+        &mut self,
+        name: &str,
+        keys: &[String],
+        holds_eclass: bool,
+        res: &mut Vec<String>,
+    ) -> String {
         let view = self.view_name(name);
+        // A global whose value is not an e-class has nothing to canonicalize and
+        // no id to mint for an absent row: read the value column by key.
+        if !holds_eclass {
+            let read = crate::proofs::proof_fresh::view_value_prim_name(&view);
+            let vx = self.fresh_var();
+            res.push(format!("(let {vx} ({read} {}))", ListDisplay(keys, " ")));
+            return vx;
+        }
         let set_if_empty = crate::proofs::proof_fresh::set_if_empty_prim_name(&view);
         let view_sort = self.term_sort(name);
         let fresh_e = self.fresh_id(res, &view_sort);
@@ -1780,9 +1806,11 @@ impl<'a> ProofInstrumentor<'a> {
                             {
                                 let keys: Vec<String> =
                                     args.iter().map(|a| a.value.clone()).collect();
+                                let holds_eclass = holds_eclasses(func_type.output());
                                 Operand::plain(self.lookup_global(
                                     &func_type.name,
                                     &keys,
+                                    holds_eclass,
                                     emit.stmts,
                                 ))
                             } else {
@@ -2317,4 +2345,11 @@ fn command_skips_rebuild(command: &ResolvedNCommand) -> bool {
         ResolvedNCommand::CoreActions(actions) => actions.0.iter().all(action_skips_rebuild),
         _ => false,
     }
+}
+
+/// Whether values of `sort` are, or contain, e-classes — so a row holding one
+/// goes stale and needs the encoding's term and rebuild machinery. False only for
+/// a sort whose values stand alone, which a global of that sort can be stored as.
+pub(super) fn holds_eclasses(sort: &ArcSort) -> bool {
+    sort.is_eq_sort() || sort.is_container_sort()
 }

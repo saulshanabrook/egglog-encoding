@@ -388,6 +388,24 @@ impl EGraph {
         )))
     }
 
+    /// Read output column `col_idx` of the FD view `view_name` by its
+    /// `n_keys` keys, with no fallback: the action fails when the key is absent.
+    pub fn register_view_column_lookup(
+        &mut self,
+        view_name: String,
+        n_keys: usize,
+        col_idx: usize,
+    ) -> ExternalFunctionId {
+        let registry = self.action_registry.clone();
+        self.register_external_func(Box::new(make_external_func(
+            move |state: &mut ExecutionState, args: &[Value]| {
+                let registry = registry.read().unwrap();
+                let action = registry.lookup_table(&view_name)?.clone();
+                action.lookup_value_col(state, &args[..n_keys], col_idx)
+            },
+        )))
+    }
+
     pub fn free_external_func(&mut self, func: ExternalFunctionId) {
         // A cached panic with more than one reference is kept alive (just
         // decrement); one at its last reference — or any func that is not a

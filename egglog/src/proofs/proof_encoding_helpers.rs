@@ -880,9 +880,9 @@ pub enum ProofEncodingUnsupportedReason {
     #[error("`fail` wrapping an `input` command is not supported by proof encoding.")]
     FailInputCommand,
     #[error(
-        "let binding with a primitive in the body. For silly internal reasons, we don't support primitive bindings for proofs at the moment, sorry."
+        "let binding a container. A container global's elements go stale as the e-graph merges, and the encoding has no rebuild for a global's own row; bind it inside a rule, or run on the native backend."
     )]
-    LetBindingWithNonEqSort,
+    LetBindingWithContainer,
     #[error(
         "rule uses `:unsafe-seminaive`. Arbitrary RHS database reads are not representable by the term/proof encoding."
     )]
@@ -1219,10 +1219,10 @@ fn command_supports_proof_encoding_impl(
         ResolvedCommand::Action(ResolvedAction::Let(_, _, expr)) => {
             // let binding with non-eq sort not supported by proof_global_desugar
             // we detect as setting something that is no-merge to a primitive not supported (global primitive binding)
-            if expr.output_type().is_eq_sort() {
-                Ok(())
+            if expr.output_type().is_container_sort() {
+                Err(ProofEncodingUnsupportedReason::LetBindingWithContainer)
             } else {
-                Err(ProofEncodingUnsupportedReason::LetBindingWithNonEqSort)
+                Ok(())
             }
         }
         // After global desugar it may look like this
@@ -1231,10 +1231,10 @@ fn command_supports_proof_encoding_impl(
             // shared table.
             let binds_global =
                 type_info.is_global(head.name()) || type_info.is_global_table(head.name());
-            if !binds_global || expr.output_type().is_eq_sort() {
-                Ok(())
+            if binds_global && expr.output_type().is_container_sort() {
+                Err(ProofEncodingUnsupportedReason::LetBindingWithContainer)
             } else {
-                Err(ProofEncodingUnsupportedReason::LetBindingWithNonEqSort)
+                Ok(())
             }
         }
         _ => Ok(()),

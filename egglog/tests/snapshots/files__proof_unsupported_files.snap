@@ -2,7 +2,6 @@
 source: egglog/tests/files.rs
 expression: snapshot
 ---
-before-proofs.egg
 begin-block.egg
 bignum.egg
 complex-merge-prim.egg
@@ -12,7 +11,7 @@ eggcc-extraction.egg
 eqsat-basic-multiset.egg
 extract-vec-bench.egg
 factoring-multisets.egg
-fail-global-primitive.egg
+fail-global-container.egg
 fusion.egg
 hardboiled_conv1d_128.egg
 herbie-tutorial.egg
@@ -21,20 +20,17 @@ interval.egg
 lambda.egg
 levenshtein-distance.egg
 looking_up_global.egg
-luminal-llama.egg
 map.egg
 merge-action-block.egg
 merge_read.egg
 multiset.egg
 naive-action-lookup.egg
 pair.egg
-prims.egg
 python_array_optimize.egg
 rat-pow-eval.egg
 repro-738-fn-sort.egg
 repro-herbie-vanilla.egg
 repro-new-backend-python-vec.egg
-repro-unsound.egg
 repro-vec-unequal.egg
 set.egg
 set_sort_function.egg

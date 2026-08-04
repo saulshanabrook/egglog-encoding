@@ -719,11 +719,17 @@ fn view_column_read_apply(
         .get(&op.view_name)
         .ok_or_else(|| anyhow!("view-column read view `{}` is not registered", op.view_name))?;
     let keys = &args[..op.n_keys];
-    let fallback = args[op.n_keys];
-    Ok(match lookup_existing(eg, view, keys, index) {
-        Some(values) => Value::new(values[op.col_idx]),
-        None => fallback,
-    })
+    match lookup_existing(eg, view, keys, index) {
+        Some(values) => Ok(Value::new(values[op.col_idx])),
+        // A strict read takes no fallback argument, so there is nothing to return
+        // for a key the view does not hold.
+        None if op.strict => Err(anyhow!(
+            "view `{}` holds no row for the key read by column {}",
+            op.view_name,
+            op.col_idx
+        )),
+        None => Ok(args[op.n_keys]),
+    }
 }
 
 #[cfg(test)]

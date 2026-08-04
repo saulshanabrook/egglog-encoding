@@ -4,6 +4,7 @@
 
 use super::proof_checker::is_container_side_condition;
 use super::proof_encoding::ProofInstrumentor;
+use crate::proofs::proof_encoding::holds_eclasses;
 use crate::typechecking::FuncType;
 use crate::*;
 
@@ -67,14 +68,21 @@ impl ProofInstrumentor<'_> {
                     "(= (values {v} {proof_var}) ({view_name} {children_str}))"
                 ));
 
-                if self.egraph.proof_state.proofs_enabled {
+                if !self.egraph.proof_state.proofs_enabled {
+                    "()".to_string()
+                } else if self.names_a_global(head.name(), args) && !holds_eclasses(head.output()) {
+                    let value = v.name.clone();
+                    // As in `instrument_fact_expr`: a global holding a value is
+                    // justified by the value. A custom function with a base-sort
+                    // output is not — its row is established, so it keeps the
+                    // row's proof.
+                    self.reflexive_fiat_proof(head.output().name(), &value)
+                } else {
                     let mut proof = proof_var;
                     for (i, arg_proof) in arg_proofs.into_iter().enumerate() {
                         proof = self.mint_congr(&proof, i, &arg_proof);
                     }
                     proof
-                } else {
-                    "()".to_string()
                 }
             }
             ResolvedFact::Eq(_span, left_expr, right_expr) => {
@@ -199,7 +207,15 @@ impl ProofInstrumentor<'_> {
                             res.push(format!(
                                 "(= (values {fv} {view_proof_var}) ({view_name} {args_str}))"
                             ));
-                            if self.proofs_enabled() {
+                            if !self.proofs_enabled() {
+                                "()".to_string()
+                            } else if !holds_eclasses(func_type.output()) {
+                                // The row's own term names the slot as well as the
+                                // value, so it lines up with nothing else in the
+                                // proof. The value stands for itself, exactly as the
+                                // same fact written as a literal would.
+                                self.reflexive_fiat_proof(func_type.output().name(), &fv)
+                            } else {
                                 let mut proof = view_proof_var;
                                 for (i, arg_proof) in arg_proofs.into_iter().enumerate() {
                                     if let Some(arg_proof) = arg_proof {
@@ -207,8 +223,6 @@ impl ProofInstrumentor<'_> {
                                     }
                                 }
                                 proof
-                            } else {
-                                "()".to_string()
                             }
                         };
                         (fv, proof)
