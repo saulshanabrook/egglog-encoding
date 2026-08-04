@@ -7,17 +7,19 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::AuthorityRegistries;
 use crate::rebuild::{
     OrderedUnionGraph, ordered_union_outer, validate_scalar_action_ordered_union,
     validate_scalar_mixed_ordered_union,
 };
-use crate::rule_sql::compile_live_body;
+use crate::scalar_expr::{ScalarAuthority, ScalarExpression};
 use crate::storage::{ScalarSqlType, Storage, TableInfo, WriteCapability, sql_table};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
 use egglog_backend_trait::{
-    BaseValues, ColumnTy, DefaultVal, ExternalFunctionId, FunctionId, MergeFn, NativePrimitive,
-    ReadMode, RuleActionCall, RuleBodyCall, RuleSpec, RuleValue, RuleVar,
+    BaseValues, ColumnTy, DefaultVal, ExternalFunctionId, FunctionId, MergeAction, MergeFn,
+    NativePrimitive, NativeScalarPrimitive, ReadMode, RuleActionCall, RuleBodyCall, RuleSpec,
+    RuleValue, RuleVar,
 };
 use egglog_numeric_id::NumericId;
 
@@ -516,7 +518,7 @@ impl<'a> ScalarCompiler<'a> {
                 })?;
                 ensure!(
                     binding.ty == variable.ty,
-                    "DuckDB scalar-mixed rule `{}` reuses variable id {} with an inconsistent type",
+                    "DuckDB scalar-mixed rule `{}` reuses variable id {} with inconsistent type metadata",
                     self.rule_name,
                     variable.id
                 );
@@ -1372,8 +1374,14 @@ enum ScalarActionRead {
 
 #[derive(Clone, Debug)]
 enum ScalarActionSlotSource {
-    Fresh { rank: u64 },
+    Fresh {
+        rank: u64,
+    },
     Read(ScalarActionRead),
+    Expression {
+        expression: ScalarExpression,
+        inputs: Vec<ScalarValueRef>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -1401,14 +1409,34 @@ pub(crate) struct ScalarActionPlan {
     action_count: u64,
     required_fresh_tokens: BTreeSet<ExternalFunctionId>,
     required_fd_descriptors: BTreeMap<ExternalFunctionId, FdDescriptor>,
+    required_native_primitives: BTreeMap<ExternalFunctionId, NativePrimitive>,
+    required_native_scalar_primitives: BTreeMap<ExternalFunctionId, NativeScalarPrimitive>,
+    required_authority_epochs: BTreeMap<ExternalFunctionId, u64>,
 }
 
 impl ScalarActionPlan {
     pub(crate) fn authorize(
         &self,
+        native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
+        native_scalar_primitives: &BTreeMap<ExternalFunctionId, NativeScalarPrimitive>,
+        authority_epochs: &BTreeMap<ExternalFunctionId, u64>,
         fresh_tokens: &BTreeSet<ExternalFunctionId>,
         fd_descriptors: &BTreeMap<ExternalFunctionId, FdDescriptor>,
     ) -> Result<()> {
+        for (token, descriptor) in &self.required_native_primitives {
+            ensure!(
+                native_primitives.get(token) == Some(descriptor),
+                "DuckDB scalar action plan references a freed or reused native token {}",
+                token.rep()
+            );
+        }
+        for (token, descriptor) in &self.required_native_scalar_primitives {
+            ensure!(
+                native_scalar_primitives.get(token) == Some(descriptor),
+                "DuckDB scalar action plan references a freed or reused native scalar token {}",
+                token.rep()
+            );
+        }
         for token in &self.required_fresh_tokens {
             ensure!(
                 fresh_tokens.contains(token),
@@ -1420,6 +1448,15 @@ impl ScalarActionPlan {
             ensure!(
                 fd_descriptors.get(token) == Some(descriptor),
                 "DuckDB scalar action plan references a freed or reused FD token {}",
+                token.rep()
+            );
+        }
+        // Descriptor/kind diagnostics stay specific. The epoch is the final
+        // ABA guard when a token is freed and reused with the same authority.
+        for (token, epoch) in &self.required_authority_epochs {
+            ensure!(
+                authority_epochs.get(token) == Some(epoch),
+                "DuckDB scalar action plan references a freed or reused authority token {}",
                 token.rep()
             );
         }
@@ -1449,13 +1486,17 @@ impl ScalarActionPlan {
     pub(crate) fn owner_checks(&self) -> Vec<(FunctionId, usize, bool)> {
         let mut checks = Vec::new();
         for slot in &self.slots {
-            if let ScalarActionSlotSource::Read(read) = &slot.source {
-                let (target, n_keys) = match read {
-                    ScalarActionRead::Table { target, n_keys, .. }
-                    | ScalarActionRead::SetIfEmpty { target, n_keys, .. }
-                    | ScalarActionRead::ViewColumn { target, n_keys, .. } => (*target, *n_keys),
-                };
-                checks.push((target, n_keys, false));
+            match &slot.source {
+                ScalarActionSlotSource::Read(read) => {
+                    let (target, n_keys) = match read {
+                        ScalarActionRead::Table { target, n_keys, .. }
+                        | ScalarActionRead::SetIfEmpty { target, n_keys, .. }
+                        | ScalarActionRead::ViewColumn { target, n_keys, .. } => (*target, *n_keys),
+                    };
+                    checks.push((target, n_keys, false));
+                }
+                ScalarActionSlotSource::Fresh { .. }
+                | ScalarActionSlotSource::Expression { .. } => {}
             }
         }
         checks.extend(
@@ -1475,11 +1516,21 @@ impl ScalarActionPlan {
         assert_scratch_name(stage);
         if self.match_from.is_empty() {
             let run = !self.seminaive || watermark == 0;
+            let mut predicates = self.match_predicates.clone();
+            predicates.push(if run { "TRUE" } else { "FALSE" }.to_string());
+            let mut projection = self
+                .match_projection
+                .iter()
+                .enumerate()
+                .map(|(column, expression)| format!("{expression} AS b{column}"))
+                .collect::<Vec<_>>();
+            projection.push("CAST('1' AS UBIGINT) AS __match_ordinal".to_string());
             return format!(
                 "CREATE TEMP TABLE {stage} AS
-                 SELECT CAST('1' AS UBIGINT) AS __match_ordinal
+                 SELECT {}
                  WHERE {}",
-                if run { "TRUE" } else { "FALSE" }
+                projection.join(", "),
+                predicates.join(" AND ")
             );
         }
 
@@ -1535,6 +1586,19 @@ impl ScalarActionPlan {
                             + prior.__match_ordinal - 1 AS s{slot_index}
                  FROM {input_stage} AS prior"
             ),
+            ScalarActionSlotSource::Expression { expression, inputs } => {
+                let inputs = inputs
+                    .iter()
+                    .map(|input| render_general_ref(input, "prior"))
+                    .collect::<Vec<_>>();
+                let rendered = expression.render(&inputs);
+                format!(
+                    "CREATE TEMP TABLE {output_stage} AS
+                     SELECT prior.*, {} AS s{slot_index}
+                     FROM {input_stage} AS prior",
+                    rendered.value
+                )
+            }
             ScalarActionSlotSource::Read(ScalarActionRead::Table {
                 target,
                 n_keys,
@@ -1626,30 +1690,47 @@ impl ScalarActionPlan {
         slot_index: usize,
     ) -> Option<String> {
         assert_scratch_name(input_stage);
-        let ScalarActionSlotSource::Read(ScalarActionRead::Table {
-            target,
-            n_keys,
-            keys,
-            ..
-        }) = &self.slots[slot_index].source
-        else {
-            return None;
-        };
-        debug_assert_eq!(keys.len(), *n_keys);
-        let equality = render_read_equality(keys, *n_keys, "prior");
-        Some(format!(
-            "SELECT EXISTS (
-                 SELECT 1
-                 FROM {input_stage} AS prior
-                 LEFT JOIN LATERAL (
-                     SELECT count(existing.__generation) AS __owners
-                     FROM {} AS existing
-                     WHERE {equality}
-                 ) AS lookup ON TRUE
-                 WHERE lookup.__owners <> 1
-             )",
-            sql_table(*target)
-        ))
+        match &self.slots[slot_index].source {
+            ScalarActionSlotSource::Read(ScalarActionRead::Table {
+                target,
+                n_keys,
+                keys,
+                ..
+            }) => {
+                debug_assert_eq!(keys.len(), *n_keys);
+                let equality = render_read_equality(keys, *n_keys, "prior");
+                Some(format!(
+                    "SELECT EXISTS (
+                         SELECT 1
+                         FROM {input_stage} AS prior
+                         LEFT JOIN LATERAL (
+                             SELECT count(existing.__generation) AS __owners
+                             FROM {} AS existing
+                             WHERE {equality}
+                         ) AS lookup ON TRUE
+                         WHERE lookup.__owners <> 1
+                     )",
+                    sql_table(*target)
+                ))
+            }
+            ScalarActionSlotSource::Expression { expression, inputs } => {
+                let inputs = inputs
+                    .iter()
+                    .map(|input| render_general_ref(input, "prior"))
+                    .collect::<Vec<_>>();
+                let rendered = expression.render(&inputs);
+                (!rendered.is_total()).then(|| {
+                    format!(
+                        "SELECT EXISTS (SELECT 1 FROM {input_stage} AS prior WHERE NOT ({}))",
+                        rendered.defined
+                    )
+                })
+            }
+            ScalarActionSlotSource::Fresh { .. }
+            | ScalarActionSlotSource::Read(
+                ScalarActionRead::SetIfEmpty { .. } | ScalarActionRead::ViewColumn { .. },
+            ) => None,
+        }
     }
 
     pub(crate) fn slot_invalid_sql(&self, stage: &str, slot_index: usize) -> Option<String> {
@@ -1680,6 +1761,13 @@ impl ScalarActionPlan {
             ScalarActionSlotSource::Fresh { .. } => {
                 unreachable!("fresh slots have no ownership check")
             }
+            ScalarActionSlotSource::Expression { expression, .. } => format!(
+                "DuckDB scalar action {} (runtime {}, result {:?}) evaluated undefined for authenticated token {}",
+                slot.raw_action_ordinal,
+                slot.runtime_ordinal,
+                slot.ty,
+                expression.token().rep()
+            ),
         }
     }
 
@@ -1716,10 +1804,333 @@ impl ScalarActionPlan {
     }
 }
 
+#[derive(Clone)]
+struct ScalarBodyBinding {
+    ty: ColumnTy,
+    expression: String,
+    stage_column: usize,
+}
+
+struct ScalarBodyPlan {
+    match_projection: Vec<String>,
+    match_from: Vec<String>,
+    match_predicates: Vec<String>,
+    freshness_columns: Vec<String>,
+    order_columns: Vec<String>,
+    bindings: BTreeMap<u32, ScalarBodyBinding>,
+    required_native_primitives: BTreeMap<ExternalFunctionId, NativePrimitive>,
+    required_native_scalar_primitives: BTreeMap<ExternalFunctionId, NativeScalarPrimitive>,
+}
+
+fn compile_scalar_body(
+    storage: &Storage,
+    base_values: &BaseValues,
+    native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
+    native_scalar_primitives: &BTreeMap<ExternalFunctionId, NativeScalarPrimitive>,
+    rule: &RuleSpec,
+) -> Result<ScalarBodyPlan> {
+    let mut plan = ScalarBodyPlan {
+        match_projection: Vec::new(),
+        match_from: Vec::new(),
+        match_predicates: Vec::new(),
+        freshness_columns: Vec::new(),
+        order_columns: Vec::new(),
+        bindings: BTreeMap::new(),
+        required_native_primitives: BTreeMap::new(),
+        required_native_scalar_primitives: BTreeMap::new(),
+    };
+
+    for (atom_index, atom) in rule.core.body.atoms.iter().enumerate() {
+        match &atom.head {
+            RuleBodyCall::Table { id, read } => {
+                ensure!(
+                    *read == ReadMode::Live,
+                    "DuckDB scalar rule `{}` requests {read:?}; only Live table reads are supported",
+                    rule.name
+                );
+                let info = storage.table_info(*id).with_context(|| {
+                    format!(
+                        "DuckDB scalar rule `{}` references invalid body table {}",
+                        rule.name,
+                        id.rep()
+                    )
+                })?;
+                ensure!(
+                    atom.args.len() == info.arity(),
+                    "DuckDB scalar rule `{}` body table `{}` expects {} arguments, got {}",
+                    rule.name,
+                    info.name,
+                    info.arity(),
+                    atom.args.len()
+                );
+                let alias = format!("b{atom_index}");
+                plan.match_from
+                    .push(format!("{} AS {alias}", sql_table(*id)));
+                plan.match_predicates
+                    .push(format!("{alias}.__subsumed = FALSE"));
+                plan.freshness_columns.push(format!("{alias}.__generation"));
+                plan.order_columns.push(format!("{alias}.__generation"));
+                plan.order_columns
+                    .extend((0..info.arity()).map(|column| format!("{alias}.c{column}")));
+
+                for (column, (term, &expected)) in atom.args.iter().zip(&info.schema).enumerate() {
+                    let expression = format!("{alias}.c{column}");
+                    match term {
+                        GenericAtomTerm::Var(_, variable) => {
+                            ensure!(
+                                variable.ty == expected,
+                                "DuckDB scalar rule `{}` table variable `{}` has the wrong type",
+                                rule.name,
+                                variable.name
+                            );
+                            if let Some(binding) = plan.bindings.get(&variable.id) {
+                                ensure_body_metadata(&rule.name, variable, binding)?;
+                                plan.match_predicates.push(format!(
+                                    "{expression} IS NOT DISTINCT FROM {}",
+                                    binding.expression
+                                ));
+                            } else {
+                                let stage_column = plan.match_projection.len();
+                                plan.match_projection.push(expression.clone());
+                                plan.bindings.insert(
+                                    variable.id,
+                                    ScalarBodyBinding {
+                                        ty: variable.ty,
+                                        expression,
+                                        stage_column,
+                                    },
+                                );
+                            }
+                        }
+                        GenericAtomTerm::Literal(_, literal) => {
+                            ensure!(
+                                literal.ty == expected,
+                                "DuckDB scalar rule `{}` has a mistyped body literal",
+                                rule.name
+                            );
+                            let literal = ScalarSqlType::from_column(base_values, expected)?
+                                .sql_literal(base_values, literal.value)?;
+                            plan.match_predicates
+                                .push(format!("{expression} IS NOT DISTINCT FROM {literal}"));
+                        }
+                        GenericAtomTerm::Global(..) => bail!(
+                            "DuckDB scalar rule `{}` contains an unsupported body global",
+                            rule.name
+                        ),
+                    }
+                }
+            }
+            RuleBodyCall::Primitive {
+                id,
+                name: _,
+                output,
+                ..
+            } => {
+                let Some((result, inputs)) = atom.args.split_last() else {
+                    bail!(
+                        "DuckDB scalar rule `{}` primitive body atom has no output term",
+                        rule.name
+                    );
+                };
+                let input_tys = inputs.iter().map(argument_ty).collect::<Vec<_>>();
+                let expression = ScalarExpression::authenticate(
+                    base_values,
+                    native_primitives,
+                    native_scalar_primitives,
+                    *id,
+                    &input_tys,
+                    *output,
+                )
+                .with_context(|| {
+                    format!(
+                        "DuckDB scalar rule `{}` has an invalid primitive body atom",
+                        rule.name
+                    )
+                })?;
+                let inputs = inputs
+                    .iter()
+                    .zip(input_tys)
+                    .map(|(term, ty)| {
+                        compile_scalar_body_term(
+                            base_values,
+                            &rule.name,
+                            &plan.bindings,
+                            term,
+                            ty,
+                            "primitive input",
+                        )
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                let rendered = expression.render(&inputs);
+                if !rendered.is_total() {
+                    plan.match_predicates.push(rendered.defined);
+                }
+                match result {
+                    GenericAtomTerm::Var(_, variable) => {
+                        ensure!(
+                            variable.ty == *output,
+                            "DuckDB scalar rule `{}` primitive output variable has the wrong type",
+                            rule.name
+                        );
+                        if let Some(binding) = plan.bindings.get(&variable.id) {
+                            ensure_body_metadata(&rule.name, variable, binding)?;
+                            plan.match_predicates.push(format!(
+                                "{} IS NOT DISTINCT FROM {}",
+                                rendered.value, binding.expression
+                            ));
+                        } else {
+                            let stage_column = plan.match_projection.len();
+                            plan.match_projection.push(rendered.value.clone());
+                            plan.bindings.insert(
+                                variable.id,
+                                ScalarBodyBinding {
+                                    ty: variable.ty,
+                                    expression: rendered.value,
+                                    stage_column,
+                                },
+                            );
+                        }
+                    }
+                    GenericAtomTerm::Literal(_, literal) => {
+                        ensure!(
+                            literal.ty == *output,
+                            "DuckDB scalar rule `{}` primitive output literal has the wrong type",
+                            rule.name
+                        );
+                        let literal = ScalarSqlType::from_column(base_values, *output)?
+                            .sql_literal(base_values, literal.value)?;
+                        plan.match_predicates
+                            .push(format!("{} IS NOT DISTINCT FROM {literal}", rendered.value));
+                    }
+                    GenericAtomTerm::Global(..) => bail!(
+                        "DuckDB scalar rule `{}` primitive output cannot be a global",
+                        rule.name
+                    ),
+                }
+                match expression.authority() {
+                    ScalarAuthority::Native(descriptor) => {
+                        plan.required_native_primitives.insert(*id, descriptor);
+                    }
+                    ScalarAuthority::Typed(descriptor) => {
+                        plan.required_native_scalar_primitives
+                            .insert(*id, descriptor);
+                    }
+                }
+            }
+        }
+    }
+    Ok(plan)
+}
+
+fn ensure_body_metadata(
+    rule_name: &str,
+    variable: &RuleVar,
+    binding: &ScalarBodyBinding,
+) -> Result<()> {
+    ensure!(
+        binding.ty == variable.ty,
+        "DuckDB scalar rule `{rule_name}` reuses variable id {} with inconsistent type metadata",
+        variable.id
+    );
+    Ok(())
+}
+
+fn compile_scalar_body_term(
+    base_values: &BaseValues,
+    rule_name: &str,
+    bindings: &BTreeMap<u32, ScalarBodyBinding>,
+    term: &GenericAtomTerm<RuleVar, RuleValue>,
+    expected: ColumnTy,
+    context: &str,
+) -> Result<String> {
+    match term {
+        GenericAtomTerm::Var(_, variable) => {
+            ensure!(
+                variable.ty == expected,
+                "DuckDB scalar rule `{rule_name}` {context} has a mistyped variable"
+            );
+            let binding = bindings.get(&variable.id).ok_or_else(|| {
+                anyhow!(
+                    "DuckDB scalar rule `{rule_name}` {context} uses variable id {} before binding",
+                    variable.id
+                )
+            })?;
+            ensure_body_metadata(rule_name, variable, binding)?;
+            Ok(binding.expression.clone())
+        }
+        GenericAtomTerm::Literal(_, literal) => {
+            ensure!(
+                literal.ty == expected,
+                "DuckDB scalar rule `{rule_name}` {context} has a mistyped literal"
+            );
+            ScalarSqlType::from_column(base_values, expected)?
+                .sql_literal(base_values, literal.value)
+        }
+        GenericAtomTerm::Global(..) => {
+            bail!("DuckDB scalar rule `{rule_name}` {context} contains an unsupported global")
+        }
+    }
+}
+
+fn retain_native_merge_dependencies(
+    merge: &MergeFn,
+    native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
+    required: &mut BTreeMap<ExternalFunctionId, NativePrimitive>,
+) {
+    match merge {
+        MergeFn::Primitive { id, args, .. } => {
+            if let Some(&descriptor) = native_primitives.get(id) {
+                required.insert(*id, descriptor);
+            }
+            for argument in args {
+                retain_native_merge_dependencies(argument, native_primitives, required);
+            }
+        }
+        MergeFn::Function(_, arguments) | MergeFn::Lookup(_, arguments) => {
+            for argument in arguments {
+                retain_native_merge_dependencies(argument, native_primitives, required);
+            }
+        }
+        MergeFn::Columns(columns) => {
+            for column in columns {
+                retain_native_merge_dependencies(column, native_primitives, required);
+            }
+        }
+        MergeFn::Block { actions, result } => {
+            for action in actions {
+                match action {
+                    MergeAction::Set(_, arguments) => {
+                        for argument in arguments {
+                            retain_native_merge_dependencies(argument, native_primitives, required);
+                        }
+                    }
+                    MergeAction::Let { value, .. } => {
+                        retain_native_merge_dependencies(value, native_primitives, required);
+                    }
+                    MergeAction::Union(left, right) => {
+                        retain_native_merge_dependencies(left, native_primitives, required);
+                        retain_native_merge_dependencies(right, native_primitives, required);
+                    }
+                }
+            }
+            retain_native_merge_dependencies(result, native_primitives, required);
+        }
+        MergeFn::AssertEq
+        | MergeFn::UnionId
+        | MergeFn::Old
+        | MergeFn::New
+        | MergeFn::OldCol(_)
+        | MergeFn::NewCol(_)
+        | MergeFn::LetVar(_)
+        | MergeFn::Const { .. } => {}
+    }
+}
+
 struct GeneralScalarCompiler<'a> {
     storage: &'a Storage,
     base_values: &'a BaseValues,
     native_primitives: &'a BTreeMap<ExternalFunctionId, NativePrimitive>,
+    native_scalar_primitives: &'a BTreeMap<ExternalFunctionId, NativeScalarPrimitive>,
     fresh_tokens: &'a BTreeSet<ExternalFunctionId>,
     fd_descriptors: &'a BTreeMap<ExternalFunctionId, FdDescriptor>,
     rule_name: &'a str,
@@ -1731,6 +2142,8 @@ struct GeneralScalarCompiler<'a> {
     runtime_ordinal: u64,
     required_fresh_tokens: BTreeSet<ExternalFunctionId>,
     required_fd_descriptors: BTreeMap<ExternalFunctionId, FdDescriptor>,
+    required_native_primitives: BTreeMap<ExternalFunctionId, NativePrimitive>,
+    required_native_scalar_primitives: BTreeMap<ExternalFunctionId, NativeScalarPrimitive>,
 }
 
 impl<'a> GeneralScalarCompiler<'a> {
@@ -1756,7 +2169,7 @@ impl<'a> GeneralScalarCompiler<'a> {
                 })?;
                 ensure!(
                     binding.ty == variable.ty,
-                    "DuckDB scalar rule `{}` reuses variable id {} with an inconsistent type",
+                    "DuckDB scalar rule `{}` reuses variable id {} with inconsistent type metadata",
                     self.rule_name,
                     variable.id
                 );
@@ -1839,6 +2252,23 @@ impl<'a> GeneralScalarCompiler<'a> {
                     target,
                 )?;
                 self.required_fresh_tokens.insert(graph.fresh_token);
+                retain_native_merge_dependencies(
+                    info.merge.as_ref(),
+                    self.native_primitives,
+                    &mut self.required_native_primitives,
+                );
+                let displaced = self.storage.table_info(graph.displaced.target).with_context(|| {
+                    format!(
+                        "DuckDB scalar rule `{}` ordered-union graph references invalid displaced target {}",
+                        self.rule_name,
+                        graph.displaced.target.rep()
+                    )
+                })?;
+                retain_native_merge_dependencies(
+                    displaced.merge.as_ref(),
+                    self.native_primitives,
+                    &mut self.required_native_primitives,
+                );
                 if let Some(existing) = self
                     .graphs
                     .iter()
@@ -2088,17 +2518,41 @@ impl<'a> GeneralScalarCompiler<'a> {
                             )?;
                         }
                     }
-                } else if self.native_primitives.contains_key(id) {
-                    bail!(
-                        "DuckDB scalar rule `{}` action {raw_action_ordinal} contains a deferred native scalar expression",
-                        self.rule_name
-                    );
                 } else {
-                    bail!(
-                        "DuckDB scalar rule `{}` action {raw_action_ordinal} uses an unauthenticated or callback primitive token {}",
-                        self.rule_name,
-                        id.rep()
-                    );
+                    let input_tys = arguments.iter().map(argument_ty).collect::<Vec<_>>();
+                    let expression = ScalarExpression::authenticate(
+                        self.base_values,
+                        self.native_primitives,
+                        self.native_scalar_primitives,
+                        *id,
+                        &input_tys,
+                        *output,
+                    )
+                    .with_context(|| {
+                        format!(
+                            "DuckDB scalar rule `{}` action {raw_action_ordinal} has an invalid scalar expression",
+                            self.rule_name
+                        )
+                    })?;
+                    let inputs = arguments
+                        .iter()
+                        .zip(input_tys)
+                        .map(|(term, ty)| self.compile_term(term, ty, "scalar expression input"))
+                        .collect::<Result<Vec<_>>>()?;
+                    match expression.authority() {
+                        ScalarAuthority::Native(descriptor) => {
+                            self.required_native_primitives.insert(*id, descriptor);
+                        }
+                        ScalarAuthority::Typed(descriptor) => {
+                            self.required_native_scalar_primitives
+                                .insert(*id, descriptor);
+                        }
+                    }
+                    self.bind_slot(
+                        raw_action_ordinal,
+                        variable,
+                        ScalarActionSlotSource::Expression { expression, inputs },
+                    )?;
                 }
             }
         }
@@ -2113,11 +2567,14 @@ impl<'a> GeneralScalarCompiler<'a> {
 pub(crate) fn compile_scalar_action(
     storage: &Storage,
     base_values: &BaseValues,
-    native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
-    fresh_tokens: &BTreeSet<ExternalFunctionId>,
-    fd_descriptors: &BTreeMap<ExternalFunctionId, FdDescriptor>,
+    authorities: &AuthorityRegistries<'_>,
     rule: &RuleSpec,
 ) -> Result<Option<ScalarActionPlan>> {
+    let native_primitives = authorities.native_primitives;
+    let native_scalar_primitives = authorities.native_scalar_primitives;
+    let authority_epochs = authorities.authority_epochs;
+    let fresh_tokens = authorities.fresh_tokens;
+    let fd_descriptors = authorities.fd_descriptors;
     let exact_transcript = looks_like_exact_scalar_transcript(rule);
     if exact_transcript && scalar_mixed_owner(storage, rule)?.is_some() {
         compile_scalar_mixed(storage, base_values, native_primitives, fresh_tokens, rule)?
@@ -2130,7 +2587,7 @@ pub(crate) fn compile_scalar_action(
                 RuleBodyCall::Table {
                     read: ReadMode::Live,
                     ..
-                }
+                } | RuleBodyCall::Primitive { .. }
             )
         })
         || !rule.core.head.0.iter().all(|action| {
@@ -2151,6 +2608,12 @@ pub(crate) fn compile_scalar_action(
         _ => false,
     };
     let owns = rule.core.body.atoms.is_empty()
+        || rule
+            .core
+            .body
+            .atoms
+            .iter()
+            .any(|atom| matches!(atom.head, RuleBodyCall::Primitive { .. }))
         || rule.core.head.0.len() > 1
         || owns_deferred_single_set
         || rule.core.head.0.iter().any(|action| {
@@ -2166,11 +2629,15 @@ pub(crate) fn compile_scalar_action(
     // Preserve the reached 50-action compiler as a strict oracle for that
     // generated family, while executing its accepted transcript through the
     // general plan below.
-    let body = compile_live_body(storage, base_values, rule)?;
-    let mut match_projection = vec![String::new(); body.bindings.len()];
+    let body = compile_scalar_body(
+        storage,
+        base_values,
+        native_primitives,
+        native_scalar_primitives,
+        rule,
+    )?;
     let mut bindings = BTreeMap::new();
     for (&id, binding) in &body.bindings {
-        match_projection[binding.stage_column] = binding.expression.clone();
         bindings.insert(
             id,
             BoundValue {
@@ -2183,6 +2650,7 @@ pub(crate) fn compile_scalar_action(
         storage,
         base_values,
         native_primitives,
+        native_scalar_primitives,
         fresh_tokens,
         fd_descriptors,
         rule_name: &rule.name,
@@ -2194,6 +2662,8 @@ pub(crate) fn compile_scalar_action(
         runtime_ordinal: 0,
         required_fresh_tokens: BTreeSet::new(),
         required_fd_descriptors: BTreeMap::new(),
+        required_native_primitives: body.required_native_primitives,
+        required_native_scalar_primitives: body.required_native_scalar_primitives,
     };
 
     for (raw_action_ordinal, action) in rule.core.head.0.iter().enumerate() {
@@ -2228,11 +2698,36 @@ pub(crate) fn compile_scalar_action(
         rule.name
     );
 
+    let required_tokens = compiler
+        .required_native_primitives
+        .keys()
+        .chain(compiler.required_native_scalar_primitives.keys())
+        .chain(compiler.required_fresh_tokens.iter())
+        .chain(compiler.required_fd_descriptors.keys())
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let required_authority_epochs = required_tokens
+        .into_iter()
+        .map(|token| {
+            authority_epochs
+                .get(&token)
+                .copied()
+                .map(|epoch| (token, epoch))
+                .ok_or_else(|| {
+                    anyhow!(
+                        "DuckDB scalar rule `{}` has no live authority epoch for token {}",
+                        rule.name,
+                        token.rep()
+                    )
+                })
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
+
     Ok(Some(ScalarActionPlan {
         seminaive: rule.seminaive,
-        match_projection,
-        match_from: body.from,
-        match_predicates: body.predicates,
+        match_projection: body.match_projection,
+        match_from: body.match_from,
+        match_predicates: body.match_predicates,
         freshness_columns: body.freshness_columns,
         order_columns: body.order_columns,
         slots: compiler.slots,
@@ -2242,6 +2737,9 @@ pub(crate) fn compile_scalar_action(
         action_count: compiler.runtime_ordinal,
         required_fresh_tokens: compiler.required_fresh_tokens,
         required_fd_descriptors: compiler.required_fd_descriptors,
+        required_native_primitives: compiler.required_native_primitives,
+        required_native_scalar_primitives: compiler.required_native_scalar_primitives,
+        required_authority_epochs,
     }))
 }
 

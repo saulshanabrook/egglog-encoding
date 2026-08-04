@@ -21,7 +21,8 @@ use anyhow::{Result, anyhow, bail};
 use egglog_backend_trait::{
     Backend, BaseValues, ColumnTy, ContainerValues, ExecutionState, ExternalFunction,
     ExternalFunctionId, FunctionConfig, FunctionId, IterationReport, NativeInputValue,
-    NativePrimitive, ReportLevel, RuleId, RuleSetRun, RuleSpec, ScanEntry, Value,
+    NativePrimitive, NativeScalarPrimitive, ReportLevel, RuleId, RuleSetRun, RuleSpec, ScanEntry,
+    Value,
 };
 use egglog_core_relations::Database;
 use egglog_numeric_id::NumericId;
@@ -47,11 +48,22 @@ mod rebuild_tests;
 mod rule_sql;
 #[cfg(test)]
 mod rule_sql_tests;
+mod scalar_expr;
+#[cfg(test)]
+mod scalar_expr_tests;
 mod storage;
 
 use action_rule::FdDescriptor;
 use rule_sql::{CompiledRule, RuleExecutionStats, compile_rule};
 use storage::{InsertStats, Storage, for_each_scan_entry};
+
+struct AuthorityRegistries<'a> {
+    native_primitives: &'a BTreeMap<ExternalFunctionId, NativePrimitive>,
+    native_scalar_primitives: &'a BTreeMap<ExternalFunctionId, NativeScalarPrimitive>,
+    authority_epochs: &'a BTreeMap<ExternalFunctionId, u64>,
+    fresh_tokens: &'a BTreeSet<ExternalFunctionId>,
+    fd_descriptors: &'a BTreeMap<ExternalFunctionId, FdDescriptor>,
+}
 
 struct RegisteredRule {
     plan: CompiledRule,
@@ -71,6 +83,9 @@ pub struct EGraph {
     fresh_tokens: BTreeSet<ExternalFunctionId>,
     fd_descriptors: BTreeMap<ExternalFunctionId, FdDescriptor>,
     native_primitives: BTreeMap<ExternalFunctionId, NativePrimitive>,
+    native_scalar_primitives: BTreeMap<ExternalFunctionId, NativeScalarPrimitive>,
+    authority_epochs: BTreeMap<ExternalFunctionId, u64>,
+    next_authority_epoch: u64,
     rules: Vec<Option<RegisteredRule>>,
     last_insert: InsertStats,
     last_rule: RuleExecutionStats,
@@ -88,6 +103,9 @@ impl EGraph {
             fresh_tokens: BTreeSet::new(),
             fd_descriptors: BTreeMap::new(),
             native_primitives: BTreeMap::new(),
+            native_scalar_primitives: BTreeMap::new(),
+            authority_epochs: BTreeMap::new(),
+            next_authority_epoch: 0,
             rules: Vec::new(),
             last_insert: InsertStats::default(),
             last_rule: RuleExecutionStats::default(),
@@ -160,6 +178,15 @@ impl EGraph {
             bail!(message);
         }
         Ok(())
+    }
+
+    fn record_authority_epoch(&mut self, token: ExternalFunctionId) {
+        let epoch = self.next_authority_epoch;
+        self.next_authority_epoch = self
+            .next_authority_epoch
+            .checked_add(1)
+            .expect("DuckDB primitive authority epoch overflow");
+        self.authority_epochs.insert(token, epoch);
     }
 }
 
@@ -311,12 +338,17 @@ impl Backend for EGraph {
     }
 
     fn add_rule(&mut self, rule: RuleSpec) -> Result<RuleId> {
+        let authorities = AuthorityRegistries {
+            native_primitives: &self.native_primitives,
+            native_scalar_primitives: &self.native_scalar_primitives,
+            authority_epochs: &self.authority_epochs,
+            fresh_tokens: &self.fresh_tokens,
+            fd_descriptors: &self.fd_descriptors,
+        };
         let plan = compile_rule(
             &self.storage,
             self.registries.base_values(),
-            &self.native_primitives,
-            &self.fresh_tokens,
-            &self.fd_descriptors,
+            &authorities,
             rule,
         )?;
         let id = RuleId::new(self.rules.len() as u32);
@@ -356,7 +388,13 @@ impl Backend for EGraph {
                     .and_then(Option::as_ref)
                     .map(|registered| {
                         if let Some(plan) = registered.plan.scalar_action() {
-                            plan.authorize(&self.fresh_tokens, &self.fd_descriptors)?;
+                            plan.authorize(
+                                &self.native_primitives,
+                                &self.native_scalar_primitives,
+                                &self.authority_epochs,
+                                &self.fresh_tokens,
+                                &self.fd_descriptors,
+                            )?;
                         }
                         Ok::<(&CompiledRule, u64), anyhow::Error>((
                             &registered.plan,
@@ -402,6 +440,22 @@ impl Backend for EGraph {
             "DuckDB native primitive {primitive:?} requires authenticated SQL lowering"
         ));
         self.native_primitives.insert(token, primitive);
+        self.record_authority_epoch(token);
+        token
+    }
+
+    fn register_native_scalar_primitive(
+        &mut self,
+        primitive: NativeScalarPrimitive,
+        _fallback: Box<dyn ExternalFunction + 'static>,
+    ) -> ExternalFunctionId {
+        // The canonical callback is intentionally not installed in DuckDB.
+        // This token can authorize only the closed public-SQL renderer.
+        let token = self.new_panic(format!(
+            "DuckDB native scalar primitive {primitive:?} requires authenticated SQL lowering"
+        ));
+        self.native_scalar_primitives.insert(token, primitive);
+        self.record_authority_epoch(token);
         token
     }
 
@@ -412,6 +466,7 @@ impl Backend for EGraph {
         // lowering reserves ids directly from the SQL counter instead.
         let token = self.new_panic("DuckDB get-fresh requires native SQL lowering".to_string());
         self.fresh_tokens.insert(token);
+        self.record_authority_epoch(token);
         token
     }
 
@@ -432,6 +487,7 @@ impl Backend for EGraph {
                 out_arity,
             },
         );
+        self.record_authority_epoch(token);
         token
     }
 
@@ -452,13 +508,16 @@ impl Backend for EGraph {
                 col_idx,
             },
         );
+        self.record_authority_epoch(token);
         token
     }
 
     fn free_external_func(&mut self, func: ExternalFunctionId) {
         self.fd_descriptors.remove(&func);
         self.native_primitives.remove(&func);
+        self.native_scalar_primitives.remove(&func);
         self.fresh_tokens.remove(&func);
+        self.authority_epochs.remove(&func);
         self.registries.free_external_function(func);
     }
 
@@ -536,6 +595,27 @@ mod tests {
         assert_eq!(host_result, None);
         let error = backend.take_deferred_panic().unwrap_err();
         assert!(error.to_string().contains("authenticated SQL lowering"));
+
+        let typed = Backend::register_native_scalar_primitive(
+            &mut backend,
+            NativeScalarPrimitive::I64Add,
+            Box::new(egglog_core_relations::make_external_func(
+                |_state: &mut ExecutionState<'_>, _args: &[Value]| Some(Value::new(11)),
+            )),
+        );
+        assert_eq!(
+            backend.native_scalar_primitives.get(&typed),
+            Some(&NativeScalarPrimitive::I64Add)
+        );
+        let host_result = backend
+            .registries
+            .with_execution_state(|state| state.call_external_func(typed, &[]));
+        assert_eq!(host_result, None);
+        let error = backend.take_deferred_panic().unwrap_err();
+        assert!(error.to_string().contains("authenticated SQL lowering"));
+        Backend::free_external_func(&mut backend, typed);
+        assert!(!backend.native_scalar_primitives.contains_key(&typed));
+        assert!(!backend.authority_epochs.contains_key(&typed));
 
         Backend::free_external_func(&mut backend, first);
         assert!(!backend.native_primitives.contains_key(&first));

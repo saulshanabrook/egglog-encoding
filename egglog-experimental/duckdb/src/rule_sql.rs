@@ -6,18 +6,19 @@
 //! Rust retains only immutable SQL plans, generation watermarks, and scalar
 //! statement/count telemetry.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use anyhow::{Result, anyhow, bail};
 use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
 use egglog_ast::generic_ast::Change;
 use egglog_backend_trait::{
-    BaseValues, ColumnTy, ExternalFunctionId, FunctionId, NativePrimitive, ReadMode,
-    RuleActionCall, RuleBodyCall, RuleSpec, RuleValue, RuleVar,
+    BaseValues, ColumnTy, FunctionId, ReadMode, RuleActionCall, RuleBodyCall, RuleSpec, RuleValue,
+    RuleVar,
 };
 use egglog_numeric_id::NumericId;
 
-use crate::action_rule::{FdDescriptor, ScalarActionPlan, ScalarMixedPlan, compile_scalar_action};
+use crate::AuthorityRegistries;
+use crate::action_rule::{ScalarActionPlan, ScalarMixedPlan, compile_scalar_action};
 use crate::marker_rekey::{MarkerRekeyPlan, compile_marker_rekey};
 use crate::path_compress::{
     PathCompressionPlan, compile_path_compression, looks_like_path_compression,
@@ -31,7 +32,6 @@ use crate::storage::{
 #[derive(Clone, Debug)]
 pub(crate) struct VariableBinding {
     pub(crate) expression: String,
-    pub(crate) stage_column: usize,
     pub(crate) ty: ColumnTy,
     pub(crate) name: Box<str>,
 }
@@ -382,25 +382,31 @@ pub(crate) struct RuleExecutionStats {
 pub(crate) fn compile_rule(
     storage: &Storage,
     base_values: &BaseValues,
-    native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
-    fresh_tokens: &BTreeSet<ExternalFunctionId>,
-    fd_descriptors: &BTreeMap<ExternalFunctionId, FdDescriptor>,
+    authorities: &AuthorityRegistries<'_>,
     rule: RuleSpec,
 ) -> Result<CompiledRule> {
     // Rebuild admission is tri-state and must precede the path compiler's
     // intentionally cheap arity discriminator. A malformed standard outer
     // topology is an error; marker/container/custom topologies fall through.
-    if let Some(plan) =
-        compile_standard_rebuild(storage, base_values, native_primitives, fresh_tokens, &rule)?
-    {
+    if let Some(plan) = compile_standard_rebuild(
+        storage,
+        base_values,
+        authorities.native_primitives,
+        authorities.fresh_tokens,
+        &rule,
+    )? {
         return Ok(CompiledRule {
             seminaive: rule.seminaive,
             kind: CompiledRuleKind::StandardRebuild(plan),
         });
     }
-    if let Some(plan) =
-        compile_marker_rekey(storage, base_values, native_primitives, fresh_tokens, &rule)?
-    {
+    if let Some(plan) = compile_marker_rekey(
+        storage,
+        base_values,
+        authorities.native_primitives,
+        authorities.fresh_tokens,
+        &rule,
+    )? {
         return Ok(CompiledRule {
             seminaive: rule.seminaive,
             kind: CompiledRuleKind::MarkerRekey(plan),
@@ -412,21 +418,19 @@ pub(crate) fn compile_rule(
     // as a malformed path candidate.
     if looks_like_path_compression(&rule) && !is_delete_only(&rule) {
         let seminaive = rule.seminaive;
-        let plan =
-            compile_path_compression(storage, base_values, native_primitives, fresh_tokens, &rule)?;
+        let plan = compile_path_compression(
+            storage,
+            base_values,
+            authorities.native_primitives,
+            authorities.fresh_tokens,
+            &rule,
+        )?;
         return Ok(CompiledRule {
             seminaive,
             kind: CompiledRuleKind::PathCompression(plan),
         });
     }
-    if let Some(plan) = compile_scalar_action(
-        storage,
-        base_values,
-        native_primitives,
-        fresh_tokens,
-        fd_descriptors,
-        &rule,
-    )? {
+    if let Some(plan) = compile_scalar_action(storage, base_values, authorities, &rule)? {
         return Ok(CompiledRule {
             seminaive: rule.seminaive,
             kind: CompiledRuleKind::ScalarAction(plan),
@@ -529,12 +533,10 @@ pub(crate) fn compile_live_body(
                             binding.expression
                         ));
                     } else {
-                        let stage_column = bindings.len();
                         bindings.insert(
                             variable.id,
                             VariableBinding {
                                 expression: column_expression,
-                                stage_column,
                                 ty: variable.ty,
                                 name: variable.name.clone(),
                             },

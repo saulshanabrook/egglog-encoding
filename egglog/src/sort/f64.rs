@@ -28,8 +28,8 @@ impl BaseSort for F64Sort {
         add_literal_prim!(eg, "^" = |a: F, b: F| -> F { F::from(OrderedFloat(a.powf(**b))) });
         add_literal_prim!(eg, "neg" = |a: F| -> F { -a });
 
-        add_literal_prim!(eg, "<" = |a: F, b: F| -?> () { (a < b).then(|| ()) });
-        add_literal_prim!(eg, ">" = |a: F, b: F| -?> () { (a > b).then(|| ()) });
+        add_literal_prim!(eg, "<" = |a: F, b: F| -?> () { (a < b).then(|| ()) }, NativeScalarPrimitive::F64Lt);
+        add_literal_prim!(eg, ">" = |a: F, b: F| -?> () { (a > b).then(|| ()) }, NativeScalarPrimitive::F64Gt);
         add_literal_prim!(eg, "<=" = |a: F, b: F| -?> () { (a <= b).then(|| ()) });
         add_literal_prim!(eg, ">=" = |a: F, b: F| -?> () { (a >= b).then(|| ()) });
 

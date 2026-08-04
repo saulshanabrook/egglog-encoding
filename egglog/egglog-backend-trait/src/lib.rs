@@ -135,6 +135,29 @@ pub enum NativePrimitive {
     SelectMaxPayload,
 }
 
+/// A typed scalar operation that a native backend may lower directly.
+///
+/// Unlike [`NativePrimitive`], these descriptors name decoded base-value
+/// semantics. Registration therefore also carries the canonical
+/// [`ExternalFunction`] implementation: backends that do not provide native
+/// scalar lowering execute that implementation unchanged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum NativeScalarPrimitive {
+    I64Add,
+    I64Sub,
+    I64Mul,
+    I64Div,
+    I64Rem,
+    I64BitAnd,
+    I64Min,
+    I64Max,
+    I64Ge,
+    I64Lt,
+    F64Gt,
+    F64Lt,
+}
+
 impl NativePrimitive {
     fn invoke(self, state: &mut ExecutionState<'_>, args: &[Value]) -> Option<Value> {
         match self {
@@ -446,6 +469,21 @@ pub trait Backend: Send + Sync {
         )))
     }
 
+    /// Register a typed scalar primitive together with its canonical callback.
+    ///
+    /// The default is deliberately just ordinary callback registration, so an
+    /// existing backend retains exactly the implementation supplied by the
+    /// primitive definition. A backend may override this method to mint an
+    /// authenticated token and lower the closed descriptor without invoking
+    /// the callback.
+    fn register_native_scalar_primitive(
+        &mut self,
+        _primitive: NativeScalarPrimitive,
+        fallback: Box<dyn ExternalFunction + 'static>,
+    ) -> ExternalFunctionId {
+        self.register_external_func(fallback)
+    }
+
     /// Drop a user-defined primitive.
     fn free_external_func(&mut self, func: ExternalFunctionId);
 
@@ -680,7 +718,7 @@ impl<B: Backend + ?Sized> BackendExt for B {
 mod tests {
     use egglog_numeric_id::NumericId;
 
-    use super::{Backend, BackendExt, NativePrimitive, Value};
+    use super::{Backend, BackendExt, NativePrimitive, NativeScalarPrimitive, Value};
 
     #[test]
     fn native_primitive_defaults_are_object_safe_and_choose_right_on_ties() {
@@ -742,6 +780,29 @@ mod tests {
             ] {
                 assert_eq!(state.call_external_func(id, &args), None);
             }
+        });
+    }
+
+    #[test]
+    fn native_scalar_default_registers_the_supplied_canonical_callback() {
+        let mut backend: Box<dyn Backend> = Box::new(egglog_bridge::EGraph::default());
+        let expected = Value::from_usize(17);
+        let scalar = backend.register_native_scalar_primitive(
+            NativeScalarPrimitive::I64Add,
+            Box::new(egglog_core_relations::make_external_func(
+                move |_state, args: &[Value]| (args.len() == 2).then_some(expected),
+            )),
+        );
+
+        backend.with_execution_state(|state| {
+            assert_eq!(
+                state.call_external_func(scalar, &[Value::from_usize(3), Value::from_usize(5)]),
+                Some(expected)
+            );
+            assert_eq!(
+                state.call_external_func(scalar, &[Value::from_usize(3)]),
+                None
+            );
         });
     }
 }

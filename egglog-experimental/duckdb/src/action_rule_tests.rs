@@ -1634,6 +1634,51 @@ fn freed_fresh_token_reused_by_ordinary_callback_loses_authority() -> Result<()>
 }
 
 #[test]
+fn scalar_plan_reauthenticates_ordered_union_merge_tokens_after_same_kind_reuse() -> Result<()> {
+    let mut fixture = Fixture::new(EGraph::new()?, "duckdb stale merge provenance")?;
+    let stale = fixture.primitives.proof_max;
+    let rule = fixture
+        .backend
+        .add_rule(fixture.scalar_rule("stale merge-token scalar rule"))?;
+    let generation = fixture.backend.storage.generation()?;
+    let trace = fixture.backend.storage.latest_rule_sql();
+    let watermark = fixture.backend.rules[rule.rep() as usize]
+        .as_ref()
+        .expect("registered rule")
+        .watermark;
+
+    fixture.backend.free_external_func(stale);
+    let replacement = fixture
+        .backend
+        .register_native_primitive(NativePrimitive::SelectMaxPayload);
+    assert_eq!(replacement, stale);
+    let error = fixture
+        .backend
+        .run_rules(RuleSetRun {
+            name: Some("same-kind merge token ABA"),
+            rules: &[rule],
+        })
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("freed or reused authority token"),
+        "{error:#}"
+    );
+    assert_eq!(fixture.backend.storage.generation()?, generation);
+    assert_eq!(fixture.backend.storage.latest_rule_sql(), trace);
+    assert_eq!(fixture.backend.storage.next_fresh_id()?, 0);
+    assert_eq!(
+        fixture.backend.rules[rule.rep() as usize]
+            .as_ref()
+            .expect("registered rule")
+            .watermark,
+        watermark
+    );
+    Ok(())
+}
+
+#[test]
 fn non_subsumable_self_displacing_uf_continues_through_general_admission() -> Result<()> {
     let mut fixture = Fixture::new_with_key_count(EGraph::new()?, "duckdb non-subsume owner", 1)?;
     let mut rule = fixture.scalar_rule("non-subsume self-displacing near shape");

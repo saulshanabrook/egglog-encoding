@@ -2102,3 +2102,396 @@ matching is now the common first blocker for three workloads, so it precedes
 the closed native scalar-expression layer for Math/Luminal; typed containers
 remain after those unless a fresh census shows otherwise. `bench.py` DuckDB
 endpoint support remains required before final benchmark collection.
+
+## Generic `ReadMode::All` proposal rejected as a standalone checkpoint
+
+Fresh static audits at clean committed HEAD `a2163b3` corrected the provisional
+ordering above. `All` matching is a small, reusable semantic prerequisite, but
+an `All`-only patch advances none of Pointer, Eggcc, or Hardboiled past its
+current `RuleSpec`. Under the goal's early-exit rule, no writer is authorized
+for this isolated slice.
+
+The verified generic semantics are retained for a later combined capability:
+
+- `Live` adds `alias.__subsumed = FALSE`, `All` adds no visibility predicate,
+  and `Subsumed` would add `alias.__subsumed = TRUE` when separately scoped.
+- Every table atom contributes its generation column. One seminaive OR across
+  those columns is extensionally equivalent to Reference's disjoint focus
+  variants and fires a joined tuple once when more than one input is fresh.
+- A live-to-subsumed transition must retimestamp the row and refire `All`
+  exactly once; repeated Subsume is a no-op. Bodies and action reads remain a
+  stable prewave, and failure rolls back rows, counters, watermarks, telemetry,
+  and scratch state.
+- A non-seminaive unconstrained all-`All` body must render `WHERE TRUE` (or omit
+  the clause), not an empty `WHERE`.
+
+The reached rules require deeper capabilities in the same admission unit:
+
+| workload | exact reached shape after the visibility check | reason an `All`-only patch does not move it |
+| --- | --- | --- |
+| Pointer | two scalar `All` FD-view atoms and a zero-argument `check_facts_match` Let, with no durable Set | requires a separately authenticated SQL-native existential/result observation; generic host callback execution is forbidden |
+| Eggcc | two `All` tables, authenticated `ValueNeq`, fresh/Congr Set, custom-view Set, and Delete | requires a structural custom min/max merge plus primitive body, mixed Set/Delete staging, and one shared rebuilding transaction |
+| Hardboiled | one `All` table, typed `Vec<Expr>` rebuild, `ValueNeq`, a Full proof primitive, several Sets, and Delete | requires complete native container registry/rebuild/proof-effect semantics; an opaque Id treatment is unsound |
+
+Storage also rejects a scheduled mixture of scalar-action and existing
+rebuilding/direct plan kinds. Executing the existing transactions sequentially
+would violate the global stable-prewave and Delete-before-Set contract, so a
+later combined implementation must share one transaction rather than weaken
+that guard.
+
+Accepted no-go facts:
+
+1. Do not implement generic `All` merely to change the first diagnostic.
+2. Do not authenticate Pointer's callback by its name or execute it in Rust.
+3. Do not interpret Eggcc's arbitrary `MergeFn::Block` or split a rebuilding
+   ruleset across transactions.
+4. Do not treat Hardboiled container IDs as scalar payloads.
+5. Preserve Standard/Marker/Path ownership precedence and reject every
+   malformed or unsupported shape before RuleId allocation.
+
+The next active proposal is the closed authenticated scalar-expression layer:
+Math and Luminal each have a reached scalar-only rule that this capability can
+actually advance. `All` remains available as part of a later combined Pointer,
+Eggcc, or container checkpoint, with the differential canaries above.
+
+### Scalar-expression design roster
+
+| Agent | Circle/domain | Aim | Authority | Expected output | Stop |
+| --- | --- | --- | --- | --- | --- |
+| Math scalar frontier | proof-instrumented Math union actions | Recover the exact authenticated operation at action 22 and every following scalar-only family through the next non-scalar boundary | Read-only `a2163b3`; no edits/builds/tests/workloads/network/contact | token/signature/context census, source semantics, canaries, benchmark-moving verdict | Stop at exact next non-scalar prerequisite or one forbidden host/container requirement |
+| Luminal scalar frontier | checked scalar primitive bodies/actions | Freeze the reached primitive family, undefined/error behavior, and workload order | Read-only `a2163b3`; no edits/builds/tests/workloads/network/contact | typed operation matrix, zero/one-row SQL contract, differentials, stop rule | Stop if the reached slice needs callbacks/UDFs/containers or an unbounded compiler |
+| scalar IR architecture | shared authentication and SQL lowering | Select one closed typed representation for body and action expressions and one materially different repair design | Read-only `a2163b3`; no edits/builds/tests/workloads/network/contact | Design A/B, authority/type/failure/rollback contract, write set and gates | Stop once a bounded public-API SQL design passes or one semantic blocker is proved |
+
+No scalar writer is authorized until all three design circles finish and the
+coordinator freezes one contract. Performance is descriptive; each later
+probe is separately capped at 110 seconds and a timeout is censored data.
+
+## Frozen authenticated scalar-expression contract
+
+All scalar design circles completed against unchanged committed HEAD
+`a2163b3`. The source remains clean; this ledger is the only modified file.
+The reached workload evidence authorizes one implementation checkpoint.
+
+### Workload-moving scope
+
+Math requires exactly the existing authenticated raw-value operations
+`OrderingMax` and `OrderingMin` in action expressions. They are applied only
+to `(Id, Id) -> Id`, compare the stored raw `Value` handles, and choose the
+right operand on ties. Four variable-RHS rewrites each use the sequence
+`max, min, max, min`, for 16 calls total. No later static non-scalar Math
+boundary is visible, although a fresh capped run remains the runtime gate.
+
+Luminal requires one closed typed scalar layer. Its frozen reachable surface
+is:
+
+- checked i64 `Add`, `Sub`, `Mul`, `Div`, and `Rem`;
+- total i64 `BitAnd`, `Min`, and `Max`;
+- i64 `Ge` and `Lt` predicates;
+- f64 `Gt` and `Lt` predicates with `OrderedFloat` semantics; and
+- typed `ValueNeq` over `Id`, `i64`, `f64`, and `String`.
+
+The exact static census contains 172 calls: 152 body calls and 20 action
+calls. Body failure removes the lane. Action failure is a hard rule error and
+must roll back the transaction; it is never represented by SQL `NULL`.
+Source `Subsume` at Luminal line 66 has already become a marker-table `Set` in
+the proof-lowered action stream, while the generated cleanup remains an
+already-supported Direct Subsume rule. This checkpoint therefore adds neither
+Delete nor Subsume to the generalized executor.
+
+### Selected architecture
+
+Introduce a separate, closed `NativeScalarPrimitive` descriptor rather than
+adding decoded arithmetic to the raw `NativePrimitive` enum. The backend SPI
+gets one object-safe registration method accepting the semantic descriptor
+and a canonical boxed `ExternalFunction` fallback. Its default implementation
+registers that fallback unchanged, preserving every existing backend. DuckDB
+overrides the method, registers a fail-closed callback token, and stores the
+exact token-to-descriptor authority. Diagnostic names never authorize
+lowering.
+
+The primitive macro/type-registration path must retain and pass its existing
+canonical implementation to this registration method. Other backends keep
+executing that canonical implementation. DuckDB plans retain every token and
+descriptor dependency and reauthenticate them immediately before opening the
+execution transaction; freed or reused tokens fail before SQL or observable
+state change.
+
+DuckDB uses one closed scalar-expression renderer shared by body predicates,
+body bindings, and action slots. Existing raw `OrderingMin`/`OrderingMax` are
+adapted into it only for exact `Id` signatures. Typed i64/f64 operations stay
+semantically distinct from raw-value ordering. Existing specialized standard,
+marker, and path ownership remains ahead of generalized scalar admission.
+
+General scalar admission owns only Live table bodies plus authenticated scalar
+primitive atoms and the already-supported Let/alias/Set head family. It does
+not absorb `All`, `Subsumed`, Change, Delete, containers, arbitrary merge
+blocks, callbacks, or mixed plan-kind schedules. Empty bodies remain allowed.
+Malformed signatures, unknown variants, unbound inputs, spoofed tokens, and
+unsupported types reject before RuleId allocation.
+
+### Exact SQL semantics
+
+Every expression renders as a non-null value expression plus an explicit
+definedness predicate. Body expressions are evaluated in source/dependency
+order in the frozen match stage; false definedness prunes that lane. Action
+expressions are materialized in action order. Every fallible action slot is
+preflighted before fresh-ID reservation or durable effects; any undefined
+survivor aborts and rolls back. Primitive Lets consume runtime ordinals but do
+not themselves change rows, generations, or insert telemetry.
+
+Checked i64 add/sub/mul compute in `HUGEINT`, test the inclusive i64 bounds,
+and only then cast a safe totalized branch to `BIGINT`. Division/remainder are
+defined only when the divisor is nonzero and the operands are not
+`i64::MIN / -1`; an invalid divisor is replaced with a safe value inside the
+arithmetic expression so DuckDB cannot raise before the explicit guard.
+Division truncates toward zero and remainder has the dividend's sign.
+`BitAnd`, typed min/max, and comparisons use signed `BIGINT` semantics.
+
+F64 equality and ordering must reproduce `OrderedFloat`: all NaNs compare
+equal and above ordinary values, and signed zeros compare equal. The two
+reached predicates therefore use explicit `isnan` logic. Ordinary DuckDB
+comparison alone, `LEAST`, and `GREATEST` are forbidden. Typed `ValueNeq`
+must reuse the same equality relation for f64 and ordinary exact equality for
+Id, i64, and String.
+
+Raw Id max/min use strict `>`/`<` and the right operand in `ELSE`; they may not
+be generalized to decoded base values. No expression may use `TRY`, SQL NULL
+as absence, a UDF/callback, host row enumeration, Arrow, Appender, unsafe/FFI,
+or a private DuckDB API.
+
+### Transaction, statements, and tests
+
+Freeze all body survivors before RHS work. Preserve the existing one-transaction
+action-major staging, dependency-ordered graph application, fixed-point queue
+drain, generation publication, telemetry publication, and rollback contract.
+Body expressions should be fused into the match CTAS. One CTAS per action
+expression and one aggregate preflight per fallible action are acceptable;
+statement count is reported, not a hard acceptance ceiling.
+
+Required focused canaries cover:
+
+1. Reference-versus-DuckDB results for every reached typed operation, including
+   i64 bounds, negative division/remainder, zero divisors, `MIN / -1`, negative
+   bitwise inputs, NaNs, infinities, and signed zeros.
+2. Body output bind versus bound-output predicate behavior, chained body and
+   action expressions, empty-body actions, and body-lane pruning.
+3. Action undefinedness before fresh reservation, full late rollback/retry,
+   stable prewave visibility, action-major IDs, generation/watermark/telemetry
+   preservation, and unchanged/no-delta reruns.
+4. Raw Id min/max strict comparison and right-tie behavior across the exact
+   Math `max,min,max,min` shape.
+5. Token spoofing, diagnostic-name mismatch, free/reuse after rule creation,
+   wrong arity/types/output, unbound inputs, unsupported variants, and RuleId
+   preservation on every admission failure.
+6. Structural SQL assertions excluding diagnostic names, UDFs, `NULL`, `TRY`,
+   `LEAST`, and `GREATEST` from the relevant renderings.
+7. Static proof-lowering evidence that Luminal's source Subsume remains one
+   marker Set plus the existing Direct cleanup rule.
+
+### Writer contract and stop rule
+
+One implementation writer owns only the backend trait/type-registration
+plumbing, i64/f64 primitive registrations, DuckDB scalar IR/admission/execution,
+and focused tests. Expected files are:
+
+- `egglog/egglog-backend-trait/src/lib.rs`;
+- `egglog/src/typechecking.rs`;
+- `egglog/src/sort/add_primitive/src/lib.rs`;
+- `egglog/src/sort/i64.rs` and `egglog/src/sort/f64.rs`;
+- `egglog/src/lib.rs` only if required for the closed registration path;
+- `egglog-experimental/duckdb/src/{lib.rs,rule_sql.rs,action_rule.rs,storage.rs}`;
+- a new DuckDB-local scalar-expression module; and
+- focused trait/scalar/general-action tests.
+
+The writer must not edit this ledger, fixtures, manifests/lockfiles, loaders,
+benchmark runner, proof storage, containers, `All`, Change effects, or other
+backends beyond the compatible default SPI behavior. It may run only separately
+capped focused checks and must freeze a complete source-patch digest. It may
+not run public workloads, the proof suite, full workspace, commit, or push.
+
+After the freeze, three independent read-only reviews cover (1) SPI authority
+and fallback compatibility, (2) SQL semantic and transaction correctness, and
+(3) test discrimination and scope. At most one bounded repair is allowed. If
+the design cannot express the exact frozen operations through public SQL, if
+another backend cannot retain its current callback behavior, if any reached
+operation needs a host callback/UDF/container/private API, or if the focused
+witnesses remain incorrect after that repair, stop the checkpoint and return
+to proposal formation. Performance or a capped workload timeout alone is
+censored evidence, not a correctness failure.
+
+## Frozen authenticated scalar-expression candidate
+
+The sole source writer completed against unchanged committed HEAD
+`a2163b33d436876b6dce929bdbe215c7f3b37b88`. The coordinator independently
+reproduced the deterministic source-patch SHA-256
+`5a159cf28c48ef8c4d717556d9317e82fcb76e6aa872473fbd729277c40734cf`.
+That digest contains the tracked binary diff excluding this coordinator-owned
+ledger, followed by sorted no-index binary diffs for the two untracked scalar
+source/test files. `git diff --check` is clean.
+
+The frozen source write set is:
+
+- `egglog/egglog-backend-trait/src/lib.rs`;
+- `egglog/src/{lib.rs,typechecking.rs}` and
+  `egglog/src/sort/{add_primitive/src/lib.rs,i64.rs,f64.rs}`;
+- `egglog-experimental/duckdb/src/{lib.rs,rule_sql.rs,action_rule.rs}`;
+- focused existing tests in
+  `egglog-experimental/duckdb/src/{rule_sql_tests.rs,action_rule_tests.rs,
+  general_action_tests.rs}`; and
+- new `egglog-experimental/duckdb/src/{scalar_expr.rs,
+  scalar_expr_tests.rs}`.
+
+No fixture, manifest, lockfile, loader, benchmark runner, proof-storage,
+container, Appender, Arrow, file-reader SQL, unsafe/FFI, UDF, callback
+execution, commit, or remote state changed.
+
+Writer-owned capped evidence is green:
+
+- scalar integration tests: 9/9 pass, including full reached-operation
+  differentials, body binding/pruning, primitive-only and empty bodies,
+  action failure rollback/retry, exact Math min/max shape, stable prewave, and
+  same-descriptor ABA token reuse;
+- generalized-action regressions: 8/8 pass;
+- displaced ordered-union merge-token reauthentication canary: pass;
+- native-token lifecycle canary: pass;
+- backend-trait/core checks and clippy: pass;
+- DuckDB crate check and `-D warnings` clippy: pass;
+- feature-gated `egglog-experimental` DuckDB CLI check: pass; and
+- formatting and source diff checks: pass.
+
+Two live read-only findings were repaired before the freeze: descriptor-kind
+diagnostics now precede the epoch ABA guard, and scalar plans retain authority
+from both root and displaced ordered-union merges. The no-table match path now
+retains scalar projections/definedness, and every generalized scalar plan is
+reauthenticated before storage execution.
+
+For this checkpoint, "DuckDB plans retain every token and descriptor
+dependency" means every newly generalized `ScalarAction` plan and all of its
+raw, typed, fresh, FD, root-merge, and displaced-merge dependencies. Previously
+accepted Standard/Marker/Path plan envelopes remain compile-time authenticated;
+retrofitting them is a recorded lifecycle-hardening follow-up, not an
+authorized expansion of this scalar checkpoint.
+
+The source patch is frozen for the required three independent read-only
+reviews. No source writer is active. Coordinator gates and public workload
+probes remain pending; no checkpoint is accepted or committed yet.
+
+## Independent scalar review verdicts and sole repair authorization
+
+Three independent read-only reviewers authenticated committed HEAD
+`a2163b33d436876b6dce929bdbe215c7f3b37b88`, reproduced frozen source digest
+`5a159cf28c48ef8c4d717556d9317e82fcb76e6aa872473fbd729277c40734cf`,
+and confirmed the exact authorized dirty set before reviewing. None edited,
+built, tested, ran workloads, accessed the network, or contacted another
+agent.
+
+- The SQL/transaction reviewer returned **PASS**. Checked i64 and OrderedFloat
+  f64 semantics, explicit definedness, body and action staging, preflight,
+  fresh-ID order, merge-graph order, rollback/publication, generation, and the
+  forbidden SQL/host paths all matched the frozen contract.
+- The test/scope reviewer returned **REVISE** for one admission regression:
+  generalized scalar binding had made diagnostic `RuleVar.name` semantic for
+  an otherwise identical variable ID and `ColumnTy`. This contradicts the
+  retained renamed-variable regression and the frozen name-independent
+  authority contract. The bounded repair must restore identity to ID plus
+  type and add a cross-body/scalar/action rename canary.
+- The SPI/lifecycle reviewer returned **REVISE** because the new public
+  `NativeScalarPrimitive` enum was exhaustively matchable. Since later scalar
+  descriptors are expected, adding a variant would be a downstream source
+  break. The bounded repair must add `#[non_exhaustive]` and explicit
+  fail-closed wildcard arms in DuckDB production and test matches.
+
+The reviews otherwise passed dispatch precedence, the exact closed operation
+surface, canonical fallback compatibility, descriptor authentication,
+RuleId preservation, and ScalarAction retention/reauthentication of raw,
+typed, fresh, FD, root-merge, and displaced-merge dependencies. Direct
+same-kind ABA canaries for fresh and FD tokens and a checked-in Luminal census
+remain nonblocking follow-ups; the shared epoch machinery and frozen static
+provenance already cover their production mechanisms.
+
+One and only one repair writer is authorized. Its source write set is limited
+to the backend-trait scalar enum plus DuckDB scalar binding/rendering and their
+focused action/scalar tests. It may not edit this ledger, storage, fixtures,
+manifests, loaders, benchmarks, other backends, or committed history. It must
+run only separately capped focused gates, freeze a new deterministic source
+digest, and stop rather than broaden either repair into an architecture
+change. Coordinator gates and public workload probes remain pending.
+
+### Sole repair result
+
+The one authorized repair completed against unchanged committed HEAD
+`a2163b33d436876b6dce929bdbe215c7f3b37b88`. The coordinator independently
+reproduced the new deterministic source digest
+`ccd499f337d833ee5e28ffbb7a2287a494eeeccd384dd4d00d39919aaf2693e0`.
+The source dirty set remains exactly the previously frozen set; only this
+coordinator ledger is modified outside it.
+
+Variable identity in the generalized scalar compiler is now ID plus
+`ColumnTy`; use-site names remain diagnostic only. Same-ID/wrong-type reuse
+still fails closed. `NativeScalarPrimitive` is now `#[non_exhaustive]`, and
+DuckDB production and test matches contain explicit unsupported future-variant
+fallbacks rather than guessing a lowering. One scalar witness deliberately
+renames the same logical variable across table binding, scalar body
+input/output, and action input.
+
+Repair-writer evidence is green: scalar-expression tests 9/9, action-rule
+tests 24/24, the backend-trait canonical-fallback canary, DuckDB and
+backend-trait `-D warnings` clippy, formatting, and tracked/untracked diff
+checks. No commit, push, ledger edit, workload, proof suite, full package, or
+out-of-scope source change was made by the writer. The source is frozen again;
+coordinator-owned gates and public probes remain pending.
+
+## Accepted authenticated scalar-expression checkpoint
+
+The two reviewers that raised blockers independently authenticated repaired
+source digest
+`ccd499f337d833ee5e28ffbb7a2287a494eeeccd384dd4d00d39919aaf2693e0`
+and returned **PASS** on their exact repaired boundaries. Variable identity is
+ID plus `ColumnTy`, the renamed-use witness discriminates the original bug,
+same-ID/wrong-type reuse still rejects, the public enum is non-exhaustive, and
+the sole DuckDB production descriptor match plus all test helpers fail closed
+on future variants. No source moved during these confirmations.
+
+Coordinator-owned separately capped gates are green:
+
+- scalar-expression tests 9/9, action-rule tests 24/24, generalized-action
+  tests 8/8, native-token lifecycle, and canonical fallback;
+- full `egglog-experimental-duckdb` library tests 126/126 and all-target
+  `-D warnings` clippy;
+- changed backend-trait/core/frontend library tests 69 + 2 + 58, plus check
+  and `-D warnings` clippy;
+- DuckDB-feature CLI check, binary tests 4/4, and `-D warnings` clippy;
+- formatting and tracked/untracked diff checks; and
+- all selected proof identities. The main proof binary passed 204/204,
+  including full Math and Hardboiled. Seven small experimental proof fixtures
+  passed in the aggregate run, and the sole unfinished fixture,
+  `eggcc_2mm_pass1_proof_testing`, passed in an isolated bounded run in
+  66.37 seconds. The aggregate `make proof-tests` process itself reached the
+  110-second watchdog after compilation and those 211 passes; that aggregate
+  timeout is censored orchestration data, while complete correctness coverage
+  is evidenced by the split runs.
+
+The final DuckDB-feature build completed in 53.40 seconds and its direct
+dynamic-loader preflight succeeded. Pointer's live fact-directory identity is
+`c15261f17ff692435f41beafa4de893bb1cca0a36874aafa472bce78781f6e78`,
+matching the frozen corpus. Fresh proof-mode workload probes produced:
+
+| Workload | Exit and wall | Maximum RSS | New fail-closed frontier |
+| --- | --- | --- | --- |
+| Math | exit 1, 0.13s | 38,436,864 bytes | ordered-union target 22 `View` has an unsupported standard-rebuild configuration |
+| Luminal | exit 1, 0.16s | 61,472,768 bytes | the same target-22 `View` configuration, first exposed by `add-zero` |
+| Eggcc | exit 1, 3.27s | 100,220,928 bytes | `@rebuild_rule166` requests `ReadMode::All` |
+| Pointer | exit 1, 5.81s | 354,107,392 bytes | `check_facts` requests `ReadMode::All` after native raw-SQL fact ingestion |
+| Hardboiled | exit 1, 0.04s | 45,006,848 bytes | `@rebuild_rule64` requests `ReadMode::All` |
+
+No workload timed out, crashed, invoked a host fallback, or published a
+partial report artifact. All five moved beyond the prior scalar-operation
+frontier to one of two explicit non-scalar prerequisites. Performance remains
+descriptive.
+
+This checkpoint is accepted for a local commit. The next proposal-formation
+round must independently census (1) the exact target-22 standard-rebuild
+configuration reached by Math/Luminal and (2) the exact `All` rule shapes
+reached by Eggcc/Pointer/Hardboiled. No implementation writer is authorized
+until those read-only circles separate a bounded native SQL slice from any
+container, callback, host matcher/merge, or private-API requirement.

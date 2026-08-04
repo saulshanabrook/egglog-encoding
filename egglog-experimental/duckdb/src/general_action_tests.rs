@@ -474,7 +474,7 @@ fn fd_descriptor_ambiguity_schema_and_reuse_reject_without_rule_ids() -> Result<
         ))
         .unwrap_err();
     assert!(
-        error.to_string().contains("unauthenticated or callback"),
+        format!("{error:#}").contains("unauthenticated or callback"),
         "{error:#}"
     );
     assert!(reused.rules.is_empty());

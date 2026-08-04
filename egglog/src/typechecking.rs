@@ -346,6 +346,31 @@ impl EGraph {
         );
     }
 
+    /// Register a pure primitive whose decoded scalar semantics may be lowered
+    /// by a native backend. The canonical per-context wrapper is still passed
+    /// across the SPI, so every backend that keeps the default method executes
+    /// the exact same implementation as an ordinary pure primitive.
+    pub(crate) fn add_native_scalar_primitive<T>(
+        &mut self,
+        x: T,
+        validator: Option<PrimitiveValidator>,
+        native: NativeScalarPrimitive,
+    ) where
+        T: PurePrim + Clone,
+    {
+        self.register_per_context(
+            x,
+            validator,
+            PureState::valid_contexts(),
+            move |backend, x, ctx| {
+                backend.register_native_scalar_primitive(
+                    native,
+                    Box::new(PurePrimWrapper { prim: x, ctx }),
+                )
+            },
+        );
+    }
+
     /// Register a [`WritePrim`]. Pass `None` for the validator if not
     /// using the proof checker.
     pub fn add_write_primitive<T>(&mut self, x: T, validator: Option<PrimitiveValidator>)

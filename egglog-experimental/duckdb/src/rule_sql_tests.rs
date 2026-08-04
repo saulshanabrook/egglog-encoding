@@ -745,12 +745,10 @@ fn unsupported_rule_ir_fails_closed_before_allocating_an_id() -> Result<()> {
         name: "primitive".into(),
         output: ColumnTy::Id,
     };
+    let error = backend.add_rule(primitive_body).unwrap_err();
     assert!(
-        backend
-            .add_rule(primitive_body)
-            .unwrap_err()
-            .to_string()
-            .contains("primitive body")
+        format!("{error:#}").contains("unauthenticated or callback"),
+        "{error:#}"
     );
 
     let mut unbound = valid.clone();

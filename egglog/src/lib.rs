@@ -43,7 +43,7 @@ use egglog_ast::span::Span;
 use egglog_ast::util::ListDisplay;
 /// The pluggable backend interface. Re-exported so downstream crates can
 /// implement their own backend (see [`EGraph::with_backend`]).
-pub use egglog_backend_trait::{Backend, BackendExt, NativePrimitive};
+pub use egglog_backend_trait::{Backend, BackendExt, NativePrimitive, NativeScalarPrimitive};
 use egglog_backend_trait::{
     NativeInputValue, ReadMode, RuleActionCall, RuleBodyCall, RuleSetRun, RuleSpec, RuleValue,
     RuleVar,

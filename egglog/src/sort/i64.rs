@@ -26,13 +26,13 @@ impl BaseSort for I64Sort {
 
     #[rustfmt::skip]
     fn register_primitives(&self, eg: &mut EGraph) {
-        add_literal_prim!(eg, "+" = |a: i64, b: i64| -?> i64 { a.checked_add(b) });
-        add_literal_prim!(eg, "-" = |a: i64, b: i64| -?> i64 { a.checked_sub(b) });
-        add_literal_prim!(eg, "*" = |a: i64, b: i64| -?> i64 { a.checked_mul(b) });
-        add_literal_prim!(eg, "/" = |a: i64, b: i64| -?> i64 { a.checked_div(b) });
-        add_literal_prim!(eg, "%" = |a: i64, b: i64| -?> i64 { a.checked_rem(b) });
+        add_literal_prim!(eg, "+" = |a: i64, b: i64| -?> i64 { a.checked_add(b) }, NativeScalarPrimitive::I64Add);
+        add_literal_prim!(eg, "-" = |a: i64, b: i64| -?> i64 { a.checked_sub(b) }, NativeScalarPrimitive::I64Sub);
+        add_literal_prim!(eg, "*" = |a: i64, b: i64| -?> i64 { a.checked_mul(b) }, NativeScalarPrimitive::I64Mul);
+        add_literal_prim!(eg, "/" = |a: i64, b: i64| -?> i64 { a.checked_div(b) }, NativeScalarPrimitive::I64Div);
+        add_literal_prim!(eg, "%" = |a: i64, b: i64| -?> i64 { a.checked_rem(b) }, NativeScalarPrimitive::I64Rem);
 
-        add_literal_prim!(eg, "&" = |a: i64, b: i64| -> i64 { a & b });
+        add_literal_prim!(eg, "&" = |a: i64, b: i64| -> i64 { a & b }, NativeScalarPrimitive::I64BitAnd);
         add_literal_prim!(eg, "|" = |a: i64, b: i64| -> i64 { a | b });
         add_literal_prim!(eg, "^" = |a: i64, b: i64| -> i64 { a ^ b });
         add_literal_prim!(eg, "<<" = |a: i64, b: i64| -?> i64 { b.try_into().ok().and_then(|b| a.checked_shl(b)) });
@@ -43,10 +43,10 @@ impl BaseSort for I64Sort {
 
         add_literal_prim!(eg, "abs" = |a: i64| -?> i64 { a.checked_abs() });
 
-        add_literal_prim!(eg, "<" = |a: i64, b: i64| -?> () { (a < b).then_some(()) });
+        add_literal_prim!(eg, "<" = |a: i64, b: i64| -?> () { (a < b).then_some(()) }, NativeScalarPrimitive::I64Lt);
         add_literal_prim!(eg, ">" = |a: i64, b: i64| -?> () { (a > b).then_some(()) });
         add_literal_prim!(eg, "<=" = |a: i64, b: i64| -?> () { (a <= b).then_some(()) });
-        add_literal_prim!(eg, ">=" = |a: i64, b: i64| -?> () { (a >= b).then_some(()) });
+        add_literal_prim!(eg, ">=" = |a: i64, b: i64| -?> () { (a >= b).then_some(()) }, NativeScalarPrimitive::I64Ge);
 
         add_literal_prim!(eg, "bool-=" = |a: i64, b: i64| -> bool { a == b });
         add_literal_prim!(eg, "bool-<" = |a: i64, b: i64| -> bool { a < b });
@@ -54,8 +54,8 @@ impl BaseSort for I64Sort {
         add_literal_prim!(eg, "bool-<=" = |a: i64, b: i64| -> bool { a <= b });
         add_literal_prim!(eg, "bool->=" = |a: i64, b: i64| -> bool { a >= b });
 
-        add_literal_prim!(eg, "min" = |a: i64, b: i64| -> i64 { a.min(b) });
-        add_literal_prim!(eg, "max" = |a: i64, b: i64| -> i64 { a.max(b) });
+        add_literal_prim!(eg, "min" = |a: i64, b: i64| -> i64 { a.min(b) }, NativeScalarPrimitive::I64Min);
+        add_literal_prim!(eg, "max" = |a: i64, b: i64| -> i64 { a.max(b) }, NativeScalarPrimitive::I64Max);
 
         add_literal_prim!(eg, "to-string" = |a: i64| -> S { S::new(a.to_string()) });
 

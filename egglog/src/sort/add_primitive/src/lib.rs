@@ -21,7 +21,7 @@ use syn::{Expr, Ident, LitStr, Token, braced, bracketed, parenthesized, parse_ma
 #[proc_macro]
 pub fn add_primitive_with_validator(input: TokenStream) -> TokenStream {
     let parsed = parse_macro_input!(input as AddPrimitiveWithValidator);
-    build_add_primitive_impl(parsed.primitive, Some(parsed.validator))
+    build_add_primitive_impl(parsed.primitive, Some(parsed.validator), None)
 }
 
 /// Parses an `AddPrimitive` followed by a comma and a validator expression.
@@ -71,10 +71,14 @@ impl Parse for AddPrimitiveWithValidator {
 ///   `T` must be `Clone` and `'static`.
 #[proc_macro]
 pub fn add_primitive(input: TokenStream) -> TokenStream {
-    build_add_primitive_impl(parse_macro_input!(input), None)
+    build_add_primitive_impl(parse_macro_input!(input), None, None)
 }
 
-fn build_add_primitive_impl(parsed: AddPrimitive, validator: Option<Expr>) -> TokenStream {
+fn build_add_primitive_impl(
+    parsed: AddPrimitive,
+    validator: Option<Expr>,
+    native_scalar: Option<Expr>,
+) -> TokenStream {
     // If you're trying to read this code, you should read the big
     // `quote!` block at the bottom of this function first. Trying
     // to parse all the intermediate gobbledygook is going to be
@@ -244,12 +248,23 @@ fn build_add_primitive_impl(parsed: AddPrimitive, validator: Option<Expr>) -> To
     // containers, which are all safe everywhere per the `Core` trait.
     // If a future extension of the macro introduces a non-pure
     // emission path, the declared kind would need to narrow accordingly.
-    let add_call = match validator {
-        None => quote!(eg.add_pure_primitive(#prim_use, None);),
-        Some(validator_expr) => quote!(eg.add_pure_primitive(
+    let add_call = match (validator, native_scalar) {
+        (None, None) => quote!(eg.add_pure_primitive(#prim_use, None);),
+        (Some(validator_expr), None) => quote!(eg.add_pure_primitive(
             #prim_use,
             Some(::std::sync::Arc::new(#validator_expr))
         );),
+        (validator, Some(native_scalar)) => {
+            let validator = validator.map_or_else(
+                || quote!(None),
+                |validator_expr| quote!(Some(::std::sync::Arc::new(#validator_expr))),
+            );
+            quote!(eg.add_native_scalar_primitive(
+                #prim_use,
+                #validator,
+                #native_scalar
+            );)
+        }
     };
 
     quote! {{
@@ -471,8 +486,12 @@ impl Parse for Arrow {
 /// ```
 #[proc_macro]
 pub fn add_literal_prim(input: TokenStream) -> TokenStream {
-    // Parse the input using the same structure as add_primitive
-    let parsed = parse_macro_input!(input as AddPrimitive);
+    // Parse the input using the same structure as add_primitive, with an
+    // optional closed native-scalar descriptor after the canonical body.
+    let AddLiteralPrimitive {
+        primitive: parsed,
+        native_scalar,
+    } = parse_macro_input!(input as AddLiteralPrimitive);
 
     // Varargs not supported for literal primitives
     if parsed.is_varargs {
@@ -532,7 +551,28 @@ pub fn add_literal_prim(input: TokenStream) -> TokenStream {
     .unwrap();
 
     // Use the shared implementation with the validator
-    build_add_primitive_impl(parsed, Some(validator_expr))
+    build_add_primitive_impl(parsed, Some(validator_expr), native_scalar)
+}
+
+struct AddLiteralPrimitive {
+    primitive: AddPrimitive,
+    native_scalar: Option<Expr>,
+}
+
+impl Parse for AddLiteralPrimitive {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let primitive = input.parse()?;
+        let native_scalar = if input.is_empty() {
+            None
+        } else {
+            input.parse::<Token![,]>()?;
+            Some(input.parse()?)
+        };
+        Ok(Self {
+            primitive,
+            native_scalar,
+        })
+    }
 }
 
 // Helper function to generate literal validator that computes results
