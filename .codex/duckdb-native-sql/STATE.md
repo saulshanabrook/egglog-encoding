@@ -2761,3 +2761,331 @@ This checkpoint is accepted for a local commit. The next bounded checkpoint is
 Pointer's authenticated SQL-native MatchObservation plus exact `All`
 visibility, because it should complete one frozen benchmark without conflating
 Eggcc custom-merge rebuilds or Hardboiled typed containers. Nothing is pushed.
+
+## Pointer MatchObservation proposal formation
+
+The accepted standalone-UF checkpoint is local commit
+`7c578c6959534975ccd0e7bc1354dcbf67e26a40`; the source worktree was clean
+immediately after commit and nothing was pushed. Pointer's final
+`check_facts` rule is now the selected frontier. Implementation pauses for one
+bounded Understand -> Explore -> Decide round before any writer edits source.
+
+| Circle/domain | Aim and progress signal | Authority and forbidden shortcuts | Expected output | Stop and no movement |
+| --- | --- | --- | --- | --- |
+| observer SPI/frontend semantics | Specify the smallest backend-neutral semantic observer registration that preserves Reference/DD behavior while DuckDB never invokes an arbitrary callback | Read-only `7c578c6`; public backend SPI, frontend lowering, and lifecycle tests only; no edits/builds/tests/workloads/network/contact; no callback-name or function-ID authorization | Design A/B, handle/token/epoch/ABA contract, allocation/free/publication behavior, exact write set and blocker | Stop once one object-safe public API preserves canonical behavior and authenticated native lowering, or prove that post-commit observation cannot be represented; repeated API reshuffling without a new discriminating witness is no movement |
+| DuckDB SQL/transaction semantics | Compile the exact two-table `All` existence query and return only scalar match telemetry after a successful transaction | Read-only `7c578c6`; DuckDB compiler/storage and exact Pointer rule only; no edits/builds/tests/workloads/network/contact; no host matcher/row export/callback/UDF/Arrow/Appender/unsafe/private API/proof-aware storage | Dedicated-plan versus scalar-plan decision, visibility SQL, authority recheck, transaction/publication contract, statement shape, write set and stop rule | Stop at any need for host match enumeration or callback execution; two SQL designs failing the same reduced semantic witness is no movement |
+| differential/oracle matrix | Freeze the smallest Reference/DuckDB and fail-closed canaries that discriminate existence, `All` visibility, authority, rollback, and output publication | Read-only `7c578c6`; source/tests/fixture and existing hooks only; no edits/builds/tests/workloads/network/contact | Blocking test matrix, capped commands, exact Pointer completion criterion, censored/performance reporting split | Stop when every selected invariant has one smallest witness; more tests without new semantic discrimination are no movement |
+
+All commands in later implementation and review remain externally capped at
+110 seconds. Performance is descriptive: Pointer completing is expected but a
+timeout is censored rather than converted into a correctness result. The
+checkpoint may run more than one SQL statement and has no statement-count
+ceiling. It must retain raw typed SQL through public DuckDB/duckdb-rs APIs and
+must not change the durable metadata boundary of `__generation` plus
+`__subsumed`; proof columns remain opaque ordinary program columns.
+
+## Frozen Pointer MatchObservation Design A contract
+
+All three read-only circles completed against committed HEAD
+`7c578c6959534975ccd0e7bc1354dcbf67e26a40` with only this coordinator ledger
+dirty. None edited source, built, tested, ran workloads, used the network, or
+contacted another agent. They found no API, SQL, transaction, or oracle blocker.
+
+An independent encoding audit also resolves the union-find terminology. The
+DuckDB backend has no native/hidden union-find: `get_canon_repr` remains the
+identity and no host mirror is authorized. Current HEAD and local
+`origin/main` nevertheless have identical encoder sources that still reify
+equality as ordinary per-sort `@UF_*` function tables, merges, and maintenance
+rules. The already accepted standalone-UF checkpoint executes that ordinary
+encoded relation; it does not add a second disjoint-set authority. Removing
+those tables would require a separately reviewed encoding change.
+
+### Selected public API and lifecycle
+
+Add a public clonable, monotone `MatchObserver` value whose state starts false,
+may be marked true, and remains readable after token release. Add one
+object-safe default backend method:
+
+```text
+register_match_observer(observer: MatchObserver) -> ExternalFunctionId
+```
+
+The default registers the canonical zero-argument, Id-valued callback, marks
+the supplied observer, and returns the existing sentinel Id. This preserves
+Reference and DD behavior through their public external-function APIs; a
+nonzero-argument use fails closed. The frontend replaces only `check_facts`'
+private side-channel registration with this semantic method and retains its
+current lifecycle: allocate after fact lowering, enroll the token in
+`BackendRule` rollback, transfer it only after successful `add_rule`, execute,
+free the rule, free the token, handle a backend error, then read the observer.
+
+DuckDB overrides registration. It installs only a deferred-panic placeholder,
+stores `token -> MatchObserver`, and records the existing monotonically
+increasing authority epoch. Freeing removes observer authority and the epoch
+before returning the numeric slot to the reusable external registry. Admission
+captures token plus epoch; every run checks both kind and exact epoch before
+opening SQL. Reuse as an ordinary callback fails kind authentication and reuse
+as a new observer fails same-kind ABA authentication. DuckDB never invokes the
+callback.
+
+### Exact compiler and execution slice
+
+Add a dedicated effectless `MatchObservationPlan`, dispatched before scalar
+actions and selected only by a live observer token. Names, paths, numeric table
+or function IDs, diagnostic labels, and the spelling `check_facts_match` never
+authorize it. An owned malformed use errors rather than falling through.
+
+This checkpoint admits exactly the reached shape:
+
+- `seminaive=false` and `no_decomp=false`;
+- exactly two complete typed table atoms, both `ReadMode::All`;
+- typed variables/literals only, no globals or body primitive;
+- exactly one head `Let` using the observer token with zero arguments;
+- matching Id output metadata and an otherwise unused Id result; and
+- no other Let, Set, Delete, Subsume, Union, Panic, lookup, fresh operation, or
+  durable effect.
+
+Table arity and column types come from registered metadata rather than fixed
+Pointer names. Variable semantic identity is numeric ID plus `ColumnTy`; names
+remain diagnostic and may differ at repeated occurrences. Literals use the
+central typed raw-SQL encoder, including UTF-8 hex construction for Strings.
+The two proof columns reached in Pointer are opaque unused ordinary Id columns.
+
+The plan uses the existing direct-rule transaction without a storage change.
+Its materialized temporary stage projects one Boolean per SQL match, never a
+user/proof row. `ReadMode::All` contributes no `__subsumed` predicate, and the
+non-seminaive query contributes no watermark predicate. Existing direct
+execution freezes every scheduled stage before effects, queries exact stage
+counts as Rust scalars, applies any mixed direct effects, drops scratch, and
+commits. Only after successful commit and after run state is ready does DuckDB
+mark observers whose counts are nonzero and publish run ID, watermarks, trace,
+and telemetry.
+
+Hit and miss both report `changed=false`, leave rows, subsumption, generation,
+and fresh IDs unchanged, set each successful rule watermark to the captured
+pre-wave generation, report exact match cardinality and zero inserts, and leave
+no scratch. Any admission, authorization, CTAS/count/effect/drop/commit failure
+publishes none of observer state, run ID, watermarks, trace, or telemetry; an
+identical retry reuses the same run/stage identity. The SQL path may use any
+measured number of statements. It must use public typed SQL only and contain no
+host row enumeration or matching, arbitrary callback/UDF execution, Arrow,
+Appender, unsafe/private API, bound parameters, semantic NULL, `TRY`, or
+proof-aware storage.
+
+### Blocking witnesses and public report
+
+The implementation must give each of these one smallest discriminating
+witness, reusing existing direct-rule test helpers rather than duplicating a
+second executor harness:
+
+1. Object-safe Reference default behavior and existing DD check compatibility,
+   including independent handles and free-before-read lifecycle.
+2. Exact Pointer-shaped Reference/DuckDB hit and miss differential with
+   `changed=false`, exact count, and zero inserts.
+3. Absent, one-match, and three-match SQL cardinalities.
+4. Live/live, live/subsumed, subsumed/live, and subsumed/subsumed visibility,
+   all matching without a subsumption predicate.
+5. Hostile typed literals, shared and repeated variables, decoys, renamed
+   same-ID/same-type occurrences accepted, and same-ID/wrong-type rejected.
+6. Ordinary callback name spoof, wrong token/arity/output/read/flags, extra
+   action, one/three body atoms, primitive/global body, and diagnostic mutations
+   reject or accept exactly as specified before RuleId allocation.
+7. Ordinary-token reuse and same-kind observer ABA reject before SQL with all
+   observer/backend state unchanged.
+8. Two scheduled observation rules where the first stage succeeds and a
+   renamed physical table makes the second fail: neither publishes; sentinel
+   trace/telemetry, generation, fresh counter, watermarks, run ID, rows, and
+   scratch stay unchanged; restoring the table makes the exact retry publish
+   both counts with `changed=false`.
+
+SQL inspection additionally requires central hex literals and shared-Id
+equality, no raw source/user names or `?` parameters, no subsumption or
+generation predicate, no function-table DML/counter update, and statement
+telemetry equal to the executed manifest without freezing an incidental count.
+
+Because shared SPI/frontend code changes, backend-trait, egglog, existing DD,
+complete DuckDB, feature CLI, formatting, Clippy, and the complete split proof
+corpus are blocking. An aggregate proof command timing out only after the split
+corpus passes is censored orchestration data.
+
+The coordinator owns one fresh Reference and DuckDB Pointer proof-mode run with
+source/fact hashes and fresh timing-summary paths, each capped at 110 seconds.
+DuckDB exit 0 with a valid complete artifact earns a `Pointer completed` claim.
+Exit 124 is censored performance data and does not reject a semantically green
+checkpoint. Exit 1, check failure, backend error, panic/crash, fallback, or a
+stale/partial artifact is blocking. Wall time, RSS, and statement count are
+descriptive; no optimization loop is authorized here.
+
+### Writer, review, and stop rules
+
+One implementation writer may edit only:
+
+- `egglog/egglog-backend-trait/src/lib.rs`;
+- `egglog/src/lib.rs`;
+- `egglog-experimental/duckdb/src/lib.rs`;
+- `egglog-experimental/duckdb/src/rule_sql.rs`; and
+- `egglog-experimental/duckdb/src/rule_sql_tests.rs`.
+
+This ledger, storage/action/rebuild modules, Reference/DD production, core IR,
+proof encoding, fixtures, manifests/lockfile, loaders, benchmark harness,
+committed history, and remotes are coordinator-owned or forbidden. The writer
+runs only separately capped focused/package gates, creates no commit, and
+freezes a deterministic source digest excluding this ledger.
+
+Three independent read-only reviews then cover (1) SPI/lifecycle/authority,
+(2) SQL/transaction/publication/forbidden interfaces, and (3) oracle strength,
+Reference/DD compatibility, and scope. Permit at most one evidence-driven
+repair to Design A. A first-class observer action/ID is Design B and may be
+proposed once only if a reduced witness proves the primitive-token form cannot
+preserve semantics; it is not a parallel production mode. Stop rather than
+broaden if correctness needs callback inspection/execution in DuckDB, a host
+row/matcher, proof/container metadata, name-based authority, publication before
+commit, a second transaction, storage changes, or a new action family. Two
+materially different designs failing the same reduced witness ends this
+checkpoint and returns the smallest counterexample.
+
+## Frozen Pointer MatchObservation implementation candidate
+
+The sole writer froze Design A against committed HEAD
+`7c578c6959534975ccd0e7bc1354dcbf67e26a40`. The deterministic source diff,
+excluding this ledger, is
+`27917b2075c98fa9970699c66951a764fd2f4a4b51e0d6e4cbf48989b7c80bf8`.
+The dirty production/test set is exactly the five authorized paths above; no
+storage, action/rebuild, other-backend production, IR, proof encoding, fixture,
+manifest, harness, history, or remote path changed.
+
+The candidate adds the public monotone observer and object-safe default,
+preserves the frontend free-before-read lifecycle, and adds DuckDB's
+epoch-authenticated effectless two-`All` SQL plan with post-commit marking.
+The writer reports all eight canary groups green, together with backend-trait
+3/3, complete DuckDB library 139/139, egglog library 69/69, validator 2/2, DD
+compatibility 1/1, DuckDB-feature CLI 4/4, warnings-denied scoped Clippy,
+formatting, and diff checks. Every command had an external 110-second watchdog
+and none timed out. The coordinator independently reproduced HEAD, dirty-set,
+digest, and diff-check authentication before opening read-only review.
+
+The writer did not run the coordinator-owned split proof corpus or public
+Pointer workload. Three independent reviewers now own the frozen SPI,
+SQL/transaction, and oracle/scope surfaces. No source edit, build, test,
+workload, network operation, agent contact, commit, or remote write is
+authorized during review.
+
+## Pointer MatchObservation independent review
+
+All three read-only reviewers reauthenticated unchanged HEAD
+`7c578c6959534975ccd0e7bc1354dcbf67e26a40`, unchanged source digest
+`27917b2075c98fa9970699c66951a764fd2f4a4b51e0d6e4cbf48989b7c80bf8`,
+the exact five-path source/test dirty set plus this ledger, and returned
+**PASS** without edits or execution.
+
+- SPI/lifecycle review passed object safety, default Reference/DD callback
+  compatibility, monotone shared state, rollback ownership, free-before-read,
+  ordinary-token reuse, same-kind epoch ABA rejection, pre-SQL authorization,
+  and post-commit publication.
+- SQL/transaction review passed structural two-`All` admission, registered
+  table metadata and central typed literals, effectless scalar-count staging,
+  stable shared transaction and rollback behavior, exact telemetry, and the
+  ban on callback/UDF/host matching or rows, Arrow, Appender, unsafe/private
+  APIs, parameters, semantic NULL, `TRY`, and proof-aware storage.
+- Oracle/scope review found all eight witness groups discriminating, confirmed
+  the fixtures use the public production registration and execution paths,
+  found existing Reference proof/check and DD check/fail-check coverage for the
+  shared frontend route, and confirmed the public Pointer CLI run remains the
+  necessary end-to-end shape gate rather than a missing unit test.
+
+No review repair is authorized or needed. Coordinator-owned capped runtime
+gates begin on this same frozen source.
+
+## Pointer public-gate repair witness
+
+Coordinator validation reproduced complete DuckDB library coverage at 139/139
+and the full proof corpus at core 204/204 plus experimental 8/8. The
+DuckDB-feature CLI build also completed within its watchdog. A fresh Reference
+Pointer proof-mode run exited 0 and published
+`/tmp/egglog-duckdb-pointer.tCmgTt/reference.json`.
+
+The corresponding frozen DuckDB run executed for 7.05 seconds, reached timing
+artifact construction, then exited 1 with:
+
+```text
+[ERROR] failed to create timing summary: split pre-merge timing is unavailable for ruleset ""
+```
+
+It published no DuckDB report and therefore fails the exact public completion
+gate even though this is a report-contract boundary rather than a check or SQL
+semantic rejection. Maximum RSS was 357,613,568 bytes. The failure is reduced
+to DuckDB returning the default `Combined` pre-merge timing from `run_rules`,
+while `TimingSummaryV2` correctly requires `Split` timing for every successful
+ruleset. This behavior predates observer matching but becomes observable only
+when a DuckDB workload reaches successful report construction.
+
+Exactly one Design-A repair is authorized. It must add the smallest public
+report witness and make DuckDB report an honest serial `Split` timing without
+claiming unavailable search/apply attribution. Unattributed elapsed time is
+permitted; fabricated phase measurements are not. The repair remains inside
+the existing five-path write set, may not touch the report crate or storage,
+and must not weaken timing-summary validation, suppress the report, special
+case Pointer, or run another public workload. After a new frozen digest, the
+SQL/publication reviewer re-reviews the repair and coordinator gates restart.
+
+The sole writer reduced and repaired that witness at unchanged HEAD. The new
+complete source digest excluding this ledger is
+`e745da37643ad40e7eef27dc583534d24a96013134adbe4d948f104b0e25e0ab`;
+the complete dirty set remains exactly the five authorized paths plus this
+ledger. Only DuckDB `lib.rs` and `rule_sql_tests.rs` changed within the repair.
+Nonempty serial executions now measure the `execute_rules` outer interval and
+report `Split { search: 0, apply: 0, unattributed: elapsed }`; empty schedules
+report Split zeros. This closes the artifact schema without inventing an
+internal phase boundary.
+
+The writer reports the focused timing witness 1/1, complete DuckDB library
+140/140, DuckDB-feature CLI 4/4, timing-summary CLI 6/6, warnings-denied DuckDB
+and feature-CLI Clippy, formatting, and diff checks green, with no timeout or
+public workload. The coordinator independently reproduced HEAD, dirty set,
+digest, and diff-check. The original SQL/publication reviewer now owns one
+read-only repair review before coordinator gates restart.
+
+The original SQL/publication reviewer reauthenticated the repaired digest and
+returned **PASS**. It confirmed the monotonic measurement surrounds exactly the
+successful serial `execute_rules` transaction, the three Split components are
+additive and honest, error and observer publication paths are unchanged, empty
+schedules truthfully report zero work, the focused witness covers both forms,
+and no timing masking or forbidden scope appeared. Coordinator gates restart
+on the repaired digest; no further repair is authorized.
+
+## Accepted Pointer MatchObservation checkpoint
+
+Coordinator-owned final gates on repaired source digest
+`e745da37643ad40e7eef27dc583534d24a96013134adbe4d948f104b0e25e0ab`
+are green, every command externally capped at 110 seconds:
+
+- complete DuckDB library 140/140;
+- complete proof corpus, core 204/204 plus experimental 8/8;
+- DuckDB-feature CLI 4/4 and a fresh feature binary build;
+- warnings-denied backend-trait/egglog, DuckDB all-target, and DuckDB-feature
+  CLI Clippy;
+- formatting, diff, frozen digest, and exact dirty-scope checks; and
+- fresh Reference and DuckDB Pointer proof-mode public runs.
+
+The frozen workload hash is
+`dbb091872559ee71f685986f2f49c80ee6c929d72de2843c19688c4677b3f76f`
+and its fact-directory hash is
+`c15261f17ff692435f41beafa4de893bb1cca0a36874aafa472bce78781f6e78`.
+Fresh artifacts are retained under
+`/tmp/egglog-duckdb-pointer-repaired.uo4WSi/`. Both executions exited 0,
+produced empty stdout, and published schema-v2 timing summaries containing the
+same ordered ruleset vector: default, `@delete_subsume_ruleset`, `@parent`,
+`@rebuilding`, and `@rebuilding_cleanup`.
+
+Reference completed in 0.49 seconds with 38,977,536-byte maximum RSS. DuckDB
+completed in 6.35 seconds with 352,108,544-byte maximum RSS. DuckDB is therefore
+about 13x slower and 9x higher-RSS on this small workload; this is descriptive
+performance evidence, not a correctness failure. Crucially, this is the first
+frozen real `.egg` benchmark to complete end to end through the fully
+DuckDB-authoritative proof-mode path. No host matcher, merge, row mirror,
+callback execution, proof-aware storage, unsafe/private API, Arrow, or Appender
+was introduced.
+
+The Pointer checkpoint is accepted for one local commit. Per the user's regroup
+request, stop after committing and reporting this checkpoint; do not recensus,
+plan, or begin another implementation frontier. Nothing is pushed.

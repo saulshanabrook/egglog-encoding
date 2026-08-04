@@ -43,7 +43,9 @@ use egglog_ast::span::Span;
 use egglog_ast::util::ListDisplay;
 /// The pluggable backend interface. Re-exported so downstream crates can
 /// implement their own backend (see [`EGraph::with_backend`]).
-pub use egglog_backend_trait::{Backend, BackendExt, NativePrimitive, NativeScalarPrimitive};
+pub use egglog_backend_trait::{
+    Backend, BackendExt, MatchObserver, NativePrimitive, NativeScalarPrimitive,
+};
 use egglog_backend_trait::{
     NativeInputValue, ReadMode, RuleActionCall, RuleBodyCall, RuleSetRun, RuleSpec, RuleValue,
     RuleVar,
@@ -2005,14 +2007,8 @@ impl EGraph {
         )?;
         let query = core_rule.body;
 
-        let ext_sc = egglog_bridge::SideChannel::default();
-        let ext_sc_ref = ext_sc.clone();
-        let ext_id = self
-            .backend
-            .register_external_func(Box::new(make_external_func(move |_, _| {
-                *ext_sc_ref.lock().unwrap() = Some(());
-                Some(Value::new_const(0))
-            })));
+        let observer = MatchObserver::new();
+        let ext_id = self.backend.register_match_observer(observer.clone());
 
         let mut translator = BackendRule::new(
             &mut *self.backend,
@@ -2038,10 +2034,7 @@ impl EGraph {
         self.backend.free_external_func(ext_id);
         run_result.map_err(|e| Error::BackendError(e.to_string()))?;
 
-        let ext_sc_val = ext_sc.lock().unwrap().take();
-        let matched = matches!(ext_sc_val, Some(()));
-
-        if !matched {
+        if !observer.matched() {
             Err(Error::CheckError(
                 facts.iter().map(|f| f.clone().make_unresolved()).collect(),
                 span.clone(),

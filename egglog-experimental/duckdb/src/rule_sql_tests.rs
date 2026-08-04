@@ -8,8 +8,9 @@ use egglog_ast::{
     span::Span,
 };
 use egglog_backend_trait::{
-    Backend, BaseValueId, ColumnTy, DefaultVal, FunctionConfig, FunctionId, MergeFn, ReadMode,
-    RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar, Value,
+    Backend, BaseValueId, ColumnTy, DefaultVal, ExternalFunctionId, FunctionConfig, FunctionId,
+    MatchObserver, MergeFn, PreMergeTiming, ReadMode, RuleActionCall, RuleBodyCall, RuleId,
+    RuleSetRun, RuleSpec, RuleValue, RuleVar, Value,
 };
 use egglog_core_relations::Boxed;
 use egglog_numeric_id::NumericId;
@@ -60,6 +61,18 @@ fn table_with_merge<B: Backend>(
     })
 }
 
+fn subsumable_table<B: Backend>(backend: &mut B, name: &str, schema: Vec<ColumnTy>) -> FunctionId {
+    backend.add_table(FunctionConfig {
+        schema,
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::Old,
+        name: name.to_string(),
+        can_subsume: true,
+    })
+}
+
 fn var(id: u32, name: &str, ty: ColumnTy) -> RuleTerm {
     GenericAtomTerm::Var(
         Span::Panic,
@@ -76,14 +89,60 @@ fn literal(value: Value, ty: ColumnTy) -> RuleTerm {
 }
 
 fn atom(id: FunctionId, args: Vec<RuleTerm>) -> GenericAtom<RuleBodyCall, RuleVar, RuleValue> {
+    atom_with_read(id, ReadMode::Live, args)
+}
+
+fn atom_with_read(
+    id: FunctionId,
+    read: ReadMode,
+    args: Vec<RuleTerm>,
+) -> GenericAtom<RuleBodyCall, RuleVar, RuleValue> {
     GenericAtom {
         span: Span::Panic,
-        head: RuleBodyCall::Table {
-            id,
-            read: ReadMode::Live,
-        },
+        head: RuleBodyCall::Table { id, read },
         args,
     }
+}
+
+fn observation_rule(
+    name: &str,
+    token: ExternalFunctionId,
+    body: Vec<GenericAtom<RuleBodyCall, RuleVar, RuleValue>>,
+) -> RuleSpec {
+    RuleSpec {
+        name: name.to_string(),
+        seminaive: false,
+        no_decomp: false,
+        core: GenericCoreRule {
+            span: Span::Panic,
+            body: Query { atoms: body },
+            head: GenericCoreActions::new(vec![GenericCoreAction::Let(
+                Span::Panic,
+                RuleVar {
+                    id: 10_000,
+                    name: "unused-observer-result".into(),
+                    ty: ColumnTy::Id,
+                },
+                RuleActionCall::Primitive {
+                    id: token,
+                    name: "diagnostic-only-observer-name".into(),
+                    output: ColumnTy::Id,
+                },
+                Vec::new(),
+            )]),
+        },
+    }
+}
+
+fn register_observation<B: Backend>(
+    backend: &mut B,
+    name: &str,
+    body: Vec<GenericAtom<RuleBodyCall, RuleVar, RuleValue>>,
+) -> Result<(MatchObserver, ExternalFunctionId, RuleId)> {
+    let observer = MatchObserver::new();
+    let token = backend.register_match_observer(observer.clone());
+    let rule = backend.add_rule(observation_rule(name, token, body))?;
+    Ok((observer, token, rule))
 }
 
 fn set_rule(
@@ -140,6 +199,21 @@ fn scan_values<B: Backend>(backend: &B, id: FunctionId) -> Vec<Vec<Value>> {
     backend.for_each_while_dyn(id, &mut |entry| {
         rows.push(entry.vals.to_vec());
         true
+    });
+    rows
+}
+
+fn scan_state<B: Backend>(backend: &B, id: FunctionId) -> Vec<(Vec<Value>, bool)> {
+    let mut rows = Vec::new();
+    backend.for_each_while_dyn(id, &mut |entry| {
+        rows.push((entry.vals.to_vec(), entry.subsumed));
+        true
+    });
+    rows.sort_by_key(|(values, subsumed)| {
+        (
+            values.iter().map(|value| value.rep()).collect::<Vec<_>>(),
+            *subsumed,
+        )
     });
     rows
 }
@@ -357,6 +431,1002 @@ fn math_transcript<B: Backend>(backend: &mut B) -> Result<MathTranscript> {
         math_rows(backend, fixture.add),
     ));
     Ok(transcript)
+}
+
+fn pointer_observation_fixture<B: Backend>(
+    backend: &mut B,
+    hit: bool,
+) -> Result<(MatchObserver, ExternalFunctionId, RuleId)> {
+    let types = register_scalar_types(backend);
+    backend
+        .base_values_mut()
+        .register_type::<Boxed<OrderedFloat<f64>>>();
+    backend.base_values_mut().register_type::<bool>();
+    let string = ColumnTy::Base(types.string);
+    let left = table(
+        backend,
+        "pointer encoded left relation",
+        vec![string, ColumnTy::Id, ColumnTy::Id],
+    );
+    let right = table(
+        backend,
+        "pointer encoded right relation",
+        vec![ColumnTy::Id, string, ColumnTy::Id],
+    );
+    let call = string_value(backend, "call-site");
+    let formal = string_value(backend, "formal");
+    let decoy = string_value(backend, "decoy");
+    backend.add_values(vec![
+        (left, vec![call, Value::new(101), Value::new(901)]),
+        (left, vec![decoy, Value::new(999), Value::new(902)]),
+        (
+            right,
+            vec![
+                if hit {
+                    Value::new(101)
+                } else {
+                    Value::new(777)
+                },
+                formal,
+                Value::new(903),
+            ],
+        ),
+        (right, vec![Value::new(888), decoy, Value::new(904)]),
+    ])?;
+    let allocation_left = var(0, "allocation-left", ColumnTy::Id);
+    let allocation_right = var(0, "renamed-allocation-right", ColumnTy::Id);
+    register_observation(
+        backend,
+        "pointer-two-All-observation",
+        vec![
+            atom_with_read(
+                left,
+                ReadMode::All,
+                vec![
+                    literal(call, string),
+                    allocation_left,
+                    var(1, "opaque-left-proof", ColumnTy::Id),
+                ],
+            ),
+            atom_with_read(
+                right,
+                ReadMode::All,
+                vec![
+                    allocation_right,
+                    literal(formal, string),
+                    var(2, "opaque-right-proof", ColumnTy::Id),
+                ],
+            ),
+        ],
+    )
+}
+
+fn subsume_selected_row(
+    backend: &mut EGraph,
+    name: &str,
+    target: FunctionId,
+    shared: Value,
+    label: Value,
+    string: ColumnTy,
+) -> Result<RuleId> {
+    backend.add_rule(RuleSpec {
+        name: name.to_string(),
+        seminaive: false,
+        no_decomp: false,
+        core: GenericCoreRule {
+            span: Span::Panic,
+            body: Query {
+                atoms: vec![atom(
+                    target,
+                    vec![
+                        literal(shared, ColumnTy::Id),
+                        literal(label, string),
+                        var(0, "opaque-proof", ColumnTy::Id),
+                    ],
+                )],
+            },
+            head: GenericCoreActions::new(vec![GenericCoreAction::Change(
+                Span::Panic,
+                egglog_ast::generic_ast::Change::Subsume,
+                RuleActionCall::Table {
+                    id: target,
+                    name: "diagnostic-only-subsume-target".into(),
+                },
+                vec![literal(shared, ColumnTy::Id), literal(label, string)],
+            )]),
+        },
+    })
+}
+
+#[test]
+fn match_observation_pointer_shape_matches_reference_for_hit_and_miss() -> Result<()> {
+    for hit in [false, true] {
+        let mut reference = egglog_bridge::EGraph::default();
+        let (reference_observer, reference_token, reference_rule) =
+            pointer_observation_fixture(&mut reference, hit)?;
+        assert!(!run(&mut reference, &[reference_rule])?);
+        reference.free_rule(reference_rule);
+        reference.free_external_func(reference_token);
+        assert_eq!(reference_observer.matched(), hit);
+
+        let mut duckdb = EGraph::new()?;
+        let (duckdb_observer, duckdb_token, duckdb_rule) =
+            pointer_observation_fixture(&mut duckdb, hit)?;
+        assert!(!run(&mut duckdb, &[duckdb_rule])?);
+        assert_eq!(duckdb.last_rule_match_counts(), &[usize::from(hit)]);
+        assert_eq!(duckdb.last_rule_insert_counts(), &[0]);
+        duckdb.free_rule(duckdb_rule);
+        duckdb.free_external_func(duckdb_token);
+        assert_eq!(duckdb_observer.matched(), reference_observer.matched());
+    }
+    Ok(())
+}
+
+#[test]
+fn duckdb_reports_serial_rule_time_as_split_unattributed_elapsed() -> Result<()> {
+    let mut backend = EGraph::new()?;
+    let (observer, token, rule) = pointer_observation_fixture(&mut backend, true)?;
+    let report = backend.run_rules(RuleSetRun {
+        name: Some("timed-observation"),
+        rules: &[rule],
+    })?;
+    let PreMergeTiming::Split {
+        search,
+        apply,
+        unattributed,
+    } = report.rule_set_report.pre_merge
+    else {
+        panic!("serial DuckDB execution must report split timing")
+    };
+    assert_eq!(search, Duration::ZERO);
+    assert_eq!(apply, Duration::ZERO);
+    assert_eq!(report.rule_set_report.pre_merge.total(), unattributed);
+    assert!(observer.matched());
+
+    let empty = backend.run_rules(RuleSetRun {
+        name: Some("empty"),
+        rules: &[],
+    })?;
+    assert_eq!(
+        empty.rule_set_report.pre_merge,
+        PreMergeTiming::Split {
+            search: Duration::ZERO,
+            apply: Duration::ZERO,
+            unattributed: Duration::ZERO,
+        }
+    );
+    backend.free_rule(rule);
+    backend.free_external_func(token);
+    Ok(())
+}
+
+#[test]
+fn match_observation_reports_absent_one_and_three_match_cardinalities() -> Result<()> {
+    for expected in [0_usize, 1, 3] {
+        let mut backend = EGraph::new()?;
+        let left = table(
+            &mut backend,
+            "cardinality-left",
+            vec![ColumnTy::Id, ColumnTy::Id],
+        );
+        let right = table(
+            &mut backend,
+            "cardinality-right",
+            vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
+        );
+        backend.add_values(vec![(left, vec![Value::new(7), Value::new(70)])])?;
+        backend.add_values(
+            (0..expected)
+                .map(|index| {
+                    (
+                        right,
+                        vec![
+                            Value::new(7),
+                            Value::new(u32::try_from(index + 1).unwrap()),
+                            Value::new(u32::try_from(80 + index).unwrap()),
+                        ],
+                    )
+                })
+                .collect(),
+        )?;
+        let generation = backend.storage.generation()?;
+        let shared = var(0, "shared-left", ColumnTy::Id);
+        let (observer, token, rule) = register_observation(
+            &mut backend,
+            "cardinality-observer",
+            vec![
+                atom_with_read(
+                    left,
+                    ReadMode::All,
+                    vec![shared, var(1, "left-proof", ColumnTy::Id)],
+                ),
+                atom_with_read(
+                    right,
+                    ReadMode::All,
+                    vec![
+                        var(0, "shared-right", ColumnTy::Id),
+                        var(2, "tag", ColumnTy::Id),
+                        var(3, "right-proof", ColumnTy::Id),
+                    ],
+                ),
+            ],
+        )?;
+
+        assert!(!run(&mut backend, &[rule])?);
+        assert_eq!(observer.matched(), expected != 0);
+        assert_eq!(backend.last_rule_match_counts(), &[expected]);
+        assert_eq!(backend.last_rule_insert_counts(), &[0]);
+        assert_eq!(
+            backend.rules[rule.rep() as usize]
+                .as_ref()
+                .unwrap()
+                .watermark,
+            generation
+        );
+        let manifest = backend.storage.latest_rule_sql();
+        assert_eq!(backend.last_rule_statement_count(), manifest.len() + 1);
+        assert!(manifest.iter().all(|sql| {
+            !sql.contains("INSERT ")
+                && !sql.contains("UPDATE ")
+                && !sql.contains("DELETE ")
+                && !sql.contains('?')
+        }));
+        assert!(
+            manifest
+                .first()
+                .is_some_and(|sql| sql.contains("SELECT TRUE AS __matched"))
+        );
+        backend.free_rule(rule);
+        backend.free_external_func(token);
+        assert_eq!(observer.matched(), expected != 0);
+    }
+    Ok(())
+}
+
+#[test]
+fn match_observation_all_reads_cover_every_live_and_subsumed_pair() -> Result<()> {
+    let mut backend = EGraph::new()?;
+    let types = register_scalar_types(&mut backend);
+    backend
+        .base_values_mut()
+        .register_type::<Boxed<OrderedFloat<f64>>>();
+    backend.base_values_mut().register_type::<bool>();
+    let string = ColumnTy::Base(types.string);
+    let left = subsumable_table(
+        &mut backend,
+        "visibility-left",
+        vec![ColumnTy::Id, string, ColumnTy::Id],
+    );
+    let right = subsumable_table(
+        &mut backend,
+        "visibility-right",
+        vec![ColumnTy::Id, string, ColumnTy::Id],
+    );
+    let shared = Value::new(41);
+    let live = string_value(&backend, "live");
+    let subsumed = string_value(&backend, "subsumed");
+    backend.add_values(vec![
+        (left, vec![shared, live, Value::new(101)]),
+        (left, vec![shared, subsumed, Value::new(102)]),
+        (right, vec![shared, live, Value::new(201)]),
+        (right, vec![shared, subsumed, Value::new(202)]),
+    ])?;
+    let subsume_left =
+        subsume_selected_row(&mut backend, "subsume-left", left, shared, subsumed, string)?;
+    let subsume_right = subsume_selected_row(
+        &mut backend,
+        "subsume-right",
+        right,
+        shared,
+        subsumed,
+        string,
+    )?;
+    assert!(run(&mut backend, &[subsume_left, subsume_right])?);
+
+    let mut observers = Vec::new();
+    let mut tokens = Vec::new();
+    let mut rules = Vec::new();
+    for (left_label, right_label, name) in [
+        (live, live, "live-live"),
+        (live, subsumed, "live-subsumed"),
+        (subsumed, live, "subsumed-live"),
+        (subsumed, subsumed, "subsumed-subsumed"),
+    ] {
+        let (observer, token, rule) = register_observation(
+            &mut backend,
+            name,
+            vec![
+                atom_with_read(
+                    left,
+                    ReadMode::All,
+                    vec![
+                        var(0, "shared-left", ColumnTy::Id),
+                        literal(left_label, string),
+                        var(1, "left-proof", ColumnTy::Id),
+                    ],
+                ),
+                atom_with_read(
+                    right,
+                    ReadMode::All,
+                    vec![
+                        var(0, "renamed-shared-right", ColumnTy::Id),
+                        literal(right_label, string),
+                        var(2, "right-proof", ColumnTy::Id),
+                    ],
+                ),
+            ],
+        )?;
+        observers.push(observer);
+        tokens.push(token);
+        rules.push(rule);
+    }
+    let generation = backend.storage.generation()?;
+    assert!(!run(&mut backend, &rules)?);
+    assert!(observers.iter().all(MatchObserver::matched));
+    assert_eq!(backend.last_rule_match_counts(), &[1, 1, 1, 1]);
+    assert_eq!(backend.last_rule_insert_counts(), &[0, 0, 0, 0]);
+    assert!(
+        backend
+            .storage
+            .latest_rule_sql()
+            .iter()
+            .all(|sql| !sql.contains("__subsumed"))
+    );
+    for rule in &rules {
+        assert_eq!(
+            backend.rules[rule.rep() as usize]
+                .as_ref()
+                .unwrap()
+                .watermark,
+            generation
+        );
+    }
+    for (rule, token) in rules.into_iter().zip(tokens) {
+        backend.free_rule(rule);
+        backend.free_external_func(token);
+    }
+    Ok(())
+}
+
+#[test]
+fn match_observation_uses_typed_literals_and_id_type_variable_identity() -> Result<()> {
+    let mut backend = EGraph::new()?;
+    let types = register_scalar_types(&mut backend);
+    backend
+        .base_values_mut()
+        .register_type::<Boxed<OrderedFloat<f64>>>();
+    backend.base_values_mut().register_type::<bool>();
+    let string = ColumnTy::Base(types.string);
+    let left = table(
+        &mut backend,
+        "hostile source name; DROP TABLE decoy",
+        vec![string, string, string, ColumnTy::Id],
+    );
+    let right = table(
+        &mut backend,
+        "renamed right source",
+        vec![string, string, ColumnTy::Id],
+    );
+    let wrong_type_right = table(
+        &mut backend,
+        "wrong-type-right",
+        vec![ColumnTy::Id, string, ColumnTy::Id],
+    );
+    let hostile = "'); DROP TABLE egglog_function_0; -- 🦆";
+    let hostile_value = string_value(&backend, hostile);
+    let join = string_value(&backend, "join");
+    let decoy = string_value(&backend, "decoy");
+    backend.add_values(vec![
+        (left, vec![hostile_value, join, join, Value::new(101)]),
+        (left, vec![hostile_value, join, decoy, Value::new(102)]),
+        (right, vec![join, hostile_value, Value::new(201)]),
+        (right, vec![decoy, hostile_value, Value::new(202)]),
+        (
+            wrong_type_right,
+            vec![Value::new(7), hostile_value, Value::new(301)],
+        ),
+    ])?;
+
+    let (observer, token, rule) = register_observation(
+        &mut backend,
+        "hostile rule name; check_facts_match",
+        vec![
+            atom_with_read(
+                left,
+                ReadMode::All,
+                vec![
+                    literal(hostile_value, string),
+                    var(0, "first-name", string),
+                    var(0, "renamed-repeated-name", string),
+                    var(1, "left-proof", ColumnTy::Id),
+                ],
+            ),
+            atom_with_read(
+                right,
+                ReadMode::All,
+                vec![
+                    var(0, "renamed-shared-name", string),
+                    literal(hostile_value, string),
+                    var(2, "right-proof", ColumnTy::Id),
+                ],
+            ),
+        ],
+    )?;
+    assert!(!run(&mut backend, &[rule])?);
+    assert!(observer.matched());
+    assert_eq!(backend.last_rule_match_counts(), &[1]);
+    let sql = backend.storage.latest_rule_sql();
+    let materialize = &sql[0];
+    assert!(materialize.contains("decode(from_hex('"));
+    assert!(materialize.contains("b0.c2 IS NOT DISTINCT FROM b0.c1"));
+    assert!(materialize.contains("b1.c0 IS NOT DISTINCT FROM b0.c1"));
+    for diagnostic in [
+        hostile,
+        "hostile source name",
+        "renamed right source",
+        "hostile rule name",
+        "first-name",
+        "renamed-repeated-name",
+        "renamed-shared-name",
+        "check_facts_match",
+    ] {
+        assert!(!materialize.contains(diagnostic), "leaked `{diagnostic}`");
+    }
+
+    let wrong_observer = MatchObserver::new();
+    let wrong_token = backend.register_match_observer(wrong_observer.clone());
+    let invalid = observation_rule(
+        "same-id-wrong-type",
+        wrong_token,
+        vec![
+            atom_with_read(
+                left,
+                ReadMode::All,
+                vec![
+                    literal(hostile_value, string),
+                    var(50, "string occurrence", string),
+                    var(51, "other string", string),
+                    var(52, "left proof", ColumnTy::Id),
+                ],
+            ),
+            atom_with_read(
+                wrong_type_right,
+                ReadMode::All,
+                vec![
+                    var(50, "same id but Id", ColumnTy::Id),
+                    literal(hostile_value, string),
+                    var(53, "right proof", ColumnTy::Id),
+                ],
+            ),
+        ],
+    );
+    let rule_slots = backend.rules.len();
+    let error = backend.add_rule(invalid).unwrap_err();
+    assert!(
+        error.to_string().contains("inconsistent type metadata"),
+        "{error:#}"
+    );
+    assert_eq!(backend.rules.len(), rule_slots);
+    assert!(!wrong_observer.matched());
+
+    backend.free_rule(rule);
+    backend.free_external_func(token);
+    backend.free_external_func(wrong_token);
+    Ok(())
+}
+
+#[test]
+fn match_observation_admission_is_token_owned_exact_and_preallocating() -> Result<()> {
+    let mut backend = EGraph::new()?;
+    let types = register_scalar_types(&mut backend);
+    let left = table(
+        &mut backend,
+        "admission-left",
+        vec![ColumnTy::Id, ColumnTy::Id],
+    );
+    let right = table(
+        &mut backend,
+        "admission-right",
+        vec![ColumnTy::Id, ColumnTy::Id],
+    );
+    backend.add_values(vec![
+        (left, vec![Value::new(5), Value::new(50)]),
+        (right, vec![Value::new(5), Value::new(60)]),
+    ])?;
+    let observer = MatchObserver::new();
+    let token = backend.register_match_observer(observer.clone());
+    let base = observation_rule(
+        "valid-observer",
+        token,
+        vec![
+            atom_with_read(
+                left,
+                ReadMode::All,
+                vec![
+                    var(0, "shared-left", ColumnTy::Id),
+                    var(1, "left-proof", ColumnTy::Id),
+                ],
+            ),
+            atom_with_read(
+                right,
+                ReadMode::All,
+                vec![
+                    var(0, "shared-right", ColumnTy::Id),
+                    var(2, "right-proof", ColumnTy::Id),
+                ],
+            ),
+        ],
+    );
+    let callback =
+        backend.register_external_func(Box::new(egglog_core_relations::make_external_func(
+            |_, args: &[Value]| args.is_empty().then_some(Value::new_const(0)),
+        )));
+
+    let mut invalid = Vec::<(&str, RuleSpec)>::new();
+    let mut spoof = base.clone();
+    spoof.name = "ordinary-callback-name-spoof".to_string();
+    if let GenericCoreAction::Let(_, _, RuleActionCall::Primitive { id, name, .. }, _) =
+        &mut spoof.core.head.0[0]
+    {
+        *id = callback;
+        *name = "check_facts_match".into();
+    }
+    invalid.push(("ordinary callback spoof", spoof));
+
+    let mut arity = base.clone();
+    if let GenericCoreAction::Let(_, _, _, arguments) = &mut arity.core.head.0[0] {
+        arguments.push(literal(Value::new(9), ColumnTy::Id));
+    }
+    invalid.push(("observer arity", arity));
+
+    let mut output = base.clone();
+    if let GenericCoreAction::Let(
+        _,
+        result,
+        RuleActionCall::Primitive {
+            output: call_output,
+            ..
+        },
+        _,
+    ) = &mut output.core.head.0[0]
+    {
+        *call_output = ColumnTy::Base(types.i64);
+        result.ty = ColumnTy::Base(types.i64);
+    }
+    invalid.push(("observer output", output));
+
+    for read in [ReadMode::Live, ReadMode::Subsumed] {
+        let mut wrong_read = base.clone();
+        if let RuleBodyCall::Table {
+            read: actual_read, ..
+        } = &mut wrong_read.core.body.atoms[0].head
+        {
+            *actual_read = read;
+        }
+        invalid.push(("observer read mode", wrong_read));
+    }
+
+    let mut seminaive = base.clone();
+    seminaive.seminaive = true;
+    invalid.push(("seminaive flag", seminaive));
+    let mut no_decomp = base.clone();
+    no_decomp.no_decomp = true;
+    invalid.push(("decomposition flag", no_decomp));
+
+    let mut extra_action = base.clone();
+    extra_action.core.head.0.push(GenericCoreAction::Panic(
+        Span::Panic,
+        "must not execute".to_string(),
+    ));
+    invalid.push(("extra action", extra_action));
+
+    let mut one_atom = base.clone();
+    one_atom.core.body.atoms.pop();
+    invalid.push(("one body atom", one_atom));
+    let mut three_atoms = base.clone();
+    three_atoms
+        .core
+        .body
+        .atoms
+        .push(three_atoms.core.body.atoms[0].clone());
+    invalid.push(("three body atoms", three_atoms));
+
+    let mut primitive_body = base.clone();
+    primitive_body.core.body.atoms[0].head = RuleBodyCall::Primitive {
+        id: callback,
+        name: "body callback".into(),
+        output: ColumnTy::Id,
+    };
+    invalid.push(("primitive body", primitive_body));
+
+    let mut global_body = base.clone();
+    global_body.core.body.atoms[0].args[0] = GenericAtomTerm::Global(
+        Span::Panic,
+        RuleVar {
+            id: 99,
+            name: "global".into(),
+            ty: ColumnTy::Id,
+        },
+    );
+    invalid.push(("global body", global_body));
+
+    let mut wrong_body_arity = base.clone();
+    wrong_body_arity.core.body.atoms[0].args.pop();
+    invalid.push(("body arity", wrong_body_arity));
+
+    for (case, spec) in invalid {
+        let before = backend.rules.len();
+        let error = match backend.add_rule(spec) {
+            Ok(_) => panic!("{case} unexpectedly admitted"),
+            Err(error) => error,
+        };
+        assert_eq!(backend.rules.len(), before, "{case} allocated a RuleId");
+        assert!(
+            !error.to_string().is_empty(),
+            "{case} returned an empty error"
+        );
+    }
+
+    let mut diagnostic_mutation = base;
+    diagnostic_mutation.name = "renamed/path/check_facts_match".to_string();
+    for atom in &mut diagnostic_mutation.core.body.atoms {
+        atom.span = Span::Panic;
+        for term in &mut atom.args {
+            if let GenericAtomTerm::Var(_, variable) = term {
+                variable.name = format!("diagnostic-{}", variable.id).into_boxed_str();
+            }
+        }
+    }
+    if let GenericCoreAction::Let(_, result, RuleActionCall::Primitive { name, .. }, _) =
+        &mut diagnostic_mutation.core.head.0[0]
+    {
+        result.name = "renamed-result".into();
+        *name = "check_facts_match".into();
+    }
+    let admitted = backend.add_rule(diagnostic_mutation)?;
+    assert_eq!(admitted, RuleId::new(0));
+    assert!(!run(&mut backend, &[admitted])?);
+    assert!(observer.matched());
+
+    backend.free_rule(admitted);
+    backend.free_external_func(token);
+    backend.free_external_func(callback);
+    Ok(())
+}
+
+#[test]
+fn match_observation_reauth_rejects_callback_reuse_and_same_kind_aba_before_sql() -> Result<()> {
+    let mut backend = EGraph::new()?;
+    let left = table(
+        &mut backend,
+        "reauth-left",
+        vec![ColumnTy::Id, ColumnTy::Id],
+    );
+    let right = table(
+        &mut backend,
+        "reauth-right",
+        vec![ColumnTy::Id, ColumnTy::Id],
+    );
+    backend.add_values(vec![
+        (left, vec![Value::new(3), Value::new(30)]),
+        (right, vec![Value::new(3), Value::new(40)]),
+    ])?;
+    let old_observer = MatchObserver::new();
+    let old_token = backend.register_match_observer(old_observer.clone());
+    let rule = backend.add_rule(observation_rule(
+        "reauth-observer",
+        old_token,
+        vec![
+            atom_with_read(
+                left,
+                ReadMode::All,
+                vec![
+                    var(0, "shared-left", ColumnTy::Id),
+                    var(1, "left-proof", ColumnTy::Id),
+                ],
+            ),
+            atom_with_read(
+                right,
+                ReadMode::All,
+                vec![
+                    var(0, "shared-right", ColumnTy::Id),
+                    var(2, "right-proof", ColumnTy::Id),
+                ],
+            ),
+        ],
+    ))?;
+    let generation = backend.storage.generation()?;
+    let fresh = backend.storage.next_fresh_id()?;
+    let left_state = scan_state(&backend, left);
+    let right_state = scan_state(&backend, right);
+    let telemetry = backend.last_rule.clone();
+    let trace = backend.storage.latest_rule_sql();
+
+    backend.free_external_func(old_token);
+    let callback_invoked = MatchObserver::new();
+    let callback_probe = callback_invoked.clone();
+    let callback_token = backend.register_external_func(Box::new(
+        egglog_core_relations::make_external_func(move |_, _args: &[Value]| {
+            callback_probe.mark();
+            Some(Value::new_const(0))
+        }),
+    ));
+    assert_eq!(
+        callback_token, old_token,
+        "freed registry slot was not reused"
+    );
+    let callback_error = backend
+        .run_rules(RuleSetRun {
+            name: Some("callback-reuse"),
+            rules: &[rule],
+        })
+        .unwrap_err();
+    assert!(
+        callback_error
+            .to_string()
+            .contains("authenticated as an observer"),
+        "{callback_error:#}"
+    );
+    assert!(!callback_invoked.matched());
+    assert!(!old_observer.matched());
+    assert_eq!(backend.last_rule, telemetry);
+    assert_eq!(backend.storage.latest_rule_sql(), trace);
+    assert_eq!(backend.storage.generation()?, generation);
+    assert_eq!(backend.storage.next_fresh_id()?, fresh);
+    assert_eq!(scan_state(&backend, left), left_state);
+    assert_eq!(scan_state(&backend, right), right_state);
+    assert_eq!(
+        backend.rules[rule.rep() as usize]
+            .as_ref()
+            .unwrap()
+            .watermark,
+        0
+    );
+    backend.free_external_func(callback_token);
+
+    let replacement_observer = MatchObserver::new();
+    let replacement_token = backend.register_match_observer(replacement_observer.clone());
+    assert_eq!(replacement_token, old_token);
+    let aba_error = backend
+        .run_rules(RuleSetRun {
+            name: Some("observer-aba"),
+            rules: &[rule],
+        })
+        .unwrap_err();
+    assert!(aba_error.to_string().contains("stale authority epoch"));
+    assert!(!old_observer.matched());
+    assert!(!replacement_observer.matched());
+    assert_eq!(backend.last_rule, telemetry);
+    assert_eq!(backend.storage.latest_rule_sql(), trace);
+    assert_eq!(backend.storage.generation()?, generation);
+    assert_eq!(backend.storage.next_fresh_id()?, fresh);
+    assert_eq!(scan_state(&backend, left), left_state);
+    assert_eq!(scan_state(&backend, right), right_state);
+    backend.storage.with_connection(|connection| {
+        let scratch = connection.query_row(
+            "SELECT count(*) FROM duckdb_tables() WHERE table_name LIKE 'egglog_rule_stage_%'",
+            [],
+            |row| row.get::<_, u64>(0),
+        )?;
+        assert_eq!(scratch, 0);
+        Ok(())
+    })?;
+
+    backend.free_rule(rule);
+    backend.free_external_func(replacement_token);
+    Ok(())
+}
+
+#[test]
+fn match_observation_late_stage_failure_publishes_nothing_and_retry_is_identical() -> Result<()> {
+    let mut backend = EGraph::new()?;
+    let first = table(
+        &mut backend,
+        "atomic-first",
+        vec![ColumnTy::Id, ColumnTy::Id],
+    );
+    let second = table(
+        &mut backend,
+        "atomic-second",
+        vec![ColumnTy::Id, ColumnTy::Id],
+    );
+    let renamed = table(
+        &mut backend,
+        "atomic-renamed",
+        vec![ColumnTy::Id, ColumnTy::Id],
+    );
+    backend.add_values(vec![
+        (first, vec![Value::new(9), Value::new(90)]),
+        (second, vec![Value::new(9), Value::new(91)]),
+        (renamed, vec![Value::new(9), Value::new(92)]),
+    ])?;
+
+    let (sentinel_observer, sentinel_token, sentinel_rule) = register_observation(
+        &mut backend,
+        "sentinel-miss",
+        vec![
+            atom_with_read(
+                first,
+                ReadMode::All,
+                vec![
+                    literal(Value::new(777), ColumnTy::Id),
+                    var(1, "sentinel-left-proof", ColumnTy::Id),
+                ],
+            ),
+            atom_with_read(
+                second,
+                ReadMode::All,
+                vec![
+                    literal(Value::new(777), ColumnTy::Id),
+                    var(2, "sentinel-right-proof", ColumnTy::Id),
+                ],
+            ),
+        ],
+    )?;
+    assert!(!run(&mut backend, &[sentinel_rule])?);
+    assert!(!sentinel_observer.matched());
+    let sentinel_telemetry = backend.last_rule.clone();
+    let sentinel_trace = backend.storage.latest_rule_sql();
+    assert!(
+        sentinel_trace
+            .iter()
+            .any(|sql| sql.contains("egglog_rule_stage_0_0"))
+    );
+
+    let (first_observer, first_token, first_rule) = register_observation(
+        &mut backend,
+        "atomic-first-observer",
+        vec![
+            atom_with_read(
+                first,
+                ReadMode::All,
+                vec![
+                    var(0, "first-shared", ColumnTy::Id),
+                    var(1, "first-left-proof", ColumnTy::Id),
+                ],
+            ),
+            atom_with_read(
+                second,
+                ReadMode::All,
+                vec![
+                    var(0, "first-shared-renamed", ColumnTy::Id),
+                    var(2, "first-right-proof", ColumnTy::Id),
+                ],
+            ),
+        ],
+    )?;
+    let (second_observer, second_token, second_rule) = register_observation(
+        &mut backend,
+        "atomic-second-observer",
+        vec![
+            atom_with_read(
+                first,
+                ReadMode::All,
+                vec![
+                    var(10, "second-shared", ColumnTy::Id),
+                    var(11, "second-left-proof", ColumnTy::Id),
+                ],
+            ),
+            atom_with_read(
+                renamed,
+                ReadMode::All,
+                vec![
+                    var(10, "second-shared-renamed", ColumnTy::Id),
+                    var(12, "second-right-proof", ColumnTy::Id),
+                ],
+            ),
+        ],
+    )?;
+    let generation = backend.storage.generation()?;
+    let fresh = backend.storage.next_fresh_id()?;
+    let first_state = scan_state(&backend, first);
+    let second_state = scan_state(&backend, second);
+    let renamed_state = scan_state(&backend, renamed);
+    let physical_name = crate::storage::sql_table(renamed);
+    let hidden_name = "egglog_hidden_match_observation_failure";
+    backend.storage.with_connection(|connection| {
+        connection.execute(
+            &format!("ALTER TABLE {physical_name} RENAME TO {hidden_name}"),
+            [],
+        )?;
+        Ok(())
+    })?;
+
+    let error = backend
+        .run_rules(RuleSetRun {
+            name: Some("late-observation-stage-failure"),
+            rules: &[first_rule, second_rule],
+        })
+        .unwrap_err();
+    assert!(
+        error.to_string().contains(&physical_name),
+        "unexpected failure: {error:#}"
+    );
+    assert!(!first_observer.matched());
+    assert!(!second_observer.matched());
+    assert_eq!(backend.last_rule, sentinel_telemetry);
+    assert_eq!(backend.storage.latest_rule_sql(), sentinel_trace);
+    assert_eq!(backend.storage.generation()?, generation);
+    assert_eq!(backend.storage.next_fresh_id()?, fresh);
+    for rule in [first_rule, second_rule] {
+        assert_eq!(
+            backend.rules[rule.rep() as usize]
+                .as_ref()
+                .unwrap()
+                .watermark,
+            0
+        );
+    }
+    backend.storage.with_connection(|connection| {
+        let scratch = connection.query_row(
+            "SELECT count(*) FROM duckdb_tables() WHERE table_name LIKE 'egglog_rule_stage_%'",
+            [],
+            |row| row.get::<_, u64>(0),
+        )?;
+        assert_eq!(scratch, 0);
+        connection.execute(
+            &format!("ALTER TABLE {hidden_name} RENAME TO {physical_name}"),
+            [],
+        )?;
+        Ok(())
+    })?;
+    assert_eq!(scan_state(&backend, first), first_state);
+    assert_eq!(scan_state(&backend, second), second_state);
+    assert_eq!(scan_state(&backend, renamed), renamed_state);
+
+    assert!(!run(&mut backend, &[first_rule, second_rule])?);
+    assert!(first_observer.matched());
+    assert!(second_observer.matched());
+    assert_eq!(backend.last_rule_match_counts(), &[1, 1]);
+    assert_eq!(backend.last_rule_insert_counts(), &[0, 0]);
+    assert_eq!(backend.storage.generation()?, generation);
+    assert_eq!(backend.storage.next_fresh_id()?, fresh);
+    let retry_trace = backend.storage.latest_rule_sql();
+    assert!(
+        retry_trace
+            .iter()
+            .any(|sql| sql.contains("egglog_rule_stage_1_0"))
+    );
+    assert!(
+        retry_trace
+            .iter()
+            .any(|sql| sql.contains("egglog_rule_stage_1_1"))
+    );
+    assert_eq!(backend.last_rule_statement_count(), retry_trace.len() + 1);
+    assert!(retry_trace.iter().all(|sql| {
+        !sql.contains("INSERT ")
+            && !sql.contains("UPDATE ")
+            && !sql.contains("DELETE ")
+            && !sql.contains("__subsumed")
+            && !sql.contains("__generation")
+            && !sql.contains('?')
+    }));
+    for rule in [first_rule, second_rule] {
+        assert_eq!(
+            backend.rules[rule.rep() as usize]
+                .as_ref()
+                .unwrap()
+                .watermark,
+            generation
+        );
+    }
+    backend.storage.with_connection(|connection| {
+        let scratch = connection.query_row(
+            "SELECT count(*) FROM duckdb_tables() WHERE table_name LIKE 'egglog_rule_stage_%'",
+            [],
+            |row| row.get::<_, u64>(0),
+        )?;
+        assert_eq!(scratch, 0);
+        Ok(())
+    })?;
+
+    for rule in [sentinel_rule, first_rule, second_rule] {
+        backend.free_rule(rule);
+    }
+    for token in [sentinel_token, first_token, second_token] {
+        backend.free_external_func(token);
+    }
+    Ok(())
 }
 
 #[test]

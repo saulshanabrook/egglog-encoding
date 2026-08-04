@@ -84,7 +84,10 @@
 //! `impl Backend for egglog_bridge::EGraph` (see `backend_impl`).
 
 use std::any::{Any, TypeId};
-use std::sync::{Arc, RwLock};
+use std::sync::{
+    Arc, RwLock,
+    atomic::{AtomicBool, Ordering},
+};
 
 use anyhow::Result;
 use egglog_numeric_id::NumericId;
@@ -104,6 +107,30 @@ pub use egglog_core_relations::{
     ExternalFunction, ExternalFunctionId, Value,
 };
 pub use egglog_reports::{IterationReport, PreMergeTiming, ReportLevel};
+
+/// A monotone indication that a backend rule produced at least one match.
+///
+/// Clones share one state. The state starts false, can only transition to true,
+/// and remains readable after the external-function token used by a rule has
+/// been released.
+#[derive(Clone, Debug, Default)]
+pub struct MatchObserver(Arc<AtomicBool>);
+
+impl MatchObserver {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record that at least one match was observed.
+    pub fn mark(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+
+    /// Whether a match has been observed.
+    pub fn matched(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+}
 
 /// Which subsumption view a table atom reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -457,6 +484,23 @@ pub trait Backend: Send + Sync {
         func: Box<dyn ExternalFunction + 'static>,
     ) -> ExternalFunctionId;
 
+    /// Register the canonical zero-argument match-observation callback.
+    ///
+    /// Existing callback backends inherit this implementation. Native
+    /// backends may instead retain the observer and lower authenticated call
+    /// sites without invoking a host callback.
+    fn register_match_observer(&mut self, observer: MatchObserver) -> ExternalFunctionId {
+        self.register_external_func(Box::new(egglog_core_relations::make_external_func(
+            move |_state: &mut ExecutionState, args: &[Value]| {
+                if !args.is_empty() {
+                    return None;
+                }
+                observer.mark();
+                Some(Value::new_const(0))
+            },
+        )))
+    }
+
     /// Register a shared native primitive.
     ///
     /// The default preserves source compatibility for existing backends by
@@ -718,7 +762,42 @@ impl<B: Backend + ?Sized> BackendExt for B {
 mod tests {
     use egglog_numeric_id::NumericId;
 
-    use super::{Backend, BackendExt, NativePrimitive, NativeScalarPrimitive, Value};
+    use super::{
+        Backend, BackendExt, MatchObserver, NativePrimitive, NativeScalarPrimitive, Value,
+    };
+
+    #[test]
+    fn match_observer_default_is_object_safe_independent_and_survives_token_release() {
+        let mut backend: Box<dyn Backend> = Box::new(egglog_bridge::EGraph::default());
+        let first = MatchObserver::new();
+        let second = MatchObserver::new();
+        let first_token = backend.register_match_observer(first.clone());
+        let second_token = backend.register_match_observer(second.clone());
+
+        backend.with_execution_state(|state| {
+            assert_eq!(
+                state.call_external_func(first_token, &[Value::from_usize(9)]),
+                None,
+                "nonzero-argument observation must fail closed"
+            );
+            assert_eq!(
+                state.call_external_func(first_token, &[]),
+                Some(Value::new_const(0))
+            );
+        });
+        backend.free_external_func(first_token);
+        assert!(first.matched());
+        assert!(!second.matched());
+
+        backend.with_execution_state(|state| {
+            assert_eq!(
+                state.call_external_func(second_token, &[]),
+                Some(Value::new_const(0))
+            );
+        });
+        backend.free_external_func(second_token);
+        assert!(second.matched());
+    }
 
     #[test]
     fn native_primitive_defaults_are_object_safe_and_choose_right_on_ties() {

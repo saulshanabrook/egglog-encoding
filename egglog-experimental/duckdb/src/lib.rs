@@ -8,21 +8,23 @@
 //! structural two-atom union-find path rule and its typed identity-guarded
 //! merge Block, and the two standard scalar All-mode rebuild forms over exact
 //! ordered-union Blocks, plus the exact proof-instrumented scalar 34-action
-//! rewrite family. Matches, phased cleanup effects, constructor rows, fresh
+//! rewrite family and the effectless authenticated two-All-table match
+//! observation form. Matches, phased cleanup effects, constructor rows, fresh
 //! allocation, and recursive merge candidates execute through staged DuckDB
-//! SQL. Unsupported writes fail closed even though their complete configurations
-//! remain registered for later lowering.
+//! SQL. Unsupported writes fail closed even though their complete
+//! configurations remain registered for later lowering.
 
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow, bail};
 use egglog_backend_trait::{
     Backend, BaseValues, ColumnTy, ContainerValues, ExecutionState, ExternalFunction,
-    ExternalFunctionId, FunctionConfig, FunctionId, IterationReport, NativeInputValue,
-    NativePrimitive, NativeScalarPrimitive, ReportLevel, RuleId, RuleSetRun, RuleSpec, ScanEntry,
-    Value,
+    ExternalFunctionId, FunctionConfig, FunctionId, IterationReport, MatchObserver,
+    NativeInputValue, NativePrimitive, NativeScalarPrimitive, PreMergeTiming, ReportLevel, RuleId,
+    RuleSetRun, RuleSpec, ScanEntry, Value,
 };
 use egglog_core_relations::Database;
 use egglog_numeric_id::NumericId;
@@ -60,6 +62,7 @@ use storage::{InsertStats, Storage, for_each_scan_entry};
 struct AuthorityRegistries<'a> {
     native_primitives: &'a BTreeMap<ExternalFunctionId, NativePrimitive>,
     native_scalar_primitives: &'a BTreeMap<ExternalFunctionId, NativeScalarPrimitive>,
+    match_observers: &'a BTreeMap<ExternalFunctionId, MatchObserver>,
     authority_epochs: &'a BTreeMap<ExternalFunctionId, u64>,
     fresh_tokens: &'a BTreeSet<ExternalFunctionId>,
     fd_descriptors: &'a BTreeMap<ExternalFunctionId, FdDescriptor>,
@@ -84,6 +87,7 @@ pub struct EGraph {
     fd_descriptors: BTreeMap<ExternalFunctionId, FdDescriptor>,
     native_primitives: BTreeMap<ExternalFunctionId, NativePrimitive>,
     native_scalar_primitives: BTreeMap<ExternalFunctionId, NativeScalarPrimitive>,
+    match_observers: BTreeMap<ExternalFunctionId, MatchObserver>,
     authority_epochs: BTreeMap<ExternalFunctionId, u64>,
     next_authority_epoch: u64,
     rules: Vec<Option<RegisteredRule>>,
@@ -104,6 +108,7 @@ impl EGraph {
             fd_descriptors: BTreeMap::new(),
             native_primitives: BTreeMap::new(),
             native_scalar_primitives: BTreeMap::new(),
+            match_observers: BTreeMap::new(),
             authority_epochs: BTreeMap::new(),
             next_authority_epoch: 0,
             rules: Vec::new(),
@@ -341,6 +346,7 @@ impl Backend for EGraph {
         let authorities = AuthorityRegistries {
             native_primitives: &self.native_primitives,
             native_scalar_primitives: &self.native_scalar_primitives,
+            match_observers: &self.match_observers,
             authority_epochs: &self.authority_epochs,
             fresh_tokens: &self.fresh_tokens,
             fd_descriptors: &self.fd_descriptors,
@@ -366,7 +372,13 @@ impl Backend for EGraph {
         self.take_deferred_panic()?;
         if run.rules.is_empty() {
             self.last_rule = RuleExecutionStats::default();
-            return Ok(IterationReport::default());
+            let mut report = IterationReport::default();
+            report.rule_set_report.pre_merge = PreMergeTiming::Split {
+                search: Duration::ZERO,
+                apply: Duration::ZERO,
+                unattributed: Duration::ZERO,
+            };
+            return Ok(report);
         }
 
         let mut unique = BTreeSet::new();
@@ -396,6 +408,9 @@ impl Backend for EGraph {
                                 &self.fd_descriptors,
                             )?;
                         }
+                        if let Some(plan) = registered.plan.match_observation() {
+                            plan.authorize(&self.match_observers, &self.authority_epochs)?;
+                        }
                         Ok::<(&CompiledRule, u64), anyhow::Error>((
                             &registered.plan,
                             registered.watermark,
@@ -405,8 +420,33 @@ impl Backend for EGraph {
                     .ok_or_else(|| anyhow!("DuckDB cannot run freed or unknown rule {}", id.rep()))
             })
             .collect::<Result<Vec<_>>>()?;
+        let observation_handles = scheduled
+            .iter()
+            .map(|(plan, _)| {
+                plan.match_observation().map(|observation| {
+                    self.match_observers
+                        .get(&observation.token())
+                        .expect("authorized observer disappeared before synchronous execution")
+                        .clone()
+                })
+            })
+            .collect::<Vec<_>>();
+        // DuckDB executes this bounded ruleset serially in one SQL
+        // transaction. The transaction has no honest externally observable
+        // search/apply boundary, so retain its measured elapsed time as the
+        // exhaustive unattributed component rather than inventing a split.
+        let pre_merge_start = Instant::now();
         let stats = self.storage.execute_rules(&scheduled)?;
+        let pre_merge_elapsed = pre_merge_start.elapsed();
         drop(scheduled);
+
+        for (observer, &count) in observation_handles.iter().zip(&stats.matched_rows) {
+            if count != 0
+                && let Some(observer) = observer
+            {
+                observer.mark();
+            }
+        }
 
         for id in run.rules {
             let registered = self.rules[id.rep() as usize]
@@ -416,6 +456,11 @@ impl Backend for EGraph {
         }
         let mut report = IterationReport::default();
         report.rule_set_report.changed = stats.changed;
+        report.rule_set_report.pre_merge = PreMergeTiming::Split {
+            search: Duration::ZERO,
+            apply: Duration::ZERO,
+            unattributed: pre_merge_elapsed,
+        };
         self.last_rule = stats;
         Ok(report)
     }
@@ -430,6 +475,14 @@ impl Backend for EGraph {
         func: Box<dyn ExternalFunction + 'static>,
     ) -> ExternalFunctionId {
         self.registries.add_external_function(func)
+    }
+
+    fn register_match_observer(&mut self, observer: MatchObserver) -> ExternalFunctionId {
+        let token =
+            self.new_panic("DuckDB match observer requires authenticated SQL lowering".to_string());
+        self.match_observers.insert(token, observer);
+        self.record_authority_epoch(token);
+        token
     }
 
     fn register_native_primitive(&mut self, primitive: NativePrimitive) -> ExternalFunctionId {
@@ -517,6 +570,7 @@ impl Backend for EGraph {
         self.native_primitives.remove(&func);
         self.native_scalar_primitives.remove(&func);
         self.fresh_tokens.remove(&func);
+        self.match_observers.remove(&func);
         self.authority_epochs.remove(&func);
         self.registries.free_external_function(func);
     }

@@ -12,8 +12,8 @@ use anyhow::{Result, anyhow, bail};
 use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
 use egglog_ast::generic_ast::Change;
 use egglog_backend_trait::{
-    BaseValues, ColumnTy, FunctionId, ReadMode, RuleActionCall, RuleBodyCall, RuleSpec, RuleValue,
-    RuleVar,
+    BaseValues, ColumnTy, ExternalFunctionId, FunctionId, MatchObserver, ReadMode, RuleActionCall,
+    RuleBodyCall, RuleSpec, RuleValue, RuleVar,
 };
 use egglog_numeric_id::NumericId;
 
@@ -45,6 +45,7 @@ pub(crate) struct CompiledRule {
 #[derive(Clone, Debug)]
 enum CompiledRuleKind {
     Direct(DirectRule),
+    MatchObservation(MatchObservationPlan),
     MarkerRekey(MarkerRekeyPlan),
     PathCompression(PathCompressionPlan),
     ScalarAction(ScalarActionPlan),
@@ -59,6 +60,68 @@ struct DirectRule {
     predicates: Vec<String>,
     freshness_columns: Vec<String>,
     order_columns: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct MatchObservationPlan {
+    token: ExternalFunctionId,
+    authority_epoch: u64,
+    from: Vec<String>,
+    predicates: Vec<String>,
+}
+
+impl MatchObservationPlan {
+    pub(crate) fn token(&self) -> ExternalFunctionId {
+        self.token
+    }
+
+    pub(crate) fn authorize(
+        &self,
+        observers: &BTreeMap<ExternalFunctionId, MatchObserver>,
+        authority_epochs: &BTreeMap<ExternalFunctionId, u64>,
+    ) -> Result<()> {
+        if !observers.contains_key(&self.token) {
+            bail!(
+                "DuckDB match-observation token {} is no longer authenticated as an observer",
+                self.token.rep()
+            );
+        }
+        let current_epoch = authority_epochs.get(&self.token).ok_or_else(|| {
+            anyhow!(
+                "DuckDB match-observation token {} has no live authority epoch",
+                self.token.rep()
+            )
+        })?;
+        if *current_epoch != self.authority_epoch {
+            bail!(
+                "DuckDB match-observation token {} has stale authority epoch {} (current {})",
+                self.token.rep(),
+                self.authority_epoch,
+                current_epoch
+            );
+        }
+        Ok(())
+    }
+
+    fn materialize_sql(&self, stage: &str) -> String {
+        debug_assert!(
+            stage
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        );
+        let predicate = if self.predicates.is_empty() {
+            "TRUE".to_string()
+        } else {
+            self.predicates.join(" AND ")
+        };
+        format!(
+            "CREATE TEMP TABLE {stage} AS
+             SELECT TRUE AS __matched
+             FROM {}
+             WHERE {predicate}",
+            self.from.join(" CROSS JOIN ")
+        )
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -102,6 +165,9 @@ pub(crate) struct CompiledBody {
 
 impl CompiledRule {
     pub(crate) fn materialize_sql(&self, stage: &str, watermark: u64) -> String {
+        if let CompiledRuleKind::MatchObservation(plan) = &self.kind {
+            return plan.materialize_sql(stage);
+        }
         if let CompiledRuleKind::PathCompression(plan) = &self.kind {
             return plan.materialize_sql(stage, watermark);
         }
@@ -160,8 +226,10 @@ impl CompiledRule {
     }
 
     pub(crate) fn delete_sql(&self, stage: &str) -> Vec<String> {
-        let CompiledRuleKind::Direct(direct) = &self.kind else {
-            unreachable!("staged-queue rules use their dedicated executor");
+        let direct = match &self.kind {
+            CompiledRuleKind::Direct(direct) => direct,
+            CompiledRuleKind::MatchObservation(_) => return Vec::new(),
+            _ => unreachable!("staged-queue rules use their dedicated executor"),
         };
         direct
             .effects
@@ -187,8 +255,10 @@ impl CompiledRule {
     }
 
     pub(crate) fn insert_sql(&self, stage: &str, generation: u64) -> Option<String> {
-        let CompiledRuleKind::Direct(direct) = &self.kind else {
-            unreachable!("staged-queue rules use their dedicated executor");
+        let direct = match &self.kind {
+            CompiledRuleKind::Direct(direct) => direct,
+            CompiledRuleKind::MatchObservation(_) => return None,
+            _ => unreachable!("staged-queue rules use their dedicated executor"),
         };
         let DirectEffect::Set {
             target,
@@ -258,8 +328,10 @@ impl CompiledRule {
     }
 
     pub(crate) fn subsume_sql(&self, stage: &str, generation: u64) -> Vec<String> {
-        let CompiledRuleKind::Direct(direct) = &self.kind else {
-            unreachable!("staged-queue rules use their dedicated executor");
+        let direct = match &self.kind {
+            CompiledRuleKind::Direct(direct) => direct,
+            CompiledRuleKind::MatchObservation(_) => return Vec::new(),
+            _ => unreachable!("staged-queue rules use their dedicated executor"),
         };
         direct
             .effects
@@ -325,6 +397,7 @@ impl CompiledRule {
         match &self.kind {
             CompiledRuleKind::PathCompression(plan) => Some(plan),
             CompiledRuleKind::Direct(_)
+            | CompiledRuleKind::MatchObservation(_)
             | CompiledRuleKind::MarkerRekey(_)
             | CompiledRuleKind::ScalarAction(_)
             | CompiledRuleKind::StandardRebuild(_) => None,
@@ -335,6 +408,7 @@ impl CompiledRule {
         match &self.kind {
             CompiledRuleKind::StandardRebuild(plan) => Some(plan),
             CompiledRuleKind::Direct(_)
+            | CompiledRuleKind::MatchObservation(_)
             | CompiledRuleKind::MarkerRekey(_)
             | CompiledRuleKind::PathCompression(_) => None,
             CompiledRuleKind::ScalarAction(_) => None,
@@ -345,6 +419,7 @@ impl CompiledRule {
         match &self.kind {
             CompiledRuleKind::MarkerRekey(plan) => Some(plan),
             CompiledRuleKind::Direct(_)
+            | CompiledRuleKind::MatchObservation(_)
             | CompiledRuleKind::PathCompression(_)
             | CompiledRuleKind::ScalarAction(_)
             | CompiledRuleKind::StandardRebuild(_) => None,
@@ -355,6 +430,7 @@ impl CompiledRule {
         match &self.kind {
             CompiledRuleKind::ScalarAction(plan) => Some(plan),
             CompiledRuleKind::Direct(_)
+            | CompiledRuleKind::MatchObservation(_)
             | CompiledRuleKind::MarkerRekey(_)
             | CompiledRuleKind::PathCompression(_)
             | CompiledRuleKind::StandardRebuild(_) => None,
@@ -366,6 +442,17 @@ impl CompiledRule {
     #[allow(dead_code)]
     pub(crate) fn scalar_mixed(&self) -> Option<&ScalarMixedPlan> {
         None
+    }
+
+    pub(crate) fn match_observation(&self) -> Option<&MatchObservationPlan> {
+        match &self.kind {
+            CompiledRuleKind::MatchObservation(plan) => Some(plan),
+            CompiledRuleKind::Direct(_)
+            | CompiledRuleKind::MarkerRekey(_)
+            | CompiledRuleKind::PathCompression(_)
+            | CompiledRuleKind::ScalarAction(_)
+            | CompiledRuleKind::StandardRebuild(_) => None,
+        }
     }
 }
 
@@ -385,6 +472,15 @@ pub(crate) fn compile_rule(
     authorities: &AuthorityRegistries<'_>,
     rule: RuleSpec,
 ) -> Result<CompiledRule> {
+    // Observer-token ownership is authoritative and tri-state. Any live
+    // observer token in a malformed rule is rejected here rather than being
+    // reinterpreted by another compiler.
+    if let Some(plan) = compile_match_observation(storage, base_values, authorities, &rule)? {
+        return Ok(CompiledRule {
+            seminaive: rule.seminaive,
+            kind: CompiledRuleKind::MatchObservation(plan),
+        });
+    }
     // Rebuild admission is tri-state and must precede the path compiler's
     // intentionally cheap arity discriminator. A malformed standard outer
     // topology is an error; marker/container/custom topologies fall through.
@@ -459,6 +555,196 @@ pub(crate) fn compile_rule(
             order_columns: body.order_columns,
         }),
     })
+}
+
+fn compile_match_observation(
+    storage: &Storage,
+    base_values: &BaseValues,
+    authorities: &AuthorityRegistries<'_>,
+    rule: &RuleSpec,
+) -> Result<Option<MatchObservationPlan>> {
+    let owns_rule = rule.core.body.atoms.iter().any(|atom| {
+        matches!(
+            &atom.head,
+            RuleBodyCall::Primitive { id, .. } if authorities.match_observers.contains_key(id)
+        )
+    }) || rule.core.head.0.iter().any(|action| {
+        let call = match action {
+            GenericCoreAction::Let(_, _, call, _)
+            | GenericCoreAction::Set(_, call, _, _)
+            | GenericCoreAction::Change(_, _, call, _) => Some(call),
+            GenericCoreAction::LetAtomTerm(..)
+            | GenericCoreAction::Union(..)
+            | GenericCoreAction::Panic(..) => None,
+        };
+        matches!(
+            call,
+            Some(RuleActionCall::Primitive { id, .. })
+                if authorities.match_observers.contains_key(id)
+        )
+    });
+    if !owns_rule {
+        return Ok(None);
+    }
+
+    if rule.seminaive {
+        bail!(
+            "DuckDB match-observation rule `{}` must be non-seminaive",
+            rule.name
+        );
+    }
+    if rule.no_decomp {
+        bail!(
+            "DuckDB match-observation rule `{}` must use the decomposed rule mode",
+            rule.name
+        );
+    }
+    if rule.core.body.atoms.len() != 2 {
+        bail!(
+            "DuckDB match-observation rule `{}` requires exactly two table atoms, got {}",
+            rule.name,
+            rule.core.body.atoms.len()
+        );
+    }
+    if rule.core.head.0.len() != 1 {
+        bail!(
+            "DuckDB match-observation rule `{}` requires exactly one observer Let, got {} actions",
+            rule.name,
+            rule.core.head.0.len()
+        );
+    }
+
+    let GenericCoreAction::Let(_, result, call, arguments) = &rule.core.head.0[0] else {
+        bail!(
+            "DuckDB match-observation rule `{}` requires one observer Let action",
+            rule.name
+        );
+    };
+    let RuleActionCall::Primitive {
+        id: token, output, ..
+    } = call
+    else {
+        bail!(
+            "DuckDB match-observation rule `{}` requires an observer primitive Let",
+            rule.name
+        );
+    };
+    if !authorities.match_observers.contains_key(token) {
+        bail!(
+            "DuckDB match-observation rule `{}` does not use its live observer token in the head",
+            rule.name
+        );
+    }
+    if !arguments.is_empty() {
+        bail!(
+            "DuckDB match-observation rule `{}` observer Let requires zero arguments",
+            rule.name
+        );
+    }
+    if *output != ColumnTy::Id || result.ty != ColumnTy::Id {
+        bail!(
+            "DuckDB match-observation rule `{}` observer Let requires matching Id output metadata",
+            rule.name
+        );
+    }
+
+    let mut bindings = BTreeMap::<u32, VariableBinding>::new();
+    let mut from = Vec::with_capacity(2);
+    let mut predicates = Vec::new();
+    for (atom_index, atom) in rule.core.body.atoms.iter().enumerate() {
+        let RuleBodyCall::Table { id, read } = &atom.head else {
+            bail!(
+                "DuckDB match-observation rule `{}` contains a primitive body atom",
+                rule.name
+            );
+        };
+        if *read != ReadMode::All {
+            bail!(
+                "DuckDB match-observation rule `{}` requires All table reads, got {read:?}",
+                rule.name
+            );
+        }
+        let info = storage.table_info(*id).map_err(|error| {
+            anyhow!(
+                "DuckDB match-observation rule `{}` references invalid body table {}: {error:#}",
+                rule.name,
+                id.rep()
+            )
+        })?;
+        if atom.args.len() != info.arity() {
+            bail!(
+                "DuckDB match-observation rule `{}` body table `{}` expects {} arguments, got {}",
+                rule.name,
+                info.name,
+                info.arity(),
+                atom.args.len()
+            );
+        }
+        let alias = format!("b{atom_index}");
+        from.push(format!("{} AS {alias}", sql_table(*id)));
+        for (column, (term, &expected)) in atom.args.iter().zip(&info.schema).enumerate() {
+            let expression = format!("{alias}.c{column}");
+            match term {
+                GenericAtomTerm::Var(_, variable) => {
+                    validate_variable(&rule.name, variable, expected)?;
+                    if let Some(binding) = bindings.get(&variable.id) {
+                        if binding.ty != variable.ty {
+                            bail!(
+                                "DuckDB match-observation rule `{}` reuses variable id {} with inconsistent type metadata",
+                                rule.name,
+                                variable.id
+                            );
+                        }
+                        predicates.push(format!(
+                            "{expression} IS NOT DISTINCT FROM {}",
+                            binding.expression
+                        ));
+                    } else {
+                        bindings.insert(
+                            variable.id,
+                            VariableBinding {
+                                expression,
+                                ty: variable.ty,
+                                name: variable.name.clone(),
+                            },
+                        );
+                    }
+                }
+                GenericAtomTerm::Literal(_, literal) => {
+                    validate_literal(&rule.name, literal, expected)?;
+                    let encoded = ScalarSqlType::from_column(base_values, expected)?
+                        .sql_literal(base_values, literal.value)?;
+                    predicates.push(format!("{expression} IS NOT DISTINCT FROM {encoded}"));
+                }
+                GenericAtomTerm::Global(..) => {
+                    bail!(
+                        "DuckDB match-observation rule `{}` contains a global body term",
+                        rule.name
+                    );
+                }
+            }
+        }
+    }
+    if bindings.contains_key(&result.id) {
+        bail!(
+            "DuckDB match-observation rule `{}` observer result id {} is used by the body",
+            rule.name,
+            result.id
+        );
+    }
+    let authority_epoch = *authorities.authority_epochs.get(token).ok_or_else(|| {
+        anyhow!(
+            "DuckDB match-observation token {} has no authority epoch at admission",
+            token.rep()
+        )
+    })?;
+
+    Ok(Some(MatchObservationPlan {
+        token: *token,
+        authority_epoch,
+        from,
+        predicates,
+    }))
 }
 
 pub(crate) fn compile_live_body(
