@@ -28,8 +28,9 @@ use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
 use egglog_backend_trait::{
     Backend, BaseValues, ColumnTy, ContainerMergeFn, ContainerValues, CounterId, DefaultVal,
     ExecutionState, ExternalFunction, ExternalFunctionId, FunctionConfig, FunctionId,
-    IterationReport, MergeAction, MergeFn, PreMergeTiming, ReportLevel, RuleActionCall,
-    RuleBodyCall, RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry, Value,
+    IterationReport, MergeAction, MergeExpr, MergeInputSide, MergeProgram, PreMergeTiming,
+    ReportLevel, RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar,
+    ScanEntry, Value,
 };
 use egglog_core_relations::Database;
 use egglog_numeric_id::NumericId;
@@ -107,7 +108,7 @@ pub(crate) struct RelationInfo {
     /// Number of visible columns.
     pub(crate) arity: usize,
     n_keys: usize,
-    merge: Arc<MergeFn>,
+    merge: Arc<MergeProgram>,
     default: TableDefault,
     n_identity_vals: Option<usize>,
     /// Read dependencies are registered before their owners, so this level
@@ -468,7 +469,7 @@ impl EGraph {
     pub(crate) fn function_spec(
         &self,
         function: FunctionId,
-    ) -> (usize, Arc<MergeFn>, TableDefault, Option<usize>) {
+    ) -> (usize, Arc<MergeProgram>, TableDefault, Option<usize>) {
         let info = self.info(function);
         (
             info.n_keys,
@@ -829,36 +830,19 @@ impl<'a> MergeTransaction<'a> {
         let merged = if values_unchanged || identity_unchanged {
             old.values.clone()
         } else {
-            let (actions, result) = match merge.as_ref() {
-                MergeFn::Block { actions, result } => (actions.as_slice(), result.as_ref()),
-                result => (&[][..], result),
-            };
             let mut environment = Vec::new();
-            for action in actions {
+            for action in &merge.actions {
                 self.run_action(action, function, &old.values, &incoming, &mut environment)?;
             }
             let mut values = Vec::with_capacity(incoming.len());
-            match result {
-                MergeFn::Columns(results) => {
-                    for (self_col, expression) in results.iter().enumerate() {
-                        values.push(self.eval(
-                            expression,
-                            function,
-                            &old.values,
-                            &incoming,
-                            self_col,
-                            &environment,
-                        )?);
-                    }
-                }
-                expression => values.push(self.eval(
+            for expression in &merge.results {
+                values.push(self.eval(
                     expression,
                     function,
                     &old.values,
                     &incoming,
-                    0,
                     &environment,
-                )?),
+                )?);
             }
             values.into_boxed_slice()
         };
@@ -885,77 +869,92 @@ impl<'a> MergeTransaction<'a> {
         environment: &mut Vec<u32>,
     ) -> Result<()> {
         match action {
-            MergeAction::Set(function, arguments) => {
+            MergeAction::Set {
+                function,
+                arguments,
+            } => {
                 let row = self
-                    .eval_args(arguments, owner, old, new, 0, environment)?
+                    .eval_args(arguments, owner, old, new, environment)?
                     .into_boxed_slice();
                 self.next_wave.push((*function, row));
             }
-            MergeAction::Let { slot, value } => {
-                if *slot != environment.len() {
+            MergeAction::Let { binding, value } => {
+                if binding.index() != environment.len() {
                     return Err(anyhow!(
-                        "merge let slot {slot} for `{}` is out of order; expected {}",
+                        "merge let binding {} for `{}` is out of order; expected {}",
+                        binding.index(),
                         self.eg.relation_name(owner),
                         environment.len()
                     ));
                 }
-                let value = self.eval(value, owner, old, new, 0, environment)?;
+                let value = self.eval(value, owner, old, new, environment)?;
                 environment.push(value);
             }
-            MergeAction::Union(..) => unreachable!("native merge unions are rejected by add_table"),
+            MergeAction::Union { .. } => {
+                unreachable!("native merge unions are rejected by add_table")
+            }
         }
         Ok(())
     }
 
     fn eval_args(
         &mut self,
-        arguments: &[MergeFn],
+        arguments: &[MergeExpr],
         owner: FunctionId,
         old: &[u32],
         new: &[u32],
-        self_col: usize,
         environment: &[u32],
     ) -> Result<Vec<u32>> {
         let mut values = Vec::with_capacity(arguments.len());
         for argument in arguments {
-            values.push(self.eval(argument, owner, old, new, self_col, environment)?);
+            values.push(self.eval(argument, owner, old, new, environment)?);
         }
         Ok(values)
     }
 
     fn eval(
         &mut self,
-        expression: &MergeFn,
+        expression: &MergeExpr,
         owner: FunctionId,
         old: &[u32],
         new: &[u32],
-        self_col: usize,
         environment: &[u32],
     ) -> Result<u32> {
         match expression {
-            MergeFn::AssertEq => {
-                if old[self_col] != new[self_col] {
+            MergeExpr::AssertEq { column } => {
+                let column = column.index();
+                if old[column] != new[column] {
                     return Err(anyhow!(
                         "illegal merge attempted for function `{}`",
                         self.eg.relation_name(owner)
                     ));
                 }
-                Ok(old[self_col])
+                Ok(old[column])
             }
-            MergeFn::UnionId => Ok(old[self_col].min(new[self_col])),
-            MergeFn::Old => Ok(old[self_col]),
-            MergeFn::New => Ok(new[self_col]),
-            MergeFn::OldCol(index) => Ok(old[*index]),
-            MergeFn::NewCol(index) => Ok(new[*index]),
-            MergeFn::LetVar(slot) => environment.get(*slot).copied().ok_or_else(|| {
-                anyhow!(
-                    "merge for `{}` references unbound let slot {slot}",
-                    self.eg.relation_name(owner)
-                )
-            }),
-            MergeFn::Const(value) => Ok(value.rep()),
-            MergeFn::Primitive(id, arguments) | MergeFn::InputChoicePrimitive(id, arguments) => {
-                let args = self.eval_args(arguments, owner, old, new, self_col, environment)?;
+            MergeExpr::UnionId { column } => {
+                let column = column.index();
+                Ok(old[column].min(new[column]))
+            }
+            MergeExpr::Input { side, column } => match side {
+                MergeInputSide::Prior => Ok(old[column.index()]),
+                MergeInputSide::Incoming => Ok(new[column.index()]),
+            },
+            MergeExpr::Binding(binding) => {
+                environment.get(binding.index()).copied().ok_or_else(|| {
+                    anyhow!(
+                        "merge for `{}` references unbound let binding {}",
+                        self.eg.relation_name(owner),
+                        binding.index()
+                    )
+                })
+            }
+            MergeExpr::Const(value) => Ok(value.rep()),
+            MergeExpr::Primitive {
+                function: id,
+                arguments,
+                ..
+            } => {
+                let args = self.eval_args(arguments, owner, old, new, environment)?;
                 // A custom merge lowered into the FD view's `:merge` may build
                 // terms, so the term encoder's `set-if-empty` / view-column-read ops can
                 // be invoked here too. Service them against the transaction's own
@@ -977,11 +976,11 @@ impl<'a> MergeTransaction<'a> {
                         )
                     })
             }
-            MergeFn::Function(function, arguments) => {
-                if old[self_col] == new[self_col] {
-                    return Ok(old[self_col]);
-                }
-                let key = self.eval_args(arguments, owner, old, new, self_col, environment)?;
+            MergeExpr::Function {
+                function,
+                arguments,
+            } => {
+                let key = self.eval_args(arguments, owner, old, new, environment)?;
                 self.lookup_or_insert(*function, &key)?
                     .map(|values| values[0])
                     .ok_or_else(|| {
@@ -991,15 +990,6 @@ impl<'a> MergeTransaction<'a> {
                             self.eg.relation_name(owner)
                         )
                     })
-            }
-            MergeFn::Lookup(function, arguments) => {
-                let key = self.eval_args(arguments, owner, old, new, self_col, environment)?;
-                Ok(self
-                    .lookup_or_insert(*function, &key)?
-                    .map_or(old[self_col], |values| values[0]))
-            }
-            MergeFn::Columns(_) | MergeFn::Block { .. } => {
-                unreachable!("nested merge programs are rejected by add_table")
             }
         }
     }
@@ -1144,6 +1134,10 @@ fn update_version_map(
 mod tests {
     use super::*;
     use std::panic::{catch_unwind, AssertUnwindSafe};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
 
     use egglog_ast::{
         core::{GenericAtom, GenericAtomTerm, GenericCoreAction, GenericCoreRule, Query},
@@ -1152,7 +1146,8 @@ mod tests {
     };
     use egglog_backend_trait::{
         Backend, BaseValueId, ColumnTy, DefaultVal, ExternalFunctionId, FunctionConfig,
-        MergeAction, MergeFn, ReadMode, RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec,
+        MergeAction, MergeBindingId, MergeExpr, MergeInputSide, MergePrimitiveOrigin, MergeProgram,
+        MergeValueColumn, ReadMode, RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec,
         RuleValue, RuleVar, Value,
     };
     use egglog_numeric_id::NumericId;
@@ -1298,7 +1293,59 @@ mod tests {
         )
     }
 
-    fn id_function(eg: &mut EGraph, name: &str, merge: MergeFn) -> FunctionId {
+    fn prior(column: usize) -> MergeExpr {
+        MergeExpr::Input {
+            side: MergeInputSide::Prior,
+            column: MergeValueColumn::new(column),
+        }
+    }
+
+    fn incoming(column: usize) -> MergeExpr {
+        MergeExpr::Input {
+            side: MergeInputSide::Incoming,
+            column: MergeValueColumn::new(column),
+        }
+    }
+
+    fn assert_equal(column: usize) -> MergeExpr {
+        MergeExpr::AssertEq {
+            column: MergeValueColumn::new(column),
+        }
+    }
+
+    fn union_id(column: usize) -> MergeExpr {
+        MergeExpr::UnionId {
+            column: MergeValueColumn::new(column),
+        }
+    }
+
+    fn primitive(function: ExternalFunctionId, arguments: Vec<MergeExpr>) -> MergeExpr {
+        MergeExpr::Primitive {
+            function,
+            arguments,
+            origin: MergePrimitiveOrigin::Opaque,
+        }
+    }
+
+    fn function(function: FunctionId, arguments: Vec<MergeExpr>) -> MergeExpr {
+        MergeExpr::Function {
+            function,
+            arguments,
+        }
+    }
+
+    fn single_merge(result: MergeExpr) -> MergeProgram {
+        MergeProgram {
+            actions: Vec::new(),
+            results: vec![result],
+        }
+    }
+
+    fn id_function(eg: &mut EGraph, name: &str, merge: MergeExpr) -> FunctionId {
+        id_function_with_program(eg, name, single_merge(merge))
+    }
+
+    fn id_function_with_program(eg: &mut EGraph, name: &str, merge: MergeProgram) -> FunctionId {
         Backend::add_table(
             eg,
             FunctionConfig {
@@ -1321,7 +1368,7 @@ mod tests {
                 n_vals: 1,
                 n_identity_vals: None,
                 default: DefaultVal::Fail,
-                merge: MergeFn::Old,
+                merge: single_merge(prior(0)),
                 name: name.to_string(),
                 can_subsume: false,
             },
@@ -1331,7 +1378,7 @@ mod tests {
     fn tuple_function(
         eg: &mut EGraph,
         name: &str,
-        merge: MergeFn,
+        merge: MergeProgram,
         n_identity_vals: Option<usize>,
         can_subsume: bool,
     ) -> FunctionId {
@@ -1376,7 +1423,7 @@ mod tests {
                 n_vals: 1,
                 n_identity_vals: None,
                 default: DefaultVal::Fail,
-                merge: MergeFn::Old,
+                merge: single_merge(prior(0)),
                 name: "R".to_string(),
                 can_subsume: false,
             },
@@ -1393,7 +1440,7 @@ mod tests {
                 n_vals: 1,
                 n_identity_vals: None,
                 default: DefaultVal::Fail,
-                merge: MergeFn::Old,
+                merge: single_merge(prior(0)),
                 name: "Out".to_string(),
                 can_subsume: false,
             },
@@ -1413,7 +1460,7 @@ mod tests {
                 n_vals: 1,
                 n_identity_vals: None,
                 default: DefaultVal::Fail,
-                merge: MergeFn::Old,
+                merge: single_merge(prior(0)),
                 name: "UF".to_string(),
                 can_subsume: false,
             },
@@ -1444,7 +1491,7 @@ mod tests {
                 n_vals: 1,
                 n_identity_vals: None,
                 default: DefaultVal::Fail,
-                merge: MergeFn::Old,
+                merge: single_merge(prior(0)),
                 name: "Trigger".to_string(),
                 can_subsume: false,
             },
@@ -1456,7 +1503,7 @@ mod tests {
                 n_vals: 1,
                 n_identity_vals: None,
                 default: DefaultVal::Fail,
-                merge: MergeFn::New,
+                merge: single_merge(incoming(0)),
                 name: "F".to_string(),
                 can_subsume: true,
             },
@@ -1644,7 +1691,10 @@ mod tests {
         let f = tuple_function(
             &mut eg,
             "tuple",
-            MergeFn::Columns(vec![MergeFn::NewCol(1), MergeFn::OldCol(0)]),
+            MergeProgram {
+                actions: Vec::new(),
+                results: vec![incoming(1), prior(0)],
+            },
             None,
             false,
         );
@@ -1655,25 +1705,114 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "references OldCol(1) but has only 1 value columns")]
-    fn merge_rejects_out_of_range_output_column() {
+    fn function_result_is_not_skipped_by_an_unchanged_owner_column() {
         let mut eg = EGraph::new();
-        id_function(&mut eg, "invalid column", MergeFn::OldCol(1));
+        let target = Backend::add_table(
+            &mut eg,
+            FunctionConfig {
+                schema: vec![ColumnTy::Id, ColumnTy::Id],
+                n_vals: 1,
+                n_identity_vals: None,
+                default: DefaultVal::FreshId,
+                merge: single_merge(prior(0)),
+                name: "target".to_string(),
+                can_subsume: false,
+            },
+        );
+        let owner = tuple_function(
+            &mut eg,
+            "owner",
+            MergeProgram {
+                actions: Vec::new(),
+                results: vec![
+                    function(target, vec![MergeExpr::Const(Value::new(7))]),
+                    incoming(1),
+                ],
+            },
+            None,
+            false,
+        );
+        eg.insert_live_row(owner, row(&[1, 10, 10]));
+
+        assert!(eg.apply_sets(vec![(owner, row(&[1, 10, 20]))]).unwrap());
+        let target_row = eg.mirror[&target].iter().next().unwrap();
+        assert_eq!(target_row[0], 7);
+        assert_eq!(
+            eg.mirror[&owner],
+            HashSet::from([row(&[1, target_row[1], 20])])
+        );
     }
 
     #[test]
-    #[should_panic(expected = "declares let slot 1, expected 0")]
-    fn merge_rejects_out_of_order_let_slot() {
+    #[should_panic(expected = "references value column 1 but has only 1 value columns")]
+    fn merge_rejects_out_of_range_output_column() {
         let mut eg = EGraph::new();
-        id_function(
+        id_function(&mut eg, "invalid column", prior(1));
+    }
+
+    #[test]
+    #[should_panic(expected = "declares let binding 1, expected 0")]
+    fn merge_rejects_out_of_order_let_binding() {
+        let mut eg = EGraph::new();
+        id_function_with_program(
             &mut eg,
             "invalid let",
-            MergeFn::Block {
+            MergeProgram {
                 actions: vec![MergeAction::Let {
-                    slot: 1,
-                    value: MergeFn::Old,
+                    binding: MergeBindingId::new(1),
+                    value: prior(0),
                 }],
-                result: Box::new(MergeFn::Old),
+                results: vec![prior(0)],
+            },
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "has 2 output columns; merge function calls require exactly one")]
+    fn merge_rejects_tuple_output_function_call() {
+        let mut eg = EGraph::new();
+        let target = tuple_function(
+            &mut eg,
+            "tuple target",
+            MergeProgram {
+                actions: Vec::new(),
+                results: vec![prior(0), prior(1)],
+            },
+            None,
+            false,
+        );
+        id_function(
+            &mut eg,
+            "invalid function call",
+            function(target, vec![MergeExpr::Const(Value::new(7))]),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "with 0 key arguments, expected 1")]
+    fn merge_rejects_function_call_with_wrong_key_arity() {
+        let mut eg = EGraph::new();
+        let target = id_function(&mut eg, "target", prior(0));
+        id_function(
+            &mut eg,
+            "invalid function call",
+            function(target, Vec::new()),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "does not support native union actions inside merge blocks")]
+    fn merge_rejects_native_union_action() {
+        let mut eg = EGraph::new();
+        id_function_with_program(
+            &mut eg,
+            "native union",
+            MergeProgram {
+                actions: vec![MergeAction::Union {
+                    left: prior(0),
+                    right: incoming(0),
+                }],
+                results: vec![prior(0)],
             },
         );
     }
@@ -1688,7 +1827,7 @@ mod tests {
                 n_vals: 1,
                 n_identity_vals: None,
                 default: DefaultVal::FreshId,
-                merge: MergeFn::Old,
+                merge: single_merge(prior(0)),
                 name: "fresh".to_string(),
                 can_subsume: false,
             },
@@ -1696,10 +1835,13 @@ mod tests {
         let f = tuple_function(
             &mut eg,
             "failing tuple",
-            MergeFn::Columns(vec![
-                MergeFn::Lookup(fresh, vec![MergeFn::Const(Value::new(7))]),
-                MergeFn::AssertEq,
-            ]),
+            MergeProgram {
+                actions: Vec::new(),
+                results: vec![
+                    function(fresh, vec![MergeExpr::Const(Value::new(7))]),
+                    assert_equal(1),
+                ],
+            },
             None,
             false,
         );
@@ -1725,12 +1867,12 @@ mod tests {
                 n_vals: 1,
                 n_identity_vals: None,
                 default: DefaultVal::Fail,
-                merge: MergeFn::Block {
-                    actions: vec![MergeAction::Set(
+                merge: MergeProgram {
+                    actions: vec![MergeAction::Set {
                         function,
-                        vec![MergeFn::Const(Value::new(1)), MergeFn::Old],
-                    )],
-                    result: Box::new(MergeFn::Old),
+                        arguments: vec![MergeExpr::Const(Value::new(1)), prior(0)],
+                    }],
+                    results: vec![prior(0)],
                 },
                 name: "recursive".to_string(),
                 can_subsume: false,
@@ -1748,10 +1890,28 @@ mod tests {
     #[test]
     fn identity_column_guard_skips_payload_only_conflicts() {
         let mut eg = EGraph::new();
+        let action_calls = Arc::new(AtomicUsize::new(0));
+        let observed_calls = action_calls.clone();
+        let count_action = Backend::register_external_func(
+            &mut eg,
+            Box::new(egglog_core_relations::make_external_func(
+                move |_, arguments| {
+                    assert!(arguments.is_empty());
+                    observed_calls.fetch_add(1, Ordering::SeqCst);
+                    Some(Value::new(0))
+                },
+            )),
+        );
         let f = tuple_function(
             &mut eg,
             "guarded",
-            MergeFn::Columns(vec![MergeFn::NewCol(0), MergeFn::NewCol(1)]),
+            MergeProgram {
+                actions: vec![MergeAction::Let {
+                    binding: MergeBindingId::new(0),
+                    value: primitive(count_action, Vec::new()),
+                }],
+                results: vec![incoming(0), incoming(1)],
+            },
             Some(1),
             false,
         );
@@ -1759,37 +1919,40 @@ mod tests {
 
         assert!(!eg.apply_sets(vec![(f, row(&[1, 10, 200]))]).unwrap());
         assert_eq!(eg.mirror[&f], HashSet::from([row(&[1, 10, 100])]));
+        assert_eq!(action_calls.load(Ordering::SeqCst), 0);
 
         assert!(eg.apply_sets(vec![(f, row(&[1, 20, 300]))]).unwrap());
         assert_eq!(eg.mirror[&f], HashSet::from([row(&[1, 20, 300])]));
+        assert_eq!(
+            action_calls.load(Ordering::SeqCst),
+            1,
+            "the action must run once for the conflict, not once per result"
+        );
     }
 
     #[test]
-    fn block_let_var_feeds_set_and_tuple_result() {
+    fn merge_program_let_binding_feeds_set_and_tuple_result() {
         let mut eg = EGraph::new();
-        let side = id_function(&mut eg, "side", MergeFn::Old);
+        let side = id_function(&mut eg, "side", prior(0));
         let max = max_primitive(&mut eg);
         let f = tuple_function(
             &mut eg,
             "block",
-            MergeFn::Block {
+            MergeProgram {
                 actions: vec![
                     MergeAction::Let {
-                        slot: 0,
-                        value: MergeFn::Primitive(
-                            max,
-                            vec![MergeFn::OldCol(0), MergeFn::NewCol(0)],
-                        ),
+                        binding: MergeBindingId::new(0),
+                        value: primitive(max, vec![prior(0), incoming(0)]),
                     },
-                    MergeAction::Set(
-                        side,
-                        vec![MergeFn::Const(Value::new(7)), MergeFn::LetVar(0)],
-                    ),
+                    MergeAction::Set {
+                        function: side,
+                        arguments: vec![
+                            MergeExpr::Const(Value::new(7)),
+                            MergeExpr::Binding(MergeBindingId::new(0)),
+                        ],
+                    },
                 ],
-                result: Box::new(MergeFn::Columns(vec![
-                    MergeFn::LetVar(0),
-                    MergeFn::NewCol(1),
-                ])),
+                results: vec![MergeExpr::Binding(MergeBindingId::new(0)), incoming(1)],
             },
             None,
             false,
@@ -1813,15 +1976,12 @@ mod tests {
                 n_vals: 1,
                 n_identity_vals: Some(1),
                 default: DefaultVal::Fail,
-                merge: MergeFn::Block {
-                    actions: vec![MergeAction::Set(
-                        uf,
-                        vec![
-                            MergeFn::Primitive(max, vec![MergeFn::Old, MergeFn::New]),
-                            MergeFn::UnionId,
-                        ],
-                    )],
-                    result: Box::new(MergeFn::UnionId),
+                merge: MergeProgram {
+                    actions: vec![MergeAction::Set {
+                        function: uf,
+                        arguments: vec![primitive(max, vec![prior(0), incoming(0)]), union_id(0)],
+                    }],
+                    results: vec![union_id(0)],
                 },
                 name: "uf".to_string(),
                 can_subsume: false,
@@ -1843,7 +2003,10 @@ mod tests {
         let tuple = tuple_function(
             &mut eg,
             "tuple-output",
-            MergeFn::Columns(vec![MergeFn::OldCol(0), MergeFn::OldCol(1)]),
+            MergeProgram {
+                actions: Vec::new(),
+                results: vec![prior(0), prior(1)],
+            },
             None,
             false,
         );
@@ -1867,7 +2030,10 @@ mod tests {
         let f = tuple_function(
             &mut eg,
             "subsumed tuple",
-            MergeFn::Columns(vec![MergeFn::NewCol(0), MergeFn::NewCol(1)]),
+            MergeProgram {
+                actions: Vec::new(),
+                results: vec![incoming(0), incoming(1)],
+            },
             None,
             true,
         );
@@ -1881,7 +2047,7 @@ mod tests {
     #[test]
     fn merge_set_preserves_subsumed_status() {
         let mut eg = EGraph::new();
-        let f = id_function(&mut eg, "f", MergeFn::New);
+        let f = id_function(&mut eg, "f", incoming(0));
         eg.subsumed.entry(f).or_default().insert(row(&[1, 10]));
 
         assert!(eg.apply_sets(vec![(f, row(&[1, 11]))]).unwrap());
@@ -1894,7 +2060,7 @@ mod tests {
     #[test]
     fn lookup_or_create_finds_subsumed_rows() {
         let mut eg = EGraph::new();
-        let f = id_function(&mut eg, "f", MergeFn::New);
+        let f = id_function(&mut eg, "f", incoming(0));
         eg.db.set_counter(eg.id_counter, 100);
         eg.subsumed.entry(f).or_default().insert(row(&[42, 7]));
 
@@ -1910,7 +2076,7 @@ mod tests {
     #[test]
     fn merge_set_collapses_live_subsumed_key_duplicate() {
         let mut eg = EGraph::new();
-        let f = id_function(&mut eg, "f", MergeFn::New);
+        let f = id_function(&mut eg, "f", incoming(0));
         eg.mirror.entry(f).or_default().insert(row(&[1, 10]));
         eg.subsumed.entry(f).or_default().insert(row(&[1, 11]));
 
@@ -1955,7 +2121,7 @@ mod tests {
                 n_vals: 1,
                 n_identity_vals: None,
                 default: DefaultVal::Fail,
-                merge: MergeFn::Old,
+                merge: single_merge(prior(0)),
                 name: "R".to_string(),
                 can_subsume: true,
             },
@@ -1967,7 +2133,7 @@ mod tests {
                 n_vals: 1,
                 n_identity_vals: None,
                 default: DefaultVal::Fail,
-                merge: MergeFn::Old,
+                merge: single_merge(prior(0)),
                 name: "LiveOut".to_string(),
                 can_subsume: false,
             },
@@ -1979,7 +2145,7 @@ mod tests {
                 n_vals: 1,
                 n_identity_vals: None,
                 default: DefaultVal::Fail,
-                merge: MergeFn::Old,
+                merge: single_merge(prior(0)),
                 name: "AllOut".to_string(),
                 can_subsume: false,
             },
@@ -2260,7 +2426,7 @@ mod tests {
                 n_vals: 1,
                 n_identity_vals: None,
                 default: DefaultVal::Fail,
-                merge: MergeFn::Old,
+                merge: single_merge(prior(0)),
                 name: "View".to_string(),
                 can_subsume: false,
             },
@@ -2272,7 +2438,7 @@ mod tests {
                 n_vals: 1,
                 n_identity_vals: None,
                 default: DefaultVal::Fail,
-                merge: MergeFn::New,
+                merge: single_merge(incoming(0)),
                 name: "Current".to_string(),
                 can_subsume: false,
             },
@@ -2284,7 +2450,7 @@ mod tests {
                 n_vals: 1,
                 n_identity_vals: None,
                 default: DefaultVal::Fail,
-                merge: MergeFn::Old,
+                merge: single_merge(prior(0)),
                 name: "Dummy".to_string(),
                 can_subsume: false,
             },
@@ -2373,7 +2539,7 @@ impl Backend for EGraph {
         validate_merge(&config.merge, config.n_vals, &config.name);
         let merge = Arc::new(config.merge);
         let mut merge_level = 0;
-        visit_merge_read_dependencies(&merge, &mut |dependency| {
+        visit_merge_read_dependencies(&merge, &mut |dependency, argument_count| {
             let dependency = self
                 .relations
                 .get(dependency.rep() as usize)
@@ -2384,6 +2550,17 @@ impl Backend for EGraph {
                         dependency.rep()
                     )
                 });
+            let dependency_n_vals = dependency.arity - dependency.n_keys;
+            assert_eq!(
+                dependency_n_vals, 1,
+                "merge for `{}` calls `{}`, which has {dependency_n_vals} output columns; merge function calls require exactly one",
+                config.name, dependency.name
+            );
+            assert_eq!(
+                argument_count, dependency.n_keys,
+                "merge for `{}` calls `{}` with {argument_count} key arguments, expected {}",
+                config.name, dependency.name, dependency.n_keys
+            );
             merge_level = merge_level.max(dependency.merge_level + 1);
         });
         self.table_ids.insert(config.name.clone(), id);

@@ -84,6 +84,41 @@ fn merge_action_block_let_in_tuple_merge() {
 }
 
 #[test]
+fn merge_action_function_call_is_not_skipped_by_an_unchanged_owner_column() {
+    // Action expressions do not denote any particular owner result column. Even though column
+    // zero is unchanged, `(C 42)` must still be evaluated before it is written to `side`.
+    run(r#"
+        (datatype E (A) (B) (C i64))
+        (function side () E :merge old)
+        (function f () (E E)
+          :merge ((set (side) (C 42))
+                  (values old0 new1)))
+        (set (f) (values (A) (A)))
+        (set (f) (values (A) (B)))
+        (check (= (C 42) (side)))
+    "#)
+    .unwrap();
+}
+
+#[test]
+fn identical_tuple_skips_the_complete_merge_program() {
+    // An exact repeat is not a conflict. It must preserve the old tuple without evaluating either
+    // the action's function call or the result's function call.
+    run(r#"
+        (datatype E (A) (C i64))
+        (function side () E :merge old)
+        (function f () (E E)
+          :merge ((set (side) (C 1))
+                  (values (C 2) old1)))
+        (set (f) (values (A) (A)))
+        (set (f) (values (A) (A)))
+        (check (= (values (A) (A)) (f)))
+        (fail (check (= (C 1) (side))))
+    "#)
+    .unwrap();
+}
+
+#[test]
 fn merge_action_block_rejects_unsupported_action() {
     // `set`/`let`/`union` are supported; other actions (here `panic`) are not meaningful during a
     // merge and are a clear error.

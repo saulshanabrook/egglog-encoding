@@ -47,6 +47,55 @@ fn tuple_merge_combines_columns_independently() {
 }
 
 #[test]
+fn tuple_merge_reads_all_columns_from_one_conflict() {
+    // Both results observe the same complete prior and incoming rows. Computing column zero must
+    // not mutate the inputs seen by column one.
+    run(r#"
+        (function swapped () (i64 i64) :merge (values new1 old0))
+        (set (swapped) (values 10 20))
+        (set (swapped) (values 30 40))
+        (check (= (values 40 10) (swapped)))
+    "#)
+    .unwrap();
+}
+
+#[test]
+fn tuple_function_result_is_not_skipped_by_an_unchanged_owner_column() {
+    // The first owner column is unchanged across the conflict, but its merge expression still
+    // denotes `(C 42)`. Equality of the owner inputs cannot short-circuit an unrelated call.
+    run(r#"
+        (datatype E (A) (B) (C i64))
+        (function f () (E E) :merge (values (C 42) new1))
+        (set (f) (values (A) (A)))
+        (set (f) (values (A) (B)))
+        (check (= (values (C 42) (B)) (f)))
+    "#)
+    .unwrap();
+}
+
+#[test]
+fn failed_tuple_merge_preserves_the_complete_prior_row() {
+    let mut egraph = EGraph::default();
+    egraph
+        .parse_and_run_program(
+            None,
+            r#"
+        (function missing (i64) i64 :merge old)
+        (function t () (i64 i64) :merge (values (missing new0) new1))
+        (set (t) (values 1 10))
+    "#,
+        )
+        .unwrap();
+
+    egraph
+        .parse_and_run_program(None, "(set (t) (values 2 20))")
+        .expect_err("a missing merge function call should reject the conflict");
+    egraph
+        .parse_and_run_program(None, "(check (= (values 1 10) (t)))")
+        .expect("a failed later result must not publish a hybrid tuple");
+}
+
+#[test]
 fn tuple_check_distinguishes_columns() {
     // A `(values ...)` check must match every column, not just the first.
     let bad = run(r#"
@@ -126,14 +175,27 @@ fn single_output_rust_apis_reject_tuple_functions() {
 
 #[test]
 fn tuple_no_merge_asserts_equality() {
-    // With no `:merge`, each output column asserts equality; a conflicting write is an error.
-    run(r#"
+    let mut egraph = EGraph::default();
+    egraph
+        .parse_and_run_program(
+            None,
+            r#"
         (datatype M (V i64))
-        (function iv (M) (i64 i64))
+        (function iv (M) (i64 i64) :no-merge)
         (set (iv (V 0)) (values 1 2))
-        (set (iv (V 0)) (values 1 3))
-    "#)
-    .expect_err("conflicting write under default (assert-eq) merge should fail");
+    "#,
+        )
+        .unwrap();
+
+    let error = egraph
+        .parse_and_run_program(None, "(set (iv (V 0)) (values 1 3))")
+        .expect_err("conflicting write under :no-merge should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("Illegal merge attempted for function iv"),
+        "unexpected conflict error: {error}"
+    );
 }
 
 #[test]

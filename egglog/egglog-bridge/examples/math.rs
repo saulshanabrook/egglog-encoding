@@ -1,9 +1,19 @@
 use egglog_bridge::{
-    ColumnTy, DefaultVal, EGraph, FunctionConfig, MergeFn, add_expressions, define_rule,
+    ColumnTy, DefaultVal, EGraph, FunctionConfig, MergeExpr, MergeProgram, MergeValueColumn,
+    add_expressions, define_rule,
 };
 use mimalloc::MiMalloc;
 use num_rational::Rational64;
 use web_time::Instant;
+
+fn union_merge() -> MergeProgram {
+    MergeProgram {
+        actions: Vec::new(),
+        results: vec![MergeExpr::UnionId {
+            column: MergeValueColumn::new(0),
+        }],
+    }
+}
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
@@ -24,7 +34,7 @@ fn main() {
             n_identity_vals: None,
             schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
             default: DefaultVal::FreshId,
-            merge: MergeFn::UnionId,
+            merge: union_merge(),
             name: "diff".into(),
             can_subsume: false,
         });
@@ -33,7 +43,7 @@ fn main() {
             n_identity_vals: None,
             schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
             default: DefaultVal::FreshId,
-            merge: MergeFn::UnionId,
+            merge: union_merge(),
             name: "integral".into(),
             can_subsume: false,
         });
@@ -43,7 +53,7 @@ fn main() {
             n_identity_vals: None,
             schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
             default: DefaultVal::FreshId,
-            merge: MergeFn::UnionId,
+            merge: union_merge(),
             name: "add".into(),
             can_subsume: false,
         });
@@ -52,7 +62,7 @@ fn main() {
             n_identity_vals: None,
             schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
             default: DefaultVal::FreshId,
-            merge: MergeFn::UnionId,
+            merge: union_merge(),
             name: "sub".into(),
             can_subsume: false,
         });
@@ -62,7 +72,7 @@ fn main() {
             n_identity_vals: None,
             schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
             default: DefaultVal::FreshId,
-            merge: MergeFn::UnionId,
+            merge: union_merge(),
             name: "mul".into(),
             can_subsume: false,
         });
@@ -72,7 +82,7 @@ fn main() {
             n_identity_vals: None,
             schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
             default: DefaultVal::FreshId,
-            merge: MergeFn::UnionId,
+            merge: union_merge(),
             name: "div".into(),
             can_subsume: false,
         });
@@ -82,7 +92,7 @@ fn main() {
             n_identity_vals: None,
             schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
             default: DefaultVal::FreshId,
-            merge: MergeFn::UnionId,
+            merge: union_merge(),
             name: "pow".into(),
             can_subsume: false,
         });
@@ -92,7 +102,7 @@ fn main() {
             n_identity_vals: None,
             schema: vec![ColumnTy::Id, ColumnTy::Id],
             default: DefaultVal::FreshId,
-            merge: MergeFn::UnionId,
+            merge: union_merge(),
             name: "ln".into(),
             can_subsume: false,
         });
@@ -102,7 +112,7 @@ fn main() {
             n_identity_vals: None,
             schema: vec![ColumnTy::Id, ColumnTy::Id],
             default: DefaultVal::FreshId,
-            merge: MergeFn::UnionId,
+            merge: union_merge(),
             name: "sqrt".into(),
             can_subsume: false,
         });
@@ -112,7 +122,7 @@ fn main() {
             n_identity_vals: None,
             schema: vec![ColumnTy::Id, ColumnTy::Id],
             default: DefaultVal::FreshId,
-            merge: MergeFn::UnionId,
+            merge: union_merge(),
             name: "sin".into(),
             can_subsume: false,
         });
@@ -122,7 +132,7 @@ fn main() {
             n_identity_vals: None,
             schema: vec![ColumnTy::Id, ColumnTy::Id],
             default: DefaultVal::FreshId,
-            merge: MergeFn::UnionId,
+            merge: union_merge(),
             name: "cos".into(),
             can_subsume: false,
         });
@@ -132,7 +142,7 @@ fn main() {
             n_identity_vals: None,
             schema: vec![ColumnTy::Base(rational_ty), ColumnTy::Id],
             default: DefaultVal::FreshId,
-            merge: MergeFn::UnionId,
+            merge: union_merge(),
             name: "rat".into(),
             can_subsume: false,
         });
@@ -142,7 +152,7 @@ fn main() {
             n_identity_vals: None,
             schema: vec![ColumnTy::Base(string_ty), ColumnTy::Id],
             default: DefaultVal::FreshId,
-            merge: MergeFn::UnionId,
+            merge: union_merge(),
             name: "var".into(),
             can_subsume: false,
         });

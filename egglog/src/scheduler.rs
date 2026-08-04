@@ -4,7 +4,8 @@ use std::sync::Mutex;
 use core_relations::{ExecutionState, ExternalFunction, ExternalFunctionId, Value};
 use egglog_backend_trait::{BackendExt, ReadMode, RuleSetRun, RuleValue};
 use egglog_bridge::{
-    ColumnTy, DefaultVal, FunctionConfig, FunctionId, MergeFn, RuleId, TableAction,
+    ColumnTy, DefaultVal, FunctionConfig, FunctionId, MergeExpr, MergeInputSide, MergeProgram,
+    MergeValueColumn, RuleId, TableAction,
 };
 use egglog_reports::RunReport;
 use numeric_id::define_id;
@@ -461,7 +462,13 @@ impl SchedulerRuleInfo {
             n_vals: 1,
             n_identity_vals: None,
             default: DefaultVal::Const(unit),
-            merge: MergeFn::Old,
+            merge: MergeProgram {
+                actions: Vec::new(),
+                results: vec![MergeExpr::Input {
+                    side: MergeInputSide::Prior,
+                    column: MergeValueColumn::new(0),
+                }],
+            },
             name: "backend".to_string(),
             can_subsume: false,
         });
@@ -575,7 +582,12 @@ mod test {
             n_vals: 1,
             n_identity_vals: None,
             default: DefaultVal::Const(unit),
-            merge: MergeFn::AssertEq,
+            merge: MergeProgram {
+                actions: Vec::new(),
+                results: vec![MergeExpr::AssertEq {
+                    column: MergeValueColumn::new(0),
+                }],
+            },
             name: "probe".into(),
             can_subsume: false,
         });

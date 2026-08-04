@@ -61,6 +61,14 @@
   with a `(values ...)` clause whose `i`-th element merges column `i` using the bound variables
   `old0`, `new0`, `old1`, `new1`, .... Tuple outputs are only allowed for plain functions (not
   constructors, relations, or view tables) and are not supported by the term/proof encoding.
+- **Breaking Rust API:** `egglog_bridge::MergeFn` is split into `MergeProgram` and `MergeExpr`, and
+  the core-relations callback type is renamed from `MergeFn` to `MergeCallback`. Merge actions now
+  use named fields, and `let` bindings use `MergeBindingId`. `MergeFn::InputChoicePrimitive` becomes
+  `MergeExpr::Primitive` with `MergePrimitiveOrigin::SelectsArgument`; other primitives use
+  `MergePrimitiveOrigin::Opaque`. The unused `MergeFn::Lookup` capability is removed;
+  `MergeExpr::Function` follows the target function's configured default on a miss and fails the
+  merge when that default is `Fail`. Failed result evaluation now rejects the complete owner row
+  instead of publishing successful tuple columns alongside fallback values.
 - **`:merge` action blocks.** A `:merge` may be a value-producing action block
   `:merge (<action>* <result-expr>)`: the actions run first (with `old`/`new` bound), then the
   trailing expression is the merged value. Actions may be `let` (bind an intermediate value used by

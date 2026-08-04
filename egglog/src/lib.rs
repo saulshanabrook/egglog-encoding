@@ -1962,31 +1962,44 @@ impl EGraph {
         }
     }
 
-    fn translate_expr_to_mergefn(
+    fn translate_merge_expr(
         &self,
         expr: &ResolvedExpr,
-        lets: &HashMap<String, usize>,
-    ) -> Result<egglog_bridge::MergeFn, Error> {
+        lets: &HashMap<String, egglog_bridge::MergeBindingId>,
+    ) -> Result<egglog_bridge::MergeExpr, Error> {
+        use egglog_bridge::{MergeExpr, MergeInputSide, MergePrimitiveOrigin, MergeValueColumn};
         match expr {
             GenericExpr::Lit(_, literal) => {
                 let val = literal_to_value(self.backend.base_values(), literal);
-                Ok(egglog_bridge::MergeFn::Const(val))
+                Ok(MergeExpr::Const(val))
             }
             GenericExpr::Var(span, resolved_var) => {
                 let name = resolved_var.name.as_str();
                 // A `let`-bound variable resolves to its environment slot. Otherwise: single-output
                 // merges use `old`/`new`; tuple-output merges use `old0`, `new0`, `old1`, ... to
                 // refer to the old/new value of a specific output column.
-                if let Some(&slot) = lets.get(name) {
-                    Ok(egglog_bridge::MergeFn::LetVar(slot))
+                if let Some(&binding) = lets.get(name) {
+                    Ok(MergeExpr::Binding(binding))
                 } else if name == "old" {
-                    Ok(egglog_bridge::MergeFn::Old)
+                    Ok(MergeExpr::Input {
+                        side: MergeInputSide::Prior,
+                        column: MergeValueColumn::new(0),
+                    })
                 } else if name == "new" {
-                    Ok(egglog_bridge::MergeFn::New)
+                    Ok(MergeExpr::Input {
+                        side: MergeInputSide::Incoming,
+                        column: MergeValueColumn::new(0),
+                    })
                 } else if let Some(i) = name.strip_prefix("old").and_then(|s| s.parse().ok()) {
-                    Ok(egglog_bridge::MergeFn::OldCol(i))
+                    Ok(MergeExpr::Input {
+                        side: MergeInputSide::Prior,
+                        column: MergeValueColumn::new(i),
+                    })
                 } else if let Some(i) = name.strip_prefix("new").and_then(|s| s.parse().ok()) {
-                    Ok(egglog_bridge::MergeFn::NewCol(i))
+                    Ok(MergeExpr::Input {
+                        side: MergeInputSide::Incoming,
+                        column: MergeValueColumn::new(i),
+                    })
                 } else {
                     // NB: type-checking should already catch unbound variables here.
                     Err(TypeError::Unbound(resolved_var.name.clone(), span.clone()).into())
@@ -1995,17 +2008,17 @@ impl EGraph {
             GenericExpr::Call(_, ResolvedCall::Func(f), args) => {
                 let translated_args = args
                     .iter()
-                    .map(|arg| self.translate_expr_to_mergefn(arg, lets))
+                    .map(|arg| self.translate_merge_expr(arg, lets))
                     .collect::<Result<Vec<_>, _>>()?;
-                Ok(egglog_bridge::MergeFn::Function(
-                    self.functions[&f.name].backend_id,
-                    translated_args,
-                ))
+                Ok(MergeExpr::Function {
+                    function: self.functions[&f.name].backend_id,
+                    arguments: translated_args,
+                })
             }
             GenericExpr::Call(_, ResolvedCall::Primitive(p), args) => {
                 let mut translated_args = args
                     .iter()
-                    .map(|arg| self.translate_expr_to_mergefn(arg, lets))
+                    .map(|arg| self.translate_merge_expr(arg, lets))
                     .collect::<Result<Vec<_>, _>>()?;
                 if p.name() == "unstable-fn" {
                     let Some(GenericExpr::Lit(_, Literal::String(name))) = args.first() else {
@@ -2032,74 +2045,62 @@ impl EGraph {
                         p,
                         panic_id,
                     )?;
-                    translated_args[0] =
-                        egglog_bridge::MergeFn::Const(self.backend.base_values().get(resolved));
+                    translated_args[0] = MergeExpr::Const(self.backend.base_values().get(resolved));
                 }
                 let primitive = p.external_id(crate::Context::Write);
-                if primitive_merge_returns_one_input(p.name()) {
-                    Ok(egglog_bridge::MergeFn::InputChoicePrimitive(
-                        primitive,
-                        translated_args,
-                    ))
+                let origin = if primitive_merge_returns_one_input(p.name()) {
+                    MergePrimitiveOrigin::SelectsArgument
                 } else {
-                    Ok(egglog_bridge::MergeFn::Primitive(
-                        primitive,
-                        translated_args,
-                    ))
-                }
+                    MergePrimitiveOrigin::Opaque
+                };
+                Ok(MergeExpr::Primitive {
+                    function: primitive,
+                    arguments: translated_args,
+                    origin,
+                })
             }
-            // `(values ...)` never legitimately reaches here: a top-level tuple merge is
-            // destructured per column in `declare_function`, and any other `(values ...)` is
-            // rejected during type-checking. This arm only keeps the match exhaustive.
+            // `(values ...)` never legitimately reaches here: `translate_merge_program`
+            // destructures a top-level tuple merge per column, and type-checking rejects every
+            // nested use. This arm only keeps the match exhaustive.
             GenericExpr::Call(span, ResolvedCall::Values(_), _) => Err(Error::TypeError(
                 TypeError::TupleMergeNotValues("<merge>".to_owned(), span.clone()),
             )),
         }
     }
 
-    /// Lower a resolved `:merge` (a value-producing action block) to a backend [`MergeFn`], keeping
-    /// the existing merge interpreter. The `result` produces the merged value(s); any `actions` run
-    /// first as effects.
+    /// Lower a resolved `:merge` to an ordered backend merge program.
     /// `self_ref` names the function this merge belongs to and its (peeked) backend id,
     /// so the merge can write into the table being declared.
-    fn translate_merge_to_mergefn(
+    fn translate_merge_program(
         &self,
         merge: &ResolvedMerge,
         self_ref: (&str, egglog_bridge::FunctionId),
-    ) -> Result<egglog_bridge::MergeFn, Error> {
-        use egglog_bridge::MergeFn;
+    ) -> Result<egglog_bridge::MergeProgram, Error> {
+        use egglog_bridge::{MergeBindingId, MergeProgram};
         // Assign each `let`-bound variable an environment slot, in block order, so `set`/`union`
-        // args and the result can refer to it via `MergeFn::LetVar`. Built up front because the
+        // args and the result can refer to it through a typed binding id. Built up front because the
         // result is lowered before the actions.
-        let mut lets = HashMap::<String, usize>::default();
+        let mut lets = HashMap::<String, MergeBindingId>::default();
         for action in merge.actions.iter() {
             if let GenericAction::Let(_, var, _) = action {
                 let slot = lets.len();
-                lets.insert(var.name.as_str().to_owned(), slot);
+                lets.insert(var.name.as_str().to_owned(), MergeBindingId::new(slot));
             }
         }
         // Lower the result value (a `(values ...)` result becomes one column per element).
-        let result = match &merge.result {
-            GenericExpr::Call(_, ResolvedCall::Values(_), cols) => MergeFn::Columns(
-                cols.iter()
-                    .map(|e| self.translate_expr_to_mergefn(e, &lets))
-                    .collect::<Result<Vec<_>, _>>()?,
-            ),
-            expr => self.translate_expr_to_mergefn(expr, &lets)?,
+        let results = match &merge.result {
+            GenericExpr::Call(_, ResolvedCall::Values(_), columns) => columns
+                .iter()
+                .map(|e| self.translate_merge_expr(e, &lets))
+                .collect::<Result<Vec<_>, _>>()?,
+            expr => vec![self.translate_merge_expr(expr, &lets)?],
         };
-        if merge.actions.is_empty() {
-            return Ok(result);
-        }
-        // A value-producing action block: run the effects, then evaluate the result value(s).
         let actions = merge
             .actions
             .iter()
             .map(|a| self.translate_merge_action(a, &lets, self_ref))
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(MergeFn::Block {
-            actions,
-            result: Box::new(result),
-        })
+        Ok(MergeProgram { actions, results })
     }
 
     /// Lower a single resolved merge action to a backend [`MergeAction`]. Supports `set`, `let`, and
@@ -2107,19 +2108,19 @@ impl EGraph {
     fn translate_merge_action(
         &self,
         action: &ResolvedAction,
-        lets: &HashMap<String, usize>,
+        lets: &HashMap<String, egglog_bridge::MergeBindingId>,
         self_ref: (&str, egglog_bridge::FunctionId),
     ) -> Result<egglog_bridge::MergeAction, Error> {
         use egglog_bridge::MergeAction;
         match action {
             GenericAction::Let(_, var, expr) => Ok(MergeAction::Let {
-                slot: lets[var.name.as_str()],
-                value: self.translate_expr_to_mergefn(expr, lets)?,
+                binding: lets[var.name.as_str()],
+                value: self.translate_merge_expr(expr, lets)?,
             }),
-            GenericAction::Union(_, a, b) => Ok(MergeAction::Union(
-                self.translate_expr_to_mergefn(a, lets)?,
-                self.translate_expr_to_mergefn(b, lets)?,
-            )),
+            GenericAction::Union(_, a, b) => Ok(MergeAction::Union {
+                left: self.translate_merge_expr(a, lets)?,
+                right: self.translate_merge_expr(b, lets)?,
+            }),
             GenericAction::Set(_, ResolvedCall::Func(f), keys, val) => {
                 // The function being declared is not in `functions` yet; its id was peeked.
                 let backend_id = if f.name == self_ref.0 {
@@ -2137,18 +2138,21 @@ impl EGraph {
                 };
                 let mut args = keys
                     .iter()
-                    .map(|k| self.translate_expr_to_mergefn(k, lets))
+                    .map(|k| self.translate_merge_expr(k, lets))
                     .collect::<Result<Vec<_>, _>>()?;
                 // A tuple-output target is set with `(values ...)`; expand it into value columns.
                 match val {
                     GenericExpr::Call(_, ResolvedCall::Values(_), cols) => {
                         for c in cols {
-                            args.push(self.translate_expr_to_mergefn(c, lets)?);
+                            args.push(self.translate_merge_expr(c, lets)?);
                         }
                     }
-                    _ => args.push(self.translate_expr_to_mergefn(val, lets)?),
+                    _ => args.push(self.translate_merge_expr(val, lets)?),
                 }
-                Ok(MergeAction::Set(backend_id, args))
+                Ok(MergeAction::Set {
+                    function: backend_id,
+                    arguments: args,
+                })
             }
             other => Err(Error::BackendError(format!(
                 "action `{other}` is not supported inside a :merge block (only `set`, `let`, `union`)"
@@ -2191,19 +2195,30 @@ impl EGraph {
             FunctionSubtype::Custom => decl.term_constructor.is_some(),
         };
 
-        use egglog_bridge::{DefaultVal, MergeFn};
+        use egglog_bridge::{DefaultVal, MergeExpr, MergeProgram, MergeValueColumn};
         // This function's backend id (the id `add_table` below will assign, peeked
         // deterministically), so its merge can write into its own table.
         let own_id = self.backend.peek_next_function_id();
         let merge = match decl.subtype {
-            FunctionSubtype::Constructor => MergeFn::UnionId,
+            FunctionSubtype::Constructor => MergeProgram {
+                actions: Vec::new(),
+                results: (0..num_outputs)
+                    .map(|column| MergeExpr::UnionId {
+                        column: MergeValueColumn::new(column),
+                    })
+                    .collect(),
+            },
             FunctionSubtype::Custom => match &decl.merge {
-                Some(merge) => self.translate_merge_to_mergefn(merge, (&decl.name, own_id))?,
+                Some(merge) => self.translate_merge_program(merge, (&decl.name, own_id))?,
                 // No merge clause: assert equality per output column.
-                None if num_outputs > 1 => {
-                    MergeFn::Columns((0..num_outputs).map(|_| MergeFn::AssertEq).collect())
-                }
-                None => MergeFn::AssertEq,
+                None => MergeProgram {
+                    actions: Vec::new(),
+                    results: (0..num_outputs)
+                        .map(|column| MergeExpr::AssertEq {
+                            column: MergeValueColumn::new(column),
+                        })
+                        .collect(),
+                },
             },
         };
         let backend_id = self

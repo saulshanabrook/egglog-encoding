@@ -1,6 +1,17 @@
-use egglog_bridge::{ColumnTy, DefaultVal, EGraph, FunctionConfig, MergeFn, define_rule};
-
+use egglog_bridge::{
+    ColumnTy, DefaultVal, EGraph, FunctionConfig, MergeExpr, MergeProgram, MergeValueColumn,
+    define_rule,
+};
 use mimalloc::MiMalloc;
+
+fn union_merge() -> MergeProgram {
+    MergeProgram {
+        actions: Vec::new(),
+        results: vec![MergeExpr::UnionId {
+            column: MergeValueColumn::new(0),
+        }],
+    }
+}
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
@@ -19,7 +30,7 @@ fn main() {
             n_identity_vals: None,
             schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
             default: DefaultVal::FreshId,
-            merge: MergeFn::UnionId,
+            merge: union_merge(),
             name: "num".into(),
             can_subsume: false,
         });
@@ -28,7 +39,7 @@ fn main() {
             n_identity_vals: None,
             schema: vec![ColumnTy::Id; 3],
             default: DefaultVal::FreshId,
-            merge: MergeFn::UnionId,
+            merge: union_merge(),
             name: "add".into(),
             can_subsume: false,
         });

@@ -824,10 +824,11 @@ where
     /// functional dependency (also called a primary key) on its inputs to its output(s).
     ///
     /// ```text
-    /// (function <name:Ident> <schema:Schema> <cost:Cost>
-    ///        (:on_merge <List<Action>>)?
-    ///        (:merge <Expr>)?)
-    ///```
+    /// (function <name:Ident> <schema:Schema> [<merge-option>] [:internal-cost <Cost>])
+    /// <merge-option> ::= :merge <Expr>
+    ///                  | :merge (<MergeAction>* <Expr>)
+    ///                  | :no-merge
+    /// ```
     /// A function can have a `cost` for extraction.
     ///
     /// The output of a function is usually a single sort, but may be a parenthesized list of
@@ -837,11 +838,10 @@ where
     /// `(set (f x) (values a b))`, and merged with a `(values e0 e1 ...)` clause where `ei` merges
     /// column `i` using the bound variables `old0`, `new0`, `old1`, `new1`, ....
     ///
-    /// Finally, it can have a `merge` and `on_merge`, which are triggered when
-    /// the function dependency is violated.
-    /// In this case, the merge expression determines which of the two outputs
-    /// for the same input is used.
-    /// The `on_merge` actions are run after the merge expression is evaluated.
+    /// Finally, its `:merge` is triggered when the function dependency is violated. A bare
+    /// `:merge <expr>` evaluates `<expr>` to determine the merged output. The action-block form
+    /// `:merge (<merge-action>* <expr>)` runs its `let`, `set`, and `union` actions first, then
+    /// evaluates the trailing expression to determine the merged output.
     ///
     /// Note that the `:merge` expression must be monotonic
     /// for the behavior of the egglog program to be consistent and defined.

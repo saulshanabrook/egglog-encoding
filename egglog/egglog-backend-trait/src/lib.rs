@@ -40,7 +40,7 @@
 //!
 //! For function tables, `set` observes the current row for the function's input
 //! key, if any, and folds conflicting output values through the configured
-//! [`MergeFn`]. In each fold, `old` is the currently retained output value and
+//! [`MergeProgram`]. In each fold, `old` is the currently retained output value and
 //! `new` is the incoming staged value. Implementations may choose their own
 //! physical representation, but they must not derive `old`/`new` from unordered
 //! table iteration; non-monotone merge expressions are already user-visible
@@ -80,7 +80,7 @@
 //! ## Relationship to `egglog-bridge`
 //!
 //! This crate depends on `egglog-bridge` and re-exports its vocabulary types
-//! ([`FunctionConfig`], [`MergeFn`], [`ColumnTy`], [`Value`], …) so an
+//! ([`FunctionConfig`], [`MergeProgram`], [`MergeExpr`], [`ColumnTy`], [`Value`], …) so an
 //! implementer imports them from here. It also provides the reference
 //! `impl Backend for egglog_bridge::EGraph` (see `backend_impl`).
 
@@ -98,7 +98,8 @@ mod backend_impl;
 
 pub use egglog_bridge::{
     ActionRegistry, ColumnTy, DefaultVal, FunctionConfig, FunctionId, FunctionReplaySpec,
-    MergeAction, MergeFn, RuleId, ScanEntry,
+    MergeAction, MergeBindingId, MergeExpr, MergeInputSide, MergePrimitiveOrigin, MergeProgram,
+    MergeValueColumn, RuleId, ScanEntry,
 };
 pub use egglog_core_relations::{
     BaseValue, BaseValueId, BaseValues, ContainerValue, ContainerValues, CounterId, ExecutionState,

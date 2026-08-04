@@ -188,7 +188,7 @@ impl Rows {
 /// tuple. The fourth argument is a mutable reference to a vector that will be used to store the
 /// output of the merge function _if_ it changes the value of the tuple. If it does not, then the
 /// merge function should return `false`.
-pub type MergeFn =
+pub type MergeCallback =
     dyn Fn(&mut ExecutionState, &[Value], &[Value], &mut Vec<Value>) -> bool + Send + Sync;
 
 pub struct SortedWritesTable {
@@ -204,7 +204,7 @@ pub struct SortedWritesTable {
     offsets: Vec<(Value, RowId)>,
 
     pending_state: Arc<PendingState>,
-    merge: Arc<MergeFn>,
+    merge: Arc<MergeCallback>,
     to_rebuild: Vec<ColumnId>,
     rebuild_index: Index<ColumnIndex>,
     // Used to manage incremental rebuilds.
@@ -1032,7 +1032,7 @@ impl SortedWritesTable {
         n_columns: usize,
         sort_by: Option<ColumnId>,
         to_rebuild: Vec<ColumnId>,
-        merge_fn: Box<MergeFn>,
+        merge_fn: Box<MergeCallback>,
     ) -> Self {
         let hash = ShardedHashTable::<TableEntry>::default();
         let shard_data = hash.shard_data();

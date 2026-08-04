@@ -22,28 +22,179 @@ use once_cell::sync::Lazy;
 
 use crate::{
     ColumnTy, DefaultVal, EGraph, FunctionConfig, FunctionId, FunctionReplaySpec,
-    GroundedRuleBinding, GroundedRuleRun, MergeAction, MergeFn, QueryEntry, ReplayCallSpec,
+    GroundedRuleBinding, GroundedRuleRun, MergeAction, MergeBindingId, MergeExpr, MergeInputSide,
+    MergePrimitiveOrigin, MergeProgram, MergeValueColumn, QueryEntry, ReplayCallSpec,
     ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTableKind, SourceInputRow, TableAction,
     TraceLifecycleError, Variable, add_expressions, define_rule,
 };
 
+fn prior(column: usize) -> MergeExpr {
+    MergeExpr::Input {
+        side: MergeInputSide::Prior,
+        column: MergeValueColumn::new(column),
+    }
+}
+
+fn incoming(column: usize) -> MergeExpr {
+    MergeExpr::Input {
+        side: MergeInputSide::Incoming,
+        column: MergeValueColumn::new(column),
+    }
+}
+
+fn assert_equal(column: usize) -> MergeExpr {
+    MergeExpr::AssertEq {
+        column: MergeValueColumn::new(column),
+    }
+}
+
+fn union_id(column: usize) -> MergeExpr {
+    MergeExpr::UnionId {
+        column: MergeValueColumn::new(column),
+    }
+}
+
+fn primitive(
+    function: ExternalFunctionId,
+    arguments: Vec<MergeExpr>,
+    origin: MergePrimitiveOrigin,
+) -> MergeExpr {
+    MergeExpr::Primitive {
+        function,
+        arguments,
+        origin,
+    }
+}
+
+fn function(function: FunctionId, arguments: Vec<MergeExpr>) -> MergeExpr {
+    MergeExpr::Function {
+        function,
+        arguments,
+    }
+}
+
+fn single_merge(result: MergeExpr) -> MergeProgram {
+    MergeProgram {
+        actions: Vec::new(),
+        results: vec![result],
+    }
+}
+
 #[test]
 fn only_explicit_input_choice_primitives_receive_structural_selector() {
-    let primitive = ExternalFunctionId::new_const(0);
-    let generic = MergeFn::Primitive(primitive, vec![MergeFn::Old, MergeFn::New]);
+    let function = ExternalFunctionId::new_const(0);
+    let generic = primitive(
+        function,
+        vec![prior(0), incoming(0)],
+        MergePrimitiveOrigin::Opaque,
+    );
     assert_eq!(
-        generic.structural_origin_selector(1, 0),
+        generic.structural_origin_selector(1),
         core_relations::MergeOriginSelector::Unsupported,
         "a generic binary primitive such as addition must fail before its callback"
     );
-    let choice = MergeFn::InputChoicePrimitive(primitive, vec![MergeFn::Old, MergeFn::New]);
+    let choice = primitive(
+        function,
+        vec![prior(0), incoming(0)],
+        MergePrimitiveOrigin::SelectsArgument,
+    );
     assert_eq!(
-        choice.structural_origin_selector(1, 0),
+        choice.structural_origin_selector(1),
         core_relations::MergeOriginSelector::PriorOrIncoming {
             incoming_column: 1,
             prior_column: 1,
         }
     );
+}
+
+#[test]
+#[should_panic(expected = "declares let binding 1, expected 0")]
+fn merge_rejects_out_of_order_binding() {
+    let mut egraph = EGraph::default();
+    egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeProgram {
+            actions: vec![MergeAction::Let {
+                binding: MergeBindingId::new(1),
+                value: prior(0),
+            }],
+            results: vec![prior(0)],
+        },
+        name: "out-of-order-binding".into(),
+        can_subsume: false,
+    });
+}
+
+#[test]
+#[should_panic(expected = "references let binding 0 before it is bound")]
+fn merge_rejects_unbound_binding_reference() {
+    let mut egraph = EGraph::default();
+    egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: single_merge(MergeExpr::Binding(MergeBindingId::new(0))),
+        name: "unbound-binding".into(),
+        can_subsume: false,
+    });
+}
+
+#[test]
+#[should_panic(expected = "has 2 output columns; merge function calls require exactly one")]
+fn merge_rejects_tuple_output_function_call() {
+    let mut egraph = EGraph::default();
+    let target = egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
+        n_vals: 2,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeProgram {
+            actions: Vec::new(),
+            results: vec![prior(0), prior(1)],
+        },
+        name: "tuple-target".into(),
+        can_subsume: false,
+    });
+    egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: single_merge(function(
+            target,
+            vec![MergeExpr::Const(Value::from_usize(7))],
+        )),
+        name: "invalid-function-call".into(),
+        can_subsume: false,
+    });
+}
+
+#[test]
+#[should_panic(expected = "with 0 key arguments, expected 1")]
+fn merge_rejects_function_call_with_wrong_key_arity() {
+    let mut egraph = EGraph::default();
+    let target = egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: single_merge(prior(0)),
+        name: "target".into(),
+        can_subsume: false,
+    });
+    egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: single_merge(function(target, Vec::new())),
+        name: "invalid-function-call".into(),
+        can_subsume: false,
+    });
 }
 
 #[test]
@@ -87,7 +238,7 @@ fn conflicting_source_constructor_container_type_is_rejected_before_staging() {
             n_identity_vals: None,
             schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
             default: DefaultVal::FreshId,
-            merge: MergeFn::UnionId,
+            merge: single_merge(union_id(0)),
             name: "container-constructor".into(),
             can_subsume: false,
         });
@@ -217,7 +368,10 @@ fn source_constructor_replay_rejects_tuple_outputs_before_staging() {
             n_identity_vals: None,
             schema: vec![ColumnTy::Base(int_base), ColumnTy::Id, ColumnTy::Id],
             default: DefaultVal::FreshId,
-            merge: MergeFn::Columns(vec![MergeFn::UnionId, MergeFn::UnionId]),
+            merge: MergeProgram {
+                actions: Vec::new(),
+                results: vec![union_id(0), union_id(1)],
+            },
             name: "tuple-constructor".into(),
             can_subsume: false,
         });
@@ -274,7 +428,7 @@ fn trace_capture_rejects_unsupported_merge_before_table_allocation() {
             n_identity_vals: None,
             schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
             default: DefaultVal::FreshId,
-            merge: MergeFn::UnionId,
+            merge: single_merge(union_id(0)),
             name: "constructor".into(),
             can_subsume: false,
         });
@@ -287,7 +441,7 @@ fn trace_capture_rejects_unsupported_merge_before_table_allocation() {
                 n_identity_vals: None,
                 schema: vec![ColumnTy::Id, ColumnTy::Id],
                 default: DefaultVal::Fail,
-                merge: MergeFn::Function(constructor, vec![MergeFn::Old, MergeFn::New]),
+                merge: single_merge(function(constructor, vec![prior(0), incoming(0)])),
                 name: "unsupported-merge".into(),
                 can_subsume: false,
             })
@@ -321,7 +475,7 @@ fn grounded_wave_point_probes_every_match_before_running_any_head_without_planni
         n_identity_vals: None,
         schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "grounded-input".into(),
         can_subsume: false,
     });
@@ -417,7 +571,7 @@ fn grounded_wave_uses_one_common_prestate_and_reports_committed_matches() {
         n_identity_vals: None,
         schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "grounded-delete-input".into(),
         can_subsume: false,
     });
@@ -493,7 +647,7 @@ fn grounded_wave_guard_failure_runs_no_head() {
         n_identity_vals: None,
         schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "grounded-guard-input".into(),
         can_subsume: false,
     });
@@ -575,7 +729,7 @@ fn grounded_wave_head_failure_aborts_earlier_staged_mutations() {
         n_identity_vals: None,
         schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "grounded-atomic-input".into(),
         can_subsume: false,
     });
@@ -584,7 +738,7 @@ fn grounded_wave_head_failure_aborts_earlier_staged_mutations() {
         n_identity_vals: None,
         schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "grounded-atomic-output".into(),
         can_subsume: false,
     });
@@ -657,7 +811,7 @@ fn grounded_wave_resolves_proof_like_probe_dependencies_without_supplied_proof_v
         n_identity_vals: None,
         schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "proof-source".into(),
         can_subsume: false,
     });
@@ -666,7 +820,7 @@ fn grounded_wave_resolves_proof_like_probe_dependencies_without_supplied_proof_v
         n_identity_vals: None,
         schema: vec![ColumnTy::Id, ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "proof-premise".into(),
         can_subsume: false,
     });
@@ -743,7 +897,7 @@ fn grounded_wave_computes_hidden_primitive_keys_before_point_probes() {
         n_identity_vals: None,
         schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "computed-key-source".into(),
         can_subsume: false,
     });
@@ -815,7 +969,7 @@ fn grounded_wave_handles_reverse_primitive_dependency_order() {
         n_identity_vals: None,
         schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "reverse-primitive-source".into(),
         can_subsume: false,
     });
@@ -902,7 +1056,7 @@ fn ordinary_planned_rule_keeps_primitive_result_constraint() {
         n_identity_vals: None,
         schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "ordinary-primitive-source".into(),
         can_subsume: false,
     });
@@ -1025,7 +1179,7 @@ fn removing_last_table_restores_shadowed_registry_entry_and_id() {
         n_vals: 1,
         n_identity_vals: None,
         default: DefaultVal::Const(unit),
-        merge: MergeFn::AssertEq,
+        merge: single_merge(assert_equal(0)),
         name: "temporary".into(),
         can_subsume: false,
     };
@@ -1063,7 +1217,7 @@ fn removing_unknown_or_non_last_function_preserves_registrations() {
         n_vals: 1,
         n_identity_vals: None,
         default: DefaultVal::Const(unit),
-        merge: MergeFn::AssertEq,
+        merge: single_merge(assert_equal(0)),
         name: name.into(),
         can_subsume: false,
     };
@@ -1123,7 +1277,7 @@ fn failed_database_table_removal_restores_function_registration() {
         n_vals: 1,
         n_identity_vals: None,
         default: DefaultVal::Const(unit),
-        merge: MergeFn::AssertEq,
+        merge: single_merge(assert_equal(0)),
         name: "function".into(),
         can_subsume: false,
     });
@@ -1162,7 +1316,7 @@ fn ac_test(can_subsume: bool) {
         n_identity_vals: None,
         schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "num".into(),
         can_subsume,
     });
@@ -1171,7 +1325,7 @@ fn ac_test(can_subsume: bool) {
         n_identity_vals: None,
         schema: vec![ColumnTy::Id; 3],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "add".into(),
         can_subsume,
     });
@@ -1244,7 +1398,7 @@ fn ac_fail() {
         n_identity_vals: None,
         schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "num".into(),
         can_subsume: false,
     });
@@ -1253,7 +1407,7 @@ fn ac_fail() {
         n_identity_vals: None,
         schema: vec![ColumnTy::Id; 3],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "add".into(),
         can_subsume: false,
     });
@@ -1344,7 +1498,7 @@ fn math_test(mut egraph: EGraph, can_subsume: bool) {
         n_identity_vals: None,
         schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "diff".into(),
         can_subsume,
     });
@@ -1353,7 +1507,7 @@ fn math_test(mut egraph: EGraph, can_subsume: bool) {
         n_identity_vals: None,
         schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "integral".into(),
         can_subsume,
     });
@@ -1362,7 +1516,7 @@ fn math_test(mut egraph: EGraph, can_subsume: bool) {
         n_identity_vals: None,
         schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "add".into(),
         can_subsume,
     });
@@ -1371,7 +1525,7 @@ fn math_test(mut egraph: EGraph, can_subsume: bool) {
         n_identity_vals: None,
         schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "sub".into(),
         can_subsume,
     });
@@ -1380,7 +1534,7 @@ fn math_test(mut egraph: EGraph, can_subsume: bool) {
         n_identity_vals: None,
         schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "mul".into(),
         can_subsume,
     });
@@ -1389,7 +1543,7 @@ fn math_test(mut egraph: EGraph, can_subsume: bool) {
         n_identity_vals: None,
         schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "div".into(),
         can_subsume,
     });
@@ -1398,7 +1552,7 @@ fn math_test(mut egraph: EGraph, can_subsume: bool) {
         n_identity_vals: None,
         schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "pow".into(),
         can_subsume,
     });
@@ -1408,7 +1562,7 @@ fn math_test(mut egraph: EGraph, can_subsume: bool) {
         n_identity_vals: None,
         schema: vec![ColumnTy::Id, ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "ln".into(),
         can_subsume,
     });
@@ -1417,7 +1571,7 @@ fn math_test(mut egraph: EGraph, can_subsume: bool) {
         n_identity_vals: None,
         schema: vec![ColumnTy::Id, ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "sqrt".into(),
         can_subsume,
     });
@@ -1426,7 +1580,7 @@ fn math_test(mut egraph: EGraph, can_subsume: bool) {
         n_identity_vals: None,
         schema: vec![ColumnTy::Id, ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "sin".into(),
         can_subsume,
     });
@@ -1435,7 +1589,7 @@ fn math_test(mut egraph: EGraph, can_subsume: bool) {
         n_identity_vals: None,
         schema: vec![ColumnTy::Id, ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "cos".into(),
         can_subsume,
     });
@@ -1444,7 +1598,7 @@ fn math_test(mut egraph: EGraph, can_subsume: bool) {
         n_identity_vals: None,
         schema: vec![ColumnTy::Base(rational_ty), ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "rat".into(),
         can_subsume,
     });
@@ -1453,7 +1607,7 @@ fn math_test(mut egraph: EGraph, can_subsume: bool) {
         n_identity_vals: None,
         schema: vec![ColumnTy::Base(string_ty), ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "var".into(),
         can_subsume,
     });
@@ -1697,7 +1851,7 @@ fn container_test() {
         n_identity_vals: None,
         schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "num".into(),
         can_subsume: false,
     });
@@ -1706,7 +1860,7 @@ fn container_test() {
         n_identity_vals: None,
         schema: vec![ColumnTy::Id; 3],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "add".into(),
         can_subsume: false,
     });
@@ -1715,7 +1869,7 @@ fn container_test() {
         n_identity_vals: None,
         schema: vec![ColumnTy::Id; 2],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "vec".into(),
         can_subsume: false,
     });
@@ -1888,7 +2042,7 @@ fn run_query_prim_container_match_case(seminaive: bool, seed_canonical: bool) ->
         n_identity_vals: None,
         schema: vec![ColumnTy::Id, ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "k".into(),
         can_subsume: false,
     });
@@ -1897,7 +2051,7 @@ fn run_query_prim_container_match_case(seminaive: bool, seed_canonical: bool) ->
         n_identity_vals: None,
         schema: vec![ColumnTy::Id, ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "w".into(),
         can_subsume: false,
     });
@@ -1906,7 +2060,7 @@ fn run_query_prim_container_match_case(seminaive: bool, seed_canonical: bool) ->
         n_identity_vals: None,
         schema: vec![ColumnTy::Id, ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "l".into(),
         can_subsume: false,
     });
@@ -1996,7 +2150,7 @@ fn rhs_only_rule() {
         n_identity_vals: None,
         schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "num".into(),
         can_subsume: false,
     });
@@ -2048,7 +2202,7 @@ fn rhs_only_rule_only_runs_once() {
 }
 
 #[test]
-fn mergefn_arithmetic() {
+fn merge_expr_arithmetic() {
     let mut egraph = EGraph::default();
     let int_base = egraph.base_values_mut().register_type::<i64>();
 
@@ -2080,19 +2234,24 @@ fn mergefn_arithmetic() {
     let value_1 = egraph.base_values_mut().get(1i64);
 
     // Create a function with merge function (+ 1 (* old new))
-    // This uses nested MergeFn::Primitive with external functions to build the complex merge function
+    // This uses nested MergeExpr::Primitive with external functions to build the complex merge function
     let f_table = egraph.add_table(FunctionConfig {
         n_vals: 1,
         n_identity_vals: None,
         schema: vec![ColumnTy::Base(int_base), ColumnTy::Base(int_base)],
         default: DefaultVal::Fail,
-        merge: MergeFn::Primitive(
+        merge: single_merge(primitive(
             add_func,
             vec![
-                MergeFn::Const(value_1),
-                MergeFn::Primitive(multiply_func, vec![MergeFn::Old, MergeFn::New]),
+                MergeExpr::Const(value_1),
+                primitive(
+                    multiply_func,
+                    vec![prior(0), incoming(0)],
+                    MergePrimitiveOrigin::Opaque,
+                ),
             ],
-        ),
+            MergePrimitiveOrigin::Opaque,
+        )),
         name: "f".into(),
         can_subsume: false,
     });
@@ -2174,7 +2333,7 @@ fn mergefn_arithmetic() {
 }
 
 #[test]
-fn mergefn_nested_function() {
+fn merge_expr_nested_function() {
     let mut egraph = EGraph::default();
     let int_base = egraph.base_values_mut().register_type::<i64>();
 
@@ -2184,25 +2343,25 @@ fn mergefn_nested_function() {
         n_identity_vals: None,
         schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "g".into(),
         can_subsume: true,
     });
 
     // Create a function f whose merge function is (g (g new new) (g old old))
-    // This uses nested MergeFn::Function to build the complex merge function
+    // This uses nested MergeExpr::Function to build the complex merge function
     let f_table = egraph.add_table(FunctionConfig {
         n_vals: 1,
         n_identity_vals: None,
         schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::Function(
+        merge: single_merge(function(
             g_table,
             vec![
-                MergeFn::Function(g_table, vec![MergeFn::New, MergeFn::New]),
-                MergeFn::Function(g_table, vec![MergeFn::Old, MergeFn::Old]),
+                function(g_table, vec![incoming(0), incoming(0)]),
+                function(g_table, vec![prior(0), prior(0)]),
             ],
-        ),
+        )),
         name: "f".into(),
         can_subsume: true,
     });
@@ -2310,7 +2469,7 @@ fn constrain_prims_simple() {
         n_identity_vals: None,
         schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "f".into(),
         can_subsume: false,
     });
@@ -2319,7 +2478,7 @@ fn constrain_prims_simple() {
         n_identity_vals: None,
         schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "g".into(),
         can_subsume: false,
     });
@@ -2407,7 +2566,7 @@ fn constrain_prims_abstract() {
         n_identity_vals: None,
         schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "f".into(),
         can_subsume: false,
     });
@@ -2416,7 +2575,7 @@ fn constrain_prims_abstract() {
         n_identity_vals: None,
         schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "g".into(),
         can_subsume: false,
     });
@@ -2508,7 +2667,7 @@ fn basic_subsumption() {
         n_identity_vals: None,
         schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "f".into(),
         can_subsume: true,
     });
@@ -2517,7 +2676,7 @@ fn basic_subsumption() {
         n_identity_vals: None,
         schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
         default: DefaultVal::FreshId,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "g".into(),
         can_subsume: false,
     });
@@ -2591,7 +2750,7 @@ fn lookup_failure_panics() {
         n_identity_vals: None,
         schema: vec![ColumnTy::Id, ColumnTy::Id],
         default: DefaultVal::Fail,
-        merge: MergeFn::UnionId,
+        merge: single_merge(union_id(0)),
         name: "test".into(),
         can_subsume: false,
     });
@@ -2702,8 +2861,8 @@ fn panic_functions_trigger_early_stop() {
 fn self_referential_merge_union_find() {
     // A merge that writes back into its OWN table, like the term encoding's single-table UF. On a
     // conflicting parent it keeps the smaller endpoint and re-inserts the displaced edge into
-    // itself. Exercises `peek_next_function_id`, `MergeFn::TableInsert` into self, `Seq`, and the
-    // backend's self-write buffer pre-seed.
+    // itself. Exercises `peek_next_function_id`, `MergeAction::Set` into self, and the backend's
+    // self-write buffer pre-seed.
     let mut egraph = EGraph::default();
     let int_base = egraph.base_values_mut().register_type::<i64>();
     let min_func = egraph.register_external_func(Box::new(core_relations::make_external_func(
@@ -2729,8 +2888,18 @@ fn self_referential_merge_union_find() {
 
     // The merge references the table itself, so reserve its id before creating it.
     let uf_id = egraph.peek_next_function_id();
-    let min = || MergeFn::Primitive(min_func, vec![MergeFn::Old, MergeFn::New]);
-    let max = MergeFn::Primitive(max_func, vec![MergeFn::Old, MergeFn::New]);
+    let min = || {
+        primitive(
+            min_func,
+            vec![prior(0), incoming(0)],
+            MergePrimitiveOrigin::Opaque,
+        )
+    };
+    let max = primitive(
+        max_func,
+        vec![prior(0), incoming(0)],
+        MergePrimitiveOrigin::Opaque,
+    );
     let uf = egraph.add_table(FunctionConfig {
         schema: vec![ColumnTy::Base(int_base), ColumnTy::Base(int_base)],
         n_vals: 1,
@@ -2738,9 +2907,12 @@ fn self_referential_merge_union_find() {
         // unchanged, so the body stages the displaced edge unconditionally.
         n_identity_vals: Some(1),
         default: DefaultVal::Fail,
-        merge: MergeFn::Block {
-            actions: vec![MergeAction::Set(uf_id, vec![max, min()])],
-            result: Box::new(min()),
+        merge: MergeProgram {
+            actions: vec![MergeAction::Set {
+                function: uf_id,
+                arguments: vec![max, min()],
+            }],
+            results: vec![min()],
         },
         name: "uf".into(),
         can_subsume: false,
@@ -2797,6 +2969,14 @@ fn identity_column_guard_skips_payload_only_conflicts() {
     // changes the identity runs the merge.
     let mut egraph = EGraph::default();
     let int_base = egraph.base_values_mut().register_type::<i64>();
+    let action_calls = Arc::new(AtomicUsize::new(0));
+    let observed_calls = action_calls.clone();
+    let count_action =
+        egraph.register_external_func(Box::new(make_external_func(move |_state, values| {
+            assert!(values.is_empty());
+            observed_calls.fetch_add(1, Ordering::SeqCst);
+            Some(Value::new(0))
+        })));
     let f = egraph.add_table(FunctionConfig {
         schema: vec![
             ColumnTy::Base(int_base), // key
@@ -2808,7 +2988,13 @@ fn identity_column_guard_skips_payload_only_conflicts() {
         n_identity_vals: Some(1),
         default: DefaultVal::Fail,
         // On a real (identity) conflict, take the new row.
-        merge: MergeFn::Columns(vec![MergeFn::NewCol(0), MergeFn::NewCol(1)]),
+        merge: MergeProgram {
+            actions: vec![MergeAction::Let {
+                binding: MergeBindingId::new(0),
+                value: primitive(count_action, Vec::new(), MergePrimitiveOrigin::Opaque),
+            }],
+            results: vec![incoming(0), incoming(1)],
+        },
         name: "f".into(),
         can_subsume: false,
     });
@@ -2844,11 +3030,17 @@ fn identity_column_guard_skips_payload_only_conflicts() {
         (10, 100),
         "payload-only change should keep the existing row"
     );
+    assert_eq!(action_calls.load(Ordering::SeqCst), 0);
     set(&mut egraph, 20, 300); // identity 10 -> 20 -> merge runs, takes new
     assert_eq!(
         read_row(&egraph),
         (20, 300),
         "an identity change should run the merge"
+    );
+    assert_eq!(
+        action_calls.load(Ordering::SeqCst),
+        1,
+        "the action must run once for the conflict, not once per result"
     );
 }
 
@@ -2865,7 +3057,10 @@ fn tuple_subsume_preserves_all_outputs() {
         n_vals: 2,
         n_identity_vals: None,
         default: DefaultVal::Fail,
-        merge: MergeFn::Columns(vec![MergeFn::OldCol(0), MergeFn::OldCol(1)]),
+        merge: MergeProgram {
+            actions: Vec::new(),
+            results: vec![prior(0), prior(1)],
+        },
         name: "tuple-subsume".into(),
         can_subsume: true,
     });

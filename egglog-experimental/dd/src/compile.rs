@@ -1,125 +1,120 @@
 //! DD-specific physical values and join plans.
 
 use egglog_ast::core::GenericAtomTerm;
-use egglog_backend_trait::{FunctionId, MergeAction, MergeFn, ReadMode, RuleValue, RuleVar};
+use egglog_backend_trait::{
+    FunctionId, MergeAction, MergeExpr, MergeProgram, ReadMode, RuleValue, RuleVar,
+};
 use egglog_numeric_id::NumericId;
 
 /// Variable-width row stored in the host-side relation mirror.
 pub type Row = Box<[u32]>;
 
-pub(super) fn validate_merge(merge: &MergeFn, n_vals: usize, name: &str) {
-    let (actions, result) = match merge {
-        MergeFn::Block { actions, result } => (actions.as_slice(), result.as_ref()),
-        result => (&[][..], result),
-    };
-
-    let mut available_slots = 0;
-    for action in actions {
+pub(super) fn validate_merge(merge: &MergeProgram, n_vals: usize, name: &str) {
+    let mut available_bindings = 0;
+    for action in &merge.actions {
         match action {
-            MergeAction::Set(_, arguments) => {
+            MergeAction::Set { arguments, .. } => {
                 for argument in arguments {
-                    validate_merge_expr(argument, n_vals, name, available_slots);
+                    validate_merge_expr(argument, n_vals, name, available_bindings);
                 }
             }
-            MergeAction::Let { slot, value } => {
+            MergeAction::Let { binding, value } => {
                 assert_eq!(
-                    *slot, available_slots,
-                    "merge for `{name}` declares let slot {slot}, expected {available_slots}"
+                    binding.index(),
+                    available_bindings,
+                    "merge for `{name}` declares let binding {}, expected {available_bindings}",
+                    binding.index()
                 );
-                validate_merge_expr(value, n_vals, name, available_slots);
-                available_slots += 1;
+                validate_merge_expr(value, n_vals, name, available_bindings);
+                available_bindings += 1;
             }
-            MergeAction::Union(..) => panic!(
+            MergeAction::Union { .. } => panic!(
                 "DD backend does not support native union actions inside merge blocks for `{name}`; term encoding must lower equality effects to table writes"
             ),
         }
     }
 
-    let results = match result {
-        MergeFn::Columns(columns) => columns.as_slice(),
-        result => std::slice::from_ref(result),
-    };
     assert_eq!(
-        results.len(),
+        merge.results.len(),
         n_vals,
         "merge for `{name}` must produce {n_vals} value column(s), got {}",
-        results.len()
+        merge.results.len()
     );
-    for result in results {
-        validate_merge_expr(result, n_vals, name, available_slots);
+    for result in &merge.results {
+        validate_merge_expr(result, n_vals, name, available_bindings);
     }
 }
 
-fn validate_merge_expr(merge: &MergeFn, n_vals: usize, name: &str, available_slots: usize) {
+fn validate_merge_expr(merge: &MergeExpr, n_vals: usize, name: &str, available_bindings: usize) {
     match merge {
-        MergeFn::OldCol(index) => assert!(
-            *index < n_vals,
-            "merge for `{name}` references OldCol({index}) but has only {n_vals} value columns"
+        MergeExpr::AssertEq { column }
+        | MergeExpr::UnionId { column }
+        | MergeExpr::Input { column, .. } => assert!(
+            column.index() < n_vals,
+            "merge for `{name}` references value column {} but has only {n_vals} value columns",
+            column.index()
         ),
-        MergeFn::NewCol(index) => assert!(
-            *index < n_vals,
-            "merge for `{name}` references NewCol({index}) but has only {n_vals} value columns"
+        MergeExpr::Binding(binding) => assert!(
+            binding.index() < available_bindings,
+            "merge for `{name}` references let binding {} before it is bound",
+            binding.index()
         ),
-        MergeFn::LetVar(slot) => assert!(
-            *slot < available_slots,
-            "merge for `{name}` references let slot {slot} before it is bound"
-        ),
-        MergeFn::Primitive(_, arguments)
-        | MergeFn::InputChoicePrimitive(_, arguments)
-        | MergeFn::Function(_, arguments)
-        | MergeFn::Lookup(_, arguments) => {
+        MergeExpr::Primitive { arguments, .. } | MergeExpr::Function { arguments, .. } => {
             for argument in arguments {
-                validate_merge_expr(argument, n_vals, name, available_slots);
+                validate_merge_expr(argument, n_vals, name, available_bindings);
             }
         }
-        MergeFn::Columns(_) => panic!("nested MergeFn::Columns is not supported for `{name}`"),
-        MergeFn::Block { .. } => panic!("nested MergeFn::Block is not supported for `{name}`"),
-        MergeFn::AssertEq | MergeFn::UnionId | MergeFn::Old | MergeFn::New | MergeFn::Const(_) => {}
+        MergeExpr::Const(_) => {}
     }
 }
 
-pub(super) fn visit_merge_read_dependencies(merge: &MergeFn, visit: &mut impl FnMut(FunctionId)) {
-    match merge {
-        MergeFn::Function(function, arguments) | MergeFn::Lookup(function, arguments) => {
-            visit(*function);
-            for argument in arguments {
-                visit_merge_read_dependencies(argument, visit);
-            }
-        }
-        MergeFn::Primitive(_, arguments)
-        | MergeFn::InputChoicePrimitive(_, arguments)
-        | MergeFn::Columns(arguments) => {
-            for argument in arguments {
-                visit_merge_read_dependencies(argument, visit);
-            }
-        }
-        MergeFn::Block { actions, result } => {
-            for action in actions {
-                match action {
-                    MergeAction::Set(_, arguments) => {
-                        for argument in arguments {
-                            visit_merge_read_dependencies(argument, visit);
-                        }
-                    }
-                    MergeAction::Let { value, .. } => {
-                        visit_merge_read_dependencies(value, visit);
-                    }
-                    MergeAction::Union(lhs, rhs) => {
-                        visit_merge_read_dependencies(lhs, visit);
-                        visit_merge_read_dependencies(rhs, visit);
-                    }
+pub(super) fn visit_merge_read_dependencies(
+    merge: &MergeProgram,
+    visit: &mut impl FnMut(FunctionId, usize),
+) {
+    for action in &merge.actions {
+        match action {
+            MergeAction::Set { arguments, .. } => {
+                for argument in arguments {
+                    visit_merge_expr_read_dependencies(argument, visit);
                 }
             }
-            visit_merge_read_dependencies(result, visit);
+            MergeAction::Let { value, .. } => visit_merge_expr_read_dependencies(value, visit),
+            MergeAction::Union { left, right } => {
+                visit_merge_expr_read_dependencies(left, visit);
+                visit_merge_expr_read_dependencies(right, visit);
+            }
         }
-        MergeFn::AssertEq
-        | MergeFn::UnionId
-        | MergeFn::Old
-        | MergeFn::New
-        | MergeFn::OldCol(_)
-        | MergeFn::NewCol(_)
-        | MergeFn::LetVar(_)
-        | MergeFn::Const(_) => {}
+    }
+    for result in &merge.results {
+        visit_merge_expr_read_dependencies(result, visit);
+    }
+}
+
+fn visit_merge_expr_read_dependencies(
+    merge: &MergeExpr,
+    visit: &mut impl FnMut(FunctionId, usize),
+) {
+    match merge {
+        MergeExpr::Function {
+            function,
+            arguments,
+        } => {
+            visit(*function, arguments.len());
+            for argument in arguments {
+                visit_merge_expr_read_dependencies(argument, visit);
+            }
+        }
+        MergeExpr::Primitive { arguments, .. } => {
+            for argument in arguments {
+                visit_merge_expr_read_dependencies(argument, visit);
+            }
+        }
+        MergeExpr::AssertEq { .. }
+        | MergeExpr::UnionId { .. }
+        | MergeExpr::Input { .. }
+        | MergeExpr::Binding(_)
+        | MergeExpr::Const(_) => {}
     }
 }
 

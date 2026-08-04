@@ -159,6 +159,55 @@ fn reached_unsupported_base_merge_fails_before_native_mutation() {
 }
 
 #[test]
+fn reached_merge_action_program_fails_before_its_effect() {
+    serial_trace_pool().install(|| {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(function side () i64 :merge old)\
+                 (function total () i64 :merge ((set (side) new) old))",
+            )
+            .unwrap();
+        egraph.enable_trace().unwrap();
+        egraph
+            .parse_and_run_program(None, "(set (total) 1)")
+            .unwrap();
+
+        let error = egraph
+            .parse_and_run_program(None, "(set (total) 2)")
+            .expect_err("unsupported merge action program unexpectedly ran");
+        assert_eq!(
+            error.to_string(),
+            "function `total` merge reached an unsupported structural result expression"
+        );
+        assert_eq!(
+            egraph
+                .backend
+                .base_values()
+                .unwrap::<i64>(get_value(&egraph, "total")),
+            1,
+            "the rejected merge must preserve its prior value"
+        );
+        let side = egraph.functions.get("side").unwrap();
+        let mut side_rows = 0;
+        egraph.backend.for_each(side.backend_id, |_| side_rows += 1);
+        assert_eq!(
+            side_rows, 0,
+            "the rejected merge must not run its set action"
+        );
+        assert!(
+            egraph
+                .with_trace_view(|_| Ok(()))
+                .unwrap_err()
+                .to_string()
+                .contains("poisoned"),
+            "a rejected actionful merge must not leave a publishable partial trace"
+        );
+    });
+}
+
+#[test]
 fn reached_unsupported_rule_merge_rejects_the_whole_head_batch() {
     serial_trace_pool().install(|| {
         let mut egraph = EGraph::default();
@@ -284,6 +333,38 @@ fn trace_merge_input_choice_opt_in_is_explicit() {
     for name in ["+", "pair", "unstable-fn", "clamp"] {
         assert!(!primitive_merge_returns_one_input(name), "{name}");
     }
+}
+
+#[test]
+fn trace_input_choice_primitive_replays_the_selected_origin() {
+    serial_trace_pool().install(|| {
+        let mut recorder = EGraph::default();
+        recorder.enable_trace().unwrap();
+        recorder
+            .parse_and_run_program(
+                None,
+                "(function best () i64 :merge (min old new))\
+                 (relation Selected (i64))\
+                 (set (best) 5)\
+                 (set (best) 3)\
+                 (rule ((= (best) x)) ((Selected x)))\
+                 (run 1)\
+                 (check (Selected 3))",
+            )
+            .unwrap();
+        assert_eq!(
+            recorder
+                .backend
+                .base_values()
+                .unwrap::<i64>(get_value(&recorder, "best")),
+            3
+        );
+
+        let commands = crate::slicing::slice_all_checks(&recorder).unwrap();
+        let rendered = crate::slicing::render_commands(&commands);
+        let mut replay = EGraph::default().with_proofs_enabled().with_proof_testing();
+        replay.parse_and_run_program(None, &rendered).unwrap();
+    });
 }
 
 #[test]
