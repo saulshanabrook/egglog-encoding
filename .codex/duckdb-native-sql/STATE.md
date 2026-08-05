@@ -4122,3 +4122,56 @@ at the final proof-instrumented/typechecked/global-eliminated seam, together
 with pure capture and round-trip/linker tests that panic if capture invokes a
 backend. Preserve both proof-check/provenance and execution streams, parse each
 input batch once, and keep exact target identity plus typed merge/rule IR.
+
+### Checkpoint 2 slice A accepted: backend-free resolution substrate (2026-08-05)
+
+The first checkpoint-2 slice establishes a real backend-free frontend mode. It
+does not install a no-op backend: `BackendSlot::CompileOnly` contains only
+deterministic frontend sort/primitive token state and no `dyn Backend`. Any
+accidental execution-backend dereference panics at the access boundary.
+
+The crate-private `EGraph::new_compile_only` and
+`resolve_program_compile_only` path now reaches the complete proof
+instrumentation, second typecheck, and second global-removal pipeline while
+returning both finalized execution and pre-proof-check streams. `Push` and
+`Pop` remain in the stream for fail-closed standalone preflight but are never
+executed. Proof resolution registers the typed `get-fresh!`, set-if-empty, and
+view-column operations using synthetic typechecking tokens without evaluating
+backend registration callbacks.
+
+Accepted bytes:
+
+```text
+egglog/src/lib.rs                              9069b1e0c21f242311938440c89da505a6f7eb3a1328a4c8c431f7a57cffc9a8
+egglog/src/typechecking.rs                     4735a59359d7443bf7e615b45ab37741fdc5bcf579cf5dfbd8b186d6219044a5
+egglog/src/proofs/proof_fresh.rs               830c8713757771bcfee604060fc00ded0d3061ef22e4177c2a78c0481be910cf
+egglog/src/proofs/proof_container_rebuild.rs   e8376e63defdae550c2aa4d6c3bcdafcb206848db8b8c7b151da20022fb971d4
+```
+
+Validation passed: three focused compile-only tests, all 97 egglog library
+tests, runtime Push/Pop regression, EqSat term-encoding roundtrip, library
+check, clippy with warnings denied, formatting, diff check, and an independent
+read-only review. The root reauthenticated the exact hashes and focused tests.
+
+This is substrate only, not the public snapshot and not a checkpoint-2
+completion claim. Current finalized commands still contain registry-relative
+primitive context tokens, and term/proof input preparation still parses a fact
+file once for proof-check actions while standalone execution would otherwise
+parse it again. The next slices must:
+
+1. publish owned nominal sort/function/primitive/rule IDs and typed literals;
+2. retain explicit primitive authority descriptors rather than infer from
+   names or backend `ExternalFunctionId`s;
+3. prepare the exact typed lazy merge program and generic `RuleSpec` once, then
+   structurally bind stable IDs for live execution or consume them directly for
+   SQL;
+4. own each typed input batch from one read and feed proof and execution views
+   from that same ordered payload;
+5. add command/source/output ordinals and the exact print/check/schedule
+   metadata before exposing the public snapshot API.
+
+The public merge IR must preserve root-driven evaluation: ordered action roots,
+then result roots; lazy Function argument evaluation behind the owner old/new
+guard; Lookup's old-value fallback; and all Union/UnionId operands even when a
+consumer rejects them. DuckDB-private linked `MergeProgram` is not this public
+IR and must not be promoted as one.

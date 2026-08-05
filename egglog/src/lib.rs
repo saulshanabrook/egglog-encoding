@@ -60,7 +60,7 @@ pub use exec_state::{
 use extract::{DefaultCost, Extractor, TreeAdditiveCostModel};
 use indexmap::map::Entry;
 use log::{Level, log_enabled};
-use numeric_id::DenseIdMap;
+use numeric_id::{DenseIdMap, NumericId};
 use prelude::*;
 pub use proofs::proof_encoding_helpers::{
     file_supports_proofs, file_supports_proofs_with_egraph, program_supports_proofs,
@@ -79,7 +79,7 @@ use std::fs::File;
 use std::hash::Hash;
 use std::io::Write as _;
 use std::iter::once;
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::Arc;
 pub use termdag::{OrdTerm, Term, TermDag, TermId};
@@ -356,9 +356,115 @@ impl<T> ExtensionStateValue for T where T: Any + Clone + Send + Sync {}
 
 dyn_clone::clone_trait_object!(ExtensionStateValue);
 
+/// The execution engine attached to an [`EGraph`].
+///
+/// `CompileOnly` deliberately contains no [`Backend`]. Frontend registration
+/// still needs stable ids while resolving primitive calls, so that mode owns a
+/// deterministic, frontend-only token allocator instead. Any accidental use of
+/// an execution API goes through [`Deref`] and panics at the point of access.
+#[derive(Clone)]
+enum BackendSlot {
+    Runtime(Box<dyn Backend>),
+    // Consumed by the standalone compiler snapshot in the next integration
+    // slice; retained here as the backend-free frontend substrate.
+    #[allow(dead_code)]
+    CompileOnly(CompileOnlyBackendState),
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct CompileOnlyBackendState {
+    next_external_function_id: usize,
+    /// Nominal sort registrations in deterministic declaration order. These
+    /// are typechecking tokens, not backend [`ColumnTy`] ids.
+    sort_tokens: IndexMap<String, usize>,
+}
+
+impl BackendSlot {
+    fn runtime(backend: Box<dyn Backend>) -> Self {
+        Self::Runtime(backend)
+    }
+
+    #[allow(dead_code)]
+    fn compile_only() -> Self {
+        Self::CompileOnly(CompileOnlyBackendState::default())
+    }
+
+    #[allow(dead_code)]
+    fn is_compile_only(&self) -> bool {
+        matches!(self, Self::CompileOnly(_))
+    }
+
+    /// Register a sort for typechecking without asking a compile-only frontend
+    /// to manufacture backend-specific storage types.
+    fn register_sort(&mut self, sort: &ArcSort) {
+        match self {
+            Self::Runtime(backend) => sort.register_type(backend.as_mut()),
+            Self::CompileOnly(state) => {
+                let next = state.sort_tokens.len();
+                state
+                    .sort_tokens
+                    .entry(sort.name().to_owned())
+                    .or_insert(next);
+            }
+        }
+    }
+
+    /// Allocate the runtime or synthetic token used to resolve one primitive
+    /// in one context. The callback is never evaluated in compile-only mode.
+    fn register_primitive<T>(
+        &mut self,
+        value: T,
+        context: Context,
+        build_runtime: &mut impl FnMut(&mut dyn Backend, T, Context) -> ExternalFunctionId,
+    ) -> ExternalFunctionId {
+        match self {
+            Self::Runtime(backend) => build_runtime(backend.as_mut(), value, context),
+            Self::CompileOnly(state) => {
+                let token = ExternalFunctionId::from_usize(state.next_external_function_id);
+                state.next_external_function_id += 1;
+                token
+            }
+        }
+    }
+
+    /// Fresh ids are a required typed operation in proof-instrumented source.
+    /// The compile-only frontend admits and types that operation without
+    /// claiming an execution capability.
+    fn supports_fresh_ids_for_typechecking(&self) -> bool {
+        match self {
+            Self::Runtime(backend) => backend.supports_fresh_ids(),
+            Self::CompileOnly(_) => true,
+        }
+    }
+}
+
+impl Deref for BackendSlot {
+    type Target = dyn Backend;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Runtime(backend) => backend.as_ref(),
+            Self::CompileOnly(_) => {
+                panic!("compile-only frontend attempted to access an execution backend")
+            }
+        }
+    }
+}
+
+impl DerefMut for BackendSlot {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            Self::Runtime(backend) => backend.as_mut(),
+            Self::CompileOnly(_) => {
+                panic!("compile-only frontend attempted to access an execution backend")
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct EGraph {
-    backend: Box<dyn egglog_backend_trait::Backend>,
+    backend: BackendSlot,
     pub parser: Parser,
     names: check_shadowing::Names,
     /// pushed_egraph forms a linked list of pushed egraphs.
@@ -484,6 +590,24 @@ impl EGraph {
     /// backend (e.g. a differential-dataflow engine) by implementing
     /// [`Backend`] and passing it here.
     pub fn with_backend(backend: Box<dyn Backend>) -> Self {
+        Self::with_backend_slot(BackendSlot::runtime(backend))
+    }
+
+    /// Construct a frontend whose typechecking state is completely detached
+    /// from execution. This is an internal compiler substrate, not an alternate
+    /// runtime backend.
+    #[allow(dead_code)]
+    pub(crate) fn new_compile_only(proofs_enabled: bool) -> Self {
+        let mut egraph = Self::with_backend_slot(BackendSlot::compile_only());
+        if proofs_enabled {
+            let typechecker = egraph.clone();
+            egraph.enable_term_encoding(typechecker);
+            egraph.proof_state.proofs_enabled = true;
+        }
+        egraph
+    }
+
+    fn with_backend_slot(backend: BackendSlot) -> Self {
         let mut parser = Parser::default();
         let proof_state = EncodingState::new(&mut parser.symbol_gen);
         let mut eg = Self {
@@ -624,6 +748,35 @@ struct ResolvedNCommandsWithOutput {
     resolved: Vec<ResolvedNCommand>,
     /// In proof mode, populated with the desugared program before instrumented with proofs
     resolved_before_proofs: Vec<ResolvedNCommand>,
+}
+
+/// The two finalized command streams produced by the backend-free frontend.
+/// This is crate-private compiler plumbing; it is intentionally not the public
+/// standalone-program snapshot API.
+#[allow(dead_code)]
+pub(crate) struct CompileOnlyResolvedProgram {
+    /// Proof-instrumented, typechecked, global-eliminated execution commands.
+    pub(crate) execution: Vec<ResolvedNCommand>,
+    /// The corresponding pre-instrumentation commands used for proof checking.
+    pub(crate) proof_check: Vec<ResolvedNCommand>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProgramProcessingMode {
+    Run,
+    ResolvePublic,
+    #[allow(dead_code)]
+    CompileOnly,
+}
+
+impl ProgramProcessingMode {
+    fn runs_commands(self) -> bool {
+        matches!(self, Self::Run)
+    }
+
+    fn executes_push_pop(self) -> bool {
+        matches!(self, Self::Run | Self::ResolvePublic)
+    }
 }
 
 #[derive(Debug, Error)]
@@ -1160,12 +1313,13 @@ impl EGraph {
                 None => MergeFn::AssertEq,
             },
         };
-        let backend_id = self.backend.add_table(egglog_bridge::FunctionConfig {
-            schema: input
-                .iter()
-                .chain(outputs.iter())
-                .map(|sort| sort.column_ty(self.backend.base_values()))
-                .collect(),
+        let schema = input
+            .iter()
+            .chain(outputs.iter())
+            .map(|sort| sort.column_ty(self.backend.base_values()))
+            .collect();
+        let config = egglog_bridge::FunctionConfig {
+            schema,
             n_vals: num_outputs,
             n_identity_vals: decl.identity_vals,
             default: match decl.subtype {
@@ -1175,7 +1329,8 @@ impl EGraph {
             merge,
             name: decl.name.to_string(),
             can_subsume,
-        });
+        };
+        let backend_id = self.backend.add_table(config);
         assert_eq!(backend_id, own_id);
 
         let function = Function {
@@ -1253,7 +1408,8 @@ impl EGraph {
         if proof_testing {
             proof_check_eg = proof_check_eg.with_proof_testing();
         }
-        let resolved = proof_check_eg.process_program_internal(prog, false)?;
+        let resolved =
+            proof_check_eg.process_program_internal(prog, ProgramProcessingMode::ResolvePublic)?;
 
         self.proof_check_program = resolved.resolved_before_proofs;
         Ok(())
@@ -2766,12 +2922,12 @@ impl EGraph {
         }
     }
 
-    /// Run a program, returning the desugared outputs as well as the CommandOutputs.
-    /// Can optionally not run the commands, just adding type information.
+    /// Process a program for execution, public resolution, or backend-free
+    /// compiler resolution.
     fn process_program_internal(
         &mut self,
         program: Vec<Command>,
-        run_commands: bool,
+        mode: ProgramProcessingMode,
     ) -> Result<ResolvedNCommandsWithOutput, Error> {
         let mut outputs = Vec::new();
         let mut desugared_before_proofs = Vec::new();
@@ -2801,13 +2957,13 @@ impl EGraph {
                         .parser
                         .get_program_from_string(Some(file.clone()), &s)?;
                     // run program internal on these include commands
-                    let resolved = self.process_program_internal(included_program, run_commands)?;
+                    let resolved = self.process_program_internal(included_program, mode)?;
                     outputs.extend(resolved.outputs);
                     desugared.extend(resolved.resolved);
                     desugared_before_proofs.extend(resolved.resolved_before_proofs);
                 } else {
                     let resolved = self.resolve_command(command)?;
-                    if run_commands && self.are_proofs_enabled() {
+                    if mode.runs_commands() && self.are_proofs_enabled() {
                         self.proof_check_program
                             .extend(resolved.desugared_before_proofs.clone());
                     }
@@ -2816,12 +2972,15 @@ impl EGraph {
                     desugared.extend(resolved.desugared.clone());
 
                     for processed in resolved.desugared {
-                        // even in desugar mode we still run push and pop
-                        if run_commands
-                            || matches!(
-                                processed,
-                                ResolvedNCommand::Push(_) | ResolvedNCommand::Pop(_, _)
-                            )
+                        // Public desugaring retains its historical scoped-state
+                        // behavior. Compiler resolution retains Push/Pop in the
+                        // stream without executing either command.
+                        if mode.runs_commands()
+                            || mode.executes_push_pop()
+                                && matches!(
+                                    processed,
+                                    ResolvedNCommand::Push(_) | ResolvedNCommand::Pop(_, _)
+                                )
                         {
                             let result = self.run_command(processed)?;
                             outputs.extend(result);
@@ -2845,7 +3004,7 @@ impl EGraph {
         {
             return Err(Error::BackendRequiresTermEncoding);
         }
-        let res = self.process_program_internal(program, true)?;
+        let res = self.process_program_internal(program, ProgramProcessingMode::Run)?;
         Ok(res.outputs)
     }
 
@@ -2858,8 +3017,29 @@ impl EGraph {
         input: &str,
     ) -> Result<Vec<ResolvedCommand>, Error> {
         let parsed = self.parser.get_program_from_string(filename, input)?;
-        let res = self.process_program_internal(parsed, false)?;
+        let res = self.process_program_internal(parsed, ProgramProcessingMode::ResolvePublic)?;
         Ok(res.resolved.into_iter().map(|c| c.to_command()).collect())
+    }
+
+    /// Resolve source through the complete frontend pipeline without attaching
+    /// or invoking an execution backend. Push/pop commands remain in the
+    /// returned stream for compiler preflight and are never executed here.
+    #[allow(dead_code)]
+    pub(crate) fn resolve_program_compile_only(
+        &mut self,
+        filename: Option<String>,
+        input: &str,
+    ) -> Result<CompileOnlyResolvedProgram, Error> {
+        assert!(
+            self.backend.is_compile_only(),
+            "resolve_program_compile_only requires EGraph::new_compile_only"
+        );
+        let parsed = self.parser.get_program_from_string(filename, input)?;
+        let resolved = self.process_program_internal(parsed, ProgramProcessingMode::CompileOnly)?;
+        Ok(CompileOnlyResolvedProgram {
+            execution: resolved.resolved,
+            proof_check: resolved.resolved_before_proofs,
+        })
     }
 
     /// Takes a source program `input` and parses it into a list of [`Command`]s.
@@ -4074,6 +4254,102 @@ mod tests {
         fn apply<'a, 'db>(&self, state: FullState<'a, 'db>, _args: &[Value]) -> Option<Value> {
             Some(state.base_values().get::<i64>(1))
         }
+    }
+
+    fn compile_only_state(egraph: &EGraph) -> &CompileOnlyBackendState {
+        match &egraph.backend {
+            BackendSlot::CompileOnly(state) => state,
+            BackendSlot::Runtime(_) => panic!("expected a compile-only frontend"),
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "compile-only frontend attempted to access an execution backend")]
+    fn compile_only_backend_slot_panics_on_execution_access() {
+        let egraph = EGraph::new_compile_only(false);
+        let _ = egraph.backend.base_values();
+    }
+
+    #[test]
+    fn compile_only_resolution_is_backend_free_and_retains_push_pop() {
+        let source = "(push)\n(relation Edge (i64 i64))\n(pop)";
+        let mut first = EGraph::new_compile_only(false);
+        let first_resolved = first.resolve_program_compile_only(None, source).unwrap();
+        let mut second = EGraph::new_compile_only(false);
+        let second_resolved = second.resolve_program_compile_only(None, source).unwrap();
+
+        assert!(matches!(
+            first_resolved.execution.first(),
+            Some(ResolvedNCommand::Push(1))
+        ));
+        assert!(first_resolved.execution.iter().any(
+            |command| matches!(command, ResolvedNCommand::Function(decl) if decl.name == "Edge")
+        ));
+        assert!(matches!(
+            first_resolved.execution.last(),
+            Some(ResolvedNCommand::Pop(_, 1))
+        ));
+        assert!(first_resolved.proof_check.is_empty());
+        assert_eq!(first_resolved.execution, second_resolved.execution);
+
+        // Running either command would populate these execution-owned fields.
+        assert!(first.functions.is_empty());
+        assert!(first.pushed_egraph.is_none());
+        assert_eq!(compile_only_state(&first), compile_only_state(&second));
+    }
+
+    #[test]
+    fn compile_only_proof_resolution_registers_fresh_and_view_ops() {
+        let mut egraph = EGraph::new_compile_only(true);
+        let resolved = egraph
+            .resolve_program_compile_only(
+                None,
+                r#"
+                (datatype X (Leaf i64))
+                (let $x (Leaf 1))
+                (run 1)
+                (check (= $x $x))
+                "#,
+            )
+            .unwrap();
+
+        assert!(!resolved.execution.is_empty());
+        assert!(!resolved.proof_check.is_empty());
+        assert!(
+            egraph
+                .type_info
+                .get_prims(crate::proofs::proof_fresh::GET_FRESH_PRIM_NAME)
+                .is_some()
+        );
+
+        let view_name = resolved
+            .execution
+            .iter()
+            .find_map(|command| match command {
+                ResolvedNCommand::Function(decl)
+                    if decl.term_constructor.as_deref() == Some("Leaf") =>
+                {
+                    Some(decl.name.as_str())
+                }
+                _ => None,
+            })
+            .expect("proof instrumentation should declare Leaf's logical view");
+        assert!(
+            egraph
+                .type_info
+                .get_prims(&crate::proofs::proof_fresh::set_if_empty_prim_name(
+                    view_name
+                ))
+                .is_some(),
+            "set-if-empty was not registered for view {view_name}"
+        );
+        assert!(
+            egraph
+                .type_info
+                .get_prims(&crate::proofs::proof_fresh::view_proof_prim_name(view_name))
+                .is_some(),
+            "proof-column read was not registered for view {view_name}"
+        );
     }
 
     #[test]

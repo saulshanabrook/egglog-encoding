@@ -295,7 +295,7 @@ impl EGraph {
 
     /// Add a user-defined sort to the e-graph.
     pub fn add_arcsort(&mut self, sort: ArcSort, span: Span) -> Result<(), TypeError> {
-        sort.register_type(self.backend.as_mut());
+        self.backend.register_sort(&sort);
 
         let name = sort.name();
         match self.type_info.sorts.entry(name.to_owned()) {
@@ -492,9 +492,10 @@ impl EGraph {
             let primitive: Arc<dyn Primitive> = Arc::new(x.clone());
             let name = primitive.name().to_owned();
             let context_ids = EnumMap::from_fn(|ctx| {
-                valid_ctxs
-                    .contains(&ctx)
-                    .then(|| build_wrapper(eg.backend.as_mut(), x.clone(), ctx))
+                valid_ctxs.contains(&ctx).then(|| {
+                    eg.backend
+                        .register_primitive(x.clone(), ctx, &mut build_wrapper)
+                })
             });
             eg.type_info
                 .primitives

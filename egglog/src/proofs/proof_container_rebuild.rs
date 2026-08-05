@@ -149,7 +149,7 @@ pub(crate) fn register_container_rebuild_from_spec(
     if let Some(proof_prim) = &spec.internal_rebuild_proof_prim {
         // Proof ids use the same backend-owned allocator as `get-fresh!`; a
         // backend may implement that allocator without exposing a host counter.
-        if !eg.backend.supports_fresh_ids() {
+        if !eg.backend.supports_fresh_ids_for_typechecking() {
             return;
         }
         // Each container's `<CSort>Proof` table (this sort + nested containers),

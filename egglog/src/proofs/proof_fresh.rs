@@ -145,7 +145,7 @@ pub(crate) const GET_FRESH_PRIM_NAME: &str = "get-fresh!";
 /// is available both during encoding and when the desugared program is
 /// re-parsed. A no-op on backends without fresh-id support.
 pub(crate) fn register_get_fresh(eg: &mut EGraph) {
-    if !eg.backend.supports_fresh_ids() {
+    if !eg.backend.supports_fresh_ids_for_typechecking() {
         return;
     }
     eg.add_backend_op_primitive(GetFresh, WriteState::valid_contexts(), |backend, _| {
