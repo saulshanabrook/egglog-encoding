@@ -104,10 +104,12 @@ or modify the JSONL.
 - Benchmark inputs should not contain executable `(prove ...)` commands. Use
   `(check ...)` so the selected treatment controls proof extraction, and cover
   strict proof validity in proof tests.
-- Benchmark files are resolved relative to the command invocation directory,
-  not relative to comparison targets.
-- Cache reuse is decided by binary SHA-256, file SHA-256, fact-directory
-  SHA-256, backend, treatment, and timeout.
+- Benchmark files and their relative `(include ...)` paths are resolved from
+  the command invocation directory, and workloads execute from that directory
+  rather than from comparison targets.
+- Cache reuse is decided by binary SHA-256, the source-closure SHA-256 covering
+  the top-level file and transitive includes, fact-directory SHA-256, backend,
+  treatment, and timeout.
 - The baseline and candidate must have different endpoint cache identities
   (binary SHA-256, backend, and treatment). They may use the same binary when
   backend or treatment differs.

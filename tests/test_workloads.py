@@ -65,6 +65,63 @@ def test_resolve_files_allows_prove_mentions_in_comments(tmp_path: Path) -> None
     assert workloads.resolve_files([str(check_file)], tmp_path)[0].absolute_path == check_file.resolve()
 
 
+def test_included_source_content_is_part_of_workload_identity(tmp_path: Path) -> None:
+    base = tmp_path / "base.egg"
+    base.write_text("(datatype Expr)\n", encoding="utf-8")
+    wrapper = tmp_path / "wrapper.egg"
+    wrapper.write_text('(include "base.egg")\n(check (= 1 1))\n', encoding="utf-8")
+
+    before = workloads.resolve_files([wrapper.name], tmp_path)[0]
+    base.write_text("(datatype Changed)\n", encoding="utf-8")
+    after = workloads.resolve_files([wrapper.name], tmp_path)[0]
+
+    assert before.sha256 != targets.sha256_file(wrapper)
+    assert before.sha256 != after.sha256
+    assert before.working_directory == tmp_path.resolve()
+
+
+def test_standalone_workload_keeps_raw_file_hash(tmp_path: Path) -> None:
+    benchmark_file = tmp_path / "file.egg"
+    benchmark_file.write_text("(check (= 1 1))\n", encoding="utf-8")
+
+    resolved = workloads.resolve_files([benchmark_file.name], tmp_path)[0]
+
+    assert resolved.sha256 == targets.sha256_file(benchmark_file)
+
+
+def test_nested_includes_are_hashed_and_checked_for_prove(tmp_path: Path) -> None:
+    nested = tmp_path / "nested.egg"
+    nested.write_text("(prove (= 1 1))\n", encoding="utf-8")
+    base = tmp_path / "base.egg"
+    base.write_text('(include "nested.egg")\n', encoding="utf-8")
+    wrapper = tmp_path / "wrapper.egg"
+    wrapper.write_text('(include "base.egg")\n', encoding="utf-8")
+
+    identity = workloads.workload_source_identity(wrapper, tmp_path)
+
+    assert identity.files == (wrapper.resolve(), base.resolve(), nested.resolve())
+    with pytest.raises(ValueError, match="explicit prove command"):
+        workloads.resolve_files([wrapper.name], tmp_path)
+
+
+def test_include_cycle_is_rejected_before_execution(tmp_path: Path) -> None:
+    first = tmp_path / "first.egg"
+    second = tmp_path / "second.egg"
+    first.write_text('(include "second.egg")\n', encoding="utf-8")
+    second.write_text('(include "first.egg")\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="include cycle"):
+        workloads.resolve_files([first.name], tmp_path)
+
+
+def test_missing_include_is_rejected_before_execution(tmp_path: Path) -> None:
+    wrapper = tmp_path / "wrapper.egg"
+    wrapper.write_text('(include "missing.egg")\n', encoding="utf-8")
+
+    with pytest.raises(FileNotFoundError, match="included egglog file does not exist"):
+        workloads.resolve_files([wrapper.name], tmp_path)
+
+
 def test_prove_scan_ignores_comments_strings_and_longer_atoms(tmp_path: Path) -> None:
     check_file = tmp_path / "check.egg"
     check_file.write_text(
@@ -76,19 +133,45 @@ def test_prove_scan_ignores_comments_strings_and_longer_atoms(tmp_path: Path) ->
     assert not workloads.file_contains_executable_prove_command(check_file)
 
 
+def test_require_workload_unchanged_detects_included_source_mutation(tmp_path: Path) -> None:
+    base = tmp_path / "base.egg"
+    base.write_text("(datatype Expr)\n", encoding="utf-8")
+    wrapper = tmp_path / "wrapper.egg"
+    wrapper.write_text('(include "base.egg")\n', encoding="utf-8")
+    file_spec = workloads.resolve_files([wrapper.name], tmp_path)[0]
+
+    base.write_text("(datatype Changed)\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"workload changed during execution: wrapper\.egg"):
+        workloads.require_workload_unchanged(file_spec)
+
+
 def test_default_workloads_are_the_six_research_cases() -> None:
     files = workloads.resolve_files([], ROOT)
     assert tuple(file.display_path for file in files) == (
-        "egglog/tests/math-microbenchmark.egg",
+        "benchmarks/math-microbenchmark/math-run-010.egg",
         "egglog-experimental/tests/fixtures/eggcc-2mm-pass1.egg",
-        "benchmarks/pointer-analysis-small.egg",
+        "benchmarks/pointer-analysis-initdb.egg",
         "egglog/tests/hardboiled_conv1d_32.egg",
         "benchmarks/luminal-llama.egg",
         "egglog/tests/web-demo/herbie.egg",
     )
-    pointer = next(file for file in files if file.display_path == "benchmarks/pointer-analysis-small.egg")
-    assert pointer.fact_directory == (ROOT / "benchmarks/data/pointer-analysis-small").resolve()
+    math = next(file for file in files if file.display_path.endswith("math-run-010.egg"))
+    assert math.sha256 != targets.sha256_file(math.absolute_path)
+    pointer = next(file for file in files if file.display_path == "benchmarks/pointer-analysis-initdb.egg")
+    assert pointer.fact_directory == (ROOT / "benchmarks/data/pointer-analysis-initdb").resolve()
     assert pointer.fact_directory_sha256.startswith("sha256:")
+
+
+def test_pointer_initdb_facts_are_the_complete_consumed_artifact_relations() -> None:
+    fact_directory = ROOT / "benchmarks/data/pointer-analysis-initdb"
+    files = tuple(sorted(fact_directory.glob("*.csv")))
+
+    assert len(files) == 23
+    assert sum(len(path.read_text(encoding="utf-8").splitlines()) for path in files) == 73_864
+    assert targets.sha256_directory(fact_directory) == (
+        "sha256:28354d7f25d8c198d923be014bbb1ee2292501e12cdde29ea90e666bc86b6929"
+    )
 
 
 def test_explicit_fact_directory_is_resolved_and_hashed(tmp_path: Path) -> None:

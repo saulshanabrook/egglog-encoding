@@ -188,16 +188,63 @@ fn unordered_container_reshaped_element_collapse_proof() {
 }
 
 #[test]
-fn pointer_analysis_sample_passes_proof_checking() {
+fn pointer_analysis_initdb_passes_proof_checking() {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("egglog crate should be inside the workspace");
     let mut egraph = EGraph::new_with_proofs().with_proof_testing();
-    egraph.fact_directory = Some(repository.join("benchmarks/data/pointer-analysis-small"));
+    egraph.fact_directory = Some(repository.join("benchmarks/data/pointer-analysis-initdb"));
     let program =
-        std::fs::read_to_string(repository.join("benchmarks/pointer-analysis-small.egg")).unwrap();
+        std::fs::read_to_string(repository.join("benchmarks/pointer-analysis-initdb.egg")).unwrap();
 
     egraph.parse_and_run_program(None, &program).unwrap();
+}
+
+fn math_checkpoint_program(repository: &Path, iterations: usize) -> String {
+    let base = std::fs::read_to_string(repository.join("benchmarks/math-microbenchmark/base.egg"))
+        .unwrap();
+    let wrapper = std::fs::read_to_string(repository.join(format!(
+        "benchmarks/math-microbenchmark/math-run-{iterations:03}.egg"
+    )))
+    .unwrap();
+    let (_, checkpoint) = wrapper
+        .split_once("\n\n")
+        .expect("generated checkpoint should separate its include from commands");
+    format!("{base}\n{checkpoint}")
+}
+
+#[test]
+fn math_checkpoint_zero_passes_proof_checking() {
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("egglog crate should be inside the workspace");
+
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(None, &math_checkpoint_program(repository, 0))
+        .unwrap();
+}
+
+#[test]
+fn math_checkpoint_ten_requires_ten_integration_by_parts_unfoldings() {
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("egglog crate should be inside the workspace");
+    let program = math_checkpoint_program(repository, 10);
+
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(None, &program)
+        .unwrap();
+
+    let too_short = program.replacen("(run 10)", "(run 9)", 1);
+    assert!(
+        EGraph::new_with_proofs()
+            .with_proof_testing()
+            .parse_and_run_program(None, &too_short)
+            .is_err(),
+        "the checkpoint equality must not exist after only nine unfoldings"
+    );
 }
 
 #[test]
