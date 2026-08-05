@@ -4051,3 +4051,74 @@ git status --short --branch
 
 Then inspect the complete staged scope and create the no-ff merge commit. Do
 not add `.codex/duckdb-native-sql/artifacts/` and do not push.
+
+### Checkpoint 1 accepted stock-kernel slice (2026-08-05)
+
+Checkpoint 0 was committed as merge commit
+`f8d2f6ddc77cb76f2e8edcc9d5974168400e3f5a`; the earlier scoreboard wording
+"accepted, uncommitted" is historical. Checkpoint 1 is now accepted by both
+the implementation circle and an independent read-only review on these exact
+candidate bytes:
+
+```text
+Makefile                 de18ecd2066711d4d38cf852f8c7685cc67397576b921d525e201bd5020bc802
+kernel checker           511116c78a85a55ddd6904c792c8e918d6bc9d65f06ad3bf473c1e02f5e87d69
+stock kernel fixture     a4b7c005dec22952ae2ae94edae256aaf016f325776601beb277545f21c81529
+deterministic stdout     f93283bfa9f6f918d29574e3be82cf8abc9eb3f2237ecfc5f24f028ea5d11c66
+```
+
+The exact tracked gate is:
+
+```text
+DUCKDB_CLI=target/duckdb-cli/v1.5.4/duckdb make duckdb-kernel-check
+```
+
+It authenticates the official 1.5.4 CLI SHA/version, snapshots the pinned SQL
+and a private copy of the CLI, executes that copy with only `LANG=C`,
+`LC_ALL=C`, and a fixed system `PATH`, and runs the fixture twice under the
+exact safe argv. The 27 statements produce 16 unique success documents and
+byte-identical stdout. The optional 1.5.5 compatibility run uses the same
+authenticated private-copy/minimal-environment path.
+
+The tracked kernel covers typed nested state; zero-working full recompute and
+one-working seminaive branches; multiple recurring reads; explicit ordered
+duplicate folds; strict anti-diff; Delete -> Set/reinsert -> Subsume including
+an omitted survivor; nullary keys without SQL `NULL`; Repeat 0/1/100000;
+mandatory first Saturate iteration; nested last-child versus aggregate flags;
+non-short-circuiting Sequence; the sticky target-batch latch; the current
+one-Fresh proof-shaped hot SCC; checked arithmetic and lazy errors; explicit
+rollback/retry of rows, generation, watermark, and fresh state; hostile
+strings; and partial values represented by non-null `(defined, value)` state.
+Twelve semantic mutations fail their intended oracle.
+
+Rendered-fragment admission counts all unqualified working-source occurrences,
+allows only exact `recurring.<cte>` qualification to escape that count, and
+rejects more than one working read. Zero-working and one-working probes admit;
+join/comma two-working, other-qualified, and quoted-source mutations reject.
+The nullable filtered-rank canary reproduces the vulnerable two-row result and
+the explicit three-term total-key mitigation returns all three rows.
+
+Pinned 1.5.4 first-failure depths are unary expression 988, explicitly
+parenthesized left-deep set operation 9979, and CTE dependency 998; flat
+`UNION ALL` passed through 50,000 operators. The compiler-owned cap remains
+736 and adjacent-boundary probes agree on 1.5.5.
+
+One obligation is explicitly deferred rather than claimed: with
+`-bail -json :memory:` a fatal statement closes the sole process/connection,
+so the harness cannot inspect automatic post-error rollback. Checkpoint 1
+proves explicit rollback. Automatic rollback of one source command while
+retaining earlier committed commands and output events is a blocking
+checkpoint-3 standalone command-transaction test.
+
+The production architecture is **Design B** by user decision. Exact stable
+function identity, resolved generic `RuleSpec`, and the exact typed logical
+`MergeFn` determine semantics. The generic merge program is the sole
+scalar-action production path. Function names, proof-role names, schema shape,
+and registration order are metadata only and may not select behavior;
+same-schema decoy functions must execute literally in snapshot/compiler tests.
+
+The next frontier is checkpoint 2: introduce the public owned nominal snapshot
+at the final proof-instrumented/typechecked/global-eliminated seam, together
+with pure capture and round-trip/linker tests that panic if capture invokes a
+backend. Preserve both proof-check/provenance and execution streams, parse each
+input batch once, and keep exact target identity plus typed merge/rule IR.

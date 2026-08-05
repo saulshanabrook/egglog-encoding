@@ -1,11 +1,14 @@
 .PHONY: \
 	check nits test python-check python-nits rust-check rust-nits \
-	proof-tests benchmark-smoke nightly nightly-local nightly-uv nightly-rustup \
+	proof-tests benchmark-smoke duckdb-kernel-check \
+	nightly nightly-local nightly-uv nightly-rustup \
 	update-snapshots format \
 	python-lock python-format-check python-lint python-typecheck python-test \
 	rust-format-check rust-clippy rust-doc-links rust-test
 
 BENCHMARK_SMOKE_REPORT ?= /tmp/egglog-encoding-bench-smoke.jsonl
+DUCKDB_CLI ?=
+export DUCKDB_CLI
 DUCKDB_PREBUILT_ENV := env -u DUCKDB_LIB_DIR -u DUCKDB_INCLUDE_DIR -u DUCKDB_STATIC DUCKDB_DOWNLOAD_LIB=1
 
 # No Ubuntu release packages uv, so `make nightly` installs a pinned copy into
@@ -88,6 +91,16 @@ benchmark-smoke:
 	uv run --locked python -c \
 		'from pathlib import Path; import sys; from benchmarking.reports.store import ReportStore; assert ReportStore(Path(sys.argv[1])).row_count > 0' \
 		"$(BENCHMARK_SMOKE_REPORT)"
+
+# Optional stock-engine admission check.  The pinned CLI is not provisioned by
+# normal CI and target/ is ignored, so this target requires an explicit path
+# and is intentionally not a dependency of `check`.
+duckdb-kernel-check:
+	@test -n "$${DUCKDB_CLI}" || { \
+		echo "duckdb-kernel-check: pass DUCKDB_CLI=/path/to/duckdb-v1.5.4" >&2; \
+		exit 2; \
+	}
+	python3 -I scripts/check_duckdb_kernel.py --duckdb="$${DUCKDB_CLI}"
 
 # Benchmark each endpoint in nightly_bench.py's ENDPOINTS on this checkout and on
 # main, then copy eval-live's interactive report to nightly/output/. The
