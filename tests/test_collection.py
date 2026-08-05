@@ -520,6 +520,35 @@ def test_run_process_passes_backend_flag_only_for_dd(
     assert dd.timing_summary is not None
 
 
+def test_run_process_uses_workload_working_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    benchmark_file = source_root / "file.egg"
+    benchmark_file.write_text("(check (= 1 1))\n", encoding="utf-8")
+    file_spec = models.FileSpec(
+        benchmark_file.name,
+        benchmark_file,
+        targets.sha256_file(benchmark_file),
+        working_directory=source_root,
+    )
+    observed_cwds: list[Path] = []
+
+    def fake_run_command(command: list[str], cwd: Path, _timeout_sec: int) -> processes.TimingResult:
+        observed_cwds.append(cwd)
+        summary_path = Path(command[command.index("--timing-summary") + 1])
+        summary_path.write_text(json.dumps(make_timing_summary()), encoding="utf-8")
+        return processes.TimingResult("success", processes.TimingRow(wall_sec=1.0), None)
+
+    monkeypatch.setattr(collection, "run_command", fake_run_command)
+
+    collection.run_process(ROOT / "egglog-experimental", ROOT / "target-checkout", file_spec, "main", "off", 120)
+
+    assert observed_cwds == [source_root]
+
+
 def test_run_process_rejects_success_without_timing_summary(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

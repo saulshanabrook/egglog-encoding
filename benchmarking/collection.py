@@ -299,7 +299,7 @@ def run_process(
         summary_path = Path(directory) / "timing-summary.json"
         workload = workload_command(binary_path, file_spec, backend, treatment)
         command = [workload[0], "--timing-summary", str(summary_path), *workload[1:]]
-        result = run_command(command, checkout_path, timeout_sec)
+        result = run_command(command, file_spec.working_directory or checkout_path, timeout_sec)
         require_workload_unchanged(file_spec)
         if result.status != "success":
             return ProcessObservation(result=result, timing_summary=None)

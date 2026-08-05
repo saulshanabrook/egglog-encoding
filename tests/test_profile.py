@@ -6,6 +6,7 @@ import argparse
 import subprocess
 import sys
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -317,6 +318,33 @@ def test_samply_record_uses_fixed_flags_and_replaces_artifact(
     assert command[-2:] == ["--", "workload"]
 
 
+def test_samply_record_uses_workload_working_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    artifact = tmp_path / "profile.json.gz"
+    file_spec = stable_file_spec(tmp_path)
+    source_root = tmp_path / "source-root"
+    source_root.mkdir()
+    file_spec = models.FileSpec(
+        file_spec.display_path,
+        file_spec.absolute_path,
+        file_spec.sha256,
+        working_directory=source_root,
+    )
+    observed_cwds: list[Path] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> None:
+        observed_cwds.append(kwargs["cwd"])
+        write_profile(Path(command[command.index("--output") + 1]))
+
+    stub_samply_record_process(monkeypatch, fake_run)
+
+    record_profile(artifact, file_spec)
+
+    assert observed_cwds == [source_root]
+
+
 def test_samply_mutated_workload_is_not_promoted(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     artifact = tmp_path / "profile.json.gz"
     artifact.write_bytes(b"old")
@@ -616,24 +644,27 @@ def test_profile_auto_calibrates_once_and_uses_derived_iterations(
     tmp_path: Path,
 ) -> None:
     request, target, _ = make_profile_case(tmp_path, force_run=True, show_summary=False)
+    source_root = tmp_path / "source-root"
+    source_root.mkdir()
+    request = replace(request, file=replace(request.file, working_directory=source_root))
     recorded: list[int] = []
+    calibration_cwds: list[Path] = []
 
     def fake_record(**kwargs: Any) -> dict[str, Any]:
         recorded.append(kwargs["iterations"])
         return make_profile_data()
 
+    def fake_calibration(command: list[str], cwd: Path, timeout_sec: int) -> processes.TimingResult:
+        calibration_cwds.append(cwd)
+        return processes.TimingResult("success", processes.TimingRow(wall_sec=2.0), None)
+
     mock_profile_resolution(monkeypatch, request, target)
-    monkeypatch.setattr(
-        profile_runner,
-        "run_command",
-        lambda command, checkout_path, timeout_sec: processes.TimingResult(
-            "success", processes.TimingRow(wall_sec=2.0), None
-        ),
-    )
+    monkeypatch.setattr(profile_runner, "run_command", fake_calibration)
     monkeypatch.setattr(profile_runner, "run_samply_record", fake_record)
     profile_runner.run_profile(argparse.Namespace(), Console(stderr=True), ROOT, ROOT)
 
     assert recorded == [6]
+    assert calibration_cwds == [source_root]
 
 
 def test_profile_auto_calibration_failure_stops_before_samply(
