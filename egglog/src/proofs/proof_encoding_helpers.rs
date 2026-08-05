@@ -669,13 +669,15 @@ fn checked_alias_expr_support(
             ))
         }
         ResolvedExpr::Call(_, ResolvedCall::Func(function), children) => {
-            if function.subtype != crate::ast::FunctionSubtype::Constructor
-                || function.outputs.len() != 1
-                || !function.output().is_eq_sort()
-            {
+            let supported = function.outputs.len() == 1
+                && match function.subtype {
+                    crate::ast::FunctionSubtype::Constructor => function.output().is_eq_sort(),
+                    crate::ast::FunctionSubtype::Custom => true,
+                };
+            if !supported {
                 return Err(ProofEncodingUnsupportedReason::CheckedAliasExpression(
                     format!(
-                        "function `{}` is not a single-output EqSort constructor",
+                        "function `{}` is not a readable single-output function",
                         function.name
                     ),
                 ));

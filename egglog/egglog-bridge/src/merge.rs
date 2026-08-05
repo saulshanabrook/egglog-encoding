@@ -6,15 +6,15 @@
 //! necessarily pure: [`MergeExpr::UnionId`] stages a union, while [`MergeExpr::Function`] may
 //! construct a missing row. For a conflict that does run the program, the `actions` list executes
 //! once rather than once per result. Trace-enabled execution rejects reached actionful programs
-//! before their effects because their result origins cannot yet be recorded exactly.
+//! before their effects because check-directed replay has one computed-result carrier and does not
+//! retain ordered merge-block effects or multiple results.
 //!
 //! A failed action or result rejects the owner row before publication. Effects completed before a
 //! later failure are not rolled back.
 
 use super::{
-    ColumnId, ColumnTy, EGraph, ExecutionState, ExternalFunctionId, FunctionId, IndexSet,
-    MergeOriginSelector, NumericId, RowVals, SchemaMath, SmallVec, TableAction, TableId, Value,
-    combine_subsumed, core_relations,
+    ColumnId, EGraph, ExecutionState, ExternalFunctionId, FunctionId, IndexSet, NumericId, RowVals,
+    SchemaMath, SmallVec, TableAction, TableId, Value, combine_subsumed, core_relations,
 };
 
 /// An FD-conflict program: run `actions` in order, then compute one result per value column.
@@ -70,16 +70,6 @@ impl MergeBindingId {
     }
 }
 
-/// Structural-origin information attached to a primitive call.
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub enum MergePrimitiveOrigin {
-    /// The result is computed and cannot be attributed to one argument exactly.
-    Opaque,
-    /// The frontend guarantees that this is a binary call whose result is exactly one argument,
-    /// with one argument structurally read from the prior row and one from the incoming row.
-    SelectsArgument,
-}
-
 /// A value expression evaluated by a [`MergeProgram`].
 pub enum MergeExpr {
     /// Panic unless this value column agrees in the prior and incoming rows, then retain it.
@@ -90,7 +80,6 @@ pub enum MergeExpr {
     Primitive {
         function: ExternalFunctionId,
         arguments: Vec<MergeExpr>,
-        origin: MergePrimitiveOrigin,
     },
     /// Look up or construct a single-output table-backed function call.
     ///
@@ -130,101 +119,26 @@ pub enum MergeAction {
 }
 
 impl MergeProgram {
-    pub(super) fn has_function_result(&self) -> bool {
-        self.results.iter().any(MergeExpr::has_function_result)
-    }
-
-    pub(super) fn origin_selectors(
-        &self,
-        schema: &[ColumnTy],
-        n_keys: usize,
-    ) -> Box<[MergeOriginSelector]> {
-        let mut selectors = (0..n_keys)
-            .map(|column| MergeOriginSelector::Incoming {
-                column: u16::try_from(column).expect("function has more than u16 columns"),
-            })
-            .collect::<Vec<_>>();
-        if self.actions.is_empty() {
-            assert_eq!(self.results.len(), schema.len() - n_keys);
-            selectors.extend(
-                self.results
-                    .iter()
-                    .map(|result| result.structural_origin_selector(n_keys)),
-            );
-        } else {
-            selectors.resize(schema.len(), MergeOriginSelector::Unsupported);
-        }
-        selectors.into_boxed_slice()
+    /// Whether this program has the scalar, action-free shape whose result can
+    /// be named by one post-merge table lookup. Frontends separately validate
+    /// that external primitives are pure and replayable.
+    pub(super) fn supports_scalar_replay_result_shape(&self) -> bool {
+        self.actions.is_empty()
+            && self.results.len() == 1
+            && !self.results[0].requires_table_read_or_binding()
     }
 }
 
 impl MergeExpr {
-    fn has_function_result(&self) -> bool {
+    fn requires_table_read_or_binding(&self) -> bool {
         match self {
-            Self::Function { .. } => true,
-            Self::AssertEq { .. }
-            | Self::UnionId { .. }
-            | Self::Primitive { .. }
-            | Self::Input { .. }
-            | Self::Binding(..)
-            | Self::Const(..) => false,
-        }
-    }
-
-    pub(crate) fn structural_origin_selector(&self, n_keys: usize) -> MergeOriginSelector {
-        let value_column = |column: usize| {
-            u16::try_from(n_keys + column).expect("function has more than u16 columns")
-        };
-        match self {
-            MergeExpr::AssertEq { column } => MergeOriginSelector::Prior {
-                column: value_column(column.index()),
-            },
-            MergeExpr::UnionId { column } => MergeOriginSelector::NativeMin {
-                incoming_column: value_column(column.index()),
-                prior_column: value_column(column.index()),
-            },
-            MergeExpr::Input { side, column } => match side {
-                MergeInputSide::Prior => MergeOriginSelector::Prior {
-                    column: value_column(column.index()),
-                },
-                MergeInputSide::Incoming => MergeOriginSelector::Incoming {
-                    column: value_column(column.index()),
-                },
-            },
-            MergeExpr::Primitive {
-                arguments,
-                origin: MergePrimitiveOrigin::SelectsArgument,
-                ..
-            } if arguments.len() == 2 => {
-                let left = arguments[0].structural_origin_selector(n_keys);
-                let right = arguments[1].structural_origin_selector(n_keys);
-                match (left, right) {
-                    (
-                        MergeOriginSelector::Prior {
-                            column: prior_column,
-                        },
-                        MergeOriginSelector::Incoming {
-                            column: incoming_column,
-                        },
-                    )
-                    | (
-                        MergeOriginSelector::Incoming {
-                            column: incoming_column,
-                        },
-                        MergeOriginSelector::Prior {
-                            column: prior_column,
-                        },
-                    ) => MergeOriginSelector::PriorOrIncoming {
-                        incoming_column,
-                        prior_column,
-                    },
-                    _ => MergeOriginSelector::Unsupported,
-                }
+            Self::Function { .. } | Self::Binding(..) => true,
+            Self::Primitive { arguments, .. } => {
+                arguments.iter().any(Self::requires_table_read_or_binding)
             }
-            MergeExpr::Primitive { .. }
-            | MergeExpr::Function { .. }
-            | MergeExpr::Binding(..)
-            | MergeExpr::Const(..) => MergeOriginSelector::Unsupported,
+            Self::AssertEq { .. } | Self::UnionId { .. } | Self::Input { .. } | Self::Const(..) => {
+                false
+            }
         }
     }
 
@@ -308,7 +222,6 @@ impl MergeExpr {
             MergeExpr::Primitive {
                 function,
                 arguments,
-                ..
             } => CompiledMergeExpr::Primitive {
                 prim: *function,
                 args: arguments

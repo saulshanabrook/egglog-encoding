@@ -64,11 +64,16 @@
 - **Breaking Rust API:** `egglog_bridge::MergeFn` is split into `MergeProgram` and `MergeExpr`, and
   the core-relations callback type is renamed from `MergeFn` to `MergeCallback`. Merge actions now
   use named fields, and `let` bindings use `MergeBindingId`. `MergeFn::InputChoicePrimitive` becomes
-  `MergeExpr::Primitive` with `MergePrimitiveOrigin::SelectsArgument`; other primitives use
-  `MergePrimitiveOrigin::Opaque`. The unused `MergeFn::Lookup` capability is removed;
-  `MergeExpr::Function` follows the target function's configured default on a miss and fails the
-  merge when that default is `Fail`. Failed result evaluation now rejects the complete owner row
-  instead of publishing successful tuple columns alongside fallback values.
+  `MergeExpr::Primitive`; the unused `MergeFn::Lookup` capability and the per-primitive
+  `MergePrimitiveOrigin` classifier are removed. `MergeExpr::Function` follows the target
+  function's configured default on a miss and fails the merge when that default is `Fail`. Failed
+  result evaluation now rejects the complete owner row instead of publishing successful tuple
+  columns alongside fallback values. Check-directed replay treats a supported scalar merge as one
+  computed table-row occurrence: it retains both conflicting rows, replays the original merge, and
+  reads the result back through a checked alias instead of inferring which input supplied it.
+  Capture supports one action-free output computed from replayable pure scalar expressions;
+  multi-output and actionful merge results remain unsupported. Merge causes record the callback's
+  operand-read cutoff separately from the later application of any equality staged by the callback.
 - **`:merge` action blocks.** A `:merge` may be a value-producing action block
   `:merge (<action>* <result-expr>)`: the actions run first (with `old`/`new` bound), then the
   trailing expression is the merged value. Actions may be `let` (bind an intermediate value used by

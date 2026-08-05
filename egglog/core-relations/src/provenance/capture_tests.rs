@@ -263,7 +263,7 @@ fn structural_occurrence_rejects_uncertified_non_table_calls() {
         })
         .unwrap_err();
     assert!(
-        matches!(error, TraceViewError::Invalid(ref message) if message.contains("no registered constructor or certified replay recipe")),
+        matches!(error, TraceViewError::Invalid(ref message) if message.contains("no registered row call or certified replay recipe")),
         "unknown non-table calls must fail closed: {error:?}"
     );
 }
@@ -435,6 +435,59 @@ fn promoted_firings_reconstruct_current_terms_from_static_recipes() {
 }
 
 #[test]
+fn shared_template_dag_is_projected_once_per_historical_owner() {
+    let trace = Trace::default();
+    let sort = ReplaySortId::new(9);
+    let leaf = trace.intern_literal(sort, ReplayLiteral::I64(9), Value::new_const(9));
+    let shared = Arc::new(TermTemplate::Call {
+        sort,
+        op: ReplayOpId::new(90),
+        children: [Arc::new(TermTemplate::Static { term: leaf })].into(),
+    });
+    let root = Arc::new(TermTemplate::Call {
+        sort,
+        op: ReplayOpId::new(91),
+        children: [Arc::clone(&shared), shared].into(),
+    });
+    trace.register_rule_term_recipe(
+        90,
+        TermRecipe {
+            current_roots: [Some(root)].into(),
+        },
+    );
+    let sources = [ReplayBindingSource::Current {
+        variable: Variable::new(0),
+        sort,
+        residual: 0,
+    }];
+    trace.register_firings(90, Wave::new(1), 0, &sources, &[], &[0]);
+    trace.finalize_wave().unwrap();
+
+    let before = trace.0.term_projection_memo.lock().unwrap().template_len();
+    trace
+        .with_view(|view| {
+            let terms = view.firing_terms(FiringId::new(1))?;
+            let [root] = terms.as_ref() else {
+                panic!("expected one projected current binding")
+            };
+            let ReplayTerm::Call { children, .. } = view.replay_term(*root)? else {
+                panic!("current binding did not project to its root call")
+            };
+            assert_eq!(
+                children[0], children[1],
+                "shared recipe node projected to distinct term nodes"
+            );
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        trace.0.term_projection_memo.lock().unwrap().template_len() - before,
+        3,
+        "projection expanded a three-node template DAG as a tree"
+    );
+}
+
+#[test]
 fn container_anchor_projects_only_referenced_bindings_and_memoizes_repeated_leaves() {
     let trace = Trace::default();
     let table = TableId::new_const(0);
@@ -531,6 +584,33 @@ fn container_anchor_projects_only_referenced_bindings_and_memoizes_repeated_leav
         trace.lookup_term(current_sort, current_value),
         Some(children[0]),
         "the exact nested Current producer was not installed for its runtime value"
+    );
+
+    let cached_facts = {
+        let memo = trace.0.term_projection_memo.lock().unwrap();
+        assert!(memo.contains_fact(used_fact, 0));
+        assert!(
+            !memo.contains_fact(unused_fact, 0),
+            "runtime anchoring projected an unreferenced premise"
+        );
+        memo.fact_len()
+    };
+    let installed_again = trace
+        .with_container_anchor_installer(site, &replay, |install| {
+            install(
+                &binding_sources,
+                &[used_fact, unused_fact],
+                &[current_value, current_value],
+                container_value,
+            )
+        })
+        .unwrap()
+        .unwrap();
+    assert_eq!(installed_again, installed);
+    assert_eq!(
+        trace.0.term_projection_memo.lock().unwrap().fact_len(),
+        cached_facts,
+        "a later anchor batch rebuilt an immutable fact projection"
     );
 }
 

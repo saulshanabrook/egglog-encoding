@@ -51,6 +51,9 @@ pub(super) struct Slice {
     pub(super) source_roots: HashSet<SourceRef>,
     /// Structural terms paired with checked-alias schedules for each selected firing.
     pub(super) firing_bindings: HashMap<FiringId, Box<[FiringBindingPlan]>>,
+    /// Facts whose source/firing carriers are replayed. Replay uses this set only to end a
+    /// computed-result alias when its selected merge successor replaces the same table row.
+    pub(super) retained_facts: HashSet<FactId>,
 }
 
 #[derive(Default)]
@@ -454,6 +457,7 @@ fn maintenance_cause_is_replay_visible(
             RawCause::Merge {
                 incoming,
                 prior_fact,
+                ..
             } => {
                 let incoming = maintenance_cause_is_replay_visible(
                     view,
@@ -865,6 +869,7 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                         RawCause::Merge {
                             incoming,
                             prior_fact,
+                            ..
                         } => {
                             work.push_back(Work::Cause(incoming));
                             work.push_back(Work::Fact(prior_fact));
@@ -941,6 +946,7 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
             break;
         }
     }
+    selection.slice.retained_facts = selection.replay_facts;
     Ok(selection.slice)
 }
 

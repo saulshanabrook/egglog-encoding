@@ -98,8 +98,8 @@ mod backend_impl;
 
 pub use egglog_bridge::{
     ActionRegistry, ColumnTy, DefaultVal, FunctionConfig, FunctionId, FunctionReplaySpec,
-    MergeAction, MergeBindingId, MergeExpr, MergeInputSide, MergePrimitiveOrigin, MergeProgram,
-    MergeValueColumn, RuleId, ScanEntry,
+    MergeAction, MergeBindingId, MergeExpr, MergeInputSide, MergeProgram, MergeValueColumn, RuleId,
+    ScanEntry,
 };
 pub use egglog_core_relations::{
     BaseValue, BaseValueId, BaseValues, ContainerValue, ContainerValues, CounterId, ExecutionState,

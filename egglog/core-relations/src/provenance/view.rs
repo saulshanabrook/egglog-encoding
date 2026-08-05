@@ -9,7 +9,7 @@ mod explain;
 /// anchoring. Native capture stores raw creation rows and compact static origin
 /// sites; consumers expand only the requested references into the replay-term
 /// DAG.
-#[derive(Clone)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum TemplateOwner {
     Durable(FiringId),
     Fact(FactId),
@@ -25,10 +25,33 @@ pub(super) struct TermProjector<'a> {
     term_recipes: &'a StaticTermRecipeStore,
     replay_terms: &'a TermInterner,
     next_term: &'a AtomicU32,
-    fact_memo: HashMap<(FactId, usize), ReplayTermId>,
-    firing_memo: HashMap<(FiringId, usize), ReplayTermId>,
+    memo: &'a mut TermProjectionMemo,
     visiting_facts: HashSet<(FactId, usize)>,
     visiting_firings: HashSet<(FiringId, usize)>,
+}
+
+/// Successful projections of immutable trace owners, shared by every lazy
+/// projector created for one trace. Cycle detection remains projector-local.
+#[derive(Default)]
+pub(super) struct TermProjectionMemo {
+    fact: HashMap<(FactId, usize), ReplayTermId>,
+    firing: HashMap<(FiringId, usize), ReplayTermId>,
+    template: HashMap<(Option<TemplateOwner>, usize), ReplayTermId>,
+}
+
+#[cfg(test)]
+impl TermProjectionMemo {
+    pub(super) fn fact_len(&self) -> usize {
+        self.fact.len()
+    }
+
+    pub(super) fn contains_fact(&self, fact: FactId, column: usize) -> bool {
+        self.fact.contains_key(&(fact, column))
+    }
+
+    pub(super) fn template_len(&self) -> usize {
+        self.template.len()
+    }
 }
 
 impl<'a> TermProjector<'a> {
@@ -38,6 +61,7 @@ impl<'a> TermProjector<'a> {
         term_recipes: &'a StaticTermRecipeStore,
         replay_terms: &'a TermInterner,
         next_term: &'a AtomicU32,
+        memo: &'a mut TermProjectionMemo,
     ) -> Self {
         Self {
             arena,
@@ -45,8 +69,7 @@ impl<'a> TermProjector<'a> {
             term_recipes,
             replay_terms,
             next_term,
-            fact_memo: HashMap::default(),
-            firing_memo: HashMap::default(),
+            memo,
             visiting_facts: HashSet::default(),
             visiting_firings: HashSet::default(),
         }
@@ -57,7 +80,7 @@ impl<'a> TermProjector<'a> {
         fact_id: FactId,
         column: usize,
     ) -> Result<ReplayTermId, String> {
-        if let Some(term) = self.fact_memo.get(&(fact_id, column)).copied() {
+        if let Some(term) = self.memo.fact.get(&(fact_id, column)).copied() {
             return Ok(term);
         }
         if !self.visiting_facts.insert((fact_id, column)) {
@@ -77,47 +100,48 @@ impl<'a> TermProjector<'a> {
                 .originating_rule(fact.cause)
                 .map(TemplateOwner::Durable)
                 .unwrap_or(TemplateOwner::Fact(fact_id));
-            let merge_cell = match fact.origin {
-                Some(FactOrigin::Merge { cells, .. }) => self.arena.durable_merge_cell_origins
-                    [cells.as_range()]
-                .get(column)
-                .copied(),
-                _ => None,
-            };
             let (table, origin) = (fact.table, fact.origin);
             match origin {
                 Some(FactOrigin::Site(site)) => self.site_term(site, table, column, Some(&owner)),
                 Some(FactOrigin::Fact(source)) => self.fact_term(source, column),
-                Some(FactOrigin::Merge {
-                    incoming, prior, ..
-                }) => {
-                    let cell = merge_cell.ok_or_else(|| {
-                        format!("merge origin for {fact_id:?} has no column {column}")
-                    })?;
-                    let incoming_term = |this: &mut Self| match incoming {
-                        Some(RowOriginRef::Site(site)) => {
-                            this.site_term(site, table, column, Some(&owner))
-                        }
-                        Some(RowOriginRef::Fact(source)) => this.fact_term(source, column),
-                        None => Err(format!(
-                            "reached unattributed incoming syntax for {fact_id:?} column {column}"
-                        )),
-                    };
-                    match cell {
-                        MergeCellOrigin::Incoming(source) => match incoming {
-                            Some(RowOriginRef::Site(site)) => {
-                                self.site_term(site, table, source as usize, Some(&owner))
+                Some(FactOrigin::Merge { incoming, .. }) => {
+                    let key_columns = self
+                        .replay_terms
+                        .table_key_columns
+                        .get(&table)
+                        .map(|columns| *columns as usize)
+                        .ok_or_else(|| format!("merge table {table:?} has no key arity"))?;
+                    if column < key_columns {
+                        return match incoming {
+                            RowOriginRef::Site(site) => {
+                                self.site_term(site, table, column, Some(&owner))
                             }
-                            Some(RowOriginRef::Fact(source_fact)) => {
-                                self.fact_term(source_fact, source as usize)
-                            }
-                            None => incoming_term(self),
-                        },
-                        MergeCellOrigin::Prior(source) => self.fact_term(prior, source as usize),
-                        MergeCellOrigin::Unsupported => Err(format!(
-                            "merge of {fact_id:?} column {column} synthesized unsupported syntax"
-                        )),
+                            RowOriginRef::Fact(source) => self.fact_term(source, column),
+                        };
                     }
+                    if column != key_columns {
+                        return Err(format!(
+                            "scalar merge fact {fact_id:?} has no logical column {column}"
+                        ));
+                    }
+                    let result = self
+                        .replay_terms
+                        .table_merge_results
+                        .get(&table)
+                        .map(|entry| entry.clone())
+                        .ok_or_else(|| format!("merge table {table:?} has no result call"))?;
+                    let mut children = Vec::with_capacity(key_columns);
+                    for key in 0..key_columns {
+                        children.push(self.fact_term(fact_id, key)?);
+                    }
+                    Ok(self.replay_terms.intern(
+                        self.next_term,
+                        ReplayTerm::Call {
+                            sort: result.result_sort,
+                            op: result.op,
+                            children: children.into(),
+                        },
+                    ))
                 }
                 None => Err(format!(
                     "causal fact {fact_id:?} column {column} has no structural origin"
@@ -126,7 +150,7 @@ impl<'a> TermProjector<'a> {
         })();
         self.visiting_facts.remove(&(fact_id, column));
         let term = result?;
-        self.fact_memo.insert((fact_id, column), term);
+        self.memo.fact.insert((fact_id, column), term);
         Ok(term)
     }
 
@@ -159,7 +183,7 @@ impl<'a> TermProjector<'a> {
     }
 
     fn firing_term(&mut self, firing_id: FiringId, binding: usize) -> Result<ReplayTermId, String> {
-        if let Some(term) = self.firing_memo.get(&(firing_id, binding)).copied() {
+        if let Some(term) = self.memo.firing.get(&(firing_id, binding)).copied() {
             return Ok(term);
         }
         if !self.visiting_firings.insert((firing_id, binding)) {
@@ -180,7 +204,7 @@ impl<'a> TermProjector<'a> {
         })();
         self.visiting_firings.remove(&(firing_id, binding));
         let term = result?;
-        self.firing_memo.insert((firing_id, binding), term);
+        self.memo.firing.insert((firing_id, binding), term);
         Ok(term)
     }
 
@@ -232,7 +256,14 @@ impl<'a> TermProjector<'a> {
         template: &TermTemplate,
         owner: Option<&TemplateOwner>,
     ) -> Result<ReplayTermId, String> {
-        match template {
+        // Recipe lowering preserves shared Arc nodes. Cache each immutable
+        // template node per historical owner so projection instantiates that
+        // DAG once instead of recursively expanding it as a tree.
+        let key = (owner.copied(), template as *const TermTemplate as usize);
+        if let Some(term) = self.memo.template.get(&key).copied() {
+            return Ok(term);
+        }
+        let result = match template {
             TermTemplate::Binding { binding } => match owner.ok_or_else(|| {
                 format!("source row origin unexpectedly references binding {binding}")
             })? {
@@ -349,20 +380,24 @@ impl<'a> TermProjector<'a> {
                 self.fact_term(fact, *column as usize)
             }
             TermTemplate::Call { sort, op, children } => {
-                let children = children
-                    .iter()
-                    .map(|child| self.template(child, owner))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let mut projected = Vec::with_capacity(children.len());
+                for child in children.iter() {
+                    projected.push(self.template(child, owner)?);
+                }
                 Ok(self.replay_terms.intern(
                     self.next_term,
                     ReplayTerm::Call {
                         sort: *sort,
                         op: *op,
-                        children: children.into(),
+                        children: projected.into(),
                     },
                 ))
             }
+        };
+        if let Ok(term) = result {
+            self.memo.template.insert(key, term);
         }
+        result
     }
 
     pub(super) fn runtime_anchor_template(
@@ -371,7 +406,22 @@ impl<'a> TermProjector<'a> {
         binding_sources: &[ReplayBindingSource],
         premises: &[FactId],
     ) -> Result<ReplayTermId, String> {
-        match template {
+        let mut memo = HashMap::default();
+        self.runtime_anchor_template_with_memo(template, binding_sources, premises, &mut memo)
+    }
+
+    fn runtime_anchor_template_with_memo(
+        &mut self,
+        template: &TermTemplate,
+        binding_sources: &[ReplayBindingSource],
+        premises: &[FactId],
+        memo: &mut HashMap<usize, ReplayTermId>,
+    ) -> Result<ReplayTermId, String> {
+        let key = template as *const TermTemplate as usize;
+        if let Some(term) = memo.get(&key).copied() {
+            return Ok(term);
+        }
+        let result = match template {
             TermTemplate::Binding { binding } => {
                 let source = binding_sources.get(*binding as usize).ok_or_else(|| {
                     format!("container anchor references unknown binding {binding}")
@@ -403,20 +453,29 @@ impl<'a> TermProjector<'a> {
                 "container runtime anchor unexpectedly references zero-key table {table:?}"
             )),
             TermTemplate::Call { sort, op, children } => {
-                let children = children
-                    .iter()
-                    .map(|child| self.runtime_anchor_template(child, binding_sources, premises))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let mut projected = Vec::with_capacity(children.len());
+                for child in children.iter() {
+                    projected.push(self.runtime_anchor_template_with_memo(
+                        child,
+                        binding_sources,
+                        premises,
+                        memo,
+                    )?);
+                }
                 Ok(self.replay_terms.intern(
                     self.next_term,
                     ReplayTerm::Call {
                         sort: *sort,
                         op: *op,
-                        children: children.into(),
+                        children: projected.into(),
                     },
                 ))
             }
+        };
+        if let Ok(term) = result {
+            memo.insert(key, term);
         }
+        result
     }
 
     fn equality_endpoint(
@@ -521,7 +580,8 @@ pub struct TraceView<'a> {
     pub(super) history_boundary: HistoryPosition,
     pub(super) equality_index: Option<ExplanationForest>,
     pub(super) rekey_index: Option<Result<VersionChain, TraceViewError>>,
-    pub(super) constructor_occurrence_index: Option<ConstructorOccurrenceIndex>,
+    pub(super) merge_replacement_index: Option<Vec<Option<(FactId, HistoryPosition)>>>,
+    pub(super) row_call_occurrence_index: Option<RowCallOccurrenceIndex>,
     pub(super) occurrence_support_cache:
         HashMap<StructuralOccurrenceQuery, Option<RawEqualitySupport>>,
     pub(super) exact_occurrence_support_cache:
@@ -537,9 +597,13 @@ pub(super) struct VersionChain {
     by_position: HashMap<HistoryPosition, usize>,
 }
 
-pub(super) struct ConstructorOccurrenceIndex {
+pub(super) struct RowCallOccurrenceIndex {
+    /// All table-backed structural calls, including computed scalar merge results.
     facts: HashMap<(ReplaySortId, ReplayOpId), Arc<[FactId]>>,
+    /// Constructor-only occurrences used by congruence explanation.
+    constructor_facts: HashMap<(ReplaySortId, ReplayOpId), Arc<[FactId]>>,
     registered: HashSet<(ReplaySortId, ReplayOpId)>,
+    constructors: HashSet<(ReplaySortId, ReplayOpId)>,
     equality_sorts: HashSet<ReplaySortId>,
     /// Non-table calls that were emitted by a frontend-certified static term
     /// recipe. Only these calls may be recomputed by `let-check` without a
@@ -787,9 +851,11 @@ impl<'a> TraceView<'a> {
             DurableCause::Merge {
                 incoming,
                 prior_fact,
+                history_cutoff,
             } => RawCause::Merge {
                 incoming: Self::public_cause(*incoming)?,
                 prior_fact: *prior_fact,
+                history_cutoff: *history_cutoff,
             },
         })
     }
@@ -1164,8 +1230,67 @@ impl<'a> TraceView<'a> {
             .ok_or_else(|| TraceViewError::Invalid(format!("unknown replay term {term:?}")))
     }
 
+    /// Return the direct effective-merge successor that ended this fact, if any.
+    ///
+    /// Merge replacement shares the successor fact's creation position rather
+    /// than allocating a tombstone event. The index is therefore derived cold
+    /// from `FactOrigin::Merge` records. Dense [`FactId`]s index the derived
+    /// successor slots directly.
+    pub fn fact_replacement(
+        &mut self,
+        fact: FactId,
+    ) -> Result<Option<(FactId, HistoryPosition)>, TraceViewError> {
+        if self.merge_replacement_index.is_none() {
+            let mut replacements = vec![None; self.arena.facts.len()];
+            for (index, slot) in self.arena.facts.iter().enumerate() {
+                let Some(record) = slot.as_ref() else {
+                    continue;
+                };
+                let Some(FactOrigin::Merge { prior, .. }) = record.origin else {
+                    continue;
+                };
+                let successor = FactId::new(index as u64 + 1);
+                let prior_record = self.fact(prior)?;
+                if prior_record.table != record.table {
+                    return Err(TraceViewError::Invalid(format!(
+                        "merge successor {successor:?} changed tables from {:?} to {:?}",
+                        prior_record.table, record.table
+                    )));
+                }
+                let prior_position = prior_record.position;
+                if record.position <= prior_position {
+                    return Err(TraceViewError::Invalid(format!(
+                        "merge successor {successor:?} does not follow prior fact {prior:?}"
+                    )));
+                }
+                let prior_index = usize::try_from(prior.get() - 1)
+                    .map_err(|_| TraceViewError::UnknownFact(prior))?;
+                if replacements[prior_index]
+                    .replace((successor, record.position))
+                    .is_some()
+                {
+                    return Err(TraceViewError::Invalid(format!(
+                        "fact {prior:?} has multiple direct merge successors"
+                    )));
+                }
+            }
+            self.merge_replacement_index = Some(replacements);
+        }
+        let Some(raw_index) = fact.get().checked_sub(1) else {
+            return Ok(None);
+        };
+        let index = usize::try_from(raw_index).map_err(|_| TraceViewError::UnknownFact(fact))?;
+        Ok(self
+            .merge_replacement_index
+            .as_ref()
+            .expect("initialized merge-replacement index disappeared")
+            .get(index)
+            .copied()
+            .flatten())
+    }
+
     fn live_fact_at(
-        &self,
+        &mut self,
         fact: FactId,
         position: HistoryPosition,
     ) -> Result<RawFactRecord<'a>, TraceViewError> {
@@ -1180,17 +1305,28 @@ impl<'a> TraceView<'a> {
                 "fact {fact:?} was created after {position:?}"
             )));
         }
-        if let Some(removal) = self
+        let replacement = self.fact_replacement(fact)?;
+        let removal = self
             .arena
             .removals
             .iter()
             .find(|removal| removal.removed_fact == fact && removal.position <= position)
-        {
+            .map(|removal| removal.position);
+        let end = match (replacement, removal) {
+            (Some((successor, ended_at)), removal)
+                if ended_at <= position && removal.is_none_or(|position| ended_at <= position) =>
+            {
+                Some((ended_at, Some(successor)))
+            }
+            (_, Some(ended_at)) => Some((ended_at, None)),
+            _ => None,
+        };
+        if let Some((ended_at, successor)) = end {
             return Err(TraceViewError::FactNoLongerLive {
                 fact,
                 position,
-                ended_at: removal.position,
-                successor: None,
+                ended_at,
+                successor,
             });
         }
         Ok(record)

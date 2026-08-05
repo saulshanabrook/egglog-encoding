@@ -20,8 +20,8 @@ use std::{
 use crate::core_relations::{
     BaseValue, BaseValueId, BaseValues, ColumnId, Constraint, ContainerValue, ContainerValues,
     CounterId, Database, DisplacedTable, ExecutionState, ExternalFunction, ExternalFunctionId,
-    MergeOriginSelector, MergeVal, Offset, PlanStrategy, RowOriginSiteId, SortedWritesTable,
-    TableId, TaggedRowBuffer, Value, WrappedTable, make_external_func,
+    MergeVal, Offset, PlanStrategy, RowOriginSiteId, SortedWritesTable, TableId, TaggedRowBuffer,
+    Value, WrappedTable, make_external_func,
 };
 use crate::numeric_id::{DenseIdMap, DenseIdMapWithReuse, NumericId, define_id};
 use egglog_core_relations as core_relations;
@@ -48,8 +48,7 @@ mod tests;
 
 pub use grounded::{GroundedRuleBinding, GroundedRuleRun, GroundedRuleVariable};
 pub use merge::{
-    MergeAction, MergeBindingId, MergeExpr, MergeInputSide, MergePrimitiveOrigin, MergeProgram,
-    MergeValueColumn,
+    MergeAction, MergeBindingId, MergeExpr, MergeInputSide, MergeProgram, MergeValueColumn,
 };
 pub use rule::{
     CriterionCapturePremise, CriterionCaptureSpec, FiringCaptureBinding, FiringCaptureSpec,
@@ -259,25 +258,6 @@ pub struct FunctionConfig {
     pub can_subsume: bool,
 }
 
-fn validate_replay_merge_origins(
-    name: &str,
-    origins: &[MergeOriginSelector],
-    has_function_result: bool,
-) -> Result<()> {
-    if !has_function_result {
-        return Ok(());
-    }
-    if origins
-        .iter()
-        .any(|origin| matches!(origin, MergeOriginSelector::Unsupported))
-    {
-        anyhow::bail!(
-            "function `{name}` merge reached an unsupported structural result expression"
-        );
-    }
-    Ok(())
-}
-
 /// Side-band structural replay metadata for one registered function.
 ///
 /// [`FunctionReplaySpec::logical_sorts`] is the complete user-visible schema in
@@ -289,9 +269,15 @@ fn validate_replay_merge_origins(
 /// [`FunctionReplaySpec::table_kind`] are independent. A constructor recipe
 /// controls structural result construction and means source input rows contain
 /// keys only; the bridge creates the function's single output. Without a
-/// constructor recipe, source input rows contain the full key-then-output logical row. The table
-/// kind separately controls replay-observable table semantics, so a
-/// presence-relation table can still carry a constructor recipe.
+/// constructor recipe, source input rows contain the full key-then-output
+/// logical row. The table kind separately controls replay-observable table
+/// semantics, so a presence-relation table can still carry a constructor
+/// recipe.
+///
+/// [`FunctionReplaySpec::merge_result`] is a separate, read-only call recipe
+/// for naming an effective scalar merge after its structural carrier runs.
+/// It is absent for presence relations and for merge programs whose result
+/// cannot be replayed without additional effects or table reads.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FunctionReplaySpec {
     /// Logical sort of each user-visible column: keys first, then outputs.
@@ -300,6 +286,9 @@ pub struct FunctionReplaySpec {
     /// Its presence, rather than [`FunctionReplaySpec::table_kind`], selects
     /// keys-only source staging.
     pub constructor: Option<ReplayCallSpec>,
+    /// Read-only table call used to name the result of an effective scalar merge.
+    /// `None` leaves reached causal collisions unsupported.
+    pub merge_result: Option<ReplayCallSpec>,
     /// Replay-observable table semantics, independent of the constructor
     /// recipe and source-row shape.
     pub table_kind: ReplayTableKind,
@@ -361,7 +350,14 @@ impl FunctionReplaySpec {
                 ReplayTableKind::ValueFunction
             },
             constructor,
+            merge_result: None,
         }
+    }
+
+    /// Name effective scalar merges by reading this function at its retained keys.
+    pub fn with_merge_result(mut self, merge_result: ReplayCallSpec) -> Self {
+        self.merge_result = Some(merge_result);
+        self
     }
 
     /// Override the table semantics inferred by [`FunctionReplaySpec::new`].
@@ -856,11 +852,7 @@ impl EGraph {
         };
         let n_args = schema_math.num_keys();
         let n_cols = schema_math.table_columns();
-        let has_function_result = merge.has_function_result();
-        let merge_origins = merge.origin_selectors(&schema, n_keys);
-        if self.trace.is_some() {
-            validate_replay_merge_origins(&name, &merge_origins, has_function_result)?;
-        }
+        let merge_result_shape_supported = merge.supports_scalar_replay_result_shape();
         let next_func_id = self.funcs.next_id();
         let name: Arc<str> = name.into();
         // Knot-tying for a self-referential merge (e.g. the term encoder's single-table UF `@UF`,
@@ -877,8 +869,7 @@ impl EGraph {
             n_keys,
             n_identity_vals,
             replay: None,
-            merge_origins,
-            has_function_result,
+            merge_result_shape_supported,
             incremental_rebuild_rules: Default::default(),
             nonincremental_rebuild_rule: RuleId::new(!0),
             default_val: default,
@@ -1026,7 +1017,41 @@ impl EGraph {
                 );
             }
         }
-        validate_replay_merge_origins(&info.name, &info.merge_origins, info.has_function_result)?;
+        if let Some(merge_result) = &spec.merge_result {
+            let outputs = info.schema.len() - info.n_keys;
+            if outputs != 1 {
+                anyhow::bail!(
+                    "function `{}` has {outputs} outputs but causal merge replay requires exactly one",
+                    info.name
+                );
+            }
+            if !info.merge_result_shape_supported {
+                anyhow::bail!(
+                    "function `{}` supplied merge-result replay metadata for an actionful or table-reading merge",
+                    info.name
+                );
+            }
+            if merge_result.child_sorts.len() != info.n_keys {
+                anyhow::bail!(
+                    "function `{}` has {} keys but merge-result replay metadata supplied {} child sorts",
+                    info.name,
+                    info.n_keys,
+                    merge_result.child_sorts.len()
+                );
+            }
+            if spec.logical_sorts[info.n_keys] != merge_result.result_sort {
+                anyhow::bail!(
+                    "function `{}` merge-result replay sort does not match its output",
+                    info.name
+                );
+            }
+            if spec.logical_sorts[..info.n_keys] != *merge_result.child_sorts {
+                anyhow::bail!(
+                    "function `{}` merge-result replay child sorts do not match its keys",
+                    info.name
+                );
+            }
+        }
 
         let trace = self
             .trace
@@ -1061,14 +1086,9 @@ impl EGraph {
                 .register_table_constructor(info.table, constructor)
                 .map_err(anyhow::Error::msg)?;
         }
-        let mut merge_origins = info.merge_origins.to_vec();
-        merge_origins.resize(layout.len(), MergeOriginSelector::Unsupported);
-        trace
-            .register_table_merge_origins(info.table, &merge_origins)
-            .map_err(anyhow::Error::msg)?;
-        if let Some(identity_columns) = info.n_identity_vals {
+        if let Some(merge_result) = spec.merge_result.clone() {
             trace
-                .register_table_merge_identity_guard(info.table, info.n_keys, identity_columns)
+                .register_table_merge_result(info.table, merge_result)
                 .map_err(anyhow::Error::msg)?;
         }
         self.funcs[func].replay = Some(spec);
@@ -1706,8 +1726,8 @@ struct FunctionInfo {
     /// Opt-in identity-column guard (see [`FunctionConfig::n_identity_vals`]).
     n_identity_vals: Option<usize>,
     replay: Option<FunctionReplaySpec>,
-    merge_origins: Box<[MergeOriginSelector]>,
-    has_function_result: bool,
+    /// The native merge has one action-free result and no hidden table read or binding.
+    merge_result_shape_supported: bool,
     incremental_rebuild_rules: Vec<RuleId>,
     nonincremental_rebuild_rule: RuleId,
     default_val: DefaultVal,

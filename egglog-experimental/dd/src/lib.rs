@@ -952,7 +952,6 @@ impl<'a> MergeTransaction<'a> {
             MergeExpr::Primitive {
                 function: id,
                 arguments,
-                ..
             } => {
                 let args = self.eval_args(arguments, owner, old, new, environment)?;
                 // A custom merge lowered into the FD view's `:merge` may build
@@ -1146,9 +1145,9 @@ mod tests {
     };
     use egglog_backend_trait::{
         Backend, BaseValueId, ColumnTy, DefaultVal, ExternalFunctionId, FunctionConfig,
-        MergeAction, MergeBindingId, MergeExpr, MergeInputSide, MergePrimitiveOrigin, MergeProgram,
-        MergeValueColumn, ReadMode, RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec,
-        RuleValue, RuleVar, Value,
+        MergeAction, MergeBindingId, MergeExpr, MergeInputSide, MergeProgram, MergeValueColumn,
+        ReadMode, RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar,
+        Value,
     };
     use egglog_numeric_id::NumericId;
 
@@ -1323,7 +1322,6 @@ mod tests {
         MergeExpr::Primitive {
             function,
             arguments,
-            origin: MergePrimitiveOrigin::Opaque,
         }
     }
 

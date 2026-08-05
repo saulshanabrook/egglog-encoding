@@ -948,8 +948,8 @@ impl Database {
     }
 
     /// Fallible trace-aware variant of [`Database::merge_all`] for reached
-    /// structural merge selectors. Low-level capture callers must still use
-    /// origin-aware staging APIs.
+    /// unsupported structural merge results. Low-level capture callers must
+    /// still use origin-aware staging APIs.
     ///
     /// Every currently dirty table is preflighted before any table is changed.
     /// A callback can stage more rows while that batch is being merged, so the

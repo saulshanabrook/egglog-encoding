@@ -23,11 +23,13 @@
 //! birewrite form and orientation.
 //!
 //! Structural-call-valued bindings cross into the fresh graph only through checked
-//! aliases. Each alias is scheduled at a retained pre-wave boundary after its
-//! children and historical key support are available and before its producer is
-//! removed. Structural reuse is confined to an occurrence lifetime: removals
-//! split alias epochs so identical syntax cannot conflate deleted and recreated
-//! native values.
+//! aliases. Calls include constructor occurrences and table-backed scalar merge
+//! results: the latter read the row computed by the original retained merge rather
+//! than reimplementing its expression. Each alias is scheduled at a retained
+//! pre-wave boundary after its children and historical key support are available
+//! and before its producer is replaced or removed. Structural reuse is confined to
+//! an occurrence lifetime so identical syntax cannot conflate successive native
+//! values.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -1441,10 +1443,10 @@ fn lower_slice_to_owned_program_with_sources(
 
     // A checked alias remains a valid name for later monotone unions/rekeys,
     // but not across removal/recreation: identical syntax can then denote a
-    // fresh native occurrence. Exact producer tombstones also end that call's
-    // capture window. Use a conservative global removal epoch for structural
-    // deduplication so unrelated deletions may inhibit reuse but can never
-    // merge two occurrence lifetimes.
+    // fresh native occurrence. Exact producer tombstones and selected merge
+    // successors both end that call's capture window. Use a conservative global
+    // removal epoch for structural deduplication so unrelated deletions may
+    // inhibit reuse but can never merge two occurrence lifetimes.
     let mut alias_reset_positions = Vec::new();
     let mut selected_removal_by_fact = HashMap::<FactId, u64>::default();
     for index in slice.replay_removals.iter().copied() {
@@ -1458,6 +1460,15 @@ fn lower_slice_to_owned_program_with_sources(
     }
     alias_reset_positions.sort_unstable();
     alias_reset_positions.dedup();
+    let mut selected_replacement_by_fact = HashMap::<FactId, u64>::default();
+    for fact in slice.retained_facts.iter().copied() {
+        let Some((successor, position)) = view.fact_replacement(fact)? else {
+            continue;
+        };
+        if slice.retained_facts.contains(&successor) {
+            selected_replacement_by_fact.insert(fact, position.get());
+        }
+    }
 
     let mut terms = OwnedTermBuilder::new(view, catalog)?;
     let mut waves = BTreeMap::<u64, Vec<ReplayFiring>>::new();
@@ -1592,9 +1603,17 @@ fn lower_slice_to_owned_program_with_sources(
                 // tombstone for this exact producer is the exclusive upper
                 // bound: the alias must be checked before replay deletes it.
                 let history_ready_after = plan.ready_after.get();
-                let live_before = plan
+                let removal_before = plan
                     .producer
                     .and_then(|producer| selected_removal_by_fact.get(&producer).copied());
+                let replacement_before = plan
+                    .producer
+                    .and_then(|producer| selected_replacement_by_fact.get(&producer).copied());
+                let live_before = match (removal_before, replacement_before) {
+                    (Some(removal), Some(replacement)) => Some(removal.min(replacement)),
+                    (Some(position), None) | (None, Some(position)) => Some(position),
+                    (None, None) => None,
+                };
                 let alias_wave = wave_history_cutoffs
                     .iter()
                     .find_map(|(candidate_wave, candidate_cutoff)| {

@@ -1822,7 +1822,7 @@ impl<'a> ProofInstrumentor<'a> {
             }
             // `let-check` performs its own lookup-only evaluation. Passing it
             // through avoids action instrumentation, Fiat term rows, and proof
-            // facts; runtime constructor lookup targets the encoded FD view.
+            // facts; runtime constructor/value-function lookup targets the encoded FD view.
             ResolvedNCommand::LetCheck { .. } => {
                 res.push(command.to_command().make_unresolved());
             }

@@ -23,14 +23,16 @@ fn equality_endpoint_is_carrier_owned(term: EqualityTermRef) -> bool {
 }
 
 impl<'a> TraceView<'a> {
-    /// Explain the historical state read by one structural equality endpoint
-    /// immediately before its applied event.
+    /// Explain the historical state read by one structural equality endpoint.
     ///
     /// Equality events record both the structural proposal and the native
     /// forest edge that proposal actually applied. A proposal term may already
-    /// denote an older representative, so replay also needs the strictly
-    /// earlier equalities that established that denotation. The event itself
-    /// is deliberately outside both cutoffs and can never justify its own
+    /// denote an older representative, so replay also needs the earlier
+    /// equalities that established that denotation. Most effects read their
+    /// operands immediately before application. A table merge can stage an
+    /// equality, publish its replacement fact, and apply that equality later;
+    /// its merge cause therefore supplies the earlier callback-read cutoff.
+    /// The event itself is outside both cutoffs and cannot justify its own
     /// precondition.
     pub fn explain_equality_denotation_before(
         &mut self,
@@ -77,15 +79,36 @@ impl<'a> TraceView<'a> {
             })?
             .try_into()
             .map_err(|_| TraceViewError::Invalid("equality prefix exceeds storage".into()))?;
-        let position =
+        let application_position =
             HistoryPosition::new(event_position.get().checked_sub(1).ok_or_else(|| {
                 TraceViewError::Invalid("applied equality has no pre-event history position".into())
             })?);
-        if equality_prefix != self.equality_prefix_at(position)? {
+        if equality_prefix != self.equality_prefix_at(application_position)? {
             return Err(TraceViewError::Invalid(
                 "applied equality does not immediately follow its derived prefix".into(),
             ));
         }
+        let read_position = match &event.reason {
+            EqualityReason::MergeFn { cause } => match self.cause(*cause)? {
+                RawCause::Merge { history_cutoff, .. } => history_cutoff,
+                _ => {
+                    return Err(TraceViewError::Invalid(format!(
+                        "merge equality {id:?} has a non-merge cause"
+                    )));
+                }
+            },
+            _ => application_position,
+        };
+        if read_position > application_position {
+            return Err(TraceViewError::Invalid(format!(
+                "applied equality {id:?} reads its endpoints after application"
+            )));
+        }
+        let read_prefix = if read_position == application_position {
+            equality_prefix
+        } else {
+            self.equality_prefix_at(read_position)?
+        };
         self.validate_equality_endpoints(event.left, event.right)?;
         let left_root = self.raw_representative_at(
             RawEqualityEndpoint {
@@ -117,7 +140,7 @@ impl<'a> TraceView<'a> {
             ))
         };
         let left_occurrence = self
-            .explain_endpoint_read_at(event.left, equality_prefix, position, left_carrier_owned)
+            .explain_endpoint_read_at(event.left, read_prefix, read_position, left_carrier_owned)
             .map_err(|error| explain_error("left", error))?;
         let left_bridge = self
             .explain_raw_equality_support_with_cutoff(
@@ -133,7 +156,7 @@ impl<'a> TraceView<'a> {
             )
             .map_err(|error| explain_error("left", error))?;
         let right_occurrence = self
-            .explain_endpoint_read_at(event.right, equality_prefix, position, right_carrier_owned)
+            .explain_endpoint_read_at(event.right, read_prefix, read_position, right_carrier_owned)
             .map_err(|error| explain_error("right", error))?;
         let right_bridge = self
             .explain_raw_equality_support_with_cutoff(
@@ -838,107 +861,188 @@ impl<'a> TraceView<'a> {
         Ok(count)
     }
 
-    fn constructor_occurrence_facts(
-        &mut self,
-        sort: ReplaySortId,
-        op: ReplayOpId,
-    ) -> Arc<[FactId]> {
-        if self.constructor_occurrence_index.is_none() {
-            let mut facts = HashMap::<(ReplaySortId, ReplayOpId), Vec<FactId>>::default();
-            facts.reserve(self.replay_terms.table_constructors.len());
-            let registered = self
-                .replay_terms
-                .table_constructors
+    fn initialize_row_call_occurrences(&mut self) {
+        if self.row_call_occurrence_index.is_some() {
+            return;
+        }
+        let mut facts = HashMap::<(ReplaySortId, ReplayOpId), Vec<FactId>>::default();
+        let mut constructor_facts = HashMap::<(ReplaySortId, ReplayOpId), Vec<FactId>>::default();
+        facts.reserve(
+            self.replay_terms.table_constructors.len()
+                + self.replay_terms.table_merge_results.len(),
+        );
+        let constructors = self
+            .replay_terms
+            .table_constructors
+            .iter()
+            .map(|entry| (entry.value().result_sort, entry.value().op))
+            .collect::<HashSet<_>>();
+        let mut registered = constructors.clone();
+        registered.extend(
+            self.replay_terms
+                .table_merge_results
                 .iter()
-                .map(|entry| (entry.value().result_sort, entry.value().op))
-                .collect::<HashSet<_>>();
-            let equality_sorts = registered.iter().map(|(sort, _)| *sort).collect();
-            let mut certified_calls = HashSet::default();
-            let mut visited_terms = HashSet::default();
-            for recipe in self.term_recipes.rules.values() {
-                for template in recipe.current_roots.iter().flatten() {
-                    self.collect_certified_template_calls(
-                        template,
-                        &mut certified_calls,
-                        &mut visited_terms,
-                    );
-                }
-            }
-            for origin in &self.term_recipes.row_origins {
-                for template in origin.cells.iter().flatten() {
-                    self.collect_certified_template_calls(
-                        template,
-                        &mut certified_calls,
-                        &mut visited_terms,
-                    );
-                }
-            }
-            for origin in &self.term_recipes.term_origins {
+                .map(|entry| (entry.value().result_sort, entry.value().op)),
+        );
+        let equality_sorts = constructors.iter().map(|(sort, _)| *sort).collect();
+        let mut certified_calls = HashSet::default();
+        let mut visited_terms = HashSet::default();
+        for recipe in self.term_recipes.rules.values() {
+            for template in recipe.current_roots.iter().flatten() {
                 self.collect_certified_template_calls(
-                    &origin.term,
+                    template,
                     &mut certified_calls,
                     &mut visited_terms,
                 );
             }
-            for (index, slot) in self.arena.facts.iter().enumerate() {
-                let Some(fact) = slot.as_ref() else {
-                    continue;
-                };
-                let Some(constructor) = self
-                    .replay_terms
+        }
+        for origin in &self.term_recipes.row_origins {
+            for template in origin.cells.iter().flatten() {
+                self.collect_certified_template_calls(
+                    template,
+                    &mut certified_calls,
+                    &mut visited_terms,
+                );
+            }
+        }
+        for origin in &self.term_recipes.term_origins {
+            self.collect_certified_template_calls(
+                &origin.term,
+                &mut certified_calls,
+                &mut visited_terms,
+            );
+        }
+        for (index, slot) in self.arena.facts.iter().enumerate() {
+            let Some(fact) = slot.as_ref() else {
+                continue;
+            };
+            let id = FactId::new(index as u64 + 1);
+            if let Some(constructor) = self
+                .replay_terms
+                .table_constructors
+                .get(&fact.table)
+                .map(|entry| entry.clone())
+            {
+                constructor_facts
+                    .entry((constructor.result_sort, constructor.op))
+                    .or_default()
+                    .push(id);
+            }
+            let row_call = if matches!(fact.origin, Some(FactOrigin::Merge { .. })) {
+                self.replay_terms
+                    .table_merge_results
+                    .get(&fact.table)
+                    .map(|entry| entry.clone())
+            } else {
+                self.replay_terms
                     .table_constructors
                     .get(&fact.table)
                     .map(|entry| entry.clone())
-                else {
-                    continue;
-                };
+            };
+            if let Some(row_call) = row_call {
                 facts
-                    .entry((constructor.result_sort, constructor.op))
+                    .entry((row_call.result_sort, row_call.op))
                     .or_default()
-                    .push(FactId::new(index as u64 + 1));
+                    .push(id);
             }
-            self.constructor_occurrence_index = Some(ConstructorOccurrenceIndex {
-                facts: facts
-                    .into_iter()
-                    .map(|(key, facts)| (key, Arc::from(facts)))
-                    .collect(),
-                registered,
-                equality_sorts,
-                certified_calls,
-            });
         }
-        self.constructor_occurrence_index
+        self.row_call_occurrence_index = Some(RowCallOccurrenceIndex {
+            facts: facts
+                .into_iter()
+                .map(|(key, facts)| (key, Arc::from(facts)))
+                .collect(),
+            constructor_facts: constructor_facts
+                .into_iter()
+                .map(|(key, facts)| (key, Arc::from(facts)))
+                .collect(),
+            registered,
+            constructors,
+            equality_sorts,
+            certified_calls,
+        });
+    }
+
+    fn row_call_occurrence_facts(&mut self, sort: ReplaySortId, op: ReplayOpId) -> Arc<[FactId]> {
+        self.initialize_row_call_occurrences();
+        self.row_call_occurrence_index
             .as_ref()
-            .expect("initialized constructor occurrence index disappeared")
+            .expect("initialized row-call occurrence index disappeared")
             .facts
             .get(&(sort, op))
             .cloned()
             .unwrap_or_else(|| Arc::from([]))
     }
 
-    fn is_registered_constructor_call(&mut self, sort: ReplaySortId, op: ReplayOpId) -> bool {
-        let _ = self.constructor_occurrence_facts(sort, op);
-        self.constructor_occurrence_index
+    fn constructor_occurrence_facts(
+        &mut self,
+        sort: ReplaySortId,
+        op: ReplayOpId,
+    ) -> Arc<[FactId]> {
+        self.initialize_row_call_occurrences();
+        self.row_call_occurrence_index
             .as_ref()
-            .expect("initialized constructor occurrence index disappeared")
+            .expect("initialized row-call occurrence index disappeared")
+            .constructor_facts
+            .get(&(sort, op))
+            .cloned()
+            .unwrap_or_else(|| Arc::from([]))
+    }
+
+    fn is_registered_row_call(&mut self, sort: ReplaySortId, op: ReplayOpId) -> bool {
+        self.initialize_row_call_occurrences();
+        self.row_call_occurrence_index
+            .as_ref()
+            .expect("initialized row-call occurrence index disappeared")
             .registered
             .contains(&(sort, op))
     }
 
-    fn is_certified_replay_call(&mut self, sort: ReplaySortId, op: ReplayOpId) -> bool {
-        let _ = self.constructor_occurrence_facts(sort, op);
-        self.constructor_occurrence_index
+    fn row_call_spec_for_fact(&self, producer: FactId) -> Result<ReplayCallSpec, TraceViewError> {
+        let fact = self
+            .arena
+            .facts
+            .get(
+                (producer.get().checked_sub(1).ok_or_else(|| {
+                    TraceViewError::Invalid("missing FactId has no row-call producer".into())
+                })?) as usize,
+            )
+            .and_then(Option::as_ref)
+            .ok_or(TraceViewError::UnknownFact(producer))?;
+        let spec = if matches!(fact.origin, Some(FactOrigin::Merge { .. })) {
+            self.replay_terms.table_merge_results.get(&fact.table)
+        } else {
+            self.replay_terms.table_constructors.get(&fact.table)
+        };
+        spec.map(|entry| entry.clone()).ok_or_else(|| {
+            TraceViewError::Invalid(format!(
+                "row-call occurrence {producer:?} lost its replay metadata"
+            ))
+        })
+    }
+
+    fn is_registered_constructor_call(&mut self, sort: ReplaySortId, op: ReplayOpId) -> bool {
+        self.initialize_row_call_occurrences();
+        self.row_call_occurrence_index
             .as_ref()
-            .expect("initialized constructor occurrence index disappeared")
+            .expect("initialized row-call occurrence index disappeared")
+            .constructors
+            .contains(&(sort, op))
+    }
+
+    fn is_certified_replay_call(&mut self, sort: ReplaySortId, op: ReplayOpId) -> bool {
+        self.initialize_row_call_occurrences();
+        self.row_call_occurrence_index
+            .as_ref()
+            .expect("initialized row-call occurrence index disappeared")
             .certified_calls
             .contains(&(sort, op))
     }
 
-    fn is_equality_sort(&mut self, sort: ReplaySortId, seed_op: ReplayOpId) -> bool {
-        let _ = self.constructor_occurrence_facts(sort, seed_op);
-        self.constructor_occurrence_index
+    fn is_equality_sort(&mut self, sort: ReplaySortId) -> bool {
+        self.initialize_row_call_occurrences();
+        self.row_call_occurrence_index
             .as_ref()
-            .expect("initialized constructor occurrence index disappeared")
+            .expect("initialized row-call occurrence index disappeared")
             .equality_sorts
             .contains(&sort)
     }
@@ -1018,13 +1122,13 @@ impl<'a> TraceView<'a> {
             }));
         };
 
-        if !self.is_registered_constructor_call(sort, op) {
+        if !self.is_registered_row_call(sort, op) {
             if !self.is_certified_replay_call(sort, op) {
                 return Err(TraceViewError::Invalid(format!(
                     "structural call {op:?} for {sort:?} has no replay-safe availability producer"
                 )));
             }
-            let equality_sort = self.is_equality_sort(sort, op);
+            let equality_sort = self.is_equality_sort(sort);
             let mut fresh_after = inherited_fresh_after;
             let mut support_ready_after = HistoryPosition::new(0);
             if self.replay_terms.container_child_sorts.contains_key(&sort)
@@ -1058,9 +1162,9 @@ impl<'a> TraceView<'a> {
                 let child_desired = match self.replay_term(child)? {
                     ReplayTerm::Call {
                         sort: child_sort,
-                        op: child_op,
+                        op: _,
                         ..
-                    } if self.is_equality_sort(child_sort, child_op) => self
+                    } if self.is_equality_sort(child_sort) => self
                         .replay_terms
                         .original_value(child_sort, child)
                         .map(|raw| RawEqualityEndpoint {
@@ -1101,7 +1205,7 @@ impl<'a> TraceView<'a> {
             return Ok(Some(combine_raw_equality_support(parts)));
         }
 
-        let possible = self.constructor_occurrence_facts(sort, op);
+        let possible = self.row_call_occurrence_facts(sort, op);
         // ReplayTermId identifies syntax, not one native occurrence. Prefer
         // an exact structural producer and use the historical equality
         // prefix only to bridge that occurrence to the row value requested by
@@ -1139,17 +1243,8 @@ impl<'a> TraceView<'a> {
                 if fact_position > position {
                     continue;
                 }
-                let constructor = self
-                    .replay_terms
-                    .table_constructors
-                    .get(&self.fact(producer)?.table)
-                    .map(|entry| entry.clone())
-                    .ok_or_else(|| {
-                        TraceViewError::Invalid(format!(
-                            "constructor occurrence {producer:?} lost its replay metadata"
-                        ))
-                    })?;
-                let output = constructor.child_sorts.len();
+                let row_call = self.row_call_spec_for_fact(producer)?;
+                let output = row_call.child_sorts.len();
                 let produced_term = self
                     .projector
                     .fact_term(producer, output)
@@ -1168,7 +1263,7 @@ impl<'a> TraceView<'a> {
                         Err(TraceViewError::FactNoLongerLive { ended_at, .. }) => {
                             let last_live = ended_at.get().checked_sub(1).ok_or_else(|| {
                                 TraceViewError::Invalid(format!(
-                                    "constructor producer {producer:?} ended before history began"
+                                    "row-call producer {producer:?} ended before history began"
                                 ))
                             })?;
                             let last_live = HistoryPosition::new(last_live);
@@ -1228,11 +1323,11 @@ impl<'a> TraceView<'a> {
                 } else {
                     None
                 };
-                if children.len() != constructor.child_sorts.len() {
+                if children.len() != row_call.child_sorts.len() {
                     return Err(TraceViewError::Invalid(format!(
-                        "constructor term {term:?} has {} children but its producer expects {}",
+                        "row-call term {term:?} has {} children but its producer expects {}",
                         children.len(),
-                        constructor.child_sorts.len()
+                        row_call.child_sorts.len()
                     )));
                 }
                 let mut parts = Vec::with_capacity(children.len() + 2);
@@ -1245,7 +1340,7 @@ impl<'a> TraceView<'a> {
                 for (column, (child, child_sort)) in children
                     .iter()
                     .copied()
-                    .zip(constructor.child_sorts.iter().copied())
+                    .zip(row_call.child_sorts.iter().copied())
                     .enumerate()
                 {
                     let child_cell = self.fact_cell_at(
@@ -1257,7 +1352,7 @@ impl<'a> TraceView<'a> {
                     )?;
                     if child_cell.endpoint.sort != child_sort {
                         return Err(TraceViewError::Invalid(format!(
-                            "constructor producer {producer:?} child {column} changed replay sort"
+                            "row-call producer {producer:?} child {column} changed replay sort"
                         )));
                     }
                     let Some(support) = self.try_explain_structural_term_availability_at(
@@ -1294,7 +1389,7 @@ impl<'a> TraceView<'a> {
                 if !compatible {
                     continue;
                 }
-                // Capture this exact constructor occurrence as soon as its own
+                // Capture this exact row-call occurrence as soon as its own
                 // producer exists. A parent anchor is causal support for the
                 // requested denotation, not liveness for the child row; using
                 // its later position would cross removal/recreation and collapse
@@ -1302,12 +1397,25 @@ impl<'a> TraceView<'a> {
                 // waits for every child alias and key-support frontier before
                 // constructing the parent.
                 let available_after = fact_position;
+                let occurrence_fresh_after = matches!(
+                    self.arena
+                        .facts
+                        .get((producer.get() - 1) as usize)
+                        .and_then(Option::as_ref)
+                        .and_then(|fact| fact.origin),
+                    Some(FactOrigin::Merge { .. })
+                )
+                .then_some(fact_position);
+                let fresh_after = match (inherited_fresh_after, occurrence_fresh_after) {
+                    (Some(left), Some(right)) => Some(left.max(right)),
+                    (left, right) => left.or(right),
+                };
                 aliases.push(ReplayAliasPlan {
                     producer: Some(producer),
-                    ready_after: inherited_fresh_after
+                    ready_after: fresh_after
                         .map_or(available_after, |fresh| fresh.max(available_after))
                         .max(support_ready_after),
-                    fresh_after: inherited_fresh_after,
+                    fresh_after,
                 });
                 parts.push(RawEqualitySupport {
                     applied: Box::new([]),
@@ -1610,7 +1718,7 @@ impl<'a> TraceView<'a> {
             ));
         }
 
-        let possible = self.constructor_occurrence_facts(sort, op);
+        let possible = self.row_call_occurrence_facts(sort, op);
         let mut supports = Vec::new();
         let mut first_projection_error = None;
         for producer in possible.iter().rev().copied() {
@@ -1618,13 +1726,8 @@ impl<'a> TraceView<'a> {
             if producer == excluded_fact || fact.position > position {
                 continue;
             }
-            let constructor = self
-                .replay_terms
-                .table_constructors
-                .get(&fact.table)
-                .map(|entry| entry.clone())
-                .ok_or(TraceViewError::UnknownTable(fact.table))?;
-            let output = constructor.child_sorts.len();
+            let row_call = self.row_call_spec_for_fact(producer)?;
+            let output = row_call.child_sorts.len();
             let produced_term = match self.projector.fact_term(producer, output) {
                 Ok(term) => term,
                 Err(error) => {
@@ -1637,7 +1740,7 @@ impl<'a> TraceView<'a> {
             }
             let creation_raw = *fact.values.get(output).ok_or_else(|| {
                 TraceViewError::Invalid(format!(
-                    "constructor fact {producer:?} has no output column {output}"
+                    "row-call fact {producer:?} has no output column {output}"
                 ))
             })?;
             let raw_support = match self.explain_raw_equality_support_with_cutoff(
@@ -1755,37 +1858,26 @@ impl<'a> TraceView<'a> {
             Some(FactOrigin::Fact(source)) => {
                 self.exact_fact_cell_origin(source, column, depth + 1)
             }
-            Some(FactOrigin::Merge {
-                incoming,
-                prior,
-                cells,
-            }) => {
-                let cell = *self
-                    .arena
-                    .durable_merge_cell_origins
-                    .get(cells.as_range())
-                    .and_then(|cells| cells.get(column))
-                    .ok_or_else(|| {
-                        TraceViewError::Invalid(format!(
-                            "merge origin for {fact:?} has no column {column}"
-                        ))
-                    })?;
-                match cell {
-                    MergeCellOrigin::Incoming(source) => match incoming {
-                        Some(RowOriginRef::Site(_)) => Ok(fact),
-                        Some(RowOriginRef::Fact(source_fact)) => {
-                            self.exact_fact_cell_origin(source_fact, source as usize, depth + 1)
-                        }
-                        None => Err(TraceViewError::Invalid(format!(
-                            "merge origin for {fact:?} lost incoming column {column}"
-                        ))),
-                    },
-                    MergeCellOrigin::Prior(source) => {
-                        self.exact_fact_cell_origin(prior, source as usize, depth + 1)
+            Some(FactOrigin::Merge { incoming, .. }) => {
+                let key_columns = self
+                    .replay_terms
+                    .table_key_columns
+                    .get(&record.table)
+                    .map(|columns| *columns as usize)
+                    .ok_or(TraceViewError::UnknownTable(record.table))?;
+                if column == key_columns {
+                    return Ok(fact);
+                }
+                if column > key_columns {
+                    return Err(TraceViewError::Invalid(format!(
+                        "scalar merge fact {fact:?} has no logical column {column}"
+                    )));
+                }
+                match incoming {
+                    RowOriginRef::Site(_) => Ok(fact),
+                    RowOriginRef::Fact(source_fact) => {
+                        self.exact_fact_cell_origin(source_fact, column, depth + 1)
                     }
-                    MergeCellOrigin::Unsupported => Err(TraceViewError::Invalid(format!(
-                        "merge origin for {fact:?} synthesized column {column}"
-                    ))),
                 }
             }
             None => Err(TraceViewError::Invalid(format!(
@@ -1796,7 +1888,7 @@ impl<'a> TraceView<'a> {
 
     /// Explain how one structural Call could be read at `desired_raw` without
     /// trusting final `(sort, value)` state. Exact producer facts are the base
-    /// case. A constructor lookup that was a native no-op is reconstructed
+    /// case. A row-call lookup that was a native no-op is reconstructed
     /// against a live compatible producer row, recursively retaining the
     /// child equalities that made its canonical key hit that row. This is a
     /// cold fact-graph walk over retained terms, not rule matching or replay.
@@ -1884,16 +1976,16 @@ impl<'a> TraceView<'a> {
         }
 
         // Production Call nodes have exactly two origins: registered table
-        // constructors, or frontend-certified pure primitives with validators.
+        // row calls, or frontend-certified pure primitives with validators.
         // The latter are recomputed by `let-check` and deliberately have no
-        // constructor FactId of their own. Ordered container builders are the
+        // row-call FactId of their own. Ordered container builders are the
         // one structural exception: their identity depends on positional
         // EqSort children, so reconcile those child equalities through the
         // container anchor index before treating the call as available.
-        if !self.is_registered_constructor_call(sort, op) {
+        if !self.is_registered_row_call(sort, op) {
             if !self.is_certified_replay_call(sort, op) {
                 return Err(TraceViewError::Invalid(format!(
-                    "structural call {op:?} for {sort:?} has no registered constructor or certified replay recipe"
+                    "structural call {op:?} for {sort:?} has no registered row call or certified replay recipe"
                 )));
             }
             let support = if self.replay_terms.container_child_sorts.contains_key(&sort) {
@@ -1907,7 +1999,7 @@ impl<'a> TraceView<'a> {
                     retain_exact_producer,
                     depth,
                 )?
-            } else if self.is_equality_sort(sort, op) {
+            } else if self.is_equality_sort(sort) {
                 self.explain_pure_eqsort_call_occurrence(
                     sort,
                     &target_children,
@@ -1931,7 +2023,7 @@ impl<'a> TraceView<'a> {
             return Ok(Some(support));
         }
 
-        let possible = self.constructor_occurrence_facts(sort, op);
+        let possible = self.row_call_occurrence_facts(sort, op);
         let sibling_cause = (!excluded_fact.is_missing())
             .then(|| self.fact(excluded_fact).map(|fact| fact.cause))
             .transpose()?;
@@ -1948,13 +2040,8 @@ impl<'a> TraceView<'a> {
             if fact.position > position && !later_sibling {
                 continue;
             }
-            let constructor = self
-                .replay_terms
-                .table_constructors
-                .get(&fact.table)
-                .map(|entry| entry.clone())
-                .ok_or(TraceViewError::UnknownTable(fact.table))?;
-            let output = constructor.child_sorts.len();
+            let row_call = self.row_call_spec_for_fact(producer)?;
+            let output = row_call.child_sorts.len();
             let produced_term = self
                 .projector
                 .fact_term(producer, output)
@@ -1965,7 +2052,7 @@ impl<'a> TraceView<'a> {
             let output_support = if later_sibling {
                 let creation_raw = *fact.values.get(output).ok_or_else(|| {
                     TraceViewError::Invalid(format!(
-                        "constructor fact {producer:?} has no output column {output}"
+                        "row-call fact {producer:?} has no output column {output}"
                     ))
                 })?;
                 let support = match self.explain_raw_equality_support_with_cutoff(
@@ -2020,7 +2107,7 @@ impl<'a> TraceView<'a> {
             return Ok(Some(support));
         }
 
-        // A successful constructor lookup may have inserted nothing because
+        // A successful row-call lookup may have inserted nothing because
         // canonicalized children hit a compatible older row. Reconstruct
         // only that case, recursively, and stop at the first exact support;
         // slicing needs a sound witness, not a minimum one.
@@ -2029,13 +2116,8 @@ impl<'a> TraceView<'a> {
             if producer == excluded_fact || fact.position > position {
                 continue;
             }
-            let constructor = self
-                .replay_terms
-                .table_constructors
-                .get(&fact.table)
-                .map(|entry| entry.clone())
-                .ok_or(TraceViewError::UnknownTable(fact.table))?;
-            let output = constructor.child_sorts.len();
+            let row_call = self.row_call_spec_for_fact(producer)?;
+            let output = row_call.child_sorts.len();
             let produced_term = self
                 .projector
                 .fact_term(producer, output)
@@ -2098,7 +2180,7 @@ impl<'a> TraceView<'a> {
                     break;
                 };
                 if child_sort != produced_child_sort
-                    || constructor.child_sorts.get(column) != Some(child_sort)
+                    || row_call.child_sorts.get(column) != Some(child_sort)
                 {
                     compatible = false;
                     break;

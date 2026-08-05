@@ -10,9 +10,9 @@ use std::{
 
 use crate::provenance::{RowOriginSpec, TermOriginSpec, TermTemplate};
 use crate::{
-    CriterionCaptureSpec, CriterionEndpointSource, FactId, FiringCaptureSpec, MergeOriginSelector,
-    ReplayCallSpec, ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTableKind, ReplayTerm,
-    RowOriginSiteId, SourceRef, Trace, Wave,
+    CriterionCaptureSpec, CriterionEndpointSource, FactId, FiringCaptureSpec, ReplayCallSpec,
+    ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTableKind, ReplayTerm, RowOriginSiteId,
+    SourceRef, Trace, Wave,
     action::{ExecutionState, Instr},
     free_join::plan::{JoinStage, MatScanMode, Plan},
     offsets::RowId,
@@ -33,16 +33,6 @@ fn register_test_capture_table_kind(
 ) {
     trace
         .register_table_layout(table, &vec![Some(TEST_REPLAY_SORT); columns])
-        .unwrap();
-    trace
-        .register_table_merge_origins(
-            table,
-            &(0..columns)
-                .map(|column| MergeOriginSelector::Incoming {
-                    column: column.try_into().unwrap(),
-                })
-                .collect::<Vec<_>>(),
-        )
         .unwrap();
     trace.register_table_kind(table, kind).unwrap();
 }
@@ -80,8 +70,31 @@ fn certify_test_replay_call(trace: &Trace, rule: u32, sort: ReplaySortId, op: Re
     );
 }
 
-fn register_test_merge_origins(trace: &Trace, table: TableId, origins: &[MergeOriginSelector]) {
-    trace.register_table_merge_origins(table, origins).unwrap();
+fn register_test_merge_result(trace: &Trace, table: TableId, key_columns: usize) {
+    let layout = trace
+        .table_replay_layout(table)
+        .expect("test merge table has no replay layout");
+    let child_sorts = layout[..key_columns]
+        .iter()
+        .map(|sort| sort.expect("test merge key has no replay sort"))
+        .collect::<Vec<_>>();
+    let result_sort = layout[key_columns].expect("test merge output has no replay sort");
+    trace
+        .register_table_key_columns(table, key_columns)
+        .unwrap();
+    trace
+        .register_table_kind(table, ReplayTableKind::ValueFunction)
+        .unwrap();
+    trace
+        .register_table_merge_result(
+            table,
+            ReplayCallSpec::new(
+                result_sort,
+                ReplayOpId::new(u32::try_from(table.index() + 1).unwrap()),
+                child_sorts,
+            ),
+        )
+        .unwrap();
 }
 
 fn fact_ids(view: &crate::TraceView<'_>) -> impl Iterator<Item = FactId> {
@@ -618,6 +631,7 @@ fn test_cause_dependencies(
                 crate::RawCause::Merge {
                     incoming,
                     prior_fact,
+                    ..
                 } => {
                     stack.push(incoming);
                     result.facts.push(prior_fact);
@@ -903,15 +917,7 @@ fn causal_capture_rebuild_collision_records_exact_congruence() {
     trace
         .register_table_layout(rebuilt, &[Some(sort), Some(sort), None])
         .unwrap();
-    register_test_merge_origins(
-        &trace,
-        rebuilt,
-        &[
-            MergeOriginSelector::Prior { column: 0 },
-            MergeOriginSelector::Prior { column: 1 },
-            MergeOriginSelector::Unsupported,
-        ],
-    );
+    register_test_merge_result(&trace, rebuilt, 1);
 
     let old_key = Value::new(30);
     let target_key = Value::new(20);
@@ -1001,7 +1007,7 @@ fn causal_capture_rebuild_collision_records_exact_congruence() {
 }
 
 #[test]
-fn causal_capture_rebuild_abort_is_atomic_across_target_tables() {
+fn causal_capture_rebuild_handles_presence_tables_without_merge_result_metadata() {
     let mut db = Database::default();
     let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
     let relation = || {
@@ -1011,7 +1017,7 @@ fn causal_capture_rebuild_abort_is_atomic_across_target_tables() {
             Some(ColumnId::new(1)),
             vec![ColumnId::new(0)],
             Box::new(|_, left, right, _| {
-                assert_eq!(left, right);
+                assert_eq!(left[0], right[0]);
                 false
             }),
         )
@@ -1025,23 +1031,11 @@ fn causal_capture_rebuild_abort_is_atomic_across_target_tables() {
         trace
             .register_table_layout(table, &[Some(table_sort), None])
             .unwrap();
+        trace.register_table_key_columns(table, 1).unwrap();
+        trace
+            .register_table_kind(table, ReplayTableKind::PresenceRelation)
+            .unwrap();
     }
-    register_test_merge_origins(
-        &trace,
-        first,
-        &[
-            MergeOriginSelector::Prior { column: 0 },
-            MergeOriginSelector::Unsupported,
-        ],
-    );
-    register_test_merge_origins(
-        &trace,
-        second,
-        &[
-            MergeOriginSelector::Unsupported,
-            MergeOriginSelector::Unsupported,
-        ],
-    );
 
     let first_old = Value::new(120);
     let first_new = Value::new(110);
@@ -1103,26 +1097,19 @@ fn causal_capture_rebuild_abort_is_atomic_across_target_tables() {
     assert!(db.merge_all());
     db.set_trace_wave(Wave::new(2));
 
-    let error = db
-        .try_apply_rebuild(uf, &[first, second], Value::new(2))
-        .expect_err("unsupported rebuild collision must fail closed");
-    assert_eq!(
-        error.to_string(),
-        "function `second` merge reached an unsupported structural result expression"
+    assert!(
+        db.try_apply_rebuild(uf, &[first, second], Value::new(2))
+            .unwrap()
     );
-    assert_eq!(committed_fact_id(&db, first, first_old), first_fact);
-    assert_eq!(committed_fact_id(&db, second, second_old), second_fact);
-    assert!(db.get_table(first).get_row(&[first_new]).is_none());
+    assert_eq!(committed_fact_id(&db, first, first_new), first_fact);
+    assert!(db.get_table(first).get_row(&[first_old]).is_none());
+    assert!(db.get_table(second).get_row(&[second_old]).is_none());
     assert_eq!(
         committed_fact_id(&db, second, second_new),
         second_canonical_fact
     );
-    assert!(matches!(
-        trace.with_view(|_| Ok(())),
-        Err(crate::TraceViewError::NotFinalized(
-            "a rule execution failed before trace publication"
-        ))
-    ));
+    assert_ne!(second_fact, second_canonical_fact);
+    db.finalize_trace_wave().unwrap();
 }
 
 #[test]
@@ -1342,14 +1329,8 @@ fn merge_function_union_cites_one_match_and_immutable_prior_fact() {
     trace
         .register_table_layout(proposal, &[Some(sort), Some(sort)])
         .unwrap();
-    register_test_merge_origins(
-        &trace,
-        target,
-        &[
-            MergeOriginSelector::Prior { column: 0 },
-            MergeOriginSelector::Prior { column: 1 },
-        ],
-    );
+    register_test_merge_result(&trace, target, 1);
+    trace.register_table_key_columns(proposal, 2).unwrap();
     let key = Value::new(1);
     let prior = Value::new(30);
     let incoming = Value::new(20);
@@ -1547,14 +1528,9 @@ fn causal_trace_reject_unsupported_merge_before_callback_effects() {
     trace
         .register_table_layout(table, &[Some(TEST_REPLAY_SORT), Some(TEST_REPLAY_SORT)])
         .unwrap();
+    trace.register_table_key_columns(table, 1).unwrap();
     trace
-        .register_table_merge_origins(
-            table,
-            &[
-                MergeOriginSelector::Incoming { column: 0 },
-                MergeOriginSelector::Unsupported,
-            ],
-        )
+        .register_table_kind(table, ReplayTableKind::ValueFunction)
         .unwrap();
     let (zero, one, two) = (Value::new(0), Value::new(1), Value::new(2));
     install_test_row_terms(&trace, &[zero, one, two, Value::new(9)]);
@@ -1616,7 +1592,7 @@ fn causal_trace_reject_unsupported_merge_before_callback_effects() {
 
     let error = db
         .try_merge_all()
-        .expect_err("unsupported merge origin must fail closed");
+        .expect_err("unsupported merge result must fail closed");
     assert_eq!(
         error.to_string(),
         "function `unsupported` merge reached an unsupported structural result expression"
@@ -1724,18 +1700,15 @@ fn assert_dynamic_merge_preflight(extra_dirty_tables: usize) {
     trace
         .register_table_layout(b, &[Some(TEST_REPLAY_SORT), Some(TEST_REPLAY_SORT)])
         .unwrap();
+    trace.register_table_key_columns(b, 1).unwrap();
     trace
-        .register_table_merge_origins(
-            b,
-            &[
-                MergeOriginSelector::Incoming { column: 0 },
-                MergeOriginSelector::Unsupported,
-            ],
-        )
+        .register_table_kind(b, ReplayTableKind::ValueFunction)
         .unwrap();
     register_test_capture_table(&trace, a, 2);
+    register_test_merge_result(&trace, a, 1);
     for extra in &extras {
         register_test_capture_table(&trace, *extra, 1);
+        trace.register_table_key_columns(*extra, 1).unwrap();
     }
     b_origin
         .set(
@@ -1821,6 +1794,165 @@ fn causal_trace_rechecks_rows_staged_by_an_earlier_table_merge() {
     // Two dirty tables use merge_simple; four use the dependency-strata path.
     assert_dynamic_merge_preflight(0);
     assert_dynamic_merge_preflight(2);
+}
+
+#[test]
+fn container_canonicalization_rejects_calls_that_only_return_the_container_sort() {
+    let mut db = Database::default();
+    let _uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
+    let trace = db.try_enable_trace().unwrap();
+    let element_sort = ReplaySortId::new(102);
+    let scalar_sort = ReplaySortId::new(103);
+    let unrelated_key_sort = ReplaySortId::new(104);
+    let container_sort = ReplaySortId::new(105);
+    let returning_function = ReplayOpId::new(102);
+    let left_key = Value::new(10);
+    let right_key = Value::new(20);
+    let left = Value::new(30);
+    let right = Value::new(40);
+    let wave = Wave::new(1);
+    db.set_trace_wave(wave);
+
+    let left_key_term = trace.intern_literal(unrelated_key_sort, ReplayLiteral::I64(10), left_key);
+    let right_key_term =
+        trace.intern_literal(unrelated_key_sort, ReplayLiteral::I64(20), right_key);
+    trace
+        .typed_equality_proposal(wave, unrelated_key_sort, left_key, right_key)
+        .unwrap();
+    let left_call = trace
+        .intern_call(container_sort, returning_function, &[left_key_term], left)
+        .unwrap();
+    let right_call = trace
+        .intern_call(container_sort, returning_function, &[right_key_term], right)
+        .unwrap();
+    for (value, term) in [(left, left_call), (right, right_call)] {
+        trace
+            .install_test_container_anchor(
+                container_sort,
+                TypeId::of::<Vec<Value>>(),
+                &[element_sort, scalar_sort],
+                value,
+                term,
+            )
+            .unwrap();
+    }
+
+    let error = trace
+        .container_canonicalization_cause(
+            &crate::provenance::ContainerAnchorJournal::default(),
+            TypeId::of::<Vec<Value>>(),
+            wave,
+            left,
+            right,
+            trace.maintenance_landmark().unwrap(),
+        )
+        .expect_err("a function returning a container is not its structural constructor");
+    assert_eq!(
+        error,
+        "container ids have no compatible structural Call anchors"
+    );
+}
+
+#[test]
+fn container_canonicalization_retains_distinct_terms_for_one_raw_child() {
+    let mut db = Database::default();
+    let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
+    let trace = db.try_enable_trace().unwrap();
+    let equality_sort = ReplaySortId::new(106);
+    let scalar_sort = ReplaySortId::new(107);
+    let container_sort = ReplaySortId::new(108);
+    let container_op = ReplayOpId::new(106);
+    let left_child = Value::new(10);
+    let right_child = Value::new(20);
+    let shared_raw = Value::new(1);
+    let left = Value::new(30);
+    let right = Value::new(40);
+    let wave = Wave::new(1);
+    db.set_trace_wave(wave);
+
+    let left_child_term = trace.intern_literal(equality_sort, ReplayLiteral::I64(10), left_child);
+    let right_child_term = trace.intern_literal(equality_sort, ReplayLiteral::I64(20), right_child);
+    // Register the only raw equality this collision needs. Equal raw scalar
+    // children have no entry in this map because they require no UF edge.
+    trace
+        .typed_equality_proposal(wave, equality_sort, left_child, right_child)
+        .unwrap();
+    let left_scalar_term = trace
+        .intern_call(scalar_sort, ReplayOpId::new(107), &[], shared_raw)
+        .unwrap();
+    let right_scalar_term = trace
+        .intern_call(scalar_sort, ReplayOpId::new(108), &[], shared_raw)
+        .unwrap();
+    assert_ne!(left_scalar_term, right_scalar_term);
+
+    let left_call = trace
+        .intern_call(
+            container_sort,
+            container_op,
+            &[left_child_term, left_scalar_term],
+            left,
+        )
+        .unwrap();
+    let right_call = trace
+        .intern_call(
+            container_sort,
+            container_op,
+            &[right_child_term, right_scalar_term],
+            right,
+        )
+        .unwrap();
+    for (value, term) in [(left, left_call), (right, right_call)] {
+        trace
+            .install_test_container_anchor(
+                container_sort,
+                TypeId::of::<Vec<Value>>(),
+                &[equality_sort, scalar_sort],
+                value,
+                term,
+            )
+            .unwrap();
+    }
+
+    let landmark = trace.maintenance_landmark().unwrap();
+    let journal = crate::provenance::ContainerAnchorJournal::default();
+    let (cause, proposal) = trace
+        .container_canonicalization_cause(
+            &journal,
+            TypeId::of::<Vec<Value>>(),
+            wave,
+            left,
+            right,
+            landmark,
+        )
+        .unwrap();
+    {
+        let mut buffer = db.new_buffer(uf);
+        buffer.stage_typed_union_deferred(
+            &[left, right, Value::new(1)],
+            crate::DeferredEqualityCause::capability(cause),
+            proposal,
+        );
+    }
+    assert!(db.merge_all());
+    db.finalize_trace_wave().unwrap();
+
+    trace
+        .with_view(|view| {
+            let equality = view.project_applied_equality(crate::AppliedEqualityId::new(1))?;
+            let crate::EqualityReason::Congruence { cause, .. } = equality.reason else {
+                panic!("container alias lost its canonicalization cause")
+            };
+            let dependencies = test_cause_dependencies(view, cause)?;
+            let [dependency] = dependencies.container_canonicalizations.as_slice() else {
+                panic!("expected one container canonicalization dependency")
+            };
+            assert_eq!(dependency.equalities.pairs.len(), 2);
+            let same_raw = &dependency.equalities.pairs[1];
+            assert_eq!(same_raw.left.raw, same_raw.right.raw);
+            assert_ne!(same_raw.left.term, same_raw.right.term);
+            Ok(())
+        })
+        .unwrap();
 }
 
 #[test]
@@ -1995,9 +2127,7 @@ fn same_term_native_bridge_joins_distinct_historical_components() {
     trace
         .register_table_layout(fact_table, &[Some(sort)])
         .unwrap();
-    trace
-        .register_table_merge_origins(fact_table, &[MergeOriginSelector::Incoming { column: 0 }])
-        .unwrap();
+    trace.register_table_key_columns(fact_table, 1).unwrap();
     db.stage_source_row(fact_table, &[right], &[shared], SourceRef::Synthetic(214))
         .unwrap();
     assert!(db.merge_all());
@@ -2053,8 +2183,11 @@ fn same_term_native_bridge_joins_distinct_historical_components() {
         )
         .unwrap();
     let incoming = empty_rule_cause(&trace, 215, second_wave);
-    let merge_cause =
-        trace.pending_merge_cause(crate::DeferredEqualityCause::ready(incoming), prior_fact);
+    let merge_cause = trace.pending_merge_cause(
+        crate::DeferredEqualityCause::ready(incoming),
+        prior_fact,
+        trace.history_boundary(),
+    );
     {
         let mut buffer = db.new_buffer(uf);
         buffer.stage_typed_union_deferred(&[right, left, Value::new(2)], merge_cause, bridge);
@@ -2491,7 +2624,7 @@ fn captureless_static_constructor_miss_fails_before_counter_or_rule_mutation() {
 }
 
 #[test]
-fn prior_or_incoming_uses_callback_result_not_opaque_value_order() {
+fn computed_merge_result_is_table_call_and_ends_prior_fact() {
     let mut db = Database::default();
     let table = db.add_table(
         SortedWritesTable::new(
@@ -2509,20 +2642,16 @@ fn prior_or_incoming_uses_callback_result_not_opaque_value_order() {
     );
     let trace = db.try_enable_trace().unwrap();
     let sort = ReplaySortId::new(216);
+    let op = ReplayOpId::new(217);
     trace
         .register_table_layout(table, &[Some(sort), Some(sort)])
         .unwrap();
+    trace.register_table_key_columns(table, 1).unwrap();
     trace
-        .register_table_merge_origins(
-            table,
-            &[
-                MergeOriginSelector::Incoming { column: 0 },
-                MergeOriginSelector::PriorOrIncoming {
-                    incoming_column: 1,
-                    prior_column: 1,
-                },
-            ],
-        )
+        .register_table_kind(table, ReplayTableKind::ValueFunction)
+        .unwrap();
+    trace
+        .register_table_merge_result(table, ReplayCallSpec::new(sort, op, [sort]))
         .unwrap();
 
     let key = Value::new(2160);
@@ -2571,49 +2700,36 @@ fn prior_or_incoming_uses_callback_result_not_opaque_value_order() {
                 .max_by_key(|(id, _)| *id)
                 .unwrap();
             assert_eq!(latest.1.values, &[key, incoming]);
+            let terms = view.fact_terms(latest.0)?;
+            assert_eq!(terms[0], key_term);
             assert_eq!(
-                view.fact_terms(latest.0)?.as_ref(),
-                &[key_term, incoming_term]
+                view.replay_term(terms[1])?,
+                ReplayTerm::Call {
+                    sort,
+                    op,
+                    children: [key_term].into(),
+                }
             );
+            assert_eq!(
+                view.fact_replacement(prior_fact)?,
+                Some((latest.0, latest.1.position))
+            );
+            assert!(matches!(
+                view.fact_cell_at(
+                    crate::FactCellRef {
+                        fact: prior_fact,
+                        column: ColumnId::new(1),
+                    },
+                    latest.1.position,
+                ),
+                Err(crate::TraceViewError::FactNoLongerLive {
+                    successor: Some(successor),
+                    ..
+                }) if successor == latest.0
+            ));
             Ok(())
         })
         .unwrap();
-
-    let tie_origin = trace.register_row_origin(RowOriginSpec {
-        table,
-        cells: [
-            Some(Arc::new(TermTemplate::Static { term: key_term })),
-            Some(Arc::new(TermTemplate::Call {
-                sort,
-                op: ReplayOpId::new(217),
-                children: Arc::from([]),
-            })),
-        ]
-        .into(),
-    });
-    let prepared = trace
-        .prepare_merged_fact_origin(
-            table,
-            &[key, prior],
-            &[key, prior],
-            &[key, prior],
-            prior_fact,
-            Some(crate::provenance::RowOriginRef::Site(tie_origin)),
-        )
-        .unwrap();
-    assert!(matches!(
-        prepared,
-        crate::provenance::PreparedFactOrigin::Merge {
-            prior: fact,
-            cells,
-            ..
-        } if fact == prior_fact
-            && cells.as_slice()
-                == [
-                    crate::provenance::MergeCellOrigin::Incoming(0),
-                    crate::provenance::MergeCellOrigin::Prior(1),
-                ]
-    ));
 }
 
 fn committed_fact_id_for_key(db: &Database, table: TableId, key: &[Value]) -> FactId {
@@ -2659,6 +2775,7 @@ fn serial_compaction_preserves_live_and_historical_fact_ids() {
     );
     let trace = db.try_enable_trace().unwrap();
     register_test_capture_table(&trace, table, 2);
+    register_test_merge_result(&trace, table, 1);
     let zero = trace.intern_test_term("zero");
     for key in 0..20 {
         let key_term = trace.intern_test_term(&format!("key-{key}"));
@@ -2743,6 +2860,7 @@ fn decomposed_projected_capture_case(retain_existential: bool) {
         (derived, if retain_existential { 5 } else { 4 }),
     ] {
         register_test_capture_table(&trace, table, columns);
+        trace.register_table_key_columns(table, columns).unwrap();
     }
     for (source, (table, row)) in [
         (r, vec![1, 10, 100]),
@@ -4150,118 +4268,7 @@ fn causal_capture_metadata_rejects_binding_an_ignored_column() {
         .unwrap();
 }
 #[test]
-fn causal_trace_merge_origin_selects_each_cell_without_value_alias_lookup() {
-    let mut db = Database::default();
-    let table = db.add_table(
-        SortedWritesTable::new(
-            1,
-            3,
-            None,
-            vec![],
-            Box::new(|_, prior, incoming, out| {
-                out.extend_from_slice(&[incoming[0], prior[1], incoming[2]]);
-                out.as_slice() != prior
-            }),
-        ),
-        iter::empty(),
-        iter::empty(),
-    );
-    let trace = db.try_enable_trace().unwrap();
-    let value_sort = ReplaySortId::new(198);
-    let alias_sort = ReplaySortId::new(199);
-    let alias_op = ReplayOpId::new(198);
-    trace
-        .register_table_layout(
-            table,
-            &[Some(value_sort), Some(alias_sort), Some(value_sort)],
-        )
-        .unwrap();
-    trace
-        .register_table_merge_origins(
-            table,
-            &[
-                MergeOriginSelector::Incoming { column: 0 },
-                MergeOriginSelector::Prior { column: 1 },
-                MergeOriginSelector::Incoming { column: 2 },
-            ],
-        )
-        .unwrap();
-
-    let key_value = Value::new(1980);
-    let shared_alias_value = Value::new(1981);
-    let old_child_value = Value::new(1982);
-    let new_child_value = Value::new(1983);
-    let old_tail_value = Value::new(1984);
-    let new_tail_value = Value::new(1985);
-    let key_term = trace.intern_literal(value_sort, ReplayLiteral::I64(1980), key_value);
-    let old_child = trace.intern_literal(value_sort, ReplayLiteral::I64(1982), old_child_value);
-    let new_child = trace.intern_literal(value_sort, ReplayLiteral::I64(1983), new_child_value);
-    let old_alias = trace
-        .intern_call(alias_sort, alias_op, &[old_child], shared_alias_value)
-        .unwrap();
-    let old_tail = trace.intern_literal(value_sort, ReplayLiteral::I64(1984), old_tail_value);
-    let new_tail = trace.intern_literal(value_sort, ReplayLiteral::I64(1985), new_tail_value);
-    let prior_row = [key_value, shared_alias_value, old_tail_value];
-    db.stage_source_row(
-        table,
-        &prior_row,
-        &[key_term, old_alias, old_tail],
-        SourceRef::Synthetic(198),
-    )
-    .unwrap();
-    assert!(db.merge_all());
-    db.finalize_trace_wave().unwrap();
-
-    let incoming_origin = trace.register_row_origin(RowOriginSpec {
-        table,
-        cells: [
-            Some(Arc::new(TermTemplate::Static { term: key_term })),
-            Some(Arc::new(TermTemplate::Call {
-                sort: alias_sort,
-                op: alias_op,
-                children: [Arc::new(TermTemplate::Static { term: new_child })].into(),
-            })),
-            Some(Arc::new(TermTemplate::Static { term: new_tail })),
-        ]
-        .into(),
-    });
-    db.set_trace_wave(Wave::new(1));
-    let cause = empty_rule_cause(&trace, 198, Wave::new(1));
-    let incoming_row = [key_value, shared_alias_value, new_tail_value];
-    {
-        let mut updates = db.new_buffer(table);
-        updates.stage_insert_deferred_with_origin(
-            &incoming_row,
-            crate::DeferredEqualityCause::ready(cause),
-            incoming_origin,
-        );
-    }
-    assert!(db.merge_all());
-    db.finalize_trace_wave().unwrap();
-
-    trace.with_view(|view| {
-    let latest = fact_ids(view).filter_map(|id| view.fact(id).ok().map(|fact| (id, fact))).filter(|(_, fact)| fact.table == table).max_by_key(|(id, _)| *id).unwrap();
-    let terms = view.fact_terms(latest.0)?;
-    assert_eq!(
-        latest.1.values,
-        &[key_value, shared_alias_value, new_tail_value]
-    );
-    assert_eq!(terms[0], key_term);
-    assert_eq!(
-        terms[1], old_alias,
-        "the Prior selector must preserve the exact prior alias even when incoming has the same native value"
-    );
-    assert_eq!(terms[2], new_tail);
-    assert_eq!(
-        trace.lookup_term(alias_sort, shared_alias_value),
-        Some(old_alias),
-        "the canary deliberately leaves global lookup unable to name the incoming alias"
-    );
-    Ok(())
-    }).unwrap();
-}
-#[test]
-fn merge_origin_catalog_rejects_out_of_range_and_cross_sort_sources() {
+fn merge_result_catalog_rejects_wrong_arity_and_sorts() {
     let trace = Trace::default();
     let table = TableId::new_const(198);
     let left = ReplaySortId::new(198);
@@ -4269,25 +4276,20 @@ fn merge_origin_catalog_rejects_out_of_range_and_cross_sort_sources() {
     trace
         .register_table_layout(table, &[Some(left), Some(right)])
         .unwrap();
+    trace.register_table_key_columns(table, 1).unwrap();
     assert_eq!(
-        trace.register_table_merge_origins(
+        trace.register_table_merge_result(
             table,
-            &[
-                MergeOriginSelector::Incoming { column: 2 },
-                MergeOriginSelector::Incoming { column: 1 },
-            ],
+            ReplayCallSpec::new(right, ReplayOpId::new(198), [left, left]),
         ),
-        Err("merge-origin source column exceeds the table layout")
+        Err("merge-result call arguments do not match the table key arity")
     );
     assert_eq!(
-        trace.register_table_merge_origins(
+        trace.register_table_merge_result(
             table,
-            &[
-                MergeOriginSelector::Incoming { column: 0 },
-                MergeOriginSelector::Prior { column: 0 },
-            ],
+            ReplayCallSpec::new(right, ReplayOpId::new(198), [right]),
         ),
-        Err("merge-origin source and destination have different replay sorts")
+        Err("merge-result call argument sorts do not match the table keys")
     );
 }
 #[test]

@@ -23,9 +23,9 @@ use once_cell::sync::Lazy;
 use crate::{
     ColumnTy, DefaultVal, EGraph, FunctionConfig, FunctionId, FunctionReplaySpec,
     GroundedRuleBinding, GroundedRuleRun, MergeAction, MergeBindingId, MergeExpr, MergeInputSide,
-    MergePrimitiveOrigin, MergeProgram, MergeValueColumn, QueryEntry, ReplayCallSpec,
-    ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTableKind, SourceInputRow, TableAction,
-    TraceLifecycleError, Variable, add_expressions, define_rule,
+    MergeProgram, MergeValueColumn, QueryEntry, ReplayCallSpec, ReplayLiteral, ReplayOpId,
+    ReplaySortId, ReplayTableKind, SourceInputRow, TableAction, TraceLifecycleError, Variable,
+    add_expressions, define_rule,
 };
 
 fn prior(column: usize) -> MergeExpr {
@@ -54,15 +54,10 @@ fn union_id(column: usize) -> MergeExpr {
     }
 }
 
-fn primitive(
-    function: ExternalFunctionId,
-    arguments: Vec<MergeExpr>,
-    origin: MergePrimitiveOrigin,
-) -> MergeExpr {
+fn primitive(function: ExternalFunctionId, arguments: Vec<MergeExpr>) -> MergeExpr {
     MergeExpr::Primitive {
         function,
         arguments,
-        origin,
     }
 }
 
@@ -81,29 +76,21 @@ fn single_merge(result: MergeExpr) -> MergeProgram {
 }
 
 #[test]
-fn only_explicit_input_choice_primitives_receive_structural_selector() {
+fn only_action_free_scalar_merges_accept_result_lookup_metadata() {
     let function = ExternalFunctionId::new_const(0);
-    let generic = primitive(
-        function,
-        vec![prior(0), incoming(0)],
-        MergePrimitiveOrigin::Opaque,
+    assert!(
+        single_merge(primitive(function, vec![prior(0), incoming(0)]))
+            .supports_scalar_replay_result_shape()
     );
-    assert_eq!(
-        generic.structural_origin_selector(1),
-        core_relations::MergeOriginSelector::Unsupported,
-        "a generic binary primitive such as addition must fail before its callback"
-    );
-    let choice = primitive(
-        function,
-        vec![prior(0), incoming(0)],
-        MergePrimitiveOrigin::SelectsArgument,
-    );
-    assert_eq!(
-        choice.structural_origin_selector(1),
-        core_relations::MergeOriginSelector::PriorOrIncoming {
-            incoming_column: 1,
-            prior_column: 1,
+    assert!(
+        !MergeProgram {
+            actions: vec![MergeAction::Let {
+                binding: MergeBindingId::new(0),
+                value: prior(0),
+            }],
+            results: vec![prior(0)],
         }
+        .supports_scalar_replay_result_shape()
     );
 }
 
@@ -415,7 +402,7 @@ fn trace_wave_rejects_decreasing_stamp_without_panicking() {
 }
 
 #[test]
-fn trace_capture_rejects_unsupported_merge_before_table_allocation() {
+fn trace_replay_rejects_table_reading_merge_metadata_before_staging() {
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(1)
         .build()
@@ -432,35 +419,38 @@ fn trace_capture_rejects_unsupported_merge_before_table_allocation() {
             name: "constructor".into(),
             can_subsume: false,
         });
-        let next_function = egraph.peek_next_function_id();
-        let next_table = egraph.db.next_table_id();
-
-        let error = egraph
-            .try_add_table(FunctionConfig {
-                n_vals: 1,
-                n_identity_vals: None,
-                schema: vec![ColumnTy::Id, ColumnTy::Id],
-                default: DefaultVal::Fail,
-                merge: single_merge(function(constructor, vec![prior(0), incoming(0)])),
-                name: "unsupported-merge".into(),
-                can_subsume: false,
-            })
-            .unwrap_err();
+        let unsupported = egraph.add_table(FunctionConfig {
+            n_vals: 1,
+            n_identity_vals: None,
+            schema: vec![ColumnTy::Id, ColumnTy::Id],
+            default: DefaultVal::Fail,
+            merge: single_merge(function(constructor, vec![prior(0), incoming(0)])),
+            name: "unsupported-merge".into(),
+            can_subsume: false,
+        });
+        let sort = ReplaySortId::new(0);
+        let error =
+            egraph
+                .register_function_replay(
+                    unsupported,
+                    FunctionReplaySpec::new([sort, sort], None)
+                        .with_merge_result(ReplayCallSpec::new(sort, ReplayOpId::new(0), [sort])),
+                )
+                .unwrap_err();
 
         assert!(
             error
                 .to_string()
-                .contains("merge reached an unsupported structural result expression")
+                .contains("merge-result replay metadata for an actionful or table-reading merge")
         );
-        assert_eq!(egraph.peek_next_function_id(), next_function);
-        assert_eq!(egraph.db.next_table_id(), next_table);
+        assert_eq!(egraph.table_size(unsupported), 0);
         assert!(
             egraph
                 .action_registry()
                 .read()
                 .unwrap()
                 .lookup_table("unsupported-merge")
-                .is_none()
+                .is_some()
         );
     });
 }
@@ -2244,13 +2234,8 @@ fn merge_expr_arithmetic() {
             add_func,
             vec![
                 MergeExpr::Const(value_1),
-                primitive(
-                    multiply_func,
-                    vec![prior(0), incoming(0)],
-                    MergePrimitiveOrigin::Opaque,
-                ),
+                primitive(multiply_func, vec![prior(0), incoming(0)]),
             ],
-            MergePrimitiveOrigin::Opaque,
         )),
         name: "f".into(),
         can_subsume: false,
@@ -2888,18 +2873,8 @@ fn self_referential_merge_union_find() {
 
     // The merge references the table itself, so reserve its id before creating it.
     let uf_id = egraph.peek_next_function_id();
-    let min = || {
-        primitive(
-            min_func,
-            vec![prior(0), incoming(0)],
-            MergePrimitiveOrigin::Opaque,
-        )
-    };
-    let max = primitive(
-        max_func,
-        vec![prior(0), incoming(0)],
-        MergePrimitiveOrigin::Opaque,
-    );
+    let min = || primitive(min_func, vec![prior(0), incoming(0)]);
+    let max = primitive(max_func, vec![prior(0), incoming(0)]);
     let uf = egraph.add_table(FunctionConfig {
         schema: vec![ColumnTy::Base(int_base), ColumnTy::Base(int_base)],
         n_vals: 1,
@@ -2991,7 +2966,7 @@ fn identity_column_guard_skips_payload_only_conflicts() {
         merge: MergeProgram {
             actions: vec![MergeAction::Let {
                 binding: MergeBindingId::new(0),
-                value: primitive(count_action, Vec::new(), MergePrimitiveOrigin::Opaque),
+                value: primitive(count_action, Vec::new()),
             }],
             results: vec![incoming(0), incoming(1)],
         },

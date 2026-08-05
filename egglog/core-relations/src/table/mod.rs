@@ -1310,7 +1310,7 @@ impl SortedWritesTable {
                                 exec_state
                                     .trace()
                                     .expect("capture merge has no arena")
-                                    .validate_merge_origin(self.table_id, incoming_origin.is_some())
+                                    .validate_merge_result(self.table_id, incoming_origin.is_some())
                                     .unwrap_or_else(|error| {
                                         panic!(
                                             "cannot execute causal merge for {:?}: {error}",
@@ -1353,25 +1353,6 @@ impl SortedWritesTable {
                                     .filter(|_| logical_changed)
                             });
                             if merged {
-                                let prepared_origin = (CAPTURE && logical_changed).then(|| {
-                                    exec_state
-                                        .trace()
-                                        .expect("capture merge has no arena")
-                                        .prepare_merged_fact_origin(
-                                            self.table_id,
-                                            &scratch,
-                                            cur,
-                                            query,
-                                            prior_fact,
-                                            incoming_origin,
-                                        )
-                                        .unwrap_or_else(|error| {
-                                            panic!(
-                                                "cannot attribute causal merge for {:?}: {error}",
-                                                self.table_id
-                                            )
-                                        })
-                                });
                                 let merge_cause = merge_cause
                                     .flatten()
                                     .map(|cause| cause.promote())
@@ -1385,8 +1366,10 @@ impl SortedWritesTable {
                                             self.table_id,
                                             merge_cause,
                                             &scratch,
-                                            prepared_origin
-                                                .expect("capture merge has no prepared origin"),
+                                            incoming_origin.expect(
+                                                "causal merge has no incoming structural origin",
+                                            ),
+                                            prior_fact,
                                         )
                                     })
                                 };
@@ -1535,7 +1518,7 @@ impl SortedWritesTable {
                                 exec_state
                                     .trace()
                                     .expect("capture merge has no arena")
-                                    .validate_merge_origin(self.table_id, incoming_origin.is_some())
+                                    .validate_merge_result(self.table_id, incoming_origin.is_some())
                                     .unwrap_or_else(|error| {
                                         panic!(
                                             "cannot execute causal merge for {:?}: {error}",
@@ -1578,25 +1561,6 @@ impl SortedWritesTable {
                                     .filter(|_| logical_changed)
                             });
                             if merged {
-                                let prepared_origin = (CAPTURE && logical_changed).then(|| {
-                                    exec_state
-                                        .trace()
-                                        .expect("capture merge has no arena")
-                                        .prepare_merged_fact_origin(
-                                            self.table_id,
-                                            &scratch,
-                                            cur,
-                                            query,
-                                            prior_fact,
-                                            incoming_origin,
-                                        )
-                                        .unwrap_or_else(|error| {
-                                            panic!(
-                                                "cannot attribute causal merge for {:?}: {error}",
-                                                self.table_id
-                                            )
-                                        })
-                                });
                                 let merge_cause = merge_cause
                                     .flatten()
                                     .map(|cause| cause.promote())
@@ -1609,8 +1573,10 @@ impl SortedWritesTable {
                                             self.table_id,
                                             merge_cause,
                                             &scratch,
-                                            prepared_origin
-                                                .expect("capture merge has no prepared origin"),
+                                            incoming_origin.expect(
+                                                "causal merge has no incoming structural origin",
+                                            ),
+                                            prior_fact,
                                         )
                                     })
                                 };
@@ -1688,9 +1654,9 @@ impl SortedWritesTable {
         changed
     }
 
-    /// Preserve whole-batch atomicity for the fail-closed structural-origin
-    /// boundary. Supported tables stay on the ordinary one-pass path; only a
-    /// table with missing/Unsupported merge metadata pays for a keyed scan.
+    /// Preserve whole-batch atomicity for unsupported structural merge
+    /// results. Supported tables stay on the ordinary one-pass path; only a
+    /// table whose collisions cannot name an exact merge result pays for a keyed scan.
     /// Every queue is restored in FIFO order before reporting the error, so no
     /// native row or capture promotion becomes visible first.
     fn preflight_serial_capture_collisions(
@@ -1743,7 +1709,7 @@ impl SortedWritesTable {
             }
         }
         if collision {
-            trace.validate_merge_origin(self.table_id, true)?;
+            trace.validate_merge_result(self.table_id, true)?;
         }
         Ok(())
     }

@@ -111,43 +111,6 @@ impl ReplayCallSpec {
     }
 }
 
-/// Static structural origin of one column in an effective merge result.
-/// The bridge derives this once from the source merge expression; native
-/// capture stores only the resolved column references for changed facts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MergeOriginSelector {
-    /// The merged output cell preserves one cell of the incoming row.
-    Incoming {
-        /// Physical incoming-row column supplying the structural origin.
-        column: u16,
-    },
-    /// The merged output cell preserves one cell of the previously live row.
-    Prior {
-        /// Physical prior-row column supplying the structural origin.
-        column: u16,
-    },
-    /// `UnionId` returns the lower native id, choosing the prior value when
-    /// both inputs are already identical.
-    NativeMin {
-        /// Incoming-row column compared by native id.
-        incoming_column: u16,
-        /// Prior-row column compared by native id.
-        prior_column: u16,
-    },
-    /// The callback result must be exactly one of its two input cells. The
-    /// native result decides which structural origin won; equal inputs choose
-    /// the prior origin deterministically. This supports semantic min/max on
-    /// base values without comparing their opaque runtime Value ids.
-    PriorOrIncoming {
-        /// Incoming-row column that may have supplied the callback result.
-        incoming_column: u16,
-        /// Prior-row column that may have supplied the callback result.
-        prior_column: u16,
-    },
-    /// The merge expression has no exact structural-origin rule and must fail closed if needed.
-    Unsupported,
-}
-
 impl ReplayTerm {
     /// Returns the logical result sort stored by either term variant.
     pub fn sort(&self) -> ReplaySortId {
@@ -171,8 +134,8 @@ pub(super) struct TermInterner {
     pub(super) table_kinds: DashMap<TableId, ReplayTableKind>,
     pub(super) table_key_columns: DashMap<TableId, u16>,
     pub(super) table_constructors: DashMap<TableId, ReplayCallSpec>,
-    pub(super) table_merge_origins: DashMap<TableId, Arc<[MergeOriginSelector]>>,
-    pub(super) table_merge_identity_guards: DashMap<TableId, (u16, u16)>,
+    /// Read-only table call that names the result of one effective scalar merge.
+    pub(super) table_merge_results: DashMap<TableId, ReplayCallSpec>,
     pub(super) container_type_by_sort: DashMap<ReplaySortId, TypeId>,
     pub(super) container_child_sorts: DashMap<ReplaySortId, Arc<[ReplaySortId]>>,
 }
@@ -371,25 +334,45 @@ impl TermInterner {
                 continue;
             }
             let sort = *entry.key();
+            let Some(expected_children) = self
+                .container_child_sorts
+                .get(&sort)
+                .map(|entry| Arc::clone(entry.value()))
+            else {
+                return Err("container replay sort has no child-sort layout");
+            };
             let left_anchors = self.container_anchors_with_journal(journal, sort, left);
             let right_anchors = self.container_anchors_with_journal(journal, sort, right);
             for left_term in left_anchors {
                 for right_term in right_anchors.iter().copied() {
-                    if matches!(
-                        (self.node(left_term), self.node(right_term)),
-                        (
-                            Some(ReplayTerm::Call {
-                                op: left_op,
-                                children: left_children,
-                                ..
-                            }),
-                            Some(ReplayTerm::Call {
-                                op: right_op,
-                                children: right_children,
-                                ..
-                            })
-                        ) if left_op == right_op && left_children.len() == right_children.len()
-                    ) {
+                    let (
+                        Some(ReplayTerm::Call {
+                            op: left_op,
+                            children: left_children,
+                            ..
+                        }),
+                        Some(ReplayTerm::Call {
+                            op: right_op,
+                            children: right_children,
+                            ..
+                        }),
+                    ) = (self.node(left_term), self.node(right_term))
+                    else {
+                        continue;
+                    };
+                    let has_container_shape = |children: &[ReplayTermId]| {
+                        children.len() == expected_children.len()
+                            && children.iter().zip(expected_children.iter()).all(
+                                |(term, expected_sort)| {
+                                    self.node(*term)
+                                        .is_some_and(|node| node.sort() == *expected_sort)
+                                },
+                            )
+                    };
+                    if left_op == right_op
+                        && has_container_shape(&left_children)
+                        && has_container_shape(&right_children)
+                    {
                         pairs.push((sort, left_term, right_term));
                     }
                 }
@@ -496,16 +479,17 @@ impl TermInterner {
         self.validate_container_type(constructor)
     }
 
-    pub(super) fn register_table_merge_origins(
+    pub(super) fn register_table_merge_result(
         &self,
         table: TableId,
-        origins: &[MergeOriginSelector],
+        result: ReplayCallSpec,
     ) -> Result<(), &'static str> {
-        match self.table_merge_origins.entry(table) {
-            Entry::Occupied(entry) if entry.get().as_ref() == origins => Ok(()),
-            Entry::Occupied(_) => Err("table already has different merge-origin metadata"),
+        match self.table_merge_results.entry(table) {
+            Entry::Occupied(entry) if entry.get() == &result => Ok(()),
+            Entry::Occupied(_) => Err("table already has different merge-result metadata"),
             Entry::Vacant(entry) => {
-                entry.insert(origins.into());
+                self.register_container_type(&result)?;
+                entry.insert(result);
                 Ok(())
             }
         }

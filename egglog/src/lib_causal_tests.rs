@@ -18,6 +18,27 @@ fn enable_serial_trace(egraph: &mut EGraph) -> Result<(), Error> {
     serial_trace_pool().install(|| egraph.enable_trace())
 }
 
+fn assert_strict_replay_in_all_modes(commands: &[Command], setup: Option<&str>) {
+    let rendered = crate::slicing::render_commands(commands);
+    for (mode, mut replay) in [
+        ("native", EGraph::default()),
+        ("term", EGraph::new_with_term_encoding()),
+        (
+            "proof",
+            EGraph::default().with_proofs_enabled().with_proof_testing(),
+        ),
+    ] {
+        if let Some(setup) = setup {
+            replay
+                .parse_and_run_program(None, setup)
+                .unwrap_or_else(|error| panic!("{mode} replay setup failed: {error}"));
+        }
+        replay
+            .parse_and_run_program(None, &rendered)
+            .unwrap_or_else(|error| panic!("{mode} strict replay failed: {error}"));
+    }
+}
+
 #[test]
 fn trace_accepts_empty_declarations_installed_by_a_matching_replay_factory() {
     serial_trace_pool().install(|| {
@@ -43,7 +64,7 @@ fn trace_accepts_empty_declarations_installed_by_a_matching_replay_factory() {
 }
 
 #[test]
-fn failed_trace_activation_leaves_ordinary_execution_usable() {
+fn dormant_unsupported_merge_rejects_only_a_reached_collision() {
     let mut egraph = EGraph::default();
     egraph
         .parse_and_run_program(
@@ -54,18 +75,117 @@ fn failed_trace_activation_leaves_ordinary_execution_usable() {
         )
         .unwrap();
 
-    let error = serial_trace_pool()
+    serial_trace_pool()
         .install(|| egraph.enable_trace())
-        .unwrap_err();
+        .unwrap();
+
+    egraph
+        .parse_and_run_program(None, "(Safe 1) (set (bad (A 0)) (A 1)) (check (Safe 1))")
+        .unwrap();
+    let function = egraph.functions.get("bad").unwrap().backend_id;
+    let mut prior = None;
+    egraph
+        .backend
+        .for_each(function, |row| prior = row.vals.last().copied());
+    let prior = prior.unwrap();
+    let error = egraph
+        .parse_and_run_program(None, "(set (bad (A 0)) (A 2))")
+        .expect_err("table-reading merge unexpectedly reached its callback");
     assert!(
         error
             .to_string()
             .contains("merge reached an unsupported structural result expression")
     );
-
+    let mut after = None;
     egraph
-        .parse_and_run_program(None, "(Safe 1) (check (Safe 1))")
-        .unwrap();
+        .backend
+        .for_each(function, |row| after = row.vals.last().copied());
+    assert_eq!(after, Some(prior));
+}
+
+#[test]
+fn duplicate_presence_relation_needs_no_computed_merge_result() {
+    serial_trace_pool().install(|| {
+        let mut recorder = EGraph::default();
+        recorder.enable_trace().unwrap();
+        recorder
+            .parse_and_run_program(
+                None,
+                "(datatype E (A) (B))\
+                 (relation Seen (E))\
+                 (Seen (A))\
+                 (Seen (B))\
+                 (union (A) (B))\
+                 (check (Seen (A)))",
+            )
+            .unwrap();
+
+        let commands = crate::slicing::slice_all_checks(&recorder).unwrap();
+        assert_strict_replay_in_all_modes(&commands, None);
+    });
+}
+
+#[test]
+fn deferred_merge_equality_uses_the_callback_read_horizon() {
+    serial_trace_pool().install(|| {
+        let mut recorder = EGraph::default();
+        recorder.enable_trace().unwrap();
+        recorder
+            .parse_and_run_program(
+                None,
+                "(datatype Expr (Num i64) (Add Expr Expr))\
+                 (constructor Root () Expr)\
+                 (rewrite (Root) (Add (Num 1) (Num 0)))\
+                 (rewrite (Add (Num a) (Num b)) (Num (+ a b)))\
+                 (let $root (Root))\
+                 (run 2)\
+                 (check (= $root (Num 1)))",
+            )
+            .unwrap();
+
+        recorder
+            .with_trace_view(|view| {
+                let equality = core_relations::AppliedEqualityId::new(1);
+                let event = view.applied_equality(equality)?;
+                let core_relations::EqualityReason::MergeFn { cause } = event.reason else {
+                    panic!("first equality is not merge-caused: {event:?}");
+                };
+                let core_relations::RawCause::Merge {
+                    prior_fact,
+                    history_cutoff,
+                    ..
+                } = view.cause(cause)?
+                else {
+                    panic!("merge equality has a non-merge cause");
+                };
+                let (successor, ended_at) = view
+                    .fact_replacement(prior_fact)?
+                    .expect("effective merge did not replace its prior fact");
+                assert!(history_cutoff < ended_at && ended_at < event.position);
+
+                let output = view.table_schema(view.fact(prior_fact)?.table)?.key_columns;
+                let cell = core_relations::FactCellRef {
+                    fact: prior_fact,
+                    column: core_relations::ColumnId::new_const(output as u32),
+                };
+                view.fact_cell_at(cell, history_cutoff)?;
+                assert!(matches!(
+                    view.fact_cell_at(cell, ended_at),
+                    Err(core_relations::TraceViewError::FactNoLongerLive {
+                        successor: Some(actual),
+                        ended_at: actual_end,
+                        ..
+                    }) if actual == successor && actual_end == ended_at
+                ));
+                let support = view.explain_equality_denotation_before(equality)?;
+                assert!(support.facts.contains(&prior_fact));
+                Ok(())
+            })
+            .unwrap();
+
+        let commands = crate::slicing::slice_all_checks(&recorder).unwrap();
+        assert_strict_replay_in_all_modes(&commands, None);
+    });
 }
 
 #[test]
@@ -110,51 +230,133 @@ fn capture_enabled_frontend_clone_remains_unsupported_after_finalization() {
 }
 
 #[test]
-fn reached_unsupported_base_merge_fails_before_native_mutation() {
+fn computed_scalar_merge_replays_the_original_carriers() {
     serial_trace_pool().install(|| {
-        let mut egraph = EGraph::default();
-        egraph
-            .parse_and_run_program(None, "(function total () i64 :merge (+ old new))")
-            .unwrap();
-        egraph.enable_trace().unwrap();
-        egraph
-            .parse_and_run_program(None, "(set (total) 1)")
-            .unwrap();
-
-        let error = egraph
-            .parse_and_run_program(None, "(set (total) 2)")
-            .expect_err("unsupported merge unexpectedly succeeded");
-        assert_eq!(
-            error.to_string(),
-            "function `total` merge reached an unsupported structural result expression"
-        );
-        assert_eq!(
-            egraph
-                .backend
-                .base_values()
-                .unwrap::<i64>(get_value(&egraph, "total")),
-            1,
-            "failed preflight must not publish the merged native row"
-        );
-        assert!(
-            egraph
-                .with_trace_view(|_| Ok(()))
-                .unwrap_err()
-                .to_string()
-                .contains("poisoned"),
-            "a rejected merge must not leave a publishable partial trace"
-        );
-
-        let mut ordinary = EGraph::default();
-        ordinary
+        let mut recorder = EGraph::default();
+        recorder.enable_trace().unwrap();
+        recorder
             .parse_and_run_program(
                 None,
                 "(function total () i64 :merge (+ old new))\
+                 (relation Seen (i64))\
                  (set (total) 1)\
                  (set (total) 2)\
-                 (check (= (total) 3))",
+                 (rule ((= (total) x)) ((Seen x)) :name \"observe-total\")\
+                 (run 1)\
+                 (check (Seen 3))",
             )
             .unwrap();
+        assert_eq!(
+            recorder
+                .backend
+                .base_values()
+                .unwrap::<i64>(get_value(&recorder, "total")),
+            3
+        );
+
+        let commands = crate::slicing::slice_all_checks(&recorder).unwrap();
+        let rendered = crate::slicing::render_commands(&commands);
+        assert!(
+            rendered.contains("(function total () i64 :merge (+ old new))"),
+            "the original merge remains the execution authority:\n{rendered}"
+        );
+        assert_eq!(rendered.matches("(set (total) 1)").count(), 1);
+        assert_eq!(rendered.matches("(set (total) 2)").count(), 1);
+        assert!(
+            !rendered.contains("(set (total) 3)"),
+            "replay must read the computed result rather than inventing a source write"
+        );
+        assert!(rendered.contains("(let-check "));
+        assert!(rendered.contains("(total) :sort i64"));
+
+        assert_strict_replay_in_all_modes(&commands, None);
+    });
+}
+
+#[test]
+fn nested_pure_scalar_merge_replays_as_one_computed_result() {
+    serial_trace_pool().install(|| {
+        let mut recorder = EGraph::default();
+        recorder.enable_trace().unwrap();
+        recorder
+            .parse_and_run_program(
+                None,
+                "(function total () i64 :merge (+ 1 (* old new)))\
+                 (relation Seen (i64))\
+                 (set (total) 2)\
+                 (set (total) 3)\
+                 (rule ((= (total) x)) ((Seen x)) :name \"observe-nested-total\")\
+                 (run 1)\
+                 (check (Seen 7))",
+            )
+            .unwrap();
+
+        let commands = crate::slicing::slice_all_checks(&recorder).unwrap();
+        assert_strict_replay_in_all_modes(&commands, None);
+    });
+}
+
+#[test]
+fn container_valued_scalar_merge_replays_as_one_computed_result() {
+    serial_trace_pool().install(|| {
+        let mut recorder = EGraph::default();
+        recorder.enable_trace().unwrap();
+        recorder
+            .parse_and_run_program(
+                None,
+                "(sort Scored (Pair i64 i64))\
+                 (function best () Scored :merge new)\
+                 (relation Seen (i64))\
+                 (set (best) (pair 10 5))\
+                 (set (best) (pair 20 3))\
+                 (rule ((= value (best)) (= score (pair-second value))) ((Seen score)))\
+                 (run 1)\
+                 (check (Seen 3))",
+            )
+            .unwrap();
+
+        let commands = crate::slicing::slice_all_checks(&recorder).unwrap();
+        assert_strict_replay_in_all_modes(&commands, None);
+    });
+}
+
+#[test]
+fn repeated_computed_merge_results_keep_distinct_checked_alias_lifetimes() {
+    serial_trace_pool().install(|| {
+        let mut recorder = EGraph::default();
+        recorder.enable_trace().unwrap();
+        recorder
+            .parse_and_run_program(
+                None,
+                "(function total () i64 :merge (+ old new))\
+                 (relation First (i64))\
+                 (relation Pair (i64 i64))\
+                 (ruleset first)\
+                 (ruleset second)\
+                 (set (total) 1)\
+                 (set (total) 2)\
+                 (rule ((= (total) x)) ((First x)) :ruleset first :name \"first-total\")\
+                 (run first 1)\
+                 (set (total) 4)\
+                 (rule ((First x) (= (total) y)) ((Pair x y)) :ruleset second :name \"pair-totals\")\
+                 (run second 1)\
+                 (check (Pair 3 7))",
+            )
+            .unwrap();
+
+        let commands = crate::slicing::slice_all_checks(&recorder).unwrap();
+        let rendered = crate::slicing::render_commands(&commands);
+        assert_eq!(
+            rendered.matches("(total) :sort i64").count(),
+            2,
+            "successive rows with identical lookup syntax need distinct aliases:\n{rendered}"
+        );
+        let first_alias = rendered.find("(total) :sort i64").unwrap();
+        let third_set = rendered.find("(set (total) 4)").unwrap();
+        let second_alias = rendered.rfind("(total) :sort i64").unwrap();
+        assert!(first_alias < third_set && third_set < second_alias, "{rendered}");
+
+        assert_strict_replay_in_all_modes(&commands, None);
     });
 }
 
@@ -208,85 +410,153 @@ fn reached_merge_action_program_fails_before_its_effect() {
 }
 
 #[test]
-fn reached_unsupported_rule_merge_rejects_the_whole_head_batch() {
+fn reached_tuple_merge_fails_before_native_mutation() {
     serial_trace_pool().install(|| {
         let mut egraph = EGraph::default();
+        egraph.enable_trace().unwrap();
         egraph
             .parse_and_run_program(
                 None,
-                "(function total () i64 :merge (+ old new))\
-                 (relation Input (i64))\
-                 (relation Seen (i64))",
+                "(function pair-total () (i64 i64)\
+                   :merge (values (+ old0 new0) (+ old1 new1)))\
+                 (set (pair-total) (values 1 10))",
             )
             .unwrap();
-        egraph.enable_trace().unwrap();
+
         let error = egraph
+            .parse_and_run_program(None, "(set (pair-total) (values 2 20))")
+            .expect_err("tuple merge unexpectedly entered causal capture");
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported structural result expression"),
+            "{error}"
+        );
+        let function = egraph.functions.get("pair-total").unwrap();
+        let mut rows = Vec::new();
+        egraph
+            .backend
+            .for_each(function.backend_id, |row| rows.push(row.vals.to_vec()));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(egraph.backend.base_values().unwrap::<i64>(rows[0][0]), 1);
+        assert_eq!(egraph.backend.base_values().unwrap::<i64>(rows[0][1]), 10);
+    });
+}
+
+#[test]
+fn reached_table_read_merge_fails_before_evaluating_the_lookup() {
+    serial_trace_pool().install(|| {
+        let mut egraph = EGraph::default();
+        egraph.enable_trace().unwrap();
+        egraph
             .parse_and_run_program(
                 None,
-                "(Input 1) (Input 2)\
-                 (rule ((Input x)) ((Seen x) (set (total) x)) :name \"sum\")\
-                 (run 1)",
+                "(function helper (i64) i64 :no-merge)\
+                 (function total () i64 :merge (helper new))\
+                 (set (total) 1)",
             )
-            .expect_err("unsupported rule merge unexpectedly succeeded");
-        assert_eq!(
-            error.to_string(),
-            "function `total` merge reached an unsupported structural result expression"
-        );
-        for name in ["total", "Seen"] {
-            let function = egraph.functions.get(name).unwrap();
-            let mut rows = 0;
-            egraph.backend.for_each(function.backend_id, |_| rows += 1);
-            assert_eq!(rows, 0, "failed rule head published a `{name}` row");
-        }
+            .unwrap();
+
+        let error = egraph
+            .parse_and_run_program(None, "(set (total) 2)")
+            .expect_err("table-reading merge unexpectedly entered causal capture");
         assert!(
-            egraph
-                .with_trace_view(|_| Ok(()))
-                .unwrap_err()
+            error
                 .to_string()
-                .contains("poisoned")
+                .contains("unsupported structural result expression"),
+            "causal preflight must reject before the missing helper lookup runs: {error}"
+        );
+        assert_eq!(
+            egraph
+                .backend
+                .base_values()
+                .unwrap::<i64>(get_value(&egraph, "total")),
+            1
         );
     });
 }
 
 #[test]
-fn reached_unsupported_rebuild_merge_returns_the_same_typed_error() {
+fn reached_write_primitive_merge_fails_before_evaluating_the_primitive() {
     serial_trace_pool().install(|| {
-        let declarations = "(datatype E (A) (B)) (function total (E) i64 :merge (+ old new))";
         let mut egraph = EGraph::default();
-        egraph.parse_and_run_program(None, declarations).unwrap();
         egraph.enable_trace().unwrap();
         egraph
-            .parse_and_run_program(None, "(set (total (A)) 1) (set (total (B)) 2)")
-            .unwrap();
-
-        let error = egraph
-            .parse_and_run_program(None, "(union (A) (B))")
-            .expect_err("unsupported rebuild merge unexpectedly succeeded");
-        assert_eq!(
-            error.to_string(),
-            "function `total` merge reached an unsupported structural result expression"
-        );
-        assert!(
-            egraph
-                .with_trace_view(|_| Ok(()))
-                .unwrap_err()
-                .to_string()
-                .contains("poisoned")
-        );
-
-        let mut ordinary = EGraph::default();
-        ordinary
             .parse_and_run_program(
                 None,
-                &format!(
-                    "{declarations}\
-                     (set (total (A)) 1)\
-                     (set (total (B)) 2)\
-                     (union (A) (B))\
-                     (check (= (total (A)) 3))"
-                ),
+                "(datatype E (A) (B))\
+                 (sort V (Vec E))\
+                 (function items () V :merge (vec-union old new))\
+                 (set (items) (vec-of (A)))",
             )
             .unwrap();
+        let prior = get_value(&egraph, "items");
+
+        let error = egraph
+            .parse_and_run_program(None, "(set (items) (vec-of (B)))")
+            .expect_err("write-primitive merge unexpectedly entered causal capture");
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported structural result expression"),
+            "{error}"
+        );
+        assert_eq!(get_value(&egraph, "items"), prior);
+    });
+}
+
+#[test]
+fn computed_scalar_merge_replays_rule_head_collisions() {
+    serial_trace_pool().install(|| {
+        let mut recorder = EGraph::default();
+        recorder.enable_trace().unwrap();
+        recorder
+            .parse_and_run_program(
+                None,
+                "(function total () i64 :merge (+ old new))\
+                 (relation Input (i64))\
+                 (relation Seen (i64))\
+                 (ruleset produce)\
+                 (ruleset observe)\
+                 (Input 1) (Input 2)\
+                 (rule ((Input x)) ((set (total) x)) :ruleset produce :name \"sum\")\
+                 (rule ((= (total) x)) ((Seen x)) :ruleset observe :name \"observe\")\
+                 (run produce 1)\
+                 (run observe 1)\
+                 (check (Seen 3))",
+            )
+            .unwrap();
+
+        let commands = crate::slicing::slice_all_checks(&recorder).unwrap();
+        assert_strict_replay_in_all_modes(&commands, None);
+    });
+}
+
+#[test]
+fn computed_scalar_merge_replays_rebuild_collisions() {
+    serial_trace_pool().install(|| {
+        let declarations = "(datatype E (A) (B))\
+                            (function total (E) i64 :merge (+ old new))\
+                            (relation Seen (i64))";
+        // Declarations precede activation so this also exercises registration of preexisting
+        // function metadata.
+        let mut recorder = EGraph::default();
+        recorder.parse_and_run_program(None, declarations).unwrap();
+        recorder.enable_trace().unwrap();
+        recorder
+            .parse_and_run_program(
+                None,
+                "(set (total (A)) 1)\
+                 (set (total (B)) 2)\
+                 (union (A) (B))\
+                 (rule ((= (total (A)) x)) ((Seen x)) :name \"observe-rebuild-total\")\
+                 (run 1)\
+                 (check (Seen 3))",
+            )
+            .unwrap();
+
+        let commands = crate::slicing::slice_all_checks(&recorder).unwrap();
+        assert_strict_replay_in_all_modes(&commands, Some(declarations));
     });
 }
 
@@ -320,23 +590,7 @@ fn find_container_canonicalization(
 }
 
 #[test]
-fn trace_merge_input_choice_opt_in_is_explicit() {
-    for name in [
-        "min",
-        "max",
-        "pair-min-by-second-i64",
-        "maybe-either-i64-bool-min",
-        "maybe-either-i64-bool-max",
-    ] {
-        assert!(primitive_merge_returns_one_input(name), "{name}");
-    }
-    for name in ["+", "pair", "unstable-fn", "clamp"] {
-        assert!(!primitive_merge_returns_one_input(name), "{name}");
-    }
-}
-
-#[test]
-fn trace_input_choice_primitive_replays_the_selected_origin() {
+fn computed_min_merge_replays_its_table_result() {
     serial_trace_pool().install(|| {
         let mut recorder = EGraph::default();
         recorder.enable_trace().unwrap();
@@ -361,9 +615,7 @@ fn trace_input_choice_primitive_replays_the_selected_origin() {
         );
 
         let commands = crate::slicing::slice_all_checks(&recorder).unwrap();
-        let rendered = crate::slicing::render_commands(&commands);
-        let mut replay = EGraph::default().with_proofs_enabled().with_proof_testing();
-        replay.parse_and_run_program(None, &rendered).unwrap();
+        assert_strict_replay_in_all_modes(&commands, None);
     });
 }
 
@@ -1775,6 +2027,72 @@ fn let_check_runs_through_proof_encoding_without_fiat_rows() {
     egraph
         .parse_and_run_program(None, "(check (= $a (A 1)))")
         .unwrap();
+}
+
+#[test]
+fn let_check_reads_single_output_value_functions_without_writing_rows() {
+    for (mode, mut egraph) in [
+        ("native", EGraph::default()),
+        ("term", EGraph::new_with_term_encoding()),
+        (
+            "proof",
+            EGraph::default().with_proofs_enabled().with_proof_testing(),
+        ),
+    ] {
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (function total () i64 :merge (+ old new))
+                (set (total) 1)
+                (set (total) 2)
+                "#,
+            )
+            .unwrap_or_else(|error| panic!("{mode} setup failed: {error}"));
+        let tuples_before = egraph.num_tuples();
+        egraph
+            .parse_and_run_program(None, "(let-check $read-total (total) :sort i64)")
+            .unwrap_or_else(|error| panic!("{mode} value-function lookup failed: {error}"));
+        assert_eq!(
+            egraph.backend.base_values().unwrap::<i64>(
+                *egraph
+                    .checked_aliases
+                    .get("$read-total")
+                    .expect("checked value-function alias was not published")
+            ),
+            3,
+            "{mode} looked up the wrong function result"
+        );
+        assert_eq!(
+            egraph.num_tuples(),
+            tuples_before,
+            "{mode} let-check inserted a row or proof fact"
+        );
+    }
+}
+
+#[test]
+fn let_check_value_function_miss_is_atomic_in_all_modes() {
+    for (mode, mut egraph) in [
+        ("native", EGraph::default()),
+        ("term", EGraph::new_with_term_encoding()),
+        (
+            "proof",
+            EGraph::default().with_proofs_enabled().with_proof_testing(),
+        ),
+    ] {
+        egraph
+            .parse_and_run_program(None, "(function total () i64 :merge (+ old new))")
+            .unwrap_or_else(|error| panic!("{mode} declaration failed: {error}"));
+        let tuples_before = egraph.num_tuples();
+        let error = egraph
+            .parse_and_run_program(None, "(let-check $missing (total) :sort i64)")
+            .expect_err("missing value-function row unexpectedly resolved");
+        assert!(error.to_string().contains("lookup"), "{mode}: {error}");
+        assert_eq!(egraph.num_tuples(), tuples_before, "{mode} mutated rows");
+        assert!(!egraph.checked_aliases.contains_key("$missing"));
+        assert!(!egraph.checked_alias_types.contains_key("$missing"));
+    }
 }
 
 #[test]

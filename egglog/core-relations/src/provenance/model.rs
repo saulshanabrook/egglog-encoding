@@ -478,7 +478,9 @@ pub enum EqualityReason {
     /// A merge callback produced an equality while combining table rows.
     MergeFn {
         /// Shared exact cause root. Dependencies are unfolded lazily through
-        /// [`TraceView::cause`].
+        /// [`TraceView::cause`]. The associated [`RawCause::Merge`] records
+        /// when the callback read its operands; the equality record's position
+        /// is the later time at which the deferred native edge was applied.
         cause: CauseId,
     },
     /// Rebuild or container maintenance derived the edge from earlier equalities.
@@ -797,6 +799,9 @@ pub enum RawCause<'a> {
         incoming: CauseRef,
         /// Existing fact read by the merge callback.
         prior_fact: FactId,
+        /// Inclusive history boundary at which the callback read both rows.
+        /// Deferred equality effects may be published after the replacement fact.
+        history_cutoff: HistoryPosition,
     },
 }
 

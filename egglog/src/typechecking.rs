@@ -1054,7 +1054,7 @@ impl EGraph {
 
 impl TypeInfo {
     /// Return a typechecking view in which encoded term-relation names recover
-    /// their source constructor signatures.  This is deliberately used only
+    /// their source function signatures.  This is deliberately used only
     /// for closed, lookup-only expressions (`let-check` and `run-rule`
     /// bindings); ordinary actions must continue to see the encoded relation
     /// schema with its explicit term-id input.
@@ -1264,16 +1264,15 @@ impl TypeInfo {
             ));
         }
         let ftype = self.function_to_functype(fdecl)?;
-        // A tuple-valued FD view carrying `:internal-term-constructor F`
-        // serializes enough information to recover a source constructor's
-        // lookup schema.  Require the encoder's exact metadata and paired
-        // term-node shape: encoded constructors are relations
-        // `F(children..., eclass) -> Unit`, whereas encoded globals and custom
-        // functions must not become source-level constructor lookups.
+        // A tuple-valued FD view carrying `:internal-term-constructor F` serializes enough
+        // information to recover the source function's lookup schema. Require the encoder's
+        // exact metadata and paired term-node shape. Constructor term relations are
+        // `F(children..., eclass) -> Unit`; custom-function term relations are
+        // `F(keys..., value, term-id) -> Unit`. In both cases the FD view is the only read-only
+        // source-level lookup table.
         let source_lookup_type = fdecl.term_constructor.as_ref().and_then(|source_name| {
             let term_node = self.func_types.get(source_name)?;
-            let (term_id_sort, term_children) = term_node.input.split_last()?;
-            (!fdecl.internal_let
+            let common_shape = !fdecl.internal_let
                 && !fdecl.internal_term_node
                 && fdecl.identity_vals == Some(1)
                 && ftype.outputs.len() == 2
@@ -1281,15 +1280,28 @@ impl TypeInfo {
                 && term_node.subtype == FunctionSubtype::Custom
                 && term_node.outputs.len() == 1
                 && term_node.output().name() == UnitSort.name()
-                && term_children.len() == ftype.input.len()
-                && term_children
+                && term_node
+                    .input
                     .iter()
+                    .take(ftype.input.len())
                     .zip(&ftype.input)
-                    .all(|(term, view)| term.name() == view.name())
-                && term_id_sort.name() == ftype.output().name())
-            .then(|| FuncType {
+                    .all(|(term, view)| term.name() == view.name());
+            let subtype = if common_shape
+                && term_node.input.len() == ftype.input.len() + 1
+                && term_node.input.last()?.name() == ftype.output().name()
+            {
+                FunctionSubtype::Constructor
+            } else if common_shape
+                && term_node.input.len() == ftype.input.len() + 2
+                && term_node.input[ftype.input.len()].name() == ftype.output().name()
+            {
+                FunctionSubtype::Custom
+            } else {
+                return None;
+            };
+            Some(FuncType {
                 name: source_name.clone(),
-                subtype: FunctionSubtype::Constructor,
+                subtype,
                 input: ftype.input.clone(),
                 outputs: vec![ftype.output().clone()],
             })

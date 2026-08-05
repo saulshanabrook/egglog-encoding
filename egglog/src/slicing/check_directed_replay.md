@@ -134,11 +134,33 @@ are re-established through checked `let-check` aliases.
 
 `let-check` is deliberately narrower than an ordinary `let` action. Variables
 may reference only aliases published by earlier `let-check` commands. Literals
-and validated pure primitives may evaluate normally, while equality-sort
-constructor calls are lookup-only and must already exist. The command performs
-no Fiat insertion, relational write, equality, or global binding. Replay always
-supplies the recorded expected sort so nominal container aliases cannot be
-confused even when they share one physical Rust representation.
+and validated pure primitives may evaluate normally. Equality-sort constructor
+calls and single-output value-function calls are lookup-only and must already
+exist. Under term or proof encoding, the lookup targets the generated
+functional-dependency view rather than the append-only term relation. The
+command performs no default insertion, Fiat insertion, relational write,
+equality, or global binding. Replay always supplies the recorded expected sort
+so nominal container aliases cannot be confused even when they share one
+physical Rust representation.
+
+An effective supported merge is recorded as a new computed fact caused by both
+the prior row and the incoming proposal. The replay artifact keeps those
+structural carriers and the original merge declaration; it never replaces them
+with a synthetic write of the observed result. After the carrier executes,
+`let-check` reads the exact function row and gives that historical occurrence a
+name. Successive merges at the same key therefore receive separate aliases and
+lifetime windows even though their lookup syntax is identical. This separates
+two obligations: backward closure explains why the merged row exists, while the
+checked lookup names the value that the original merge computed.
+
+A merge callback and an equality staged by that callback have two distinct
+times. `RawCause::Merge::history_cutoff` records the inclusive boundary at
+which the callback read the prior and incoming rows. The replacement fact may
+be published next, and the staged union may become an applied equality only
+after that. Endpoint denotation is therefore explained at the callback cutoff;
+native edge validation and chronological replay still use the later equality
+event. Treating equality application minus one as the read time would make the
+prior row appear dead even though the callback had just read it.
 
 Exact aliases support Pair, Vec, Maybe, Either, Set, MultiSet, and Map values
 whose keys cannot later collapse through equality. A Map with equality-capable
@@ -254,14 +276,15 @@ fresh `(B)` no longer denotes `A`. Retaining the owner of a native applied edge
 is therefore insufficient; replay also needs the historical state that made
 the owner's structural proposal denote that edge.
 
-The closure law is strict and pre-event. For every replay-visible applied
-equality, both structural endpoints are resolved immediately before that
-event: at the preceding `HistoryPosition`, from which the preceding equality
-prefix is derived. Their
-representatives must match the recorded native parent and child, and the
-earlier occurrence and equality support for those denotations is added to the
-slice. The equality being explained cannot justify its own precondition. This
-both fixes the example and prevents circular explanations.
+The closure law is strict and pre-event. Normally, both structural endpoints
+of a replay-visible applied equality are resolved at the preceding
+`HistoryPosition`, from which the preceding equality prefix is derived. A
+merge-staged equality instead uses its cause's earlier callback-read cutoff;
+its later pre-application position still validates the applied native edge.
+In both cases, endpoint representatives must match the recorded native parent
+and child, and earlier occurrence and equality support for those denotations is
+added to the slice. The equality being explained cannot justify its own
+precondition. This both fixes the example and prevents circular explanations.
 
 ## Why output support and producer liveness are different
 
@@ -410,9 +433,13 @@ Slicing fails closed with respect to artifacts: an unsupported path returns an
 error and is never replaced by a prefix or the original program. This is not a
 general native transaction-rollback guarantee. Some constructs, such as
 push/pop state and nested `fail`, are rejected before that command is resolved
-or can mutate captured state. Static typed `Unsupported` structural-origin
-selectors may remain dormant, but an effective merge or rebuild that reaches
-one is rejected while its capture transaction is still abortable. Unsupported
+or can mutate captured state. Check-directed replay capture currently supports
+exactly one output, no merge actions, and a result formed from `old`, `new`,
+literals, and recursively validated pure primitives. Tuple results, table
+reads, action-local bindings, and effect-capable or unvalidated primitives may
+remain dormant in declarations, but an effective merge or rebuild that reaches
+one is rejected while its capture transaction is still abortable. Ordinary and
+proof execution continue to support their wider merge language. Unsupported
 scheduler, source, literal, container, or mutation shapes similarly produce an
 error at the relevant capture or selection boundary. If native effects may
 already exist when capture fails, the trace is poisoned and later slicing

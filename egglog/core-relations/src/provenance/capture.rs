@@ -226,6 +226,7 @@ struct PendingMergeCause {
     trace: Trace,
     incoming: DeferredEqualityCause,
     prior_fact: FactId,
+    history_cutoff: HistoryPosition,
     equality: EqualityCauseSummary,
     cause: OnceLock<PackedCauseRef>,
 }
@@ -445,6 +446,7 @@ enum DurableCause {
     Merge {
         incoming: PackedCauseRef,
         prior_fact: FactId,
+        history_cutoff: HistoryPosition,
     },
 }
 
@@ -454,33 +456,13 @@ pub(crate) enum RowOriginRef {
     Fact(FactId),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum MergeCellOrigin {
-    Incoming(u16),
-    Prior(u16),
-    /// The merge synthesized a value not structurally named by either input.
-    Unsupported,
-}
-
 #[derive(Clone, Copy, Debug)]
 enum FactOrigin {
     Site(RowOriginSiteId),
     Fact(FactId),
     Merge {
-        incoming: Option<RowOriginRef>,
+        incoming: RowOriginRef,
         prior: FactId,
-        cells: FlatRange,
-    },
-}
-
-#[derive(Clone, Debug)]
-pub(crate) enum PreparedFactOrigin {
-    None,
-    Direct(RowOriginRef),
-    Merge {
-        incoming: Option<RowOriginRef>,
-        prior: FactId,
-        cells: SmallVec<[MergeCellOrigin; 4]>,
     },
 }
 
@@ -518,7 +500,6 @@ struct TraceArena {
     /// Sparse because most source action bundles never invoke a merge callback.
     source_merge_reads: HashMap<SourceRef, SmallVec<[FactId; 2]>>,
     durable_fact_values: Vec<Value>,
-    durable_merge_cell_origins: Vec<MergeCellOrigin>,
     /// Flat typed-cell equality slab shared by rebuild and container causes.
     durable_cell_equalities: Vec<TypedCellEquality>,
     durable_causes: Vec<Option<(DurableCause, EqualityCauseSummary)>>,
@@ -687,6 +668,9 @@ struct TraceShared {
         RwLock<HashMap<u32, Arc<[(FiringEqualitySource, FiringEqualitySource)]>>>,
     /// Cold compile-time recipes shared by every seminaive/decomposed variant.
     static_term_recipes: Mutex<StaticTermRecipeStore>,
+    /// Successful lazy projections are immutable once their fact or firing is
+    /// published, so runtime container anchors and cold views can reuse them.
+    term_projection_memo: Mutex<TermProjectionMemo>,
     arena: Mutex<TraceArena>,
 }
 
@@ -710,6 +694,7 @@ impl Default for TraceShared {
             rule_binding_recipes: RwLock::new(HashMap::default()),
             rule_equality_recipes: RwLock::new(HashMap::default()),
             static_term_recipes: Mutex::new(StaticTermRecipeStore::default()),
+            term_projection_memo: Mutex::new(TermProjectionMemo::default()),
             arena: Mutex::new(TraceArena::default()),
         }
     }
@@ -728,7 +713,6 @@ pub(crate) struct CaptureBatch {
     shared: Arc<TraceShared>,
     facts: Vec<(FactId, FactRecord)>,
     fact_values: Vec<Value>,
-    merge_cell_origins: Vec<MergeCellOrigin>,
     equalities: Vec<(AppliedEqualityId, EqualityRecord)>,
     published: bool,
 }
@@ -740,7 +724,6 @@ impl CaptureBatch {
             shared,
             facts: Vec::new(),
             fact_values: Vec::new(),
-            merge_cell_origins: Vec::new(),
             equalities: Vec::new(),
             published: false,
         }
@@ -803,39 +786,29 @@ impl CaptureBatch {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn record_merged_fact(
         &mut self,
         table: TableId,
         cause: impl Into<PackedCauseRef>,
         row: &[Value],
-        prepared: PreparedFactOrigin,
+        incoming: RowOriginRef,
+        prior: FactId,
     ) -> FactId {
         let cause = cause.into();
         assert!(
             !cause.is_unattributed(),
             "effective commit is missing exact causal attribution"
         );
-        let origin = match prepared {
-            PreparedFactOrigin::None => None,
-            PreparedFactOrigin::Direct(RowOriginRef::Site(site)) => Some(FactOrigin::Site(site)),
-            PreparedFactOrigin::Direct(RowOriginRef::Fact(fact)) => Some(FactOrigin::Fact(fact)),
-            PreparedFactOrigin::Merge {
-                incoming,
-                prior,
-                cells,
-            } => {
-                assert_eq!(cells.len(), row.len());
-                let range = FlatRange::new(self.merge_cell_origins.len(), cells.len());
-                self.merge_cell_origins.extend(cells);
-                Some(FactOrigin::Merge {
-                    incoming,
-                    prior,
-                    cells: range,
-                })
-            }
-        };
-        self.push_fact(table, cause, row, origin)
+        assert!(
+            !prior.is_missing(),
+            "merged row has no immutable prior FactId"
+        );
+        self.push_fact(
+            table,
+            cause,
+            row,
+            Some(FactOrigin::Merge { incoming, prior }),
+        )
     }
 
     fn push_fact(
@@ -903,15 +876,8 @@ impl CaptureBatch {
             let mut arena = self.shared.arena.lock().unwrap();
             let fact_value_base = arena.durable_fact_values.len();
             arena.durable_fact_values.append(&mut self.fact_values);
-            let merge_origin_base = arena.durable_merge_cell_origins.len();
-            arena
-                .durable_merge_cell_origins
-                .append(&mut self.merge_cell_origins);
             for (id, mut fact) in self.facts.drain(..) {
                 fact.values = fact.values.shifted(fact_value_base);
-                if let Some(FactOrigin::Merge { cells, .. }) = &mut fact.origin {
-                    *cells = cells.shifted(merge_origin_base);
-                }
                 arena.install_fact(id, fact);
             }
             for (id, equality) in self.equalities.drain(..) {
@@ -928,11 +894,7 @@ impl Drop for CaptureBatch {
         if self.published {
             return;
         }
-        if !self.facts.is_empty()
-            || !self.fact_values.is_empty()
-            || !self.merge_cell_origins.is_empty()
-            || !self.equalities.is_empty()
-        {
+        if !self.facts.is_empty() || !self.fact_values.is_empty() || !self.equalities.is_empty() {
             self.shared
                 .abandoned_fragments
                 .fetch_add(1, Ordering::Relaxed);
@@ -963,7 +925,7 @@ impl Trace {
     /// Inclusive high-water of the already-published logical history. Zero is
     /// the valid boundary before the first effective event; observing this
     /// counter never allocates a history event.
-    fn history_boundary(&self) -> HistoryPosition {
+    pub(crate) fn history_boundary(&self) -> HistoryPosition {
         HistoryPosition::new(self.0.next_history.load(Ordering::Acquire))
     }
 
@@ -1237,98 +1199,48 @@ impl Trace {
             .validate_table_constructor(table, constructor)
     }
 
-    /// Register the static structural origin selector for every merge-result
-    /// column.
+    /// Register the read-only table call that names an effective scalar merge result.
     ///
-    /// The table layout must already exist. The selector list must have the
-    /// same arity, every referenced source column must exist, and typed source
-    /// and destination columns must have the same replay sort. Identical
-    /// repeated registration is accepted. [`MergeOriginSelector::Unsupported`]
-    /// is valid catalog data, but a typed result that reaches it fails closed.
-    pub fn register_table_merge_origins(
+    /// Its arguments must be exactly the table's logical key columns, and its
+    /// result must be the table's sole logical value column. Identical repeated
+    /// registration is accepted. A table without this metadata remains valid,
+    /// but a reached causal merge collision fails closed before its callback.
+    pub fn register_table_merge_result(
         &self,
         table: TableId,
-        origins: &[MergeOriginSelector],
+        result: ReplayCallSpec,
     ) -> Result<(), &'static str> {
         let layout = self
             .0
             .replay_terms
             .table_layout(table)
-            .ok_or("register table layout before merge origins")?;
-        if layout.len() != origins.len() {
-            return Err("merge-origin metadata and table layout have different arities");
+            .ok_or("register table layout before merge result")?;
+        let key_columns = self
+            .0
+            .replay_terms
+            .table_key_columns
+            .get(&table)
+            .map(|columns| *columns as usize)
+            .ok_or("register table key arity before merge result")?;
+        if result.child_sorts.len() != key_columns {
+            return Err("merge-result call arguments do not match the table key arity");
         }
-        for (destination, origin) in origins.iter().copied().enumerate() {
-            let check = |source: u16| {
-                let source = source as usize;
-                if source >= layout.len() {
-                    return Err("merge-origin source column exceeds the table layout");
-                }
-                if layout[source] != layout[destination] {
-                    return Err("merge-origin source and destination have different replay sorts");
-                }
-                Ok(())
-            };
-            match origin {
-                MergeOriginSelector::Incoming { column }
-                | MergeOriginSelector::Prior { column } => check(column)?,
-                MergeOriginSelector::NativeMin {
-                    incoming_column,
-                    prior_column,
-                }
-                | MergeOriginSelector::PriorOrIncoming {
-                    incoming_column,
-                    prior_column,
-                } => {
-                    check(incoming_column)?;
-                    check(prior_column)?;
-                }
-                MergeOriginSelector::Unsupported => {}
-            }
+        if layout[..key_columns]
+            .iter()
+            .copied()
+            .ne(result.child_sorts.iter().copied().map(Some))
+        {
+            return Err("merge-result call argument sorts do not match the table keys");
+        }
+        if layout.get(key_columns).copied().flatten() != Some(result.result_sort) {
+            return Err("merge-result call sort does not match the table output");
+        }
+        if layout[key_columns + 1..].iter().any(Option::is_some) {
+            return Err("causal merge-result calls require exactly one logical output");
         }
         self.0
             .replay_terms
-            .register_table_merge_origins(table, origins)
-    }
-
-    /// Register a contiguous identity-value range used when resolving merge
-    /// cell origins.
-    ///
-    /// If incoming and prior rows agree over this range, capture assigns the
-    /// prior structural origin to every typed column at or after `start`. The
-    /// caller must guarantee that this matches the native merge's identity
-    /// semantics. The range must be nonempty, inside the registered layout,
-    /// and representable with compact `u16` offsets. Identical registration is
-    /// accepted.
-    pub fn register_table_merge_identity_guard(
-        &self,
-        table: TableId,
-        start: usize,
-        len: usize,
-    ) -> Result<(), &'static str> {
-        let layout = self
-            .0
-            .replay_terms
-            .table_layout(table)
-            .ok_or("register table layout before merge identity guard")?;
-        if len == 0 || start.checked_add(len).is_none_or(|end| end > layout.len()) {
-            return Err("merge identity guard is outside the table layout");
-        }
-        let guard = (
-            start
-                .try_into()
-                .map_err(|_| "merge identity guard exceeds u16")?,
-            len.try_into()
-                .map_err(|_| "merge identity guard exceeds u16")?,
-        );
-        match self.0.replay_terms.table_merge_identity_guards.entry(table) {
-            Entry::Occupied(entry) if *entry.get() == guard => Ok(()),
-            Entry::Occupied(_) => Err("table already has a different merge identity guard"),
-            Entry::Vacant(entry) => {
-                entry.insert(guard);
-                Ok(())
-            }
-        }
+            .register_table_merge_result(table, result)
     }
 
     pub(crate) fn table_column_sort(&self, table: TableId, column: usize) -> Option<ReplaySortId> {
@@ -1364,7 +1276,7 @@ impl Trace {
             .map(|constructor| constructor.clone())
     }
 
-    pub(crate) fn validate_merge_origin(
+    pub(crate) fn validate_merge_result(
         &self,
         table: TableId,
         incoming_available: bool,
@@ -1374,48 +1286,38 @@ impl Trace {
             .replay_terms
             .table_layout(table)
             .ok_or("merge table has no replay layout")?;
-        let origins = self
+        let key_columns = self
             .0
             .replay_terms
-            .table_merge_origins
+            .table_key_columns
             .get(&table)
-            .ok_or("merge table has no static origin metadata")?;
-        for (sort, origin) in layout.iter().zip(origins.iter()) {
-            if sort.is_some() && matches!(origin, MergeOriginSelector::Unsupported) {
-                return Err("merge reached an unsupported structural result expression");
-            }
-            if sort.is_some()
-                && !incoming_available
-                && matches!(
-                    origin,
-                    MergeOriginSelector::Incoming { .. }
-                        | MergeOriginSelector::NativeMin { .. }
-                        | MergeOriginSelector::PriorOrIncoming { .. }
-                )
-            {
-                return Err("merge incoming row has no exact structural origin");
-            }
+            .map(|columns| *columns as usize)
+            .ok_or("merge table has no replay key arity")?;
+        let table_kind = self
+            .0
+            .replay_terms
+            .table_kinds
+            .get(&table)
+            .map(|kind| *kind)
+            .ok_or("merge table has no replay semantics")?;
+        let result_required = table_kind != ReplayTableKind::PresenceRelation
+            && layout[key_columns..].iter().any(Option::is_some);
+        if result_required && !self.0.replay_terms.table_merge_results.contains_key(&table) {
+            return Err("merge reached an unsupported structural result expression");
+        }
+        if !incoming_available {
+            return Err("merge incoming row has no exact structural origin");
         }
         Ok(())
     }
 
     /// Whether rebuild must prove that no table collision reaches this merge
     /// before publishing its removal/rekey batch. Fully supported bridge
-    /// tables do not need the extra key set: the callback and these selectors
-    /// are compiled from the same merge AST, and commit-time validation is an
-    /// internal consistency assertion. Missing metadata and typed
-    /// `Unsupported` selectors are reached semantics, so their collision must
-    /// fail while the rebuild transaction is still abortable.
+    /// tables do not need the extra key set. Missing scalar result metadata is
+    /// reached semantics, so its collision must fail while the rebuild
+    /// transaction is still abortable.
     pub(crate) fn requires_collision_preflight(&self, table: TableId) -> bool {
-        let Some(layout) = self.0.replay_terms.table_layout(table) else {
-            return true;
-        };
-        let Some(origins) = self.0.replay_terms.table_merge_origins.get(&table) else {
-            return true;
-        };
-        layout.iter().zip(origins.iter()).any(|(sort, origin)| {
-            sort.is_some() && matches!(origin, MergeOriginSelector::Unsupported)
-        })
+        self.validate_merge_result(table, true).is_err()
     }
 
     /// Whether an effective physical row replacement changes any
@@ -1443,154 +1345,6 @@ impl Trace {
             .iter()
             .enumerate()
             .any(|(column, sort)| sort.is_some() && prior[column] != next[column]))
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn prepare_merged_fact_origin(
-        &self,
-        table: TableId,
-        row: &[Value],
-        prior_row: &[Value],
-        incoming_row: &[Value],
-        prior_fact: FactId,
-        incoming: Option<RowOriginRef>,
-    ) -> Result<PreparedFactOrigin, &'static str> {
-        if prior_fact.is_missing() {
-            return Err("merged row has no immutable prior FactId");
-        }
-        if row.len() != prior_row.len() || row.len() != incoming_row.len() {
-            return Err("merge result and input rows have different arities");
-        }
-        let layout = self
-            .0
-            .replay_terms
-            .table_layout(table)
-            .ok_or("merged fact table has no replay layout")?;
-        if layout.len() != row.len() {
-            return Err("merge result and replay layout have different arities");
-        }
-        if !layout.iter().any(Option::is_some) {
-            return Ok(PreparedFactOrigin::None);
-        }
-        let selectors = self
-            .0
-            .replay_terms
-            .table_merge_origins
-            .get(&table)
-            .ok_or("merge table has no static origin metadata")?;
-        let identity_guard = self
-            .0
-            .replay_terms
-            .table_merge_identity_guards
-            .get(&table)
-            .map(|guard| *guard);
-        let identity_unchanged = identity_guard.is_some_and(|(start, len)| {
-            let start = start as usize;
-            let end = start + len as usize;
-            prior_row.get(start..end) == incoming_row.get(start..end)
-        });
-        let mut cells = SmallVec::<[MergeCellOrigin; 4]>::with_capacity(row.len());
-        for (column, sort) in layout.iter().copied().enumerate() {
-            let selected = if sort.is_none() {
-                MergeCellOrigin::Unsupported
-            } else if identity_unchanged
-                && identity_guard.is_some_and(|(value_start, _)| column >= value_start as usize)
-            {
-                MergeCellOrigin::Prior(
-                    column
-                        .try_into()
-                        .expect("function table has more than u16 columns"),
-                )
-            } else {
-                match selectors.get(column).copied() {
-                    Some(MergeOriginSelector::Incoming { column: source })
-                        if incoming.is_some()
-                            && incoming_row.get(source as usize) == row.get(column) =>
-                    {
-                        MergeCellOrigin::Incoming(source)
-                    }
-                    Some(MergeOriginSelector::Prior { column: source })
-                        if prior_row.get(source as usize) == row.get(column) =>
-                    {
-                        MergeCellOrigin::Prior(source)
-                    }
-                    Some(MergeOriginSelector::NativeMin {
-                        incoming_column,
-                        prior_column,
-                    }) if incoming.is_some() => {
-                        let incoming_value = incoming_row.get(incoming_column as usize);
-                        let prior_value = prior_row.get(prior_column as usize);
-                        match (incoming_value, prior_value) {
-                            (Some(incoming_value), Some(prior_value))
-                                if row.get(column)
-                                    == Some(std::cmp::min(incoming_value, prior_value)) =>
-                            {
-                                if prior_value <= incoming_value {
-                                    MergeCellOrigin::Prior(prior_column)
-                                } else {
-                                    MergeCellOrigin::Incoming(incoming_column)
-                                }
-                            }
-                            _ => MergeCellOrigin::Unsupported,
-                        }
-                    }
-                    Some(MergeOriginSelector::PriorOrIncoming {
-                        incoming_column,
-                        prior_column,
-                    }) if incoming.is_some() => {
-                        let incoming_value = incoming_row.get(incoming_column as usize);
-                        let prior_value = prior_row.get(prior_column as usize);
-                        let result = row.get(column);
-                        match (
-                            result == prior_value,
-                            result == incoming_value,
-                            prior_value,
-                            incoming_value,
-                        ) {
-                            (true, _, Some(_), Some(_)) => MergeCellOrigin::Prior(prior_column),
-                            (false, true, Some(_), Some(_)) => {
-                                MergeCellOrigin::Incoming(incoming_column)
-                            }
-                            _ => MergeCellOrigin::Unsupported,
-                        }
-                    }
-                    _ => MergeCellOrigin::Unsupported,
-                }
-            };
-            cells.push(selected);
-        }
-        if layout
-            .iter()
-            .zip(&cells)
-            .any(|(sort, origin)| sort.is_some() && matches!(origin, MergeCellOrigin::Unsupported))
-        {
-            return Err("effective merge violated its exact structural-origin selector");
-        }
-        let all_incoming = layout.iter().zip(&cells).enumerate().all(
-            |(column, (sort, selected))| {
-                sort.is_none()
-                    || matches!(selected, MergeCellOrigin::Incoming(source) if *source as usize == column)
-            },
-        );
-        if all_incoming {
-            return incoming
-                .map(PreparedFactOrigin::Direct)
-                .ok_or("merge incoming row has no exact structural origin");
-        }
-        let all_prior = layout.iter().zip(&cells).enumerate().all(
-            |(column, (sort, selected))| {
-                sort.is_none()
-                    || matches!(selected, MergeCellOrigin::Prior(source) if *source as usize == column)
-            },
-        );
-        if all_prior {
-            return Ok(PreparedFactOrigin::Direct(RowOriginRef::Fact(prior_fact)));
-        }
-        Ok(PreparedFactOrigin::Merge {
-            incoming,
-            prior: prior_fact,
-            cells,
-        })
     }
 
     /// Capture one history landmark at a native maintenance barrier.
@@ -1691,6 +1445,7 @@ impl Trace {
         &self,
         incoming: DeferredEqualityCause,
         prior_fact: FactId,
+        history_cutoff: HistoryPosition,
     ) -> DeferredEqualityCause {
         assert!(
             !prior_fact.is_missing(),
@@ -1702,6 +1457,7 @@ impl Trace {
                 trace: self.clone(),
                 incoming,
                 prior_fact,
+                history_cutoff,
                 equality,
                 cause: OnceLock::new(),
             },
@@ -1718,6 +1474,7 @@ impl Trace {
             DurableCause::Merge {
                 incoming,
                 prior_fact: cause.prior_fact,
+                history_cutoff: cause.history_cutoff,
             },
             cause.equality,
         );
@@ -2148,8 +1905,9 @@ impl Trace {
                     exact = false;
                     break;
                 };
-                if value_sorts.get(&left_raw) != Some(&child_sort)
-                    || value_sorts.get(&right_raw) != Some(&child_sort)
+                if left_raw != right_raw
+                    && (value_sorts.get(&left_raw) != Some(&child_sort)
+                        || value_sorts.get(&right_raw) != Some(&child_sort))
                 {
                     exact = false;
                     break;
@@ -2424,12 +2182,14 @@ impl Trace {
             let recipes = self.0.rule_binding_recipes.read().unwrap();
             let term_recipes = self.0.static_term_recipes.lock().unwrap();
             let arena = self.0.arena.lock().unwrap();
+            let mut projection_memo = self.0.term_projection_memo.lock().unwrap();
             let mut projector = TermProjector::new(
                 &arena,
                 &recipes,
                 &term_recipes,
                 &self.0.replay_terms,
                 &self.0.next_term,
+                &mut projection_memo,
             );
             let mut lookups = SmallVec::<[Lookup; 8]>::new();
             for &(request, sort) in requests {
@@ -2582,12 +2342,14 @@ impl Trace {
         let recipes = self.0.rule_binding_recipes.read().unwrap();
         let term_recipes = self.0.static_term_recipes.lock().unwrap();
         let arena = self.0.arena.lock().unwrap();
+        let mut projection_memo = self.0.term_projection_memo.lock().unwrap();
         let mut projector = TermProjector::new(
             &arena,
             &recipes,
             &term_recipes,
             &self.0.replay_terms,
             &self.0.next_term,
+            &mut projection_memo,
         );
         projector.fact_term(fact, column)
     }
@@ -2630,12 +2392,14 @@ impl Trace {
             return Err("container anchor site does not match its primitive producer".into());
         }
         let arena = self.0.arena.lock().unwrap();
+        let mut projection_memo = self.0.term_projection_memo.lock().unwrap();
         let mut projector = TermProjector::new(
             &arena,
             &recipes,
             &term_recipes,
             &self.0.replay_terms,
             &self.0.next_term,
+            &mut projection_memo,
         );
         let mut install = |binding_sources: &[ReplayBindingSource],
                            premises: &[FactId],
@@ -3520,12 +3284,18 @@ impl Trace {
                 "global history publication has an ID hole",
             ));
         }
+        let mut projection_memo = self
+            .0
+            .term_projection_memo
+            .lock()
+            .map_err(|_| TraceViewError::Poisoned("term projection memo"))?;
         let projector = TermProjector::new(
             &arena,
             &recipes,
             &term_recipes,
             &self.0.replay_terms,
             &self.0.next_term,
+            &mut projection_memo,
         );
         let mut view = TraceView {
             arena: &arena,
@@ -3537,7 +3307,8 @@ impl Trace {
             history_boundary,
             equality_index: None,
             rekey_index: None,
-            constructor_occurrence_index: None,
+            merge_replacement_index: None,
+            row_call_occurrence_index: None,
             occurrence_support_cache: HashMap::default(),
             exact_occurrence_support_cache: HashMap::default(),
         };
@@ -3545,6 +3316,7 @@ impl Trace {
             Ok(result) => result,
             Err(payload) => {
                 drop(view);
+                drop(projection_memo);
                 drop(arena);
                 drop(term_recipes);
                 drop(equality_recipes);

@@ -107,21 +107,6 @@ use crate::proofs::proof_normal_form::proof_form;
 
 pub const GLOBAL_NAME_PREFIX: &str = "$";
 
-/// Whether a merge primitive is semantically guaranteed to return exactly one of its two
-/// arguments. Trace capture uses this narrow opt-in to attribute the selected input without
-/// recording or re-running an arbitrary primitive. Keep the default closed: a primitive belongs
-/// here only when its implementation has that exact contract.
-fn primitive_merge_returns_one_input(name: &str) -> bool {
-    matches!(
-        name,
-        "min"
-            | "max"
-            | "pair-min-by-second-i64"
-            | "maybe-either-i64-bool-min"
-            | "maybe-either-i64-bool-max"
-    )
-}
-
 pub type ArcSort = Arc<dyn Sort>;
 
 /// Methods shared by every kind-specific primitive trait.
@@ -576,6 +561,40 @@ impl Default for CaptureCatalog {
 }
 
 impl CaptureCatalog {
+    /// Whether replay can recover the result of an effective merge by executing the retained
+    /// structural carrier and then performing one read-only lookup of its function row.
+    ///
+    /// The lookup makes the merged row a computed producer, so the merge expression no longer
+    /// needs to select one input syntactically. Keep the capability closed over the resolved
+    /// expression: table reads, action-local bindings, tuple values, and effect-capable
+    /// primitives would add unrecorded dependencies or effects.
+    fn supports_scalar_merge_result(decl: &ResolvedFunctionDecl, schema: &ResolvedSchema) -> bool {
+        if schema.outputs.len() != 1 {
+            return false;
+        }
+        match decl.subtype {
+            FunctionSubtype::Constructor => true,
+            FunctionSubtype::Custom => decl.merge.as_ref().is_none_or(|merge| {
+                merge.actions.is_empty() && Self::supports_scalar_merge_expr(&merge.result)
+            }),
+        }
+    }
+
+    fn supports_scalar_merge_expr(expr: &ResolvedExpr) -> bool {
+        match expr {
+            ResolvedExpr::Lit(..) => true,
+            ResolvedExpr::Var(_, variable) => {
+                !variable.is_global_ref && matches!(variable.name.as_str(), "old" | "new")
+            }
+            ResolvedExpr::Call(_, ResolvedCall::Primitive(primitive), children) => {
+                primitive.is_pure()
+                    && primitive.validator().is_some()
+                    && children.iter().all(Self::supports_scalar_merge_expr)
+            }
+            ResolvedExpr::Call(_, ResolvedCall::Func(_) | ResolvedCall::Values(_), _) => false,
+        }
+    }
+
     fn op_id(&mut self, key: ReplayOpKey) -> ReplayOpId {
         if let Some(op) = self.op_ids.get(&key) {
             return *op;
@@ -650,11 +669,12 @@ impl CaptureCatalog {
 
     fn function_spec(
         &mut self,
-        name: &str,
+        decl: &ResolvedFunctionDecl,
         schema: &ResolvedSchema,
-        subtype: FunctionSubtype,
         is_relation: bool,
     ) -> FunctionReplaySpec {
+        let name = decl.name.as_str();
+        let subtype = decl.subtype;
         let input_names = schema
             .input
             .iter()
@@ -673,10 +693,10 @@ impl CaptureCatalog {
             .iter()
             .map(|name| self.sort_id(name))
             .collect::<Vec<_>>();
-        let constructor = (subtype == FunctionSubtype::Constructor).then(|| {
+        let call = (output_sorts.len() == 1).then(|| {
             let key = ReplayOpKey {
                 name: name.to_owned(),
-                inputs: input_names,
+                inputs: input_names.clone(),
                 output: output_names[0].clone(),
             };
             let op = self.op_id(key);
@@ -691,13 +711,24 @@ impl CaptureCatalog {
                 replay
             }
         });
+        let constructor = (subtype == FunctionSubtype::Constructor)
+            .then(|| call.clone())
+            .flatten();
+        let merge_result = (!is_relation && Self::supports_scalar_merge_result(decl, schema))
+            .then_some(call)
+            .flatten();
         let table_kind = match (is_relation, subtype) {
             (true, _) => ReplayTableKind::PresenceRelation,
             (false, FunctionSubtype::Constructor) => ReplayTableKind::Constructor,
             (false, FunctionSubtype::Custom) => ReplayTableKind::ValueFunction,
         };
-        FunctionReplaySpec::new(input_sorts.into_iter().chain(output_sorts), constructor)
-            .with_table_kind(table_kind)
+        let spec =
+            FunctionReplaySpec::new(input_sorts.into_iter().chain(output_sorts), constructor)
+                .with_table_kind(table_kind);
+        match merge_result {
+            Some(merge_result) => spec.with_merge_result(merge_result),
+            None => spec,
+        }
     }
 
     fn primitive_key(primitive: &core::SpecializedPrimitive) -> ReplayOpKey {
@@ -1627,9 +1658,8 @@ impl EGraph {
                 (
                     function.backend_id,
                     catalog.function_spec(
-                        function.name(),
+                        &function.decl,
                         &function.schema,
-                        function.subtype(),
                         self.relation_names.contains(function.name()),
                     ),
                 )
@@ -1967,7 +1997,7 @@ impl EGraph {
         expr: &ResolvedExpr,
         lets: &HashMap<String, egglog_bridge::MergeBindingId>,
     ) -> Result<egglog_bridge::MergeExpr, Error> {
-        use egglog_bridge::{MergeExpr, MergeInputSide, MergePrimitiveOrigin, MergeValueColumn};
+        use egglog_bridge::{MergeExpr, MergeInputSide, MergeValueColumn};
         match expr {
             GenericExpr::Lit(_, literal) => {
                 let val = literal_to_value(self.backend.base_values(), literal);
@@ -2048,15 +2078,9 @@ impl EGraph {
                     translated_args[0] = MergeExpr::Const(self.backend.base_values().get(resolved));
                 }
                 let primitive = p.external_id(crate::Context::Write);
-                let origin = if primitive_merge_returns_one_input(p.name()) {
-                    MergePrimitiveOrigin::SelectsArgument
-                } else {
-                    MergePrimitiveOrigin::Opaque
-                };
                 Ok(MergeExpr::Primitive {
                     function: primitive,
                     arguments: translated_args,
-                    origin,
                 })
             }
             // `(values ...)` never legitimately reaches here: `translate_merge_program`
@@ -2187,7 +2211,7 @@ impl EGraph {
         let replay = self
             .capture_catalog
             .as_mut()
-            .map(|catalog| catalog.function_spec(&decl.name, &schema, decl.subtype, is_relation));
+            .map(|catalog| catalog.function_spec(decl, &schema, is_relation));
 
         let can_subsume = match decl.subtype {
             FunctionSubtype::Constructor => true,
@@ -3484,7 +3508,7 @@ impl EGraph {
 
     /// Evaluate the deliberately closed `let-check` expression subset. This is
     /// intentionally separate from `eval_resolved_expr`: the ordinary evaluator
-    /// compiles a global action and gives constructors lookup-or-insert semantics.
+    /// compiles a global action and may insert constructor/default function rows.
     fn eval_checked_expr(&self, alias_name: &str, expr: &ResolvedExpr) -> Result<Value, Error> {
         match expr {
             ResolvedExpr::Lit(_, literal) => {
@@ -3535,15 +3559,17 @@ impl EGraph {
                 "tuple values are not supported",
             )),
             ResolvedExpr::Call(span, ResolvedCall::Func(function), children) => {
-                if function.subtype != FunctionSubtype::Constructor
-                    || function.outputs.len() != 1
-                    || !function.output().is_eq_sort()
-                {
+                let supported = function.outputs.len() == 1
+                    && match function.subtype {
+                        FunctionSubtype::Constructor => function.output().is_eq_sort(),
+                        FunctionSubtype::Custom => true,
+                    };
+                if !supported {
                     return Err(Self::checked_alias_error(
                         span,
                         alias_name,
                         format!(
-                            "function `{}` is not a single-output EqSort constructor",
+                            "function `{}` is not a readable single-output function",
                             function.name
                         ),
                     ));
@@ -3556,23 +3582,33 @@ impl EGraph {
                     *argument = self.canonical_checked_value(sort, *argument);
                 }
 
-                // Under term/proof encoding (including a serialized desugared
-                // program replayed in a plain graph), the original constructor
-                // name is the term relation.  Prefer the FD view whose
-                // `term_constructor` points back to the source constructor; its
-                // lookup is read-only and returns the existing e-class.
+                // Under term/proof encoding (including a serialized desugared program replayed
+                // in a plain graph), the source name is an append-only term relation. Prefer the
+                // FD view whose `term_constructor` points back to it: the view owns the current
+                // function result and its lookup remains read-only. Constructor term rows append
+                // one e-class id; custom-function term rows append the value and a fresh term id.
                 let encoded_term_node = self.functions.get(&function.name).filter(|candidate| {
                     candidate.decl.internal_term_node
-                        && candidate.schema.input.len() == function.input.len() + 1
+                        && candidate.schema.outputs.len() == 1
+                        && candidate.schema.output().name() == UnitSort.name()
                         && candidate
                             .schema
                             .input
                             .iter()
                             .zip(&function.input)
                             .all(|(left, right)| left.name() == right.name())
-                        && candidate.schema.input.last().unwrap().name() == function.output().name()
-                        && candidate.schema.outputs.len() == 1
-                        && candidate.schema.output().name() == UnitSort.name()
+                        && match function.subtype {
+                            FunctionSubtype::Constructor => {
+                                candidate.schema.input.len() == function.input.len() + 1
+                                    && candidate.schema.input.last().unwrap().name()
+                                        == function.output().name()
+                            }
+                            FunctionSubtype::Custom => {
+                                candidate.schema.input.len() == function.input.len() + 2
+                                    && candidate.schema.input[function.input.len()].name()
+                                        == function.output().name()
+                            }
+                        }
                 });
                 let mut encoded_views = self.functions.values().filter(|candidate| {
                     encoded_term_node.is_some()
@@ -3598,7 +3634,7 @@ impl EGraph {
                         span,
                         alias_name,
                         format!(
-                            "constructor `{}` has more than one readable FD view",
+                            "function `{}` has more than one readable FD view",
                             function.name
                         ),
                     ));
@@ -3614,7 +3650,7 @@ impl EGraph {
                         Self::checked_alias_error(
                             span,
                             alias_name,
-                            format!("constructor `{}` has no readable table", function.name),
+                            format!("function `{}` has no readable table", function.name),
                         )
                     })?;
                 let value = self
@@ -3624,7 +3660,7 @@ impl EGraph {
                         Self::checked_alias_error(
                             span,
                             alias_name,
-                            format!("lookup of constructor `{}` failed", function.name),
+                            format!("lookup of function `{}` failed", function.name),
                         )
                     })?;
                 Ok(self.canonical_checked_value(function.output(), value))

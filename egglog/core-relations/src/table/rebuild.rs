@@ -79,7 +79,7 @@ impl SortedWritesTable {
     }
 
     /// Fail closed before publishing any capture-mode rebuild mutation when a
-    /// collision would reach missing or unsupported merge-origin semantics.
+    /// collision would reach missing or unsupported merge-result metadata.
     /// Serial rebuild has already materialized the complete changed-row batch,
     /// so one outgoing-row set plus one proposed-key set covers both a live
     /// occupant and two rows that first collide inside this batch.
@@ -125,7 +125,7 @@ impl SortedWritesTable {
             }
         }
         if collision {
-            trace.validate_merge_origin(self.table_id, true)?;
+            trace.validate_merge_result(self.table_id, true)?;
         }
         Ok(())
     }

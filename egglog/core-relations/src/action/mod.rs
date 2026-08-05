@@ -637,6 +637,7 @@ pub(crate) enum ActiveCause {
         prior_fact: FactId,
         table: TableId,
         incoming_origin: Option<crate::provenance::RowOriginRef>,
+        history_cutoff: HistoryPosition,
         shared: Option<DeferredEqualityCause>,
     },
 }
@@ -648,10 +649,13 @@ impl ActiveCause {
             Self::DeferredMerge {
                 incoming,
                 prior_fact,
+                history_cutoff,
                 shared,
                 ..
             } => shared
-                .get_or_insert_with(|| trace.pending_merge_cause(incoming.clone(), *prior_fact))
+                .get_or_insert_with(|| {
+                    trace.pending_merge_cause(incoming.clone(), *prior_fact, *history_cutoff)
+                })
                 .clone(),
         }
     }
@@ -1019,11 +1023,17 @@ impl<'a> ExecutionState<'a> {
         table: TableId,
         incoming_origin: Option<crate::provenance::RowOriginRef>,
     ) -> Option<ActiveCause> {
+        let history_cutoff = self
+            .db
+            .trace
+            .expect("deferred merge cause requires causal trace")
+            .history_boundary();
         self.active_cause.replace(ActiveCause::DeferredMerge {
             incoming,
             prior_fact,
             table,
             incoming_origin,
+            history_cutoff,
             shared: None,
         })
     }
