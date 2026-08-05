@@ -1390,13 +1390,13 @@ fn merge_function_union_cites_one_match_and_immutable_prior_fact() {
         .with_view(|view| {
             let equality = view.project_applied_equality(crate::AppliedEqualityId::new(1))?;
             let (firing, recorded_prior) = match &equality.reason {
-                crate::EqualityReason::MergeFn { cause } => {
+                crate::EqualityReason::Merge { cause } => {
                     let dependencies = test_cause_dependencies(view, *cause)?;
                     assert_eq!(dependencies.rules.len(), 1);
                     assert_eq!(dependencies.facts.len(), 1);
                     (dependencies.rules[0], dependencies.facts[0])
                 }
-                ref other => panic!("expected exact MergeFn reason, got {other:?}"),
+                ref other => panic!("expected exact merge reason, got {other:?}"),
             };
             assert_eq!(recorded_prior, prior_fact);
             let matched = view.firing(firing)?;
@@ -2226,7 +2226,7 @@ fn same_term_native_bridge_joins_distinct_historical_components() {
                 panic!("first equality lost its rule attribution")
             };
             assert_eq!(view.firing(first_match)?.rule, 214);
-            let crate::EqualityReason::MergeFn { cause } = second.reason else {
+            let crate::EqualityReason::Merge { cause } = second.reason else {
                 panic!("same-term bridge lost its merge attribution")
             };
             let dependencies = test_cause_dependencies(view, cause)?;
@@ -3168,6 +3168,25 @@ fn causal_capture_activation_is_all_or_nothing_across_tables() {
         raw_uf_staging.is_ok(),
         "an earlier UF table must not be partially switched to typed capture staging"
     );
+}
+
+#[test]
+fn cause_merge_reads_rejects_unknown_cause_ids() {
+    let mut db = Database::default();
+    let trace = db.try_enable_trace().unwrap();
+    db.finalize_trace_wave().unwrap();
+
+    trace
+        .with_view(|view| {
+            for cause in [crate::CauseId::new(0), crate::CauseId::new(1)] {
+                assert!(matches!(
+                    view.cause_merge_reads(cause),
+                    Err(crate::TraceViewError::UnknownCause(id)) if id == cause
+                ));
+            }
+            Ok(())
+        })
+        .unwrap();
 }
 
 #[test]

@@ -665,6 +665,26 @@ impl Parser {
                 }],
                 _ => return error!(span, "usage: (relation <name> (<input sort>*))"),
             },
+            "index" => match tail {
+                [name, function, key] => {
+                    let key = key.expect_list("index key")?;
+                    let [extractor, cols @ ..] = key else {
+                        return error!(span, "usage: (index <name> <function> (any <column>*))");
+                    };
+                    if extractor.expect_atom("index extractor")? != "any" {
+                        return error!(span, "the only index extractor is `any`");
+                    }
+                    vec![Command::Index {
+                        span,
+                        name: self.parse_name(name, "index name")?,
+                        function: function.expect_atom("indexed function name")?,
+                        any_of: map_fallible(cols, self, |_, sexp| {
+                            sexp.expect_uint("index column")
+                        })?,
+                    }]
+                }
+                _ => return error!(span, "usage: (index <name> <function> (any <column>*))"),
+            },
             "ruleset" => match tail {
                 [name] => vec![Command::AddRuleset(span, name.expect_atom("ruleset name")?)],
                 _ => return error!(span, "usage: (ruleset <name>)"),

@@ -223,6 +223,20 @@ pub enum RuleBodyCall {
         id: FunctionId,
         read: ReadMode,
     },
+    /// An atom over a declared index: the rows of `id` reached through the value
+    /// occurring in *some* one of `any_of`. An index is the relation
+    /// `(value, row of id…) -> Unit`, so the atom takes `id`'s arity plus two
+    /// arguments: that value, the whole row of `id`, then the index's own unit
+    /// output.
+    ///
+    /// The atom is probed rather than scanned, so a variable leading value must
+    /// be bound elsewhere in the query by a function's rows; a literal is already
+    /// known and needs no binder.
+    IndexTable {
+        id: FunctionId,
+        any_of: Vec<usize>,
+        read: ReadMode,
+    },
     Primitive {
         id: ExternalFunctionId,
         name: Box<str>,

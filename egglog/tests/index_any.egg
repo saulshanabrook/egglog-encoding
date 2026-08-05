@@ -1,0 +1,111 @@
+;; A declared index is a read-only relation over the rows of a function: each
+;; value appearing in any of the listed columns, followed by the whole row. It
+;; is the "which rows mention this value" lookup, which no ordinary atom
+;; expresses -- repeating a variable across columns would instead constrain
+;; those columns to be equal.
+
+(datatype Math (Num i64) (Add Math Math))
+(function edge (Math Math) Math :merge old)
+
+;; Columns 0 and 1 are the inputs, column 2 the output: all three are indexed,
+;; so a value is found wherever it sits in the row.
+(index EdgeOcc edge (any 0 1 2))
+
+(relation dirty (Math))
+(relation touched (Math Math Math))
+
+(let $a (Num 1))
+(let $b (Num 2))
+(let $c (Num 3))
+(set (edge $a $b) $c)
+(set (edge $b $c) $a)
+;; Both endpoints are the same value, and the row must still be reported once.
+(set (edge $c $c) $c)
+
+(rule ((dirty x) (EdgeOcc x p q r))
+      ((touched p q r)))
+
+;; (Num 2) sits at an input of the first row and at an input of the second.
+(dirty $b)
+(run 1)
+(check (touched $a $b $c))
+(check (touched $b $c $a))
+(fail (check (touched $c $c $c)))
+
+;; (Num 1) sits at an input of the first row and at the *output* of the second.
+(dirty $a)
+(run 1)
+(check (touched $a $b $c))
+(check (touched $b $c $a))
+
+;; (Num 3) appears in every row, twice over in the third.
+(dirty $c)
+(run 1)
+(check (touched $c $c $c))
+(print-size touched)
+
+;; --- Rules that earlier planner work got wrong ---------------------------
+
+(relation seed (Math Math))
+(relation triple (Math Math Math))
+(relation selfcol (Math Math Math))
+
+;; Three body atoms: the query planner must see the edge between the atom
+;; binding the value and the index atom, rather than treating them as
+;; disconnected (or failing to plan the rule at all).
+(rule ((dirty x) (EdgeOcc x p q r) (seed p r))
+      ((triple p q r)))
+
+;; The cover binds two variables of the index atom at once — the occurring
+;; value and another column — so a trie node reused across frames must not
+;; answer from the index it built for the previous frame's subset. Several
+;; bindings that cross-combine `p` and `x` are what expose a stale one: it
+;; reports a row that does not exist and loses the ones that do.
+(constructor link (Math Math) Math)
+(index LinkOcc link (any 0 1 2))
+(relation crossed (Math Math))
+(relation linked (Math Math Math))
+(let $l1 (Num 11)) (let $l2 (Num 12)) (let $l3 (Num 13))
+(let $r1 (Num 21)) (let $r2 (Num 22)) (let $r3 (Num 23))
+(union (link $l1 $r1) (Num 31))
+(union (link $l2 $r2) (Num 32))
+(union (link $l3 $r3) (Num 33))
+(crossed $l1 $r1) (crossed $l2 $r1) (crossed $l2 $r2)
+(crossed $l3 $r2) (crossed $l3 $r3) (crossed $l1 $r3)
+(rule ((crossed p x) (LinkOcc x p q r))
+      ((linked p q r)))
+
+;; The occurring value also sits at one of the indexed columns. The occurrence
+;; is then implied, and the atom means the same as an ordinary row match.
+(rule ((dirty x) (EdgeOcc x x q r))
+      ((selfcol x q r)))
+
+(seed $a $c)
+(run 1)
+;; edge($a,$b)=$c is the only row; $a occurs at column 0 and $c at column 2.
+(check (triple $a $b $c))
+;; Exactly the three real rows, and nothing recombined across them.
+(check (linked $l1 $r1 (Num 31)))
+(check (linked $l2 $r2 (Num 32)))
+(check (linked $l3 $r3 (Num 33)))
+(fail (check (linked $l2 $r1 (Num 31))))
+(check (selfcol $a $b $c))
+(fail (check (selfcol $b $b $c)))
+
+;; --- An index reads the same rows the function itself would ---------------
+
+;; Subsumption is one of those rows' properties, so an ordinary rule must not
+;; reach a subsumed row through an index when a plain atom would not.
+(constructor arc (Math Math) Math)
+(index ArcOcc arc (any 0 1 2))
+(relation viaindex (Math Math Math))
+(relation viaplain (Math Math))
+(let $s1 (Num 41)) (let $s2 (Num 42))
+(union (arc $s1 $s2) (Num 43))
+(subsume (arc $s1 $s2))
+(dirty $s2)
+(rule ((dirty x) (ArcOcc x p q r)) ((viaindex p q r)))
+(rule ((dirty x) (= r (arc p x))) ((viaplain p r)))
+(run 1)
+(fail (check (viaindex $s1 $s2 (Num 43))))
+(fail (check (viaplain $s1 (Num 43))))

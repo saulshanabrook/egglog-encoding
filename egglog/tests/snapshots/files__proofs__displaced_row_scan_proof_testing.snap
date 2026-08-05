@@ -1,0 +1,18 @@
+---
+source: egglog/tests/files.rs
+expression: proof_snapshot
+---
+(let t0 (h-matched 0 3 5))
+(let t1 (h 3 5 5))
+(Rule
+  (= t0 t0)
+  (name "repeated-column-live")
+  (premises (Fiat (= t1 t1)) (Fiat (= 5 5)))
+  (substitution (p 3) (q 5) (@n1 5)))
+(let t0 (kept 0 1 5))
+(let t1 (k 1 5 5))
+(Rule
+  (= t0 t0)
+  (name "kept-row")
+  (premises (Fiat (= t1 t1)) (Fiat (= 5 5)))
+  (substitution (p 1) (q 5) (@n3 5)))

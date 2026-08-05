@@ -28,9 +28,9 @@ expression: proof_snapshot
             (= t2 (Const 0))
             (name "(rewrite (Sub a a) (Const 0))")
             (premises (Fiat (= t2 t2)))
-            (substitution (a t1) (__rewrite_root t2)))
+            (substitution (__rewrite_root t2) (a t1)))
           1))
-      (substitution (a (Var "c")) (__rewrite_root t3)))
+      (substitution (__rewrite_root t3) (a (Var "c"))))
     1)
   (Sym
     (= t9 t8)
@@ -60,5 +60,5 @@ expression: proof_snapshot
               (premises (Fiat (= t6 t6)))
               (substitution (__rewrite_root t6) (x (Const 1))))
             1))
-        (substitution (a (Var "c")) (__rewrite_root t7)))
+        (substitution (__rewrite_root t7) (a (Var "c"))))
       1)))

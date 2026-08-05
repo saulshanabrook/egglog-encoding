@@ -22,6 +22,7 @@ fn capture_test_atom(table: TableId, variable: Variable) -> Atom {
             fast,
             slow: Default::default(),
         },
+        occurrence: None,
     }
 }
 

@@ -89,7 +89,7 @@ impl<'a> TraceView<'a> {
             ));
         }
         let read_position = match &event.reason {
-            EqualityReason::MergeFn { cause } => match self.cause(*cause)? {
+            EqualityReason::Merge { cause } => match self.cause(*cause)? {
                 RawCause::Merge { history_cutoff, .. } => history_cutoff,
                 _ => {
                     return Err(TraceViewError::Invalid(format!(
@@ -600,7 +600,7 @@ impl<'a> TraceView<'a> {
         })
     }
 
-    fn explain_endpoint_read_at(
+    pub(super) fn explain_endpoint_read_at(
         &mut self,
         endpoint: EqualityEndpoint,
         equality_prefix: usize,

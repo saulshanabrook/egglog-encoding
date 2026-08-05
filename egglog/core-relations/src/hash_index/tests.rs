@@ -131,3 +131,76 @@ fn multi_column_column_index_rebuild_orders_each_value_by_row() {
         });
     assert_eq!(row_ids, expected);
 }
+
+/// A `ColumnIndex` over several columns posts each row under every value it
+/// holds in them. A value sitting in more than one of those columns must still
+/// post its row once: consumers that treat the index as a relation would
+/// otherwise see the row twice.
+#[test]
+fn column_index_posts_a_row_once_per_distinct_value() {
+    let table = WrappedTable::new(fill_table(
+        vec![
+            vec![v(0), v(10), v(11)],
+            vec![v(1), v(11), v(12)],
+            // Same value in both indexed columns.
+            vec![v(2), v(13), v(13)],
+        ],
+        1,
+        None,
+        |old, new| {
+            assert_eq!(old, new, "no conflicts in this test");
+            None
+        },
+    ));
+    let mut index = Index::new(vec![ColumnId::new(1), ColumnId::new(2)], ColumnIndex::new());
+    index.refresh(table.as_ref());
+
+    let rows_for = |val| {
+        index
+            .get_subset(&v(val))
+            .map(|subset| {
+                let mut rows = Vec::new();
+                subset.offsets(|row_id| rows.push(row_id.index()));
+                rows
+            })
+            .unwrap_or_default()
+    };
+
+    assert_eq!(rows_for(10), vec![0]);
+    // Reached through either indexed column.
+    assert_eq!(rows_for(11), vec![0, 1]);
+    assert_eq!(rows_for(12), vec![1]);
+    assert_eq!(rows_for(13), vec![2], "one entry, not one per column");
+    assert!(rows_for(99).is_empty());
+    // Column 0 was not indexed.
+    assert!(rows_for(0).is_empty());
+}
+
+/// The parallel index build must deduplicate a row's repeated value the same way
+/// the serial one does. A table large enough to cross
+/// `parallelize_index_construction` takes a different code path, so it needs its
+/// own coverage.
+#[test]
+fn parallel_column_index_posts_a_row_once_per_distinct_value() {
+    const N: usize = 25_000;
+    let mut rows: Vec<Vec<_>> = (0..N)
+        .map(|i| vec![v(i), v(i + 1_000_000), v(i + 2_000_000)])
+        .collect();
+    // One row holding the same value in both indexed columns.
+    let dup = v(999_999);
+    rows[5] = vec![v(5), dup, dup];
+    let table = WrappedTable::new(fill_table(rows, 1, None, |old, new| {
+        assert_eq!(old, new, "no conflicts in this test");
+        None
+    }));
+
+    let mut index = Index::new(vec![ColumnId::new(1), ColumnId::new(2)], ColumnIndex::new());
+    index.refresh(table.as_ref());
+
+    let mut got = Vec::new();
+    index
+        .get_subset(&dup)
+        .expect("the duplicated value is indexed")
+        .offsets(|row_id| got.push(row_id.index()));
+    assert_eq!(got, vec![5], "one entry, not one per column");
+}

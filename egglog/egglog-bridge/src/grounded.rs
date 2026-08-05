@@ -59,7 +59,7 @@ impl EGraph {
         let info = &mut self.rules[rule];
         anyhow::ensure!(
             info.query.supports_grounded_execution(),
-            "rule {} records trace capture and cannot be grounded",
+            "rule {} cannot use grounded execution",
             info.desc
         );
         if info.grounded_rule.is_none() {
@@ -81,7 +81,7 @@ impl EGraph {
             let info = &mut self.rules[firing.rule];
             anyhow::ensure!(
                 info.query.supports_grounded_execution(),
-                "rule {} records trace capture and cannot be grounded",
+                "rule {} cannot use grounded execution",
                 info.desc
             );
             if info.grounded_rule.is_none() {

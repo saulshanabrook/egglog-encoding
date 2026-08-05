@@ -35,7 +35,7 @@ expression: proof_snapshot
         ((union (Comb x) (CAbs v (Comb body))))
            )")
                                       (premises (Fiat (= t2 t2)))
-                                      (substitution (v "x") (body t1) (x t2)))
+                                      (substitution (x t2) (v "x") (body t1)))
                                     (Rule
                                       (= t21 t20)
                                       (name
@@ -43,14 +43,14 @@ expression: proof_snapshot
         ((union (Comb x) (CApp (CApp $CAdd (Comb l)) (Comb r))))
            )")
                                       (premises (Fiat (= t1 t1)))
-                                      (substitution (r (N 2)) (x t1) (l t0)))
+                                      (substitution (x t1) (l t0) (r (N 2))))
                                     1)))
 (let t23
   (substitution
-                                  (v "x")
                                   (__rewrite_root t18)
-                                  (y (Comb (N 2)))
-                                  (x t12)))
+                                  (v "x")
+                                  (x t12)
+                                  (y (Comb (N 2)))))
 (let t24
   (premises
                             (Congr
@@ -64,7 +64,7 @@ expression: proof_snapshot
         ((union (Comb x) (CApp (Comb f) (Comb a))))
            )")
                                   (premises (Fiat (= t3 t3)))
-                                  (substitution (a (FConst)) (f t2) t19))
+                                  (substitution t19 (f t2) (a (FConst))))
                                 (Sym
                                   (= (Comb (FConst)) (CFConst))
                                   (Rule
@@ -114,8 +114,8 @@ expression: proof_snapshot
                                       1)))
 (let t29
   (substitution
-                                    (v "x")
                                     (__rewrite_root t15)
+                                    (v "x")
                                     (n 2)))
 (let t30 (cx (Comb (N 2))))
 (let t31 (CApp (CAbs "x" (CAddConst)) (CFConst)))
@@ -130,10 +130,10 @@ expression: proof_snapshot
                                     t23)))
 (let t34
   (substitution
-                                  (v "x")
                                   (__rewrite_root t13)
-                                  (y t4)
-                                  (x (CAddConst))))
+                                  (v "x")
+                                  (x (CAddConst))
+                                  (y t4)))
 (let t35
   (premises
                             (Congr
@@ -237,8 +237,8 @@ expression: proof_snapshot
                                     t33
                                     t34))
                                 (substitution
-                                  (v "x")
-                                  (__rewrite_root (CAbs "x" (CAddConst)))))
+                                  (__rewrite_root (CAbs "x" (CAddConst)))
+                                  (v "x")))
                               0))
                           (substitution
                             (__rewrite_root t31)
@@ -246,7 +246,7 @@ expression: proof_snapshot
                             (cy (CFConst))))
                         0)
                       0)))
-(let t38 (substitution (cl t6) (cr (Comb (N 2))) (cx t9)))
+(let t38 (substitution (cx t9) (cl t6) (cr (Comb (N 2)))))
 (let t39 (Uncomb (Comb (N 2))))
 (let t40 (Add t7 t39))
 (let t41 (If (FConst) (N 0) (N 1)))
@@ -280,17 +280,17 @@ expression: proof_snapshot
            )")
                                     (premises (Fiat (= t0 t0)))
                                     (substitution
-                                      (t (N 0))
-                                      (f (N 1))
                                       (x t0)
-                                      (c (Var "x"))))
+                                      (c (Var "x"))
+                                      (t (N 0))
+                                      (f (N 1))))
                                   1)))
 (let t55
   (substitution
-                                (v "x")
                                 (__rewrite_root t5)
-                                (y (Comb (N 1)))
-                                (x t47)))
+                                (v "x")
+                                (x t47)
+                                (y (Comb (N 1)))))
 (let t56
   (premises
                           (Congr
@@ -337,7 +337,7 @@ expression: proof_snapshot
                                       t55)
                                     prf1
                                     1)))
-(let t61 (substitution (v "x") (__rewrite_root t50) (n 1)))
+(let t61 (substitution (__rewrite_root t50) (v "x") (n 1)))
 (let t62 (cx (Comb (N 1))))
 (let t63 (CAbs "x" t46))
 (let t64 (CApp t63 (CFConst)))
@@ -354,10 +354,10 @@ expression: proof_snapshot
                                     t55)))
 (let t69
   (substitution
-                                  (v "x")
                                   (__rewrite_root t48)
-                                  (y (Comb (N 0)))
-                                  (x t46)))
+                                  (v "x")
+                                  (x t46)
+                                  (y (Comb (N 0)))))
 (let t70
   (premises
                             (Congr
@@ -406,17 +406,17 @@ expression: proof_snapshot
                                       1)))
 (let t75
   (substitution
-                                    (v "x")
                                     (__rewrite_root t65)
+                                    (v "x")
                                     (n 0)))
 (let t76 (cx (Comb (N 0))))
-(let t77 (CApp (CAbs "x" (CIfConst)) (CFConst)))
-(let t78 (CAbs "x" (Comb (Var "x"))))
-(let t79 (CApp t78 (CFConst)))
+(let t77 (CAbs "x" (Comb (Var "x"))))
+(let t78 (CApp t77 (CFConst)))
+(let t79 (CApp (CAbs "x" (CIfConst)) (CFConst)))
 (let t80
   (CApp
                                       (CApp (SConst) (CAbs "x" (CIfConst)))
-                                      t78))
+                                      t77))
 (let t81
   (premises
                                     (Rule
@@ -427,10 +427,10 @@ expression: proof_snapshot
                                       t69)))
 (let t82
   (substitution
-                                    (v "x")
                                     (__rewrite_root t63)
-                                    (y (Comb (Var "x")))
-                                    (x (CIfConst))))
+                                    (v "x")
+                                    (x (CIfConst))
+                                    (y (Comb (Var "x")))))
 (let t83
   (premises
                               (Congr
@@ -452,7 +452,7 @@ expression: proof_snapshot
   (substitution
                               (__rewrite_root t64)
                               (cx (CAbs "x" (CIfConst)))
-                              (cy t78)
+                              (cy t77)
                               (cz (CFConst))))
 (let t85
   (premises
@@ -545,19 +545,21 @@ expression: proof_snapshot
                       (Congr
                         (= t64 (CApp (CIfConst) (CFConst)))
                         (Congr
-                          (= t64 (CApp t77 (CFConst)))
+                          (= t64 (CApp (CIfConst) t78))
                           (Rule
-                            (= t64 (CApp t77 t79))
+                            (= t64 (CApp t79 t78))
                             (name
                               "(rewrite (CApp (CApp (CApp $S cx) cy) cz) (CApp (CApp cx cz) (CApp cy cz)))")
                             t83
                             t84)
                           (Rule
-                            (= t79 (CFConst))
-                            (name "(rewrite (CApp $I cx) cx)")
+                            (= t79 (CIfConst))
+                            (name "(rewrite (CApp (CApp $K cx) cy) cx)")
                             (premises
                               (Congr
-                                (= t79 (CApp (IConst) (CFConst)))
+                                (=
+                                  t79
+                                  (CApp (CApp (KConst) (CIfConst)) (CFConst)))
                                 (Rule
                                   (= t79 t79)
                                   (name
@@ -565,72 +567,72 @@ expression: proof_snapshot
                                   t83
                                   t84)
                                 (Rule
-                                  (= t78 (IConst))
-                                  (name "(rewrite (CAbs v (CVar v)) $I)")
+                                  (=
+                                    (CAbs "x" (CIfConst))
+                                    (CApp (KConst) (CIfConst)))
+                                  (name "(rewrite (CAbs v $CIf) (CApp $K $CIf))")
                                   (premises
-                                    (Congr
-                                      (= t78 (CAbs "x" (CVar "x")))
-                                      (Rule
-                                        (= t78 t78)
-                                        (name
-                                          "(rewrite (CAbs v (CApp x y)) (CApp (CApp $S (CAbs v x)) (CAbs v y)))")
-                                        t81
-                                        t82)
-                                      (Rule
-                                        (= (Comb (Var "x")) (CVar "x"))
-                                        (name
-                                          "(rule ((= x (Var v)))
-        ((union (Comb x) (CVar v)))
-           )")
-                                        (premises (Fiat (= (Var "x") (Var "x"))))
-                                        (substitution (v "x") (x (Var "x"))))
-                                      1))
-                                  (substitution (v "x") (__rewrite_root t78)))
+                                    (Rule
+                                      (=
+                                        (CAbs "x" (CIfConst))
+                                        (CAbs "x" (CIfConst)))
+                                      (name
+                                        "(rewrite (CAbs v (CApp x y)) (CApp (CApp $S (CAbs v x)) (CAbs v y)))")
+                                      t81
+                                      t82))
+                                  (substitution
+                                    (__rewrite_root (CAbs "x" (CIfConst)))
+                                    (v "x")))
                                 0))
-                            (substitution (__rewrite_root t79) (cx (CFConst))))
-                          1)
+                            (substitution
+                              (__rewrite_root t79)
+                              (cx (CIfConst))
+                              (cy (CFConst))))
+                          0)
                         (Rule
-                          (= t77 (CIfConst))
-                          (name "(rewrite (CApp (CApp $K cx) cy) cx)")
+                          (= t78 (CFConst))
+                          (name "(rewrite (CApp $I cx) cx)")
                           (premises
                             (Congr
-                              (= t77 (CApp (CApp (KConst) (CIfConst)) (CFConst)))
+                              (= t78 (CApp (IConst) (CFConst)))
                               (Rule
-                                (= t77 t77)
+                                (= t78 t78)
                                 (name
                                   "(rewrite (CApp (CApp (CApp $S cx) cy) cz) (CApp (CApp cx cz) (CApp cy cz)))")
                                 t83
                                 t84)
                               (Rule
-                                (=
-                                  (CAbs "x" (CIfConst))
-                                  (CApp (KConst) (CIfConst)))
-                                (name "(rewrite (CAbs v $CIf) (CApp $K $CIf))")
+                                (= t77 (IConst))
+                                (name "(rewrite (CAbs v (CVar v)) $I)")
                                 (premises
-                                  (Rule
-                                    (=
-                                      (CAbs "x" (CIfConst))
-                                      (CAbs "x" (CIfConst)))
-                                    (name
-                                      "(rewrite (CAbs v (CApp x y)) (CApp (CApp $S (CAbs v x)) (CAbs v y)))")
-                                    t81
-                                    t82))
-                                (substitution
-                                  (v "x")
-                                  (__rewrite_root (CAbs "x" (CIfConst)))))
+                                  (Congr
+                                    (= t77 (CAbs "x" (CVar "x")))
+                                    (Rule
+                                      (= t77 t77)
+                                      (name
+                                        "(rewrite (CAbs v (CApp x y)) (CApp (CApp $S (CAbs v x)) (CAbs v y)))")
+                                      t81
+                                      t82)
+                                    (Rule
+                                      (= (Comb (Var "x")) (CVar "x"))
+                                      (name
+                                        "(rule ((= x (Var v)))
+        ((union (Comb x) (CVar v)))
+           )")
+                                      (premises (Fiat (= (Var "x") (Var "x"))))
+                                      (substitution (x (Var "x")) (v "x")))
+                                    1))
+                                (substitution (__rewrite_root t77) (v "x")))
                               0))
-                          (substitution
-                            (__rewrite_root t77)
-                            (cx (CIfConst))
-                            (cy (CFConst))))
-                        0)
+                          (substitution (__rewrite_root t78) (cx (CFConst))))
+                        1)
                       0)
                     0)))
 (let t86
   (substitution
+                  (cx t6)
                   (cc (CFConst))
                   (ct (Comb (N 0)))
-                  (cx t6)
                   (cf (Comb (N 1)))))
 (Rule
   (= t3 (N 3))
@@ -743,4 +745,4 @@ expression: proof_snapshot
               2)))
         (substitution (__rewrite_root t7) (t (N 0)) (f (N 1))))
       0))
-  (substitution (m 2) (__rewrite_root t3) (n 1)))
+  (substitution (__rewrite_root t3) (n 1) (m 2)))

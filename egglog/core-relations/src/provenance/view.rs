@@ -379,6 +379,28 @@ impl<'a> TermProjector<'a> {
                     })?;
                 self.fact_term(fact, *column as usize)
             }
+            TermTemplate::RowOriginCell {
+                origin,
+                table,
+                column,
+            } => match origin {
+                RowOriginRef::Fact(fact) => {
+                    let (fact_table, values) = self
+                        .arena
+                        .fact_values(*fact)
+                        .ok_or_else(|| format!("unknown row-origin fact {fact:?}"))?;
+                    if fact_table != *table {
+                        return Err(format!(
+                            "row-origin fact {fact:?} belongs to {fact_table:?}, not {table:?}"
+                        ));
+                    }
+                    values.get(*column as usize).ok_or_else(|| {
+                        format!("row-origin fact {fact:?} has no column {column}")
+                    })?;
+                    self.fact_term(*fact, *column as usize)
+                }
+                RowOriginRef::Site(site) => self.site_term(*site, *table, *column as usize, owner),
+            },
             TermTemplate::Call { sort, op, children } => {
                 let mut projected = Vec::with_capacity(children.len());
                 for child in children.iter() {
@@ -451,6 +473,9 @@ impl<'a> TermProjector<'a> {
             TermTemplate::Static { term } => Ok(*term),
             TermTemplate::FactLookup { table, .. } => Err(format!(
                 "container runtime anchor unexpectedly references zero-key table {table:?}"
+            )),
+            TermTemplate::RowOriginCell { table, column, .. } => Err(format!(
+                "container runtime anchor unexpectedly references merge row {table:?} column {column}"
             )),
             TermTemplate::Call { sort, op, children } => {
                 let mut projected = Vec::with_capacity(children.len());
@@ -668,7 +693,8 @@ impl<'a> TraceView<'a> {
         match template {
             TermTemplate::Binding { .. }
             | TermTemplate::PremiseCell { .. }
-            | TermTemplate::FactLookup { .. } => {}
+            | TermTemplate::FactLookup { .. }
+            | TermTemplate::RowOriginCell { .. } => {}
             TermTemplate::Static { term } => {
                 self.collect_certified_replay_term_calls(*term, calls, visited_terms);
             }
@@ -801,11 +827,32 @@ impl<'a> TraceView<'a> {
     /// Replaying any selected effect from the bundle re-executes all of its
     /// visible sibling effects, so their merge predecessors are dependencies
     /// of the source carrier as a whole.
-    pub fn source_merge_reads(&self, source: &SourceRef) -> &[FactId] {
+    pub fn source_merge_reads(&self, source: &SourceRef) -> &[MergeRead] {
         self.arena
             .source_merge_reads
             .get(source)
             .map_or(&[], SmallVec::as_slice)
+    }
+
+    /// Borrow additional prior facts consulted by merge callbacks attributed
+    /// to one already-durable non-source cause.
+    ///
+    /// These are side dependencies of the cause carrier as a whole, matching
+    /// [`TraceView::source_merge_reads`] and [`Firing::merge_reads`]. Unknown
+    /// cause identities fail closed instead of appearing dependency-free.
+    pub fn cause_merge_reads(&self, cause: CauseId) -> Result<&[MergeRead], TraceViewError> {
+        if cause.get() == 0 {
+            return Err(TraceViewError::UnknownCause(cause));
+        }
+        let draft = CauseDraftId::new(cause.get() as u64);
+        if self.arena.durable_cause(draft).is_none() {
+            return Err(TraceViewError::UnknownCause(cause));
+        }
+        Ok(self
+            .arena
+            .cause_merge_reads
+            .get(&draft)
+            .map_or(&[], SmallVec::as_slice))
     }
 
     /// Borrow one shared non-rule cause node without recursively expanding it.
@@ -813,6 +860,8 @@ impl<'a> TraceView<'a> {
     /// Source, rebuild, container, and merge causes expose only their immediate
     /// dependencies. Consumers can follow returned [`CauseRef`] and [`FactId`]
     /// handles lazily, so inspecting one node does not walk the causal graph.
+    /// Additional committed rows consulted by a nested merge callback are
+    /// available separately through [`TraceView::cause_merge_reads`].
     pub fn cause(&self, id: CauseId) -> Result<RawCause<'a>, TraceViewError> {
         if id.get() == 0 {
             return Err(TraceViewError::UnknownCause(id));
@@ -1002,6 +1051,69 @@ impl<'a> TraceView<'a> {
             key_columns,
             columns,
         })
+    }
+
+    /// Explain one constructor lookup performed inside a merge callback.
+    ///
+    /// The origin recovers the exact `old`/`new` syntax, while the stored key
+    /// supplies the representatives that syntax denoted at the callback
+    /// cutoff. A committed hit additionally anchors each key to the exact live
+    /// constructor row, including its historical rekeys.
+    pub fn explain_merge_constructor_read(
+        &mut self,
+        table: TableId,
+        origin: RowOriginSiteId,
+        key: [Value; 2],
+        history_cutoff: HistoryPosition,
+        hit: Option<FactId>,
+        firing: Option<FiringId>,
+    ) -> Result<RawEqualitySupport, TraceViewError> {
+        let schema = self.table_schema(table)?;
+        if schema.kind != ReplayTableKind::Constructor || schema.key_columns != key.len() {
+            return Err(TraceViewError::Invalid(format!(
+                "merge constructor read has incompatible table {table:?}"
+            )));
+        }
+        let owner = firing.map_or(
+            TemplateOwner::History {
+                position: history_cutoff,
+                inclusive: true,
+            },
+            TemplateOwner::Durable,
+        );
+        let equality_prefix = self.equality_prefix_at(history_cutoff)?;
+        let mut parts = Vec::with_capacity(key.len());
+        for (column, raw) in key.into_iter().enumerate() {
+            let sort = schema.columns[column].ok_or_else(|| {
+                TraceViewError::Invalid(format!(
+                    "merge constructor read has untyped key column {column}"
+                ))
+            })?;
+            let term = self
+                .projector
+                .site_term(origin, table, column, Some(&owner))
+                .map_err(TraceViewError::Invalid)?;
+            let endpoint = EqualityEndpoint { sort, term, raw };
+            parts.push(if let Some(fact) = hit {
+                self.explain_fact_endpoint_support_at(
+                    FactCellRef {
+                        fact,
+                        column: crate::ColumnId::from_usize(column),
+                    },
+                    endpoint,
+                    history_cutoff,
+                )?
+            } else {
+                // The selected merge carrier performs this constructor call.
+                // It therefore needs only the callback-time denotation of its
+                // requested endpoint, not an older fact that happened to
+                // construct the same spelling. This distinction lets a later
+                // lane reuse a same-batch prediction without retaining the
+                // prediction's first creator.
+                self.explain_endpoint_read_at(endpoint, equality_prefix, history_cutoff, true)?
+            });
+        }
+        Ok(combine_raw_equality_support(parts))
     }
 
     /// Return the static premise/constant endpoint pairs checked by one rule.

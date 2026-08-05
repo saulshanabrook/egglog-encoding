@@ -475,8 +475,8 @@ pub enum EqualityReason {
         /// Shared source cause unfolded lazily through [`TraceView::cause`].
         cause: CauseId,
     },
-    /// A merge callback produced an equality while combining table rows.
-    MergeFn {
+    /// A table merge produced an equality while combining rows.
+    Merge {
         /// Shared exact cause root. Dependencies are unfolded lazily through
         /// [`TraceView::cause`]. The associated [`RawCause::Merge`] records
         /// when the callback read its operands; the equality record's position
@@ -744,6 +744,39 @@ pub struct RawFactRecord<'a> {
     pub values: &'a [Value],
 }
 
+/// One historical read performed while evaluating a selected merge callback.
+///
+/// Ordinary table collisions read an exact prior fact. Constructor-valued
+/// scalar merges additionally perform a memoized structural lookup whose
+/// requested row origin records both direct merge inputs. The callback cutoff
+/// bounds every denotation and liveness dependency of either read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MergeRead {
+    /// Read one committed keyed row.
+    Fact {
+        /// Exact immutable row occurrence returned by the table.
+        fact: FactId,
+        /// Inclusive history boundary at which the callback read the row.
+        history_cutoff: HistoryPosition,
+    },
+    /// Look up one constructor call while evaluating a scalar merge result.
+    Constructor {
+        /// Constructor table consulted by the lookup.
+        table: TableId,
+        /// Exact prior/incoming structural recipe for the requested key.
+        origin: RowOriginSiteId,
+        /// Native key values actually observed by the lookup. Structural
+        /// origins alone retain original syntax, not its representative at
+        /// callback time.
+        key: [Value; 2],
+        /// Inclusive history boundary at which the lookup ran.
+        history_cutoff: HistoryPosition,
+        /// Committed row returned by the table, or `None` for a miss or a
+        /// same-batch predicted reuse.
+        hit: Option<FactId>,
+    },
+}
+
 /// Borrowed record for one effective grounded rule match.
 #[derive(Clone, Copy, Debug)]
 pub struct Firing<'a> {
@@ -757,7 +790,7 @@ pub struct Firing<'a> {
     /// Exact source-ordered premise facts of the match.
     pub premises: &'a [FactId],
     /// Prior keyed rows read by merge effects of this match.
-    pub merge_reads: &'a [FactId],
+    pub merge_reads: &'a [MergeRead],
 }
 
 /// Borrowed non-rule cause whose dependencies a consumer can unfold lazily.

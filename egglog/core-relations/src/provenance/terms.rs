@@ -605,6 +605,17 @@ pub(crate) enum TermTemplate {
         table: TableId,
         column: u16,
     },
+    /// Read one exact logical cell from a prior fact or an incoming row origin.
+    ///
+    /// Unlike [`TermTemplate::PremiseCell`], this reference is installed while
+    /// a merge callback is running and may name a fact allocated by the current
+    /// publication batch. Projection therefore remains deferred until the
+    /// publication-complete trace is viewed.
+    RowOriginCell {
+        origin: RowOriginRef,
+        table: TableId,
+        column: u16,
+    },
     Call {
         sort: ReplaySortId,
         op: ReplayOpId,

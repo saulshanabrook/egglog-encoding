@@ -40,8 +40,8 @@ use crate::{
 
 use super::{
     ActionId, AtomId, Database, HashColumnIndex, HashIndex, TableInfo, Variable,
-    get_column_index_from_tableinfo,
-    plan::{JoinHeader, JoinStage, Plan},
+    get_column_index_from_tableinfo, get_occurrence_index_from_tableinfo,
+    plan::{JoinHeader, JoinStage, Plan, SingleScanSpec},
     with_pool_set,
 };
 
@@ -741,6 +741,10 @@ pub(crate) struct TrieNode {
     /// only ever probed with a single column, so we store one (col, map) pair
     /// instead of an IdVec across all columns.
     cached_children: OnceLock<Pooled<ChildrenMaps>>,
+    /// Cached occurrence index on this subset, with the column set it covers.
+    /// As with `cached_children`, a node is in practice probed with a single
+    /// set, so one slot is enough; a probe on any other set builds its own.
+    cached_occurrence: OnceLock<(SmallVec<[ColumnId; 4]>, Arc<ColumnIndex>)>,
 }
 
 impl std::fmt::Debug for TrieNode {
@@ -757,6 +761,7 @@ impl TrieNode {
             subset,
             cached_subsets: Default::default(),
             cached_children: Default::default(),
+            cached_occurrence: Default::default(),
         }
     }
 
@@ -775,6 +780,26 @@ impl TrieNode {
                 Arc::new(col_index)
             })
             .clone()
+    }
+
+    /// The occurrence index over this node's subset, built once per node (see
+    /// [`TrieNode::cached_occurrence`]).
+    fn get_cached_occurrence_index(&self, cols: &[ColumnId], info: &TableInfo) -> Arc<ColumnIndex> {
+        let build = || {
+            Arc::new(ColumnIndex::build_for_subset(
+                info.table.as_ref(),
+                self.subset.as_ref(),
+                cols,
+            ))
+        };
+        let (cached_cols, index) = self
+            .cached_occurrence
+            .get_or_init(|| (SmallVec::from_slice(cols), build()));
+        if cached_cols.as_slice() == cols {
+            index.clone()
+        } else {
+            build()
+        }
     }
 
     fn get_cached_trie_node(
@@ -1159,6 +1184,7 @@ impl BindingInfo {
         {
             node.cached_subsets.take();
             node.cached_children.take();
+            node.cached_occurrence.take();
             node.subset = subset;
             return;
         }
@@ -1197,12 +1223,15 @@ impl<'a> JoinState<'a> {
         }
     }
 
+    /// The index a scan of `atom` by `cols` reads. `occurrence` selects the
+    /// disjunctive reading of `cols` (see [`Atom::occurrence`]).
     fn get_index(
         &self,
         atoms: &Arc<DenseIdMap<AtomId, Atom>>,
         atom: AtomId,
         binding_info: &mut BindingInfo,
         cols: impl Iterator<Item = ColumnId>,
+        occurrence: bool,
     ) -> Prober {
         let cols = SmallVec::<[ColumnId; 4]>::from_iter(cols);
         let trie_node = binding_info.subsets.unwrap_val(atom);
@@ -1210,6 +1239,43 @@ impl<'a> JoinState<'a> {
 
         let table_id = atoms[atom].table;
         let info = &self.db.tables[table_id];
+        // An occurrence atom indexes several columns but is probed with a single
+        // value (the one occurring in any of them), so it takes the column-index
+        // path regardless of how many columns it covers.
+        if occurrence {
+            let all_cacheable = cols.iter().all(|col| {
+                !info
+                    .spec
+                    .uncacheable_columns
+                    .get(*col)
+                    .copied()
+                    .unwrap_or(false)
+            });
+            let whole_table = info.table.all();
+            // Same trade-off as the ordinary paths below. The cached index spans
+            // the whole table, so it only pays off when this atom is scanning most
+            // of it; otherwise its result would have to be cut back to a small
+            // subset, which costs more than indexing that subset directly. A
+            // seminaive delta is exactly the small case, so getting this wrong
+            // makes every probe scale with the table rather than the delta.
+            let ix = if let Subset::Dense(range) = *subset
+                && all_cacheable
+                && whole_table.size() / 2 < subset.size()
+            {
+                let needs_intersect =
+                    !(whole_table.is_dense() && subset.bounds() == whole_table.bounds());
+                DynamicIndex::CachedColumn {
+                    intersect_outer: needs_intersect.then_some(range),
+                    table: get_occurrence_index_from_tableinfo(info, &cols),
+                }
+            } else {
+                DynamicIndex::DynamicColumn(trie_node.get_cached_occurrence_index(&cols, info))
+            };
+            return Prober {
+                node: trie_node,
+                ix,
+            };
+        }
         let dyn_index = if subset.size() <= SMALL_RESIDUAL && cols.len() == 1 {
             DynamicIndex::SparseColumn(SparseColumnIndex::new(
                 info.table.as_ref(),
@@ -1270,13 +1336,30 @@ impl<'a> JoinState<'a> {
         atom: AtomId,
         col: ColumnId,
     ) -> Prober {
-        self.get_index(atoms, atom, binding_info, iter::once(col))
+        self.get_index(atoms, atom, binding_info, iter::once(col), false)
+    }
+
+    /// The index a generic-join scan reads: the occurrence index over the whole
+    /// column set when the scan binds an occurrence variable, otherwise the
+    /// ordinary index on its single column.
+    fn get_scan_index(
+        &self,
+        atoms: &Arc<DenseIdMap<AtomId, Atom>>,
+        binding_info: &mut BindingInfo,
+        scan: &SingleScanSpec,
+    ) -> Prober {
+        match &scan.occurrence_cols {
+            Some(cols) => {
+                self.get_index(atoms, scan.atom, binding_info, cols.iter().copied(), true)
+            }
+            None => self.get_column_index(atoms, binding_info, scan.atom, scan.column),
+        }
     }
 
     /// Runs the free join plan, starting with the header.
     ///
     /// A bit about the `instr_order` parameter: This defines the order in which the [`JoinStage`]
-    /// instructions will run. We want to support cached [`SinglePlan`]s that may be based on stale
+    /// instructions will run. We want to support cached [`SinglePlan`](crate::free_join::plan::SinglePlan)s that may be based on stale
     /// ordering information. `instr_order` allows us to specify a new ordering of the instructions
     /// without mutating the plan itself: `run_plan` simply executes
     /// `plan.stages.instrs[instr_order[i]]` at stage `i`.
@@ -1517,14 +1600,14 @@ impl<'a> JoinState<'a> {
                     if binding_info.has_empty_subset(a.atom) {
                         return;
                     }
-                    let prober = self.get_column_index(atoms, binding_info, a.atom, a.column);
+                    let prober = self.get_scan_index(atoms, binding_info, a);
                     let info = &self.db.tables[atoms[a.atom].table];
                     let table = info.table.as_ref();
                     let has_stale = table.has_stale_rows();
                     let mut updates = FrameUpdates::with_capacity(cmp::min(chunk_size, cur_size));
                     prober.for_each(|val, x| {
                         updates.push_binding(*var, val[0]);
-                        if x.size() <= 16 {
+                        if x.size() <= 16 || a.occurrence_cols.is_some() {
                             let sub = refine_subset(x.to_owned(pool), &a.cs, &table, has_stale);
                             if sub.is_empty() {
                                 updates.rollback();
@@ -1553,8 +1636,8 @@ impl<'a> JoinState<'a> {
                     binding_info.move_back(a.atom, prober);
                 }
                 [a, b] => {
-                    let a_prober = self.get_column_index(atoms, binding_info, a.atom, a.column);
-                    let b_prober = self.get_column_index(atoms, binding_info, b.atom, b.column);
+                    let a_prober = self.get_scan_index(atoms, binding_info, a);
+                    let b_prober = self.get_scan_index(atoms, binding_info, b);
 
                     let ((smaller, smaller_scan), (larger, larger_scan)) =
                         if a_prober.len() < b_prober.len() {
@@ -1575,7 +1658,7 @@ impl<'a> JoinState<'a> {
                     smaller.for_each(|val, small_sub| {
                         if let Some(large_sub) = larger.get_subset(val) {
                             updates.push_binding(*var, val[0]);
-                            if small_sub.size() <= 16 {
+                            if small_sub.size() <= 16 || smaller_scan.occurrence_cols.is_some() {
                                 let small_sub = refine_subset(
                                     small_sub.to_owned(pool),
                                     &smaller_scan.cs,
@@ -1607,7 +1690,7 @@ impl<'a> JoinState<'a> {
                                 }
                                 updates.refine_atom(smaller_atom, smaller_node);
                             }
-                            if large_sub.size() <= 16 {
+                            if large_sub.size() <= 16 || larger_scan.occurrence_cols.is_some() {
                                 let large_sub = refine_subset(
                                     large_sub.to_owned(pool),
                                     &larger_scan.cs,
@@ -1655,8 +1738,7 @@ impl<'a> JoinState<'a> {
                     let mut smallest_size = usize::MAX;
                     let mut probers = Vec::with_capacity(rest.len());
                     for (i, scan) in rest.iter().enumerate() {
-                        let prober =
-                            self.get_column_index(atoms, binding_info, scan.atom, scan.column);
+                        let prober = self.get_scan_index(atoms, binding_info, scan);
                         let size = prober.len();
                         if size < smallest_size {
                             smallest = i;
@@ -1693,7 +1775,7 @@ impl<'a> JoinState<'a> {
                                 if let Some(sub) = probers[i].get_subset(key) {
                                     let table =
                                         self.db.tables[atoms[rest[i].atom].table].table.as_ref();
-                                    if sub.size() <= 16 {
+                                    if sub.size() <= 16 || scan.occurrence_cols.is_some() {
                                         let sub = refine_subset(
                                             sub.to_owned(pool),
                                             &rest[i].cs,
@@ -1731,7 +1813,7 @@ impl<'a> JoinState<'a> {
                                     return;
                                 }
                             }
-                            if sub.size() <= 16 {
+                            if sub.size() <= 16 || main_spec.occurrence_cols.is_some() {
                                 let main_sub = refine_subset(
                                     sub.to_owned(pool),
                                     &main_spec.cs,
@@ -1882,6 +1964,7 @@ impl<'a> JoinState<'a> {
                                 spec.to_index.atom,
                                 binding_info,
                                 spec.to_index.vars.iter().copied(),
+                                spec.occurrence_cols.is_some(),
                             ),
                         )
                     })
@@ -2094,6 +2177,7 @@ impl<'a> JoinState<'a> {
                             spec.to_index.atom,
                             binding_info,
                             spec.to_index.vars.iter().copied(),
+                            spec.occurrence_cols.is_some(),
                         )
                     })
                     .collect::<SmallVec<[Prober; 4]>>();

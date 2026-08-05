@@ -1,6 +1,5 @@
 ---
 source: egglog/tests/files.rs
-assertion_line: 279
 expression: proof_snapshot
 ---
 (let t0 (f (f (Var "a3"))))
@@ -18,15 +17,15 @@ expression: proof_snapshot
 (let t8 (f1 (f (Var "a1"))))
 (let t9
   (substitution
+                (x3 (Var "a3"))
                 (x1 (Var "a1"))
                 (x2 (Var "a2"))
-                (f2 (f (Var "a2")))
-                (x3 (Var "a3"))
-                t8))
+                t8
+                (f2 (f (Var "a2")))))
 (let prf0 (Fiat (= t2 t2)))
 (let t10 (x1 (f (Var "a1"))))
-(let t11 (f2 t3))
-(let t12 (f1 t2))
+(let t11 (f1 t2))
+(let t12 (f2 t3))
 (let t13 (intersect (f (Var "a1")) (f (Var "b2"))))
 (let t14 (intersect (Var "b1") (Var "b2")))
 (let t15
@@ -36,11 +35,11 @@ expression: proof_snapshot
               (Fiat (= (f (Var "b2")) (f (Var "b2"))))))
 (let t16
   (substitution
+              (x3 (Var "b3"))
               (x1 (Var "b1"))
               (x2 (Var "b2"))
-              (f2 (f (Var "b2")))
-              (x3 (Var "b3"))
-              t8))
+              t8
+              (f2 (f (Var "b2")))))
 (let t17 (f (f (Var "b2"))))
 (Trans
   (= t0 t1)
@@ -69,7 +68,7 @@ expression: proof_snapshot
             t9)
           prf0
           (Fiat (= t3 t3)))
-        (substitution t10 (x2 (f (Var "a2"))) t11 (x3 t5) t12))
+        (substitution (x3 t5) t10 (x2 (f (Var "a2"))) t11 t12))
       (Rule
         (= t5 (f (Var "a3")))
         (name
@@ -104,7 +103,7 @@ expression: proof_snapshot
           t16)
         prf0
         (Sym (= t3 t17) (Fiat (= t17 t3))))
-      (substitution t10 (x2 (f (Var "b2"))) t11 (x3 t13) t12))
+      (substitution (x3 t13) t10 (x2 (f (Var "b2"))) t11 t12))
     (Rule
       (= t13 (f (Var "b3")))
       (name
@@ -140,11 +139,11 @@ expression: proof_snapshot
           (Fiat (= (f (Var "a1")) (f (Var "a1"))))
           (Fiat (= (f (Var "a2")) (f (Var "a2")))))
         (substitution
+          (x3 (Var "a3"))
           (x1 (Var "a1"))
           (x2 (Var "a2"))
-          (f2 (f (Var "a2")))
-          (x3 (Var "a3"))
-          t2)))
+          t2
+          (f2 (f (Var "a2"))))))
     (Sym
       (= (f (Var "b3")) t3)
       (Rule
@@ -160,10 +159,10 @@ expression: proof_snapshot
           (Fiat (= (f (Var "a1")) (f (Var "b1"))))
           (Fiat (= (f (Var "b2")) (f (Var "b2")))))
         (substitution
+          (x3 (Var "b3"))
           (x1 (Var "b1"))
           (x2 (Var "b2"))
-          (f2 (f (Var "b2")))
-          (x3 (Var "b3"))
-          t2)))
+          t2
+          (f2 (f (Var "b2"))))))
     (Fiat (= () ())))
-  (substitution (@v610 t0) (@v611 t3)))
+  (substitution (@v t0) (@v1 t3)))

@@ -27,7 +27,7 @@ expression: proof_snapshot
       (premises (Fiat (= (edge 0 1) (edge 0 1))))
       (substitution (x 0) (y 1)))
     (Fiat (= (edge 1 2) (edge 1 2))))
-  (substitution (z 2) (x 0) (y 1)))
+  (substitution (x 0) (y 1) (z 2)))
 (Rule
   (= (path 0 3) (path 0 3))
   (name
@@ -53,9 +53,9 @@ expression: proof_snapshot
           (premises (Fiat (= (edge 0 1) (edge 0 1))))
           (substitution (x 0) (y 1)))
         (Fiat (= (edge 1 2) (edge 1 2))))
-      (substitution (z 2) (x 0) (y 1)))
+      (substitution (x 0) (y 1) (z 2)))
     (Fiat (= (edge 2 3) (edge 2 3))))
-  (substitution (z 3) (x 0) (y 2)))
+  (substitution (x 0) (y 2) (z 3)))
 (Rule
   (= (path 0 4) (path 0 4))
   (name
@@ -81,9 +81,9 @@ expression: proof_snapshot
           (premises (Fiat (= (edge 0 1) (edge 0 1))))
           (substitution (x 0) (y 1)))
         (Fiat (= (edge 1 2) (edge 1 2))))
-      (substitution (z 2) (x 0) (y 1)))
+      (substitution (x 0) (y 1) (z 2)))
     (Fiat (= (edge 2 4) (edge 2 4))))
-  (substitution (z 4) (x 0) (y 2)))
+  (substitution (x 0) (y 2) (z 4)))
 (Rule
   (= (path 1 2) (path 1 2))
   (name
@@ -109,7 +109,7 @@ expression: proof_snapshot
       (premises (Fiat (= (edge 1 2) (edge 1 2))))
       (substitution (x 1) (y 2)))
     (Fiat (= (edge 2 3) (edge 2 3))))
-  (substitution (z 3) (x 1) (y 2)))
+  (substitution (x 1) (y 2) (z 3)))
 (Rule
   (= (path 1 4) (path 1 4))
   (name
@@ -127,4 +127,4 @@ expression: proof_snapshot
       (premises (Fiat (= (edge 1 2) (edge 1 2))))
       (substitution (x 1) (y 2)))
     (Fiat (= (edge 2 4) (edge 2 4))))
-  (substitution (z 4) (x 1) (y 2)))
+  (substitution (x 1) (y 2) (z 4)))

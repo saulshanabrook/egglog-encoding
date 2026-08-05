@@ -1,0 +1,19 @@
+---
+source: egglog/tests/files.rs
+expression: snapshot_content_across_treatments
+---
+3
+((Add 0)
+ (Num 15)
+ (arc 1)
+ (crossed 6)
+ (dirty 4)
+ (edge 3)
+ (link 3)
+ (linked 3)
+ (seed 1)
+ (selfcol 3)
+ (touched 3)
+ (triple 1)
+ (viaindex 0)
+ (viaplain 0))

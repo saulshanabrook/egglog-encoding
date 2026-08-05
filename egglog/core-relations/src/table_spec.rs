@@ -22,7 +22,7 @@ use crate::{
     Variable, Wave,
     action::{
         Bindings, ExecutionState,
-        mask::{Mask, MaskIter, ValueSource},
+        mask::{Mask, MaskIter},
     },
     common::Value,
     hash_index::{ColumnIndex, IndexBase, TupleIndex},
@@ -734,7 +734,7 @@ impl<T: Table> TableWrapper for WrapperImpl<T> {
             inner: table,
             wrapper: self,
         };
-        ColumnIndex::build_for_subset(wrapped, subset, col)
+        ColumnIndex::build_for_subset(wrapped, subset, &[col])
     }
     fn group_by_key(&self, table: &dyn Table, subset: SubsetRef, cols: &[ColumnId]) -> TupleIndex {
         let table = table.as_any().downcast_ref::<T>().unwrap();

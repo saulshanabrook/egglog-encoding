@@ -107,6 +107,8 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
             "core/before-proofs.egg",
             "core/container-rebuild.egg",
             "core/cykjson.egg",
+            "core/index_any.egg",
+            "core/index_probe.egg",
             "core/interval.egg",
             "core/naive-action-lookup.egg",
             "core/pair.egg",
@@ -210,6 +212,7 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
         paths: &[
             "core/combined-nested.egg",
             "core/container-proofs.egg",
+            "core/displaced_row_scan.egg",
             "core/include.egg",
             "core/relation-query-allowed.egg",
             "core/repro-noteqbug.egg",
@@ -244,10 +247,7 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
         },
     },
     AllowlistGroup {
-        paths: &[
-            "core/complex-merge-func.egg",
-            "core/web-demo/rw-analysis.egg",
-        ],
+        paths: &["core/complex-merge-func.egg"],
         disposition: Disposition::Unsupported {
             diagnostic: "merge reached an unsupported structural result expression",
         },

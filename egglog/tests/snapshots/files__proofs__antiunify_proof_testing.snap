@@ -34,10 +34,10 @@ expression: proof_snapshot
 (let t9
   (substitution
           (__rewrite_root t3)
-          (d (Var "y"))
           (a t0)
           (b (Var "x"))
-          (c t0)))
+          (c t0)
+          (d (Var "y"))))
 (Congr
   (= t3 (Add (Num 3) t4))
   (Congr

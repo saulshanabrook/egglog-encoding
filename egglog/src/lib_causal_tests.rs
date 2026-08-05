@@ -39,6 +39,23 @@ fn assert_strict_replay_in_all_modes(commands: &[Command], setup: Option<&str>) 
     }
 }
 
+fn assert_strict_replay_in_native_modes(commands: &[Command], setup: Option<&str>) {
+    let rendered = crate::slicing::render_commands(commands);
+    for (mode, mut replay) in [
+        ("native", EGraph::default()),
+        ("term", EGraph::new_with_term_encoding()),
+    ] {
+        if let Some(setup) = setup {
+            replay
+                .parse_and_run_program(None, setup)
+                .unwrap_or_else(|error| panic!("{mode} replay setup failed: {error}"));
+        }
+        replay
+            .parse_and_run_program(None, &rendered)
+            .unwrap_or_else(|error| panic!("{mode} strict replay failed: {error}"));
+    }
+}
+
 #[test]
 fn trace_accepts_empty_declarations_installed_by_a_matching_replay_factory() {
     serial_trace_pool().install(|| {
@@ -64,43 +81,392 @@ fn trace_accepts_empty_declarations_installed_by_a_matching_replay_factory() {
 }
 
 #[test]
-fn dormant_unsupported_merge_rejects_only_a_reached_collision() {
-    let mut egraph = EGraph::default();
-    egraph
-        .parse_and_run_program(
-            None,
-            "(datatype E (A i64) (Pair E E))\
-             (function bad (E) E :merge (Pair old new))\
-             (relation Safe (i64))",
-        )
-        .unwrap();
+fn constructor_valued_scalar_merge_replays_both_original_carriers() {
+    serial_trace_pool().install(|| {
+        let mut recorder = EGraph::default();
+        recorder.enable_trace().unwrap();
+        recorder
+            .parse_and_run_program(
+                None,
+                "(datatype E (A i64) (Pair E E))\
+                 (function merged (i64) E :merge (Pair old new))\
+                 (relation Seen (E))\
+                 (set (merged 0) (A 1))\
+                 (set (merged 0) (A 2))\
+                 (rule ((= (merged 0) value)) ((Seen value)) :name \"observe-merged\")\
+                 (run 1)\
+                 (check (Seen (Pair (A 1) (A 2))))",
+            )
+            .unwrap();
 
-    serial_trace_pool()
-        .install(|| egraph.enable_trace())
-        .unwrap();
+        let commands = crate::slicing::slice_all_checks(&recorder).unwrap();
+        let rendered = crate::slicing::render_commands(&commands);
+        assert_eq!(rendered.matches("(set (merged 0) (A 1))").count(), 1);
+        assert_eq!(rendered.matches("(set (merged 0) (A 2))").count(), 1);
+        assert!(
+            !rendered.contains("(set (merged 0) (Pair"),
+            "replay must execute the constructor-valued merge instead of inventing its result:\n{rendered}"
+        );
 
-    egraph
-        .parse_and_run_program(None, "(Safe 1) (set (bad (A 0)) (A 1)) (check (Safe 1))")
-        .unwrap();
-    let function = egraph.functions.get("bad").unwrap().backend_id;
-    let mut prior = None;
-    egraph
-        .backend
-        .for_each(function, |row| prior = row.vals.last().copied());
-    let prior = prior.unwrap();
-    let error = egraph
-        .parse_and_run_program(None, "(set (bad (A 0)) (A 2))")
-        .expect_err("table-reading merge unexpectedly reached its callback");
-    assert!(
-        error
-            .to_string()
-            .contains("merge reached an unsupported structural result expression")
-    );
-    let mut after = None;
-    egraph
-        .backend
-        .for_each(function, |row| after = row.vals.last().copied());
-    assert_eq!(after, Some(prior));
+        assert_strict_replay_in_all_modes(&commands, None);
+    });
+}
+
+#[test]
+fn constructor_valued_scalar_merge_retains_a_committed_constructor_hit() {
+    serial_trace_pool().install(|| {
+        let mut recorder = EGraph::default();
+        recorder.enable_trace().unwrap();
+        recorder
+            .parse_and_run_program(
+                None,
+                "(datatype E (A i64) (Pair E E))\
+                 (function merged (i64) E :merge (Pair old new))\
+                 (relation Seen ())\
+                 (let $pair (Pair (A 1) (A 2)))\
+                 (set (merged 0) (A 1))\
+                 (set (merged 0) (A 2))\
+                 (rule ((= (merged 0) value)) ((Seen)) :name \"observe-merged\")\
+                 (run 1)\
+                 (check (Seen))",
+            )
+            .unwrap();
+
+        let commands = crate::slicing::slice_all_checks(&recorder).unwrap();
+        let rendered = crate::slicing::render_commands(&commands);
+        assert!(
+            rendered.contains("(let $pair (Pair (A 1) (A 2)))"),
+            "a committed constructor hit must retain its exact source fact:\n{rendered}"
+        );
+        assert_eq!(rendered.matches("(set (merged 0) (A 1))").count(), 1);
+        assert_eq!(rendered.matches("(set (merged 0) (A 2))").count(), 1);
+
+        assert_strict_replay_in_all_modes(&commands, None);
+    });
+}
+
+#[test]
+fn constructor_valued_scalar_merge_retains_a_hit_rekey_dependency() {
+    serial_trace_pool().install(|| {
+        let mut recorder = EGraph::default();
+        recorder.enable_trace().unwrap();
+        recorder
+            .parse_and_run_program(
+                None,
+                "(datatype E (A i64) (Pair E E))\
+                 (function merged (i64) E :merge (Pair old new))\
+                 (function label (E) i64 :no-merge)\
+                 (relation Done ())\
+                 (let $hit (Pair (A 3) (A 1)))\
+                 (set (label $hit) 7)\
+                 (set (merged 1) (A 4))\
+                 (union (A 3) (A 4))\
+                 (set (merged 1) (A 1))\
+                 (rule ((= (merged 1) value) (= (label value) 7)) ((Done))\
+                       :name \"observe-hit\")\
+                 (run 1)\
+                 (check (Done))",
+            )
+            .unwrap();
+
+        let commands = crate::slicing::slice_all_checks(&recorder).unwrap();
+        let rendered = crate::slicing::render_commands(&commands);
+        assert!(
+            rendered.contains("(union (A 3) (A 4))"),
+            "the constructor hit's historical rekey dependency was omitted:\n{rendered}"
+        );
+
+        assert_strict_replay_in_all_modes(&commands, None);
+    });
+}
+
+#[test]
+fn constructor_valued_scalar_merge_retains_incoming_denotation_for_a_hit() {
+    serial_trace_pool().install(|| {
+        let program = "(datatype E (A i64) (Pair E E))\
+                       (function merged (i64) E :merge (Pair old new))\
+                       (relation Expected (E))\
+                       (relation Done ())\
+                       (union (A 3) (A 4))\
+                       (let $hit (Pair (A 1) (A 3)))\
+                       (Expected $hit)\
+                       (set (merged 1) (A 1))\
+                       (set (merged 1) (A 4))\
+                       (rule ((= (merged 1) value) (Expected value)) ((Done))\
+                             :name \"observe-hit\")\
+                       (run 1)\
+                       (check (Done))";
+        let mut recorder = EGraph::default();
+        recorder.enable_trace().unwrap();
+        recorder.parse_and_run_program(None, program).unwrap();
+
+        let commands = crate::slicing::slice_all_checks(&recorder).unwrap();
+        let rendered = crate::slicing::render_commands(&commands);
+        assert!(
+            rendered.contains("(union (A 3) (A 4))"),
+            "the constructor lookup's incoming denotation dependency was omitted:\n{rendered}"
+        );
+        // Full proof testing rejects the unsliced control for this exact
+        // constructor-hit/canonicalization shape (`Fiat ... is not established
+        // by globals`) under every endpoint orientation. Keep that independent
+        // proof-encoding boundary out of this slicer regression while still
+        // checking both concrete replay engines.
+        assert_strict_replay_in_native_modes(&commands, None);
+    });
+}
+
+#[test]
+fn constructor_valued_scalar_merge_retains_a_miss_removal_dependency() {
+    serial_trace_pool().install(|| {
+        let mut recorder = EGraph::default();
+        recorder.enable_trace().unwrap();
+        recorder
+            .parse_and_run_program(
+                None,
+                "(datatype E (A i64) (Pair E E))\
+                 (function merged (i64) E :merge (Pair old new))\
+                 (function label (E) i64 :no-merge)\
+                 (relation Keep ())\
+                 (relation Delete ())\
+                 (relation Done ())\
+                 (ruleset cleanup)\
+                 (ruleset observe)\
+                 (let $oldpair (Pair (A 1) (A 2)))\
+                 (begin (set (label $oldpair) 1) (Keep))\
+                 (set (merged 0) (A 1))\
+                 (Delete)\
+                 (rule ((Delete)) ((delete (Pair (A 1) (A 2))))\
+                       :ruleset cleanup :name \"delete-old-pair\")\
+                 (run cleanup 1)\
+                 (set (merged 0) (A 2))\
+                 (rule ((= (merged 0) x)) ((set (label x) 2) (Done))\
+                       :ruleset observe :name \"label-merged\")\
+                 (run observe 1)\
+                 (check (Keep) (Done))",
+            )
+            .unwrap();
+
+        let commands = crate::slicing::slice_all_checks(&recorder).unwrap();
+        let rendered = crate::slicing::render_commands(&commands);
+        assert!(
+            rendered.contains("delete-old-pair"),
+            "the constructor miss's historical absence dependency was omitted:\n{rendered}"
+        );
+
+        assert_strict_replay_in_all_modes(&commands, None);
+    });
+}
+
+#[test]
+fn constructor_valued_merge_replays_a_committed_hit_during_rebuild() {
+    serial_trace_pool().install(|| {
+        let mut recorder = EGraph::default();
+        recorder.enable_trace().unwrap();
+        recorder
+            .parse_and_run_program(
+                None,
+                "(datatype E (A i64) (Pair E E))\
+                 (function merged (E) E :merge (Pair old new))\
+                 (relation Seen ())\
+                 (let $forward (Pair (A 1) (A 2)))\
+                 (let $reverse (Pair (A 2) (A 1)))\
+                 (set (merged (A 10)) (A 1))\
+                 (set (merged (A 20)) (A 2))\
+                 (union (A 10) (A 20))\
+                 (rule ((= (merged (A 10)) value)) ((Seen)) :name \"observe-rebuilt\")\
+                 (run 1)\
+                 (check (Seen))",
+            )
+            .unwrap();
+
+        let commands = crate::slicing::slice_all_checks(&recorder).unwrap();
+        let rendered = crate::slicing::render_commands(&commands);
+        assert!(
+            rendered.contains("(let $forward (Pair (A 1) (A 2)))")
+                || rendered.contains("(let $reverse (Pair (A 2) (A 1)))"),
+            "a rebuild-time constructor hit lost its exact source fact:\n{rendered}"
+        );
+
+        assert_strict_replay_in_all_modes(&commands, None);
+    });
+}
+
+#[test]
+fn constructor_valued_scalar_merge_defers_same_batch_prior_projection() {
+    serial_trace_pool().install(|| {
+        let mut recorder = EGraph::default();
+        recorder.enable_trace().unwrap();
+        recorder
+            .parse_and_run_program(
+                None,
+                "(datatype E (A i64) (Pair E E))\
+                 (function merged (i64) E :merge (Pair old new))\
+                 (relation Candidate (E))\
+                 (relation Seen ())\
+                 (Candidate (A 1))\
+                 (Candidate (A 2))\
+                 (Candidate (A 3))\
+                 (rule ((Candidate value)) ((set (merged 0) value)) :name \"batch-merge\")\
+                 (run 1)\
+                 (rule ((= (merged 0) value)) ((Seen)) :name \"observe-merged\")\
+                 (run 1)\
+                 (check (Seen))",
+            )
+            .unwrap();
+
+        let commands = crate::slicing::slice_all_checks(&recorder).unwrap();
+        let rendered = crate::slicing::render_commands(&commands);
+        for value in 1..=3 {
+            assert_eq!(
+                rendered
+                    .matches(&format!("(Candidate (A {value}))"))
+                    .count(),
+                1,
+                "the same-batch merge chain lost candidate {value}:\n{rendered}"
+            );
+        }
+
+        assert_strict_replay_in_all_modes(&commands, None);
+    });
+}
+
+#[test]
+fn constructor_valued_scalar_merge_reuses_a_same_batch_prediction() {
+    serial_trace_pool().install(|| {
+        let mut recorder = EGraph::default();
+        recorder.enable_trace().unwrap();
+        recorder
+            .parse_and_run_program(
+                None,
+                "(datatype E (A i64) (Pair E E))\
+                 (function merged (i64) E :merge (Pair old new))\
+                 (relation Candidate (i64))\
+                 (relation Seen ())\
+                 (set (merged 0) (A 1))\
+                 (set (merged 1) (A 1))\
+                 (Candidate 0)\
+                 (Candidate 1)\
+                 (rule ((Candidate key)) ((set (merged key) (A 2))) :name \"batch-predicted-hit\")\
+                 (run 1)\
+                 (rule ((= (merged 1) value)) ((Seen)) :name \"observe-second\")\
+                 (run 1)\
+                 (check (Seen))",
+            )
+            .unwrap();
+
+        let commands = crate::slicing::slice_all_checks(&recorder).unwrap();
+        let rendered = crate::slicing::render_commands(&commands);
+        assert!(rendered.contains("(set (merged 1) (A 1))"));
+        assert!(rendered.contains("(Candidate 1)"));
+        assert!(
+            !rendered.contains("(set (merged 0)"),
+            "a predicted constructor reuse must not retain its first creator:\n{rendered}"
+        );
+        assert!(!rendered.contains("(Candidate 0)"));
+
+        assert_strict_replay_in_all_modes(&commands, None);
+    });
+}
+
+#[test]
+fn constructor_valued_scalar_merge_retains_predicted_hit_denotation() {
+    serial_trace_pool().install(|| {
+        let mut recorder = EGraph::default();
+        recorder.enable_trace().unwrap();
+        recorder
+            .parse_and_run_program(
+                None,
+                "(datatype E (A i64) (Pair E E))\
+                 (function merged (i64) E :merge (Pair old new))\
+                 (function label (E) i64 :no-merge)\
+                 (relation Candidate (i64))\
+                 (relation Done ())\
+                 (set (merged 0) (A 3))\
+                 (set (merged 1) (A 4))\
+                 (union (A 3) (A 4))\
+                 (Candidate 0)\
+                 (Candidate 1)\
+                 (rule ((Candidate key)) ((set (merged key) (A 1)))\
+                       :name \"same-batch-predicted-hit\")\
+                 (run 1)\
+                 (let $expected (Pair (A 3) (A 1)))\
+                 (set (label $expected) 7)\
+                 (rule ((= (merged 1) value) (= (label value) 7)) ((Done))\
+                       :name \"observe-predicted\")\
+                 (run 1)\
+                 (check (Done))",
+            )
+            .unwrap();
+
+        let commands = crate::slicing::slice_all_checks(&recorder).unwrap();
+        let rendered = crate::slicing::render_commands(&commands);
+        assert!(
+            rendered.contains("(union (A 3) (A 4))"),
+            "the predicted constructor hit's denotation dependency was omitted:\n{rendered}"
+        );
+
+        assert_strict_replay_in_all_modes(&commands, None);
+    });
+}
+
+#[test]
+fn reached_reordered_or_repeated_constructor_merge_fails_before_native_mutation() {
+    serial_trace_pool().install(|| {
+        for result in ["(Pair new old)", "(Pair old old)"] {
+            let mut egraph = EGraph::default();
+            egraph.enable_trace().unwrap();
+            egraph
+                .parse_and_run_program(
+                    None,
+                    &format!(
+                        "(datatype E (A i64) (Pair E E))\
+                         (function merged () E :merge {result})\
+                         (set (merged) (A 1))"
+                    ),
+                )
+                .unwrap();
+            let prior = get_value(&egraph, "merged");
+
+            let error = egraph
+                .parse_and_run_program(None, "(set (merged) (A 2))")
+                .expect_err("noncanonical constructor merge unexpectedly entered capture");
+            assert!(
+                error
+                    .to_string()
+                    .contains("unsupported structural result expression"),
+                "{result}: {error}"
+            );
+            assert_eq!(
+                get_value(&egraph, "merged"),
+                prior,
+                "rejected merge {result} changed its retained row"
+            );
+        }
+    });
+}
+
+#[test]
+fn scalar_merge_result_must_match_the_function_output_sort() {
+    serial_trace_pool().install(|| {
+        let mut egraph = EGraph::default();
+        egraph.enable_trace().unwrap();
+        let error = egraph
+            .parse_and_run_program(
+                None,
+                "(datatype E (A))\
+                 (datatype F (C E E))\
+                 (function merged () E :merge (C old new))",
+            )
+            .expect_err("wrong-sort constructor merge unexpectedly typechecked");
+        assert!(matches!(
+            error,
+            Error::TypeError(TypeError::Mismatch { .. })
+        ));
+        assert!(
+            !egraph.functions.contains_key("merged"),
+            "a wrong-sort merge declaration must fail before table allocation"
+        );
+    });
 }
 
 #[test]
@@ -147,7 +513,7 @@ fn deferred_merge_equality_uses_the_callback_read_horizon() {
             .with_trace_view(|view| {
                 let equality = core_relations::AppliedEqualityId::new(1);
                 let event = view.applied_equality(equality)?;
-                let core_relations::EqualityReason::MergeFn { cause } = event.reason else {
+                let core_relations::EqualityReason::Merge { cause } = event.reason else {
                     panic!("first equality is not merge-caused: {event:?}");
                 };
                 let core_relations::RawCause::Merge {
@@ -444,7 +810,7 @@ fn reached_tuple_merge_fails_before_native_mutation() {
 }
 
 #[test]
-fn reached_table_read_merge_fails_before_evaluating_the_lookup() {
+fn reached_custom_table_read_merge_fails_before_evaluating_the_lookup() {
     serial_trace_pool().install(|| {
         let mut egraph = EGraph::default();
         egraph.enable_trace().unwrap();
@@ -459,7 +825,7 @@ fn reached_table_read_merge_fails_before_evaluating_the_lookup() {
 
         let error = egraph
             .parse_and_run_program(None, "(set (total) 2)")
-            .expect_err("table-reading merge unexpectedly entered causal capture");
+            .expect_err("custom table-reading merge unexpectedly entered causal capture");
         assert!(
             error
                 .to_string()
@@ -1171,6 +1537,51 @@ fn trace_fail_closed_on_unsupported_container_ancestor() {
 }
 
 #[test]
+fn occurrence_index_rules_execute_ordinarily_but_fail_closed_during_capture() {
+    const SETUP: &str = r#"
+        (function edge (i64 i64) i64 :merge old)
+        (index EdgeOcc edge (any 0 1 2))
+        (relation trigger (i64))
+        (relation seen (i64 i64 i64))
+        (function effect () i64 :merge old)
+        (set (edge 1 2) 3)
+        (trigger 1)
+    "#;
+    const RULE: &str = r#"
+        (rule ((trigger x) (EdgeOcc x p q r))
+              ((seen p q r) (set (effect) r))
+              :name "from-occurrence-index")
+    "#;
+
+    let mut ordinary = EGraph::default();
+    ordinary.parse_and_run_program(None, SETUP).unwrap();
+    ordinary.parse_and_run_program(None, RULE).unwrap();
+    ordinary
+        .parse_and_run_program(None, "(run 1) (check (seen 1 2 3)) (check (= (effect) 3))")
+        .unwrap();
+
+    let mut captured = EGraph::default();
+    enable_serial_trace(&mut captured).unwrap();
+    captured.parse_and_run_program(None, SETUP).unwrap();
+    let tuples_before = captured.num_tuples();
+    let error = captured
+        .parse_and_run_program(None, RULE)
+        .expect_err("occurrence-index rule unexpectedly entered causal capture");
+    assert!(
+        matches!(&error, Error::BackendError(message)
+            if message == "causal capture does not yet support occurrence-index rule bodies"),
+        "unexpected occurrence-index capture error: {error:?}"
+    );
+    let Ruleset::Rules(rules) = &captured.rulesets[""] else {
+        unreachable!("the default ruleset must be an ordinary ruleset")
+    };
+    assert!(!rules.contains_key("from-occurrence-index"));
+    assert_eq!(captured.num_tuples(), tuples_before);
+    assert_eq!(captured.get_size("seen"), 0);
+    assert_eq!(captured.get_size("effect"), 0);
+}
+
+#[test]
 fn trace_capture_exact_rule_premise_and_wave() {
     let mut egraph = EGraph::default();
     enable_serial_trace(&mut egraph).unwrap();
@@ -1603,7 +2014,12 @@ fn replay_alpha_renames_anonymous_rule_around_user_name_collision() {
 
     let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
     serial_trace_pool()
-        .install(|| proof.parse_and_run_program(None, &rendered))
+        .install(|| {
+            proof
+                .parse_and_run_program(None, &rendered)
+                .map(drop)
+                .map_err(|error| error.to_string())
+        })
         .unwrap();
 }
 

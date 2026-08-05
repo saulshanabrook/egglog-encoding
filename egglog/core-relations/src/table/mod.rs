@@ -32,8 +32,8 @@ use crate::{
     parallel_heuristics::parallelize_table_op,
     pool::with_pool_set,
     provenance::{
-        PackedCauseRef, PendingNativeLease, PreparedRekey, PreparedRemoval, RekeyOutcome,
-        RowOriginRef,
+        MergeRead, PackedCauseRef, PendingNativeLease, PreparedRekey, PreparedRemoval,
+        RekeyOutcome, RowOriginRef,
     },
     row_buffer::{ParallelRowBufWriter, RowBuffer},
     table_spec::{
@@ -336,7 +336,7 @@ impl MutationBuffer for Buffer {
     }
 
     fn stage_insert(&mut self, row: &[Value]) {
-        let (shard, _) = hash_code(self.shard_data, row, self.n_keys as _);
+        let shard = shard_of_key(self.shard_data, row, self.n_keys as _);
         self.pending_rows
             .get_or_insert(shard, || RowBuffer::new(self.n_cols as _))
             .add_row(row);
@@ -465,7 +465,7 @@ impl MutationBuffer for Buffer {
             !self.trace_enabled,
             "trace capture requires an exact rule cause or native maintenance capability for removal"
         );
-        let (shard, _) = hash_code(self.shard_data, key, self.n_keys as _);
+        let shard = shard_of_key(self.shard_data, key, self.n_keys as _);
         self.pending_removals
             .get_or_insert(shard, || ArbitraryRowBuffer::new(self.n_keys as _))
             .add_row(key);
@@ -1319,9 +1319,13 @@ impl SortedWritesTable {
                                     });
                             }
                             if let Some(cause) = &incoming_cause {
+                                let trace = exec_state.trace().expect("capture merge has no arena");
                                 cause.record_merge_read(
-                                    exec_state.trace().expect("capture merge has no arena"),
-                                    prior_fact,
+                                    trace,
+                                    MergeRead::Fact {
+                                        fact: prior_fact,
+                                        history_cutoff: trace.history_boundary(),
+                                    },
                                 );
                             }
                             let previous_cause = incoming_cause.clone().map(|cause| {
@@ -1527,9 +1531,13 @@ impl SortedWritesTable {
                                     });
                             }
                             if let Some(cause) = &incoming_cause {
+                                let trace = exec_state.trace().expect("capture merge has no arena");
                                 cause.record_merge_read(
-                                    exec_state.trace().expect("capture merge has no arena"),
-                                    prior_fact,
+                                    trace,
+                                    MergeRead::Fact {
+                                        fact: prior_fact,
+                                        history_cutoff: trace.history_boundary(),
+                                    },
                                 );
                             }
                             let previous_cause = incoming_cause.clone().map(|cause| {
@@ -1920,7 +1928,7 @@ impl SortedWritesTable {
     }
 
     unsafe fn get_if_unchecked(&self, cs: &[Constraint], row: RowId) -> Option<&[Value]> {
-        let row = unsafe { self.data.data.get_row_unchecked(row) };
+        let row = unsafe { self.data.get_row_unchecked(row)? };
         if Self::eval_constraints(cs, row) {
             Some(row)
         } else {
@@ -2180,6 +2188,14 @@ fn get_entry_mut<'a>(
             ent.hashcode == hash as HashCode && test(ent.row)
         })
         .map(|ent| &mut ent.row)
+}
+
+/// The shard a row's key belongs to. Always shard 0 for an unsharded table.
+fn shard_of_key(shard_data: ShardData, row: &[Value], n_keys: usize) -> ShardId {
+    if shard_data.n_shards() == 1 {
+        return ShardId::new(0);
+    }
+    hash_code(shard_data, row, n_keys).0
 }
 
 fn hash_code(shard_data: ShardData, row: &[Value], n_keys: usize) -> (ShardId, u64) {

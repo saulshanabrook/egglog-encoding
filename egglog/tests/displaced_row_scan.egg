@@ -1,0 +1,50 @@
+;; A row displaced by a `:merge` update or a `delete` is gone, and no atom may
+;; still match it. A scan carrying a per-row constraint reads rows by a path of
+;; its own, so this pins that path to the same rows an unconstrained scan sees.
+;; Repeating a variable across two columns is what reaches it: that compiles to
+;; a column-to-column equality, which stays a per-row test, whereas a literal in
+;; a column is pushed down to a subset probe and leaves no constraint behind.
+;;
+;; Two things make the leak visible. The rule is declared *after* the
+;; displacement, so its first scan covers the displaced row rather than a later
+;; delta. And the action writes the displaced row's first column into a *later*
+;; column of its own: a displaced row carries a sentinel there, and a row holding
+;; that sentinel in its first column would itself read as displaced, hiding the
+;; very tuple under test.
+
+;; A displacing `:merge` update.
+(function f (i64 i64) i64 :merge (max old new))
+(set (f 3 5) 5)   ;; second input equals the output, so this row would match
+(set (f 5 6) 5)   ;; it never matches
+(set (f 3 5) 9)   ;; raises the output, displacing the row above
+(relation matched (i64 i64 i64))
+(rule ((= q (f p q))) ((matched 0 p q)) :name "repeated-column")
+(run 1)
+;; Free variables ask whether any row at all was written.
+(fail (check (matched 0 mp mq)))
+
+;; The positive control: the same rule over a row nothing displaced.
+(function h (i64 i64) i64 :merge (max old new))
+(set (h 3 5) 5)
+(relation h-matched (i64 i64 i64))
+(rule ((= q (h p q))) ((h-matched 0 p q)) :name "repeated-column-live")
+(run 1)
+(check (h-matched 0 3 5))
+
+;; The same through an explicit `delete`.
+(function g (i64 i64) i64 :merge old)
+(set (g 1 5) 5)   ;; second input equals the output, so this row would match
+(set (g 2 6) 7)   ;; it never matches
+(delete (g 1 5))
+(relation deleted (i64 i64 i64))
+(rule ((= q (g p q))) ((deleted 0 p q)) :name "deleted-row")
+(run 1)
+(fail (check (deleted 0 dp dq)))
+
+;; Its positive control: the same rule before anything is deleted.
+(function k (i64 i64) i64 :merge old)
+(set (k 1 5) 5)
+(relation kept (i64 i64 i64))
+(rule ((= q (k p q))) ((kept 0 p q)) :name "kept-row")
+(run 1)
+(check (kept 0 1 5))

@@ -287,6 +287,18 @@ pub struct TypeInfo {
     /// Typechecking metadata for globally named rules. Runtime rule templates
     /// live with their compiled ruleset entries.
     named_rules: IndexMap<String, NamedRuleTypeInfo>,
+    /// Declared indexes, by the name their atoms are written with.
+    pub(crate) indexes: HashMap<String, IndexInfo>,
+}
+
+/// A declared index: a read-only relation over the rows of `function`, holding
+/// each value appearing in `any_of` followed by the whole row.
+#[derive(Clone, Debug)]
+pub struct IndexInfo {
+    pub function: String,
+    /// Column indices of `function`'s row (its inputs then its outputs), read
+    /// disjunctively.
+    pub any_of: Vec<usize>,
 }
 
 // These methods need to be on the `EGraph` in order to
@@ -648,6 +660,79 @@ impl EGraph {
         Ok(result)
     }
 
+    /// Validate an index declaration and register it as a read-only relation
+    /// `(value, <row of `function`>)`, so its atoms resolve like any other.
+    fn typecheck_index(
+        &mut self,
+        span: &Span,
+        name: &str,
+        function: &str,
+        any_of: &[usize],
+    ) -> Result<(), TypeError> {
+        if self.type_info.func_types.contains_key(name) {
+            return Err(TypeError::FunctionAlreadyBound(
+                name.to_owned(),
+                span.clone(),
+            ));
+        }
+        // An index is a view over a function's table; it has no table of its own
+        // for a second index to read.
+        if self.type_info.indexes.contains_key(function) {
+            return Err(TypeError::IndexOfIndex(
+                name.to_owned(),
+                function.to_owned(),
+                span.clone(),
+            ));
+        }
+        let ft = self
+            .type_info
+            .get_func_type(function)
+            .ok_or_else(|| TypeError::UnboundFunction(function.to_owned(), span.clone()))?;
+        // The indexable row is the function's inputs followed by its outputs.
+        let row: Vec<ArcSort> = ft.input.iter().chain(ft.outputs.iter()).cloned().collect();
+        if any_of.is_empty() {
+            return Err(TypeError::EmptyIndex(name.to_owned(), span.clone()));
+        }
+        let mut value_sort: Option<ArcSort> = None;
+        for &col in any_of {
+            let sort = row.get(col).ok_or_else(|| {
+                TypeError::IndexColumnOutOfRange(name.to_owned(), col, row.len(), span.clone())
+            })?;
+            match &value_sort {
+                None => value_sort = Some(sort.clone()),
+                Some(prev) if prev.name() == sort.name() => {}
+                Some(prev) => {
+                    return Err(TypeError::IndexColumnSortMismatch(
+                        name.to_owned(),
+                        prev.name().to_owned(),
+                        sort.name().to_owned(),
+                        span.clone(),
+                    ));
+                }
+            }
+        }
+        let mut input = vec![value_sort.expect("any_of is non-empty")];
+        input.extend(row);
+        let unit = self.type_info.sorts.get("Unit").expect("Unit sort").clone();
+        self.type_info.func_types.insert(
+            name.to_owned(),
+            FuncType {
+                name: name.to_owned(),
+                subtype: FunctionSubtype::Custom,
+                input,
+                outputs: vec![unit],
+            },
+        );
+        self.type_info.indexes.insert(
+            name.to_owned(),
+            IndexInfo {
+                function: function.to_owned(),
+                any_of: any_of.to_vec(),
+            },
+        );
+        Ok(())
+    }
+
     fn typecheck_command(&mut self, command: &NCommand) -> Result<ResolvedNCommand, TypeError> {
         let expanded_schedule = match command {
             NCommand::RunSchedule(schedule) => Some(expand_checked_alias_schedule(
@@ -730,6 +815,14 @@ impl EGraph {
                     self.proof_state
                         .uf_parent
                         .insert(name.clone(), uf_ctor.clone());
+                    // The rebuild rules canonicalize a term in their action
+                    // through these, derived from the sort's `@UF_<S>` table.
+                    crate::proofs::proof_container_rebuild::register_uf_canon(
+                        self,
+                        name,
+                        uf_ctor,
+                        proof_func.is_some(),
+                    );
                 }
                 if let Some(pf) = proof_func {
                     self.proof_state
@@ -946,6 +1039,20 @@ impl EGraph {
             ),
             NCommand::Pop(span, n) => ResolvedNCommand::Pop(span.clone(), *n),
             NCommand::Push(n) => ResolvedNCommand::Push(*n),
+            NCommand::Index {
+                span,
+                name,
+                function,
+                any_of,
+            } => {
+                self.typecheck_index(span, name, function, any_of)?;
+                ResolvedNCommand::Index {
+                    span: span.clone(),
+                    name: name.clone(),
+                    function: function.clone(),
+                    any_of: any_of.clone(),
+                }
+            }
             NCommand::AddRuleset(span, ruleset) => {
                 ResolvedNCommand::AddRuleset(span.clone(), ruleset.clone())
             }
@@ -1410,10 +1517,11 @@ impl TypeInfo {
                         &result_scope,
                     )?
                 } else {
-                    self.typecheck_standalone_expr(
+                    self.typecheck_expr_with_output(
                         symbol_gen,
                         &merge.result,
                         &result_scope,
+                        outputs[0].clone(),
                         Context::Write,
                     )?
                 };
@@ -1972,6 +2080,22 @@ pub enum TypeError {
         expected: ArcSort,
         actual: ArcSort,
     },
+    #[error("{1}\nIndex {0} lists no columns to index")]
+    EmptyIndex(String, Span),
+    #[error("{3}\nIndex {0} refers to column {1}, but the indexed row has {2} columns")]
+    IndexColumnOutOfRange(String, usize, usize, Span),
+    #[error("{3}\nIndex {0} mixes columns of sort {1} and {2}; an index reads one sort")]
+    IndexColumnSortMismatch(String, String, String, Span),
+    #[error(
+        "{2}\nIndex {0} is looked up by {1}, which no other function atom binds. An index atom is probed, so its value must be bound elsewhere in the query by a function's rows; a body primitive runs after the join, so it cannot bind it."
+    )]
+    IndexValueUnbound(String, String, Span),
+    #[error("{1}\nIndex {0} is maintained by the database and cannot be written to")]
+    IndexIsReadOnly(String, Span),
+    #[error(
+        "{2}\nIndex {0} indexes {1}, which is itself an index; an index has no rows of its own"
+    )]
+    IndexOfIndex(String, String, Span),
     #[error("{1}\nUnbound symbol {0}")]
     Unbound(String, Span),
     #[error("{1}\nNo rule named {0:?} has been declared")]

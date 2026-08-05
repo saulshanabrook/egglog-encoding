@@ -435,15 +435,28 @@ general native transaction-rollback guarantee. Some constructs, such as
 push/pop state and nested `fail`, are rejected before that command is resolved
 or can mutate captured state. Check-directed replay capture currently supports
 exactly one output, no merge actions, and a result formed from `old`, `new`,
-literals, and recursively validated pure primitives. Tuple results, table
-reads, action-local bindings, and effect-capable or unvalidated primitives may
-remain dormant in declarations, but an effective merge or rebuild that reaches
-one is rejected while its capture transaction is still abortable. Ordinary and
-proof execution continue to support their wider merge language. Unsupported
-scheduler, source, literal, container, or mutation shapes similarly produce an
-error at the relevant capture or selection boundary. If native effects may
-already exist when capture fails, the trace is poisoned and later slicing
-refuses to publish an artifact from it.
+literals, and recursively validated pure primitives. It also supports the exact
+same-sort binary constructor form `Constructor(old, new)`, retaining a
+committed constructor fact on a hit or attributing a deferred insertion on a
+miss. Other table reads, tuple results, action-local bindings, and effect-capable
+or unvalidated primitives may remain dormant in declarations, but a
+duplicate-key collision or rebuild that reaches one is rejected while its
+capture transaction is still abortable. Ordinary and proof execution continue
+to support their wider merge language. Unsupported scheduler, source, literal,
+container, or mutation shapes similarly produce an error at the relevant
+capture or selection boundary. If native effects may already exist when capture
+fails, the trace is poisoned and later slicing refuses to publish an artifact
+from it.
+
+### Occurrence-index rule bodies
+
+Occurrence-index rule bodies are a deliberate fail-closed boundary.
+Capture records a firing's ordinary table premises as `FactId`s, but the
+current firing and grounded-probe representations do not retain an occurrence
+index's key or `any_of` metadata. Multi-column probes additionally need the
+disjunct that witnessed the match. Until the firing record carries that
+occurrence metadata, capture rejects the rule body instead of treating its
+table row as a complete premise witness.
 
 Source-authored `run-rule` schedules are one deliberate current boundary.
 Replay uses grounded `run-rule` for already-recorded ordinary firings, but

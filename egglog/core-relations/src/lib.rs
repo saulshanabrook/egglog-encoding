@@ -46,12 +46,12 @@ pub use provenance::{
     AppliedEqualityId, CauseDraftId, CauseId, CauseRef, Criterion, CriterionCaptureSpec,
     CriterionEndpointOccurrence, CriterionEndpointSource, CriterionEquality, DeferredEqualityCause,
     EqualityEndpoint, EqualityReason, FactCellRef, FactId, Firing, FiringCaptureSpec,
-    FiringEqualitySource, FiringId, HistoricalFactCell, HistoryPosition, PremiseOccurrence,
-    PreparedRekey, ProjectedEqualityProposal, RawAppliedEquality, RawCause, RawEqualityEndpoint,
-    RawEqualitySupport, RawFactRecord, RawRekeyRecord, RawTermAvailability, RekeyOutcome,
-    ReplayAliasPlan, ReplayCallSpec, ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTableKind,
-    ReplayTableSchema, ReplayTerm, ReplayTermId, RowOriginSiteId, RuleBindingSpec, SourceRef,
-    Tombstone, Trace, TraceLifecycleError, TraceTotals, TraceView, TraceViewError,
+    FiringEqualitySource, FiringId, HistoricalFactCell, HistoryPosition, MergeRead,
+    PremiseOccurrence, PreparedRekey, ProjectedEqualityProposal, RawAppliedEquality, RawCause,
+    RawEqualityEndpoint, RawEqualitySupport, RawFactRecord, RawRekeyRecord, RawTermAvailability,
+    RekeyOutcome, ReplayAliasPlan, ReplayCallSpec, ReplayLiteral, ReplayOpId, ReplaySortId,
+    ReplayTableKind, ReplayTableSchema, ReplayTerm, ReplayTermId, RowOriginSiteId, RuleBindingSpec,
+    SourceRef, Tombstone, Trace, TraceLifecycleError, TraceTotals, TraceView, TraceViewError,
     TypedCellEquality, TypedEqualityProposal, Wave,
 };
 pub use query::{

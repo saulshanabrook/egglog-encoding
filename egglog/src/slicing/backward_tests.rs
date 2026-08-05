@@ -12,13 +12,17 @@ fn serial_trace_pool() -> &'static rayon::ThreadPool {
     })
 }
 
+fn discard_run_output<T, E: std::fmt::Display>(result: Result<T, E>) -> Result<(), String> {
+    result.map(drop).map_err(|error| error.to_string())
+}
+
 fn replay_slice(egraph: EGraph, slice: &Slice) -> EGraph {
     let replay = crate::slicing::replay::build_replay_program(&egraph, slice).unwrap();
     let commands = replay.to_commands().unwrap();
     drop(egraph);
     let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
     serial_trace_pool()
-        .install(|| proof.run_program(commands))
+        .install(|| discard_run_output(proof.run_program(commands)))
         .unwrap();
     proof
 }
@@ -37,7 +41,7 @@ fn assert_strict_replay_in_all_modes(egraph: EGraph, slice: &Slice) {
         ),
     ] {
         serial_trace_pool()
-            .install(|| replay.run_program(commands.clone()))
+            .install(|| discard_run_output(replay.run_program(commands.clone())))
             .unwrap_or_else(|error| panic!("{mode} replay failed: {error}"));
     }
 }
@@ -439,7 +443,7 @@ fn same_syntax_constructor_recreation_retains_raw_reconciliation() {
 
     let mut proof = EGraph::default().with_proofs_enabled();
     serial_trace_pool()
-        .install(|| proof.run_program(commands))
+        .install(|| discard_run_output(proof.run_program(commands)))
         .unwrap();
 }
 
@@ -515,7 +519,7 @@ fn parent_alias_waits_for_child_key_bridge_without_borrowing_parent_anchor() {
     drop(egraph);
     let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
     serial_trace_pool()
-        .install(|| proof.run_program(commands))
+        .install(|| discard_run_output(proof.run_program(commands)))
         .unwrap();
 }
 
@@ -618,7 +622,7 @@ fn post_deletion_equality_cannot_select_stale_child_producer() {
 
     let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
     serial_trace_pool()
-        .install(|| proof.run_program(commands))
+        .install(|| discard_run_output(proof.run_program(commands)))
         .unwrap();
 }
 
@@ -726,7 +730,7 @@ fn duplicate_syntax_in_one_binding_keeps_distinct_occurrence_windows() {
 
     let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
     serial_trace_pool()
-        .install(|| proof.run_program(commands))
+        .install(|| discard_run_output(proof.run_program(commands)))
         .unwrap();
 }
 
@@ -869,7 +873,7 @@ fn source_merge_old_noop_retains_its_predecessor_with_an_effective_sibling() {
         ),
     ] {
         serial_trace_pool()
-            .install(|| replay.run_program(commands.clone()))
+            .install(|| discard_run_output(replay.run_program(commands.clone())))
             .unwrap_or_else(|error| panic!("{mode} replay failed: {error}"));
         replay
             .parse_and_run_program(None, "(check (= value (f)) (= value (A)))")
@@ -937,7 +941,7 @@ fn same_term_child_occurrences_keep_their_native_bridge() {
 
     let mut proof = EGraph::default().with_proofs_enabled();
     serial_trace_pool()
-        .install(|| proof.run_program(commands))
+        .install(|| discard_run_output(proof.run_program(commands)))
         .unwrap();
 }
 
@@ -993,7 +997,7 @@ fn selected_firing_exposes_whole_head_without_causal_closing_sibling() {
 
     let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
     serial_trace_pool()
-        .install(|| proof.run_program(commands))
+        .install(|| discard_run_output(proof.run_program(commands)))
         .unwrap();
     proof
         .parse_and_run_program(None, "(check (Sibling ()))")
@@ -1071,7 +1075,7 @@ fn direct_check_retains_nested_child_equality_used_by_a_head_term() {
 
     let mut proof = EGraph::default().with_proofs_enabled();
     serial_trace_pool()
-        .install(|| proof.run_program(commands))
+        .install(|| discard_run_output(proof.run_program(commands)))
         .unwrap();
 }
 
@@ -1106,7 +1110,7 @@ fn eqsort_result_of_replay_safe_primitive_is_structurally_available() {
 
     let mut proof = EGraph::default().with_proofs_enabled();
     serial_trace_pool()
-        .install(|| proof.run_program(commands))
+        .install(|| discard_run_output(proof.run_program(commands)))
         .unwrap();
 }
 
@@ -1140,7 +1144,7 @@ fn repeated_pure_result_guards_share_one_naming_recipe() {
 
     let mut proof = EGraph::default().with_proofs_enabled();
     serial_trace_pool()
-        .install(|| proof.run_program(commands))
+        .install(|| discard_run_output(proof.run_program(commands)))
         .unwrap();
 }
 
@@ -1152,7 +1156,7 @@ fn eqsort_projection_retains_the_child_equality_it_observed() {
         .unwrap();
     serial_trace_pool()
         .install(|| {
-            egraph.parse_and_run_program(
+            discard_run_output(egraph.parse_and_run_program(
                 None,
                 "(datatype E (A) (B))
                  (sort Es (Vec E))
@@ -1173,7 +1177,7 @@ fn eqsort_projection_retains_the_child_equality_it_observed() {
                  (run make 1)
                  (run consume 1)
                  (check (Out))",
-            )
+            ))
         })
         .unwrap();
 
@@ -1185,7 +1189,7 @@ fn eqsort_projection_retains_the_child_equality_it_observed() {
 
     let mut proof = EGraph::default().with_proofs_enabled();
     serial_trace_pool()
-        .install(|| proof.run_program(commands))
+        .install(|| discard_run_output(proof.run_program(commands)))
         .unwrap();
 }
 
@@ -1223,6 +1227,6 @@ fn congruence_projection_retains_historical_child_union() {
 
     let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
     serial_trace_pool()
-        .install(|| proof.run_program(commands))
+        .install(|| discard_run_output(proof.run_program(commands)))
         .unwrap();
 }

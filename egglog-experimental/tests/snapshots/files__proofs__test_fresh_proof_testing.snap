@@ -20,4 +20,4 @@ expression: snapshot
       (substitution (a (Var "x")) (b (Var "y"))))
     prf0
     (Fiat (= () ())))
-  (substitution (?y (Var "x")) (?x t0)))
+  (substitution (?x t0) (?y (Var "x"))))

@@ -153,8 +153,8 @@ impl PendingFiringCause {
         Ok(())
     }
 
-    fn record_merge_read(&self, prior_fact: FactId) {
-        self.trace.record_firing_merge_read(self.firing, prior_fact);
+    fn record_merge_read(&self, read: MergeRead) {
+        self.trace.record_firing_merge_read(self.firing, read);
     }
 }
 
@@ -289,17 +289,17 @@ impl DeferredEqualityCause {
         Self(DeferredEqualityCauseKind::Pending(cause))
     }
 
-    /// Attach a table merge callback's immutable predecessor to the incoming
-    /// replay owner without promoting it. Nested merge causes preserve the
-    /// original incoming firing or source command as their attribution owner.
-    pub(crate) fn record_merge_read(&self, trace: &Trace, prior_fact: FactId) {
+    /// Attach one historical table read to the incoming replay owner without
+    /// promoting it. Nested merge causes preserve the original incoming firing
+    /// or source command as their attribution owner.
+    pub(crate) fn record_merge_read(&self, trace: &Trace, read: MergeRead) {
         match &self.0 {
             DeferredEqualityCauseKind::Ready { cause, .. } => {
-                trace.record_ready_merge_read(*cause, prior_fact)
+                trace.record_ready_merge_read(*cause, read)
             }
-            DeferredEqualityCauseKind::Pending(cause) => cause.record_merge_read(prior_fact),
+            DeferredEqualityCauseKind::Pending(cause) => cause.record_merge_read(read),
             DeferredEqualityCauseKind::Merge(cause) => {
-                cause.incoming.record_merge_read(trace, prior_fact)
+                cause.incoming.record_merge_read(trace, read)
             }
         }
     }
@@ -496,9 +496,12 @@ struct TraceArena {
     durable_firings: Vec<Option<DurableFiring>>,
     durable_premises: Vec<FactId>,
     /// Sparse because ordinary firings never invoke a merge callback.
-    merge_reads: HashMap<FiringId, SmallVec<[FactId; 2]>>,
+    merge_reads: HashMap<FiringId, SmallVec<[MergeRead; 2]>>,
     /// Sparse because most source action bundles never invoke a merge callback.
-    source_merge_reads: HashMap<SourceRef, SmallVec<[FactId; 2]>>,
+    source_merge_reads: HashMap<SourceRef, SmallVec<[MergeRead; 2]>>,
+    /// Sparse additional facts consulted by merge callbacks owned by an
+    /// already-durable rebuild, container, or nested merge cause.
+    cause_merge_reads: HashMap<CauseDraftId, SmallVec<[MergeRead; 2]>>,
     durable_fact_values: Vec<Value>,
     /// Flat typed-cell equality slab shared by rebuild and container causes.
     durable_cell_equalities: Vec<TypedCellEquality>,
@@ -629,7 +632,7 @@ impl TraceArena {
                     cause: node.public(),
                 }
             }
-            (_, EqualityCauseSummary::Rule) => EqualityReason::MergeFn {
+            (_, EqualityCauseSummary::Rule) => EqualityReason::Merge {
                 cause: node.public(),
             },
             (_, EqualityCauseSummary::Container { position }) => EqualityReason::Congruence {
@@ -2803,6 +2806,68 @@ impl Trace {
         }))
     }
 
+    /// Build a constructor-row origin from exact cells of an active merge.
+    ///
+    /// The referenced facts may belong to the native publication batch that
+    /// is still running. Keep cell projection lazy so the immutable fact arena
+    /// is complete before any structural term is requested.
+    pub(crate) fn merge_constructor_origin(
+        &self,
+        table: TableId,
+        merge_table: TableId,
+        children: &[(RowOriginRef, usize)],
+    ) -> Result<RowOriginSiteId, &'static str> {
+        let constructor = self
+            .table_constructor(table)
+            .ok_or("merge constructor table has no replay constructor")?;
+        if children.len() != constructor.child_sorts.len() {
+            return Err("merge constructor has the wrong direct-input arity");
+        }
+        if children
+            .first()
+            .and_then(|(_, column)| self.table_column_sort(merge_table, *column))
+            != Some(constructor.result_sort)
+        {
+            return Err("merge constructor result sort does not match the merged value");
+        }
+        let layout = self
+            .0
+            .replay_terms
+            .table_layout(table)
+            .ok_or("merge constructor table has no replay layout")?;
+        let output = children.len();
+        if layout.get(output).copied().flatten() != Some(constructor.result_sort) {
+            return Err("merge constructor output does not match its table layout");
+        }
+
+        let mut child_templates = Vec::with_capacity(children.len());
+        for (&sort, &(origin, column)) in constructor.child_sorts.iter().zip(children) {
+            if self.table_column_sort(merge_table, column) != Some(sort) {
+                return Err("merge constructor input sort does not match its source column");
+            }
+            child_templates.push(Arc::new(TermTemplate::RowOriginCell {
+                origin,
+                table: merge_table,
+                column: u16::try_from(column)
+                    .map_err(|_| "merge constructor source column exceeds u16")?,
+            }));
+        }
+
+        let mut cells = vec![None; layout.len()];
+        for (column, child) in child_templates.iter().enumerate() {
+            cells[column] = Some(Arc::clone(child));
+        }
+        cells[output] = Some(Arc::new(TermTemplate::Call {
+            sort: constructor.result_sort,
+            op: constructor.op,
+            children: child_templates.into(),
+        }));
+        Ok(self.register_row_origin(RowOriginSpec {
+            table,
+            cells: cells.into(),
+        }))
+    }
+
     #[cfg(test)]
     pub(crate) fn source_draft(&self, source: SourceRef) -> CauseDraftId {
         let id = CauseDraftId::new(TraceShared::alloc_u64(&self.0.next_cause_draft, 1));
@@ -3035,11 +3100,8 @@ impl Trace {
         Ok(())
     }
 
-    fn record_firing_merge_read(&self, firing: FiringId, prior_fact: FactId) {
-        assert!(
-            !prior_fact.is_missing(),
-            "capture-enabled table merge read a row without an immutable FactId"
-        );
+    fn record_firing_merge_read(&self, firing: FiringId, read: MergeRead) {
+        Self::validate_merge_read(read);
         if self.0.poisoned_rule_executions.load(Ordering::Acquire) != 0 {
             panic!("cannot record merge read: firing belongs to a panicking execution");
         }
@@ -3050,31 +3112,47 @@ impl Trace {
             .merge_reads
             .entry(firing)
             .or_default()
-            .push(prior_fact);
+            .push(read);
     }
 
-    fn record_ready_merge_read(&self, cause: PackedCauseRef, prior_fact: FactId) {
+    fn record_ready_merge_read(&self, cause: PackedCauseRef, read: MergeRead) {
         if let Some(firing) = cause.firing() {
-            self.record_firing_merge_read(firing, prior_fact);
+            self.record_firing_merge_read(firing, read);
             return;
         }
+        Self::validate_merge_read(read);
+        let node = cause
+            .cause_node()
+            .expect("ready merge-read carrier has no exact cause");
+        let mut arena = self.0.arena.lock().unwrap();
+        match arena.durable_cause(node) {
+            Some(DurableCause::Source(source)) => {
+                let source = source.clone();
+                arena
+                    .source_merge_reads
+                    .entry(source)
+                    .or_default()
+                    .push(read);
+            }
+            Some(
+                DurableCause::Rebuild { .. }
+                | DurableCause::ContainerCanonicalize { .. }
+                | DurableCause::ContainerRefresh { .. }
+                | DurableCause::Merge { .. },
+            ) => arena.cause_merge_reads.entry(node).or_default().push(read),
+            None => panic!("ready merge-read carrier has no durable cause"),
+        }
+    }
+
+    fn validate_merge_read(read: MergeRead) {
+        let fact = match read {
+            MergeRead::Fact { fact, .. } => Some(fact),
+            MergeRead::Constructor { hit, .. } => hit,
+        };
         assert!(
-            !prior_fact.is_missing(),
+            fact.is_none_or(|fact| !fact.is_missing()),
             "capture-enabled table merge read a row without an immutable FactId"
         );
-        let Some(node) = cause.cause_node() else {
-            return;
-        };
-        let mut arena = self.0.arena.lock().unwrap();
-        let source = match arena.durable_cause(node) {
-            Some(DurableCause::Source(source)) => source.clone(),
-            _ => return,
-        };
-        arena
-            .source_merge_reads
-            .entry(source)
-            .or_default()
-            .push(prior_fact);
     }
 
     /// Test-only eager registration helper for low-level capture fixtures.

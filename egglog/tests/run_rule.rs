@@ -285,3 +285,47 @@ fn run_rule_requires_every_rule_variable_exactly_once() {
         })) if rule == "r" && variable == "x"
     ));
 }
+
+#[test]
+fn run_rule_fails_closed_for_occurrence_index_bodies() {
+    let mut egraph = EGraph::default();
+    egraph
+        .parse_and_run_program(
+            None,
+            r#"
+                (function edge (i64 i64) i64 :merge old)
+                (index EdgeOcc edge (any 0 1 2))
+                (relation trigger (i64))
+                (relation SeenIndex (i64 i64 i64 i64))
+                (set (edge 1 2) 3)
+                (trigger 2)
+                (trigger 9)
+                (rule ((trigger x) (EdgeOcc x p q r))
+                      ((SeenIndex x p q r))
+                      :name "from-occurrence-index")
+                (run 1)
+                (check (SeenIndex 2 1 2 3))
+                (fail (check (SeenIndex 9 1 2 3)))
+            "#,
+        )
+        .unwrap();
+
+    let error = egraph
+        .parse_and_run_program(
+            None,
+            r#"
+                (run-schedule
+                  (run-rule
+                    ("from-occurrence-index" ((x 9) (p 1) (q 2) (r 3)))))
+            "#,
+        )
+        .expect_err("occurrence-index rule unexpectedly used grounded execution");
+    assert!(
+        matches!(&error, Error::BackendError(message)
+            if message.contains("cannot use grounded execution")),
+        "unexpected occurrence-index run-rule error: {error:?}"
+    );
+    egraph
+        .parse_and_run_program(None, "(fail (check (SeenIndex 9 1 2 3)))")
+        .unwrap();
+}

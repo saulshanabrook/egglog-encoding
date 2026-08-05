@@ -1,6 +1,5 @@
 ---
 source: egglog/tests/files.rs
-assertion_line: 279
 expression: proof_snapshot
 ---
 (let prf0 (Sym (= (B) (A)) (Fiat (= (A) (B)))))
@@ -31,8 +30,8 @@ expression: proof_snapshot
       (Sym (= (Holds (set-of (A))) t0) prf1)
       prf1))
   (substitution
-    (@v132 (A))
-    (@v134 (A))
-    (@v131 (A))
-    (@v135 (set-of (A)))
-    (@v133 (set-of (A)))))
+    (@v (A))
+    (@v1 (A))
+    (@v3 (A))
+    (@v2 (set-of (A)))
+    (@v4 (set-of (A)))))

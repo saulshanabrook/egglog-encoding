@@ -29,14 +29,14 @@ use std::collections::VecDeque;
 use crate::core_relations::{
     AppliedEqualityId, CauseId, CauseRef, Criterion, CriterionEndpointOccurrence, EqualityEndpoint,
     EqualityReason, FactCellRef, FactId, FiringEqualitySource, FiringId, HistoryPosition,
-    PremiseOccurrence, ProjectedEqualityProposal, RawCause, RawEqualityEndpoint,
+    MergeRead, PremiseOccurrence, ProjectedEqualityProposal, RawCause, RawEqualityEndpoint,
     RawEqualitySupport, ReplayAliasPlan, ReplayTableKind, ReplayTermId, SourceRef, TableId,
     TraceView, TraceViewError, TypedCellEquality, Value,
 };
 use crate::numeric_id::NumericId;
 use crate::util::{HashMap, HashSet};
 
-use crate::EGraph;
+use crate::{CaptureCatalog, EGraph};
 
 #[derive(Default)]
 /// The closed selection consumed by replay lowering.
@@ -173,6 +173,11 @@ pub(super) enum SliceError {
 /// equality's endpoints.
 enum Work {
     Fact(FactId),
+    MergeRead {
+        read: MergeRead,
+        firing: Option<FiringId>,
+    },
+    Source(SourceRef),
     Firing(FiringId),
     Cause(CauseRef),
     Equality(AppliedEqualityId),
@@ -296,7 +301,7 @@ fn build_owner_index(view: &TraceView<'_>) -> Result<OwnerIndex, TraceViewError>
         let owner = match event.reason {
             EqualityReason::RuleUnion(rule) => Some(ReplayOwner::Firing(rule)),
             EqualityReason::SourceUnion { cause }
-            | EqualityReason::MergeFn { cause }
+            | EqualityReason::Merge { cause }
             | EqualityReason::Congruence { cause, .. } => {
                 replay_owner_for_cause(view, CauseRef::Cause(cause), &mut memo, &mut active)?
             }
@@ -450,6 +455,15 @@ fn maintenance_cause_is_replay_visible(
             "trace cause cycle reaches {cause:?}"
         )));
     }
+    let merge_reads_visible = match cause {
+        CauseRef::Rule(_) => true,
+        CauseRef::Cause(id) => view.cause_merge_reads(id)?.iter().all(|read| match read {
+            MergeRead::Fact { fact, .. } => selection.replay_facts.contains(fact),
+            MergeRead::Constructor { hit, .. } => {
+                hit.is_none_or(|fact| selection.replay_facts.contains(&fact))
+            }
+        }),
+    };
     let visible = match cause {
         CauseRef::Rule(rule) => selection.slice.firing_bindings.contains_key(&rule),
         CauseRef::Cause(id) => match view.cause(id)? {
@@ -504,7 +518,7 @@ fn maintenance_cause_is_replay_visible(
         },
     };
     active.remove(&cause);
-    Ok(visible)
+    Ok(merge_reads_visible && visible)
 }
 
 /// Retain implicit merge/congruence equalities implied by replay-visible state.
@@ -538,7 +552,7 @@ fn select_replay_maintenance_equalities(
         let event = view.applied_equality(id)?;
         let cause = match event.reason {
             EqualityReason::RuleUnion(_) | EqualityReason::SourceUnion { .. } => continue,
-            EqualityReason::MergeFn { cause } | EqualityReason::Congruence { cause, .. } => {
+            EqualityReason::Merge { cause } | EqualityReason::Congruence { cause, .. } => {
                 CauseRef::Cause(cause)
             }
         };
@@ -734,8 +748,14 @@ fn seed_check_root(
 /// denotations, and rekeys. After it drains, native maintenance equalities and
 /// interference removals may introduce new obligations; the outer loop repeats
 /// until both passes are stable, then validates every saved exact explanation.
-fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice, TraceViewError> {
+fn slice_roots(
+    view: &mut TraceView<'_>,
+    roots: Vec<Criterion>,
+    catalog: &CaptureCatalog,
+) -> Result<Slice, TraceViewError> {
     let owner_index = build_owner_index(view)?;
+    let mut cause_owner_memo = HashMap::default();
+    let mut cause_owner_active = HashSet::default();
     let mut selection = SelectionState::default();
     let mut work = VecDeque::new();
     for root in &roots {
@@ -752,6 +772,87 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                     selection.replay_facts.insert(id);
                     let cause = view.fact(id)?.cause;
                     work.push_back(Work::Cause(cause));
+                }
+                Work::MergeRead { read, firing } => match read {
+                    MergeRead::Fact {
+                        fact,
+                        history_cutoff,
+                    } => {
+                        work.push_back(Work::Fact(fact));
+                        let record = view.fact(fact)?;
+                        let schema = view.table_schema(record.table)?;
+                        for (column, sort) in schema.columns.iter().enumerate() {
+                            if sort.is_none() {
+                                continue;
+                            }
+                            let occurrence = FactCellRef {
+                                fact,
+                                column: crate::core_relations::ColumnId::new(
+                                    column.try_into().map_err(|_| {
+                                        TraceViewError::Invalid(
+                                            "merge-read column exceeds u32".into(),
+                                        )
+                                    })?,
+                                ),
+                            };
+                            // Selecting the exact fact retains its structural
+                            // creation carrier. A merge callback additionally
+                            // reads only that row's callback-time state, so
+                            // follow its rekeys; full term availability here
+                            // would pull unrelated older constructors with the
+                            // same spelling.
+                            work.extend(
+                                view.fact_cell_at(occurrence, history_cutoff)?
+                                    .rekeys
+                                    .iter()
+                                    .copied()
+                                    .map(Work::Rekey),
+                            );
+                        }
+                    }
+                    MergeRead::Constructor {
+                        table,
+                        origin,
+                        key,
+                        history_cutoff,
+                        hit,
+                    } => {
+                        let support = view.explain_merge_constructor_read(
+                            table,
+                            origin,
+                            key,
+                            history_cutoff,
+                            hit,
+                            firing,
+                        )?;
+                        enqueue_support(&mut work, support);
+                    }
+                },
+                Work::Source(source) => {
+                    if !selection.slice.source_roots.insert(source.clone()) {
+                        continue;
+                    }
+                    mark_owner_visible(
+                        view,
+                        &owner_index,
+                        &mut selection,
+                        &mut work,
+                        &ReplayOwner::Source(source.clone()),
+                    )?;
+                    work.extend(
+                        view.source_merge_reads(&source)
+                            .iter()
+                            .copied()
+                            .map(|read| Work::MergeRead { read, firing: None }),
+                    );
+                    if let SourceRef::Synthetic(_) = &source {
+                        let entry = catalog.source_commands.get(&source).ok_or_else(|| {
+                            TraceViewError::Invalid(format!(
+                                "selected source {source:?} has no catalog entry"
+                            ))
+                        })?;
+                        work.extend(entry.dependencies.iter().cloned().map(Work::Source));
+                    }
                 }
                 Work::Firing(id) => {
                     if selection.slice.firing_bindings.contains_key(&id) {
@@ -770,7 +871,10 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                     let premises = firing.premises.to_vec();
                     let merge_reads = firing.merge_reads.to_vec();
                     work.extend(premises.iter().copied().map(Work::Fact));
-                    work.extend(merge_reads.into_iter().map(Work::Fact));
+                    work.extend(merge_reads.into_iter().map(|read| Work::MergeRead {
+                        read,
+                        firing: Some(id),
+                    }));
                     let terms = view.firing_terms(id)?;
                     let mut bindings = Vec::with_capacity(terms.len());
                     for (binding, term) in terms.iter().copied().enumerate() {
@@ -802,19 +906,24 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                         work.push_back(Work::Firing(id));
                         continue;
                     };
+                    let firing = match replay_owner_for_cause(
+                        view,
+                        cause,
+                        &mut cause_owner_memo,
+                        &mut cause_owner_active,
+                    )? {
+                        Some(ReplayOwner::Firing(firing)) => Some(firing),
+                        Some(ReplayOwner::Source(_)) | None => None,
+                    };
+                    work.extend(
+                        view.cause_merge_reads(id)?
+                            .iter()
+                            .copied()
+                            .map(|read| Work::MergeRead { read, firing }),
+                    );
                     match view.cause(id)? {
                         RawCause::Source(source) => {
-                            let merge_reads = view.source_merge_reads(source).to_vec();
-                            let source = source.clone();
-                            selection.slice.source_roots.insert(source.clone());
-                            mark_owner_visible(
-                                view,
-                                &owner_index,
-                                &mut selection,
-                                &mut work,
-                                &ReplayOwner::Source(source),
-                            )?;
-                            work.extend(merge_reads.into_iter().map(Work::Fact));
+                            work.push_back(Work::Source(source.clone()));
                         }
                         RawCause::Rebuild {
                             prior_fact,
@@ -898,7 +1007,7 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
                     work.push_back(Work::Cause(match reason {
                         EqualityReason::RuleUnion(rule) => CauseRef::Rule(rule),
                         EqualityReason::SourceUnion { cause }
-                        | EqualityReason::MergeFn { cause }
+                        | EqualityReason::Merge { cause }
                         | EqualityReason::Congruence { cause, .. } => CauseRef::Cause(cause),
                     }));
                 }
@@ -951,9 +1060,12 @@ fn slice_roots(view: &mut TraceView<'_>, roots: Vec<Criterion>) -> Result<Slice,
 }
 
 /// Select the union of the support cones for all recorded successful checks.
-fn slice_all_view(view: &mut TraceView<'_>) -> Result<Slice, TraceViewError> {
+fn slice_all_view(
+    view: &mut TraceView<'_>,
+    catalog: &CaptureCatalog,
+) -> Result<Slice, TraceViewError> {
     let roots = view.check_roots().into_iter().cloned().collect();
-    slice_roots(view, roots)
+    slice_roots(view, roots, catalog)
 }
 
 /// Select all successful checks from a healthy concrete-backend capture.
@@ -962,10 +1074,11 @@ fn slice_all_view(view: &mut TraceView<'_>) -> Result<Slice, TraceViewError> {
 /// non-native backends before borrowing a trace view. The public facade maps
 /// the resulting [`SliceError`] into `crate::Error`.
 pub(super) fn select_all_checks(egraph: &EGraph) -> Result<Slice, SliceError> {
-    egraph
+    let catalog = egraph
         .capture_catalog
         .as_ref()
-        .ok_or(SliceError::Disabled)?
+        .ok_or(SliceError::Disabled)?;
+    catalog
         .ensure_healthy()
         .map_err(|error| SliceError::Poisoned(error.to_string()))?;
     let bridge = egraph
@@ -974,7 +1087,7 @@ pub(super) fn select_all_checks(egraph: &EGraph) -> Result<Slice, SliceError> {
         .downcast_ref::<egglog_bridge::EGraph>()
         .ok_or(SliceError::UnsupportedBackend)?;
     bridge
-        .with_trace_view(slice_all_view)
+        .with_trace_view(|view| slice_all_view(view, catalog))
         .map_err(SliceError::Trace)
 }
 

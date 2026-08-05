@@ -159,7 +159,7 @@ pub struct EGraph {
     /// Live registry of name-indexed action handles. Shared (via
     /// `Arc<RwLock<_>>`) with state wrappers and primitive callbacks
     /// in the egglog crate so name-indexed action methods on
-    /// [`WriteState`] / [`FullState`] can resolve table actions at
+    /// `WriteState` / `FullState` can resolve table actions at
     /// invoke time. Mutated in place from [`add_table`](EGraph::add_table).
     action_registry: Arc<std::sync::RwLock<ActionRegistry>>,
 }
@@ -277,7 +277,9 @@ pub struct FunctionConfig {
 /// [`FunctionReplaySpec::merge_result`] is a separate, read-only call recipe
 /// for naming an effective scalar merge after its structural carrier runs.
 /// It is absent for presence relations and for merge programs whose result
-/// cannot be replayed without additional effects or table reads.
+/// cannot be replayed without additional effects or unsupported table reads.
+/// A direct binary constructor over `old` and `new` is the sole table-backed
+/// result shape with exact hit/miss capture.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FunctionReplaySpec {
     /// Logical sort of each user-visible column: keys first, then outputs.
@@ -464,29 +466,35 @@ impl EGraph {
 
     /// Register the term encoder's `set-if-empty` canonicalize op for the FD
     /// view table named `view_name` (`n_keys` key columns), returning the
-    /// [`ExternalFunctionId`] its mint sites resolve to. At invoke: look up
-    /// `(view keys)`; if a row exists return its first output (the eclass);
-    /// otherwise insert `(keys, trailing-default-columns)` and return the first
-    /// default column. Serviced over this backend's db view table.
+    /// [`ExternalFunctionId`] its mint sites resolve to.
+    ///
+    /// Invoked as `(keys…, vals…)`, it returns the view's first output column
+    /// (the e-class) for `keys`: the existing row's when the key is present, and
+    /// otherwise the first of `vals` after staging `(keys, vals)`. A second
+    /// invocation with the same key inside one action batch sees the first one's
+    /// staged row, so the two agree — see
+    /// [`TableAction::lookup_or_insert_vals`].
     pub fn register_set_if_empty(
         &mut self,
         view_name: String,
         n_keys: usize,
-        _out_arity: usize,
+        out_arity: usize,
     ) -> ExternalFunctionId {
         let registry = self.action_registry.clone();
         self.register_external_func(Box::new(make_external_func(
             move |state: &mut ExecutionState, args: &[Value]| {
                 let registry = registry.read().unwrap();
                 let action = registry.lookup_table(&view_name)?.clone();
+                // Too few vals and the row is staged short of its value columns;
+                // too many and the surplus lands on the timestamp.
+                debug_assert_eq!(
+                    args.len(),
+                    n_keys + out_arity,
+                    "set-if-empty on view `{view_name}` takes {n_keys} keys and \
+                     {out_arity} values"
+                );
                 let keys = &args[..n_keys];
-                if let Some(vals) = action.lookup_values(state, keys) {
-                    // Already canonicalized: reuse the committed eclass and skip
-                    // the insert, so the fresh id never enters the table.
-                    return Some(vals[0]);
-                }
-                action.insert(state, args.iter().copied());
-                Some(args[n_keys])
+                Some(action.lookup_or_insert_vals(state, keys, &args[n_keys..]))
             },
         )))
     }
@@ -507,10 +515,11 @@ impl EGraph {
                 let registry = registry.read().unwrap();
                 let action = registry.lookup_table(&view_name)?.clone();
                 let fallback = args[n_keys];
-                Some(match action.lookup_values(state, &args[..n_keys]) {
-                    Some(vals) => vals[col_idx],
-                    None => fallback,
-                })
+                Some(
+                    action
+                        .lookup_value_col(state, &args[..n_keys], col_idx)
+                        .unwrap_or(fallback),
+                )
             },
         )))
     }
@@ -852,7 +861,7 @@ impl EGraph {
         };
         let n_args = schema_math.num_keys();
         let n_cols = schema_math.table_columns();
-        let merge_result_shape_supported = merge.supports_scalar_replay_result_shape();
+        let merge_result_shape = merge.scalar_replay_result_shape(self);
         let next_func_id = self.funcs.next_id();
         let name: Arc<str> = name.into();
         // Knot-tying for a self-referential merge (e.g. the term encoder's single-table UF `@UF`,
@@ -869,7 +878,7 @@ impl EGraph {
             n_keys,
             n_identity_vals,
             replay: None,
-            merge_result_shape_supported,
+            merge_result_shape,
             incremental_rebuild_rules: Default::default(),
             nonincremental_rebuild_rule: RuleId::new(!0),
             default_val: default,
@@ -1025,9 +1034,9 @@ impl EGraph {
                     info.name
                 );
             }
-            if !info.merge_result_shape_supported {
+            if matches!(info.merge_result_shape, MergeResultShape::Unsupported) {
                 anyhow::bail!(
-                    "function `{}` supplied merge-result replay metadata for an actionful or table-reading merge",
+                    "function `{}` supplied merge-result replay metadata for an unsupported action or table read",
                     info.name
                 );
             }
@@ -1050,6 +1059,35 @@ impl EGraph {
                     "function `{}` merge-result replay child sorts do not match its keys",
                     info.name
                 );
+            }
+            if let MergeResultShape::DirectConstructor(target) = info.merge_result_shape {
+                let target_info = &self.funcs[target];
+                let target_replay = target_info.replay.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "function `{}` direct merge constructor `{}` has no trace replay metadata",
+                        info.name,
+                        target_info.name
+                    )
+                })?;
+                let target_constructor = target_replay.constructor.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "function `{}` direct merge constructor `{}` has no constructor replay metadata",
+                        info.name,
+                        target_info.name
+                    )
+                })?;
+                let output_sort = spec.logical_sorts[info.n_keys];
+                if target_constructor.child_sorts.as_ref() != [output_sort, output_sort]
+                    || target_constructor.result_sort != output_sort
+                {
+                    anyhow::bail!(
+                        "function `{}` direct merge constructor `{}` has incompatible replay signature: expected [{output_sort:?}, {output_sort:?}] -> {output_sort:?}, found {:?} -> {:?}",
+                        info.name,
+                        target_info.name,
+                        target_constructor.child_sorts,
+                        target_constructor.result_sort
+                    );
+                }
             }
         }
 
@@ -1726,13 +1764,21 @@ struct FunctionInfo {
     /// Opt-in identity-column guard (see [`FunctionConfig::n_identity_vals`]).
     n_identity_vals: Option<usize>,
     replay: Option<FunctionReplaySpec>,
-    /// The native merge has one action-free result and no hidden table read or binding.
-    merge_result_shape_supported: bool,
+    /// Physical shape of the native merge's sole scalar result. Logical
+    /// constructor compatibility is checked when replay metadata is registered.
+    merge_result_shape: MergeResultShape,
     incremental_rebuild_rules: Vec<RuleId>,
     nonincremental_rebuild_rule: RuleId,
     default_val: DefaultVal,
     can_subsume: bool,
     name: Arc<str>,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum MergeResultShape {
+    Unsupported,
+    NoTableRead,
+    DirectConstructor(FunctionId),
 }
 
 impl FunctionInfo {
@@ -1821,6 +1867,28 @@ impl TableAction {
     /// Number of output (value) columns.
     pub fn output_arity(&self) -> usize {
         self.table_math.n_vals()
+    }
+
+    /// Look up value column `col_idx` for `key`, or `None` if the key is absent.
+    /// This is a pure read and never inserts a default row.
+    pub fn lookup_value_col(
+        &self,
+        state: &ExecutionState,
+        key: &[Value],
+        col_idx: usize,
+    ) -> Option<Value> {
+        // The timestamp column sits right after the value columns, so an
+        // out-of-range `col_idx` would read one of the table's own bookkeeping
+        // columns back as a value.
+        debug_assert!(
+            col_idx < self.table_math.n_vals(),
+            "value column {col_idx} is past this table's {} value columns",
+            self.table_math.n_vals()
+        );
+        state.get_table(self.table).get_row_column(
+            key,
+            ColumnId::from_usize(self.table_math.num_keys() + col_idx),
+        )
     }
 
     /// Look up all output columns for `key`. This is a pure read and never
@@ -1928,6 +1996,37 @@ impl TableAction {
         }
     }
 
+    fn lookup_or_insert_merge_constructor(
+        &self,
+        state: &mut ExecutionState,
+        key: &[Value],
+        merge_table: TableId,
+        input_column: ColumnId,
+    ) -> Option<Value> {
+        assert_eq!(self.kind, TableKind::Constructor);
+        let key: [Value; 2] = key
+            .try_into()
+            .expect("causal scalar merge constructors are exactly binary");
+        let origin = state
+            .merge_constructor_origin(self.table, merge_table, input_column)
+            .unwrap_or_else(|error| panic!("cannot capture merge constructor result: {error}"));
+        if let Some(row) = state.get_table(self.table).get_row(&key) {
+            let fact = state
+                .get_table(self.table)
+                .fact_id(row.id)
+                .expect("capture-enabled constructor row has no immutable FactId");
+            state
+                .record_merge_constructor_lookup(self.table, origin, key, Some(fact))
+                .unwrap_or_else(|error| panic!("cannot record merge constructor lookup: {error}"));
+            return Some(row.vals[self.table_math.ret_val_col()]);
+        }
+
+        state
+            .record_merge_constructor_lookup(self.table, origin, key, None)
+            .unwrap_or_else(|error| panic!("cannot record merge constructor lookup: {error}"));
+        self.lookup_or_insert_with_origin(state, &key, origin)
+    }
+
     fn lookup_or_insert_with_origin(
         &self,
         state: &mut ExecutionState,
@@ -2007,6 +2106,39 @@ impl TableAction {
             }
             None => self.lookup(state, key),
         }
+    }
+
+    /// Get-or-insert with caller-supplied value columns, reading this batch's
+    /// own pending inserts.
+    ///
+    /// Returns the first value column of the row for `key`: the committed row's
+    /// if the key is present, the pending row's if an earlier call in this same
+    /// action batch already inserted it, and otherwise `vals`' first entry after
+    /// staging `(key, vals)`.
+    pub fn lookup_or_insert_vals(
+        &self,
+        state: &mut ExecutionState,
+        key: &[Value],
+        vals: &[Value],
+    ) -> Value {
+        debug_assert_eq!(
+            vals.len(),
+            self.table_math.n_vals(),
+            "lookup_or_insert_vals: vals must fill every value column"
+        );
+        let timestamp = MergeVal::Constant(Value::from_usize(state.read_counter(self.timestamp)));
+        let mut merge_vals = SmallVec::<[MergeVal; 4]>::new();
+        merge_vals.extend(vals.iter().map(|v| MergeVal::Constant(*v)));
+        merge_vals.push(timestamp);
+        if self.table_math.subsume {
+            merge_vals.push(MergeVal::Constant(NOT_SUBSUMED));
+        }
+        state.predict_col(
+            self.table,
+            key,
+            merge_vals.iter().copied(),
+            ColumnId::from_usize(self.table_math.ret_val_col()),
+        )
     }
 
     /// Insert a row into this table.

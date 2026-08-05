@@ -5,16 +5,19 @@
 //! covered by an identity-prefix guard skip the complete program. Result expressions are not
 //! necessarily pure: [`MergeExpr::UnionId`] stages a union, while [`MergeExpr::Function`] may
 //! construct a missing row. For a conflict that does run the program, the `actions` list executes
-//! once rather than once per result. Trace-enabled execution rejects reached actionful programs
-//! before their effects because check-directed replay has one computed-result carrier and does not
-//! retain ordered merge-block effects or multiple results.
+//! once rather than once per result. Trace-enabled execution accepts a function call only for the
+//! certified binary constructor shape `Constructor(old, new)`, whose hit or insertion is retained
+//! exactly. It rejects other table reads and reached actionful programs before their effects because
+//! check-directed replay has one computed-result carrier and does not retain ordered merge-block
+//! effects or multiple results.
 //!
 //! A failed action or result rejects the owner row before publication. Effects completed before a
 //! later failure are not rolled back.
 
 use super::{
-    ColumnId, EGraph, ExecutionState, ExternalFunctionId, FunctionId, IndexSet, NumericId, RowVals,
-    SchemaMath, SmallVec, TableAction, TableId, Value, combine_subsumed, core_relations,
+    ColumnId, DefaultVal, EGraph, ExecutionState, ExternalFunctionId, FunctionId, IndexSet,
+    MergeResultShape, NumericId, RowVals, SchemaMath, SmallVec, TableAction, TableId, TableKind,
+    Value, combine_subsumed, core_relations,
 };
 
 /// An FD-conflict program: run `actions` in order, then compute one result per value column.
@@ -119,13 +122,34 @@ pub enum MergeAction {
 }
 
 impl MergeProgram {
-    /// Whether this program has the scalar, action-free shape whose result can
-    /// be named by one post-merge table lookup. Frontends separately validate
-    /// that external primitives are pure and replayable.
-    pub(super) fn supports_scalar_replay_result_shape(&self) -> bool {
-        self.actions.is_empty()
-            && self.results.len() == 1
-            && !self.results[0].requires_table_read_or_binding()
+    /// Classify the scalar, action-free result shape that can be named by one
+    /// post-merge table lookup. The only table-backed result admitted here is a
+    /// binary fresh-id constructor over value column zero in exact
+    /// prior/incoming order. Replay registration separately validates that
+    /// constructor's logical signature.
+    pub(super) fn scalar_replay_result_shape(&self, egraph: &EGraph) -> MergeResultShape {
+        if !self.actions.is_empty() || self.results.len() != 1 {
+            return MergeResultShape::Unsupported;
+        }
+        match &self.results[0] {
+            MergeExpr::Function {
+                function,
+                arguments,
+            } if egraph.funcs.get(*function).is_some_and(|info| {
+                matches!(info.default_val, DefaultVal::FreshId)
+                    && info.n_keys == 2
+                    && info.schema.len() - info.n_keys == 1
+                    && matches!(arguments.as_slice(),
+                        [MergeExpr::Input { side: MergeInputSide::Prior, column: prior },
+                         MergeExpr::Input { side: MergeInputSide::Incoming, column: incoming }]
+                            if prior.index() == 0 && incoming.index() == 0)
+            }) =>
+            {
+                MergeResultShape::DirectConstructor(*function)
+            }
+            result if !result.requires_table_read_or_binding() => MergeResultShape::NoTableRead,
+            _ => MergeResultShape::Unsupported,
+        }
     }
 }
 
@@ -668,7 +692,15 @@ impl CompiledMergeExpr {
 
                 // Respect the target's configured default on a miss: insert its fresh/constant
                 // output when present, or report merge failure for `DefaultVal::Fail`.
-                match func.lookup_or_insert(state, &args) {
+                let result = if state.trace_enabled() && func.kind() == TableKind::Constructor {
+                    let input_column = self.constructor_input_column(n_keys).expect(
+                        "capture-enabled constructor merge call is not a direct input call",
+                    );
+                    func.lookup_or_insert_merge_constructor(state, &args, merge_table, input_column)
+                } else {
+                    func.lookup_or_insert(state, &args)
+                };
+                match result {
                     Some(result) => Some(result),
                     None => {
                         let res = state.call_external_func(*panic, &[]);
@@ -678,5 +710,25 @@ impl CompiledMergeExpr {
                 }
             }
         }
+    }
+
+    fn constructor_input_column(&self, n_keys: usize) -> Option<ColumnId> {
+        let Self::Function { args, .. } = self else {
+            return None;
+        };
+        let [
+            Self::Input {
+                side: MergeInputSide::Prior,
+                column: prior,
+            },
+            Self::Input {
+                side: MergeInputSide::Incoming,
+                column: incoming,
+            },
+        ] = args.as_slice()
+        else {
+            return None;
+        };
+        (prior == incoming).then(|| ColumnId::from_usize(n_keys + prior.index()))
     }
 }

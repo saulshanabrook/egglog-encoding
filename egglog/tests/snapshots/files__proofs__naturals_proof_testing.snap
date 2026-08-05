@@ -8,7 +8,7 @@ expression: proof_snapshot
 (let t3 (Plus (S (Z)) (S (S (Z)))))
 (let t4 (premises (Fiat (= t2 t2))))
 (let t5 (n (S (S (Z)))))
-(let t6 (substitution (m (S (Z))) (__rewrite_root t2) t5))
+(let t6 (substitution (__rewrite_root t2) (m (S (Z))) t5))
 (let t7 (Plus (Z) (S (S (Z)))))
 (let t8
   (premises
@@ -17,7 +17,7 @@ expression: proof_snapshot
               (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
               t4
               t6)))
-(let t9 (substitution (m (Z)) (__rewrite_root t3) t5))
+(let t9 (substitution (__rewrite_root t3) (m (Z)) t5))
 (Sym
   (= t1 t2)
   (Congr
@@ -53,7 +53,7 @@ expression: proof_snapshot
 (let t8 (premises (Fiat (= t1 t1))))
 (let t9 (__rewrite_root t1))
 (let t10 (n t0))
-(let t11 (substitution (m (S (Z))) t9 t10))
+(let t11 (substitution t9 (m (S (Z))) t10))
 (let t12
   (premises
           (Rule
@@ -63,7 +63,7 @@ expression: proof_snapshot
             t11)))
 (let t13 (m (S (S (Z)))))
 (let t14 (n t6))
-(let t15 (substitution t13 t9 t14))
+(let t15 (substitution t9 t13 t14))
 (let t16 (S t2))
 (let t17 (Plus (S (Z)) t6))
 (let t18
@@ -73,7 +73,7 @@ expression: proof_snapshot
                 (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
                 t12
                 t15)))
-(let t19 (substitution (m (S (Z))) (__rewrite_root t7) t14))
+(let t19 (substitution (__rewrite_root t7) (m (S (Z))) t14))
 (let t20 (Plus (Z) t6))
 (let t21
   (premises
@@ -82,7 +82,7 @@ expression: proof_snapshot
                     (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
                     t18
                     t19)))
-(let t22 (substitution (m (Z)) (__rewrite_root t17) t14))
+(let t22 (substitution (__rewrite_root t17) (m (Z)) t14))
 (let t23 (Times (Z) t0))
 (let t24 (Plus (S (S (Z))) t23))
 (let t25
@@ -93,7 +93,7 @@ expression: proof_snapshot
                         t8
                         t11)))
 (let t26 (__rewrite_root t6))
-(let t27 (substitution (m (Z)) t26 t10))
+(let t27 (substitution t26 (m (Z)) t10))
 (let t28
   (premises
                   (Rule
@@ -101,7 +101,7 @@ expression: proof_snapshot
                     (name "(rewrite (Times (S m) n) (Plus n (Times m n)))")
                     t25
                     t27)))
-(let t29 (substitution t13 t26 (n t23)))
+(let t29 (substitution t26 t13 (n t23)))
 (let t30 (Plus (S (Z)) (Z)))
 (let t31
   (premises
@@ -124,7 +124,7 @@ expression: proof_snapshot
                             t27))
                         (substitution (__rewrite_root t23) t10))
                       1)))
-(let t32 (substitution (m (S (Z))) (__rewrite_root t24) (n (Z))))
+(let t32 (substitution (__rewrite_root t24) (m (S (Z))) (n (Z))))
 (let t33
   (premises
                       (Rule
@@ -132,14 +132,14 @@ expression: proof_snapshot
                         (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
                         t31
                         t32)))
-(let t34 (substitution (m (Z)) (__rewrite_root t30) (n (Z))))
+(let t34 (substitution (__rewrite_root t30) (m (Z)) (n (Z))))
 (let t35 (Plus (Z) t2))
 (let t36 (Plus (S (S (Z))) (S (S (Z)))))
 (let t37 (Plus (S (S (Z))) t36))
 (let t38 (Plus (S (Z)) (S (S (Z)))))
 (let t39 (premises (Fiat (= t36 t36))))
 (let t40 (n (S (S (Z)))))
-(let t41 (substitution (m (S (Z))) (__rewrite_root t36) t40))
+(let t41 (substitution (__rewrite_root t36) (m (S (Z))) t40))
 (let t42 (Plus (Z) (S (S (Z)))))
 (let t43
   (premises
@@ -149,7 +149,7 @@ expression: proof_snapshot
                                       "(rewrite (Plus (S m) n) (S (Plus m n)))")
                                     t39
                                     t41)))
-(let t44 (substitution (m (Z)) (__rewrite_root t38) t40))
+(let t44 (substitution (__rewrite_root t38) (m (Z)) t40))
 (let prf0
   (Congr
                           (= t37 t3)
@@ -184,7 +184,7 @@ expression: proof_snapshot
                           1))
 (let t45 (premises (Trans (= t3 t3) (Sym (= t3 t37) prf0) prf0)))
 (let t46 (n t2))
-(let t47 (substitution (m (S (Z))) (__rewrite_root t3) t46))
+(let t47 (substitution (__rewrite_root t3) (m (S (Z))) t46))
 (let t48
   (premises
                 (Rule
@@ -192,7 +192,7 @@ expression: proof_snapshot
                   (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
                   t45
                   t47)))
-(let t49 (substitution (m (Z)) (__rewrite_root t4) t46))
+(let t49 (substitution (__rewrite_root t4) (m (Z)) t46))
 (Trans
   (= t1 t3)
   (Congr

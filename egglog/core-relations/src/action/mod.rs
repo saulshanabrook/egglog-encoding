@@ -27,13 +27,13 @@ use crate::{
     provenance::{
         ActionCaptureKind, CauseCapability, CheckEndpointSpec, CheckTermSource,
         CriterionEndpointOccurrence, CriterionEquality, DeferredEqualityCause, FactCellRef,
-        PackedCauseRef, PendingPremiseResolver, ReplayBindingSource, RowOriginSiteId,
+        MergeRead, PackedCauseRef, PendingPremiseResolver, ReplayBindingSource, RowOriginSiteId,
         TermOriginSiteId, TypedEqualityProposal,
     },
     table_spec::{ColumnId, MutationBuffer},
 };
 
-use self::mask::{Mask, MaskIter, ValueSource};
+use self::mask::{Mask, MaskIter, ValueSource, value_source};
 
 #[macro_use]
 pub(crate) mod mask;
@@ -999,6 +999,91 @@ impl<'a> ExecutionState<'a> {
             .and_then(|trace| trace.table_column_sort(table, column.index()))
     }
 
+    /// Register the exact row origin for a constructor created while evaluating
+    /// a scalar merge result.
+    ///
+    /// The only accepted children are direct prior/incoming cells from the
+    /// active merge. The resulting constructor fact inherits that merge's
+    /// deferred cause, while this origin preserves the children's historical
+    /// syntax for later rule premises and strict replay.
+    #[doc(hidden)]
+    pub fn merge_constructor_origin(
+        &self,
+        constructor_table: TableId,
+        merge_table: TableId,
+        input_column: ColumnId,
+    ) -> Result<RowOriginSiteId, String> {
+        let trace = self
+            .db
+            .trace
+            .ok_or_else(|| "merge constructor origin requires causal trace".to_owned())?;
+        let Some(ActiveCause::DeferredMerge {
+            prior_fact,
+            table,
+            incoming_origin,
+            ..
+        }) = self.active_cause.as_ref()
+        else {
+            return Err("merge constructor has no active exact merge context".into());
+        };
+        if *table != merge_table {
+            return Err("merge constructor structural context belongs to another table".into());
+        }
+        let incoming_origin = (*incoming_origin).ok_or_else(|| {
+            "merge constructor incoming row has no exact structural origin".to_owned()
+        })?;
+        let children = [
+            (
+                crate::provenance::RowOriginRef::Fact(*prior_fact),
+                input_column.index(),
+            ),
+            (incoming_origin, input_column.index()),
+        ];
+        trace
+            .merge_constructor_origin(constructor_table, merge_table, &children)
+            .map_err(str::to_owned)
+    }
+
+    /// Retain one constructor lookup performed by the active merge.
+    ///
+    /// The requested structural origin and observed native key preserve both
+    /// merge inputs' callback-time denotation. A committed hit additionally
+    /// carries earlier equality and lifetime state; a miss remains a negative
+    /// dependency whose selected-source effects are closed before interference
+    /// analysis.
+    #[doc(hidden)]
+    pub fn record_merge_constructor_lookup(
+        &self,
+        table: TableId,
+        origin: RowOriginSiteId,
+        key: [Value; 2],
+        hit: Option<FactId>,
+    ) -> Result<(), String> {
+        let trace = self
+            .db
+            .trace
+            .ok_or_else(|| "merge constructor lookup requires causal trace".to_owned())?;
+        let Some(ActiveCause::DeferredMerge {
+            incoming,
+            history_cutoff,
+            ..
+        }) = self.active_cause.as_ref()
+        else {
+            return Err("merge constructor lookup has no active exact merge context".into());
+        };
+        incoming.record_merge_read(
+            trace,
+            MergeRead::Constructor {
+                table,
+                origin,
+                key,
+                history_cutoff: *history_cutoff,
+                hit,
+            },
+        );
+        Ok(())
+    }
+
     pub(crate) fn set_active_cause(&mut self, cause: Option<CauseDraftId>) {
         self.active_cause = cause.map(|cause| {
             ActiveCause::Ready(
@@ -1112,6 +1197,17 @@ impl<'a> ExecutionState<'a> {
 
     pub(crate) fn trace_wave(&self) -> Wave {
         self.db.trace_wave
+    }
+
+    /// Stage a batch of mutations against a single table, `mutate` receiving the
+    /// table's mutation buffer directly, and notify the table as changed once
+    /// for the whole batch.
+    fn stage_batch(&mut self, table: TableId, mutate: impl FnOnce(&mut dyn MutationBuffer)) {
+        self.buffers
+            .lazy_init(table, || self.db.table_info[table].table.new_buffer());
+        mutate(&mut *self.buffers.buffers[table]);
+        self.buffers.note_changed(table);
+        self.changed = true;
     }
 
     /// Stage a removal of the given row from `table` if it is present.
@@ -1320,6 +1416,33 @@ impl<'a> ExecutionState<'a> {
     pub fn should_stop(&self) -> bool {
         self.stop_match.load(Ordering::Acquire)
     }
+}
+
+/// Scratch space holding one gathered row, reused across the rows of one
+/// instruction.
+type RowScratch = SmallVec<[Value; 12]>;
+
+/// Where each column of a row comes from: one entry per element of `args`, in
+/// order.
+///
+/// A variable's entry borrows its whole binding slice, so [`gather_row`] indexes
+/// it by lane. Every such slice must therefore be at least as long as the mask
+/// the lanes come from; a shorter one panics rather than silently truncating the
+/// batch.
+fn row_sources<'a>(
+    args: &[QueryEntry],
+    bindings: &'a Bindings,
+) -> SmallVec<[ValueSource<'a, Value>; 12]> {
+    args.iter()
+        .map(|entry| value_source(entry, bindings))
+        .collect()
+}
+
+/// Overwrite `out` with lane `idx` of `sources`. Panics if any source slice is
+/// shorter than `idx + 1` (see [`row_sources`]).
+fn gather_row(sources: &[ValueSource<'_, Value>], idx: usize, out: &mut RowScratch) {
+    out.clear();
+    out.extend(sources.iter().map(|source| source.at(idx)));
 }
 
 impl ExecutionState<'_> {
@@ -1638,12 +1761,13 @@ impl ExecutionState<'_> {
                         })
                     });
                 } else {
-                    // Keep the ordinary loop byte-for-byte equivalent to the
-                    // pre-capture action path.
-                    for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| {
-                        iter.for_each(|vals| {
-                            self.stage_insert(*table, vals.as_slice());
-                        })
+                    let sources = row_sources(vals, bindings);
+                    let mut row = RowScratch::new();
+                    self.stage_batch(*table, |buf| {
+                        for idx in mask.ones() {
+                            gather_row(&sources, idx, &mut row);
+                            buf.stage_insert(&row);
+                        }
                     });
                 }
             }
@@ -1794,10 +1918,13 @@ impl ExecutionState<'_> {
                         })
                     });
                 } else {
-                    for_each_binding_with_mask!(mask, args.as_slice(), bindings, |iter| {
-                        iter.for_each(|args| {
-                            self.stage_remove(*table, args.as_slice());
-                        })
+                    let sources = row_sources(args, bindings);
+                    let mut row = RowScratch::new();
+                    self.stage_batch(*table, |buf| {
+                        for idx in mask.ones() {
+                            gather_row(&sources, idx, &mut row);
+                            buf.stage_remove(&row);
+                        }
                     });
                 }
             }

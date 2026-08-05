@@ -28,7 +28,7 @@ define_id!(pub SubsetId, u32, "An offset into a buffer of subsets");
 pub(super) enum UpdateInstr {
     PushBinding(Variable, Value),
     RefineAtom(AtomId, Arc<TrieNode>),
-    /// Refine an atom to a dense offset range, avoiding an Arc<TrieNode> allocation.
+    /// Refine an atom to a dense offset range, avoiding an `Arc<TrieNode>` allocation.
     RefineAtomDense(AtomId, OffsetRange),
     /// Attach the exact native support chosen for a materialized row.
     PushMaterializedWitness(MaterializedWitnessRef),
@@ -64,7 +64,7 @@ impl FrameUpdates {
     }
 
     /// Refine `atom` to consider only the given dense offset range, without
-    /// allocating an Arc<TrieNode> eagerly.
+    /// allocating an `Arc<TrieNode>` eagerly.
     pub(super) fn refine_atom_dense(&mut self, atom: AtomId, range: OffsetRange) {
         self.updates.push(UpdateInstr::RefineAtomDense(atom, range));
     }

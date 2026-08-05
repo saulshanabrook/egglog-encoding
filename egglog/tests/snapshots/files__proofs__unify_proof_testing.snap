@@ -12,9 +12,9 @@ expression: proof_snapshot
        (union b d))
          )")
     (premises (Fiat (= (Mul (Var "a") (Var "a")) (Mul (Lit 1) (Lit 2)))))
-    (substitution (d (Lit 2)) (a (Var "a")) (b (Var "a")) (c (Lit 1)))))
+    (substitution (a (Var "a")) (b (Var "a")) (c (Lit 1)) (d (Lit 2)))))
 (let t0 (premises (Fiat (= (Mul (Var "a") (Var "a")) (Mul (Lit 1) (Lit 2))))))
-(let t1 (substitution (d (Lit 2)) (a (Var "a")) (b (Var "a")) (c (Lit 1))))
+(let t1 (substitution (a (Var "a")) (b (Var "a")) (c (Lit 1)) (d (Lit 2))))
 (Trans
   (= (Lit 2) (Lit 1))
   (Rule

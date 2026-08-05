@@ -99,8 +99,8 @@ expression: proof_snapshot
                                                           (x 0)))
                                                       1))
                                                   (substitution
-                                                    (a 1)
                                                     (__rewrite_root (Fib 2))
+                                                    (a 1)
                                                     (b 0))))
 (let prf3
   (Rule
@@ -130,8 +130,8 @@ expression: proof_snapshot
                                         prf2
                                         1))
                                     (substitution
-                                      (a 1)
                                       (__rewrite_root (Fib 3))
+                                      (a 1)
                                       (b 1))))
 (let prf4
   (Rule
@@ -159,7 +159,7 @@ expression: proof_snapshot
                                   0)
                                 prf2
                                 1))
-                            (substitution (a 2) (__rewrite_root (Fib 4)) (b 1))))
+                            (substitution (__rewrite_root (Fib 4)) (a 2) (b 1))))
 (let prf5
   (Rule
                     (= (Fib 5) (Num 5))
@@ -179,7 +179,7 @@ expression: proof_snapshot
                           0)
                         prf3
                         1))
-                    (substitution (a 3) (__rewrite_root (Fib 5)) (b 2))))
+                    (substitution (__rewrite_root (Fib 5)) (a 3) (b 2))))
 (Rule
   (= (Fib 7) (Num 13))
   (name "(rewrite (Add (Num a) (Num b)) (Num (+ a b)))")
@@ -219,8 +219,8 @@ expression: proof_snapshot
                 0)
               prf4
               1))
-          (substitution (a 5) (__rewrite_root (Fib 6)) (b 3)))
+          (substitution (__rewrite_root (Fib 6)) (a 5) (b 3)))
         0)
       prf5
       1))
-  (substitution (a 8) (__rewrite_root (Fib 7)) (b 5)))
+  (substitution (__rewrite_root (Fib 7)) (a 8) (b 5)))

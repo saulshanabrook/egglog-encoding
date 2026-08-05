@@ -26,10 +26,11 @@ make test           # Python and Rust tests
 make python-check   # complete Python validation
 make rust-check     # complete Rust validation
 make python-nits    # Python hygiene only
-make rust-nits      # rustfmt check and Clippy only
+make rust-nits      # rustfmt check, Clippy, and doc-link check only
 make proof-tests    # proof-focused subset of the workspace tests
 make benchmark-smoke
 make nightly        # benchmark the nightly endpoints and publish nightly/output/
+make nightly-local  # the same run at one round, for trying it out
 make update-snapshots
 make format         # apply Ruff and rustfmt formatting
 ```
@@ -217,7 +218,7 @@ corpus:
 | Workload | Adaptation or scope | Correctness signal |
 | --- | --- | --- |
 | Math | Existing synthetic stress fixture | Existing file-test snapshot |
-| eggcc 2mm | Existing bounded container fixture | Generated `main` function type is checked |
+| eggcc 2mm | Bounded pass-one fixture with ordinary constructor-valued merges | Generated `main` function type is checked |
 | Pointer analysis | First 100 rows from 23 relations; three legacy functions are constructors for current egglog compatibility | Known `constant_points_to` row is derived |
 | Hardboiled | Dormant canonicalization rules using unsupported unstable helpers are omitted | Extracted WMMA store result is checked |
 | Luminal | Static Llama graph from [`egglog_repro` commit `7fb0194`](https://github.com/saulshanabrook/egglog_repro/blob/7fb0194812b5b11e41a286d8b55e48e3b0bfcd66/llama.egg) | `t712` is checked after kernel lowering |
@@ -373,10 +374,11 @@ sharing it.
 ### Nightly
 
 `make nightly` benchmarks each endpoint in `ENDPOINTS` — the main backend's
-`term`, `proofs`, and `proof-extraction`, with the `dd` backend disabled for
-now — on the current checkout and on the latest `main`, accumulating them all in
-the ordinary report cache, and copies the resulting interactive page and its
-cache to `nightly/output/index.html` and `index.jsonl`:
+`term`, `proofs`, `proof-extraction`, and `sliced-proofs`, with the `dd` backend
+disabled for now — on the current checkout and on the latest `main`,
+accumulating them all in the ordinary report cache, and copies the resulting
+interactive page and its cache to `nightly/output/index.html` and
+`index.jsonl`:
 
 ```bash
 make nightly
@@ -392,6 +394,9 @@ failing the run, and the output directory is only overwritten after a
 successful run. Edit `TARGETS` and `ENDPOINTS` in `scripts/nightly_bench.py` to
 change what is measured.
 
+`make nightly-local` is the same run at `--rounds 1`, for trying the whole
+pipeline out without waiting for a full nightly.
+
 The [egraphs-good nightly service](https://nightly.cs.washington.edu) checks out
 this repository, runs `make nightly`, and serves `nightly/output/`, matching the
 `report=` entry in the nightly configuration. Two things that runner does not
@@ -401,6 +406,10 @@ when uv is missing from `PATH` (uv then downloads its own CPython; bump
 the box has none. The runner also leaves rustup's `~/.cargo/bin` off `PATH`,
 which would leave cargo resolving to Ubuntu's — too old for
 `rust-toolchain.toml`'s pin — so `nightly_bench.py` puts those shims first.
+
+Both installers run `curl … | sh`, so on a developer box prefer installing uv
+and rustup yourself: `make nightly` and `make nightly-local` skip each one that
+is already there. Only a bare CI runner needs them.
 
 ### CPU profiling
 

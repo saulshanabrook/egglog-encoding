@@ -1,5 +1,4 @@
 pub mod check_shadowing;
-pub mod cse;
 pub mod desugar;
 mod expr;
 mod parse;
@@ -77,7 +76,8 @@ pub(crate) enum Ruleset {
 pub type NCommand = GenericNCommand<String, String>;
 /// [`ResolvedNCommand`] is another specialization of [`GenericNCommand`], which
 /// adds the type information to heads and leaves of commands.
-/// [`TypeInfo::typecheck_command`] turns an [`NCommand`] into a [`ResolvedNCommand`].
+/// [`EGraph::typecheck_command`](crate::EGraph::typecheck_command) turns an
+/// [`NCommand`] into a [`ResolvedNCommand`].
 pub(crate) type ResolvedNCommand = GenericNCommand<ResolvedCall, ResolvedVar>;
 
 /// A [`NCommand`] is a desugared [`Command`], where syntactic sugars
@@ -121,6 +121,12 @@ where
         unionable: bool,
     },
     Function(GenericFunctionDecl<Head, Leaf>),
+    Index {
+        span: Span,
+        name: String,
+        function: String,
+        any_of: Vec<usize>,
+    },
     AddRuleset(Span, String),
     UnstableCombinedRuleset(Span, String, Vec<String>),
     NormRule {
@@ -230,6 +236,17 @@ where
                     term_node: f.internal_term_node,
                 },
             },
+            GenericNCommand::Index {
+                span,
+                name,
+                function,
+                any_of,
+            } => GenericCommand::Index {
+                span: span.clone(),
+                name: name.clone(),
+                function: function.clone(),
+                any_of: any_of.clone(),
+            },
             GenericNCommand::AddRuleset(span, name) => {
                 GenericCommand::AddRuleset(span.clone(), name.clone())
             }
@@ -316,6 +333,7 @@ where
             ),
             GenericNCommand::Sort { .. }
             | GenericNCommand::Function(..)
+            | GenericNCommand::Index { .. }
             | GenericNCommand::AddRuleset(..)
             | GenericNCommand::UnstableCombinedRuleset(..)
             | GenericNCommand::CoreAction(..)
@@ -361,6 +379,17 @@ where
                 unionable,
             },
             GenericNCommand::Function(func) => GenericNCommand::Function(func.visit_exprs(f)),
+            GenericNCommand::Index {
+                span,
+                name,
+                function,
+                any_of,
+            } => GenericNCommand::Index {
+                span,
+                name,
+                function,
+                any_of,
+            },
             GenericNCommand::AddRuleset(span, name) => GenericNCommand::AddRuleset(span, name),
             GenericNCommand::UnstableCombinedRuleset(span, name, rulesets) => {
                 GenericNCommand::UnstableCombinedRuleset(span, name, rulesets)
@@ -888,6 +917,29 @@ where
         term_node: bool,
     },
 
+    /// Declare a named index over an existing function's columns.
+    ///
+    /// ```text
+    /// (index AddOcc AddView (any 0 1 2))
+    /// ```
+    ///
+    /// `AddOcc` is a read-only relation holding, for every row of `AddView` and
+    /// every listed column, that column's value followed by the whole row. Its
+    /// rows are exactly the live rows of `AddView`, so it changes no results —
+    /// only how fast a rule that looks up rows by a contained value runs. The
+    /// database maintains it; `set` and `delete` on it are errors.
+    ///
+    /// `any` reads the columns disjunctively: one entry per distinct value in
+    /// them, so a value in two of a row's columns still yields one entry. This
+    /// is the "which rows mention this value" lookup, and differs from repeating
+    /// a variable across those columns, which constrains them to be equal.
+    Index {
+        span: Span,
+        name: String,
+        function: String,
+        any_of: Vec<usize>,
+    },
+
     /// Using the `ruleset` command, defines a new
     /// ruleset that can be added to in [`Command::Rule`]s.
     /// Rulesets are used to group rules together
@@ -1291,6 +1343,18 @@ where
                 inputs,
             } => {
                 write!(f, "(relation {name} ({}))", ListDisplay(inputs, " "))
+            }
+            GenericCommand::Index {
+                name,
+                function,
+                any_of,
+                ..
+            } => {
+                write!(
+                    f,
+                    "(index {name} {function} (any {}))",
+                    ListDisplay(any_of, " ")
+                )
             }
             GenericCommand::AddRuleset(_span, name) => {
                 write!(f, "(ruleset {name})")
@@ -2197,6 +2261,17 @@ where
                 cost,
                 term_node,
             },
+            GenericCommand::Index {
+                span,
+                name,
+                function,
+                any_of,
+            } => GenericCommand::Index {
+                span,
+                name: fun(name),
+                function: fun(function),
+                any_of,
+            },
             GenericCommand::AddRuleset(span, name) => GenericCommand::AddRuleset(span, fun(name)),
             GenericCommand::UnstableCombinedRuleset(span, name, others) => {
                 GenericCommand::UnstableCombinedRuleset(
@@ -2478,6 +2553,17 @@ where
                 identity_vals,
                 cost,
                 term_node,
+            },
+            GenericCommand::Index {
+                span,
+                name,
+                function,
+                any_of,
+            } => GenericCommand::Index {
+                span,
+                name,
+                function,
+                any_of,
             },
             GenericCommand::AddRuleset(span, name) => GenericCommand::AddRuleset(span, name),
             GenericCommand::UnstableCombinedRuleset(span, name, others) => {

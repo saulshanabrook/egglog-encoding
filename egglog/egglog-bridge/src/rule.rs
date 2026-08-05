@@ -160,7 +160,7 @@ pub(crate) struct Query {
     id_counter: CounterId,
     ts_counter: CounterId,
     vars: DenseIdMap<VariableId, VarInfo>,
-    atoms: Vec<(TableId, Vec<QueryEntry>, SchemaMath)>,
+    atoms: Vec<QueryAtom>,
     /// The builders for queries in this module essentially wrap the lower-level
     /// builders from the `core_relations` crate. A single egglog rule can turn
     /// into N core-relations rules. The code is structured by constructing a
@@ -509,7 +509,12 @@ impl RuleBuilder<'_> {
             },
         );
         let res = AtomId::from_usize(self.query.atoms.len());
-        self.query.atoms.push((table, atom, schema_math));
+        self.query.atoms.push(QueryAtom {
+            table,
+            entries: atom,
+            schema: schema_math,
+            occurrence: None,
+        });
         res
     }
 
@@ -589,6 +594,47 @@ impl RuleBuilder<'_> {
             }),
             entries,
         ))
+    }
+
+    /// Add a table atom that additionally binds `indexed` to a value occurring in
+    /// *some* one of `cols`, serviced by an occurrence index over those columns.
+    ///
+    /// This is the "which rows mention this value" access pattern. It differs
+    /// from repeating a variable across `cols`, which instead constrains those
+    /// columns to be equal. `cols` are the function's own column indices, and
+    /// `indexed` is not one of `entries`.
+    ///
+    /// A variable `indexed` must be bound elsewhere in the query, since the atom
+    /// is probed rather than scanned; a constant is already known and needs no
+    /// binder. `is_subsumed` constrains the subsumption column exactly as it does
+    /// for [`Self::query_table`], so an index reads the same rows the function
+    /// itself would.
+    pub fn query_table_by_occurrence(
+        &mut self,
+        func: FunctionId,
+        entries: &[QueryEntry],
+        indexed: QueryEntry,
+        cols: &[usize],
+        is_subsumed: Option<bool>,
+    ) -> Result<AtomId> {
+        // The backing table carries a timestamp (and a subsumption column), which
+        // an index must not reach; only this layer knows where the schema ends.
+        let n_cols = self.resources.egraph.funcs[func].schema.len();
+        if let Some(col) = cols.iter().find(|c| **c >= n_cols) {
+            return Err(anyhow::Error::from(RuleBuilderError::ArityMismatch {
+                expected: n_cols,
+                got: col + 1,
+            }))
+            .with_context(|| {
+                format!("query_table_by_occurrence: column {col} is not one of the function's")
+            });
+        }
+        let atom = self.query_table(func, entries, is_subsumed)?;
+        self.query.atoms[atom.index()].occurrence = Some((
+            indexed,
+            cols.iter().copied().map(ColumnId::from_usize).collect(),
+        ));
+        Ok(atom)
     }
 
     /// Add the given primitive atom to query. As elsewhere in the crate, the last
@@ -935,7 +981,7 @@ impl Query {
     }
 
     pub(crate) fn supports_grounded_execution(&self) -> bool {
-        self.capture.is_none()
+        self.capture.is_none() && self.atoms.iter().all(|atom| atom.occurrence.is_none())
     }
 
     fn query_state<'a, 'outer>(
@@ -1008,20 +1054,19 @@ impl Query {
             }
             Some(QueryCapture::Criterion(capture)) => {
                 let endpoint = |source: CriterionCapturePremise| {
-                    let (_, entries, schema) =
-                        self.atoms.get(source.premise).unwrap_or_else(|| {
-                            panic!(
-                                "criterion capture endpoint cites missing table premise {}",
-                                source.premise
-                            )
-                        });
+                    let atom = self.atoms.get(source.premise).unwrap_or_else(|| {
+                        panic!(
+                            "criterion capture endpoint cites missing table premise {}",
+                            source.premise
+                        )
+                    });
                     assert!(
-                        source.column < schema.func_cols,
+                        source.column < atom.schema.func_cols,
                         "criterion capture endpoint premise {} column {} cites an engine-only column",
                         source.premise,
                         source.column
                     );
-                    let entry = entries.get(source.column).unwrap_or_else(|| {
+                    let entry = atom.entries.get(source.column).unwrap_or_else(|| {
                         panic!(
                             "criterion capture endpoint premise {} has no logical column {}",
                             source.premise, source.column
@@ -1064,8 +1109,15 @@ impl Query {
         let mut rsb = RuleSetBuilder::new(db);
         let (mut qb, mut inner) = self.query_state(&mut rsb);
         let mut atom_mapping = Vec::with_capacity(self.atoms.len());
-        for (table, entries, _schema_info) in &self.atoms {
-            atom_mapping.push(add_atom(&mut qb, *table, entries, &[], &mut inner)?);
+        for atom in &self.atoms {
+            atom_mapping.push(add_atom(
+                &mut qb,
+                atom.table,
+                &atom.entries,
+                atom.occurrence.as_ref(),
+                &[],
+                &mut inner,
+            )?);
         }
         let rule_id = self.run_rules_and_build(qb, inner, desc, &atom_mapping)?;
         let rs = rsb.build();
@@ -1079,7 +1131,7 @@ impl Query {
     ) -> Result<GroundedRuleInfo> {
         anyhow::ensure!(
             self.supports_grounded_execution(),
-            "grounded execution cannot compile trace-recording rules"
+            "rules with trace capture or occurrence-index queries cannot use grounded execution"
         );
         let mut rsb = RuleSetBuilder::new(db);
         let (mut qb, mut inner) = self.query_state(&mut rsb);
@@ -1088,9 +1140,14 @@ impl Query {
         // variables as statically grounded. A hidden primitive can produce a
         // later point-probe key (proof instrumentation does this routinely),
         // and grounded execution resolves that exact dependency at runtime.
-        for (table, entries, _schema) in &self.atoms {
-            let vars = inner.convert_all(entries);
-            let _ = qb.add_atom(*table, &vars, &[])?;
+        for atom in &self.atoms {
+            let vars = inner.convert_all(&atom.entries);
+            let _ = match &atom.occurrence {
+                Some((entry, cols)) => {
+                    qb.add_occurrence_atom(atom.table, &vars, inner.convert(entry), cols, &[])?
+                }
+                None => qb.add_atom(atom.table, &vars, &[])?,
+            };
         }
         let mut rb = qb.build();
         inner.next_ts = Some(rb.read_counter(self.ts_counter).into());
@@ -1101,11 +1158,11 @@ impl Query {
         let probes = self
             .atoms
             .iter()
-            .map(|(table, entries, schema)| {
+            .map(|atom| {
                 core_relations::GroundedProbe::new(
-                    *table,
-                    inner.convert_all(entries).into_vec(),
-                    schema.n_keys,
+                    atom.table,
+                    inner.convert_all(&atom.entries).into_vec(),
+                    atom.schema.n_keys,
                 )
             })
             .collect::<Vec<_>>();
@@ -1162,7 +1219,7 @@ impl Query {
         }
         if let Some(focus_atom) = self.sole_focus {
             // There is a single "focus" atom that we will constrain to look at new values.
-            let (_, _, schema_info) = &self.atoms[focus_atom];
+            let schema_info = &self.atoms[focus_atom].schema;
             let ts_col = ColumnId::from_usize(schema_info.ts_col());
             let _ = rsb.add_rule_from_cached_plan(
                 &cached_plan.plan,
@@ -1190,7 +1247,7 @@ impl Query {
             // constraints in order, and the focus atom may have an empty delta, which
             // will let it bail early.
             {
-                let (_, _, schema_info) = &self.atoms[focus_atom];
+                let schema_info = &self.atoms[focus_atom].schema;
                 let ts_col = ColumnId::from_usize(schema_info.ts_col());
                 constraints.push((
                     cached_plan.atom_mapping[focus_atom],
@@ -1200,7 +1257,11 @@ impl Query {
                     },
                 ))
             }
-            for (i, (_, _, schema_info)) in self.atoms[0..focus_atom].iter().enumerate() {
+            for (i, schema_info) in self.atoms[0..focus_atom]
+                .iter()
+                .map(|a| &a.schema)
+                .enumerate()
+            {
                 if mid_ts == Timestamp::new(0) {
                     continue 'outer;
                 }
@@ -1244,10 +1305,24 @@ impl Bindings {
     }
 }
 
+/// One atom of a rule's query, as staged before the core-relations query is built.
+#[derive(Clone)]
+struct QueryAtom {
+    table: TableId,
+    /// The function's columns followed by the table's timestamp / subsume columns.
+    entries: Vec<QueryEntry>,
+    schema: SchemaMath,
+    /// Set for an occurrence atom: the variable bound to a value appearing in
+    /// *some* one of `cols` (function-column indices), rather than at a fixed
+    /// column. See `core_relations::Atom::occurrence`.
+    occurrence: Option<(QueryEntry, SmallVec<[ColumnId; 4]>)>,
+}
+
 fn add_atom(
     qb: &mut QueryBuilder,
     table: TableId,
     entries: &[QueryEntry],
+    occurrence: Option<&(QueryEntry, SmallVec<[ColumnId; 4]>)>,
     constraints: &[Constraint],
     inner: &mut Bindings,
 ) -> Result<core_relations::AtomId> {
@@ -1257,5 +1332,8 @@ fn add_atom(
         }
     }
     let vars = inner.convert_all(entries);
-    Ok(qb.add_atom(table, &vars, constraints)?)
+    let Some((occ_entry, cols)) = occurrence else {
+        return Ok(qb.add_atom(table, &vars, constraints)?);
+    };
+    Ok(qb.add_occurrence_atom(table, &vars, inner.convert(occ_entry), cols, constraints)?)
 }

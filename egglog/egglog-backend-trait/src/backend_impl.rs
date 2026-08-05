@@ -90,6 +90,28 @@ fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
                 body_atom_to_table_premise[body_atom] = Some(next_table_premise);
                 next_table_premise += 1;
             }
+            RuleBodyCall::IndexTable { id, any_of, read } => {
+                if capture.is_some() {
+                    bail!("causal capture does not yet support occurrence-index rule bodies");
+                }
+                // An index is declared as the relation `(value, row…) -> Unit`, so
+                // its atom carries the occurring value, the indexed function's row,
+                // and the relation's own unit output. Only the row belongs to the
+                // underlying function.
+                let (indexed, rest) = entries
+                    .split_first()
+                    .expect("an index atom binds a value and a row");
+                let (_unit, row) = rest
+                    .split_last()
+                    .expect("an index atom carries the relation's unit output");
+                builder.query_table_by_occurrence(
+                    *id,
+                    row,
+                    indexed.clone(),
+                    any_of,
+                    read.is_subsumed(),
+                )?;
+            }
             RuleBodyCall::Primitive {
                 id, output, replay, ..
             } => {

@@ -105,6 +105,11 @@ impl Mask {
     pub(crate) fn count_ones(&self) -> usize {
         self.data.count_ones(..)
     }
+
+    /// The offsets that are still active, in ascending order.
+    pub(crate) fn ones(&self) -> impl Iterator<Item = usize> + '_ {
+        self.data.ones()
+    }
 }
 
 pub(crate) enum IterResult<T> {
@@ -300,10 +305,7 @@ where
         if self.mask.contains(idx) {
             let mut result = self.pool.get();
             result.reserve(self.data.len());
-            result.extend(self.data.iter().map(|x| match x {
-                ValueSource::Const(x) => (*x).clone(),
-                ValueSource::Slice(x) => x[idx].clone(),
-            }));
+            result.extend(self.data.iter().map(|x| x.at(idx)));
             IterResult::Item(result)
         } else if idx < self.mask.len() {
             IterResult::Skip
@@ -428,6 +430,31 @@ impl<Base: MaskIter, R, F: FnMut(Base::Item) -> R> MaskIter for MapIter<Base, F>
 pub(crate) enum ValueSource<'a, T> {
     Const(T),
     Slice(&'a [T]),
+}
+
+impl<T: Clone> ValueSource<'_, T> {
+    /// This source's value in lane `idx`; a constant is the same in every lane.
+    ///
+    /// # Panics
+    /// If a slice source is shorter than `idx + 1`.
+    pub(crate) fn at(&self, idx: usize) -> T {
+        match self {
+            ValueSource::Const(value) => value.clone(),
+            ValueSource::Slice(slice) => slice[idx].clone(),
+        }
+    }
+}
+
+/// Where the column `entry` names comes from: a variable's whole binding slice,
+/// indexed by lane, or a constant.
+pub(crate) fn value_source<'a>(
+    entry: &crate::QueryEntry,
+    bindings: &'a crate::action::Bindings,
+) -> ValueSource<'a, crate::Value> {
+    match entry {
+        crate::QueryEntry::Var(v) => ValueSource::Slice(&bindings[*v]),
+        crate::QueryEntry::Const(c) => ValueSource::Const(*c),
+    }
 }
 
 /// This is a macro for processing a slice of values pointing into a [`crate::action::Bindings`].
@@ -568,10 +595,9 @@ macro_rules! for_each_binding_with_mask {
             _ => {
                 let $iter = $mask.iter_dynamic(
                     crate::pool::with_pool_set(crate::pool::PoolSet::get_pool),
-                    $args.iter().map(|v| match v {
-                        crate::QueryEntry::Var(v) => ValueSource::Slice(&$bindings[*v]),
-                        crate::QueryEntry::Const(c) => ValueSource::Const(*c),
-                    }),
+                    $args
+                        .iter()
+                        .map(|v| crate::action::mask::value_source(v, $bindings)),
                 );
                 $body
             }

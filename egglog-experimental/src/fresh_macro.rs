@@ -169,7 +169,7 @@ fn collect_fresh_options(actions: Actions) -> Result<Vec<FreshOptions>, Error> {
 }
 
 /// Parse the arguments to unstable-fresh!
-/// Syntax: (unstable-fresh! SortName [:cost N] [:unextractable])
+/// Syntax: `(unstable-fresh! SortName [:cost N] [:unextractable])`
 fn parse_fresh_args(span: &egglog::ast::Span, args: &[Expr]) -> Result<FreshOptions, Error> {
     if args.is_empty() {
         return Err(Error::ParseError(ParseError(

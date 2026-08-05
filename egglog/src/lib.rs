@@ -566,8 +566,10 @@ impl CaptureCatalog {
     ///
     /// The lookup makes the merged row a computed producer, so the merge expression no longer
     /// needs to select one input syntactically. Keep the capability closed over the resolved
-    /// expression: table reads, action-local bindings, tuple values, and effect-capable
-    /// primitives would add unrecorded dependencies or effects.
+    /// expression: arbitrary table reads, action-local bindings, tuple values, and
+    /// effect-capable primitives would add unrecorded dependencies or effects. The one
+    /// table-backed exception is a top-level binary constructor over exactly `old`, then
+    /// `new`: capture can attribute either its exact hit or its structurally named insertion.
     fn supports_scalar_merge_result(decl: &ResolvedFunctionDecl, schema: &ResolvedSchema) -> bool {
         if schema.outputs.len() != 1 {
             return false;
@@ -575,9 +577,27 @@ impl CaptureCatalog {
         match decl.subtype {
             FunctionSubtype::Constructor => true,
             FunctionSubtype::Custom => decl.merge.as_ref().is_none_or(|merge| {
-                merge.actions.is_empty() && Self::supports_scalar_merge_expr(&merge.result)
+                merge.actions.is_empty()
+                    && match &merge.result {
+                        ResolvedExpr::Call(_, ResolvedCall::Func(function), children) => {
+                            function.subtype == FunctionSubtype::Constructor
+                                && function.num_outputs() == 1
+                                && function.output().name() == schema.outputs[0].name()
+                                && matches!(children.as_slice(), [prior, incoming]
+                                    if Self::is_scalar_merge_input(prior, "old")
+                                        && Self::is_scalar_merge_input(incoming, "new"))
+                        }
+                        result => Self::supports_scalar_merge_expr(result),
+                    }
             }),
         }
+    }
+
+    fn is_scalar_merge_input(expr: &ResolvedExpr, expected: &str) -> bool {
+        matches!(expr,
+            ResolvedExpr::Var(_, variable)
+                if !variable.is_global_ref && variable.name.as_str() == expected
+        )
     }
 
     fn supports_scalar_merge_expr(expr: &ResolvedExpr) -> bool {
@@ -2127,7 +2147,7 @@ impl EGraph {
         Ok(MergeProgram { actions, results })
     }
 
-    /// Lower a single resolved merge action to a backend [`MergeAction`]. Supports `set`, `let`, and
+    /// Lower a single resolved merge action to a backend [`egglog_bridge::MergeAction`]. Supports `set`, `let`, and
     /// `union`; other actions (`delete`/`panic`/`extract`/...) are not meaningful during a merge.
     fn translate_merge_action(
         &self,
@@ -3992,6 +4012,12 @@ impl EGraph {
                 self.declare_function(&fdecl)?;
                 log::info!("Declared {} {}.", fdecl.subtype, fdecl.name)
             }
+            ResolvedNCommand::Index { name, function, .. } => {
+                // Nothing to build: the backend creates the occurrence index the
+                // first time a rule probes it. Typechecking already registered
+                // the relation the atoms resolve against.
+                log::info!("Declared index {name} over {function}.");
+            }
             ResolvedNCommand::AddRuleset(_span, name) => {
                 self.add_ruleset(name.clone());
                 log::info!("Declared ruleset {name}.");
@@ -4421,6 +4447,11 @@ impl EGraph {
     }
 
     fn input_file(&mut self, span: Span, func_name: &str, file: String) -> Result<(), Error> {
+        // A declared index has a function type but no table of its own to load
+        // rows into.
+        if self.type_info.indexes.contains_key(func_name) {
+            return Err(TypeError::IndexIsReadOnly(func_name.to_owned(), span).into());
+        }
         let function_type = self
             .type_info
             .get_func_type(func_name)
@@ -4838,11 +4869,8 @@ impl EGraph {
                 self.names.check_shadowing(command)?;
             }
 
-            // Share repeated constructor applications (see `ast::cse`).
-            let deduped =
-                ast::cse::cse_program(typechecked_no_globals, &mut self.parser.symbol_gen);
-
-            let term_encoding_added = ProofInstrumentor::add_term_encoding(self, deduped)?;
+            let term_encoding_added =
+                ProofInstrumentor::add_term_encoding(self, typechecked_no_globals)?;
             let mut new_typechecked = vec![];
             for new_cmd in term_encoding_added {
                 let desugared =
@@ -6000,21 +6028,91 @@ impl<'a> BackendRule<'a> {
         args.into_iter().map(|term| self.entry(term)).collect()
     }
 
+    /// An index atom is probed, never scanned, so the value it is looked up by
+    /// must be bound elsewhere in the query. A literal needs no binder.
+    fn check_index_value_is_bound(
+        &self,
+        index: &crate::typechecking::FuncType,
+        atom: &core::GenericAtom<ResolvedCall, ResolvedVar>,
+        query: &core::Query<ResolvedCall, ResolvedVar>,
+    ) -> Result<(), Error> {
+        let Some(core::GenericAtomTerm::Var(span, value)) = atom.args.first() else {
+            return Ok(());
+        };
+        // The value may sit at a column of this very atom, which both binds it and
+        // makes the occurrence redundant — the atom is then an ordinary one.
+        if atom
+            .args
+            .iter()
+            .skip(1)
+            .any(|arg| matches!(arg, core::GenericAtomTerm::Var(_, v) if v.name == value.name))
+        {
+            return Ok(());
+        }
+        let bound_elsewhere =
+            query.atoms.iter().any(|other| {
+                if std::ptr::eq(other, atom) {
+                    return false;
+                }
+                // Only a function's rows bind a value the join can probe by. A body
+                // primitive runs once per match, after the join, so the value it
+                // computes is not available as a lookup key.
+                let ResolvedCall::Func(f) = &other.head else {
+                    return false;
+                };
+                // Another index atom binds through its row columns like any other
+                // atom, but not through the value it is itself probed by: two index
+                // atoms naming each other there would each look bound with neither
+                // reachable.
+                let probed = self.type_info.indexes.contains_key(&f.name);
+                other.args.iter().skip(usize::from(probed)).any(
+                    |arg| matches!(arg, core::GenericAtomTerm::Var(_, v) if v.name == value.name),
+                )
+            });
+        if bound_elsewhere {
+            return Ok(());
+        }
+        Err(
+            TypeError::IndexValueUnbound(index.name.clone(), value.name.clone(), span.clone())
+                .into(),
+        )
+    }
+
     fn query(
         &mut self,
         query: &core::Query<ResolvedCall, ResolvedVar>,
         include_subsumed: bool,
     ) -> Result<(), Error> {
         for atom in &query.atoms {
+            let read = if include_subsumed {
+                ReadMode::All
+            } else {
+                ReadMode::Live
+            };
             let (head, args) = match &atom.head {
+                // An atom on a declared index reads the rows of the indexed
+                // function, reached through the value its first argument binds.
+                ResolvedCall::Func(f) if self.type_info.indexes.contains_key(&f.name) => {
+                    self.check_index_value_is_bound(f, atom, query)?;
+                    let index = self.type_info.indexes[&f.name].clone();
+                    let indexed = self
+                        .type_info
+                        .get_func_type(&index.function)
+                        .expect("index target checked at declaration")
+                        .clone();
+                    (
+                        RuleBodyCall::IndexTable {
+                            id: self.func(&indexed),
+                            any_of: index.any_of,
+                            read,
+                        },
+                        self.args(&atom.args)?,
+                    )
+                }
                 ResolvedCall::Func(f) => (
                     RuleBodyCall::Table {
                         id: self.func(f),
-                        read: if include_subsumed {
-                            ReadMode::All
-                        } else {
-                            ReadMode::Live
-                        },
+                        read,
                     },
                     self.args(&atom.args)?,
                 ),
@@ -6044,8 +6142,27 @@ impl<'a> BackendRule<'a> {
         Ok(())
     }
 
+    /// A declared index is a view the database maintains, so an action writing
+    /// to one is rejected.
+    fn reject_index_write(&self, call: &ResolvedCall, span: &Span) -> Result<(), Error> {
+        if let ResolvedCall::Func(f) = call
+            && self.type_info.indexes.contains_key(&f.name)
+        {
+            return Err(TypeError::IndexIsReadOnly(f.name.clone(), span.clone()).into());
+        }
+        Ok(())
+    }
+
     fn actions(&mut self, actions: &core::ResolvedCoreActions) -> Result<(), Error> {
         for action in &actions.0 {
+            match action {
+                core::GenericCoreAction::Let(span, _, f, _)
+                | core::GenericCoreAction::Set(span, f, _, _)
+                | core::GenericCoreAction::Change(span, _, f, _) => {
+                    self.reject_index_write(f, span)?;
+                }
+                _ => {}
+            }
             match action {
                 core::GenericCoreAction::Let(span, v, f, args) => {
                     let (call, args) = match f {
@@ -6932,5 +7049,85 @@ mod tests {
             .parse_and_run_program(None, "(ruleset test)\n(run test2 1)")
             .unwrap_err();
         assert!(matches!(err, Error::NoSuchRuleset(name, _) if name == "test2"));
+    }
+}
+
+#[cfg(test)]
+mod index_binding_tests {
+    use crate::*;
+
+    /// The header every case below shares: one function and an index over all
+    /// three of its columns.
+    const INDEXED: &str = "
+        (datatype Math (Num i64))
+        (function edge (Math Math) Math :merge old)
+        (index EdgeOcc edge (any 0 1 2))
+        (relation dirty (Math))
+        (relation touched (Math Math Math))
+    ";
+
+    fn run(rule: &str) -> Result<(), Error> {
+        EGraph::default().parse_and_run_program(None, &format!("{INDEXED}{rule}"))?;
+        Ok(())
+    }
+
+    /// An index is probed, so its value has to be bound — but a *row column* of
+    /// another index atom binds like any other atom's column.
+    #[test]
+    fn an_index_value_may_come_from_another_indexs_row() {
+        run("(rule ((dirty x) (EdgeOcc x p q r) (EdgeOcc q s t u)) ((touched s t u)))")
+            .expect("the second index is probed by a column the first one bound");
+    }
+
+    /// The value an index is probed by does not bind: two atoms naming each
+    /// other there would each look bound with neither reachable.
+    #[test]
+    fn an_index_value_bound_only_by_another_probe_is_rejected() {
+        let err = run("(rule ((EdgeOcc x p q r) (EdgeOcc y s t u)) ((touched p q r)))")
+            .expect_err("neither index's value is bound by anything");
+        assert!(
+            format!("{err}").contains("must be bound"),
+            "expected an unbound-index-value error, got {err}"
+        );
+    }
+
+    /// A body primitive runs once per match, after the join, so the value it
+    /// computes cannot key a probe.
+    #[test]
+    fn an_index_value_bound_only_by_a_primitive_is_rejected() {
+        let err = EGraph::default()
+            .parse_and_run_program(
+                None,
+                "
+                (function f (i64 i64) i64 :merge old)
+                (index FOcc f (any 0 1 2))
+                (relation touched (i64 i64 i64))
+                (rule ((= v (+ 0 1)) (FOcc v p q r)) ((touched p q r)))
+                ",
+            )
+            .expect_err("a primitive does not bind a value the join can probe by");
+        assert!(
+            format!("{err}").contains("must be bound"),
+            "expected an unbound-index-value error, got {err}"
+        );
+    }
+
+    /// A literal is already known, so it needs no binder at all.
+    #[test]
+    fn an_index_may_be_probed_by_a_literal() {
+        EGraph::default()
+            .parse_and_run_program(
+                None,
+                "
+                (function f (i64 i64) i64 :merge old)
+                (index FOcc f (any 0 1 2))
+                (relation touched (i64 i64 i64))
+                (set (f 1 2) 3)
+                (rule ((FOcc 1 p q r)) ((touched p q r)))
+                (run 1)
+                (check (touched 1 2 3))
+                ",
+            )
+            .expect("a literal probe needs no binder");
     }
 }

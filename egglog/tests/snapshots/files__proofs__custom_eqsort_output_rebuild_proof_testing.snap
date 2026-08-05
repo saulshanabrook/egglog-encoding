@@ -1,0 +1,19 @@
+---
+source: egglog/tests/files.rs
+expression: proof_snapshot
+---
+(let t0 (f (Num 1) (Num 2)))
+(let t1 (f (Num 1) (Num 3)))
+(let prf0 (Congr (= t1 t0) (Fiat (= t1 t1)) (Fiat (= (Num 3) (Num 2))) 1))
+(Sym
+  (= (W (Num 1)) (Num 2))
+  (Rule
+    (= (Num 2) (W (Num 1)))
+    (name
+      "(rule ((= o (f k)))
+      ((union (W k) o))
+        :ruleset r )")
+    (premises
+      (Trans (= t0 t0) (Sym (= t0 t1) prf0) prf0)
+      (Fiat (= (Num 2) (Num 2))))
+    (substitution (k (Num 1)) (@n (Num 2)) (o (Num 2)))))

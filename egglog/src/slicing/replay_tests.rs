@@ -16,6 +16,10 @@ fn serial_pool() -> &'static rayon::ThreadPool {
     })
 }
 
+fn discard_run_output<T, E: std::fmt::Display>(result: Result<T, E>) -> Result<(), String> {
+    result.map(drop).map_err(|error| error.to_string())
+}
+
 fn temp_fact_dir() -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let path = std::env::temp_dir().join(format!(
@@ -38,7 +42,7 @@ fn slice_commands(program: &str) -> (Vec<Command>, String) {
 
     let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
     serial_pool()
-        .install(|| proof.parse_and_run_program(None, &rendered))
+        .install(|| discard_run_output(proof.parse_and_run_program(None, &rendered)))
         .unwrap();
     (commands, rendered)
 }
@@ -93,7 +97,7 @@ fn slices_replay_set_multiset_and_map_bindings_in_all_modes() {
             ),
         ] {
             serial_pool()
-                .install(|| replay.parse_and_run_program(None, &rendered))
+                .install(|| discard_run_output(replay.parse_and_run_program(None, &rendered)))
                 .unwrap_or_else(|error| {
                     panic!("{mode} strict {constructor} replay failed: {error}\n{rendered}")
                 });
@@ -243,7 +247,7 @@ fn carrier_container_denotation_retains_its_historical_anchor() {
     let mut recorder = EGraph::default();
     serial_pool().install(|| recorder.enable_trace()).unwrap();
     serial_pool()
-        .install(|| recorder.parse_and_run_program(None, program))
+        .install(|| discard_run_output(recorder.parse_and_run_program(None, program)))
         .unwrap();
     recorder
         .with_trace_view(|view| {
@@ -422,7 +426,7 @@ fn run_endpoint_case(case: EndpointCase) -> Result<(), String> {
         .install(|| recorder.enable_trace())
         .map_err(|error| format!("enable trace: {error}"))?;
     serial_pool()
-        .install(|| recorder.parse_and_run_program(None, &program))
+        .install(|| discard_run_output(recorder.parse_and_run_program(None, &program)))
         .map_err(|error| format!("capture: {error}"))?;
     let slice = select_all_checks(&recorder).map_err(|error| format!("slice: {error}"))?;
     if matches!(case.carrier, EndpointCarrier::DeleteRecreate) && slice.replay_removals.is_empty() {
@@ -611,7 +615,7 @@ fn replay_preserves_setup_chronology_across_late_global() {
         ),
     ] {
         serial_pool()
-            .install(|| replay.parse_and_run_program(None, &rendered))
+            .install(|| discard_run_output(replay.parse_and_run_program(None, &rendered)))
             .unwrap_or_else(|error| panic!("{mode} strict replay failed: {error}\n{rendered}"));
     }
 }
@@ -677,7 +681,7 @@ fn rendered_artifact_round_trips_globals_and_grounded_rules_in_all_modes() {
 
     let mut direct_proof = EGraph::default().with_proofs_enabled().with_proof_testing();
     serial_pool()
-        .install(|| direct_proof.run_program(commands))
+        .install(|| discard_run_output(direct_proof.run_program(commands)))
         .unwrap();
 
     for (mode, mut replay) in [
@@ -689,7 +693,7 @@ fn rendered_artifact_round_trips_globals_and_grounded_rules_in_all_modes() {
         ),
     ] {
         serial_pool()
-            .install(|| replay.parse_and_run_program(None, &rendered))
+            .install(|| discard_run_output(replay.parse_and_run_program(None, &rendered)))
             .unwrap_or_else(|error| panic!("{mode} strict replay failed: {error}\n{rendered}"));
     }
 }
@@ -1004,7 +1008,7 @@ fn owned_ir_embeds_only_selected_input_rows() {
         ),
     ] {
         serial_pool()
-            .install(|| replay.parse_and_run_program(None, &rendered))
+            .install(|| discard_run_output(replay.parse_and_run_program(None, &rendered)))
             .unwrap_or_else(|error| panic!("{mode} input replay failed: {error}\n{rendered}"));
     }
 }

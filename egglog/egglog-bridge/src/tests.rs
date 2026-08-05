@@ -23,9 +23,9 @@ use once_cell::sync::Lazy;
 use crate::{
     ColumnTy, DefaultVal, EGraph, FunctionConfig, FunctionId, FunctionReplaySpec,
     GroundedRuleBinding, GroundedRuleRun, MergeAction, MergeBindingId, MergeExpr, MergeInputSide,
-    MergeProgram, MergeValueColumn, QueryEntry, ReplayCallSpec, ReplayLiteral, ReplayOpId,
-    ReplaySortId, ReplayTableKind, SourceInputRow, TableAction, TraceLifecycleError, Variable,
-    add_expressions, define_rule,
+    MergeProgram, MergeResultShape, MergeValueColumn, QueryEntry, ReplayCallSpec, ReplayLiteral,
+    ReplayOpId, ReplaySortId, ReplayTableKind, SourceInputRow, TableAction, TraceLifecycleError,
+    Variable, add_expressions, define_rule,
 };
 
 fn prior(column: usize) -> MergeExpr {
@@ -77,20 +77,48 @@ fn single_merge(result: MergeExpr) -> MergeProgram {
 
 #[test]
 fn only_action_free_scalar_merges_accept_result_lookup_metadata() {
-    let function = ExternalFunctionId::new_const(0);
-    assert!(
-        single_merge(primitive(function, vec![prior(0), incoming(0)]))
-            .supports_scalar_replay_result_shape()
+    let mut egraph = EGraph::default();
+    let primitive_function = ExternalFunctionId::new_const(0);
+    assert_eq!(
+        single_merge(primitive(primitive_function, vec![prior(0), incoming(0)],))
+            .scalar_replay_result_shape(&egraph),
+        MergeResultShape::NoTableRead
     );
-    assert!(
-        !MergeProgram {
+    assert_eq!(
+        MergeProgram {
             actions: vec![MergeAction::Let {
                 binding: MergeBindingId::new(0),
                 value: prior(0),
             }],
             results: vec![prior(0)],
         }
-        .supports_scalar_replay_result_shape()
+        .scalar_replay_result_shape(&egraph),
+        MergeResultShape::Unsupported
+    );
+
+    let constructor = egraph.add_table(FunctionConfig {
+        n_vals: 1,
+        n_identity_vals: None,
+        schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
+        default: DefaultVal::FreshId,
+        merge: single_merge(union_id(0)),
+        name: "constructor".into(),
+        can_subsume: false,
+    });
+    assert_eq!(
+        single_merge(function(constructor, vec![prior(0), incoming(0)]))
+            .scalar_replay_result_shape(&egraph),
+        MergeResultShape::DirectConstructor(constructor)
+    );
+    assert_eq!(
+        single_merge(function(constructor, vec![incoming(0), prior(0)]))
+            .scalar_replay_result_shape(&egraph),
+        MergeResultShape::Unsupported
+    );
+    assert_eq!(
+        single_merge(function(constructor, vec![prior(0), prior(0)]))
+            .scalar_replay_result_shape(&egraph),
+        MergeResultShape::Unsupported
     );
 }
 
@@ -402,7 +430,7 @@ fn trace_wave_rejects_decreasing_stamp_without_panicking() {
 }
 
 #[test]
-fn trace_replay_rejects_table_reading_merge_metadata_before_staging() {
+fn direct_constructor_merge_replay_preflight_is_retry_safe() {
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(1)
         .build()
@@ -419,16 +447,144 @@ fn trace_replay_rejects_table_reading_merge_metadata_before_staging() {
             name: "constructor".into(),
             can_subsume: false,
         });
-        let unsupported = egraph.add_table(FunctionConfig {
+        let key_sort = ReplaySortId::new(0);
+        let consumer_output_sort = ReplaySortId::new(1);
+        let constructor_sort = ReplaySortId::new(2);
+        let supported = egraph.add_table(FunctionConfig {
             n_vals: 1,
             n_identity_vals: None,
             schema: vec![ColumnTy::Id, ColumnTy::Id],
             default: DefaultVal::Fail,
             merge: single_merge(function(constructor, vec![prior(0), incoming(0)])),
-            name: "unsupported-merge".into(),
+            name: "constructor-merge".into(),
+            can_subsume: false,
+        });
+        let consumer_replay = FunctionReplaySpec::new(
+            [key_sort, consumer_output_sort],
+            None,
+        )
+        .with_merge_result(ReplayCallSpec::new(
+            consumer_output_sort,
+            ReplayOpId::new(1),
+            [key_sort],
+        ));
+        let error = egraph
+            .register_function_replay(
+                supported,
+                consumer_replay.clone(),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "function `constructor-merge` direct merge constructor `constructor` has no trace replay metadata"
+        );
+
+        egraph
+            .register_function_replay(
+                constructor,
+                FunctionReplaySpec::new(
+                    [constructor_sort, constructor_sort, constructor_sort],
+                    Some(ReplayCallSpec::new(
+                        constructor_sort,
+                        ReplayOpId::new(0),
+                        [constructor_sort, constructor_sort],
+                    )),
+                ),
+            )
+            .unwrap();
+        let error = egraph
+            .register_function_replay(supported, consumer_replay)
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "function `constructor-merge` direct merge constructor `constructor` has incompatible replay signature: expected [ReplaySortId(1), ReplaySortId(1)] -> ReplaySortId(1), found [ReplaySortId(2), ReplaySortId(2)] -> ReplaySortId(2)"
+        );
+
+        // Changing the consumer output sort also proves both failures preceded
+        // trace layout registration: a leaked first layout would conflict here.
+        // The merge-result call names a read of the consumer at its own key;
+        // it is deliberately distinct from the binary target constructor call.
+        egraph
+            .register_function_replay(
+                supported,
+                FunctionReplaySpec::new([key_sort, constructor_sort], None).with_merge_result(
+                    ReplayCallSpec::new(
+                        constructor_sort,
+                        ReplayOpId::new(1),
+                        [key_sort],
+                    ),
+                ),
+            )
+            .unwrap();
+    });
+}
+
+#[test]
+fn trace_replay_accepts_direct_constructor_merge_and_rejects_custom_table_read() {
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .unwrap();
+    pool.install(|| {
+        let mut egraph = EGraph::default();
+        egraph.enable_trace().unwrap();
+        let constructor = egraph.add_table(FunctionConfig {
+            n_vals: 1,
+            n_identity_vals: None,
+            schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
+            default: DefaultVal::FreshId,
+            merge: single_merge(union_id(0)),
+            name: "constructor".into(),
             can_subsume: false,
         });
         let sort = ReplaySortId::new(0);
+        egraph
+            .register_function_replay(
+                constructor,
+                FunctionReplaySpec::new(
+                    [sort, sort, sort],
+                    Some(ReplayCallSpec::new(sort, ReplayOpId::new(0), [sort, sort])),
+                ),
+            )
+            .unwrap();
+        let supported = egraph.add_table(FunctionConfig {
+            n_vals: 1,
+            n_identity_vals: None,
+            schema: vec![ColumnTy::Id, ColumnTy::Id],
+            default: DefaultVal::Fail,
+            merge: single_merge(function(constructor, vec![prior(0), incoming(0)])),
+            name: "constructor-merge".into(),
+            can_subsume: false,
+        });
+        egraph
+            .register_function_replay(
+                supported,
+                FunctionReplaySpec::new([sort, sort], None).with_merge_result(ReplayCallSpec::new(
+                    sort,
+                    ReplayOpId::new(1),
+                    [sort],
+                )),
+            )
+            .unwrap();
+
+        let helper = egraph.add_table(FunctionConfig {
+            n_vals: 1,
+            n_identity_vals: None,
+            schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
+            default: DefaultVal::Fail,
+            merge: single_merge(union_id(0)),
+            name: "helper".into(),
+            can_subsume: false,
+        });
+        let unsupported = egraph.add_table(FunctionConfig {
+            n_vals: 1,
+            n_identity_vals: None,
+            schema: vec![ColumnTy::Id, ColumnTy::Id],
+            default: DefaultVal::Fail,
+            merge: single_merge(function(helper, vec![prior(0), incoming(0)])),
+            name: "custom-read-merge".into(),
+            can_subsume: false,
+        });
         let error =
             egraph
                 .register_function_replay(
@@ -441,7 +597,7 @@ fn trace_replay_rejects_table_reading_merge_metadata_before_staging() {
         assert!(
             error
                 .to_string()
-                .contains("merge-result replay metadata for an actionful or table-reading merge")
+                .contains("merge-result replay metadata for an unsupported action or table read")
         );
         assert_eq!(egraph.table_size(unsupported), 0);
         assert!(
@@ -449,7 +605,7 @@ fn trace_replay_rejects_table_reading_merge_metadata_before_staging() {
                 .action_registry()
                 .read()
                 .unwrap()
-                .lookup_table("unsupported-merge")
+                .lookup_table("custom-read-merge")
                 .is_some()
         );
     });
