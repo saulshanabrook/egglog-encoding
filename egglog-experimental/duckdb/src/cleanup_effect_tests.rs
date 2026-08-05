@@ -338,13 +338,14 @@ fn three_body_four_delete_rule_bypasses_path_dispatch_without_consuming_rejected
     let mut invalid = valid.clone();
     invalid.name = "same arity but invalid mixed path candidate".to_string();
     invalid.core.head.0[2] = set_action(targets[3], vec![key.clone()], vec![values[0].clone()]);
-    backend.add_rule(invalid).unwrap_err();
+    let mixed = backend.add_rule(invalid)?;
+    assert_eq!(mixed, RuleId::new(0));
 
     let accepted = backend.add_rule(valid)?;
     assert_eq!(
         accepted,
-        RuleId::new(0),
-        "the surrounding invalid arity collision must not consume a RuleId"
+        RuleId::new(1),
+        "the generic mixed cleanup rule consumes exactly one RuleId"
     );
     assert!(!run(&mut backend, &[accepted])?);
     for target in targets {
@@ -744,7 +745,7 @@ fn cleanup_admission_is_fail_closed_and_does_not_consume_rule_ids() -> Result<()
     let value = var(1, "admission-value", ColumnTy::Id);
     let body = vec![atom(target, vec![key.clone(), value.clone()])];
 
-    let invalid = vec![
+    let accepted = vec![
         rule(
             "mixed delete set",
             true,
@@ -763,6 +764,21 @@ fn cleanup_admission_is_fail_closed_and_does_not_consume_rule_ids() -> Result<()
                 subsume_action(target, vec![key.clone()]),
             ],
         ),
+        rule(
+            "delete diagnostic metadata name",
+            true,
+            body.clone(),
+            vec![delete_action(
+                target,
+                vec![var(0, "different-name", ColumnTy::Id)],
+            )],
+        ),
+    ];
+    for (index, spec) in accepted.into_iter().enumerate() {
+        assert_eq!(backend.add_rule(spec)?, RuleId::new(index as u32));
+    }
+
+    let invalid = vec![
         rule(
             "subsume unsupported table",
             true,
@@ -800,15 +816,6 @@ fn cleanup_admission_is_fail_closed_and_does_not_consume_rule_ids() -> Result<()
             )],
         ),
         rule(
-            "delete inconsistent metadata",
-            true,
-            body.clone(),
-            vec![delete_action(
-                target,
-                vec![var(0, "different-name", ColumnTy::Id)],
-            )],
-        ),
-        rule(
             "delete global key",
             true,
             body.clone(),
@@ -826,7 +833,10 @@ fn cleanup_admission_is_fail_closed_and_does_not_consume_rule_ids() -> Result<()
         ),
     ];
     for spec in invalid {
-        backend.add_rule(spec).unwrap_err();
+        let label = spec.name.clone();
+        if let Ok(id) = backend.add_rule(spec) {
+            panic!("{label} unexpectedly admitted as {id:?}");
+        }
     }
 
     let primitive = backend.new_panic("must not run".to_string());
@@ -869,7 +879,7 @@ fn cleanup_admission_is_fail_closed_and_does_not_consume_rule_ids() -> Result<()
     ))?;
     assert_eq!(
         valid,
-        RuleId::new(0),
+        RuleId::new(3),
         "failed cleanup admissions must not consume RuleIds"
     );
     Ok(())

@@ -4,6 +4,7 @@
 /.reports*.html
 /.profiles/
 /.bench-worktrees/
+/.uv/
 /.venv/
 /.mypy_cache/
 /.pytest_cache/

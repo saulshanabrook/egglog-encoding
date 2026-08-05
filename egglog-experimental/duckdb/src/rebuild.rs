@@ -63,14 +63,6 @@ impl OrderedUnionPlan {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct OrderedUnionGraph {
-    pub(crate) root: OrderedUnionPlan,
-    pub(crate) displaced: OrderedUnionPlan,
-    pub(crate) fresh_token: ExternalFunctionId,
-    pub(crate) fresh_label: RuleValue,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum StandardRebuildKind {
     EqKey {
         key_index: usize,
@@ -246,11 +238,11 @@ fn compile_selected(
         .expect("outer shape checked primitive");
     let first_id = match first_table.head {
         RuleBodyCall::Table { id, .. } => id,
-        RuleBodyCall::Primitive { .. } => unreachable!(),
+        RuleBodyCall::Primitive { .. } | RuleBodyCall::IndexTable { .. } => unreachable!(),
     };
     let second_id = match second_table.head {
         RuleBodyCall::Table { id, .. } => id,
-        RuleBodyCall::Primitive { .. } => unreachable!(),
+        RuleBodyCall::Primitive { .. } | RuleBodyCall::IndexTable { .. } => unreachable!(),
     };
     let first_info = storage.table_info(first_id)?;
     let second_info = storage.table_info(second_id)?;
@@ -905,186 +897,6 @@ fn validate_ordered_union(
         fresh_token: sym_token,
         fresh_label: sym_label,
     })
-}
-
-fn validate_view_ordered_union_graph(
-    base_values: &BaseValues,
-    tables: &(impl TableCatalog + ?Sized),
-    native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
-    fresh_tokens: &BTreeSet<ExternalFunctionId>,
-    rule_name: &str,
-    target: FunctionId,
-) -> Result<OrderedUnionGraph> {
-    let info = tables.table_info_for_merge(target)?;
-    validate_view_table(base_values, rule_name, &info)?;
-    let root = validate_ordered_union(
-        base_values,
-        tables,
-        native_primitives,
-        fresh_tokens,
-        rule_name,
-        target,
-        &info,
-        None,
-        OrderedUnionOrientation::EclassToTerm,
-    )?;
-    let displaced_info = tables.table_info_for_merge(root.plan.displaced_target)?;
-    validate_union_find_table(base_values, rule_name, &displaced_info)?;
-    let displaced = validate_ordered_union(
-        base_values,
-        tables,
-        native_primitives,
-        fresh_tokens,
-        rule_name,
-        root.plan.displaced_target,
-        &displaced_info,
-        Some(root.plan.displaced_target),
-        OrderedUnionOrientation::KeyToParent,
-    )?;
-    ensure!(
-        root.plan.sym == displaced.plan.sym
-            && root.plan.trans == displaced.plan.trans
-            && root.fresh_token == displaced.fresh_token
-            && root.fresh_label == displaced.fresh_label,
-        "DuckDB ordered-union View and displaced UF blocks disagree"
-    );
-    Ok(OrderedUnionGraph {
-        root: root.plan,
-        displaced: displaced.plan,
-        fresh_token: root.fresh_token,
-        fresh_label: root.fresh_label,
-    })
-}
-
-pub(crate) fn validate_scalar_mixed_ordered_union(
-    base_values: &BaseValues,
-    storage: &Storage,
-    native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
-    fresh_tokens: &BTreeSet<ExternalFunctionId>,
-    rule_name: &str,
-    target: FunctionId,
-) -> Result<OrderedUnionGraph> {
-    validate_view_ordered_union_graph(
-        base_values,
-        storage,
-        native_primitives,
-        fresh_tokens,
-        rule_name,
-        target,
-    )
-    .map_err(|error| {
-        anyhow!(
-            "DuckDB scalar-mixed rule `{rule_name}` has an incompatible ordered-union graph: {error:#}"
-        )
-    })
-}
-
-/// Validate an ordered-union target admitted from the general scalar action
-/// language. Subsumable targets retain the exact two-node View graph;
-/// non-subsumable targets must be the exact self-displacing UF and represent
-/// that singleton component by aliasing the graph's root and displaced plan.
-pub(crate) fn validate_scalar_action_ordered_union(
-    base_values: &BaseValues,
-    storage: &Storage,
-    native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
-    fresh_tokens: &BTreeSet<ExternalFunctionId>,
-    rule_name: &str,
-    target: FunctionId,
-) -> Result<OrderedUnionGraph> {
-    let validate = || -> Result<OrderedUnionGraph> {
-        let info = storage.table_info(target)?;
-        if info.can_subsume {
-            return validate_view_ordered_union_graph(
-                base_values,
-                storage,
-                native_primitives,
-                fresh_tokens,
-                rule_name,
-                target,
-            );
-        }
-
-        validate_union_find_table(base_values, rule_name, &info)?;
-        let root = validate_ordered_union(
-            base_values,
-            storage,
-            native_primitives,
-            fresh_tokens,
-            rule_name,
-            target,
-            &info,
-            Some(target),
-            OrderedUnionOrientation::KeyToParent,
-        )?;
-        Ok(OrderedUnionGraph {
-            root: root.plan.clone(),
-            displaced: root.plan,
-            fresh_token: root.fresh_token,
-            fresh_label: root.fresh_label,
-        })
-    };
-
-    validate().map_err(|error| {
-        anyhow!(
-            "DuckDB scalar rule `{rule_name}` has an incompatible ordered-union target {}: {error:#}",
-            target.rep()
-        )
-    })
-}
-
-/// Tri-state native-input admission for the ordered-union family. A View owns
-/// this branch only when both its root and displaced target have the generated
-/// outer topology; unrelated custom Blocks then retain generic `Deferred`
-/// fallthrough. Once owned, every interior and the complete queue graph is
-/// validated fail-closed. This deliberately does not alter [`WriteCapability`],
-/// so an ordinary Direct Set still rejects the same Block.
-pub(crate) fn validate_native_input_ordered_union(
-    base_values: &BaseValues,
-    tables: &[TableInfo],
-    native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
-    fresh_tokens: &BTreeSet<ExternalFunctionId>,
-    target: FunctionId,
-) -> Result<Option<Vec<OrderedUnionPlan>>> {
-    let info = tables.table_info_for_merge(target)?;
-    let Some(displaced_target) = ordered_union_outer(&info.merge) else {
-        return Ok(None);
-    };
-    if info.can_subsume {
-        let displaced_info = tables.table_info_for_merge(displaced_target)?;
-        if ordered_union_outer(&displaced_info.merge).is_none() {
-            return Ok(None);
-        }
-    }
-
-    if info.can_subsume {
-        let graph = validate_view_ordered_union_graph(
-            base_values,
-            tables,
-            native_primitives,
-            fresh_tokens,
-            "native input",
-            target,
-        )?;
-        return Ok(Some(vec![graph.root, graph.displaced]));
-    }
-
-    let orientation = {
-        validate_union_find_table(base_values, "native input", &info)?;
-        OrderedUnionOrientation::KeyToParent
-    };
-    let root = validate_ordered_union(
-        base_values,
-        tables,
-        native_primitives,
-        fresh_tokens,
-        "native input",
-        target,
-        &info,
-        (orientation == OrderedUnionOrientation::KeyToParent).then_some(target),
-        orientation,
-    )?;
-
-    Ok(Some(vec![root.plan]))
 }
 
 fn validate_inequality<'a>(

@@ -7,11 +7,11 @@ expression: proof_snapshot
 (let t2 (premises (Fiat (= t0 t0))))
 (let t3
   (substitution
-        (e (Var "x"))
-        (ctx (NilConst))
         (@rewrite_var__3 t0)
+        (ctx (NilConst))
         (x "x")
-        (t1 (TUnitConst))))
+        (t1 (TUnitConst))
+        (e (Var "x"))))
 (Congr
   (= t0 (TArr (TUnitConst) (TUnitConst)))
   (Rule
@@ -31,8 +31,8 @@ expression: proof_snapshot
         t2
         t3))
     (substitution
-      (t (TUnitConst))
-      (ctx (NilConst))
       (@rewrite_var__1 t1)
-      (x "x")))
+      (x "x")
+      (t (TUnitConst))
+      (ctx (NilConst))))
   1)

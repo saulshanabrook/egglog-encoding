@@ -53,6 +53,7 @@ impl Names {
                 }
                 Ok(())
             }
+            ResolvedNCommand::Index { span, name, .. } => self.check(name.clone(), span.clone()),
             ResolvedNCommand::AddRuleset(span, name) => self.check(name.clone(), span.clone()),
             ResolvedNCommand::UnstableCombinedRuleset(span, name, _args) => {
                 self.check(name.clone(), span.clone())

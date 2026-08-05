@@ -8,4 +8,4 @@ expression: proof_snapshot
   (premises
     (Fiat (= (Strings "hello" "world") (Strings "hello" "world")))
     (Fiat (= "hello world" "hello world")))
-  (substitution (a "hello") (res "hello world") (b "world")))
+  (substitution (a "hello") (b "world") (res "hello world")))

@@ -295,6 +295,10 @@ impl EGraph {
     /// The DD backend retains the accepted [`RuleSpec`] directly; this pass does
     /// not introduce a second rule IR.
     fn validate_rule(&self, rule: &RuleSpec) -> Result<()> {
+        let term_ty = |term: &GenericAtomTerm<RuleVar, RuleValue>| match term {
+            GenericAtomTerm::Var(_, variable) | GenericAtomTerm::Global(_, variable) => variable.ty,
+            GenericAtomTerm::Literal(_, value) => value.ty,
+        };
         let validate_terms =
             |terms: &[GenericAtomTerm<RuleVar, RuleValue>], location: &str| -> Result<()> {
                 if let Some(GenericAtomTerm::Global(_, global)) = terms
@@ -319,8 +323,73 @@ impl EGraph {
             })
         };
 
+        let unit_ty = ColumnTy::Base(self.db.base_values().get_ty::<()>());
+        let unit_value = self.db.base_values().get(());
         for atom in &rule.core.body.atoms {
             match atom.head {
+                RuleBodyCall::IndexTable { id, ref any_of, .. } => {
+                    let info = relation(id, "rule body")?;
+                    // The occurring value, the base row, and the index relation's
+                    // own unit output.
+                    let expected = info.arity + 2;
+                    if atom.args.len() != expected {
+                        bail!(
+                            "DD backend cannot add rule {:?}: index atom over `{}` has {} columns, expected {expected}",
+                            rule.name,
+                            info.name,
+                            atom.args.len()
+                        );
+                    }
+                    if any_of.is_empty() {
+                        bail!(
+                            "DD backend cannot add rule {:?}: index atom over `{}` lists no occurrence columns",
+                            rule.name,
+                            info.name
+                        );
+                    }
+                    if let Some(col) = any_of.iter().find(|c| **c >= info.arity) {
+                        bail!(
+                            "DD backend cannot add rule {:?}: index atom over `{}` reads column {col}, but it has arity {}",
+                            rule.name,
+                            info.name,
+                            info.arity
+                        );
+                    }
+                    let probe = &atom.args[0];
+                    for &column in any_of {
+                        if term_ty(probe) != info.schema[column] {
+                            bail!(
+                                "DD backend cannot add rule {:?}: index probe type disagrees with column {column} of `{}`",
+                                rule.name,
+                                info.name
+                            );
+                        }
+                    }
+                    for (term, expected) in atom.args[1..=info.arity].iter().zip(&info.schema) {
+                        if term_ty(term) != *expected {
+                            bail!(
+                                "DD backend cannot add rule {:?}: index row over `{}` has a mistyped column",
+                                rule.name,
+                                info.name
+                            );
+                        }
+                    }
+                    let Some(GenericAtomTerm::Literal(_, output)) = atom.args.last() else {
+                        bail!(
+                            "DD backend cannot add rule {:?}: index output over `{}` must be canonical Unit",
+                            rule.name,
+                            info.name
+                        );
+                    };
+                    if output.ty != unit_ty || output.value != unit_value {
+                        bail!(
+                            "DD backend cannot add rule {:?}: index output over `{}` must be canonical Unit",
+                            rule.name,
+                            info.name
+                        );
+                    }
+                    validate_terms(&atom.args, "rule body")?;
+                }
                 RuleBodyCall::Table { id, .. } => {
                     if atom.args.len() > dd_native::W {
                         bail!(
@@ -353,6 +422,80 @@ impl EGraph {
                     validate_terms(&atom.args, "rule body primitive")?;
                 }
             }
+        }
+
+        let mut reachable = HashSet::<u32>::new();
+        for atom in &rule.core.body.atoms {
+            if !matches!(&atom.head, RuleBodyCall::Table { .. }) {
+                continue;
+            }
+            for term in &atom.args {
+                if let GenericAtomTerm::Var(_, variable) = term {
+                    reachable.insert(variable.id);
+                }
+            }
+        }
+        let mut admitted_indices = HashSet::<usize>::new();
+        loop {
+            let mut changed = false;
+            for (atom_index, atom) in rule.core.body.atoms.iter().enumerate() {
+                let RuleBodyCall::IndexTable { id, any_of, .. } = &atom.head else {
+                    continue;
+                };
+                if admitted_indices.contains(&atom_index) {
+                    continue;
+                }
+                let info = relation(*id, "rule body")?;
+                let any_of = any_of.iter().copied().collect::<HashSet<_>>();
+                let probe = &atom.args[0];
+                let row = &atom.args[1..=info.arity];
+                let ready = match probe {
+                    GenericAtomTerm::Literal(..) => true,
+                    GenericAtomTerm::Var(_, variable) => {
+                        reachable.contains(&variable.id)
+                            || row.iter().enumerate().any(|(column, term)| {
+                                any_of.contains(&column)
+                                    && matches!(term, GenericAtomTerm::Var(_, row) if row.id == variable.id)
+                            })
+                            || any_of.len() == 1
+                    }
+                    GenericAtomTerm::Global(..) => false,
+                };
+                if !ready {
+                    continue;
+                }
+                if let GenericAtomTerm::Var(_, variable) = probe {
+                    reachable.insert(variable.id);
+                }
+                for term in row {
+                    if let GenericAtomTerm::Var(_, variable) = term {
+                        reachable.insert(variable.id);
+                    }
+                }
+                admitted_indices.insert(atom_index);
+                changed = true;
+            }
+            if !changed {
+                break;
+            }
+        }
+        for (atom_index, atom) in rule.core.body.atoms.iter().enumerate() {
+            if !matches!(&atom.head, RuleBodyCall::IndexTable { .. })
+                || admitted_indices.contains(&atom_index)
+            {
+                continue;
+            }
+            let probe = atom.args.first().and_then(|term| match term {
+                GenericAtomTerm::Var(_, variable) | GenericAtomTerm::Global(_, variable) => {
+                    Some(variable.id)
+                }
+                GenericAtomTerm::Literal(..) => None,
+            });
+            bail!(
+                "DD backend cannot add rule {:?}: index probe variable {:?} is not reachable from a row binder",
+                rule.name,
+                probe
+            );
         }
 
         for action in &rule.core.head.0 {
@@ -1131,7 +1274,13 @@ fn update_version_map(
                 rows.remove(row);
             }
         }
-        std::cmp::Ordering::Equal => {}
+        std::cmp::Ordering::Equal => {
+            if let Some(version) = version {
+                if let Some(existing) = versions.get_mut(&func).and_then(|rows| rows.get_mut(row)) {
+                    *existing = version;
+                }
+            }
+        }
     }
 }
 
@@ -2824,6 +2973,209 @@ mod tests {
 
         assert!(eg.mirror[&view].contains(&row(&[4, 0])));
         assert!(!eg.mirror[&view].contains(&row(&[10, 0])));
+    }
+
+    #[test]
+    fn malformed_index_rules_do_not_consume_dd_rule_ids() {
+        let mut eg = EGraph::new();
+        let unit_ty = ColumnTy::Base(eg.db.base_values().get_ty::<()>());
+        let i64_ty = ColumnTy::Base(eg.db.base_values_mut().register_type::<i64>());
+        let unit = eg.db.base_values().get(());
+        let one = eg.db.base_values().get(1_i64);
+        let source = Backend::add_table(
+            &mut eg,
+            FunctionConfig {
+                schema: vec![ColumnTy::Id, i64_ty],
+                n_vals: 1,
+                n_identity_vals: None,
+                default: DefaultVal::Fail,
+                merge: MergeFn::Old,
+                name: "DD index validation source".into(),
+                can_subsume: false,
+            },
+        );
+        let reachability_source = Backend::add_table(
+            &mut eg,
+            FunctionConfig {
+                schema: vec![i64_ty, i64_ty, i64_ty],
+                n_vals: 1,
+                n_identity_vals: None,
+                default: DefaultVal::Fail,
+                merge: MergeFn::Old,
+                name: "DD index reachability source".into(),
+                can_subsume: false,
+            },
+        );
+        let literal = |value, ty| GenericAtomTerm::Literal(Span::Panic, RuleValue { value, ty });
+        let variable = |id, ty| {
+            GenericAtomTerm::Var(
+                Span::Panic,
+                RuleVar {
+                    id,
+                    name: format!("v{id}").into(),
+                    ty,
+                },
+            )
+        };
+        let make_rule =
+            |name: &str, target: FunctionId, any_of: Vec<usize>, args: Vec<RuleTerm>| RuleSpec {
+                name: name.into(),
+                seminaive: false,
+                no_decomp: false,
+                core: GenericCoreRule {
+                    span: Span::Panic,
+                    body: Query {
+                        atoms: vec![GenericAtom {
+                            span: Span::Panic,
+                            head: RuleBodyCall::IndexTable {
+                                id: target,
+                                any_of,
+                                read: ReadMode::All,
+                            },
+                            args,
+                        }],
+                    },
+                    head: Default::default(),
+                },
+            };
+        let valid_args = vec![
+            literal(Value::new(7), ColumnTy::Id),
+            literal(Value::new(7), ColumnTy::Id),
+            literal(one, i64_ty),
+            literal(unit, unit_ty),
+        ];
+        let x = variable(20, i64_ty);
+        let y = variable(21, i64_ty);
+        let mut cyclic = make_rule(
+            "mutually cyclic probes",
+            reachability_source,
+            vec![0, 1],
+            vec![
+                x.clone(),
+                y.clone(),
+                literal(one, i64_ty),
+                literal(one, i64_ty),
+                literal(unit, unit_ty),
+            ],
+        );
+        cyclic.core.body.atoms.push(GenericAtom {
+            span: Span::Panic,
+            head: RuleBodyCall::IndexTable {
+                id: reachability_source,
+                any_of: vec![0, 1],
+                read: ReadMode::All,
+            },
+            args: vec![
+                y,
+                x.clone(),
+                literal(one, i64_ty),
+                literal(one, i64_ty),
+                literal(unit, unit_ty),
+            ],
+        });
+        let unindexed_repeat = make_rule(
+            "probe repeated only at unindexed column",
+            reachability_source,
+            vec![0, 1],
+            vec![
+                x.clone(),
+                literal(one, i64_ty),
+                literal(one, i64_ty),
+                x,
+                literal(unit, unit_ty),
+            ],
+        );
+        let mut short = valid_args.clone();
+        short.pop();
+        let malformed = vec![
+            cyclic,
+            unindexed_repeat,
+            make_rule("short index", source, vec![0], short),
+            make_rule("empty occurrence set", source, vec![], valid_args.clone()),
+            make_rule(
+                "out-of-range occurrence",
+                source,
+                vec![2],
+                valid_args.clone(),
+            ),
+            make_rule("mixed probe types", source, vec![0, 1], valid_args.clone()),
+            make_rule(
+                "mistyped row",
+                source,
+                vec![0],
+                vec![
+                    literal(Value::new(7), ColumnTy::Id),
+                    literal(one, i64_ty),
+                    literal(one, i64_ty),
+                    literal(unit, unit_ty),
+                ],
+            ),
+            make_rule(
+                "nonliteral Unit output",
+                source,
+                vec![0],
+                vec![
+                    literal(Value::new(7), ColumnTy::Id),
+                    literal(Value::new(7), ColumnTy::Id),
+                    literal(one, i64_ty),
+                    variable(9, unit_ty),
+                ],
+            ),
+            make_rule(
+                "mistyped Unit output",
+                source,
+                vec![0],
+                vec![
+                    literal(Value::new(7), ColumnTy::Id),
+                    literal(Value::new(7), ColumnTy::Id),
+                    literal(one, i64_ty),
+                    literal(one, i64_ty),
+                ],
+            ),
+            make_rule(
+                "noncanonical Unit output",
+                source,
+                vec![0],
+                vec![
+                    literal(Value::new(7), ColumnTy::Id),
+                    literal(Value::new(7), ColumnTy::Id),
+                    literal(one, i64_ty),
+                    literal(Value::new(unit.rep() + 1), unit_ty),
+                ],
+            ),
+            make_rule(
+                "unbound probe",
+                reachability_source,
+                vec![0, 1],
+                vec![
+                    variable(10, i64_ty),
+                    literal(one, i64_ty),
+                    literal(one, i64_ty),
+                    literal(one, i64_ty),
+                    literal(unit, unit_ty),
+                ],
+            ),
+            make_rule(
+                "unregistered target",
+                FunctionId::new(source.rep() + 50),
+                vec![0],
+                valid_args.clone(),
+            ),
+        ];
+        for rule in malformed {
+            Backend::add_rule(&mut eg, rule).expect_err("malformed index must be rejected");
+        }
+        let id = Backend::add_rule(
+            &mut eg,
+            make_rule(
+                "valid duplicate occurrence columns",
+                source,
+                vec![0, 0],
+                valid_args,
+            ),
+        )
+        .expect("duplicates have set semantics");
+        assert_eq!(id, RuleId::new(0));
     }
 }
 

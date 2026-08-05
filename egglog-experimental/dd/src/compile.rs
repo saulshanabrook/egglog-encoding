@@ -166,4 +166,23 @@ impl Slot {
 pub struct ReadKey {
     pub func: FunctionId,
     pub mode: ReadMode,
+    /// Zero for an ordinary read. Otherwise this stream is the *occurrence view*
+    /// of `func`: one row per (value, base row) for each value the base row holds
+    /// in a column whose bit is set here, deduplicated per row.
+    pub occurrence_cols: u64,
+}
+
+impl ReadKey {
+    /// The columns the occurrence view reads, ascending; empty for an ordinary
+    /// read.
+    pub fn occurrence_columns(&self) -> impl Iterator<Item = usize> {
+        let mut bits = self.occurrence_cols;
+        std::iter::from_fn(move || {
+            (bits != 0).then(|| {
+                let col = bits.trailing_zeros() as usize;
+                bits &= bits - 1;
+                col
+            })
+        })
+    }
 }

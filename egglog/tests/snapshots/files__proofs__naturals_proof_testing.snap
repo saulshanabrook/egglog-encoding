@@ -39,7 +39,7 @@ expression: proof_snapshot
             (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
             t8
             t9))
-        (substitution t5 (@rewrite_var__ t7)))
+        (substitution (@rewrite_var__ t7) t5))
       0)
     0))
 (let t0 (S (S (S (Z)))))
@@ -52,7 +52,7 @@ expression: proof_snapshot
 (let t7 (Plus (S (S (Z))) t6))
 (let t8 (premises (Fiat (= t1 t1))))
 (let t9 (n t0))
-(let t10 (substitution (m (S (Z))) t9 (@rewrite_var__3 t1)))
+(let t10 (substitution (@rewrite_var__3 t1) (m (S (Z))) t9))
 (let t11
   (premises
           (Rule
@@ -91,7 +91,7 @@ expression: proof_snapshot
                         (name "(rewrite (Times (S m) n) (Plus n (Times m n)))")
                         t8
                         t10)))
-(let t25 (substitution (m (Z)) t9 (@rewrite_var__3 t6)))
+(let t25 (substitution (@rewrite_var__3 t6) (m (Z)) t9))
 (let t26
   (premises
                   (Rule
@@ -176,7 +176,7 @@ expression: proof_snapshot
                                       "(rewrite (Plus (S m) n) (S (Plus m n)))")
                                     t41
                                     t42))
-                                (substitution t38 (@rewrite_var__ t40)))
+                                (substitution (@rewrite_var__ t40) t38))
                               0)
                             0)
                           1))
@@ -227,7 +227,7 @@ expression: proof_snapshot
                   (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
                   t20
                   t21))
-              (substitution t13 (@rewrite_var__ t19)))
+              (substitution (@rewrite_var__ t19) t13))
             0)
           (Congr
             (= t6 t0)
@@ -259,7 +259,7 @@ expression: proof_snapshot
                       (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
                       t31
                       t32))
-                  (substitution (n (Z)) (@rewrite_var__ (Plus (Z) (Z)))))
+                  (substitution (@rewrite_var__ (Plus (Z) (Z))) (n (Z))))
                 0)
               0)
             0)
@@ -283,7 +283,7 @@ expression: proof_snapshot
                 (name "(rewrite (Plus (S m) n) (S (Plus m n)))")
                 t46
                 t47))
-            (substitution t44 (@rewrite_var__ t33)))
+            (substitution (@rewrite_var__ t33) t44))
           0)))
     0)
   (Sym

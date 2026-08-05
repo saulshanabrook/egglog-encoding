@@ -751,7 +751,7 @@ fn rejected_rule_preserves_id(
     standard_family: bool,
     message_fragment: &str,
 ) -> Result<()> {
-    let error = fixture.backend.add_rule(rule).unwrap_err().to_string();
+    let error = format!("{:#}", fixture.backend.add_rule(rule).unwrap_err());
     let classified_standard = error.contains("standard rebuild")
         || error.contains("eq-key rebuild")
         || error.contains("eclass-output rebuild");
@@ -768,6 +768,14 @@ fn renamed_and_reordered_standard_shapes_execute_without_host_callbacks() -> Res
     let eq_rule = eq
         .backend
         .add_rule(eq.eq_rule("eq-hostile-rule", 0, BodyOrder::NeqUfView))?;
+    let plan = &eq.backend.rules[eq_rule.rep() as usize]
+        .as_ref()
+        .expect("registered rule")
+        .plan;
+    assert!(plan.scalar_action().is_some());
+    assert!(plan.standard_rebuild().is_none());
+    assert!(plan.marker_rekey().is_none());
+    assert!(plan.path_compression().is_none());
     eq.backend.storage.set_next_fresh_id(100)?;
     eq.insert_ids(eq.view, &[30, 40, 70], 0, false)?;
     eq.insert_ids(eq.uf, &[30, 20, 80], 0, false)?;
@@ -798,8 +806,6 @@ fn renamed_and_reordered_standard_shapes_execute_without_host_callbacks() -> Res
             .iter()
             .all(|sql| !sql.contains("hostile") && !sql.contains('?'))
     );
-    let eq_sql_manifest = eq.backend.storage.latest_rule_sql().to_vec();
-
     let mut replay = Fixture::one_id("different-names-same-plan")?;
     let replay_rule =
         replay
@@ -809,7 +815,11 @@ fn renamed_and_reordered_standard_shapes_execute_without_host_callbacks() -> Res
     replay.insert_ids(replay.view, &[30, 40, 70], 0, false)?;
     replay.insert_ids(replay.uf, &[30, 20, 80], 0, false)?;
     assert!(replay.run(&[replay_rule])?);
-    assert_eq!(eq_sql_manifest, replay.backend.storage.latest_rule_sql());
+    assert_eq!(replay.backend.storage.next_fresh_id()?, 101);
+    assert_eq!(
+        ids(replay.backend.lookup_row(replay.view, &[Value::new(20)])),
+        Some(vec![20, 40, 100])
+    );
 
     let mut output = Fixture::one_id("output-hostile-name")?;
     let output_rule = output
@@ -942,12 +952,11 @@ fn malformed_standard_interior_rejects_before_rule_id_and_marker_falls_through()
         unreachable!()
     };
     *read = ReadMode::Live;
-    let error = mode.backend.add_rule(bad_mode).unwrap_err();
-    assert!(error.to_string().contains("standard rebuild"));
+    assert_eq!(mode.backend.add_rule(bad_mode)?, RuleId::new(0));
     assert_eq!(
         mode.backend
             .add_rule(mode.eq_rule("valid-after-mode", 0, BodyOrder::NeqUfView))?,
-        RuleId::new(0)
+        RuleId::new(1)
     );
 
     let mut index = Fixture::one_id("bad-index")?;
@@ -959,27 +968,21 @@ fn malformed_standard_interior_rejects_before_rule_id_and_marker_falls_through()
         index.backend.base_values().get(1_i64),
         ColumnTy::Base(index.i64_ty),
     );
-    assert!(
-        index
-            .backend
-            .add_rule(bad_index)
-            .unwrap_err()
-            .to_string()
-            .contains("child index")
-    );
+    assert_eq!(index.backend.add_rule(bad_index)?, RuleId::new(0));
     assert_eq!(
         index
             .backend
             .add_rule(index.eq_rule("valid-after-index", 0, BodyOrder::ViewUfNeq))?,
-        RuleId::new(0)
+        RuleId::new(1)
     );
 
     let mut mismatched_output = Fixture::one_id_with_distinct_output("bad-output-uf")?;
-    let error = mismatched_output
-        .backend
-        .add_rule(mismatched_output.eclass_rule("bad-output-uf-rule", BodyOrder::UfViewNeq))
-        .unwrap_err();
-    assert!(error.to_string().contains("View output UF"));
+    assert_eq!(
+        mismatched_output
+            .backend
+            .add_rule(mismatched_output.eclass_rule("bad-output-uf-rule", BodyOrder::UfViewNeq))?,
+        RuleId::new(0)
+    );
     assert_eq!(
         mismatched_output
             .backend
@@ -988,14 +991,14 @@ fn malformed_standard_interior_rejects_before_rule_id_and_marker_falls_through()
                 0,
                 BodyOrder::NeqUfView,
             ))?,
-        RuleId::new(0)
+        RuleId::new(1)
     );
 
     let mut marker = Fixture::one_id("marker")?;
     let mut marker_rule = marker.eq_rule("marker-rule", 0, BodyOrder::ViewUfNeq);
     marker_rule.core.head.0 = marker_rule.core.head.0.split_off(3);
     let marker_error = marker.backend.add_rule(marker_rule).unwrap_err();
-    assert!(!marker_error.to_string().contains("standard rebuild"));
+    assert!(format!("{marker_error:#}").contains("before binding"));
     assert_eq!(
         marker
             .backend
@@ -1011,7 +1014,15 @@ fn structural_admission_mutation_matrix_is_fail_closed_without_consuming_rule_id
     let mut rule = wrong_join.eq_rule("matrix-wrong-join-rule", 0, BodyOrder::ViewUfNeq);
     let view_identity = rule.core.body.atoms[0].args[1].clone();
     rule.core.body.atoms[1].args[0] = view_identity;
-    rejected_rule_preserves_id(&mut wrong_join, rule, true, "UF key")?;
+    assert_eq!(wrong_join.backend.add_rule(rule)?, RuleId::new(0));
+    assert_eq!(
+        wrong_join.backend.add_rule(wrong_join.eq_rule(
+            "valid-after-mutation",
+            0,
+            BodyOrder::NeqUfView
+        ))?,
+        RuleId::new(1)
+    );
 
     let mut alias = Fixture::one_id("matrix-alias")?;
     let mut rule = alias.eq_rule("matrix-alias-rule", 0, BodyOrder::ViewUfNeq);
@@ -1031,7 +1042,7 @@ fn structural_admission_mutation_matrix_is_fail_closed_without_consuming_rule_id
         unreachable!()
     };
     view_values[1] = variable(fresh);
-    rejected_rule_preserves_id(&mut alias, rule, true, "aliases structurally")?;
+    rejected_rule_preserves_id(&mut alias, rule, false, "rebinds SSA variable")?;
 
     let mut fake_name = Fixture::one_id("matrix-fake-name")?;
     let mut rule = fake_name.eq_rule("matrix-fake-name-rule", 0, BodyOrder::ViewUfNeq);
@@ -1040,7 +1051,12 @@ fn structural_admission_mutation_matrix_is_fail_closed_without_consuming_rule_id
     };
     *id = fake_name.tokens.ordering_min;
     *name = "!=".into();
-    rejected_rule_preserves_id(&mut fake_name, rule, true, "ValueNeq")?;
+    rejected_rule_preserves_id(
+        &mut fake_name,
+        rule,
+        false,
+        "raw OrderingMin scalar lowering",
+    )?;
 
     let mut fake_signature = Fixture::one_id("matrix-fake-signature")?;
     let mut rule = fake_signature.eq_rule("matrix-fake-signature-rule", 0, BodyOrder::ViewUfNeq);
@@ -1048,7 +1064,7 @@ fn structural_admission_mutation_matrix_is_fail_closed_without_consuming_rule_id
         unreachable!()
     };
     *output = ColumnTy::Id;
-    rejected_rule_preserves_id(&mut fake_signature, rule, true, "ValueNeq")?;
+    rejected_rule_preserves_id(&mut fake_signature, rule, false, "ValueNeq requires")?;
 
     let mut child_type = Fixture::one_id("matrix-child-type")?;
     let mut rule = child_type.eq_rule("matrix-child-type-rule", 0, BodyOrder::ViewUfNeq);
@@ -1056,7 +1072,7 @@ fn structural_admission_mutation_matrix_is_fail_closed_without_consuming_rule_id
         unreachable!()
     };
     arguments[1] = literal(child_type.label, ColumnTy::Base(child_type.string));
-    rejected_rule_preserves_id(&mut child_type, rule, true, "i64 type")?;
+    rejected_rule_preserves_id(&mut child_type, rule, false, "mistyped literal")?;
 
     let mut container = Fixture::one_id("matrix-container")?;
     let mut rule = container.eq_rule("matrix-container-rule", 0, BodyOrder::ViewUfNeq);
@@ -1070,7 +1086,7 @@ fn structural_admission_mutation_matrix_is_fail_closed_without_consuming_rule_id
 }
 
 #[test]
-fn custom_view_merge_with_the_same_rule_head_falls_through_and_preserves_rule_id() -> Result<()> {
+fn custom_view_merges_with_the_same_rule_head_are_generic() -> Result<()> {
     let mut fixture = Fixture::one_id("custom-merge-fallthrough")?;
     let mut schema = fixture.key_types.clone();
     schema.extend([ColumnTy::Id, ColumnTy::Id]);
@@ -1120,8 +1136,7 @@ fn custom_view_merge_with_the_same_rule_head_falls_through_and_preserves_rule_id
     let mut custom_rule = fixture.eq_rule("custom-merge-rule", 0, BodyOrder::ViewUfNeq);
     custom_rule.seminaive = false;
     retarget_eq_view(&mut custom_rule, fixture.view, custom_view, ReadMode::Live);
-    let error = fixture.backend.add_rule(custom_rule).unwrap_err();
-    assert!(!error.to_string().contains("standard rebuild"));
+    assert_eq!(fixture.backend.add_rule(custom_rule)?, RuleId::new(0));
 
     let mut columns_rule = fixture.eq_rule("columns-merge-rule", 0, BodyOrder::UfViewNeq);
     retarget_eq_view(
@@ -1130,13 +1145,12 @@ fn custom_view_merge_with_the_same_rule_head_falls_through_and_preserves_rule_id
         columns_view,
         ReadMode::Live,
     );
-    let error = fixture.backend.add_rule(columns_rule).unwrap_err();
-    assert!(!error.to_string().contains("standard rebuild"));
+    assert_eq!(fixture.backend.add_rule(columns_rule)?, RuleId::new(1));
     assert_eq!(
         fixture
             .backend
             .add_rule(fixture.eq_rule("valid-after-custom", 0, BodyOrder::NeqUfView,))?,
-        RuleId::new(0)
+        RuleId::new(2)
     );
     Ok(())
 }
@@ -1347,14 +1361,19 @@ fn corrupt_owners_and_fresh_exhaustion_fail_before_durable_mutation() -> Result<
     subsumed_uf.backend.storage.set_next_fresh_id(700)?;
     subsumed_uf.insert_ids(subsumed_uf.view, &[1, 30, 70], 0, false)?;
     subsumed_uf.insert_ids(subsumed_uf.uf, &[30, 20, 80], 0, true)?;
-    assert!(
-        subsumed_uf
-            .run(&[uf_rule])
-            .unwrap_err()
-            .to_string()
-            .contains("subsumed UF")
-    );
-    assert_eq!(subsumed_uf.backend.storage.next_fresh_id()?, 700);
+    assert!(subsumed_uf.run(&[uf_rule])?);
+    assert_eq!(subsumed_uf.backend.storage.next_fresh_id()?, 704);
+    let (uf_rows, subsumed_rows) = subsumed_uf.backend.storage.with_connection(|connection| {
+        Ok(connection.query_row(
+            &format!(
+                "SELECT count(*), count(*) FILTER (WHERE __subsumed) FROM {}",
+                sql_table(subsumed_uf.uf)
+            ),
+            [],
+            |row| Ok((row.get::<_, u64>(0)?, row.get::<_, u64>(1)?)),
+        )?)
+    })?;
+    assert_eq!((uf_rows, subsumed_rows), (1, 1));
 
     let mut exhausted = Fixture::one_id("head-exhausted")?;
     let exhausted_rule = exhausted.backend.add_rule(exhausted.eq_rule(

@@ -25,6 +25,100 @@ fn mint_proof_row(state: &mut FullState, action: &TableAction, args: &[Value]) -
     Some(out)
 }
 
+/// Name of an eq-sort's `uf_canon` primitive, derived from its `@UF_<S>` table
+/// name. The encoder and the typechecker compute it the same way, so the
+/// desugared program needs no extra annotation to find it.
+pub(crate) fn uf_canon_prim_name(uf_name: &str) -> String {
+    format!("{uf_name}_canon")
+}
+
+/// Name of an eq-sort's `uf_canon_proof` primitive. See [`uf_canon_prim_name`].
+pub(crate) fn uf_canon_proof_prim_name(uf_name: &str) -> String {
+    format!("{uf_name}_canon_proof")
+}
+
+/// Register an eq-sort's single-term canonicalization primitives, so a rebuild
+/// rule can canonicalize a term in its action:
+///
+/// * `uf_canon : (S S) -> S` — `(term fallback)`, the term's `@UF_<S>` leader, or
+///   `fallback` when it has no row. Callers pass the term itself, making it
+///   leader-or-self.
+/// * `uf_canon_proof : (S Proof) -> Proof` (proof mode) — the `@UF_<S>` row's
+///   proof `term = leader`, or `fallback`. Callers pass the reflexive
+///   `<S>Proof(term)`.
+///
+/// Both are the generic view-column read over the two-output `@UF_<S>` table, so
+/// every backend services them against its own storage. They read `@UF_<S>`, so
+/// they are sound only in the action of a rule whose body joins the driving
+/// `@UF` delta. Called from the sort's Sort command, so they exist both during
+/// encoding and on re-parse.
+pub(crate) fn register_uf_canon(
+    eg: &mut EGraph,
+    sort_name: &str,
+    uf_name: &str,
+    proofs_enabled: bool,
+) {
+    let Some(sort) = eg.get_sort_by_name(sort_name).cloned() else {
+        return;
+    };
+    let table = uf_name.to_string();
+    eg.add_backend_op_primitive(
+        UfCanonCol {
+            name: uf_canon_prim_name(uf_name),
+            key_sort: sort.clone(),
+            out_sort: sort.clone(),
+        },
+        WriteState::valid_contexts(),
+        move |backend, _| backend.register_view_column_read(table.clone(), 1, 0),
+    );
+
+    // The proof column is `Unit` in term mode, and no rule reads it there.
+    if proofs_enabled {
+        let proof_sort: ArcSort = std::sync::Arc::new(EqSort {
+            name: eg.proof_state.proof_names.proof_datatype.clone(),
+        });
+        let table = uf_name.to_string();
+        eg.add_backend_op_primitive(
+            UfCanonCol {
+                name: uf_canon_proof_prim_name(uf_name),
+                key_sort: sort,
+                out_sort: proof_sort,
+            },
+            WriteState::valid_contexts(),
+            move |backend, _| backend.register_view_column_read(table.clone(), 1, 1),
+        );
+    }
+}
+
+/// One column of an eq-sort's `@UF_<S>` row, read by term with a fallback (see
+/// [`register_uf_canon`]).
+#[derive(Clone)]
+struct UfCanonCol {
+    name: String,
+    key_sort: ArcSort,
+    out_sort: ArcSort,
+}
+
+impl Primitive for UfCanonCol {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+        // (term fallback) -> column
+        SimpleTypeConstraint::new(
+            &self.name,
+            vec![
+                self.key_sort.clone(),
+                self.out_sort.clone(),
+                self.out_sort.clone(),
+            ],
+            span.clone(),
+        )
+        .into_box()
+    }
+}
+
 /// Register a container sort's rebuild primitives from its
 /// [`ContainerRebuildSpec`]. Called when a container Sort command carrying an
 /// `:internal-container-rebuild` annotation is typechecked, so the primitives

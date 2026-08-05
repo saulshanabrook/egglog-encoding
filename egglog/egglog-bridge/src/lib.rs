@@ -168,7 +168,7 @@ pub struct EGraph {
     /// Live registry of name-indexed action handles. Shared (via
     /// `Arc<RwLock<_>>`) with state wrappers and primitive callbacks
     /// in the egglog crate so name-indexed action methods on
-    /// [`WriteState`] / [`FullState`] can resolve table actions at
+    /// `WriteState` / `FullState` can resolve table actions at
     /// invoke time. Mutated in place from [`add_table`](EGraph::add_table).
     action_registry: Arc<std::sync::RwLock<ActionRegistry>>,
     /// Serialize merge-time constructor predictions around their shared fresh
@@ -361,29 +361,35 @@ impl EGraph {
 
     /// Register the term encoder's `set-if-empty` canonicalize op for the FD
     /// view table named `view_name` (`n_keys` key columns), returning the
-    /// [`ExternalFunctionId`] its mint sites resolve to. At invoke: look up
-    /// `(view keys)`; if a row exists return its first output (the eclass);
-    /// otherwise insert `(keys, trailing-default-columns)` and return the first
-    /// default column. Serviced over this backend's db view table.
+    /// [`ExternalFunctionId`] its mint sites resolve to.
+    ///
+    /// Invoked as `(keys…, vals…)`, it returns the view's first output column
+    /// (the e-class) for `keys`: the existing row's when the key is present, and
+    /// otherwise the first of `vals` after staging `(keys, vals)`. A second
+    /// invocation with the same key inside one action batch sees the first one's
+    /// staged row, so the two agree — see
+    /// [`TableAction::lookup_or_insert_vals`].
     pub fn register_set_if_empty(
         &mut self,
         view_name: String,
         n_keys: usize,
-        _out_arity: usize,
+        out_arity: usize,
     ) -> ExternalFunctionId {
         let registry = self.action_registry.clone();
         self.register_external_func(Box::new(make_external_func(
             move |state: &mut ExecutionState, args: &[Value]| {
                 let registry = registry.read().unwrap();
                 let action = registry.lookup_table(&view_name)?.clone();
+                // Too few vals and the row is staged short of its value columns;
+                // too many and the surplus lands on the timestamp.
+                debug_assert_eq!(
+                    args.len(),
+                    n_keys + out_arity,
+                    "set-if-empty on view `{view_name}` takes {n_keys} keys and \
+                     {out_arity} values"
+                );
                 let keys = &args[..n_keys];
-                if let Some(vals) = action.lookup_values(state, keys) {
-                    // Already canonicalized: reuse the committed eclass and skip
-                    // the insert, so the fresh id never enters the table.
-                    return Some(vals[0]);
-                }
-                action.insert(state, args.iter().copied());
-                Some(args[n_keys])
+                Some(action.lookup_or_insert_vals(state, keys, &args[n_keys..]))
             },
         )))
     }
@@ -404,10 +410,11 @@ impl EGraph {
                 let registry = registry.read().unwrap();
                 let action = registry.lookup_table(&view_name)?.clone();
                 let fallback = args[n_keys];
-                Some(match action.lookup_values(state, &args[..n_keys]) {
-                    Some(vals) => vals[col_idx],
-                    None => fallback,
-                })
+                Some(
+                    action
+                        .lookup_value_col(state, &args[..n_keys], col_idx)
+                        .unwrap_or(fallback),
+                )
             },
         )))
     }
@@ -842,6 +849,12 @@ impl EGraph {
     /// `add_table`; the id is deterministic as long as no other function is added in between.
     pub fn peek_next_function_id(&self) -> FunctionId {
         self.funcs.next_id()
+    }
+
+    /// The visible schema of a registered function, for backend-boundary
+    /// validation that must run before a rule builder allocates a RuleId.
+    pub fn function_schema(&self, function: FunctionId) -> Option<&[ColumnTy]> {
+        self.funcs.get(function).map(|info| info.schema.as_slice())
     }
 
     pub fn add_table(&mut self, config: FunctionConfig) -> FunctionId {
@@ -2101,6 +2114,28 @@ impl TableAction {
         self.table_math.n_vals()
     }
 
+    /// Look up value column `col_idx` for `key`, or `None` if the key is absent.
+    /// This is a pure read and never inserts a default row.
+    pub fn lookup_value_col(
+        &self,
+        state: &ExecutionState,
+        key: &[Value],
+        col_idx: usize,
+    ) -> Option<Value> {
+        // The timestamp column sits right after the value columns, so an
+        // out-of-range `col_idx` would read one of the table's own bookkeeping
+        // columns back as a value.
+        debug_assert!(
+            col_idx < self.table_math.n_vals(),
+            "value column {col_idx} is past this table's {} value columns",
+            self.table_math.n_vals()
+        );
+        state.get_table(self.table).get_row_column(
+            key,
+            ColumnId::from_usize(self.table_math.num_keys() + col_idx),
+        )
+    }
+
     /// Look up all output columns for `key`. This is a pure read and never
     /// inserts a default row.
     pub fn lookup_values(&self, state: &ExecutionState, key: &[Value]) -> Option<Vec<Value>> {
@@ -2282,6 +2317,39 @@ impl TableAction {
             }
             None => self.lookup(state, key),
         }
+    }
+
+    /// Get-or-insert with caller-supplied value columns, reading this batch's
+    /// own pending inserts.
+    ///
+    /// Returns the first value column of the row for `key`: the committed row's
+    /// if the key is present, the pending row's if an earlier call in this same
+    /// action batch already inserted it, and otherwise `vals`' first entry after
+    /// staging `(key, vals)`.
+    pub fn lookup_or_insert_vals(
+        &self,
+        state: &mut ExecutionState,
+        key: &[Value],
+        vals: &[Value],
+    ) -> Value {
+        debug_assert_eq!(
+            vals.len(),
+            self.table_math.n_vals(),
+            "lookup_or_insert_vals: vals must fill every value column"
+        );
+        let timestamp = MergeVal::Constant(Value::from_usize(state.read_counter(self.timestamp)));
+        let mut merge_vals = SmallVec::<[MergeVal; 4]>::new();
+        merge_vals.extend(vals.iter().map(|v| MergeVal::Constant(*v)));
+        merge_vals.push(timestamp);
+        if self.table_math.subsume {
+            merge_vals.push(MergeVal::Constant(NOT_SUBSUMED));
+        }
+        state.predict_col(
+            self.table,
+            key,
+            merge_vals.iter().copied(),
+            ColumnId::from_usize(self.table_math.ret_val_col()),
+        )
     }
 
     /// Insert a row into this table.

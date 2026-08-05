@@ -1408,3 +1408,331 @@ fn early_stop_inner() {
         "External function called {final_count} times, should be much less than 10k"
     );
 }
+
+/// An occurrence atom binds a variable to a value appearing in *any* of the
+/// listed columns, and is probed through the occurrence index. Here `dirty`
+/// supplies the value and the atom finds every `edge` row mentioning it at
+/// either endpoint — the access pattern a rebuild needs.
+#[test]
+fn occurrence_atom_finds_rows_mentioning_a_bound_value() {
+    use crate::table_spec::ColumnId;
+
+    let mut db = Database::default();
+    let relation = |n_keys: usize, n_cols: usize| {
+        SortedWritesTable::new(
+            n_keys,
+            n_cols,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right, "merge not supported");
+                false
+            }),
+        )
+    };
+    // edge(id, from, to) — `from`/`to` are the columns to index together.
+    let edge = db.add_table(relation(1, 3), iter::empty(), iter::empty());
+    let dirty = db.add_table(relation(1, 1), iter::empty(), iter::empty());
+    let touched = db.add_table(relation(1, 1), iter::empty(), iter::empty());
+    let v = Value::new;
+    {
+        let mut b = db.new_buffer(edge);
+        b.stage_insert(&[v(0), v(10), v(11)]);
+        b.stage_insert(&[v(1), v(11), v(12)]);
+        b.stage_insert(&[v(2), v(12), v(13)]);
+        b.stage_insert(&[v(3), v(20), v(20)]); // same value at both endpoints
+    }
+    {
+        let mut b = db.new_buffer(dirty);
+        b.stage_insert(&[v(11)]);
+        b.stage_insert(&[v(20)]);
+    }
+    db.merge_all();
+
+    let mut rules = RuleSetBuilder::new(&mut db);
+    let mut query = rules.new_rule();
+    let val = query.new_var_named("val");
+    let id = query.new_var_named("id");
+    let from = query.new_var_named("from");
+    let to = query.new_var_named("to");
+    query.add_atom(dirty, &[val.into()], &[]).unwrap();
+    query
+        .add_occurrence_atom(
+            edge,
+            &[id.into(), from.into(), to.into()],
+            val.into(),
+            &[ColumnId::new(1), ColumnId::new(2)],
+            &[],
+        )
+        .unwrap();
+    let mut action = query.build();
+    action.insert(touched, &[id.into()]).unwrap();
+    action.build_with_description("touched");
+    let rule_set = rules.build();
+    db.run_rule_set(&rule_set, ReportLevel::TimeOnly);
+    db.merge_all();
+
+    let mut got = Vec::new();
+    let table = db.get_table(touched);
+    table
+        .scan(table.all().as_ref())
+        .iter()
+        .for_each(|(_, row)| got.push(row[0].rep()));
+    got.sort_unstable();
+    // 11 sits at `to` of edge 0 and `from` of edge 1; 20 sits at both endpoints
+    // of edge 3, which must still be reported once. Edge 2 mentions neither.
+    assert_eq!(got, vec![0, 1, 3]);
+}
+
+/// An occurrence atom can also be probed by a constant, which needs no other
+/// atom to bind it: the rows holding the value restrict the atom directly.
+#[test]
+fn occurrence_atom_probed_by_a_constant() {
+    use crate::table_spec::ColumnId;
+
+    let mut db = Database::default();
+    let relation = |n_keys: usize, n_cols: usize| {
+        SortedWritesTable::new(
+            n_keys,
+            n_cols,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right, "merge not supported");
+                false
+            }),
+        )
+    };
+    let edge = db.add_table(relation(1, 3), iter::empty(), iter::empty());
+    let touched = db.add_table(relation(1, 1), iter::empty(), iter::empty());
+    let v = Value::new;
+    {
+        let mut b = db.new_buffer(edge);
+        b.stage_insert(&[v(0), v(10), v(11)]);
+        b.stage_insert(&[v(1), v(11), v(12)]);
+        b.stage_insert(&[v(2), v(12), v(13)]);
+    }
+    db.merge_all();
+
+    let mut rules = RuleSetBuilder::new(&mut db);
+    let mut query = rules.new_rule();
+    let id = query.new_var_named("id");
+    let from = query.new_var_named("from");
+    let to = query.new_var_named("to");
+    query
+        .add_occurrence_atom(
+            edge,
+            &[id.into(), from.into(), to.into()],
+            v(11).into(),
+            &[ColumnId::new(1), ColumnId::new(2)],
+            &[],
+        )
+        .unwrap();
+    let mut action = query.build();
+    action.insert(touched, &[id.into()]).unwrap();
+    action.build_with_description("touched");
+    let rule_set = rules.build();
+    db.run_rule_set(&rule_set, ReportLevel::TimeOnly);
+    db.merge_all();
+
+    let mut got = Vec::new();
+    let table = db.get_table(touched);
+    table
+        .scan(table.all().as_ref())
+        .iter()
+        .for_each(|(_, row)| got.push(row[0].rep()));
+    got.sort_unstable();
+    // 11 is `to` of edge 0 and `from` of edge 1. Edge 2 mentions it nowhere.
+    assert_eq!(got, vec![0, 1]);
+}
+
+/// The probed value may also sit at one of the atom's own columns. Outside the
+/// indexed set that is a per-row disjunction over those columns, which neither a
+/// constraint nor the index expresses, so it is rejected rather than mis-planned.
+#[test]
+fn occurrence_atom_rejects_a_value_repeated_at_an_unindexed_column() {
+    use crate::query::QueryError;
+    use crate::table_spec::ColumnId;
+
+    let mut db = Database::default();
+    let relation = |n_keys: usize, n_cols: usize| {
+        SortedWritesTable::new(
+            n_keys,
+            n_cols,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right, "merge not supported");
+                false
+            }),
+        )
+    };
+    let edge = db.add_table(relation(1, 3), iter::empty(), iter::empty());
+    let dirty = db.add_table(relation(1, 1), iter::empty(), iter::empty());
+    db.merge_all();
+
+    let mut rules = RuleSetBuilder::new(&mut db);
+    let mut query = rules.new_rule();
+    let val = query.new_var_named("val");
+    let from = query.new_var_named("from");
+    let to = query.new_var_named("to");
+    query.add_atom(dirty, &[val.into()], &[]).unwrap();
+    let err = query
+        .add_occurrence_atom(
+            edge,
+            // `val` is column 0, which columns 1 and 2 do not cover.
+            &[val.into(), from.into(), to.into()],
+            val.into(),
+            &[ColumnId::new(1), ColumnId::new(2)],
+            &[],
+        )
+        .expect_err("a value at an unindexed column is not expressible");
+    assert!(
+        matches!(
+            err,
+            QueryError::OccurrenceVarAtUnindexedColumn { column: 0, .. }
+        ),
+        "{err:?}"
+    );
+}
+
+/// Over a single indexed column the occurrence is an equality on that column, so
+/// a value repeated at another column is an ordinary constraint between the two.
+#[test]
+fn occurrence_atom_over_one_column_allows_a_repeated_value() {
+    use crate::table_spec::ColumnId;
+
+    let mut db = Database::default();
+    let relation = |n_keys: usize, n_cols: usize| {
+        SortedWritesTable::new(
+            n_keys,
+            n_cols,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right, "merge not supported");
+                false
+            }),
+        )
+    };
+    let edge = db.add_table(relation(1, 3), iter::empty(), iter::empty());
+    let dirty = db.add_table(relation(1, 1), iter::empty(), iter::empty());
+    let touched = db.add_table(relation(1, 1), iter::empty(), iter::empty());
+    let v = Value::new;
+    {
+        let mut b = db.new_buffer(edge);
+        b.stage_insert(&[v(0), v(10), v(10)]); // `to` equals `from`
+        b.stage_insert(&[v(1), v(10), v(11)]); // it does not
+    }
+    {
+        let mut b = db.new_buffer(dirty);
+        b.stage_insert(&[v(10)]);
+    }
+    db.merge_all();
+
+    let mut rules = RuleSetBuilder::new(&mut db);
+    let mut query = rules.new_rule();
+    let val = query.new_var_named("val");
+    let id = query.new_var_named("id");
+    let to = query.new_var_named("to");
+    query.add_atom(dirty, &[val.into()], &[]).unwrap();
+    query
+        .add_occurrence_atom(
+            edge,
+            // `val` is column 1, and column 2 is the indexed one.
+            &[id.into(), val.into(), to.into()],
+            val.into(),
+            &[ColumnId::new(2)],
+            &[],
+        )
+        .unwrap();
+    let mut action = query.build();
+    action.insert(touched, &[id.into()]).unwrap();
+    action.build_with_description("touched");
+    let rule_set = rules.build();
+    db.run_rule_set(&rule_set, ReportLevel::TimeOnly);
+    db.merge_all();
+
+    let mut got = Vec::new();
+    let table = db.get_table(touched);
+    table
+        .scan(table.all().as_ref())
+        .iter()
+        .for_each(|(_, row)| got.push(row[0].rep()));
+    got.sort_unstable();
+    // Only the row whose indexed column also equals `val` qualifies.
+    assert_eq!(got, vec![0]);
+}
+
+/// A query containing an occurrence atom is planned with generic join whatever
+/// strategy was asked for: the other planners map a subatom's columns back to
+/// its variables, and an occurrence variable occupies none of them.
+#[test]
+fn occurrence_atom_overrides_the_requested_plan_strategy() {
+    use crate::free_join::plan::PlanStrategy;
+    use crate::table_spec::ColumnId;
+
+    let mut db = Database::default();
+    let relation = |n_keys: usize, n_cols: usize| {
+        SortedWritesTable::new(
+            n_keys,
+            n_cols,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right, "merge not supported");
+                false
+            }),
+        )
+    };
+    let edge = db.add_table(relation(1, 3), iter::empty(), iter::empty());
+    let dirty = db.add_table(relation(1, 1), iter::empty(), iter::empty());
+    let touched = db.add_table(relation(1, 1), iter::empty(), iter::empty());
+    let v = Value::new;
+    {
+        let mut b = db.new_buffer(edge);
+        b.stage_insert(&[v(0), v(10), v(11)]);
+        b.stage_insert(&[v(1), v(12), v(13)]);
+    }
+    {
+        let mut b = db.new_buffer(dirty);
+        b.stage_insert(&[v(11)]);
+    }
+    db.merge_all();
+
+    for strat in [PlanStrategy::MinCover, PlanStrategy::PureSize] {
+        let mut rules = RuleSetBuilder::new(&mut db);
+        let mut query = rules.new_rule();
+        query.set_plan_strategy(strat);
+        let val = query.new_var_named("val");
+        let id = query.new_var_named("id");
+        let from = query.new_var_named("from");
+        let to = query.new_var_named("to");
+        query.add_atom(dirty, &[val.into()], &[]).unwrap();
+        query
+            .add_occurrence_atom(
+                edge,
+                &[id.into(), from.into(), to.into()],
+                val.into(),
+                &[ColumnId::new(1), ColumnId::new(2)],
+                &[],
+            )
+            .unwrap();
+        let mut action = query.build();
+        action.insert(touched, &[id.into()]).unwrap();
+        action.build_with_description("touched");
+        let rule_set = rules.build();
+        db.run_rule_set(&rule_set, ReportLevel::TimeOnly);
+        db.merge_all();
+    }
+
+    let mut got = Vec::new();
+    let table = db.get_table(touched);
+    table
+        .scan(table.all().as_ref())
+        .iter()
+        .for_each(|(_, row)| got.push(row[0].rep()));
+    got.sort_unstable();
+    got.dedup();
+    assert_eq!(got, vec![0], "only edge 0 holds 11");
+}

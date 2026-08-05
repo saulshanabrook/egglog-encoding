@@ -3089,3 +3089,965 @@ was introduced.
 The Pointer checkpoint is accepted for one local commit. Per the user's regroup
 request, stop after committing and reporting this checkpoint; do not recensus,
 plan, or begin another implementation frontier. Nothing is pushed.
+
+## 2026-08-05 standalone SQL compiler restart
+
+### Steering frame
+
+- **Mission:** merge one freshly frozen `origin/main` into
+  `agent/duckdb-native-sql`, then compile proof-instrumented Egglog into a
+  deterministic standalone typed SQL artifact executed only by the stock
+  DuckDB 1.5.4 safe CLI. The real proof-mode EqSat program is the blocking
+  architectural gate; Math, Pointer, bounded current-main Eggcc, and Luminal
+  are the positive generalization corpus.
+- **Non-goals:** no host fallback, callbacks, UDFs, extensions, Appender,
+  `read_csv`, `COPY FROM`, unsafe/private DuckDB API, proof-specific storage,
+  compiler fuel, patched DuckDB, or benchmark-result substitution. Hardboiled
+  is a required preflight rejection for active `Vec`; Herbie is excluded from
+  positive DuckDB completion. Neither is removed from repository regressions.
+- **Current frontier:** checkpoint 0 merge/refreeze. No network operation has
+  occurred in this restart. The pre-fetch branch is
+  `37fc161a698d7793d62182ec369a891e20fce295`, and the pre-fetch local
+  `origin/main` ref is `6ef88f13b6b6be244e961807a19d95cb35c4140b`.
+- **Progress signal:** a checkpoint patch or artifact that passes its stated
+  semantic gate under an external 110-second cap. Counts, table sizes, or a
+  timeout alone never establish semantic success.
+- **No movement:** a same-domain cycle with no passing gate, reviewable patch,
+  new minimized counterexample, or decision-narrowing measurement. Two such
+  cycles force diagnosis/proposal formation. Two materially different typed
+  execution designs failing the same kernel or EqSat gate trigger the plan's
+  early exit.
+- **Active risks:** a 129-commit main divergence; occurrence-indexed proof
+  rebuild overlap; safe-CLI DuckDB recursion limits; generated-SQL depth;
+  schedule/effect transactional semantics; proof-relation oracle fidelity;
+  and bounded performance on the four positive workloads.
+- **Exact next command:** run the separately capped pre-merge focused DuckDB
+  library gate on unchanged `37fc161`, then fetch `origin/main` exactly once
+  and record its SHA before beginning `git merge --no-ff --no-commit`.
+
+### Preserved pre-merge state
+
+| Item | Value |
+|---|---|
+| branch | `agent/duckdb-native-sql` |
+| HEAD | `37fc161a698d7793d62182ec369a891e20fce295` |
+| status | only untracked `.codex/duckdb-native-sql/artifacts/` |
+| `eqsat-basic-desugared-proofs.sql` | SHA-256 `b4a704a281beff5221922c61826fc3e0c3fd74ca7833a11159e8b2492dc73b75`, 1,961,440 bytes |
+| `eqsat-basic.sql` | SHA-256 `d33be24d636e17274f3a69dcef51845e511e01c00bc3ef722a18ac3a4fbd518a`, 1,952,346 bytes |
+
+These two untracked SQL files are diagnostic history. They must remain
+unmodified and are not standalone-compiler acceptance artifacts.
+
+### Circle roster
+
+| Agent | Circle/domain | Aim | Authority and write set | Artifact | Verification | Stop / no movement |
+|---|---|---|---|---|---|---|
+| `/root` | coordinator/integration | preserve mission, perform merge integration, own shared ledger and broad/final gates | merge resolutions, `.codex/duckdb-native-sql/STATE.md`, narrow integration repairs; no push | accepted checkpoint commits and synthesized evidence | checkpoint-specific capped gates, staged diff review | goal complete, early-exit evidence, or user authority needed |
+| integration/API circle | checkpoint 0 occurrence-index and frontend snapshot | reconcile current-main APIs and expose a backend-free resolved snapshot | assigned after merge census; disjoint explicit files | patch plus API/IR census | focused Rust tests and compile-only panic-backend canary | pass or two designs fail the minimized indexed-rebuild witness |
+| engine semantics circle | stock DuckDB kernel | freeze 1.5.4 CLI probes, recursive-state invariants, and depth cap | tracked capability SQL and probe harness only | checksummed CLI/probes/hot SCC | exact safe CLI under 110 seconds | primary plus LIST fallback fail the same semantic kernel |
+| compiler lowering circle | standalone compiler | implement typed SQL, schedules, effects, audits, CLI, and atomic publication | compiler/CLI modules and focused tests only | deterministic bundle and conformance suite | compile twice, safe-CLI parse/bind, focused tests | EqSat cannot admit or two state designs fail |
+| semantic oracle circle | differential correctness | define and run Reference/live/standalone normalized relation and output oracles | read-only fixtures/oracle artifacts; no production edits | canonical comparisons and minimized failures | two clean compiles/replays plus negative mutations | one reproducible mismatch or complete PASS |
+| artifacts/benchmark circle | corpus and `bench.py` | add four-workload suite, cache identity, censored-run reporting | harness/config/tests only after EqSat passes | workload manifests and bounded benchmark report | harness tests and one capped attempt/workload | timeout is censored; semantic mismatch blocks |
+| independent review circle | checkpoint reviews | review merge, kernel, EqSat, and final corpus against frozen criteria | read-only | `PASS`, `REVISE`, or `REASSESS` report | raw diff/artifacts and exact commands | one verdict plus at most one bounded re-review |
+
+Only the checkpoint-relevant circles are seated concurrently. Each worker gets
+an explicit disjoint write set, forbidden-shortcut list, verification command,
+and stop rule before editing; broad shared commands remain coordinator-owned.
+
+### Checkpoint 0 evidence log
+
+| Time | Surface | Evidence | Result |
+|---|---|---|---|
+| 2026-08-05 | pre-merge focused baseline, ambient loader | `/opt/homebrew/bin/timeout --signal=TERM --kill-after=5s 110s cargo test -p egglog-experimental-duckdb --no-default-features --lib` | 137/140 passed; the three failures all observed Homebrew DuckDB `v1.5.5` where the tests require `v1.5.4`. This is retained as secondary-engine drift evidence. |
+| 2026-08-05 | pre-merge focused baseline, pinned loader | same command with `DYLD_LIBRARY_PATH=$PWD/target/debug/deps`; the dylib has embedded `v1.5.4` and SHA/source provenance under `target/duckdb-download/aarch64-apple-darwin/1.5.4` | PASS, 140/140 in 1.60s after the cached build; no timeout. |
+| 2026-08-05 | one permitted main fetch | `git fetch origin main`; then `git rev-parse FETCH_HEAD origin/main` | both resolve to `6ef88f13b6b6be244e961807a19d95cb35c4140b`; merge base is `853fbfd533a3f73b390de364d980f3f939427eae`; branch-only/main-only counts are 15/129. No further main fetch is authorized for this frozen merge. |
+
+### Active checkpoint 0 seats
+
+| Agent | Domain | Status | Expected artifact | Stop condition |
+|---|---|---|---|---|
+| `/root/merge_overlap_audit` | twelve auto-merged API/semantic overlaps | read-only active | per-file three-way semantic verdict and exact repair candidates | all overlaps classified or one blocker minimized |
+| `/root/index_rebuild_audit` | occurrence-indexed proof rebuild and DuckDB lowering | read-only active | implementation-ready Design A or evidence requiring the one allowed Design B | exact IR/lowering contract and regression matrix frozen |
+| `/root/merge_gate_audit` | capped test/rustdoc/current-main gate matrix | read-only active | exact commands and minimal rustdoc-lane recommendation | complete non-overlapping gate matrix |
+
+The coordinator retains broad command ownership and performs only merge-index
+inspection, shared compilation diagnostics, state integration, and later final
+gates while these circles are active.
+
+### Checkpoint 0 merge diagnosis
+
+The merge completed without textual conflicts and remains deliberately
+uncommitted. `git diff --check` and `git diff --cached --check` pass; the merge
+index contains 114 current-main paths and no unresolved entries. The twelve
+auto-merged files preserve the branch's observer/fresh/native-input APIs and
+main's occurrence-index APIs, but the combined build exposes a real new
+backend surface rather than compiling accidentally.
+
+| Evidence | Result |
+|---|---|
+| pinned 1.5.4 `cargo check -p egglog-experimental-duckdb --no-default-features` | FAIL with exactly three non-exhaustive `RuleBodyCall::IndexTable` matches: scalar body at `action_rule.rs`, plus two standard-rebuild table destructures at `rebuild.rs`; no other merged API error |
+| `cargo test -p egglog index_binding_tests` | PASS 4/4; frontend binder/literal cases retained |
+| `cargo test -p egglog-core-relations --lib occurrence_atom` | PASS 5/5; the current suite still treats a repeated probe at an unindexed row column as rejection, so the requested public `(EdgeOcc x a x c)` regression remains to be pinned explicitly |
+| overlap/API audit | all twelve files classified; no architectural blocker; Makefile rustdoc must inherit `DUCKDB_PREBUILT_ENV`; public backend `IndexTable` specs need complete typed validation before RuleId allocation and structured errors instead of reference-backend `expect`s |
+| gate audit | froze the separately capped occurrence, generated proof-rebuild, direct DuckDB RuleSpec, rollback/retry, Eggcc no-container, proof, rustdoc, and split `make check` matrix |
+
+The occurrence-index circle remains active to settle the exact repeated-value
+semantics and specialized DuckDB rebuild design before any writer is seated.
+
+### Consented checkpoint 0 implementation contract
+
+The occurrence-index circle completed with an implementation-ready Design A.
+The reached generated rule is exactly one `Table(All)` UF atom, one
+`IndexTable(All)` View atom shaped `(probe, complete base row..., Unit)`, one
+authenticated `ValueNeq` guard, descriptor-backed proof/canonicalization Lets,
+then one stale-View Delete followed by one canonical-View Set. The current
+specialized rebuild compiler is the owner; the general action compiler remains
+the second and final design only if the binary-constructor witness proves the
+typed head cannot coexist in the rebuilding transaction.
+
+Required Design A invariants:
+
+- validate complete arity, literal typed Unit, nonempty/in-range homogeneous
+  `any_of`, probe/indexed-column type agreement, binder reachability, UF-probe
+  identity, `All` modes, exact Delete key, and exact canonical Set before
+  allocating a `RuleId`;
+- lower one typed View scan plus one typed UF scan, with the occurrence filter
+  as one parenthesized `IS NOT DISTINCT FROM` disjunction;
+- one View row yields one match even when the value or an indexed column is
+  repeated; never lower occurrence columns as `UNION ALL` branches;
+- preserve Live/Subsumed/All predicates in generic direct index lowering and
+  include every underlying generation plus typed row columns in seminaive and
+  deterministic ordering metadata;
+- freeze all matches before effects and reuse the existing rebuilding phases
+  so all Deletes precede Sets/merges and proof queues close before publication;
+- retain atomic rollback/retry for rows, subsumption, generation, watermarks,
+  fresh IDs, scratch, telemetry, and SQL trace.
+
+Repeated-value resolution is now explicit: a single-column index with the
+probe repeated at an unindexed row column is valid and preserves both
+equalities; a multi-column occurrence whose probe is only repeated at an
+unindexed same-row column remains a preflight rejection. Add public-syntax
+regressions for `(EdgeOcc 1 a b c)` and `(EdgeOcc x a x c)` over `(any 0)`;
+these normal-mode fixtures must not be term encoded.
+
+#### Integration writer contract
+
+- **Aim:** deliver the complete checkpoint-0 merge integration slice: frontend
+  binder alignment and public regressions, structured reference/DD validation,
+  specialized DuckDB indexed rebuild, direct RuleSpec canaries, and rustdoc
+  prebuilt environment.
+- **Owned write set:** `Makefile`; `egglog/src/lib.rs`; the two public index
+  fixtures/snapshots or their existing normal-mode harness assertions;
+  `egglog/egglog-backend-trait/src/backend_impl.rs`; DD validation and its
+  focused tests; `egglog-experimental/duckdb/src/{rebuild.rs,action_rule.rs,
+  rule_sql.rs,storage.rs,rebuild_tests.rs,rule_sql_tests.rs,
+  general_action_tests.rs}`. Any additional file requires a stop-and-report.
+- **Forbidden shortcuts:** no wildcard acceptance, host matching/rows/callback,
+  proof/name-specific recognition, `UNION ALL` per occurrence column, term
+  encoding of user-declared index fixtures, weakening `All`, Set-before-Delete,
+  fallback, unsafe/private API, dependency/lock changes, artifact edits,
+  ledger edits, commits, pushes, broad `make check`, or proof corpus run.
+- **Worker verification:** every subprocess separately capped at 110 seconds;
+  focused occurrence/frontend/DD/DuckDB declared-index tests, pinned-engine
+  DuckDB check, formatter, and diff checks. Broad rustdoc, proof, EqSat, Eggcc,
+  and `make check` gates remain coordinator-owned.
+- **Stop:** freeze a deterministic patch digest when Design A focused gates
+  pass, or report the smallest binary-constructor witness proving Design A
+  cannot represent the head. Two no-movement cycles force diagnosis. Design B
+  is not authorized without that witness.
+- **No movement:** status-only reporting, compile-only wildcard arms, or tests
+  that do not discriminate the typed occurrence/effect contract.
+
+### Checkpoint 0 integration handoff (2026-08-05)
+
+The single writer completed Design A without using the general-action fallback.
+The 13-file unstaged integration slice is frozen at SHA-256
+`6f807e07f6e46ccfe5e0ccccb2e90343f9cf6f0b0660c0f1e5528a318b3994cf`
+over the exact intended paths; the staged `origin/main` merge remains separate.
+The two preserved untracked EqSat traces remain byte-identical at
+`b4a704a281beff5221922c61826fc3e0c3fd74ca7833a11159e8b2492dc73b75`
+and `d33be24d636e17274f3a69dcef51845e511e01c00bc3ef722a18ac3a4fbd518a`.
+
+The final focused circle closed every refreshed blocker: canonical Unit output
+binding and raw-SPI totality; duplicate `any_of` rejection across frontend,
+reference, DD, and DuckDB; exact Live index-row reuse for direct Subsume;
+fail-closed rejection of proof-payload indexed positions; authenticated
+proof/fresh prefix closure; one-scan parenthesized occurrence SQL; and atomic
+indexed Delete, Set/merge, queue closure, rollback, retry, generation,
+watermark, fresh, scratch, telemetry, and trace behavior. Focused tests,
+warnings-denied Clippy, formatting, and diff checks passed. Broad proof, EqSat,
+Eggcc, rustdoc, and `make check` gates remain coordinator-owned.
+
+Independent frozen-diff review seats are now active for API/validation,
+DuckDB semantics/atomicity, and test/scope coverage. No integration files will
+move until those reviews complete; any concrete finding returns to one bounded
+repair cycle before the coordinator-owned gate matrix.
+
+#### Coordinator broad-gate blocker
+
+`make rust-doc-links`, `make proof-tests` (216 selected tests), and the exact
+bounded Eggcc no-container shape test passed under separate 110-second caps.
+The first real current-main EqSat DuckDB proof run did not pass: after a clean
+build, `egglog-experimental --backend duckdb --proofs
+egglog/tests/web-demo/eqsat-basic.egg` exited 1 with
+`DuckDB path rule '@uf_path_compress' merge Block must have seven ordered
+actions`. This is a current-main generated path-rule compatibility blocker,
+not a timeout and not a stock-SQL compiler result. Checkpoint 0 remains open.
+The next action is one bounded repair cycle in the existing DuckDB integration
+write set, followed by the same exact EqSat command and refreshed reviews.
+
+#### Writer scope amendments
+
+Two narrow additions to the original writer path list were explicitly
+authorized during implementation and are recorded here for provenance:
+
+- `egglog/src/typechecking.rs` was authorized to reject duplicate declared
+  index positions at source admission, keeping frontend, reference, DD, and
+  DuckDB direct-SPI behavior coherent instead of fixing only one backend.
+- `egglog-experimental/duckdb/src/lib.rs` was authorized to register canonical
+  Unit idempotently in the raw DuckDB backend constructor so malformed direct
+  `IndexTable` specs return structured errors rather than panicking.
+
+Both amendments are limited to checkpoint-0 admission totality and their
+focused canaries; neither authorizes manifests, lockfiles, artifacts, or other
+runtime behavior.
+
+### Checkpoint 0 bounded repair freeze (2026-08-05)
+
+The single authorized repair cycle is frozen at 16-path binary-diff SHA-256
+`607b5d621e355ef25f747cfdb8e98dc766f097f4c95dee33a435f59d60b47a61`.
+The three added DuckDB paths are `path_compress.rs`,
+`path_compress_tests.rs`, and the test-only `cleanup_effect_tests.rs`; their
+scope was explicitly authorized after the real EqSat failure and normalized
+RuleVar identity invalidated an old diagnostic-name assertion.
+
+The repaired path compiler and executor retain the authenticated legacy
+seven-action Sym/Trans collision proof and add the exact current-main
+five-action packed-proof collision shape. The exact capped current-main EqSat
+DuckDB proof command now exits 0. The repair also closes the frozen-review
+findings: exact generated packed-prefix wiring, late post-Delete conflict
+rollback plus identical retry, driver and auxiliary UF merge-token retention
+and epoch reauthorization, ID-and-type variable identity, source-order-neutral
+synthetic Unit binder rejection, discriminating literal occurrence coverage,
+and pre-RuleId DD fused-frontier width rejection.
+
+Worker gates passed: DuckDB 150/150, DD rewrite-join 4/4, frontend index
+binding 7/7, DuckDB/DD/egglog warnings-denied Clippy, formatting, and diff
+checks. Coordinator broad gates must be rerun against this repaired digest,
+followed by refreshed independent review.
+
+Post-merge Eggcc fixture provenance is now refrozen: staged/current
+`egglog-experimental/tests/fixtures/eggcc-2mm-pass1.egg` is SHA-256
+`66709c4f646722eb3e26db34a483e8501b5a8053a4d3c8146355beeebe480268`.
+The earlier `23efdf1b...` entry remains historical pre-merge evidence.
+
+### Checkpoint 0 final repair and coordinator gate freeze (2026-08-05)
+
+The final four-path DuckDB repair closes the two remaining independent-review
+blockers without changing the authorized 16-path surface. `IndexedProofContext`
+now carries and validates the exact authenticated packed-constructor
+`FunctionId`; canonicalizers are attributed through final result variables in
+ascending View-column order, cannot be reused for repeated source columns, and
+cannot be reordered with their proof steps. Direct negative regressions cover a
+same-schema decoy target, `(x, x)` canonicalizer reuse, and reversed
+canonicalizer order. The final 16-path binary-diff SHA-256 is
+`cc3ec2b2ba0a5610554ca5428e826fe447a0b00cf1247e8e1a9ce5f320f3192d`.
+
+Final focused worker gates passed: DuckDB library 151/151, the new packed-proof
+regressions, DuckDB Clippy with warnings denied, formatting, diff checks, and a
+proof-enabled EqSat replay. No general-action fallback was used.
+
+The coordinator independently bound the real EqSat result to the final digest
+with this exact capped invocation:
+
+```text
+/opt/homebrew/bin/timeout --signal=TERM --kill-after=5s 110s env -u DUCKDB_LIB_DIR -u DUCKDB_INCLUDE_DIR -u DUCKDB_STATIC DUCKDB_DOWNLOAD_LIB=1 DYLD_LIBRARY_PATH=/Users/saul/p/wt/egglog-encoding/duckdb-native-sql/target/debug/deps cargo run --locked -p egglog-experimental --features duckdb-backend -- --backend duckdb --proofs egglog/tests/web-demo/eqsat-basic.egg
+```
+
+It exited 0 in 5.52 seconds and emitted no program output, as expected for
+successful checks. The loaded dylib remains the cached DuckDB v1.5.4 runtime.
+
+The one required `make check` invocation was externally censored at 110 seconds
+during the workspace Rust-test lane after Python lock/format/lint/typecheck,
+Rust formatting/Clippy/rustdoc, and all 172 Python tests passed. Its separately
+capped Rust leaves then all passed: workspace excluding DuckDB; DuckDB library
+151/151; the feature-enabled DuckDB CLI binary 4/4; and DD timing-summary CLI
+1/1. This is timeout-censored aggregate coverage with complete passing leaf
+coverage, not a test failure.
+
+Checkpoint 1's stock engine is also pinned locally under ignored `target/` for
+the next checkpoint. The official `duckdb_cli-osx-arm64.zip` v1.5.4 archive is
+SHA-256 `d6c35195683fd1378e5624b01ca390069d399f8341c38986b7e3dfa0b3470d10`,
+matching the GitHub release asset digest; the extracted arm64 CLI is SHA-256
+`6c5abaff49f07ba3f6b2e41ed1adf338d10fcb2d98777331b285cc97938fb00a`,
+reports `v1.5.4 (Variegata) 08e34c447b`, and executes
+`-safe -no-init -batch -bail -json :memory:` successfully. Homebrew v1.5.5
+remains the secondary compatibility engine only.
+
+After the final digest freeze, the coordinator reran both broad semantic/doc
+gates under separate 110-second watchdogs: `make proof-tests` passed all 216
+selected tests (208 core plus 8 experimental) in 20.75 seconds, and
+`make rust-doc-links` passed with warnings denied in 1.75 seconds. The frozen
+16-path digest remained `cc3ec2b2...`; unstaged and staged diff checks pass and
+the merge index has zero unmerged entries. The final independent DuckDB review
+remains the only checkpoint-0 acceptance item before staging and committing.
+
+### Checkpoint 0 current-main EqSat refreeze (2026-08-05)
+
+Two clean proof desugarings of the post-merge EqSat source were byte-identical.
+The current desugaring is 28,474 bytes / 492 lines with SHA-256
+`4ec9cc9e8085da2d1f1f859e4300f1a81835538b1bbf68486f0c3c1cc5cc0f18`.
+This census is pinned to HEAD `37fc161a698d7793d62182ec369a891e20fce295`,
+MERGE_HEAD `6ef88f13b6b6be244e961807a19d95cb35c4140b`, and final
+16-path digest `cc3ec2b2...`.
+
+| Surface | Current post-merge census |
+|---|---|
+| source commands | 9: datatype 1, lets 2, rewrites 4, run 1, check 1 |
+| resolved commands | 95: rulesets 4, sorts 3, functions 49, indexes 6, rules 27, action blocks 2, schedules 3, check 1 |
+| resolved control ordinals | begin 76/85; schedules 91/92/94; check 93 |
+| rule placement | default 4; `@parent` 1; `@rebuilding` 10; `@delete_subsume_ruleset` 12; `@rebuilding_cleanup` 0 |
+| rule modes | Live 17, All 10; unsafe-seminaive 10, default 17; no naive/no-decomp |
+| rendered rule-head actions | 155: let 74, set 53, delete 22, subsume 6 |
+| top-level action-block actions | 168: let 82, set 86 |
+| function merges | no-merge 41; old 1 (`@MathProof`); action-block 7 (`@UF_Math` plus six logical views) |
+| typed output shapes | Unit 41; scalar `@Proof` 1; `(Math, @Proof)` tuple 7 |
+| structured schedules | Repeat 1, Sequence 6, Saturate 6, static Run leaves 13 |
+
+The schedule paths are:
+
+```text
+ResolvedCommand[91]/Repeat(10)/Sequence[0] => default
+ResolvedCommand[91]/Repeat(10)/Sequence[1]/Saturate/Sequence[0] => @rebuilding_cleanup
+ResolvedCommand[91]/Repeat(10)/Sequence[1]/Saturate/Sequence[1]/Saturate => @parent
+ResolvedCommand[91]/Repeat(10)/Sequence[1]/Saturate/Sequence[2] => @rebuilding
+ResolvedCommand[91]/Repeat(10)/Sequence[2] => @delete_subsume_ruleset
+ResolvedCommand[92]/Sequence[0]/Saturate/Sequence[0] => @rebuilding_cleanup
+ResolvedCommand[92]/Sequence[0]/Saturate/Sequence[1]/Saturate => @parent
+ResolvedCommand[92]/Sequence[0]/Saturate/Sequence[2] => @rebuilding
+ResolvedCommand[92]/Sequence[1] => @delete_subsume_ruleset
+ResolvedCommand[94] repeats the ResolvedCommand[92] shape as final maintenance.
+```
+
+Code-backed inference through `BackendRule::query` gives 27 `RuleSpec`s, all
+with seminaive true: 18 Live Table atoms, 4 All Table atoms, 6 All IndexTable
+atoms, 1 Live primitive atom, and 10 All primitive atoms, for 39 body atoms and
+no Subsumed reads. The six occurrence indexes are:
+
+```text
+@NumOcc_Math    -> @NumView    any_of=[1]
+@VarOcc_Math    -> @VarView    any_of=[1]
+@AddOcc_Math    -> @AddView    any_of=[0,1,2]
+@MulOcc_Math    -> @MulView    any_of=[0,1,2]
+@$expr1Occ_Math -> @$expr1View any_of=[0]
+@$expr2Occ_Math -> @$expr2View any_of=[0]
+```
+
+Display metadata contains 43 `internal_hidden`, two `internal_let`
+(`@$expr1View`, `@$expr2View`), six `term_constructor` mappings, and 29
+`internal_term_node` entries. Constructor views map `@NumView`, `@VarView`,
+`@AddView`, and `@MulView` to the user names `Num`, `Var`, `Add`, and `Mul`;
+the two `$expr` views are excluded by `internal_let`. All-`print-size` therefore
+has exactly `Add`, `Mul`, `Num`, `Var` in lexical order.
+
+EqSat has no print/input/output/extraction/push/pop/filesystem-output command.
+Source ordinal 8 is its sole check, resolved ordinal 93; successful output is
+silent and resolved ordinal 94 is the separately generated final maintenance
+schedule. The debug desugar surface cannot expose backend ColumnTy IDs,
+unsanitized resolved objects, assigned FunctionId/RuleId, structured MergeFn
+objects, primitive authority tokens, or a general source-to-resolved ordinal
+map. That observed limitation is the reason the compile-only public snapshot is
+the next frontend API boundary rather than an optional convenience.
+
+Current core corpus hashes:
+
+```text
+c0fa15ae2849bfbb65b53b5168ee7ec338be4ff371d473668b94d25bf2ea7fa0  egglog/tests/web-demo/eqsat-basic.egg
+aaa8942131b4db57e76710486718790e1d7f2cb9288aeb702c0c17019439cf16  egglog/tests/math-microbenchmark.egg
+dbb091872559ee71f685986f2f49c80ee6c929d72de2843c19688c4677b3f76f  benchmarks/pointer-analysis-small.egg
+66709c4f646722eb3e26db34a483e8501b5a8053a4d3c8146355beeebe480268  egglog-experimental/tests/fixtures/eggcc-2mm-pass1.egg
+4bd1d2f346de94b81b359c50d5fb4129f04011128f7442b53adde3731b740dad  benchmarks/luminal-llama.egg
+bd82a9cd8036d123826926ec0189e59a652aa2a9a155dd280d5ea3935b10c005  egglog/tests/hardboiled_conv1d_32.egg
+00ae7db6f5792416a438a1d2957e5dbb1caff1dba25ce65dcddb10c6ab2cba4a  egglog/tests/web-demo/herbie.egg
+c15261f17ff692435f41beafa4de893bb1cca0a36874aafa472bce78781f6e78  benchmarks/data/pointer-analysis-small/ (directory hash)
+```
+
+Pointer facts contain 23 files, 356,973 bytes, and 2,255 headerless rows.
+
+### Checkpoint 0 final-review correction (2026-08-05)
+
+The claimed `cc3ec2b2...` final repair is not accepted. A fresh independent
+review authenticated that exact 16-path digest and found five blocking
+surfaces; checkpoint 0 therefore remains uncommitted:
+
+1. Legacy indexed packed-constructor admission still selects the sole
+   schema-compatible catalog table, so a sole decoy self-authenticates. The
+   negative test only created ambiguity and would also reject the unchanged
+   canonical target. Packed PathCompression has the corresponding head-proof
+   ID gap.
+2. Indexed packed proof steps retain only `(target, source_body)`, not exact
+   result/action/column identity, so repeated `(x,x)` steps can be swapped.
+3. Frontend synthetic IndexTable Unit binding is installed only when that atom
+   is visited; an earlier primitive can capture a distinct unbound RuleVar.
+4. Packed support widens post-admission authority gaps in PathCompression,
+   non-indexed EqKey/EclassOutput rebuilds, and MarkerRekey: their plans do not
+   retain/recheck every native/fresh descriptor epoch before execution.
+5. DD does not refresh `All` on live-to-subsumed transitions, and Reference
+   incorrectly exposes live rows to `Subsumed` reads of non-subsummable tables.
+
+The review passed the one-scan parenthesized occurrence OR, global
+Delete-to-Set/merge-to-closure rollback/retry, indexed driver/auxiliary
+authority retention, duplicate-any-of admission, and DD pre-RuleId width
+validation. One consolidated repair cycle owns the five blockers above. The
+earlier green gate results remain useful evidence but cannot authorize a merge
+commit until focused regressions, EqSat, the affected broad gates, and a new
+frozen independent review pass.
+
+### Checkpoint 0 early-exit diagnosis (2026-08-05)
+
+Both permitted indexed-rebuild designs have now reached the plan's explicit
+stop condition.
+
+Design A cannot authenticate the exact internal relation identities required by
+the final decoy canaries. `FunctionConfig` exposes schema, merge, name, and
+subsumption/storage behavior; `RuleSpec` exposes the rule core and options.
+Neither carries authenticated internal-role provenance. A legacy ordered-union
+merge directly identifies its Sym/Trans relations, and a packed ordered-union
+merge directly identifies only its Packed_2 relation. Nothing in the backend
+vocabulary links a legacy graph to Packed_N, Packed_2 to Packed_N for N > 2,
+or a packed path-compression graph to its separate EqTrans head relation.
+Catalog uniqueness, registration order, fixed offsets, generated-name parsing,
+and schema matching are all spoofable on the public raw Backend surface.
+
+Design B, the general action compiler with All reads and atomic global
+Delete-before-Set, cannot satisfy the same exact-ID canary by construction. It
+faithfully executes the FunctionId supplied by the rule; changing only that
+target to a compatible decoy is valid generic rule semantics, not something a
+generic compiler can infer should be rejected.
+
+The smallest sound expansion is a shared, admission-only authenticated internal
+relation role registry, with at least EqTrans and PackedProof{width}, registered
+by the frontend immediately after add_table and cross-checked by the backend
+before RuleId allocation. That is a shared API/provenance change outside the
+authorized repair write set and may conflict with the milestone requirement
+that DuckDB receive no proof-aware metadata. No name/schema/ordering fallback is
+accepted. The repair worker therefore retained no partial authority changes;
+the source surface remains at ordered 16-path digest `cc3ec2b2...`, DuckDB
+`cargo check --lib` and diff checks pass, and findings 2-5 remain uncommitted
+because the foundational exact-identity gate cannot be met.
+
+Per checkpoint 0, the next command is `git merge --abort`, followed by exact
+status/ref/trace-hash verification. The current-main merge must not be committed
+and checkpoints 1-5 must not proceed unless the user explicitly authorizes the
+shared provenance API expansion or changes the exact-ID/no-metadata contract.
+
+The first `git merge --abort` correctly refused because the 16 uncommitted
+integration paths were not at the merge-index versions. After verifying that
+the complete unstaged set was exactly `STATE.md` plus those 16 owned paths, the
+coordinator restored only the 16 integration paths to the merge index and
+retried `git merge --abort`. The abort then succeeded. Final state:
+
+```text
+HEAD=37fc161a698d7793d62182ec369a891e20fce295
+ORIG_HEAD=37fc161a698d7793d62182ec369a891e20fce295
+frozen-origin-main=6ef88f13b6b6be244e961807a19d95cb35c4140b
+MERGE_HEAD=absent
+tracked-dirty=.codex/duckdb-native-sql/STATE.md only
+untracked=.codex/duckdb-native-sql/artifacts/ only
+```
+
+Both diff checks pass. `STATE.md` was SHA-256
+`3d63b71ac87dcf4e14e101a31c2329c9b4a12b15f014f17e4b4aaa44bcd8f551`
+before this final append. The two preserved diagnostic traces remain exactly
+`b4a704a2...` and `d33be24d...`. The merge and failed integration slice were
+intentionally removed from the worktree; their diagnosis, frozen digests,
+tests, and census remain recorded above. The official ignored DuckDB 1.5.4 CLI
+pin under `target/` remains available, but checkpoint 1 is intentionally not
+started.
+
+### User decision: Design B is authoritative (2026-08-05)
+
+The user explicitly selected Design B and rejected Design A as the intended
+architecture. This resolves the prior acceptance ambiguity:
+
+- A same-schema decoy FunctionId is valid generic `RuleSpec` semantics. The
+  general compiler must execute that exact target and match Reference; it must
+  not reject the target merely because it lacks a proof-specific role.
+- Exact-role/decoy rejection applies only to a proof-specialized recognizer.
+  Design B must not invoke such a recognizer, so that canary is replaced by
+  generic Reference-parity plus an assertion that no specialized route ran.
+- No internal proof-role registry is authorized or needed. Proof relations
+  remain ordinary typed relations; MergeFn/action lowering is the sole
+  production path.
+
+The earlier conclusion that both designs failed was therefore too strong:
+Design A failed its optimizer proof obligation, while Design B was dismissed
+using an inapplicable specialized-path canary before it was implemented. The
+frozen `origin/main` SHA `6ef88f13b6b6be244e961807a19d95cb35c4140b` was merged again with
+`--no-ff --no-commit` without another fetch; the merge again completed with no
+textual conflicts and remains uncommitted.
+
+#### Resumed checkpoint 0 implementation circle
+
+| Field | Contract |
+|---|---|
+| mission | merge current main and preserve generic, fail-closed standalone-SQL semantics without proof-specific backend metadata |
+| aim | reconstruct the lost occurrence-index integration, then make the general action compiler own `Table(All) + IndexTable(All) + guard + Lets + Delete -> Set` |
+| domain | prior checkpoint-0 frontend/reference/DD paths plus DuckDB generic action/rule/storage tests; specialized proof recognition may only be removed or bypassed |
+| authority | one implementation writer; coordinator owns state, preservation, broad gates, diff integration, and commits |
+| acceptance | literal decoy target executes generically with Reference parity; exact EqSat proof run, rollback/retry, read-mode, authority-epoch, focused tests, proof tests, rustdoc, and split `make check` gates pass |
+| forbidden | proof/name/schema/registration-order role inference, role registry, specialized fallback, host callbacks, Set-before-Delete, weakened All, artifact edits, staging/commit/push by worker |
+| stop | a minimized semantic counterexample shows the general compiler cannot faithfully implement the reached action shape, or two cycles show no measurable frontier movement |
+
+The exact next command belongs to the implementation writer: restore the
+previous validated occurrence-index admission slice, then add a direct generic
+All-read/Delete-before-Set decoy parity canary before broadening the compiler.
+
+### Design B generic-path audit and checkpoint-1 pre-probe (2026-08-05)
+
+The read-only generic-path audit confirmed that Design B is viable without a
+shared proof-role registry: `RuleSpec`, `TableInfo`, and `MergeFn` already retain
+the exact `FunctionId`s needed to execute literal program semantics. The actual
+integration boundary is broader than an `IndexTable` scan. The general scalar
+compiler currently follows `StandardRebuild`, `MarkerRekey`, and
+`PathCompression`, admits only Live table/primitive bodies and Let/Set heads,
+and converts deferred merges into an inferred `OrderedUnionGraph`. Storage also
+rejects a bounded ruleset that mixes scalar-action and rebuilding plans.
+
+Design B therefore requires the general compiler to claim the complete reached
+All/Index rebuilding action vocabulary before the proof-shaped recognizers and
+to lower the exact retained `MergeFn`, not infer proof roles. Its committed
+semantic phases remain frozen matches and Lets, global Delete, Set/merge queues
+to closure, then global Subsume. The correct decoy canary registers both
+same-schema functions, changes only the literal target ID, and requires both
+Reference and DuckDB to write that decoy through the generic plan. The old
+exact-transcript compiler may remain only as a test oracle.
+
+A read-only `/tmp` probe against the pinned official DuckDB CLI independently
+advanced checkpoint 1 without repository writes. The binary remained
+`v1.5.4 (Variegata) 08e34c447b`, SHA-256
+`6c5abaff49f07ba3f6b2e41ed1adf338d10fcb2d98777331b285cc97938fb00a`,
+and the exact `-safe -no-init -batch -bail -json :memory: -f` invocation passed.
+Observed kernel facts:
+
+- one nested typed `STRUCT` key and nested `STRUCT`/`UNION` payload work with
+  `USING KEY`; a constant non-null Boolean key is required for nullary state;
+- a zero-working recurring-only arm and a one-working arm with multiple
+  `recurring.state` reads work; DuckDB accepts two working scans, so the
+  compiler must reject that shape in IR and rendered-fragment audits;
+- the complete multi-branch recursive arm must be parenthesized;
+- duplicate-key replacement is order-sensitive, while an explicit non-null
+  unique ordinal makes the fold deterministic;
+- strict payload anti-diff terminates naturally without fuel;
+- tombstone/reinsert/subsume, transaction rollback, lazy `error(...)`, and
+  checked native overflow behave as required.
+
+The public CLI has no whole-dependent-script bind-only mode. `EXPLAIN` can bind
+individual statements, but dependent DML requires catalog declarations to be
+executed first. Artifact validation must therefore use a disposable in-memory
+catalog, execute only declarations, and bind runtime statements with
+`EXPLAIN`/`PREPARE` while suppressing their plans.
+
+The exact next implementation action remains with the checkpoint-0 writer:
+finish a compiling generic All/Index/Delete/Subsume phase slice, then reuse or
+extract existing merge semantics into an exact-ID generic merge-program plan
+before running DuckDB gates. The coordinator's next action is the read-only
+generic-merge reuse audit; no overlapping repository writer is authorized.
+
+### Compile-only frontend snapshot audit (2026-08-05)
+
+The read-only checkpoint-2 API audit found that the current frontend cannot
+publish the required snapshot by exposing `resolve_program` or by recording a
+backend. `EGraph` registers sorts and primitives with a backend during
+construction/typechecking; function and rule configs are built only inside
+`run_command` and immediately consumed; current IDs and values are registry
+relative; source-command grouping is flattened; and the nominal non-running
+resolver still executes push/pop.
+
+Design B therefore requires a frontend-owned, backend-free vocabulary and a
+live adapter rather than backend objects in the public artifact. The proposed
+boundary is after proof instrumentation, the second typecheck/global
+elimination, capability admission, stable catalog/core lowering, and source
+origin attachment, but before any runtime ID conversion or command execution.
+Stable declaration-order frontend IDs, owned typed literals, portable column
+types, closed primitive semantic tags, exact typed merge expressions, typed
+rules, structured schedules, catalog-prefix ruleset membership, typed input
+events, output ordinals, and display metadata all live in that snapshot.
+
+Implementation dependencies are now frozen for checkpoint 2:
+
+1. add a pure frontend state and stable typed IDs instead of a capture backend;
+2. split pure sort/primitive metadata registration from runtime registration;
+3. extract function/merge and core-rule lowering from `run_command`;
+4. preserve source-command envelopes before macro/desugar/proof flattening;
+5. extract TSV parsing into a byte-based typed helper preserving row order,
+   duplicates, trim behavior, Unit arity, and exact errors;
+6. pre-resolve print sites against the catalog prefix with constructor-view
+   first resolution and frozen hidden/let/display metadata;
+7. retain structured schedule paths because flat `RunReport` cannot recover
+   nested last-child versus aggregate reports.
+
+Whole-program preflight must precede published IDs and fact-row materialization.
+For this milestone, `include` joins push/pop, containers, dynamic unstable
+functions, extraction, output, print-function, file-targeted prints/stats,
+custom schedulers, unknown callbacks, and unsupported proof forms in the
+fail-closed set unless the source-hash contract is explicitly broadened.
+
+### Design B generic MergeFn reuse audit (2026-08-05)
+
+The read-only reuse audit found no generic DuckDB merge evaluator to extract.
+Registration validates the full `MergeFn` AST but collapses execution to
+Old/AssertEq/Deferred; both input and scalar-action Deferred writes then enter
+the same exact seven-action, two-value proof-shaped ordered-union recognizer.
+Only transaction ownership, typed queue DDL, event/wave bookkeeping, durable
+owner joins, counters, rollback, and scratch cleanup are reusable. DD's
+`MergeTransaction` is the closest complete semantic oracle.
+
+The authorized Design B implementation is a new typed SSA merge program,
+compiled once per function config and stored with its table catalog entry. It
+normalizes contextual Old/New to explicit columns, types every constant/slot/
+primitive/lookup, preserves ordered Block actions before result evaluation,
+retains exact read/write FunctionIds and all authority epochs, and emits complete
+typed results atomically. Current EqSat reaches AssertEq, Old, and seven action
+Blocks using OldCol/NewCol, Const, LetVar, authenticated ordering/payload
+selection primitives, fresh sites, ordered Let/Set, and Columns. It does not
+currently reach New, Function, Lookup, or UnionId. Residual UnionId and
+`MergeAction::Union` must fail closed in proof-mode post-instrumentation because
+silently taking a minimum would omit Reference's equality side effect.
+
+The safe initial executor is event-at-a-time rather than an unsound simultaneous
+per-key fold: freeze action effects, apply Delete globally, enqueue Set
+candidates, process targets by merge dependency level then FunctionId and
+stable event/action ordinal, put generated Sets in the next wave, preserve
+subsumed ownership and identity short-circuits, reach genuine closure, then
+apply Subsume globally. The surrounding SQL transaction owns all durable rows,
+fresh/generation counters, rollback, and publication. Performance must be
+measured immediately; a later set-at-a-time optimization requires a static
+independence proof.
+
+Patch order is frozen: typed catalog/authority admission; generic queue kernel
+while retaining the old implementation as an oracle; action Set wiring and
+generic rule routing; input wiring; then exact decoy, DD-derived merge parity,
+rollback/retry, EqSat, and broad gates. The current writer is authorized to add
+`egglog-experimental/duckdb/src/merge_program.rs` and narrow module/tests for
+this work. Production `classify_effect` must stop calling the proof-shaped
+ordered-union validator before checkpoint-0 acceptance.
+
+### Current-main merge-census refinement (2026-08-05)
+
+An independent SQL-design audit corrected the conservative event-at-a-time
+baseline using the current-main rather than historical trace shape. The seven
+reached action Blocks are self-describing five-action programs: payload-max and
+payload-min Lets, one fresh mint plus exact Packed_2 Set, one exact UF Set, and
+a two-column result. Every actionful target has one identity value; current
+EqSat reaches no Function, Lookup, New, UnionId, native Union, non-Fail default,
+or actionful no-identity merge. `UF_Math` is the sole cyclic merge SCC.
+
+That census admits a safe set-at-a-time checkpoint-0 renderer across distinct
+keys. Each target/pass ranks candidates by typed logical key plus a unique
+non-null event ordinal and selects one candidate per key; missing keys insert
+live, existing keys apply the identity-prefix guard, dense Lets and exact Block
+Sets materialize in action order, all result columns update atomically while
+preserving subsumption, and generated Sets enter the next wave. Repeated passes
+reach closure without fuel. This does not assume commutativity or implicit
+last-row replacement and avoids event-at-a-time whole-state copying.
+
+The event-at-a-time design remains the semantic fallback for later arbitrary
+Blocks, not the preferred current EqSat implementation. Dependency levels use
+read dependencies only, matching DD; write targets are next-wave edges. If the
+setwise renderer approaches 110 seconds, one balanced-CTE stage fusion is the
+only authorized immediate optimization before applying the stated stop rule.
+
+### Active SetIfEmpty predicted-state mismatch (2026-08-05)
+
+Status: checkpoint-0 blocker after the first green Design-B candidate.
+
+The first generic candidate passed all 151 pinned DuckDB 1.5.4 crate tests and
+ran live `eqsat-basic.egg --proofs` silently, but an independent reduced probe
+found the first meaningful semantic divergence. Two scheduled rules call the
+same absent-key `SetIfEmpty` with defaults 10 and 20. Reference's serial action
+flush returns 10 from both calls and stores owner 10; DuckDB returned 10 and 20
+while ultimately storing owner 10. Reversing the schedule reverses the winning
+source event.
+
+The confirmed mechanism is plan-local prediction reconstruction. The current
+SQL sees preceding `SetIfEmpty` slots from the same rule only, whereas the
+Reference action state carries the first predicted owner across scheduled
+actions in the Run. The earlier action-major-order hypothesis was fixed and is
+not the remaining cause. `ViewColumnRead` remains intentionally durable-only.
+
+The current SQL also tests `lookup.__value IS NULL` for absence, which violates
+the no-semantic-NULL contract, and delays FD seed-effect materialization until
+after later slots can remove a lane. The accepted next experiment is a typed,
+per-target transactional prediction ledger with a non-null unique global event
+ordinal, durable-first tagged choice, and a per-site winner stage. Required
+canaries cover two scheduled rules in both orders, complete multi-output
+defaults, subsumed durable ownership, a later lane-filtering action, and
+fresh/rollback/retry behavior. The previously green full crate and live EqSat
+runs remain the regression set.
+
+A separate fail-closed admission canary is also active: `MergeFn::Old`, `New`,
+and `AssertEq` must have the owner value-column type for their `self_col`; the
+compiler may not relabel one of these values with a nested target's expected
+type merely because two Egglog types share a DuckDB representation.
+
+### Checkpoint 0 accepted: current-main merge plus Design B (2026-08-05)
+
+Checkpoint 0 is accepted at `2026-08-05T21:04:45Z` for the frozen,
+wave-scoped contract. The uncommitted merge still has parents
+`37fc161a698d7793d62182ec369a891e20fce295` and
+`6ef88f13b6b6be244e961807a19d95cb35c4140b`; the latter is the single frozen
+`origin/main` fetch for this campaign. There are no unmerged paths. The next
+operation is the intentional merge staging and commit recorded below; no push
+is authorized.
+
+The user's architecture decision is final: Design B is the sole production
+path for the reached scalar action vocabulary. A typed `MergeProgram`, compiled
+from the exact registered `MergeFn`, exact `FunctionId`s, exact primitive
+authority tokens, and exact `RuleSpec`, owns generic merge behavior. Same-schema
+decoys execute literally. Production contains no `ScalarMixed`, scalar
+`OrderedUnion`, proof-role/name/schema/registration-order classifier, callback
+fallback, or second `compile_scalar_action` routing branch. The remaining
+Standard/Marker/Path specialists are compatibility paths for rules outside the
+general compiler's owned vocabulary; general admission precedes all three and
+owned errors fail closed.
+
+The current-main occurrence-index integration is part of the same accepted
+slice:
+
+- frontend index outputs are marked known Unit before fixed-point
+  reachability, and canonical Unit values are installed before any body atom is
+  lowered, so either atom order is valid;
+- frontend, Reference, DD, and DuckDB validate row arity, trailing literal
+  canonical Unit, type-compatible nonempty `any_of`, indexed-column range, and
+  fixed-point binder reachability before allocating `RuleId`;
+- the typed base table is scanned with the exact Live/Subsumed/All predicate;
+- repeated columns and repeated probe values use one parenthesized,
+  deduplicated `IS NOT DISTINCT FROM` disjunction, so a base row matches once;
+- general scalar execution freezes matches and Lets, applies global Delete,
+  drains Set/merge queues to closure, then applies global Subsume; reported
+  change, physical change, generation, fresh counter, watermarks, telemetry,
+  and transaction publication remain distinct.
+
+#### Final Design-B queue correction
+
+The final independent audit found and closed one test-visible Design-B bug.
+The old queue selector chose sibling targets by
+`(wave, dependency_level, FunctionId)`, which could reverse source actions.
+The discriminating program registers low-ID `L` before high-ID `H`, emits
+`Set(H)` then `Set(L)`, and makes two collisions in each target feed crossed
+keys in one `MergeFn::Old` sink. Before the fix, DuckDB retained `[100, 100]`
+while Reference retained `[200, 200]`.
+
+The accepted selector is
+`(wave, dependency_level, earliest_event_ordinal, FunctionId)`. Selection pins
+one `(wave, target)` and drains that target's complete current-wave batch in
+event order before considering a sibling. Consequently the distinguishing
+trace is `H1,H3,L2,L4`, not global-event interleaving or FunctionId order.
+Both native input and scalar action use this shared drain. Generated Sets stay
+at `wave + 1`; parent/action event ordinals remain stable. The original exact
+two-independent-graph Reference comparison and source-order fresh-ID oracle
+were restored; the temporary alpha-normalized/FunctionId-first expectation was
+removed.
+
+Reference's `merge_simple` can let a generated write join a later target in the
+same internal sweep, and its implementation switches to registration-ordered
+strata at four dirty tables. Those are real Reference implementation details,
+but they are not the frozen SQL contract: they depend on fast-path thresholds,
+database size, and possible parallelism, while this design intentionally
+separates generated work into the next SQL-owned wave. Independent review found
+neither behavior observable in the current-main EqSat collision-bearing route:
+initial four/five-view batches contain only missing-owner inserts, while
+collision-bearing batches contain at most two views and generate only the
+newly queued `@UF_Math` target. The existing general-path wave canary requires
+all wave-zero allocations before generated wave-one allocations. A cross-level
+ordering canary becomes mandatory before Function/Lookup admission; both remain
+fail closed now.
+
+#### Final checkpoint-0 evidence
+
+The final source freeze before this STATE append is:
+
+```text
+tracked diff excluding .codex/**
+bf7be29504abbe2114fd2c553739f15f323d21a1e68908f0f240d7c6bc9e1258
+
+same diff plus raw untracked merge_program.rs
+89501d83bdb5f3519cb75a7b9772d6277836dcb22e617a7e7a8447b48f3b3e57
+
+egglog/src/lib.rs
+d5a0b2fb3f21362bad685c388424c79102adf37e52ef03011f3556273d2108ac
+egglog/egglog-backend-trait/src/backend_impl.rs
+0d80851230d735235e0103cd0c03d652398a77b31c4305764baeda619183abae
+egglog-experimental/dd/src/lib.rs
+8da185b214d10b995aed8b6e7a3526487f415ba5be74495e42de9188a71a0cd2
+egglog-experimental/dd/tests/rewrite_join.rs
+6496d67a3c0d4892febe59a1901176e3d1f71c7f0f055ad5f90b0438fd4e6ea4
+egglog-experimental/duckdb/src/action_rule.rs
+3e9182a8f1d64946c57a378e8520d95b443ab6764adddd5e17ab75ad44e9609a
+egglog-experimental/duckdb/src/merge_program.rs
+46bb5c4fe70b68cc584e409495ce201f6a01b18db2fb9048bc657a6337e74403
+egglog-experimental/duckdb/src/storage.rs
+b004ea6185b106b503b998e53c250645363f3c95155911229ec8878922ff0217
+egglog-experimental/duckdb/src/rule_sql.rs
+54695ca7e877b49260b676af593372d5e1fd3a5617c442434aa0339dcd65a04e
+egglog-experimental/duckdb/src/action_rule_tests.rs
+443d53f11c8ccebef3faf81d7f04f24f352ff8904ffc3818b3148ec88baec031
+egglog-experimental/duckdb/src/general_action_tests.rs
+d2caf04978878326b56b1521330ca05e5d3022165fcfc38387b13a32dc699f33
+egglog-experimental/duckdb/src/lib.rs
+0cd749d10d1a857c2834ba1480a6e3178ea5a53daf453ceb05cf10dc6cb8b9f4
+```
+
+The focused and broad gates on that code freeze are green:
+
+- frontend index admission/execution: 9/9;
+- backend-trait admission: 5/5;
+- Reference bridge: 30/30;
+- DD crate: 64/64;
+- pinned DuckDB 1.5.4 crate: 167/167;
+- crossed-target pre-fix observation: 0/2 with DuckDB `[100,100]` versus
+  Reference `[200,200]`; post-fix: 2/2;
+- restored exact two-graph canary: 1/1;
+- DuckDB all-target Clippy with warnings denied, workspace formatting, and
+  staged/unstaged diff checks;
+- `make proof-tests`: 216/216 (208 core plus 8 experimental);
+- `make rust-doc-links`, using the established prebuilt DuckDB environment;
+- current-main Eggcc no-container fixture: 1/1;
+- `index_probe.egg`: 3/3 and `index_any.egg`: 3/3 in their direct intended
+  paths;
+- the live DuckDB `--proofs egglog/tests/web-demo/eqsat-basic.egg` run exits
+  zero with silent check output, and the explicit
+  `egglog/tests/proofs/eqsat-basic-proof.egg` fixture also succeeds.
+
+The required umbrella `make check` was attempted once under the 110-second
+watchdog. It passed Python lock/format/lint/mypy, 172 pytest cases, workspace
+tests/docs, and the DuckDB library, then was censored while compiling the final
+feature CLI. Its remaining dependency leaves were run separately under their
+own watchdogs: the CLI tests passed 4/4 and the DD timing test passed 1/1. The
+aggregate is recorded as timeout-censored, not as a failed or completed
+110-second run; every owned leaf is green.
+
+Checkpoint 0 proves that current-main occurrence-indexed proof rebuild executes
+through Design B in live DuckDB. It does not yet prove the checkpoint-3
+standalone/canonical oracle. The web-demo EqSat command contains a plain silent
+`check`; it discards proof columns. `make proof-tests` uses Reference. Therefore
+proof-relation fidelity still requires the planned DuckDB proof-testing or
+graph-aware Reference/live/standalone typed-relation comparison. Table sizes or
+the silent check may never substitute for that gate.
+
+The two pre-existing diagnostic traces remain untracked and byte-preserved:
+
+```text
+b4a704a281beff5221922c61826fc3e0c3fd74ca7833a11159e8b2492dc73b75  eqsat-basic-desugared-proofs.sql
+d33be24d636e17274f3a69dcef51845e511e01c00bc3ef722a18ac3a4fbd518a  eqsat-basic.sql
+```
+
+### Checkpoint 1 frozen engine frontier (2026-08-05)
+
+The primary engine is the official stock DuckDB 1.5.4 arm64 CLI at
+`target/duckdb-cli/v1.5.4/duckdb`:
+
+```text
+release zip  d6c35195683fd1378e5624b01ca390069d399f8341c38986b7e3dfa0b3470d10
+CLI binary   6c5abaff49f07ba3f6b2e41ed1adf338d10fcb2d98777331b285cc97938fb00a
+version      v1.5.4 (Variegata) 08e34c447b
+```
+
+Homebrew DuckDB 1.5.5, SHA-256
+`3d53a878a79787adcaaee28757e86f281366a062bebbffdb9ab57775a323be7e`,
+is compatibility-only. All artifact execution remains exactly
+`duckdb -safe -no-init -batch -bail -json :memory: -f program.sql`; generated
+artifacts emit no `SET` statements.
+
+Exact-safe-CLI depth probes on both engines found these first failures on the
+smaller 1.5.4 boundary: nested expression 988, left-deep set operation 9979,
+and CTE dependency edge 998. The compiler cap is therefore 75% of the smallest
+first failure, rounded down to a multiple of 32: **736**. All three shapes pass
+at 736 on 1.5.4 and 1.5.5; the cap is above the mandatory minimum 128.
+
+The reduced stock kernel proves nested typed `STRUCT`/`LIST` keyed state,
+zero-working full recompute, one-working seminaive branches with multiple
+`recurring.state` reads, strict anti-diff termination, deterministic explicit
+duplicate-key folds, parenthesized multi-branch recursion, a non-null surrogate
+for nullary state, tombstone/reinsert/subsumption, checked error paths,
+transactional durable counters, hostile strings, and the current one-Fresh
+Packed_2 proof-maintenance hot SCC. Its exact final hot-SCC oracle has Packed
+ids 100/101/102, View owners 1->10/41 and 2->15/42, UF owners 20->10/100 and
+15->10/102, next fresh 103, eight steps, and an empty queue.
+
+Accepted engine no-go facts are equally important:
+
+- unqualified recursive CTE reads see only the working wave;
+  `recurring.state` sees accumulated keyed state;
+- DuckDB accepts two working reads, so IR construction and rendered-fragment
+  lint must reject them;
+- duplicate keyed output silently uses last-row replacement and identical
+  replacement does not imply quiescence, so explicit folds and anti-diffs are
+  mandatory;
+- DuckDB has no recursive DML or mutually recursive named CTEs; one tagged
+  nested state must represent a recursive region;
+- sequences are not rollback-safe counters, and raw exceptions alone do not
+  implement committed output-prefix semantics;
+- arithmetic needs explicit definedness, and volatile error/fresh expressions
+  cannot be hidden behind `TRY`;
+- the historical two-Fresh proof recognizer and the two multi-megabyte SQL
+  traces are stale relative to the current one-Fresh Packed_2 shape.
+
+The next checkpoint-1 write set is intentionally narrow:
+`egglog-experimental/duckdb/tests/fixtures/stock-duckdb-1.5.4-kernel.sql`, a
+stdlib-only `scripts/check_duckdb_kernel.py`, and an optional explicit Make
+target that requires a caller-supplied/provisioned `DUCKDB_CLI`. The harness
+must verify the pinned SHA/version, reject `SET`, run the positive kernel twice
+with byte-identical JSON, generate expected negative/two-working/#23677/depth
+probes in a temporary directory, and leave normal `make check` independent of
+an ignored local binary.
+
+### Checkpoint 2 API frontier and scoreboard (2026-08-05)
+
+The compile-only seam remains the final proof-instrumented, second-typechecked,
+second-global-eliminated `Vec<ResolvedNCommand>` immediately before
+`run_command`. Exposing current backend objects is unsound: `FunctionId`,
+`RuleId`, primitive tokens, interned `Value`s, and existing `MergeFn`/`RuleSpec`
+objects are backend-registry relative and lose source/catalog metadata.
+
+The public snapshot must therefore own stable declaration-order symbolic IDs,
+nominal sorts, typed literals, exact logical merge/rule IR, complete structured
+schedules and ruleset membership, input provenance/typed rows, source command
+and output ordinals, primitive requirements, and display/hidden/let/constructor
+metadata. A linker may convert it to live backend objects; the standalone SQL
+compiler consumes it without any connection. Whole-program capability
+preflight precedes runtime IDs, counters, fact materialization, SQL publication,
+or backend calls. A capture/no-op backend is not an accepted substitute.
+
+| Checkpoint | State | Next proof obligation |
+|---|---|---|
+| 0 merge/current-main | accepted, uncommitted | intentional staging and merge commit |
+| 1 stock engine | probes and hot SCC proven in `/tmp` | tracked deterministic kernel/harness |
+| 2 compile-only API | seam and symbolic vocabulary frozen | lossless final-vector capture, then linker |
+| 3 standalone EqSat | not started | compile/replay plus proof and canonical typed-relation oracle |
+| 4 positive corpus | not started | Math, Pointer, Eggcc, Luminal static lowering and bounded replay |
+| 5 benchmark integration | not started | compile-outside-timing backend and bounded correctness-first rounds |
+
+#### Circle roster
+
+| Circle | Artifact and write set | Forbidden shortcuts | Verification | Stop condition | No movement |
+|---|---|---|---|---|---|
+| integration/API | current merge; next symbolic snapshot/frontend linker | proof-role inference, backend capture, stale downstream helpers | focused frontend/Reference/DD/DuckDB tests, then root gates | a minimized current-main rule cannot be represented symbolically | no lossless command/catalog field added and no gate flipped |
+| engine semantics | tracked stock kernel SQL plus Python harness only | UDFs, extensions, `SET`, host feedback, implicit last-row folds | exact safe CLI twice on pinned 1.5.4; 1.5.5 secondary; negative/depth probes | two materially different typed state layouts fail the semantic kernel within 110 seconds | no new engine fact, reduced reproducer, or passing kernel assertion |
+| compiler lowering | snapshot and standalone SQL compiler/CLI after API slice | fallback, runtime Rust execution, callbacks, observed IDs/iterations in SQL | panic-on-backend compilation test, double-compile byte identity, safe-CLI parse/bind | two materially different typed-state compiler designs fail EqSat | no newly admitted IR node or lowered semantic canary |
+| semantic oracle | read-only Reference/live/standalone comparison helpers and tests | size-only success, raw-ID equality for independent allocations, silent-check substitution | proof verification plus graph-aware alpha-normalized typed relations and reports | normalized durable/proof topology diverges after two distinct designs | no reduced discriminator or oracle surface added |
+| artifacts/benchmarks | atomic bundle publisher, manifest, then `bench.py` DuckDB backend | partial publication, timed compilation, default cache pollution, timeout reported as pass/fail | double compile/replay digests, exact output events, fresh bounded run | completed workload mismatches canonical oracle | no new deterministic artifact or correctly classified workload |
+| independent review | read-only refs, hashes, reached-shape census, gate reauthentication | workspace edits, staging, inferred success from table sizes | hash freeze plus code-backed PASS/BLOCKER and exact command evidence | concrete uncaught semantic counterexample | no new discriminator, authenticated hash, or closed blocker |
+
+Immediate exact next command, after one final status/diff readback, is:
+
+```text
+git add -u
+git add egglog-experimental/duckdb/src/merge_program.rs
+git diff --cached --check
+git status --short --branch
+```
+
+Then inspect the complete staged scope and create the no-ff merge commit. Do
+not add `.codex/duckdb-native-sql/artifacts/` and do not push.

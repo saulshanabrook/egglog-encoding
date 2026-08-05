@@ -20,7 +20,7 @@ use crate::{
     BaseValues, ContainerRebuildSummary, ContainerValues, PoolSet, QueryEntry, TupleIndex, Value,
     action::{
         Bindings, DbView,
-        mask::{Mask, MaskIter, ValueSource},
+        mask::{Mask, MaskIter},
     },
     dependency_graph::DependencyGraph,
     hash_index::{ColumnIndex, Index, IndexBase},
@@ -137,6 +137,10 @@ pub struct TableInfo {
     pub(crate) table: WrappedTable,
     pub(crate) indexes: IndexCatalog<SmallVec<[ColumnId; 4]>, HashIndex>,
     pub(crate) column_indexes: IndexCatalog<ColumnId, HashColumnIndex>,
+    /// Occurrence ("any-of") indexes: a `ColumnIndex` over a *set* of columns,
+    /// mapping each value appearing in any of them to the rows containing it.
+    /// The disjunctive counterpart to `indexes`, which keys on the whole tuple.
+    pub(crate) occurrence_indexes: IndexCatalog<SmallVec<[ColumnId; 4]>, HashColumnIndex>,
 }
 
 impl TableInfo {
@@ -175,6 +179,7 @@ impl Clone for TableInfo {
             table: self.table.dyn_clone(),
             indexes: deep_clone_map(&self.indexes, self.table.as_ref()),
             column_indexes: deep_clone_map(&self.column_indexes, self.table.as_ref()),
+            occurrence_indexes: deep_clone_map(&self.occurrence_indexes, self.table.as_ref()),
         }
     }
 }
@@ -679,6 +684,9 @@ impl Database {
                 info.column_indexes.update(|_, ti| {
                     Arc::get_mut(ti).unwrap().reset();
                 });
+                info.occurrence_indexes.update(|_, ti| {
+                    Arc::get_mut(ti).unwrap().reset();
+                });
                 info.indexes.update(|_, ti| {
                     Arc::get_mut(ti).unwrap().reset();
                 });
@@ -790,6 +798,7 @@ impl Database {
             table,
             indexes: IndexCatalog::new(),
             column_indexes: IndexCatalog::new(),
+            occurrence_indexes: IndexCatalog::new(),
         });
         self.deps.add_table(res, read_deps, write_deps);
         res
@@ -929,6 +938,11 @@ impl Database {
                 arc.reset();
             }
         });
+        info.occurrence_indexes.update(|_, ti| {
+            if let Some(arc) = Arc::get_mut(ti) {
+                arc.reset();
+            }
+        });
         info.indexes.update(|_, ti| {
             if let Some(arc) = Arc::get_mut(ti) {
                 arc.reset();
@@ -1003,6 +1017,35 @@ fn get_column_index_from_tableinfo(table_info: &TableInfo, col: ColumnId) -> Has
             ColumnIndex::new(),
         )))
     });
+    index.get_or_update(|index| {
+        index.refresh(table_info.table.as_ref());
+    });
+    debug_assert!(
+        !index
+            .get()
+            .unwrap()
+            .needs_refresh(table_info.table.as_ref())
+    );
+    index
+}
+
+/// Get and refresh an occurrence index over `cols`: a `ColumnIndex` keyed on the
+/// whole set, so each value appearing in *any* of `cols` maps to the rows holding
+/// it. This is the structure `SortedWritesTable::rebuild_index` uses to find the
+/// rows referencing a changed value; [`get_index_from_tableinfo`] over the same
+/// columns is its conjunctive counterpart, keyed on the whole tuple.
+pub(crate) fn get_occurrence_index_from_tableinfo(
+    table_info: &TableInfo,
+    cols: &[ColumnId],
+) -> HashColumnIndex {
+    let index: Arc<_> = table_info
+        .occurrence_indexes
+        .get_or_insert(cols.into(), || {
+            Arc::new(ResettableOnceLock::new(Index::new(
+                cols.to_vec(),
+                ColumnIndex::new(),
+            )))
+        });
     index.get_or_update(|index| {
         index.refresh(table_info.table.as_ref());
     });

@@ -1,11 +1,11 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use duckdb::{Connection, Row};
 use egglog_backend_trait::{
-    BaseValueId, BaseValues, ColumnTy, DefaultVal, ExternalFunctionId, FunctionConfig, FunctionId,
-    MergeAction, MergeFn, NativeInputValue, NativePrimitive, ScanEntry, Value,
+    BaseValueId, BaseValues, ColumnTy, DefaultVal, FunctionConfig, FunctionId, MergeAction,
+    MergeFn, NativeInputValue, ScanEntry, Value,
 };
 use egglog_core_relations::{BaseValue, Boxed};
 use egglog_numeric_id::NumericId;
@@ -13,12 +13,13 @@ use num::{BigInt, BigRational, ToPrimitive, Zero, rational::Rational64};
 use ordered_float::OrderedFloat;
 
 use crate::action_rule::ScalarEffectKind;
-use crate::path_compress::PathCompressionPlan;
-use crate::rebuild::{
-    OrderedUnionOrientation, OrderedUnionPlan, StandardRebuildKind,
-    validate_native_input_ordered_union,
+use crate::merge_program::{
+    MergeOpKind, MergePrimitive, MergeProgram, MergeProgramAction, compile_merge_program,
 };
+use crate::path_compress::PathCompressionPlan;
+use crate::rebuild::{OrderedUnionOrientation, OrderedUnionPlan, StandardRebuildKind};
 use crate::rule_sql::{CompiledRule, RuleExecutionStats};
+use crate::scalar_expr::ScalarAuthority;
 
 const COUNTERS_TABLE: &str = "egglog_backend_counters";
 
@@ -319,7 +320,11 @@ pub(crate) struct TableInfo {
     #[allow(dead_code)]
     pub(crate) default: DefaultVal,
     #[allow(dead_code)]
+    pub(crate) default_sql: Option<String>,
+    #[allow(dead_code)]
     pub(crate) merge: Arc<MergeFn>,
+    #[allow(dead_code)]
+    pub(crate) merge_program: Arc<MergeProgram>,
     pub(crate) can_subsume: bool,
     pub(crate) write_capability: WriteCapability,
 }
@@ -681,14 +686,35 @@ impl Storage {
         FunctionId::new(state.tables.len() as u32)
     }
 
+    #[cfg(test)]
     pub(crate) fn register_table(
         &self,
         base_values: &BaseValues,
         config: FunctionConfig,
     ) -> Result<FunctionId> {
+        self.register_table_inner(base_values, None, config)
+    }
+
+    pub(crate) fn register_table_authenticated<'a>(
+        &self,
+        base_values: &'a BaseValues,
+        authorities: &'a crate::AuthorityRegistries<'a>,
+        config: FunctionConfig,
+    ) -> Result<FunctionId> {
+        self.register_table_inner(base_values, Some(authorities), config)
+    }
+
+    fn register_table_inner<'a>(
+        &self,
+        base_values: &'a BaseValues,
+        authorities: Option<&'a crate::AuthorityRegistries<'a>>,
+        config: FunctionConfig,
+    ) -> Result<FunctionId> {
         let mut state = self.state.lock().expect("DuckDB storage mutex poisoned");
         let id = FunctionId::new(state.tables.len() as u32);
         let write_capability = validate_function_config(&state.tables, id, &config)?;
+        let merge_program =
+            compile_merge_program(base_values, &state.tables, id, &config, authorities)?;
         let columns = config
             .schema
             .iter()
@@ -704,13 +730,21 @@ impl Storage {
             name,
             can_subsume,
         } = config;
+        let default_sql = match default {
+            DefaultVal::Const(value) => {
+                Some(columns[schema.len() - n_vals].sql_literal(base_values, value)?)
+            }
+            DefaultVal::FreshId | DefaultVal::Fail => None,
+        };
         let info = TableInfo {
             name,
             n_keys: schema.len() - n_vals,
             n_vals,
             n_identity_vals,
             default,
+            default_sql,
             merge: Arc::new(merge),
+            merge_program: Arc::new(merge_program),
             schema,
             columns,
             can_subsume,
@@ -724,14 +758,12 @@ impl Storage {
     pub(crate) fn insert_batch_authenticated(
         &self,
         base_values: &BaseValues,
-        native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
-        fresh_tokens: &BTreeSet<ExternalFunctionId>,
+        authorities: &crate::AuthorityRegistries<'_>,
         values: Vec<(FunctionId, Vec<Value>)>,
     ) -> Result<InsertStats> {
-        self.insert_batch_with_fresh(
+        self.insert_batch_with_fresh_inner(
             base_values,
-            native_primitives,
-            fresh_tokens,
+            Some(authorities),
             values
                 .into_iter()
                 .map(|(function, row)| {
@@ -750,14 +782,34 @@ impl Storage {
         base_values: &BaseValues,
         values: Vec<(FunctionId, Vec<Value>)>,
     ) -> Result<InsertStats> {
-        self.insert_batch_authenticated(base_values, &BTreeMap::new(), &BTreeSet::new(), values)
+        self.insert_batch_with_fresh_inner(
+            base_values,
+            None,
+            values
+                .into_iter()
+                .map(|(function, row)| {
+                    (
+                        function,
+                        row.into_iter().map(NativeInputValue::Existing).collect(),
+                    )
+                })
+                .collect(),
+        )
     }
 
     pub(crate) fn insert_batch_with_fresh(
         &self,
         base_values: &BaseValues,
-        native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
-        fresh_tokens: &BTreeSet<ExternalFunctionId>,
+        authorities: &crate::AuthorityRegistries<'_>,
+        values: Vec<(FunctionId, Vec<NativeInputValue>)>,
+    ) -> Result<InsertStats> {
+        self.insert_batch_with_fresh_inner(base_values, Some(authorities), values)
+    }
+
+    fn insert_batch_with_fresh_inner(
+        &self,
+        base_values: &BaseValues,
+        authorities: Option<&crate::AuthorityRegistries<'_>>,
         values: Vec<(FunctionId, Vec<NativeInputValue>)>,
     ) -> Result<InsertStats> {
         if values.is_empty() {
@@ -767,33 +819,29 @@ impl Storage {
         let mut state = self.state.lock().expect("DuckDB storage mutex poisoned");
         let row_count = values.len();
         let mut grouped = BTreeMap::<u32, Vec<PreparedInputRow>>::new();
-        let mut target_plans = BTreeMap::<u32, OrderedUnionPlan>::new();
+        let mut generic_targets = BTreeMap::<u32, TableInfo>::new();
         let mut slots = std::collections::BTreeSet::new();
         for (ordinal, (function, row)) in values.into_iter().enumerate() {
             let info = table_info(&state, function)?.clone();
             let ordered_union = if info.write_capability == WriteCapability::Deferred {
-                let Some(plans) = validate_native_input_ordered_union(
-                    base_values,
-                    &state.tables,
-                    native_primitives,
-                    fresh_tokens,
-                    function,
-                )?
-                else {
-                    info.preflight_write()?;
-                    unreachable!("deferred preflight must fail")
-                };
-                for plan in plans {
-                    if let Some(existing) = target_plans.get(&plan.target.rep()) {
-                        if existing != &plan {
-                            bail!(
-                                "DuckDB native-input target {} has inconsistent ordered-union plans",
-                                plan.target.rep()
-                            );
-                        }
-                    } else {
-                        target_plans.insert(plan.target.rep(), plan);
+                let mut pending = vec![function];
+                while let Some(target) = pending.pop() {
+                    if generic_targets.contains_key(&target.rep()) {
+                        continue;
                     }
+                    let target_info = table_info(&state, target)?.clone();
+                    target_info
+                        .merge_program
+                        .ensure_proof_supported(&target_info.name)?;
+                    if let Some(authorities) = authorities {
+                        authorize_merge_program(
+                            &target_info.merge_program,
+                            authorities,
+                            &format!("native input target {}", target.rep()),
+                        )?;
+                    }
+                    pending.extend(target_info.merge_program.write_targets.iter().copied());
+                    generic_targets.insert(target.rep(), target_info);
                 }
                 true
             } else {
@@ -847,7 +895,7 @@ impl Storage {
                     values: prepared,
                 });
             if ordered_union {
-                debug_assert!(target_plans.contains_key(&function.rep()));
+                debug_assert!(generic_targets.contains_key(&function.rep()));
             }
         }
         for (expected, actual) in slots.iter().copied().enumerate() {
@@ -869,7 +917,7 @@ impl Storage {
                     .clone();
                 PreparedInputGroup {
                     function: FunctionId::new(function),
-                    ordered_union: target_plans.contains_key(&function),
+                    ordered_union: generic_targets.contains_key(&function),
                     info,
                     rows,
                 }
@@ -879,21 +927,8 @@ impl Storage {
         for group in &grouped {
             owner_checks.insert(group.function.rep(), (group.info.n_keys, false));
         }
-        for plan in target_plans.values() {
-            owner_checks.insert(
-                plan.target.rep(),
-                (
-                    plan.n_keys,
-                    plan.orientation == OrderedUnionOrientation::KeyToParent,
-                ),
-            );
-            for proof in [plan.sym, plan.trans] {
-                let info = state
-                    .tables
-                    .get(proof.rep() as usize)
-                    .expect("validated ordered-union proof target disappeared");
-                owner_checks.insert(proof.rep(), (info.n_keys, false));
-            }
+        for (&target, info) in &generic_targets {
+            owner_checks.insert(target, (info.n_keys, false));
         }
         let run = state.next_input_run;
         let next_input_run = run
@@ -999,21 +1034,26 @@ impl Storage {
                 }
             }
 
-            let (queue_groups, group_indices) = {
+            let mut generic_queues = BTreeMap::<u32, String>::new();
+            for (&target_id, info) in &generic_targets {
+                let queue = format!("egglog_input_generic_queue_{run}_{target_id}");
+                let columns = info
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .map(|(column, ty)| format!("c{column} {} NOT NULL", ty.sql()))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let create = format!(
+                    "CREATE TEMP TABLE {queue} (__wave UBIGINT NOT NULL, __event_ordinal UBIGINT NOT NULL, {columns})"
+                );
+                transaction.execute(&create, [])?;
                 #[cfg(test)]
-                let mut queue_trace = Some(&mut executed_sql);
-                #[cfg(not(test))]
-                let mut queue_trace = None;
-                create_ordered_union_queues(
-                    &transaction,
-                    &target_plans,
-                    "egglog_input",
-                    run,
-                    &mut scratch_names,
-                    &mut queue_trace,
-                    &mut statement_count,
-                )?
-            };
+                executed_sql.push(create);
+                statement_count += 1;
+                scratch_names.push(queue.clone());
+                generic_queues.insert(target_id, queue);
+            }
 
             // Frontend slots occupy the first contiguous range in the shared
             // allocator. Collision constructors may reserve only after this.
@@ -1043,13 +1083,11 @@ impl Storage {
                 statement_count += 1;
             }
 
-            let mut event_count = 0_u64;
             for (group, rows) in &resolved {
                 if !group.ordered_union {
                     continue;
                 }
-                let group_index = group_indices[&group.function.rep()];
-                let queue = &queue_groups[group_index].queue;
+                let queue = &generic_queues[&group.function.rep()];
                 let enqueue = input_queue_sql(queue, group.info.arity(), rows);
                 let enqueued = transaction.execute(&enqueue, [])?;
                 ensure_count(
@@ -1060,37 +1098,41 @@ impl Storage {
                 #[cfg(test)]
                 executed_sql.push(enqueue);
                 statement_count += 1;
-                event_count = event_count
-                    .checked_add(u64::try_from(rows.len())?)
-                    .context("native input event count overflow")?;
             }
 
-            if !queue_groups.is_empty() {
+            if !generic_queues.is_empty() {
                 let drain = {
                     #[cfg(test)]
                     let mut drain_trace = Some(&mut executed_sql);
                     #[cfg(not(test))]
                     let mut drain_trace = None;
-                    drain_ordered_union_queues(
+                    drain_generic_merge_queues(
                         &transaction,
-                        &queue_groups,
-                        &group_indices,
+                        &generic_targets,
+                        &generic_queues,
                         generation,
                         next_fresh,
                         u64::try_from(row_count)?,
-                        "egglog_input",
                         run,
-                        "native input",
                         &mut scratch_names,
                         &mut drain_trace,
                         &mut statement_count,
                     )?
                 };
-                debug_assert!(event_count <= u64::try_from(row_count)?);
                 inserted_rows = inserted_rows
                     .checked_add(drain.wave_zero_inserted)
                     .context("native input direct insert telemetry overflow")?;
                 physical_changed |= drain.physical_changed;
+                if drain.next_fresh != next_fresh {
+                    transaction.execute(
+                        &format!(
+                            "UPDATE {COUNTERS_TABLE} SET value = CAST('{}' AS UBIGINT) WHERE name = 'fresh_id'",
+                            drain.next_fresh
+                        ),
+                        [],
+                    )?;
+                    statement_count += 1;
+                }
             }
 
             if physical_changed {
@@ -1192,7 +1234,8 @@ impl Storage {
         if scalar_rules != 0 {
             if scalar_rules != scheduled.len() {
                 bail!(
-                    "DuckDB cannot mix scalar-mixed/scalar-action plans with other plan kinds in one bounded ruleset"
+                    "DuckDB cannot mix scalar-action plans with other plan kinds in one bounded ruleset (scalar {scalar_rules}, path {path_rules}, rebuild {rebuild_rules}, marker {marker_rules}, total {})",
+                    scheduled.len()
                 );
             }
             return self.execute_scalar_action_rules(scheduled);
@@ -1364,31 +1407,17 @@ impl Storage {
         &self,
         scheduled: &[(&CompiledRule, u64)],
     ) -> Result<RuleExecutionStats> {
-        // Queue order is derived from the first scheduled source effect, with
-        // each graph's generated-write target immediately following its root.
-        // FunctionId is used only for target lookup and duplicate detection.
-        let mut target_plans = BTreeMap::<u32, OrderedUnionPlan>::new();
-        let mut target_by_id = BTreeMap::<u32, OrderedUnionPlan>::new();
+        let mut generic_targets = BTreeMap::<u32, TableInfo>::new();
+        let mut prediction_targets = BTreeMap::<u32, TableInfo>::new();
         let mut owner_checks = BTreeMap::<u32, (usize, bool)>::new();
         for (rule, _) in scheduled {
             let plan = rule
                 .scalar_action()
                 .expect("caller checked every scheduled scalar-action plan");
-            for graph in plan.graphs() {
-                for target in [&graph.root, &graph.displaced] {
-                    if let Some(existing) = target_by_id.get(&target.target.rep()) {
-                        if existing != target {
-                            bail!(
-                                "DuckDB scalar-action target {} has inconsistent ordered-union plans",
-                                target.target.rep()
-                            );
-                        }
-                        continue;
-                    }
-                    let order = u32::try_from(target_plans.len())?;
-                    target_plans.insert(order, target.clone());
-                    target_by_id.insert(target.target.rep(), target.clone());
-                }
+            for target in plan.prediction_targets() {
+                prediction_targets
+                    .entry(target.rep())
+                    .or_insert(self.table_info(target)?);
             }
             for (target, n_keys, reject_subsumed) in plan.owner_checks() {
                 if let Some(&(old_keys, old_reject)) = owner_checks.get(&target.rep()) {
@@ -1401,6 +1430,23 @@ impl Storage {
                 } else {
                     owner_checks.insert(target.rep(), (n_keys, reject_subsumed));
                 }
+            }
+            let mut pending = plan
+                .effects()
+                .iter()
+                .filter(|effect| effect.kind == ScalarEffectKind::GenericMerge)
+                .map(|effect| effect.target)
+                .collect::<Vec<_>>();
+            while let Some(target) = pending.pop() {
+                if generic_targets.contains_key(&target.rep()) {
+                    continue;
+                }
+                let info = self.table_info(target)?;
+                pending.extend(info.merge_program.write_targets.iter().copied());
+                owner_checks
+                    .entry(target.rep())
+                    .or_insert((info.n_keys, false));
+                generic_targets.insert(target.rep(), info);
             }
         }
 
@@ -1453,6 +1499,57 @@ impl Storage {
                 match_stages.push(stage);
             }
 
+            // Durable ownership is authenticated immediately after every
+            // pre-wave match relation is frozen, before any FD value, fresh
+            // value, or effect stage can be materialized.
+            for (&target_id, &(n_keys, reject_subsumed)) in &owner_checks {
+                let target = sql_table(FunctionId::new(target_id));
+                let duplicate = duplicate_owner_sql(&target, n_keys);
+                let has_duplicate =
+                    transaction.query_row(&duplicate, [], |row| row.get::<_, bool>(0))?;
+                #[cfg(test)]
+                sql_log.push(duplicate);
+                statement_count += 1;
+                if has_duplicate {
+                    bail!(
+                        "DuckDB scalar-action executor found duplicate owners for function {target_id}"
+                    );
+                }
+                if reject_subsumed {
+                    let subsumed =
+                        format!("SELECT EXISTS (SELECT 1 FROM {target} WHERE __subsumed)");
+                    let has_subsumed =
+                        transaction.query_row(&subsumed, [], |row| row.get::<_, bool>(0))?;
+                    #[cfg(test)]
+                    sql_log.push(subsumed);
+                    statement_count += 1;
+                    if has_subsumed {
+                        bail!(
+                            "DuckDB scalar-action executor found a subsumed UF owner for function {target_id}"
+                        );
+                    }
+                }
+            }
+
+            let mut prediction_ledgers = BTreeMap::<u32, String>::new();
+            for (&target_id, info) in &prediction_targets {
+                let ledger = format!("egglog_scalar_fd_ledger_{run}_{target_id}");
+                let mut definitions = info
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .map(|(column, ty)| format!("c{column} {} NOT NULL", ty.sql()))
+                    .collect::<Vec<_>>();
+                definitions.push("__event UBIGINT NOT NULL".to_string());
+                let create = format!("CREATE TEMP TABLE {ledger} ({})", definitions.join(", "));
+                transaction.execute(&create, [])?;
+                #[cfg(test)]
+                sql_log.push(create);
+                statement_count += 1;
+                scratch_names.push(ledger.clone());
+                prediction_ledgers.insert(target_id, ledger);
+            }
+
             let mut head_count = 0_u64;
             let mut event_highwater = 0_u64;
             for ((rule, _), &count) in scheduled.iter().zip(&matched_rows) {
@@ -1484,6 +1581,7 @@ impl Storage {
             // Execute Let stages in source order against durable pre-wave
             // tables, then materialize every effect before any mutation.
             let mut effect_stages = Vec::with_capacity(scheduled.len());
+            let mut prediction_winners = BTreeMap::<(usize, usize), String>::new();
             let mut head_offset = 0_u64;
             let mut event_offset = 0_u64;
             for (schedule_index, (((rule, _), match_stage), &count)) in scheduled
@@ -1514,12 +1612,44 @@ impl Storage {
                     let slot_stage =
                         format!("egglog_scalar_slot_{run}_{schedule_index}_{slot_index}");
                     scratch_names.push(slot_stage.clone());
+                    let prediction_ledger = plan.set_if_empty_target(slot_index).map(|target| {
+                        prediction_ledgers
+                            .get(&target.rep())
+                            .expect("prediction target was collected")
+                            .as_str()
+                    });
+                    if let Some(ledger) = prediction_ledger {
+                        let winner =
+                            format!("egglog_scalar_fd_winner_{run}_{schedule_index}_{slot_index}");
+                        scratch_names.push(winner.clone());
+                        let create = plan
+                            .materialize_prediction_winner_sql(
+                                &head_stage,
+                                &winner,
+                                ledger,
+                                slot_index,
+                                count,
+                                event_offset,
+                            )
+                            .expect("SetIfEmpty slot has a winner stage");
+                        transaction.execute(&create, [])?;
+                        #[cfg(test)]
+                        sql_log.push(create);
+                        statement_count += 1;
+                        let insert = format!("INSERT INTO {ledger} SELECT * FROM {winner}");
+                        transaction.execute(&insert, [])?;
+                        #[cfg(test)]
+                        sql_log.push(insert);
+                        statement_count += 1;
+                        prediction_winners.insert((schedule_index, slot_index), winner);
+                    }
                     let create = plan.materialize_slot_sql(
                         &head_stage,
                         &slot_stage,
                         slot_index,
                         head_base,
                         count,
+                        prediction_ledger,
                     );
                     transaction.execute(&create, [])?;
                     #[cfg(test)]
@@ -1556,6 +1686,17 @@ impl Storage {
                         effect,
                         first_event,
                     );
+                    let create = if let Some(slot) = plan.prediction_effect_slot(effect) {
+                        plan.materialize_prediction_effect_sql(
+                            prediction_winners
+                                .get(&(schedule_index, slot))
+                                .expect("SetIfEmpty effect retains its winner stage"),
+                            &effect_stage,
+                            effect,
+                        )
+                    } else {
+                        create
+                    };
                     transaction.execute(&create, [])?;
                     #[cfg(test)]
                     sql_log.push(create);
@@ -1581,51 +1722,25 @@ impl Storage {
             debug_assert_eq!(head_offset, head_count);
             debug_assert_eq!(event_offset, event_highwater);
 
-            let (groups, group_indices) = {
+            let mut generic_queues = BTreeMap::<u32, String>::new();
+            for (&target_id, info) in &generic_targets {
+                let queue = format!("egglog_scalar_generic_queue_{run}_{target_id}");
+                let columns = info
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .map(|(column, ty)| format!("c{column} {} NOT NULL", ty.sql()))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let create = format!(
+                    "CREATE TEMP TABLE {queue} (__wave UBIGINT NOT NULL, __event_ordinal UBIGINT NOT NULL, {columns})"
+                );
+                transaction.execute(&create, [])?;
                 #[cfg(test)]
-                let mut queue_trace = Some(&mut sql_log);
-                #[cfg(not(test))]
-                let mut queue_trace = None;
-                create_ordered_union_queues(
-                    &transaction,
-                    &target_plans,
-                    "egglog_scalar",
-                    run,
-                    &mut scratch_names,
-                    &mut queue_trace,
-                    &mut statement_count,
-                )?
-            };
-
-            // Corrupt physical ownership is rejected before the first counter
-            // or durable-table mutation.
-            for (&target_id, &(n_keys, reject_subsumed)) in &owner_checks {
-                let target = sql_table(FunctionId::new(target_id));
-                let duplicate = duplicate_owner_sql(&target, n_keys);
-                let has_duplicate =
-                    transaction.query_row(&duplicate, [], |row| row.get::<_, bool>(0))?;
-                #[cfg(test)]
-                sql_log.push(duplicate);
+                sql_log.push(create);
                 statement_count += 1;
-                if has_duplicate {
-                    bail!(
-                        "DuckDB scalar-action executor found duplicate owners for function {target_id}"
-                    );
-                }
-                if reject_subsumed {
-                    let subsumed =
-                        format!("SELECT EXISTS (SELECT 1 FROM {target} WHERE __subsumed)");
-                    let has_subsumed =
-                        transaction.query_row(&subsumed, [], |row| row.get::<_, bool>(0))?;
-                    #[cfg(test)]
-                    sql_log.push(subsumed);
-                    statement_count += 1;
-                    if has_subsumed {
-                        bail!(
-                            "DuckDB scalar-action executor found a subsumed UF owner for function {target_id}"
-                        );
-                    }
-                }
+                scratch_names.push(queue.clone());
+                generic_queues.insert(target_id, queue);
             }
 
             if head_count != 0 {
@@ -1639,6 +1754,32 @@ impl Storage {
             }
 
             let mut physical_changed = false;
+            let mut report_changed = false;
+
+            // Delete every staged pre-wave key globally before any Set or
+            // merge. Deletes advance physical generations but intentionally do
+            // not contribute to the public changed result.
+            for ((rule, _), stages) in scheduled.iter().zip(&effect_stages) {
+                let plan = rule
+                    .scalar_action()
+                    .expect("caller checked every scheduled scalar-action plan");
+                for (effect, stage) in plan.effects().iter().zip(stages) {
+                    if effect.kind != ScalarEffectKind::Delete {
+                        continue;
+                    }
+                    let predicate = key_equality("existing", "staged", effect.n_keys);
+                    let delete = format!(
+                        "DELETE FROM {} AS existing
+                         WHERE EXISTS (SELECT 1 FROM {stage} AS staged WHERE {predicate})",
+                        sql_table(effect.target)
+                    );
+                    let deleted = transaction.execute(&delete, [])?;
+                    physical_changed |= deleted != 0;
+                    #[cfg(test)]
+                    sql_log.push(delete);
+                    statement_count += 1;
+                }
+            }
             for (schedule_index, ((rule, _), stages)) in
                 scheduled.iter().zip(&effect_stages).enumerate()
             {
@@ -1671,6 +1812,7 @@ impl Storage {
                                 .checked_add(inserted)
                                 .context("DuckDB scalar-action insert telemetry overflow")?;
                             physical_changed |= inserted != 0;
+                            report_changed |= inserted != 0;
                             #[cfg(test)]
                             sql_log.push(insert);
                             statement_count += 1;
@@ -1688,27 +1830,19 @@ impl Storage {
                                 .checked_add(inserted)
                                 .context("DuckDB scalar-action insert telemetry overflow")?;
                             physical_changed |= inserted != 0;
+                            report_changed |= inserted != 0;
                             #[cfg(test)]
                             sql_log.push(insert);
                             statement_count += 1;
                         }
-                        ScalarEffectKind::OrderedUnion => {
-                            let group_index = group_indices
-                                .get(&effect.target.rep())
-                                .copied()
-                                .ok_or_else(|| {
+                        ScalarEffectKind::GenericMerge => {
+                            let queue =
+                                generic_queues.get(&effect.target.rep()).ok_or_else(|| {
                                     anyhow!(
-                                        "DuckDB scalar-action target {} has no ordered-union queue",
+                                        "DuckDB scalar-action target {} has no generic merge queue",
                                         effect.target.rep()
                                     )
                                 })?;
-                            let count_sql = format!("SELECT count(*) FROM {stage}");
-                            let count = transaction
-                                .query_row(&count_sql, [], |row| row.get::<_, u64>(0))?;
-                            #[cfg(test)]
-                            sql_log.push(count_sql);
-                            statement_count += 1;
-                            let queue = &groups[group_index].queue;
                             let enqueue = format!(
                                 "INSERT INTO {queue} (__wave, __event_ordinal, {})
                                  SELECT CAST('0' AS UBIGINT), __ordinal, {}
@@ -1717,37 +1851,110 @@ impl Storage {
                                 visible_columns(effect.arity),
                                 qualified_columns("staged", effect.arity)
                             );
-                            let enqueued = transaction.execute(&enqueue, [])?;
-                            ensure_count(enqueued, count, "scalar-action candidate enqueue")?;
+                            transaction.execute(&enqueue, [])?;
                             #[cfg(test)]
                             sql_log.push(enqueue);
                             statement_count += 1;
                         }
+                        ScalarEffectKind::Delete | ScalarEffectKind::Subsume => {}
                     }
                 }
             }
 
-            let drain = {
+            let generic_drain = {
                 #[cfg(test)]
-                let mut drain_trace = Some(&mut sql_log);
+                let mut generic_trace = Some(&mut sql_log);
                 #[cfg(not(test))]
-                let mut drain_trace = None;
-                drain_ordered_union_queues(
+                let mut generic_trace = None;
+                drain_generic_merge_queues(
                     &transaction,
-                    &groups,
-                    &group_indices,
+                    &generic_targets,
+                    &generic_queues,
                     generation,
                     after_heads,
                     event_highwater,
-                    "egglog_scalar",
                     run,
-                    "scalar-action rule",
                     &mut scratch_names,
-                    &mut drain_trace,
+                    &mut generic_trace,
                     &mut statement_count,
                 )?
             };
-            physical_changed |= drain.physical_changed;
+            physical_changed |= generic_drain.physical_changed;
+            report_changed |= generic_drain.reported_changed;
+            if generic_drain.next_fresh != after_heads {
+                let reserve = format!(
+                    "UPDATE {COUNTERS_TABLE} SET value = CAST('{}' AS UBIGINT) WHERE name = 'fresh_id'",
+                    generic_drain.next_fresh
+                );
+                transaction.execute(&reserve, [])?;
+                #[cfg(test)]
+                sql_log.push(reserve);
+                statement_count += 1;
+            }
+
+            // Subsume after Set/merge closure. UPDATE preserves any same-wave Set value; INSERT
+            // restores the frozen pre-wave row after a same-wave Delete.
+            for ((rule, _), stages) in scheduled.iter().zip(&effect_stages) {
+                let plan = rule
+                    .scalar_action()
+                    .expect("caller checked every scheduled scalar-action plan");
+                for (effect, stage) in plan.effects().iter().zip(stages) {
+                    if effect.kind != ScalarEffectKind::Subsume {
+                        continue;
+                    }
+                    let predicate = key_equality("existing", "staged", effect.n_keys);
+                    let update = format!(
+                        "UPDATE {} AS existing
+                         SET __generation = CAST('{generation}' AS UBIGINT), __subsumed = TRUE
+                         WHERE existing.__subsumed = FALSE
+                           AND EXISTS (SELECT 1 FROM {stage} AS staged WHERE {predicate})",
+                        sql_table(effect.target)
+                    );
+                    let transitioned = transaction.execute(&update, [])?;
+                    physical_changed |= transitioned != 0;
+                    report_changed |= transitioned != 0;
+                    #[cfg(test)]
+                    sql_log.push(update);
+                    statement_count += 1;
+
+                    let partition = if effect.n_keys == 0 {
+                        "ORDER BY staged.__ordinal".to_string()
+                    } else {
+                        format!(
+                            "PARTITION BY {} ORDER BY staged.__ordinal",
+                            qualified_columns("staged", effect.n_keys)
+                        )
+                    };
+                    let no_existing = if effect.n_keys == 0 {
+                        format!("NOT EXISTS (SELECT 1 FROM {})", sql_table(effect.target))
+                    } else {
+                        let equality = key_equality("existing", "ranked", effect.n_keys);
+                        format!(
+                            "NOT EXISTS (SELECT 1 FROM {} AS existing WHERE {equality})",
+                            sql_table(effect.target)
+                        )
+                    };
+                    let insert = format!(
+                        "INSERT INTO {} ({}, __generation, __subsumed)
+                         SELECT {}, CAST('{generation}' AS UBIGINT), TRUE
+                         FROM (
+                             SELECT staged.*,
+                                    row_number() OVER ({partition}) AS __key_rank
+                             FROM {stage} AS staged
+                         ) AS ranked
+                         WHERE ranked.__key_rank = 1 AND {no_existing}",
+                        sql_table(effect.target),
+                        visible_columns(effect.arity),
+                        qualified_columns("ranked", effect.arity),
+                    );
+                    let inserted = transaction.execute(&insert, [])?;
+                    physical_changed |= inserted != 0;
+                    report_changed |= inserted != 0;
+                    #[cfg(test)]
+                    sql_log.push(insert);
+                    statement_count += 1;
+                }
+            }
 
             if physical_changed {
                 let update = format!(
@@ -1765,7 +1972,7 @@ impl Storage {
                 sql_log.push(drop);
                 statement_count += 1;
             }
-            Ok((generation, physical_changed))
+            Ok((generation, report_changed))
         })();
 
         let (watermark, changed) = match execute {
@@ -1776,451 +1983,6 @@ impl Storage {
                 if rollback_error.is_some() || cleanup_error.is_some() {
                     return Err(anyhow!(
                         "DuckDB scalar-action transaction failed: {error:#}; rollback: {rollback_error:?}; scratch cleanup: {cleanup_error:?}"
-                    ));
-                }
-                return Err(error);
-            }
-        };
-        transaction.commit()?;
-        state.next_rule_run = next_rule_run;
-        #[cfg(test)]
-        {
-            state.latest_rule_sql = sql_log;
-        }
-        Ok(RuleExecutionStats {
-            changed,
-            watermark,
-            matched_rows,
-            inserted_rows,
-            statement_count,
-        })
-    }
-
-    #[allow(dead_code)]
-    fn execute_scalar_mixed_rules(
-        &self,
-        scheduled: &[(&CompiledRule, u64)],
-    ) -> Result<RuleExecutionStats> {
-        // Resolve the complete target graph before opening the transaction.
-        // FunctionId order remains the deterministic queue order used by the
-        // shared ordered-union kernel.
-        let mut target_plans = BTreeMap::<u32, OrderedUnionPlan>::new();
-        let mut owner_checks = BTreeMap::<u32, (usize, bool)>::new();
-        for (rule, _) in scheduled {
-            let plan = rule
-                .scalar_mixed()
-                .expect("caller checked every scheduled scalar-mixed plan");
-            for target in [&plan.graph().root, &plan.graph().displaced] {
-                if let Some(existing) = target_plans.get(&target.target.rep()) {
-                    if existing != target {
-                        bail!(
-                            "DuckDB scalar-mixed target {} has inconsistent ordered-union plans",
-                            target.target.rep()
-                        );
-                    }
-                } else {
-                    target_plans.insert(target.target.rep(), target.clone());
-                }
-            }
-
-            let mut checks = Vec::with_capacity(plan.effects().len() + 2);
-            checks.push((plan.lookup().target, plan.lookup().n_keys, false));
-            checks.push((
-                plan.graph().displaced.target,
-                plan.graph().displaced.n_keys,
-                true,
-            ));
-            checks.extend(
-                plan.effects()
-                    .iter()
-                    .map(|effect| (effect.target, effect.n_keys, false)),
-            );
-            for (target, n_keys, reject_subsumed) in checks {
-                if let Some(&(existing_keys, existing_reject)) = owner_checks.get(&target.rep()) {
-                    if existing_keys != n_keys || existing_reject != reject_subsumed {
-                        bail!(
-                            "DuckDB scalar-mixed target {} has inconsistent owner checks",
-                            target.rep()
-                        );
-                    }
-                } else {
-                    owner_checks.insert(target.rep(), (n_keys, reject_subsumed));
-                }
-            }
-        }
-
-        let mut state = self.state.lock().expect("DuckDB storage mutex poisoned");
-        let run = state.next_rule_run;
-        let next_rule_run = state
-            .next_rule_run
-            .checked_add(1)
-            .context("DuckDB rule-stage identifier overflow")?;
-        let transaction = state.connection.transaction()?;
-        #[cfg(test)]
-        let mut sql_log = Vec::new();
-        let mut scratch_names = Vec::<String>::new();
-        let mut matched_rows = Vec::with_capacity(scheduled.len());
-        let mut inserted_rows = vec![0_usize; scheduled.len()];
-        let mut statement_count = 0;
-
-        let execute = (|| -> Result<(u64, bool)> {
-            let generation = transaction.query_row(
-                &format!("SELECT value FROM {COUNTERS_TABLE} WHERE name = 'generation'"),
-                [],
-                |row| row.get::<_, u64>(0),
-            )?;
-            statement_count += 1;
-            let first_head_id = transaction.query_row(
-                &format!("SELECT value FROM {COUNTERS_TABLE} WHERE name = 'fresh_id'"),
-                [],
-                |row| row.get::<_, u64>(0),
-            )?;
-            statement_count += 1;
-
-            // Freeze every match and validate every Fail/Old scalar lookup
-            // against the durable pre-wave before staging any action result.
-            let mut match_stages = Vec::with_capacity(scheduled.len());
-            for (schedule_index, (rule, watermark)) in scheduled.iter().enumerate() {
-                let plan = rule
-                    .scalar_mixed()
-                    .expect("caller checked every scheduled scalar-mixed plan");
-                let stage = format!("egglog_scalar_match_{run}_{schedule_index}");
-                scratch_names.push(stage.clone());
-                let create = plan.materialize_match_sql(&stage, *watermark);
-                transaction.execute(&create, [])?;
-                #[cfg(test)]
-                sql_log.push(create);
-                statement_count += 1;
-
-                let count_sql = format!("SELECT count(*) FROM {stage}");
-                let count = transaction.query_row(&count_sql, [], |row| row.get::<_, u64>(0))?;
-                #[cfg(test)]
-                sql_log.push(count_sql);
-                statement_count += 1;
-                matched_rows.push(
-                    usize::try_from(count)
-                        .context("DuckDB scalar-mixed match count exceeds usize")?,
-                );
-
-                let cardinality_sql = plan.lookup_cardinality_sql(&stage);
-                let invalid =
-                    transaction.query_row(&cardinality_sql, [], |row| row.get::<_, bool>(0))?;
-                #[cfg(test)]
-                sql_log.push(cardinality_sql);
-                statement_count += 1;
-                if invalid {
-                    bail!(
-                        "DuckDB scalar-mixed Fail/Old lookup for function {} did not have exactly one pre-wave owner",
-                        plan.lookup().target.rep()
-                    );
-                }
-                match_stages.push(stage);
-            }
-
-            let mut head_count = 0_u64;
-            let mut event_highwater = 0_u64;
-            for ((rule, _), &count) in scheduled.iter().zip(&matched_rows) {
-                let plan = rule
-                    .scalar_mixed()
-                    .expect("caller checked every scheduled scalar-mixed plan");
-                let count =
-                    u64::try_from(count).context("DuckDB scalar-mixed match count exceeds u64")?;
-                head_count = head_count
-                    .checked_add(
-                        count
-                            .checked_mul(plan.fresh_slots())
-                            .context("DuckDB scalar-mixed explicit fresh-id count overflow")?,
-                    )
-                    .context("DuckDB scalar-mixed explicit fresh-id count overflow")?;
-                event_highwater = event_highwater
-                    .checked_add(
-                        count
-                            .checked_mul(plan.action_count())
-                            .context("DuckDB scalar-mixed event ordinal overflow")?,
-                    )
-                    .context("DuckDB scalar-mixed event ordinal overflow")?;
-            }
-            let after_heads = checked_fresh_end(
-                first_head_id,
-                head_count,
-                "scalar-mixed explicit action fresh ids",
-            )?;
-
-            // Allocate explicit IDs by (schedule, fresh action, match), then
-            // materialize every one of the 34-action program's effect
-            // relations before issuing any durable Set or ordered union.
-            let mut effect_stages = Vec::with_capacity(scheduled.len());
-            let mut head_offset = 0_u64;
-            let mut event_offset = 0_u64;
-            for (schedule_index, (((rule, _), match_stage), &count)) in scheduled
-                .iter()
-                .zip(&match_stages)
-                .zip(&matched_rows)
-                .enumerate()
-            {
-                let plan = rule
-                    .scalar_mixed()
-                    .expect("caller checked every scheduled scalar-mixed plan");
-                let count =
-                    u64::try_from(count).context("DuckDB scalar-mixed match count exceeds u64")?;
-                let head_base = first_head_id
-                    .checked_add(head_offset)
-                    .context("DuckDB scalar-mixed fresh-id offset overflow")?;
-                let head_stage = format!("egglog_scalar_head_{run}_{schedule_index}");
-                scratch_names.push(head_stage.clone());
-                let create = plan.materialize_head_sql(match_stage, &head_stage, head_base, count);
-                transaction.execute(&create, [])?;
-                #[cfg(test)]
-                sql_log.push(create);
-                statement_count += 1;
-
-                let mut stages = Vec::with_capacity(plan.effects().len());
-                for (effect_index, effect) in plan.effects().iter().enumerate() {
-                    let action_offset = u64::try_from(effect.action_ordinal)?
-                        .checked_mul(count)
-                        .context("DuckDB scalar-mixed action event ordinal overflow")?;
-                    let first_event = event_offset
-                        .checked_add(action_offset)
-                        .and_then(|value| value.checked_add(1))
-                        .context("DuckDB scalar-mixed action event ordinal overflow")?;
-                    let effect_stage =
-                        format!("egglog_scalar_effect_{run}_{schedule_index}_{effect_index}");
-                    scratch_names.push(effect_stage.clone());
-                    let create = plan.materialize_effect_sql(
-                        &head_stage,
-                        &effect_stage,
-                        effect,
-                        first_event,
-                    );
-                    transaction.execute(&create, [])?;
-                    #[cfg(test)]
-                    sql_log.push(create);
-                    statement_count += 1;
-                    stages.push(effect_stage);
-                }
-                debug_assert_eq!(
-                    plan.effects()
-                        .iter()
-                        .filter(|effect| effect.kind != ScalarEffectKind::OrderedUnion)
-                        .count() as u64,
-                    plan.direct_effects_per_match()
-                );
-                effect_stages.push(stages);
-                head_offset = head_offset
-                    .checked_add(
-                        count
-                            .checked_mul(plan.fresh_slots())
-                            .context("DuckDB scalar-mixed fresh-id offset overflow")?,
-                    )
-                    .context("DuckDB scalar-mixed fresh-id offset overflow")?;
-                event_offset = event_offset
-                    .checked_add(
-                        count
-                            .checked_mul(plan.action_count())
-                            .context("DuckDB scalar-mixed event ordinal overflow")?,
-                    )
-                    .context("DuckDB scalar-mixed event ordinal overflow")?;
-            }
-            debug_assert_eq!(head_offset, head_count);
-            debug_assert_eq!(event_offset, event_highwater);
-
-            let (groups, group_indices) = {
-                #[cfg(test)]
-                let mut queue_trace = Some(&mut sql_log);
-                #[cfg(not(test))]
-                let mut queue_trace = None;
-                create_ordered_union_queues(
-                    &transaction,
-                    &target_plans,
-                    "egglog_scalar",
-                    run,
-                    &mut scratch_names,
-                    &mut queue_trace,
-                    &mut statement_count,
-                )?
-            };
-
-            // Fail closed on corrupt physical ownership before the first
-            // counter or durable table mutation.
-            for (&target_id, &(n_keys, reject_subsumed)) in &owner_checks {
-                let target = sql_table(FunctionId::new(target_id));
-                let duplicate = duplicate_owner_sql(&target, n_keys);
-                let has_duplicate =
-                    transaction.query_row(&duplicate, [], |row| row.get::<_, bool>(0))?;
-                #[cfg(test)]
-                sql_log.push(duplicate);
-                statement_count += 1;
-                if has_duplicate {
-                    bail!(
-                        "DuckDB scalar-mixed executor found duplicate owners for function {target_id}"
-                    );
-                }
-                if reject_subsumed {
-                    let subsumed =
-                        format!("SELECT EXISTS (SELECT 1 FROM {target} WHERE __subsumed)");
-                    let has_subsumed =
-                        transaction.query_row(&subsumed, [], |row| row.get::<_, bool>(0))?;
-                    #[cfg(test)]
-                    sql_log.push(subsumed);
-                    statement_count += 1;
-                    if has_subsumed {
-                        bail!(
-                            "DuckDB scalar-mixed executor found a subsumed UF owner for function {target_id}"
-                        );
-                    }
-                }
-            }
-
-            if head_count != 0 {
-                let reserve = format!(
-                    "UPDATE {COUNTERS_TABLE} SET value = CAST('{after_heads}' AS UBIGINT) WHERE name = 'fresh_id'"
-                );
-                transaction.execute(&reserve, [])?;
-                #[cfg(test)]
-                sql_log.push(reserve);
-                statement_count += 1;
-            }
-
-            let mut physical_changed = false;
-            for (schedule_index, (((rule, _), stages), &count)) in scheduled
-                .iter()
-                .zip(&effect_stages)
-                .zip(&matched_rows)
-                .enumerate()
-            {
-                let plan = rule
-                    .scalar_mixed()
-                    .expect("caller checked every scheduled scalar-mixed plan");
-                let count =
-                    u64::try_from(count).context("DuckDB scalar-mixed match count exceeds u64")?;
-                for (effect, stage) in plan.effects().iter().zip(stages) {
-                    match effect.kind {
-                        ScalarEffectKind::AssertEq => {
-                            let conflict = check_assert_eq_conflict(
-                                &transaction,
-                                effect.target,
-                                effect.n_keys,
-                                stage,
-                            )?;
-                            #[cfg(test)]
-                            sql_log.push(conflict);
-                            #[cfg(not(test))]
-                            drop(conflict);
-                            statement_count += 1;
-                            let insert = stage_insert_sql(
-                                effect.target,
-                                effect.arity,
-                                effect.n_keys,
-                                stage,
-                                generation,
-                            );
-                            let inserted = transaction.execute(&insert, [])?;
-                            inserted_rows[schedule_index] = inserted_rows[schedule_index]
-                                .checked_add(inserted)
-                                .context("DuckDB scalar-mixed direct insert telemetry overflow")?;
-                            physical_changed |= inserted != 0;
-                            #[cfg(test)]
-                            sql_log.push(insert);
-                            statement_count += 1;
-                        }
-                        ScalarEffectKind::KeepOld => {
-                            let insert = stage_insert_sql(
-                                effect.target,
-                                effect.arity,
-                                effect.n_keys,
-                                stage,
-                                generation,
-                            );
-                            let inserted = transaction.execute(&insert, [])?;
-                            inserted_rows[schedule_index] = inserted_rows[schedule_index]
-                                .checked_add(inserted)
-                                .context("DuckDB scalar-mixed direct insert telemetry overflow")?;
-                            physical_changed |= inserted != 0;
-                            #[cfg(test)]
-                            sql_log.push(insert);
-                            statement_count += 1;
-                        }
-                        ScalarEffectKind::OrderedUnion => {
-                            let group_index = group_indices
-                                .get(&effect.target.rep())
-                                .copied()
-                                .ok_or_else(|| {
-                                    anyhow!(
-                                        "DuckDB scalar-mixed View target {} has no ordered-union queue",
-                                        effect.target.rep()
-                                    )
-                                })?;
-                            let queue = &groups[group_index].queue;
-                            let enqueue = format!(
-                                "INSERT INTO {queue} (__wave, __event_ordinal, {})
-                                 SELECT CAST('0' AS UBIGINT), __ordinal, {}
-                                 FROM {stage} AS staged
-                                 ORDER BY __ordinal",
-                                visible_columns(effect.arity),
-                                qualified_columns("staged", effect.arity)
-                            );
-                            let enqueued = transaction.execute(&enqueue, [])?;
-                            ensure_count(enqueued, count, "scalar-mixed View candidate enqueue")?;
-                            #[cfg(test)]
-                            sql_log.push(enqueue);
-                            statement_count += 1;
-                        }
-                    }
-                }
-            }
-
-            // The View at action 28 is only queued above. Actions 29-33 have
-            // completed for every match before this sole ordered-union drain.
-            let drain = {
-                #[cfg(test)]
-                let mut drain_trace = Some(&mut sql_log);
-                #[cfg(not(test))]
-                let mut drain_trace = None;
-                drain_ordered_union_queues(
-                    &transaction,
-                    &groups,
-                    &group_indices,
-                    generation,
-                    after_heads,
-                    event_highwater,
-                    "egglog_scalar",
-                    run,
-                    "scalar-mixed rule",
-                    &mut scratch_names,
-                    &mut drain_trace,
-                    &mut statement_count,
-                )?
-            };
-            physical_changed |= drain.physical_changed;
-
-            if physical_changed {
-                let update = format!(
-                    "UPDATE {COUNTERS_TABLE} SET value = value + 1 WHERE name = 'generation'"
-                );
-                transaction.execute(&update, [])?;
-                #[cfg(test)]
-                sql_log.push(update);
-                statement_count += 1;
-            }
-
-            for scratch in scratch_names.iter().rev() {
-                let drop = format!("DROP TABLE IF EXISTS {scratch}");
-                transaction.execute(&drop, [])?;
-                #[cfg(test)]
-                sql_log.push(drop);
-                statement_count += 1;
-            }
-            Ok((generation, physical_changed))
-        })();
-
-        let (watermark, changed) = match execute {
-            Ok(result) => result,
-            Err(error) => {
-                let rollback_error = transaction.rollback().err();
-                let cleanup_error = cleanup_scratch(&state.connection, &scratch_names).err();
-                if rollback_error.is_some() || cleanup_error.is_some() {
-                    return Err(anyhow!(
-                        "DuckDB scalar-mixed transaction failed: {error:#}; rollback: {rollback_error:?}; scratch cleanup: {cleanup_error:?}"
                     ));
                 }
                 return Err(error);
@@ -3459,6 +3221,57 @@ fn checked_fresh_end(first: u64, count: u64, context: &str) -> Result<u64> {
         .with_context(|| format!("{context} exceed the usable Value domain"))
 }
 
+fn authorize_merge_program(
+    program: &MergeProgram,
+    authorities: &crate::AuthorityRegistries<'_>,
+    context: &str,
+) -> Result<()> {
+    for (&token, &epoch) in &program.required_authorities {
+        ensure!(
+            authorities.authority_epochs.get(&token) == Some(&epoch),
+            "DuckDB {context} references a freed or reused registration authority token {}",
+            token.rep()
+        );
+    }
+    for op in &program.ops {
+        let MergeOpKind::Primitive { primitive, .. } = &op.kind else {
+            continue;
+        };
+        match primitive {
+            MergePrimitive::Fresh { token } => ensure!(
+                authorities.fresh_tokens.contains(token),
+                "DuckDB {context} references a freed or reused get-fresh token {}",
+                token.rep()
+            ),
+            MergePrimitive::Fd { token, descriptor } => ensure!(
+                authorities.fd_descriptors.get(token) == Some(descriptor),
+                "DuckDB {context} references a freed or reused FD token {}",
+                token.rep()
+            ),
+            MergePrimitive::Scalar(expression) => match expression.authority() {
+                ScalarAuthority::Native(descriptor) => ensure!(
+                    authorities.native_primitives.get(&expression.token()) == Some(&descriptor),
+                    "DuckDB {context} references a freed or reused native token {}",
+                    expression.token().rep()
+                ),
+                ScalarAuthority::Typed(descriptor) => ensure!(
+                    authorities
+                        .native_scalar_primitives
+                        .get(&expression.token())
+                        == Some(&descriptor),
+                    "DuckDB {context} references a freed or reused native scalar token {}",
+                    expression.token().rep()
+                ),
+            },
+            MergePrimitive::Unauthenticated { token } => bail!(
+                "DuckDB {context} references unauthenticated merge token {}",
+                token.rep()
+            ),
+        }
+    }
+    Ok(())
+}
+
 fn ensure_count(actual: usize, expected: u64, context: &str) -> Result<()> {
     if u64::try_from(actual)? != expected {
         bail!("{context} changed {actual} rows, expected {expected}");
@@ -3476,6 +3289,455 @@ struct OrderedUnionQueueGroup {
 struct OrderedUnionDrainStats {
     physical_changed: bool,
     wave_zero_inserted: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct GenericMergeDrainStats {
+    physical_changed: bool,
+    reported_changed: bool,
+    wave_zero_inserted: usize,
+    next_fresh: u64,
+}
+
+fn generic_queue_next_event_query(queue: &str) -> String {
+    format!("SELECT __wave, __event_ordinal FROM {queue} ORDER BY __wave, __event_ordinal LIMIT 1")
+}
+
+fn generic_collision_suppression_sql(n_keys: usize, n_identity_vals: Option<usize>) -> String {
+    match n_identity_vals {
+        None => "FALSE".to_string(),
+        Some(0) => "TRUE".to_string(),
+        Some(count) => (0..count)
+            .map(|offset| {
+                let column = n_keys + offset;
+                format!("owner.c{column} IS NOT DISTINCT FROM candidate.c{column}")
+            })
+            .collect::<Vec<_>>()
+            .join(" AND "),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn drain_generic_merge_queues(
+    transaction: &duckdb::Transaction<'_>,
+    targets: &BTreeMap<u32, TableInfo>,
+    queues: &BTreeMap<u32, String>,
+    generation: u64,
+    mut next_fresh: u64,
+    mut next_event: u64,
+    run: u64,
+    scratch_names: &mut Vec<String>,
+    trace: &mut Option<&mut Vec<String>>,
+    statement_count: &mut usize,
+) -> Result<GenericMergeDrainStats> {
+    let mut physical_changed = false;
+    let mut reported_changed = false;
+    let mut wave_zero_inserted = 0_usize;
+    let mut event_step = 0_u64;
+    // Reference drains a first-notified table's pending batch before selecting
+    // another table. Generated Sets use wave + 1, so this latch drains exactly
+    // the selected target's fixed current-wave batch.
+    let mut selected_batch = None::<(u64, u32)>;
+    loop {
+        let selected = match selected_batch {
+            Some((selected_wave, target_id)) => {
+                let query = generic_queue_next_event_query(&queues[&target_id]);
+                let next = {
+                    let mut statement = transaction.prepare(&query)?;
+                    let mut rows = statement.query([])?;
+                    match rows.next()? {
+                        Some(row) => Some((row.get::<_, u64>(0)?, row.get::<_, u64>(1)?)),
+                        None => None,
+                    }
+                };
+                trace_sql(trace, &query);
+                *statement_count += 1;
+                match next {
+                    Some((wave, _)) if wave == selected_wave => Some((wave, target_id)),
+                    _ => {
+                        selected_batch = None;
+                        continue;
+                    }
+                }
+            }
+            None => {
+                let mut selected = None::<(u64, usize, u64, u32)>;
+                for (&target_id, queue) in queues {
+                    let query = generic_queue_next_event_query(queue);
+                    let next = {
+                        let mut statement = transaction.prepare(&query)?;
+                        let mut rows = statement.query([])?;
+                        match rows.next()? {
+                            Some(row) => Some((row.get::<_, u64>(0)?, row.get::<_, u64>(1)?)),
+                            None => None,
+                        }
+                    };
+                    trace_sql(trace, &query);
+                    *statement_count += 1;
+                    let Some((wave, event)) = next else {
+                        continue;
+                    };
+                    let level = targets[&target_id].merge_program.dependency_level;
+                    let candidate = (wave, level, event, target_id);
+                    if selected.is_none_or(|current| candidate < current) {
+                        selected = Some(candidate);
+                    }
+                }
+                let Some((wave, _, _, target_id)) = selected else {
+                    break;
+                };
+                selected_batch = Some((wave, target_id));
+                Some((wave, target_id))
+            }
+        };
+        let Some((wave, target_id)) = selected else {
+            unreachable!("generic merge queue selection always yields a batch")
+        };
+        let info = &targets[&target_id];
+        let target = FunctionId::new(target_id);
+        let queue = &queues[&target_id];
+        let event_stage = format!("egglog_scalar_generic_event_{run}_{event_step}");
+        event_step = event_step
+            .checked_add(1)
+            .context("DuckDB generic merge event-stage overflow")?;
+        scratch_names.push(event_stage.clone());
+        let create_event = format!(
+            "CREATE TEMP TABLE {event_stage} AS
+             SELECT queued.*
+             FROM {queue} AS queued
+             WHERE queued.__wave = CAST('{wave}' AS UBIGINT)
+             ORDER BY queued.__event_ordinal
+             LIMIT 1"
+        );
+        transaction.execute(&create_event, [])?;
+        trace_sql(trace, &create_event);
+        *statement_count += 1;
+        let key_match = key_equality("owner", "candidate", info.n_keys);
+        let insert = format!(
+            "INSERT INTO {} ({}, __generation, __subsumed)
+             SELECT {}, CAST('{generation}' AS UBIGINT), FALSE
+             FROM {event_stage} AS candidate
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM {} AS owner WHERE {key_match}
+             )",
+            sql_table(target),
+            visible_columns(info.arity()),
+            qualified_columns("candidate", info.arity()),
+            sql_table(target),
+        );
+        let inserted = transaction.execute(&insert, [])?;
+        trace_sql(trace, &insert);
+        *statement_count += 1;
+        physical_changed |= inserted != 0;
+        if wave == 0 {
+            wave_zero_inserted = wave_zero_inserted
+                .checked_add(inserted)
+                .context("DuckDB generic merge wave-zero telemetry overflow")?;
+        }
+        if inserted != 0 {
+            ensure_count(inserted, 1, "DuckDB generic merge missing-owner insertion")?;
+            // This event found no owner, so Reference inserts it without invoking
+            // the merge callback. Do not let the newly inserted row turn the same
+            // event into a synthetic collision.
+            delete_generic_events(transaction, queue, &event_stage, trace, statement_count)?;
+            continue;
+        }
+
+        // A generic merge may have observable actions even when old and new values
+        // are byte-for-byte equal. Only an explicitly declared identity prefix may
+        // suppress the collision. The empty prefix is vacuously equal.
+        let short_predicate = generic_collision_suppression_sql(info.n_keys, info.n_identity_vals);
+        let mut stage = format!("egglog_scalar_generic_ssa_{run}_{event_step}_0");
+        scratch_names.push(stage.clone());
+        let old_values = (0..info.n_vals)
+            .map(|column| format!("owner.c{} AS oldv{column}", info.n_keys + column));
+        let old_values = old_values.collect::<Vec<_>>();
+        let old_values = if old_values.is_empty() {
+            String::new()
+        } else {
+            format!(", {}", old_values.join(", "))
+        };
+        let initial = format!(
+            "CREATE TEMP TABLE {stage} AS
+             SELECT candidate.*{old_values}
+             FROM {event_stage} AS candidate
+             JOIN {} AS owner ON {key_match}
+             WHERE NOT ({short_predicate})",
+            sql_table(target)
+        );
+        transaction.execute(&initial, [])?;
+        trace_sql(trace, &initial);
+        *statement_count += 1;
+        let collision_count_sql = format!("SELECT count(*) FROM {stage}");
+        let collision_count =
+            transaction.query_row(&collision_count_sql, [], |row| row.get::<_, u64>(0))?;
+        trace_sql(trace, &collision_count_sql);
+        *statement_count += 1;
+        if collision_count == 0 {
+            delete_generic_events(transaction, queue, &event_stage, trace, statement_count)?;
+            continue;
+        }
+
+        let fresh_op_count = u64::try_from(
+            info.merge_program
+                .ops
+                .iter()
+                .filter(|op| {
+                    matches!(
+                        op.kind,
+                        MergeOpKind::Primitive {
+                            primitive: MergePrimitive::Fresh { .. },
+                            ..
+                        }
+                    )
+                })
+                .count(),
+        )?;
+        let fresh_count = collision_count
+            .checked_mul(fresh_op_count)
+            .context("DuckDB generic merge Fresh reservation overflow")?;
+        let first_fresh = reserve_generic_merge_fresh(&mut next_fresh, fresh_count)?;
+        let mut fresh_op_index = 0_u64;
+        for (op_index, op) in info.merge_program.ops.iter().enumerate() {
+            let (value_sql, defined_sql) = match &op.kind {
+                MergeOpKind::OldCol(column) => (format!("prior.oldv{column}"), "TRUE".to_string()),
+                MergeOpKind::NewCol(column) => (
+                    format!("prior.c{}", info.n_keys + column),
+                    "TRUE".to_string(),
+                ),
+                MergeOpKind::Const { sql, .. } => (sql.clone(), "TRUE".to_string()),
+                MergeOpKind::AssertEq { old, new } => (
+                    format!("prior.v{old}"),
+                    format!("prior.v{old} IS NOT DISTINCT FROM prior.v{new}"),
+                ),
+                MergeOpKind::Primitive {
+                    primitive,
+                    arguments,
+                } => match primitive {
+                    MergePrimitive::Scalar(expression) => {
+                        let inputs = arguments
+                            .iter()
+                            .map(|id| format!("prior.v{id}"))
+                            .collect::<Vec<_>>();
+                        let rendered = expression.render(&inputs);
+                        (rendered.value, rendered.defined)
+                    }
+                    MergePrimitive::Fresh { .. } => {
+                        let rendered = (
+                            format!(
+                                "CAST('{first_fresh}' AS UBIGINT) + (row_number() OVER (ORDER BY prior.__event_ordinal) - 1) * CAST('{fresh_op_count}' AS UBIGINT) + CAST('{fresh_op_index}' AS UBIGINT)"
+                            ),
+                            "TRUE".to_string(),
+                        );
+                        fresh_op_index += 1;
+                        rendered
+                    }
+                    MergePrimitive::Fd { .. } => {
+                        bail!("DuckDB generic merge FD operations are not reached in checkpoint 0")
+                    }
+                    MergePrimitive::Unauthenticated { token } => bail!(
+                        "DuckDB generic merge has unauthenticated token {}",
+                        token.rep()
+                    ),
+                },
+                MergeOpKind::Function { .. } => bail!(
+                    "DuckDB checkpoint-0 generic merge census does not admit Function operations"
+                ),
+                MergeOpKind::Lookup { .. } => bail!(
+                    "DuckDB checkpoint-0 generic merge census does not admit Lookup operations"
+                ),
+                MergeOpKind::UnsupportedUnionId => {
+                    bail!("DuckDB generic merge does not support UnionId")
+                }
+            };
+            let next_stage = format!(
+                "egglog_scalar_generic_ssa_{run}_{event_step}_{}",
+                op_index + 1
+            );
+            scratch_names.push(next_stage.clone());
+            let materialize = format!(
+                "CREATE TEMP TABLE {next_stage} AS SELECT prior.*, {value_sql} AS v{op_index}, {defined_sql} AS d{op_index} FROM {stage} AS prior"
+            );
+            transaction.execute(&materialize, [])?;
+            trace_sql(trace, &materialize);
+            *statement_count += 1;
+            let invalid_sql =
+                format!("SELECT EXISTS (SELECT 1 FROM {next_stage} WHERE NOT d{op_index})");
+            let invalid = transaction.query_row(&invalid_sql, [], |row| row.get::<_, bool>(0))?;
+            trace_sql(trace, &invalid_sql);
+            *statement_count += 1;
+            if invalid {
+                if matches!(op.kind, MergeOpKind::AssertEq { .. }) {
+                    bail!("DuckDB generic merge AssertEq conflict for function {target_id}");
+                }
+                bail!(
+                    "DuckDB generic merge operation {op_index} was undefined for function {target_id}"
+                );
+            }
+            stage = next_stage;
+        }
+
+        let set_action_count = u64::try_from(
+            info.merge_program
+                .actions
+                .iter()
+                .filter(|action| matches!(action, MergeProgramAction::Set { .. }))
+                .count(),
+        )?;
+        let generated_count = collision_count
+            .checked_mul(set_action_count)
+            .context("DuckDB generic merge generated event count overflow")?;
+        // Reference MergeAction::Set reports the staged insertion even when its
+        // target later folds the candidate to an identical row. Keep that public
+        // signal separate from physical table/generation changes.
+        reported_changed |= generated_count != 0;
+        let first_generated_event = next_event
+            .checked_add(1)
+            .context("DuckDB generic merge event overflow")?;
+        next_event = next_event
+            .checked_add(generated_count)
+            .context("DuckDB generic merge event overflow")?;
+        let mut set_action_index = 0_u64;
+        for action in &info.merge_program.actions {
+            match action {
+                MergeProgramAction::Bind { .. } => {}
+                MergeProgramAction::Set { target, row } => {
+                    enqueue_generic_row(
+                        transaction,
+                        &queues[&target.rep()],
+                        wave.checked_add(1)
+                            .context("DuckDB generic merge wave overflow")?,
+                        first_generated_event,
+                        set_action_count,
+                        set_action_index,
+                        row,
+                        &stage,
+                        "prior",
+                        trace,
+                        statement_count,
+                    )?;
+                    set_action_index += 1;
+                }
+                MergeProgramAction::UnsupportedUnion => {
+                    bail!("DuckDB generic merge does not support MergeAction::Union")
+                }
+            }
+        }
+        let assignments = info
+            .merge_program
+            .results
+            .iter()
+            .enumerate()
+            .map(|(column, value)| format!("c{} = prior.v{value}", info.n_keys + column))
+            .chain(std::iter::once(format!(
+                "__generation = CAST('{generation}' AS UBIGINT)"
+            )))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let update_predicate = key_equality("owner", "prior", info.n_keys);
+        let result_diff = info
+            .merge_program
+            .results
+            .iter()
+            .enumerate()
+            .map(|(column, value)| {
+                format!(
+                    "owner.c{} IS DISTINCT FROM prior.v{value}",
+                    info.n_keys + column
+                )
+            })
+            .collect::<Vec<_>>();
+        let result_diff = if result_diff.is_empty() {
+            "FALSE".to_string()
+        } else {
+            result_diff.join(" OR ")
+        };
+        let update = format!(
+            "UPDATE {} AS owner SET {assignments} FROM {stage} AS prior WHERE {update_predicate} AND ({result_diff})",
+            sql_table(target)
+        );
+        let updated = transaction.execute(&update, [])?;
+        trace_sql(trace, &update);
+        *statement_count += 1;
+        physical_changed |= updated != 0;
+        delete_generic_events(transaction, queue, &event_stage, trace, statement_count)?;
+    }
+    Ok(GenericMergeDrainStats {
+        physical_changed,
+        reported_changed: physical_changed || reported_changed,
+        wave_zero_inserted,
+        next_fresh,
+    })
+}
+
+fn reserve_generic_merge_fresh(next_fresh: &mut u64, count: u64) -> Result<u64> {
+    let first = *next_fresh;
+    let end = first
+        .checked_add(count)
+        .context("DuckDB generic merge fresh-id overflow")?;
+    ensure!(
+        end <= u64::from(u32::MAX),
+        "DuckDB generic merge collisions exhausted the usable Value domain for fresh ids"
+    );
+    *next_fresh = end;
+    Ok(first)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn enqueue_generic_row(
+    transaction: &duckdb::Transaction<'_>,
+    queue: &str,
+    wave: u64,
+    first_event: u64,
+    event_stride: u64,
+    event_offset: u64,
+    values: &[usize],
+    source: &str,
+    alias: &str,
+    trace: &mut Option<&mut Vec<String>>,
+    statement_count: &mut usize,
+) -> Result<()> {
+    let projection = values
+        .iter()
+        .map(|value| format!("{alias}.v{value}"))
+        .collect::<Vec<_>>();
+    let child_event = generic_child_event_sql(alias, first_event, event_stride, event_offset);
+    let insert = format!(
+        "INSERT INTO {queue} (__wave, __event_ordinal, {}) SELECT CAST('{wave}' AS UBIGINT), {child_event}, {} FROM {source} AS {alias}",
+        visible_columns(projection.len()),
+        projection.join(", ")
+    );
+    transaction.execute(&insert, [])?;
+    trace_sql(trace, &insert);
+    *statement_count += 1;
+    Ok(())
+}
+
+fn generic_child_event_sql(
+    alias: &str,
+    first_event: u64,
+    event_stride: u64,
+    event_offset: u64,
+) -> String {
+    format!(
+        "CAST('{first_event}' AS UBIGINT) + (row_number() OVER (ORDER BY {alias}.__event_ordinal) - 1) * CAST('{event_stride}' AS UBIGINT) + CAST('{event_offset}' AS UBIGINT)"
+    )
+}
+
+fn delete_generic_events(
+    transaction: &duckdb::Transaction<'_>,
+    queue: &str,
+    event_stage: &str,
+    trace: &mut Option<&mut Vec<String>>,
+    statement_count: &mut usize,
+) -> Result<()> {
+    let delete = format!(
+        "DELETE FROM {queue} AS queued USING {event_stage} AS selected WHERE queued.__wave = selected.__wave AND queued.__event_ordinal = selected.__event_ordinal"
+    );
+    transaction.execute(&delete, [])?;
+    trace_sql(trace, &delete);
+    *statement_count += 1;
+    Ok(())
 }
 
 fn trace_sql(trace: &mut Option<&mut Vec<String>>, sql: &str) {
@@ -4204,6 +4466,57 @@ mod tests {
         values.register_type::<i64>();
         values.register_type::<Boxed<OrderedFloat<f64>>>();
         values
+    }
+
+    #[test]
+    fn generic_child_events_are_parent_major_for_same_target_actions() -> Result<()> {
+        let storage = Storage::new()?;
+        storage.with_connection(|connection| {
+            connection.execute_batch(
+                "CREATE TEMP TABLE parents (__event_ordinal UBIGINT, v0 UBIGINT);
+                 INSERT INTO parents VALUES (20, 2), (10, 1);
+                 CREATE TEMP TABLE children (__event_ordinal UBIGINT, parent UBIGINT, action UBIGINT);",
+            )?;
+            for action in 0..2_u64 {
+                let ordinal = generic_child_event_sql("parent", 100, 2, action);
+                connection.execute(
+                    &format!(
+                        "INSERT INTO children SELECT {ordinal}, parent.v0, CAST('{action}' AS UBIGINT) FROM parents AS parent"
+                    ),
+                    [],
+                )?;
+            }
+            let rows = connection
+                .prepare(
+                    "SELECT parent, action FROM children ORDER BY __event_ordinal",
+                )?
+                .query_map([], |row| Ok((row.get::<_, u64>(0)?, row.get::<_, u64>(1)?)))?
+                .collect::<duckdb::Result<Vec<_>>>()?;
+            assert_eq!(rows, vec![(1, 0), (1, 1), (2, 0), (2, 1)]);
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn generic_queue_event_selection_has_no_empty_queue_sentinel() {
+        let query = generic_queue_next_event_query("pending_events");
+        assert_eq!(
+            query,
+            "SELECT __wave, __event_ordinal FROM pending_events ORDER BY __wave, __event_ordinal LIMIT 1"
+        );
+        let normalized = query.to_ascii_lowercase();
+        assert!(!normalized.contains("coalesce"));
+        assert!(!normalized.contains("min("));
+    }
+
+    #[test]
+    fn generic_collision_suppression_uses_only_the_declared_identity_prefix() {
+        assert_eq!(generic_collision_suppression_sql(3, None), "FALSE");
+        assert_eq!(generic_collision_suppression_sql(3, Some(0)), "TRUE");
+        assert_eq!(
+            generic_collision_suppression_sql(3, Some(2)),
+            "owner.c3 IS NOT DISTINCT FROM candidate.c3 AND owner.c4 IS NOT DISTINCT FROM candidate.c4"
+        );
     }
 
     fn register_keep_old(

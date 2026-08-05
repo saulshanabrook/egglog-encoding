@@ -7,7 +7,7 @@ use crate::{
     EGraph, TypeInfo, Value,
     ast::{
         Command, Expr, Fact, GenericCommand, ResolvedAction, ResolvedCommand, ResolvedExpr,
-        ResolvedExprExt, ResolvedFact, Schedule, Span,
+        ResolvedExprExt, ResolvedFact, ResolvedNCommand, Schedule, Span,
     },
     core::ResolvedCall,
     proofs::proof_encoding::ProofInstrumentor,
@@ -19,11 +19,27 @@ use crate::{
 /// All of these names should be generated with the single global [`SymbolGen`].
 #[derive(Clone)]
 pub(crate) struct EncodingNames {
-    pub(crate) proof_list_sort: String,
     pub(crate) ast_sort: String,
     pub(crate) proof_datatype: String,
     pub(crate) fiat_constructor: String,
-    pub(crate) rule_constructor: String,
+    /// Prefix of the rule proofs carrying their body premises inline: premise
+    /// count `k`'s constructor is [`Self::fused_rule`]. One prefix rather than a
+    /// name per arity, so that re-parsing a desugared program recovers the same
+    /// names without having encoded its rules.
+    pub(crate) rule_fused_prefix: String,
+    /// The premise counts [`ProofInstrumentor::rule_arity_header`] has declared.
+    pub(crate) rule_fused_declared: HashSet<usize>,
+    /// A later proof of the same head: the previous column's rule proof plus one
+    /// canonicalization bridge.
+    pub(crate) rule_link_constructor: String,
+    /// Prefix of the packed proof constructors carrying a [`Skeleton`] and the
+    /// columns it composes over: column count `k`'s constructor is
+    /// [`Self::packed_proof`]. Derived from one name for the same reason as
+    /// [`Self::rule_fused_prefix`].
+    pub(crate) packed_prefix: String,
+    /// The column counts [`ProofInstrumentor::packed_proof_constructor`] has
+    /// declared.
+    pub(crate) packed_declared: HashSet<usize>,
     pub(crate) merge_fn_idx_constructor: String,
     pub(crate) merge_fn_row_constructor: String,
     pub(crate) eq_trans_constructor: String,
@@ -35,8 +51,6 @@ pub(crate) struct EncodingNames {
     /// For a given function symbol, the name of the function that converts to the AST type.
     pub(crate) sort_to_ast_constructor: HashMap<String, String>,
     pub(crate) fn_to_term_sort: HashMap<String, String>,
-    pub(crate) pcons: String,
-    pub(crate) pnil: String,
     // Ruleset names
     pub(crate) path_compress_ruleset_name: String,
     pub(crate) rebuilding_ruleset_name: String,
@@ -49,12 +63,222 @@ pub(crate) struct EncodingNames {
     pub(crate) term_proof_name: HashMap<String, String>,
 }
 
-/// Packages proof information for instrumenting actions.
-/// We may not know yet what terms we are instrumenting, so the justification leaves
-/// that information to be filled in later.
-/// This is only used internally in this file, it's not part of the proof format.
+/// A proof composed out of the equality axioms over leaves of type `L`. Two
+/// leaves are in use — a [`Composition`]'s and a [`Skeleton`]'s — and
+/// [`Composition::pack`] is the map between them.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub(crate) enum ProofTree<L> {
+    Leaf(L),
+    Sym(Box<ProofTree<L>>),
+    Trans(Box<ProofTree<L>>, Box<ProofTree<L>>),
+    /// The child position the step rewrites.
+    Congr(Box<ProofTree<L>>, usize, Box<ProofTree<L>>),
+}
+
+/// The composition one packed proof row stands for, written over the row's own
+/// proof columns: a leaf is the proof in a column, so the skeleton is also the
+/// row's layout. Every column is named, so a column a composition reaches twice
+/// is named twice and carried once.
+///
+/// A packed row carries [`Skeleton::spelling`] in its first column, so the site
+/// writing the row and the unpacking that reads it work from one statement of
+/// the composition.
+pub(crate) type Skeleton = ProofTree<usize>;
+
+/// A composition the encoder has built but not written a row for. A leaf names
+/// a proof variable already in scope; the whole tree becomes one row where
+/// something reads it.
+pub(crate) type Composition = ProofTree<String>;
+
+impl<L> ProofTree<L> {
+    pub(crate) fn sym(self) -> Self {
+        ProofTree::Sym(Box::new(self))
+    }
+
+    pub(crate) fn trans(self, rhs: Self) -> Self {
+        ProofTree::Trans(Box::new(self), Box::new(rhs))
+    }
+
+    /// This composition with one more congruence step, rewriting the child at
+    /// position `child` by the proof `step` reaches.
+    pub(crate) fn congr(self, child: usize, step: Self) -> Self {
+        ProofTree::Congr(Box::new(self), child, Box::new(step))
+    }
+
+    /// The leaf this is, when it names one rather than composing.
+    pub(crate) fn leaf(&self) -> Option<&L> {
+        match self {
+            ProofTree::Leaf(leaf) => Some(leaf),
+            _ => None,
+        }
+    }
+}
+
+impl Skeleton {
+    /// How many columns the row has.
+    pub(crate) fn width(&self) -> usize {
+        match self {
+            ProofTree::Leaf(column) => column + 1,
+            ProofTree::Sym(inner) => inner.width(),
+            ProofTree::Trans(left, right) | ProofTree::Congr(left, _, right) => {
+                left.width().max(right.width())
+            }
+        }
+    }
+
+    fn collect_columns(&self, columns: &mut Vec<usize>) {
+        match self {
+            ProofTree::Leaf(column) => columns.push(*column),
+            ProofTree::Sym(inner) => inner.collect_columns(columns),
+            ProofTree::Trans(left, right) | ProofTree::Congr(left, _, right) => {
+                left.collect_columns(columns);
+                right.collect_columns(columns);
+            }
+        }
+    }
+
+    /// This skeleton as the string a packed row carries: its nodes in prefix
+    /// order, one `_`-separated token each — `sym`, `trans`, `congr`,
+    /// `p<column>` for a column, and a bare number for a congruence's child
+    /// position. Panics unless [`Self::from_spelling`] reads it back, since that
+    /// is all unpacking has to go on.
+    pub(crate) fn spelling(&self) -> String {
+        let mut tokens = vec![];
+        self.spell(&mut tokens);
+        let spelling = tokens.join("_");
+        assert_eq!(
+            Skeleton::from_spelling(&spelling).as_ref(),
+            Some(self),
+            "{spelling} does not spell {self:?}"
+        );
+        spelling
+    }
+
+    fn spell(&self, tokens: &mut Vec<String>) {
+        match self {
+            ProofTree::Leaf(column) => tokens.push(format!("p{column}")),
+            ProofTree::Sym(inner) => {
+                tokens.push("sym".to_string());
+                inner.spell(tokens);
+            }
+            ProofTree::Trans(left, right) => {
+                tokens.push("trans".to_string());
+                left.spell(tokens);
+                right.spell(tokens);
+            }
+            ProofTree::Congr(base, child, step) => {
+                tokens.push("congr".to_string());
+                base.spell(tokens);
+                tokens.push(child.to_string());
+                step.spell(tokens);
+            }
+        }
+    }
+
+    /// The skeleton [`Self::spelling`] writes as `spelling`, or `None` when that
+    /// is not a spelling of one whose columns are `0..n`. A column may be named
+    /// more than once: a composition reaching the same step twice carries it
+    /// once.
+    pub(crate) fn from_spelling(spelling: &str) -> Option<Skeleton> {
+        let mut tokens = spelling.split('_');
+        let skeleton = Skeleton::read(&mut tokens)?;
+        if tokens.next().is_some() {
+            return None;
+        }
+        let mut columns = vec![];
+        skeleton.collect_columns(&mut columns);
+        columns.sort_unstable();
+        columns.dedup();
+        (columns == (0..columns.len()).collect::<Vec<_>>()).then_some(skeleton)
+    }
+
+    fn read<'a>(tokens: &mut impl Iterator<Item = &'a str>) -> Option<Skeleton> {
+        match tokens.next()? {
+            "sym" => Some(Skeleton::read(tokens)?.sym()),
+            "trans" => {
+                let left = Skeleton::read(tokens)?;
+                Some(left.trans(Skeleton::read(tokens)?))
+            }
+            "congr" => {
+                let base = Skeleton::read(tokens)?;
+                let child = tokens.next()?.parse().ok()?;
+                Some(base.congr(child, Skeleton::read(tokens)?))
+            }
+            token => Some(ProofTree::Leaf(token.strip_prefix('p')?.parse().ok()?)),
+        }
+    }
+}
+
+impl Composition {
+    /// This composition as a packed row: the [`Skeleton`] it states and the proof
+    /// variable in each of the row's columns, in first use order. Equal subtrees
+    /// share their columns, so a step the composition reaches twice is carried
+    /// once.
+    pub(crate) fn pack(&self) -> (Skeleton, Vec<String>) {
+        let mut columns = vec![];
+        let skeleton = self.lay_out(&mut HashMap::default(), &mut columns);
+        (skeleton, columns)
+    }
+
+    fn lay_out(
+        &self,
+        laid_out: &mut HashMap<Composition, Skeleton>,
+        columns: &mut Vec<String>,
+    ) -> Skeleton {
+        if let Some(skeleton) = laid_out.get(self) {
+            return skeleton.clone();
+        }
+        let skeleton = match self {
+            ProofTree::Leaf(proof) => {
+                columns.push(proof.clone());
+                ProofTree::Leaf(columns.len() - 1)
+            }
+            ProofTree::Sym(inner) => inner.lay_out(laid_out, columns).sym(),
+            ProofTree::Trans(left, right) => {
+                let left = left.lay_out(laid_out, columns);
+                left.trans(right.lay_out(laid_out, columns))
+            }
+            ProofTree::Congr(base, child, step) => {
+                let base = base.lay_out(laid_out, columns);
+                base.congr(*child, step.lay_out(laid_out, columns))
+            }
+        };
+        laid_out.insert(self.clone(), skeleton.clone());
+        skeleton
+    }
+}
+
+/// Which proof of a rule head a row states: the column naming its position in
+/// the head's flat array of proofs (see [`crate::proofs::proof_head`]), as an
+/// `i64`-valued egglog expression.
+#[derive(Clone)]
+pub(crate) enum HeadColumn {
+    Numbered(String),
+    /// A rule row the walk gave no column: the placeholder before the encoder
+    /// fills one in, and a position inside a head that concludes nothing. It
+    /// renders as `-1`, which reading a proof back panics on.
+    Unnumbered,
+}
+
+impl HeadColumn {
+    /// The column value as an egglog expression.
+    fn expr(&self) -> String {
+        match self {
+            HeadColumn::Numbered(expr) => expr.clone(),
+            HeadColumn::Unnumbered => "-1".to_string(),
+        }
+    }
+}
+
+/// What justifies the proofs the encoder mints for an action. Which proof of the
+/// head a mint states is left as a [`HeadColumn`], filled in once the encoder's
+/// walk knows the column it is at. Internal to the encoder, not part of the proof
+/// format.
+#[derive(Clone)]
 pub(crate) enum Justification {
-    Rule(String, String), // rule-name expression and proof-list expression
+    /// Rule-name expression, one premise-proof expression per body fact, and
+    /// which of the head's proofs is being stated.
+    Rule(String, Vec<String>, HeadColumn),
     Fiat,
     /// Term-free merge justification for a merge-body subexpression: function
     /// name, the two premise (view) proof expressions, and the pre-order index of
@@ -69,14 +293,67 @@ pub(crate) enum Justification {
     MergeRow(String, String, String),
 }
 
+impl Justification {
+    /// The same justification about `column`. Only a rule justification names a
+    /// column; anything else is returned unchanged.
+    pub(crate) fn at(&self, column: HeadColumn) -> Justification {
+        match self {
+            Justification::Rule(name, proofs, _) => {
+                Justification::Rule(name.clone(), proofs.clone(), column)
+            }
+            other => other.clone(),
+        }
+    }
+
+    /// The egglog expression for the `Rule` row's column.
+    pub(crate) fn column_expr(&self) -> String {
+        match self {
+            Justification::Rule(_, _, column) => column.expr(),
+            _ => HeadColumn::Unnumbered.expr(),
+        }
+    }
+}
+
 impl EncodingNames {
+    /// The rule proof constructor carrying `arity` premise proofs inline.
+    pub(crate) fn fused_rule(&self, arity: usize) -> String {
+        format!("{}_{arity}", self.rule_fused_prefix)
+    }
+
+    /// The premise count `head` carries inline, when it is one of
+    /// [`Self::fused_rule`]'s constructors.
+    pub(crate) fn fused_rule_arity(&self, head: &str) -> Option<usize> {
+        head.strip_prefix(&self.rule_fused_prefix)?
+            .strip_prefix('_')?
+            .parse()
+            .ok()
+    }
+
+    /// The packed proof constructor carrying a [`Skeleton`] over `columns` proof
+    /// columns.
+    pub(crate) fn packed_proof(&self, columns: usize) -> String {
+        format!("{}_{columns}", self.packed_prefix)
+    }
+
+    /// The proof-column count `head` carries, when it is one of
+    /// [`Self::packed_proof`]'s constructors.
+    pub(crate) fn packed_proof_columns(&self, head: &str) -> Option<usize> {
+        head.strip_prefix(&self.packed_prefix)?
+            .strip_prefix('_')?
+            .parse()
+            .ok()
+    }
+
     pub(crate) fn new(symbol_gen: &mut SymbolGen) -> Self {
         Self {
-            proof_list_sort: symbol_gen.fresh("ProofList"),
             ast_sort: symbol_gen.fresh("Ast"),
             proof_datatype: symbol_gen.fresh("Proof"),
             fiat_constructor: symbol_gen.fresh("Fiat"),
-            rule_constructor: symbol_gen.fresh("Rule"),
+            rule_fused_prefix: symbol_gen.fresh("Rule"),
+            rule_fused_declared: HashSet::default(),
+            rule_link_constructor: symbol_gen.fresh("RuleLink"),
+            packed_prefix: symbol_gen.fresh("Packed"),
+            packed_declared: HashSet::default(),
             merge_fn_idx_constructor: symbol_gen.fresh("MergeIdx"),
             merge_fn_row_constructor: symbol_gen.fresh("MergeRow"),
             eq_trans_constructor: symbol_gen.fresh("Trans"),
@@ -87,8 +364,6 @@ impl EncodingNames {
             eval_constructor: symbol_gen.fresh("Eval"),
             sort_to_ast_constructor: HashMap::default(),
             fn_to_term_sort: HashMap::default(),
-            pcons: symbol_gen.fresh("PCons"),
-            pnil: symbol_gen.fresh("PNil"),
             path_compress_ruleset_name: symbol_gen.fresh("parent"),
             rebuilding_ruleset_name: symbol_gen.fresh("rebuilding"),
             rebuilding_cleanup_ruleset_name: symbol_gen.fresh("rebuilding_cleanup"),
@@ -150,28 +425,75 @@ impl ProofInstrumentor<'_> {
         out
     }
 
-    /// Build a proof list (`pnil`, then `pcons` folds) by minting a fresh id
-    /// per node and asserting the row, emitting the mints onto `stmts` and
-    /// returning the final list's var.
-    pub(crate) fn format_prooflist(
-        &mut self,
-        stmts: &mut Vec<String>,
-        proofs: &[String],
-    ) -> String {
-        let pcons = self.proof_names().pcons.clone();
-        let pnil = self.proof_names().pnil.clone();
-        let proof_list_sort = self.proof_names().proof_list_sort.clone();
-
-        let mut prooflist = self.mint(stmts, &pnil, "", &proof_list_sort);
-        for proof in proofs.iter().rev() {
-            prooflist = self.mint(
-                stmts,
-                &pcons,
-                &format!("{proof} {prooflist}"),
-                &proof_list_sort,
-            );
+    /// Declarations for the fused rule constructors `program`'s rules need but
+    /// that no earlier program declared. A rule's premise count is its body-fact
+    /// count, so the arities a program uses are known before it is encoded; these
+    /// are emitted ahead of the program's own commands.
+    pub(crate) fn rule_arity_header(&mut self, program: &[ResolvedNCommand]) -> Vec<Command> {
+        fn collect(commands: &[ResolvedNCommand], out: &mut Vec<usize>) {
+            for command in commands {
+                match command {
+                    ResolvedNCommand::NormRule { rule } => out.push(rule.body.len()),
+                    ResolvedNCommand::Fail(_, nested) => collect(nested, out),
+                    _ => {}
+                }
+            }
         }
-        prooflist
+        let mut arities = vec![];
+        collect(program, &mut arities);
+        arities.sort_unstable();
+        arities.dedup();
+
+        let mut decls = vec![];
+        for arity in arities {
+            if !self
+                .egraph
+                .proof_state
+                .proof_names
+                .rule_fused_declared
+                .insert(arity)
+            {
+                continue;
+            }
+            let names = self.proof_names();
+            let name = names.fused_rule(arity);
+            let proof = names.proof_datatype.clone();
+            let premises = vec![proof.as_str(); arity].join(" ");
+            let sep = if arity == 0 { "" } else { " " };
+            decls.push(format!(
+                "(function {name} (String{sep}{premises} i64 {proof}) Unit :no-merge :internal-hidden :internal-term-node)"
+            ));
+        }
+        if decls.is_empty() {
+            return vec![];
+        }
+        let decls = decls.join("\n");
+        self.parse_program(&decls)
+    }
+
+    /// The packed proof constructor for a row of `columns` proof columns,
+    /// together with its declaration — empty once some program has declared it.
+    ///
+    /// A row's column count is a property of the site packing it, not of the
+    /// proof format, so the declaration is emitted with the first commands using
+    /// it.
+    pub(crate) fn packed_proof_constructor(&mut self, columns: usize) -> (String, String) {
+        let name = self.proof_names().packed_proof(columns);
+        if !self
+            .egraph
+            .proof_state
+            .proof_names
+            .packed_declared
+            .insert(columns)
+        {
+            return (name, String::new());
+        }
+        let proof = self.proof_names().proof_datatype.clone();
+        let columns: String = std::iter::repeat_n(format!("{proof} "), columns).collect();
+        let decl = format!(
+            "(function {name} (String {columns}{proof}) Unit :no-merge :internal-hidden :internal-term-node)\n"
+        );
+        (name, decl)
     }
 
     /// Header commands for term encoding, setting up rulesets.
@@ -275,6 +597,17 @@ impl ProofInstrumentor<'_> {
         self.egraph.proof_state.proofs_enabled
     }
 
+    /// The evaluation-mode option for a generated rule that reads the database
+    /// in its action: `:unsafe-seminaive`, or `:naive` (the safe whole-database
+    /// baseline) under the `force_proof_naive` test knob.
+    pub(crate) fn rhs_read_eval_opt(&self) -> &'static str {
+        if self.egraph.proof_state.force_proof_naive {
+            ":naive"
+        } else {
+            ":unsafe-seminaive"
+        }
+    }
+
     /// Returns the proof output type: `Proof` when proofs are enabled, `Unit` otherwise.
     pub(crate) fn proof_type_str(&self) -> &str {
         if self.proofs_enabled() {
@@ -351,12 +684,19 @@ impl ProofInstrumentor<'_> {
         }
     }
 
+    /// A fresh name for an encoder temporary.
     pub(crate) fn fresh_var(&mut self) -> String {
-        self.egraph.parser.symbol_gen.fresh("v")
+        // Keep this hint distinct from the `"v"` that `proofs::proof_normal_form`
+        // gives a rule's body variables. `SymbolGen` counts per hint, so sharing
+        // one would number body variables by how many temporaries the encoder
+        // happened to mint — and those names are printed in a proof's
+        // `substitution`, so minting one more proof node would rewrite unrelated
+        // proof output.
+        self.egraph.parser.symbol_gen.fresh("pv")
     }
 
     /// Header string for proof encoding, defining sorts and constructors.
-    /// Correspondings to [`RawProof`] in the Rust code.
+    /// Correspondings to `RawProof` in [`crate::proofs::proof_format`].
     pub(crate) fn proof_header(&mut self) -> String {
         let mut to_ast_constructors = Vec::new();
         // need to build a Ast{lit} for each lit sort in self
@@ -385,11 +725,10 @@ impl ProofInstrumentor<'_> {
         let to_ast_str = to_ast_constructors.join("\n");
 
         let EncodingNames {
-            ref proof_list_sort,
             ref ast_sort,
             ref proof_datatype,
             ref fiat_constructor,
-            ref rule_constructor,
+            ref rule_link_constructor,
             ref merge_fn_idx_constructor,
             ref merge_fn_row_constructor,
             ref eq_trans_constructor,
@@ -398,32 +737,49 @@ impl ProofInstrumentor<'_> {
             ref congr_all_constructor,
             ref container_normalize_constructor,
             ref eval_constructor,
-            ref pcons,
-            ref pnil,
             ..
         } = *self.proof_names();
 
         format!(
             "
-(sort {proof_list_sort})
 (sort {ast_sort}) ;; wrap sorts in this for proofs
 ;; The proof datatype records the global proof constructor names so container
 ;; rebuild can recover them on re-parse (see ContainerRebuildSpec).
 (sort {proof_datatype} :internal-proof-names {congr_constructor} {congr_all_constructor} {eq_trans_constructor} {eq_sym_constructor} {container_normalize_constructor} {fiat_constructor})
 
-;; Proof/AST/ProofList terms are relations, not constructors: the encoding mints
-;; a fresh id (`get-fresh!`) and asserts the row, so congruent duplicates are
-;; kept (never merged away) rather than relying on native congruence. The final
-;; column of each relation is the minted output id.
-(function {pcons} ({proof_datatype} {proof_list_sort} {proof_list_sort}) Unit :no-merge :internal-hidden :internal-term-node)
-(function {pnil} ({proof_list_sort}) Unit :no-merge :internal-hidden :internal-term-node)
+;; Proof/AST terms are relations, not constructors: the encoding mints a fresh id
+;; (`get-fresh!`) and asserts the row, so congruent duplicates are kept (never
+;; merged away) rather than relying on native congruence. The final column of each
+;; relation is the minted output id.
 
 {to_ast_str}
 
 ;; Fiat justification for globals and primitives, gives two terms t1 = t2 for the proposition being justified
 (function {fiat_constructor} ({ast_sort} {ast_sort} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
-;; name of rule, one proof per fact in the query, proposition being proven t1 = t2
-(function {rule_constructor} (String {proof_list_sort} {ast_sort} {ast_sort} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
+;; A rule proof written before its head interns anything carries its premises
+;; inline, in a `Rule_<k>` declared per premise count (see `rule_arity_header`):
+;;   (Rule_<k> <rule name> <one proof per body fact> <column>)
+;; Every rule proof after that names an earlier column's proof — which carries
+;; the shared premises and the bridges recorded before it — plus the one *bridge*
+;; premise recorded since: the view-row proof of the subterm the head interned,
+;; saying which e-class it landed in. `<column>` says which proof of the head's
+;; lowering this is (see `proof_head`); proof conversion derives the proposition
+;; from it, so no term is stored. The rule name is not repeated either: it is
+;; read off the `Rule_<k>` row ending the chain.
+;;   (RuleLink <earlier column's proof> <bridge proof> <column>)
+(function {rule_link_constructor} ({proof_datatype} {proof_datatype} i64 {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
+
+;; A site with a fixed composition rather than a rule head — a top-level action,
+;; a merge body, a view rebuild, a merge collision — writes one packed row
+;; standing for the whole composition, in a `Packed_<k>` declared per proof-column
+;; count (see `packed_proof_constructor`). The first column spells the composition
+;; over the rest, in prefix order: `sym`, `trans`, `congr`, `p<n>` for the proof in
+;; column n, and a bare number for a congruence's child position. So
+;;   (Packed_2 \"trans_sym_p0_p1\" <hi proof> <lo proof>)
+;; is the `@UF` edge a merge collision displaces, where both carried proofs share
+;; their left-hand side, and
+;;   (Packed_2 \"congr_p0_3_p1\" <row proof> <step proof>)
+;; is a view rebuild that canonicalized child column 3.
 
 ;; term-free merge justification for an FD custom-function view subexpression:
 ;; name of function, two premise proofs, and the pre-order index of the merge-body
@@ -495,6 +851,10 @@ pub fn file_supports_proofs_with_egraph(path: &Path, mut egraph: EGraph) -> bool
 pub enum ProofEncodingUnsupportedReason {
     #[error("primitive operation lacks a validator function")]
     PrimitiveWithoutValidator,
+    #[error(
+        "a declared index names a user function, which the term/proof encoding replaces with a view whose columns differ; the encoding does not yet rewrite index declarations"
+    )]
+    IndexDeclaration,
     #[error(
         "action contains a function lookup. Finding the output of a function is only supported in queries."
     )]
@@ -677,6 +1037,12 @@ fn command_supports_proof_encoding_impl(
         && rule.body.iter().any(fact_has_eq_sort_primitive_result)
     {
         return Err(ProofEncodingUnsupportedReason::NaiveEqSortPrimitiveFact);
+    }
+    // A declared index refers to a function's columns by position. The encoding
+    // rewrites that function into a view with a different shape, so the
+    // declaration would silently point at the wrong columns.
+    if matches!(command, crate::ast::GenericCommand::Index { .. }) {
+        return Err(ProofEncodingUnsupportedReason::IndexDeclaration);
     }
     // Tuple-output functions store multiple value columns, which the term/proof encoding (built
     // around single-output constructor views) does not model.

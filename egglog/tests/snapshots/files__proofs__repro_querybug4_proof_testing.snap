@@ -12,4 +12,4 @@ expression: proof_snapshot
       ((union (OtherNum fvar5__) (Num fvar5__)))
          )")
   (premises prf0 prf0 prf0)
-  (substitution (y 2) (fvar5__ 2) (fvar6__ 2)))
+  (substitution (fvar5__ 2) (fvar6__ 2) (y 2)))

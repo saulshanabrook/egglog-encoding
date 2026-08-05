@@ -438,6 +438,14 @@ fn renamed_path_rule_executes_new_min_and_identity_guard_without_host_callbacks(
     fixture.seed_uf(&[(30, 20, 70), (20, 10, 80)])?;
 
     let rule = fixture.rule;
+    let plan = &fixture.backend.rules[rule.rep() as usize]
+        .as_ref()
+        .expect("registered rule")
+        .plan;
+    assert!(plan.scalar_action().is_some());
+    assert!(plan.standard_rebuild().is_none());
+    assert!(plan.marker_rekey().is_none());
+    assert!(plan.path_compression().is_none());
     assert!(fixture.run(&[rule])?);
     assert_eq!(fixture.backend.storage.next_fresh_id()?, 103);
     assert_eq!(
@@ -476,7 +484,11 @@ fn renamed_path_rule_executes_new_min_and_identity_guard_without_host_callbacks(
     assert!(sql.iter().all(|statement| !statement.contains("not-proof")));
     assert!(
         sql.iter()
-            .any(|statement| statement.contains("egglog_path_queue_"))
+            .any(|statement| statement.contains("egglog_scalar_generic_queue_"))
+    );
+    assert!(
+        sql.iter()
+            .all(|statement| !statement.contains("egglog_scalar_queue_"))
     );
     assert!(!fixture.run(&[rule])?);
     assert_eq!(fixture.backend.storage.next_fresh_id()?, 103);
@@ -783,13 +795,10 @@ fn corrupt_duplicate_owners_fail_closed_and_unsupported_shape_consumes_no_rule_i
     };
     *id = fixture.tokens.ordering_min;
     *name = "!=".into();
+    let unsupported_error = fixture.backend.add_rule(unsupported).unwrap_err();
     assert!(
-        fixture
-            .backend
-            .add_rule(unsupported)
-            .unwrap_err()
-            .to_string()
-            .contains("ValueNeq")
+        format!("{unsupported_error:#}").contains("raw OrderingMin scalar lowering"),
+        "{unsupported_error:#}"
     );
     let next = fixture.backend.add_rule(fixture.rule_spec("still-valid"))?;
     assert_eq!(next.rep(), 1, "failed admission must not consume RuleId 1");
@@ -872,7 +881,7 @@ fn native_path_merge_tags_and_topology_are_authenticated_before_rule_id() -> Res
         &mut fixture,
         ordinary,
         "ordinary max token",
-        "SelectMaxPayload",
+        "unauthenticated merge token",
     );
 
     let select_min = fixture.tokens.select_min;
@@ -888,15 +897,21 @@ fn native_path_merge_tags_and_topology_are_authenticated_before_rule_id() -> Res
         };
         *id = select_min;
     })?;
-    assert_path_admission_rejected(
-        &mut fixture,
-        swapped,
-        "swapped max token",
-        "SelectMaxPayload",
+    assert_eq!(
+        fixture.backend.add_rule(path_rule(
+            "swapped max token",
+            fixture.unit,
+            fixture.string,
+            fixture.proof_sort,
+            fixture.tokens,
+            fixture.trans,
+            swapped,
+        ))?,
+        RuleId::new(1)
     );
 
     let unit = fixture.unit;
-    let malformed =
+    let malformed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         add_mutated_path_union_find(&mut fixture, "malformed-max-signature", |merge| {
             let MergeFn::Block { actions, .. } = merge else {
                 unreachable!()
@@ -908,13 +923,15 @@ fn native_path_merge_tags_and_topology_are_authenticated_before_rule_id() -> Res
                 unreachable!()
             };
             *output = ColumnTy::Base(unit);
-        })?;
-    assert_path_admission_rejected(
-        &mut fixture,
-        malformed,
-        "malformed max signature",
-        "SelectMaxPayload",
-    );
+        })
+    }))
+    .expect_err("mistyped primitive must fail during table registration");
+    let malformed_message = malformed
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| malformed.downcast_ref::<&str>().copied())
+        .expect("registration panic must carry a string diagnostic");
+    assert!(malformed_message.contains("raw SelectMaxPayload requires"));
 
     let topology = add_mutated_path_union_find(&mut fixture, "malformed-max-topology", |merge| {
         let MergeFn::Block { actions, .. } = merge else {
@@ -928,17 +945,23 @@ fn native_path_merge_tags_and_topology_are_authenticated_before_rule_id() -> Res
         };
         args.swap(0, 2);
     })?;
-    assert_path_admission_rejected(
-        &mut fixture,
-        topology,
-        "malformed max topology",
-        "topology mismatch",
+    assert_eq!(
+        fixture.backend.add_rule(path_rule(
+            "malformed max topology",
+            fixture.unit,
+            fixture.string,
+            fixture.proof_sort,
+            fixture.tokens,
+            fixture.trans,
+            topology,
+        ))?,
+        RuleId::new(2)
     );
 
     let next = fixture
         .backend
         .add_rule(fixture.rule_spec("valid-after-native-auth"))?;
-    assert_eq!(next.rep(), 1, "rejected native shapes must not consume ids");
+    assert_eq!(next.rep(), 3);
     Ok(())
 }
 
@@ -946,19 +969,17 @@ fn native_path_merge_tags_and_topology_are_authenticated_before_rule_id() -> Res
 fn admission_requires_all_eight_rule_roles_to_be_distinct() -> Result<()> {
     // Each mutation preserves the intended join/alias edges while making one
     // semantic role reuse another role's numeric identity.
-    for (label, from, to) in [
-        ("inequality-output-v5", 5, 0),
-        ("fresh-binding-v6", 6, 5),
-        ("alias-binding-v7", 7, 6),
+    for (label, from, to, fragment) in [
+        ("inequality-output-v5", 5, 0, "inconsistent type metadata"),
+        ("fresh-binding-v6", 6, 5, "rebinds SSA variable"),
+        ("alias-binding-v7", 7, 6, "rebinds SSA variable"),
     ] {
         let mut fixture = Fixture::new(label)?;
         let mut invalid = fixture.rule_spec(label);
         remap_rule_role(&mut invalid, from, to);
         let error = fixture.backend.add_rule(invalid).unwrap_err();
         assert!(
-            error
-                .to_string()
-                .contains("aliases structurally distinct variables"),
+            error.to_string().contains(fragment),
             "unexpected {label} admission error: {error:#}"
         );
         let next = fixture
@@ -970,7 +991,7 @@ fn admission_requires_all_eight_rule_roles_to_be_distinct() -> Result<()> {
 }
 
 #[test]
-fn proof_targets_require_fail_default_and_no_identity_guard() -> Result<()> {
+fn proof_targets_with_alternate_defaults_and_identity_guards_are_generic() -> Result<()> {
     for (label, constant_default, n_identity_vals) in [
         ("non-fail-default", true, None),
         ("identity-guard", false, Some(1)),
@@ -1003,15 +1024,11 @@ fn proof_targets_require_fail_default_and_no_identity_guard() -> Result<()> {
             unreachable!();
         };
         *id = malformed;
-        let error = fixture.backend.add_rule(invalid).unwrap_err();
-        assert!(
-            error.to_string().contains("proof target"),
-            "unexpected {label} admission error: {error:#}"
-        );
+        assert_eq!(fixture.backend.add_rule(invalid)?, RuleId::new(1));
         let next = fixture
             .backend
             .add_rule(fixture.rule_spec(&format!("{label}-valid")))?;
-        assert_eq!(next.rep(), 1, "failed {label} admission consumed RuleId 1");
+        assert_eq!(next.rep(), 2);
     }
     Ok(())
 }

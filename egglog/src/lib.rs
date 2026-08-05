@@ -1017,7 +1017,7 @@ impl EGraph {
         }
     }
 
-    /// Lower a resolved `:merge` (a value-producing action block) to a backend [`MergeFn`], keeping
+    /// Lower a resolved `:merge` (a value-producing action block) to a backend [`egglog_bridge::MergeFn`], keeping
     /// the existing merge interpreter. The `result` produces the merged value(s); any `actions` run
     /// first as effects.
     /// `self_ref` names the function this merge belongs to and its (peeked) backend id,
@@ -1062,7 +1062,7 @@ impl EGraph {
         })
     }
 
-    /// Lower a single resolved merge action to a backend [`MergeAction`]. Supports `set`, `let`, and
+    /// Lower a single resolved merge action to a backend [`egglog_bridge::MergeAction`]. Supports `set`, `let`, and
     /// `union`; other actions (`delete`/`panic`/`extract`/...) are not meaningful during a merge.
     fn translate_merge_action(
         &self,
@@ -2087,6 +2087,12 @@ impl EGraph {
                 self.declare_function(&fdecl)?;
                 log::info!("Declared {} {}.", fdecl.subtype, fdecl.name)
             }
+            ResolvedNCommand::Index { name, function, .. } => {
+                // Nothing to build: the backend creates the occurrence index the
+                // first time a rule probes it. Typechecking already registered
+                // the relation the atoms resolve against.
+                log::info!("Declared index {name} over {function}.");
+            }
             ResolvedNCommand::AddRuleset(_span, name) => {
                 self.add_ruleset(name.clone());
                 log::info!("Declared ruleset {name}.");
@@ -2403,6 +2409,11 @@ impl EGraph {
     }
 
     fn input_file(&mut self, span: Span, func_name: &str, file: String) -> Result<(), Error> {
+        // A declared index has a function type but no table of its own to load
+        // rows into.
+        if self.type_info.indexes.contains_key(func_name) {
+            return Err(TypeError::IndexIsReadOnly(func_name.to_owned(), span).into());
+        }
         let function_type = self
             .type_info
             .get_func_type(func_name)
@@ -2727,11 +2738,8 @@ impl EGraph {
                 self.names.check_shadowing(command)?;
             }
 
-            // Share repeated constructor applications (see `ast::cse`).
-            let deduped =
-                ast::cse::cse_program(typechecked_no_globals, &mut self.parser.symbol_gen);
-
-            let term_encoding_added = ProofInstrumentor::add_term_encoding(self, deduped)?;
+            let term_encoding_added =
+                ProofInstrumentor::add_term_encoding(self, typechecked_no_globals)?;
             let mut new_typechecked = vec![];
             for new_cmd in term_encoding_added {
                 let desugared =
@@ -3093,7 +3101,7 @@ impl EGraph {
     }
 
     /// Run a pattern query: bind the variables in `vars` against
-    /// `facts` and return one [`HashMap`] per match, keyed by variable
+    /// `facts` and return one `HashMap` per match, keyed by variable
     /// name. Values stay raw — convert via [`EGraph::value_to_base`].
     ///
     /// With zero vars, returns at most one empty map (so `.len()` is 1
@@ -3469,21 +3477,171 @@ impl<'a> BackendRule<'a> {
         args.into_iter().map(|term| self.entry(term)).collect()
     }
 
+    /// Establish which occurrence probes are reachable without scanning a
+    /// multi-column index. Ordinary function rows seed bindings, then reachable
+    /// index rows extend them to a fixed point independently of source order.
+    fn check_index_values_are_reachable(
+        &self,
+        query: &core::Query<ResolvedCall, ResolvedVar>,
+    ) -> Result<(), Error> {
+        let mut reachable = HashSet::<ResolvedVar>::default();
+        for atom in &query.atoms {
+            let ResolvedCall::Func(function) = &atom.head else {
+                continue;
+            };
+            if self.type_info.indexes.contains_key(&function.name) {
+                // Every synthetic index result is canonical Unit, so it is
+                // known before any row is joined and may probe another index.
+                if let Some(core::GenericAtomTerm::Var(_, variable)) = atom.args.last() {
+                    reachable.insert(variable.clone());
+                }
+                continue;
+            }
+            for argument in &atom.args {
+                if let core::GenericAtomTerm::Var(_, variable) = argument {
+                    reachable.insert(variable.clone());
+                }
+            }
+        }
+
+        let mut admitted_indices = HashSet::<usize>::default();
+        loop {
+            let mut changed = false;
+            for (atom_index, atom) in query.atoms.iter().enumerate() {
+                let ResolvedCall::Func(function) = &atom.head else {
+                    continue;
+                };
+                let Some(index) = self.type_info.indexes.get(&function.name) else {
+                    continue;
+                };
+                if admitted_indices.contains(&atom_index) {
+                    continue;
+                }
+                let Some((probe, rest)) = atom.args.split_first() else {
+                    continue;
+                };
+                let Some((_unit, row)) = rest.split_last() else {
+                    continue;
+                };
+                let any_of = index.any_of.iter().copied().collect::<HashSet<_>>();
+                let ready = match probe {
+                    core::GenericAtomTerm::Literal(..) => true,
+                    core::GenericAtomTerm::Var(_, variable) => {
+                        reachable.contains(variable)
+                            || row.iter().enumerate().any(|(column, term)| {
+                                any_of.contains(&column)
+                                    && matches!(term, core::GenericAtomTerm::Var(_, row) if row == variable)
+                            })
+                            || any_of.len() == 1
+                    }
+                    core::GenericAtomTerm::Global(..) => false,
+                };
+                if !ready {
+                    continue;
+                }
+                if let core::GenericAtomTerm::Var(_, variable) = probe {
+                    reachable.insert(variable.clone());
+                }
+                for term in row {
+                    if let core::GenericAtomTerm::Var(_, variable) = term {
+                        reachable.insert(variable.clone());
+                    }
+                }
+                admitted_indices.insert(atom_index);
+                changed = true;
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        for (atom_index, atom) in query.atoms.iter().enumerate() {
+            let ResolvedCall::Func(index) = &atom.head else {
+                continue;
+            };
+            if !self.type_info.indexes.contains_key(&index.name)
+                || admitted_indices.contains(&atom_index)
+            {
+                continue;
+            }
+            let Some(
+                core::GenericAtomTerm::Var(span, value)
+                | core::GenericAtomTerm::Global(span, value),
+            ) = atom.args.first()
+            else {
+                continue;
+            };
+            return Err(TypeError::IndexValueUnbound(
+                index.name.clone(),
+                value.name.clone(),
+                span.clone(),
+            )
+            .into());
+        }
+        Ok(())
+    }
+
     fn query(
         &mut self,
         query: &core::Query<ResolvedCall, ResolvedVar>,
         include_subsumed: bool,
     ) -> Result<(), Error> {
+        // IndexTable is a synthetic occurrence view whose result is always
+        // canonical Unit. Seed every such result before lowering any body atom
+        // or checking probe reachability, so every consumer observes the same
+        // source-order-independent constant.
         for atom in &query.atoms {
+            let ResolvedCall::Func(function) = &atom.head else {
+                continue;
+            };
+            if !self.type_info.indexes.contains_key(&function.name) {
+                continue;
+            }
+            let output = atom
+                .args
+                .last()
+                .expect("typed index atom includes its Unit output");
+            self.entries.insert(
+                output.clone(),
+                core::GenericAtomTerm::Literal(
+                    output.span().clone(),
+                    RuleValue {
+                        value: self.backend.base_values().get(()),
+                        ty: ColumnTy::Base(self.backend.base_values().get_ty::<()>()),
+                    },
+                ),
+            );
+        }
+        self.check_index_values_are_reachable(query)?;
+        for atom in &query.atoms {
+            let read = if include_subsumed {
+                ReadMode::All
+            } else {
+                ReadMode::Live
+            };
             let (head, args) = match &atom.head {
+                // An atom on a declared index reads the rows of the indexed
+                // function, reached through the value its first argument binds.
+                ResolvedCall::Func(f) if self.type_info.indexes.contains_key(&f.name) => {
+                    let index = self.type_info.indexes[&f.name].clone();
+                    let indexed = self
+                        .type_info
+                        .get_func_type(&index.function)
+                        .expect("index target checked at declaration")
+                        .clone();
+                    (
+                        RuleBodyCall::IndexTable {
+                            id: self.func(&indexed),
+                            any_of: index.any_of,
+                            read,
+                        },
+                        self.args(&atom.args)?,
+                    )
+                }
                 ResolvedCall::Func(f) => (
                     RuleBodyCall::Table {
                         id: self.func(f),
-                        read: if include_subsumed {
-                            ReadMode::All
-                        } else {
-                            ReadMode::Live
-                        },
+                        read,
                     },
                     self.args(&atom.args)?,
                 ),
@@ -3512,8 +3670,27 @@ impl<'a> BackendRule<'a> {
         Ok(())
     }
 
+    /// A declared index is a view the database maintains, so an action writing
+    /// to one is rejected.
+    fn reject_index_write(&self, call: &ResolvedCall, span: &Span) -> Result<(), Error> {
+        if let ResolvedCall::Func(f) = call
+            && self.type_info.indexes.contains_key(&f.name)
+        {
+            return Err(TypeError::IndexIsReadOnly(f.name.clone(), span.clone()).into());
+        }
+        Ok(())
+    }
+
     fn actions(&mut self, actions: &core::ResolvedCoreActions) -> Result<(), Error> {
         for action in &actions.0 {
+            match action {
+                core::GenericCoreAction::Let(span, _, f, _)
+                | core::GenericCoreAction::Set(span, f, _, _)
+                | core::GenericCoreAction::Change(span, _, f, _) => {
+                    self.reject_index_write(f, span)?;
+                }
+                _ => {}
+            }
             match action {
                 core::GenericCoreAction::Let(span, v, f, args) => {
                     let (call, args) = match f {
@@ -4478,5 +4655,185 @@ mod tests {
             .parse_and_run_program(None, "(ruleset test)\n(run test2 1)")
             .unwrap_err();
         assert!(matches!(err, Error::NoSuchRuleset(name, _) if name == "test2"));
+    }
+}
+
+#[cfg(test)]
+mod index_binding_tests {
+    use crate::*;
+
+    /// The header every case below shares: one function and an index over all
+    /// three of its columns.
+    const INDEXED: &str = "
+        (datatype Math (Num i64))
+        (function edge (Math Math) Math :merge old)
+        (index EdgeOcc edge (any 0 1 2))
+        (relation dirty (Math))
+        (relation touched (Math Math Math))
+    ";
+
+    fn run(rule: &str) -> Result<(), Error> {
+        EGraph::default().parse_and_run_program(None, &format!("{INDEXED}{rule}"))?;
+        Ok(())
+    }
+
+    /// An index is probed, so its value has to be bound — but a *row column* of
+    /// another index atom binds like any other atom's column.
+    #[test]
+    fn an_index_value_may_come_from_another_indexs_row() {
+        run("(rule ((dirty x) (EdgeOcc x p q r) (EdgeOcc q s t u)) ((touched s t u)))")
+            .expect("the second index is probed by a column the first one bound");
+    }
+
+    /// The value an index is probed by does not bind: two atoms naming each
+    /// other there would each look bound with neither reachable.
+    #[test]
+    fn an_index_value_bound_only_by_another_probe_is_rejected() {
+        let err = run("(rule ((EdgeOcc x p q r) (EdgeOcc y s t u)) ((touched p q r)))")
+            .expect_err("neither index's value is bound by anything");
+        assert!(
+            format!("{err}").contains("must be bound"),
+            "expected an unbound-index-value error, got {err}"
+        );
+    }
+
+    #[test]
+    fn mutually_cyclic_index_rows_do_not_anchor_either_probe() {
+        let err = run("(rule ((EdgeOcc x y p q) (EdgeOcc y x s t)) ((dirty p)))")
+            .expect_err("neither side of an index cycle has a reachable probe");
+        assert!(
+            format!("{err}").contains("must be bound"),
+            "expected an unbound-index-value error, got {err}"
+        );
+    }
+
+    #[test]
+    fn a_multi_column_index_does_not_bind_a_probe_repeated_only_elsewhere() {
+        let err = EGraph::default()
+            .parse_and_run_program(
+                None,
+                "
+                (function f (i64 i64) i64 :merge old)
+                (index FOcc f (any 0 1))
+                (relation touched (i64))
+                (rule ((FOcc x p q x)) ((touched x)))
+                ",
+            )
+            .expect_err("an unindexed row column cannot anchor a multi-column probe");
+        assert!(
+            format!("{err}").contains("must be bound"),
+            "expected an unbound-index-value error, got {err}"
+        );
+    }
+
+    #[test]
+    fn one_deduplicated_occurrence_column_can_supply_an_unbound_probe() {
+        EGraph::default()
+            .parse_and_run_program(
+                None,
+                "
+                (function f (i64) i64 :merge old)
+                (index FOcc f (any 0 0))
+                (relation seen (i64 i64 i64))
+                (set (f 7) 8)
+                (rule ((FOcc probe key value)) ((seen probe key value)))
+                (run 1)
+                (check (seen 7 7 8))
+                ",
+            )
+            .expect("one unique occurrence column supplies the probe value");
+    }
+
+    /// A body primitive runs once per match, after the join, so the value it
+    /// computes cannot key a probe.
+    #[test]
+    fn an_index_value_bound_only_by_a_primitive_is_rejected() {
+        let err = EGraph::default()
+            .parse_and_run_program(
+                None,
+                "
+                (function f (i64 i64) i64 :merge old)
+                (index FOcc f (any 0 1 2))
+                (relation touched (i64 i64 i64))
+                (rule ((= v (+ 0 1)) (FOcc v p q r)) ((touched p q r)))
+                ",
+            )
+            .expect_err("a primitive does not bind a value the join can probe by");
+        assert!(
+            format!("{err}").contains("must be bound"),
+            "expected an unbound-index-value error, got {err}"
+        );
+    }
+
+    /// A literal is already known, so it needs no binder at all.
+    #[test]
+    fn an_index_may_be_probed_by_a_literal() {
+        EGraph::default()
+            .parse_and_run_program(
+                None,
+                "
+                (function f (i64 i64) i64 :merge old)
+                (index FOcc f (any 0 1 2))
+                (relation touched (i64 i64 i64))
+                (set (f 1 2) 3)
+                (rule ((FOcc 1 p q r)) ((touched p q r)))
+                (run 1)
+                (check (touched 1 2 3))
+                ",
+            )
+            .expect("a literal probe needs no binder");
+    }
+
+    #[test]
+    fn an_index_unit_result_is_available_to_primitives_in_either_atom_order() {
+        for body in [
+            "(= ok (value-eq u ())) (= u (FOcc 1 x y))",
+            "(= u (FOcc 1 x y)) (= ok (value-eq u ()))",
+        ] {
+            EGraph::default()
+                .parse_and_run_program(
+                    None,
+                    &format!(
+                        "
+                        (function f (i64) i64 :merge old)
+                        (index FOcc f (any 0 1))
+                        (relation seen (i64))
+                        (rule ({body}) ((seen x)))
+                        (set (f 1) 2)
+                        (run 1)
+                        (check (seen 1))
+                        "
+                    ),
+                )
+                .unwrap_or_else(|error| panic!("index/primitive order `{body}` failed: {error}"));
+        }
+    }
+
+    #[test]
+    fn an_index_unit_result_can_probe_a_multi_column_unit_index_in_either_atom_order() {
+        for body in [
+            "(= u (FOcc 1 x y)) (= v (UOcc u key value))",
+            "(= v (UOcc u key value)) (= u (FOcc 1 x y))",
+        ] {
+            EGraph::default()
+                .parse_and_run_program(
+                    None,
+                    &format!(
+                        "
+                        (function f (i64) i64 :merge old)
+                        (index FOcc f (any 0 1))
+                        (function unit-row (Unit) Unit :merge old)
+                        (index UOcc unit-row (any 0 1))
+                        (relation seen (i64))
+                        (set (f 1) 2)
+                        (set (unit-row ()) ())
+                        (rule ({body}) ((seen x)))
+                        (run 1)
+                        (check (seen 1))
+                        "
+                    ),
+                )
+                .unwrap_or_else(|error| panic!("index/Unit-index order `{body}` failed: {error}"));
+        }
     }
 }

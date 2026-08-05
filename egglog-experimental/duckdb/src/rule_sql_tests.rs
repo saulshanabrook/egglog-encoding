@@ -1454,8 +1454,8 @@ fn source_pinned_pointer_five_way_matches_main_across_delta_transcript() -> Resu
     assert_eq!(duckdb.last_rule_insert_counts(), &[0]);
     assert_eq!(
         duckdb.last_rule_statement_count(),
-        5,
-        "one rule/no change = generation read + create/count/insert/drop"
+        9,
+        "one generic rule/no change includes counter, stage, queue, and cleanup SQL"
     );
     let materialize = &duckdb.storage.latest_rule_sql()[0];
     for atom in 0..5 {
@@ -1799,13 +1799,7 @@ fn unsupported_rule_ir_fails_closed_before_allocating_an_id() -> Result<()> {
         id: source,
         read: ReadMode::All,
     };
-    assert!(
-        backend
-            .add_rule(non_live)
-            .unwrap_err()
-            .to_string()
-            .contains("only Live")
-    );
+    assert_eq!(backend.add_rule(non_live)?, next);
 
     let mut primitive_body = valid.clone();
     primitive_body.name = "primitive-body".to_string();
@@ -1826,12 +1820,10 @@ fn unsupported_rule_ir_fails_closed_before_allocating_an_id() -> Result<()> {
     if let GenericCoreAction::Set(_, _, _, values) = &mut unbound.core.head.0[0] {
         values[0] = var(999, "unbound", ColumnTy::Id);
     }
+    let unbound_error = backend.add_rule(unbound).unwrap_err();
     assert!(
-        backend
-            .add_rule(unbound)
-            .unwrap_err()
-            .to_string()
-            .contains("not bound")
+        format!("{unbound_error:#}").contains("before binding"),
+        "{unbound_error:#}"
     );
 
     let mut multiple = valid.clone();
@@ -1893,12 +1885,10 @@ fn unsupported_rule_ir_fails_closed_before_allocating_an_id() -> Result<()> {
     let mut wrong_arity = valid.clone();
     wrong_arity.name = "wrong-arity".to_string();
     wrong_arity.core.body.atoms[0].args.pop();
+    let wrong_arity_error = backend.add_rule(wrong_arity).unwrap_err();
     assert!(
-        backend
-            .add_rule(wrong_arity)
-            .unwrap_err()
-            .to_string()
-            .contains("expects 2 arguments")
+        format!("{wrong_arity_error:#}").contains("wrong arity"),
+        "{wrong_arity_error:#}"
     );
 
     let mut wrong_type = valid.clone();
@@ -1913,7 +1903,7 @@ fn unsupported_rule_ir_fails_closed_before_allocating_an_id() -> Result<()> {
             .add_rule(wrong_type)
             .unwrap_err()
             .to_string()
-            .contains("expected Id")
+            .contains("wrong type")
     );
 
     let mut primitive_target = valid.clone();
@@ -1930,7 +1920,7 @@ fn unsupported_rule_ir_fails_closed_before_allocating_an_id() -> Result<()> {
             .add_rule(primitive_target)
             .unwrap_err()
             .to_string()
-            .contains("set a primitive")
+            .contains("cannot Set a primitive")
     );
 
     let mut global = valid.clone();
@@ -1964,16 +1954,14 @@ fn unsupported_rule_ir_fails_closed_before_allocating_an_id() -> Result<()> {
     {
         *id = deferred_target;
     }
-    assert!(
-        backend
-            .add_rule(deferred)
-            .unwrap_err()
-            .to_string()
-            .contains("incompatible ordered-union target")
-    );
+    assert_eq!(backend.add_rule(deferred)?, RuleId::new(1));
 
     let id = backend.add_rule(valid)?;
-    assert_eq!(id, next, "failed admissions must not consume rule ids");
+    assert_eq!(
+        id,
+        RuleId::new(2),
+        "failed admissions must not consume rule ids"
+    );
     backend.free_rule(id);
     assert!(
         run(&mut backend, &[id])

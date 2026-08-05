@@ -18,7 +18,7 @@ use egglog_backend_trait::{
 use egglog_numeric_id::NumericId;
 
 use crate::AuthorityRegistries;
-use crate::action_rule::{ScalarActionPlan, ScalarMixedPlan, compile_scalar_action};
+use crate::action_rule::{ScalarActionPlan, compile_scalar_action};
 use crate::marker_rekey::{MarkerRekeyPlan, compile_marker_rekey};
 use crate::path_compress::{
     PathCompressionPlan, compile_path_compression, looks_like_path_compression,
@@ -437,13 +437,6 @@ impl CompiledRule {
         }
     }
 
-    /// Retained only to keep the exact 50-action compiler/executor available as
-    /// a checkpoint oracle. Production admission always returns ScalarAction.
-    #[allow(dead_code)]
-    pub(crate) fn scalar_mixed(&self) -> Option<&ScalarMixedPlan> {
-        None
-    }
-
     pub(crate) fn match_observation(&self) -> Option<&MatchObservationPlan> {
         match &self.kind {
             CompiledRuleKind::MatchObservation(plan) => Some(plan),
@@ -479,6 +472,15 @@ pub(crate) fn compile_rule(
         return Ok(CompiledRule {
             seminaive: rule.seminaive,
             kind: CompiledRuleKind::MatchObservation(plan),
+        });
+    }
+    // General scalar lowering owns its complete action vocabulary before the
+    // legacy rebuild recognizers. This keeps generated Standard, Marker, Path,
+    // All, and occurrence-index rules on one production executor path.
+    if let Some(plan) = compile_scalar_action(storage, base_values, authorities, &rule)? {
+        return Ok(CompiledRule {
+            seminaive: rule.seminaive,
+            kind: CompiledRuleKind::ScalarAction(plan),
         });
     }
     // Rebuild admission is tri-state and must precede the path compiler's
@@ -524,12 +526,6 @@ pub(crate) fn compile_rule(
         return Ok(CompiledRule {
             seminaive,
             kind: CompiledRuleKind::PathCompression(plan),
-        });
-    }
-    if let Some(plan) = compile_scalar_action(storage, base_values, authorities, &rule)? {
-        return Ok(CompiledRule {
-            seminaive: rule.seminaive,
-            kind: CompiledRuleKind::ScalarAction(plan),
         });
     }
     if rule.core.body.atoms.is_empty() {

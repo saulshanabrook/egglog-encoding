@@ -6,13 +6,13 @@
 //! Live table atoms with typed variables/literals and either one table Set, a
 //! nonempty Delete-only head, or one complete-row body-bound Subsume, plus the
 //! structural two-atom union-find path rule and its typed identity-guarded
-//! merge Block, and the two standard scalar All-mode rebuild forms over exact
-//! ordered-union Blocks, plus the exact proof-instrumented scalar 34-action
-//! rewrite family and the effectless authenticated two-All-table match
-//! observation form. Matches, phased cleanup effects, constructor rows, fresh
-//! allocation, and recursive merge candidates execute through staged DuckDB
-//! SQL. Unsupported writes fail closed even though their complete
-//! configurations remain registered for later lowering.
+//! merge Block, the two standard scalar All-mode rebuild forms over exact
+//! ordered-union Blocks, general typed scalar body/action streams, and the
+//! effectless authenticated two-All-table match observation form. Matches,
+//! phased cleanup effects, constructor rows, fresh allocation, and recursive
+//! merge candidates execute through staged DuckDB SQL. Unsupported writes fail
+//! closed even though their complete configurations remain registered for
+//! later lowering.
 
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
@@ -41,6 +41,7 @@ mod input_tests;
 mod marker_rekey;
 #[cfg(test)]
 mod marker_rekey_tests;
+mod merge_program;
 mod path_compress;
 #[cfg(test)]
 mod path_compress_tests;
@@ -159,9 +160,8 @@ impl EGraph {
     /// only head Trans inserts, not recursive UF, Sym, or Trans effects.
     /// Standard rebuild rules likewise report only their independent head
     /// constructor inserts, never recursive ordered-union effects.
-    /// Scalar-mixed rules report their 15 ordinary direct head installations
-    /// per completed match, excluding the queued View and collision-generated
-    /// effects.
+    /// Scalar-action rules report direct AssertEq/KeepOld installations,
+    /// excluding generic-merge and collision-generated effects.
     pub fn last_rule_insert_counts(&self) -> &[usize] {
         &self.last_rule.inserted_rows
     }
@@ -224,8 +224,16 @@ impl ExternalFunction for DeferredPanic {
 impl Backend for EGraph {
     fn add_table(&mut self, config: FunctionConfig) -> FunctionId {
         let name = config.name.clone();
+        let authorities = AuthorityRegistries {
+            native_primitives: &self.native_primitives,
+            native_scalar_primitives: &self.native_scalar_primitives,
+            match_observers: &self.match_observers,
+            authority_epochs: &self.authority_epochs,
+            fresh_tokens: &self.fresh_tokens,
+            fd_descriptors: &self.fd_descriptors,
+        };
         self.storage
-            .register_table(self.registries.base_values(), config)
+            .register_table_authenticated(self.registries.base_values(), &authorities, config)
             .unwrap_or_else(|error| panic!("DuckDB add_table({name}) failed: {error:#}"))
     }
 
@@ -298,10 +306,17 @@ impl Backend for EGraph {
     }
 
     fn add_values(&mut self, values: Vec<(FunctionId, Vec<Value>)>) -> Result<()> {
+        let authorities = AuthorityRegistries {
+            native_primitives: &self.native_primitives,
+            native_scalar_primitives: &self.native_scalar_primitives,
+            match_observers: &self.match_observers,
+            authority_epochs: &self.authority_epochs,
+            fresh_tokens: &self.fresh_tokens,
+            fd_descriptors: &self.fd_descriptors,
+        };
         match self.storage.insert_batch_authenticated(
             self.registries.base_values(),
-            &self.native_primitives,
-            &self.fresh_tokens,
+            &authorities,
             values,
         ) {
             Ok(stats) => {
@@ -319,10 +334,17 @@ impl Backend for EGraph {
         &mut self,
         values: Vec<(FunctionId, Vec<NativeInputValue>)>,
     ) -> Result<()> {
+        let authorities = AuthorityRegistries {
+            native_primitives: &self.native_primitives,
+            native_scalar_primitives: &self.native_scalar_primitives,
+            match_observers: &self.match_observers,
+            authority_epochs: &self.authority_epochs,
+            fresh_tokens: &self.fresh_tokens,
+            fd_descriptors: &self.fd_descriptors,
+        };
         match self.storage.insert_batch_with_fresh(
             self.registries.base_values(),
-            &self.native_primitives,
-            &self.fresh_tokens,
+            &authorities,
             values,
         ) {
             Ok(stats) => {
@@ -1250,16 +1272,13 @@ mod tests {
         assert!(matches!(result.as_ref(), MergeFn::Columns(columns) if columns.len() == 2));
 
         let generation_before = backend.storage.generation()?;
-        let error = backend
-            .add_values(vec![
-                (executable, vec![Value::new(1), Value::new(2)]),
-                (deferred, vec![Value::new(3), Value::new(4), Value::new(5)]),
-            ])
-            .unwrap_err();
-        assert!(error.to_string().contains("registered but deferred"));
-        assert_eq!(backend.table_size(executable), 0);
-        assert_eq!(backend.table_size(deferred), 0);
-        assert_eq!(backend.storage.generation()?, generation_before);
+        backend.add_values(vec![
+            (executable, vec![Value::new(1), Value::new(2)]),
+            (deferred, vec![Value::new(3), Value::new(4), Value::new(5)]),
+        ])?;
+        assert_eq!(backend.table_size(executable), 1);
+        assert_eq!(backend.table_size(deferred), 1);
+        assert_eq!(backend.storage.generation()?, generation_before + 1);
 
         let next = backend.peek_next_function_id();
         let wrong_function_arity = catch_unwind(AssertUnwindSafe(|| {
@@ -1361,11 +1380,12 @@ mod tests {
             name: "deferred-new".to_string(),
             can_subsume: true,
         });
-        let error = backend
-            .add_values(vec![(deferred, vec![Value::new(1), twenty])])
-            .unwrap_err();
-        assert!(error.to_string().contains("registered but deferred"));
-        assert_eq!(backend.table_size(deferred), 0);
+        backend.add_values(vec![(deferred, vec![Value::new(1), twenty])])?;
+        assert_eq!(backend.table_size(deferred), 1);
+        assert_eq!(
+            backend.lookup_row(deferred, &[Value::new(1)]),
+            Some(vec![Value::new(1), twenty])
+        );
         Ok(())
     }
 

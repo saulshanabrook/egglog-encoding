@@ -39,6 +39,8 @@ enum ScalarOperation {
     ValueNeq(ScalarSqlType),
     OrderingMin,
     OrderingMax,
+    SelectMinPayload,
+    SelectMaxPayload,
 }
 
 /// An authenticated, exactly typed binary scalar operation.
@@ -107,6 +109,25 @@ impl ScalarExpression {
     }
 
     pub(crate) fn render(&self, inputs: &[String]) -> RenderedScalarExpression {
+        if matches!(
+            self.operation,
+            ScalarOperation::SelectMinPayload | ScalarOperation::SelectMaxPayload
+        ) {
+            let [left, left_payload, right, right_payload] = inputs else {
+                unreachable!("authenticated payload selectors have four inputs")
+            };
+            let operator = if self.operation == ScalarOperation::SelectMinPayload {
+                "<"
+            } else {
+                ">"
+            };
+            return RenderedScalarExpression {
+                value: format!(
+                    "CASE WHEN ({left}) {operator} ({right}) THEN ({left_payload}) ELSE ({right_payload}) END"
+                ),
+                defined: "TRUE".to_string(),
+            };
+        }
         let [left, right] = inputs else {
             unreachable!("authenticated scalar expressions are binary")
         };
@@ -146,6 +167,7 @@ impl ScalarExpression {
             }
             ScalarOperation::OrderingMin => total_choice(&left, "<", &right),
             ScalarOperation::OrderingMax => total_choice(&left, ">", &right),
+            ScalarOperation::SelectMinPayload | ScalarOperation::SelectMaxPayload => unreachable!(),
         }
     }
 }
@@ -239,6 +261,27 @@ fn authenticate_raw(
     inputs: &[ColumnTy],
     output: ColumnTy,
 ) -> Result<ScalarOperation> {
+    if matches!(
+        primitive,
+        NativePrimitive::SelectMinPayload | NativePrimitive::SelectMaxPayload
+    ) {
+        let [left, left_payload, right, right_payload] = inputs else {
+            bail!("DuckDB raw scalar {primitive:?} requires exactly four inputs")
+        };
+        ensure!(
+            *left == ColumnTy::Id
+                && *right == ColumnTy::Id
+                && left_payload == right_payload
+                && *left_payload == output,
+            "DuckDB raw {primitive:?} requires (Id, T, Id, T) -> T"
+        );
+        ScalarSqlType::from_column(base_values, *left_payload)?;
+        return Ok(if primitive == NativePrimitive::SelectMinPayload {
+            ScalarOperation::SelectMinPayload
+        } else {
+            ScalarOperation::SelectMaxPayload
+        });
+    }
     let [left, right] = inputs else {
         bail!("DuckDB raw scalar {primitive:?} requires exactly two inputs");
     };
@@ -273,9 +316,7 @@ fn authenticate_raw(
                 ScalarOperation::OrderingMax
             })
         }
-        NativePrimitive::SelectMinPayload | NativePrimitive::SelectMaxPayload => {
-            bail!("DuckDB raw primitive {primitive:?} is not a public scalar expression")
-        }
+        NativePrimitive::SelectMinPayload | NativePrimitive::SelectMaxPayload => unreachable!(),
         _ => bail!("DuckDB raw primitive {primitive:?} is not a public scalar expression"),
     }
 }

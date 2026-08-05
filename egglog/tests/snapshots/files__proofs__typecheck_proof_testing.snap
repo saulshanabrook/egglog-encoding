@@ -7,11 +7,11 @@ expression: proof_snapshot
 (let t2 (premises (Fiat (= t0 t0))))
 (let t3
   (substitution
-        (e (Var "x"))
-        (ctx (NilConst))
         (@rewrite_var__3 t0)
+        (ctx (NilConst))
         (x "x")
-        (t1 (TUnitConst))))
+        (t1 (TUnitConst))
+        (e (Var "x"))))
 (Congr
   (= t0 (TArr (TUnitConst) (TUnitConst)))
   (Rule
@@ -31,10 +31,10 @@ expression: proof_snapshot
         t2
         t3))
     (substitution
-      (t (TUnitConst))
-      (ctx (NilConst))
       (@rewrite_var__1 t1)
-      (x "x")))
+      (x "x")
+      (t (TUnitConst))
+      (ctx (NilConst))))
   1)
 (let t0 (App (Var "f") (Var "x")))
 (let t1 (Lam "f" (TArr (TUnitConst) (TUnitConst)) t0))
@@ -50,8 +50,8 @@ expression: proof_snapshot
 (let t10 (typeof (NilConst) t4))
 (let t11 (TArr (TArr (TUnitConst) (TUnitConst)) t8))
 (let t12 (typeof t6 t1))
-(let t13 (e t4))
-(let t14 (f t3))
+(let t13 (f t3))
+(let t14 (e t4))
 (let prf1
   (Rule
                       (= t9 t9)
@@ -61,16 +61,16 @@ expression: proof_snapshot
          (typeof ctx e))
            )")
                       (premises prf0)
-                      (substitution (t2 t5) t13 (ctx (NilConst)) t14)))
+                      (substitution (ctx (NilConst)) t13 t14 (t2 t5))))
 (let t15 (typeof (NilConst) t2))
 (let t16 (premises prf1))
 (let t17 (f t2))
 (let t18
   (substitution
-                              (t2 t9)
-                              (e (MyUnitConst))
                               (ctx (NilConst))
-                              t17))
+                              t17
+                              (e (MyUnitConst))
+                              (t2 t9)))
 (let t19
   (premises
                           (Rule
@@ -84,11 +84,11 @@ expression: proof_snapshot
                             t18)))
 (let t20
   (substitution
-                          (e t1)
-                          (ctx (NilConst))
                           (@rewrite_var__3 t15)
+                          (ctx (NilConst))
                           (x "x")
-                          (t1 (TUnitConst))))
+                          (t1 (TUnitConst))
+                          (e t1)))
 (let t21
   (premises
                   (Rule
@@ -100,20 +100,20 @@ expression: proof_snapshot
 (let t22 (ctx t6))
 (let t23
   (substitution
-                  (e t0)
-                  t22
                   (@rewrite_var__3 t12)
+                  t22
                   (x "f")
-                  (t1 (TArr (TUnitConst) (TUnitConst)))))
+                  (t1 (TArr (TUnitConst) (TUnitConst)))
+                  (e t0)))
 (let t24 (typeof t6 (Var "x")))
 (let t25 (premises (Fiat (= t10 t10))))
 (let t26
   (substitution
-                    (e (Var "x"))
-                    (ctx (NilConst))
                     (@rewrite_var__3 t10)
+                    (ctx (NilConst))
                     (x "x")
-                    (t1 (TUnitConst))))
+                    (t1 (TUnitConst))
+                    (e (Var "x"))))
 (let prf2
   (Rule
                   (= t24 (TUnitConst))
@@ -126,12 +126,12 @@ expression: proof_snapshot
                       t25
                       t26))
                   (substitution
-                    (t (TUnitConst))
-                    (ctx (NilConst))
                     (@rewrite_var__1 t24)
-                    (x "x"))))
-(let t27 (t2 t8))
-(let t28 (t1 t5))
+                    (x "x")
+                    (t (TUnitConst))
+                    (ctx (NilConst)))))
+(let t27 (t1 t5))
+(let t28 (t2 t8))
 (let t29 (typeof t7 (Var "f")))
 (let t30 (typeof t7 (Var "x")))
 (let t31 (TArr t30 (TUnitConst)))
@@ -144,7 +144,7 @@ expression: proof_snapshot
                   t21
                   t23)))
 (let t33 (ctx t7))
-(let t34 (substitution t27 (e (Var "x")) t33 (f (Var "f"))))
+(let t34 (substitution t33 (f (Var "f")) (e (Var "x")) t28))
 (Rule
   (= t5 (TUnitConst))
   (name
@@ -203,15 +203,15 @@ expression: proof_snapshot
                             t16
                             t18))
                         (substitution
-                          (ctx (NilConst))
-                          (@rewrite_var__ (typeof (NilConst) (MyUnitConst))))))
+                          (@rewrite_var__ (typeof (NilConst) (MyUnitConst)))
+                          (ctx (NilConst)))))
                     0))
                 (substitution
-                  (t2 t12)
-                  (e (MyUnitConst))
                   (ctx (NilConst))
                   t17
-                  (t1 t9))))
+                  (e (MyUnitConst))
+                  (t1 t9)
+                  (t2 t12))))
             (Rule
               (= t12 t11)
               (name
@@ -231,7 +231,7 @@ expression: proof_snapshot
               prf2
               1))
           0))
-      (substitution t27 t13 (ctx (NilConst)) t14 t28))
+      (substitution (ctx (NilConst)) t13 t14 t27 t28))
     (Trans
       (= t29 t31)
       (Rule
@@ -248,10 +248,10 @@ expression: proof_snapshot
             t32
             t34))
         (substitution
-          (t (TArr (TUnitConst) (TUnitConst)))
-          t22
           (@rewrite_var__1 t29)
-          (x "f")))
+          (x "f")
+          (t (TArr (TUnitConst) (TUnitConst)))
+          t22))
       (Congr
         (= (TArr (TUnitConst) (TUnitConst)) t31)
         (Fiat
@@ -278,12 +278,12 @@ expression: proof_snapshot
                 (Fiat (= () ())))
               (substitution
                 (@rewrite_var__2 t30)
-                (ty (TArr (TUnitConst) (TUnitConst)))
                 (y "f")
+                (ty (TArr (TUnitConst) (TUnitConst)))
                 t22
                 (x "x")))))
         0)))
-  (substitution (t2 (TUnitConst)) (e (Var "x")) t33 (f (Var "f")) t28))
+  (substitution t33 (f (Var "f")) (e (Var "x")) t27 (t2 (TUnitConst))))
 (let t0 (Cons "y" (TUnitConst) (NilConst)))
 (let t1 (typeof t0 (Lam "x" (TUnitConst) (Var "y"))))
 (let t2 (typeof (Cons "x" (TUnitConst) t0) (Var "y")))
@@ -291,11 +291,11 @@ expression: proof_snapshot
 (let t4 (ctx t0))
 (let t5
   (substitution
-        (e (Var "y"))
-        t4
         (@rewrite_var__3 t1)
+        t4
         (x "x")
-        (t1 (TUnitConst))))
+        (t1 (TUnitConst))
+        (e (Var "y"))))
 (Congr
   (= t1 (TArr (TUnitConst) (TUnitConst)))
   (Rule
@@ -320,12 +320,12 @@ expression: proof_snapshot
             t3
             t5)
           (Fiat (= () ())))
-        (substitution (@rewrite_var__2 t2) (ty (TUnitConst)) (y "x") t4 (x "y"))))
+        (substitution (@rewrite_var__2 t2) (y "x") (ty (TUnitConst)) t4 (x "y"))))
     (substitution
-      (t (TUnitConst))
-      (ctx (NilConst))
       (@rewrite_var__1 t2)
-      (x "y")))
+      (x "y")
+      (t (TUnitConst))
+      (ctx (NilConst))))
   1)
 (let t0 (TArr (TArr (TUnitConst) (TUnitConst)) (TUnitConst)))
 (let t1 (Cons "y" t0 (NilConst)))
@@ -335,11 +335,11 @@ expression: proof_snapshot
 (let t5 (ctx t1))
 (let t6
   (substitution
-        (e (Var "y"))
-        t5
         (@rewrite_var__3 t2)
+        t5
         (x "x")
-        (t1 (TUnitConst))))
+        (t1 (TUnitConst))
+        (e (Var "y"))))
 (Congr
   (= t2 (TArr (TUnitConst) t0))
   (Rule
@@ -364,6 +364,6 @@ expression: proof_snapshot
             t4
             t6)
           (Fiat (= () ())))
-        (substitution (@rewrite_var__2 t3) (ty (TUnitConst)) (y "x") t5 (x "y"))))
-    (substitution (t t0) (ctx (NilConst)) (@rewrite_var__1 t3) (x "y")))
+        (substitution (@rewrite_var__2 t3) (y "x") (ty (TUnitConst)) t5 (x "y"))))
+    (substitution (@rewrite_var__1 t3) (x "y") (t t0) (ctx (NilConst))))
   1)

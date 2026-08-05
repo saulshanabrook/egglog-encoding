@@ -1,32 +1,23 @@
-//! Exact lowering for the reached proof-instrumented scalar rewrite family.
+//! General lowering for scalar rule bodies and action streams.
 //!
-//! This is intentionally not a general action interpreter. Admission owns only
-//! the structurally generated 34-action family and records a closed, typed SQL
-//! plan. DuckDB materializes matches, lookups, fresh slots, and effects; Rust
+//! Admission records one closed, typed Design-B SQL plan. DuckDB materializes
+//! matches, lookups, fresh slots, generic merge programs, and effects; Rust
 //! only schedules statements and observes scalar counts.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::AuthorityRegistries;
-use crate::rebuild::{
-    OrderedUnionGraph, ordered_union_outer, validate_scalar_action_ordered_union,
-    validate_scalar_mixed_ordered_union,
-};
+use crate::merge_program::{MergeOpKind, MergePrimitive};
 use crate::scalar_expr::{ScalarAuthority, ScalarExpression};
 use crate::storage::{ScalarSqlType, Storage, TableInfo, WriteCapability, sql_table};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
+use egglog_ast::generic_ast::Change;
 use egglog_backend_trait::{
-    BaseValues, ColumnTy, DefaultVal, ExternalFunctionId, FunctionId, MergeAction, MergeFn,
-    NativePrimitive, NativeScalarPrimitive, ReadMode, RuleActionCall, RuleBodyCall, RuleSpec,
-    RuleValue, RuleVar,
+    BaseValues, ColumnTy, DefaultVal, ExternalFunctionId, FunctionId, NativePrimitive,
+    NativeScalarPrimitive, ReadMode, RuleActionCall, RuleBodyCall, RuleSpec, RuleValue, RuleVar,
 };
 use egglog_numeric_id::NumericId;
-
-const ACTION_COUNT: usize = 34;
-const RAW_ACTION_COUNT: usize = 50;
-const FRESH_COUNT: u64 = 14;
-const DIRECT_EFFECT_COUNT: u64 = 15;
 
 /// Backend-minted authority for proof FD operations. The primitive's display
 /// name is diagnostic only; admission resolves this descriptor's exact table
@@ -59,35 +50,17 @@ enum ScalarValueRef {
     Literal(ScalarLiteral),
 }
 
-#[derive(Clone, Debug)]
-enum ScalarSlotSource {
-    Literal(ScalarLiteral),
-    Lookup,
-    Fresh {
-        rank: u64,
-        token: ExternalFunctionId,
-        label: ScalarLiteral,
-    },
-    Alias(ScalarValueRef),
-}
-
-#[derive(Clone, Debug)]
-struct ScalarSlotPlan {
-    action_ordinal: usize,
-    ty: ColumnTy,
-    source: ScalarSlotSource,
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ScalarEffectKind {
     AssertEq,
     KeepOld,
-    OrderedUnion,
+    GenericMerge,
+    Delete,
+    Subsume,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct ScalarEffectPlan {
-    pub(crate) action_ordinal: usize,
     pub(crate) event_ordinal: u64,
     pub(crate) target: FunctionId,
     pub(crate) arity: usize,
@@ -98,1082 +71,10 @@ pub(crate) struct ScalarEffectPlan {
     condition_slot: Option<usize>,
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct ScalarLookupPlan {
-    pub(crate) target: FunctionId,
-    pub(crate) n_keys: usize,
-    keys: Vec<ScalarValueRef>,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct ScalarMixedPlan {
-    seminaive: bool,
-    body: FunctionId,
-    body_schema: Vec<ColumnTy>,
-    body_patterns: Vec<ScalarValueRef>,
-    slots: Vec<ScalarSlotPlan>,
-    lookup: ScalarLookupPlan,
-    effects: Vec<ScalarEffectPlan>,
-    graph: OrderedUnionGraph,
-    fresh_token: ExternalFunctionId,
-}
-
-impl ScalarMixedPlan {
-    pub(crate) fn fresh_slots(&self) -> u64 {
-        FRESH_COUNT
-    }
-
-    pub(crate) fn direct_effects_per_match(&self) -> u64 {
-        DIRECT_EFFECT_COUNT
-    }
-
-    pub(crate) fn action_count(&self) -> u64 {
-        ACTION_COUNT as u64
-    }
-
-    pub(crate) fn lookup(&self) -> &ScalarLookupPlan {
-        &self.lookup
-    }
-
-    pub(crate) fn effects(&self) -> &[ScalarEffectPlan] {
-        &self.effects
-    }
-
-    pub(crate) fn graph(&self) -> &OrderedUnionGraph {
-        &self.graph
-    }
-
-    pub(crate) fn materialize_match_sql(&self, stage: &str, watermark: u64) -> String {
-        assert_scratch_name(stage);
-        let projection = (0..self.body_schema.len())
-            .map(|column| format!("source.c{column} AS b{column}"))
-            .chain(std::iter::once(format!(
-                "row_number() OVER (ORDER BY {}) AS __match_ordinal",
-                std::iter::once("source.__generation".to_string())
-                    .chain((0..self.body_schema.len()).map(|column| format!("source.c{column}")))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let mut predicates = vec!["source.__subsumed = FALSE".to_string()];
-        if self.seminaive {
-            predicates.push(format!(
-                "source.__generation >= CAST('{watermark}' AS UBIGINT)"
-            ));
-        }
-        predicates.extend(
-            self.body_patterns
-                .iter()
-                .enumerate()
-                .filter_map(|(column, value)| match value {
-                    ScalarValueRef::Literal(literal) => Some(format!(
-                        "source.c{column} IS NOT DISTINCT FROM {}",
-                        literal.sql
-                    )),
-                    ScalarValueRef::Body(_) => None,
-                    ScalarValueRef::Slot(_) => {
-                        unreachable!("body patterns cannot read action slots")
-                    }
-                }),
-        );
-        format!(
-            "CREATE TEMP TABLE {stage} AS
-             SELECT {projection}
-             FROM {} AS source
-             WHERE {}",
-            sql_table(self.body),
-            predicates.join(" AND ")
-        )
-    }
-
-    pub(crate) fn lookup_cardinality_sql(&self, match_stage: &str) -> String {
-        assert_scratch_name(match_stage);
-        let equality = self.lookup_equality("matched", "existing");
-        format!(
-            "SELECT EXISTS (
-                 SELECT 1
-                 FROM {match_stage} AS matched
-                 LEFT JOIN {} AS existing ON {equality}
-                 GROUP BY matched.__match_ordinal
-                 HAVING count(existing.__generation) <> 1
-             )",
-            sql_table(self.lookup.target)
-        )
-    }
-
-    pub(crate) fn materialize_head_sql(
-        &self,
-        match_stage: &str,
-        head_stage: &str,
-        first_fresh: u64,
-        match_count: u64,
-    ) -> String {
-        assert_scratch_name(match_stage);
-        assert_scratch_name(head_stage);
-        let equality = self.lookup_equality("matched", "existing");
-        let mut projection = (0..self.body_schema.len())
-            .map(|column| format!("matched.b{column} AS b{column}"))
-            .collect::<Vec<_>>();
-        projection.push("matched.__match_ordinal AS __match_ordinal".to_string());
-        projection.extend(self.slots.iter().enumerate().map(|(slot, _)| {
-            format!(
-                "{} AS s{slot}",
-                self.render_slot(slot, "matched", "existing", first_fresh, match_count)
-            )
-        }));
-        format!(
-            "CREATE TEMP TABLE {head_stage} AS
-             SELECT {}
-             FROM {match_stage} AS matched
-             JOIN {} AS existing ON {equality}",
-            projection.join(", "),
-            sql_table(self.lookup.target)
-        )
-    }
-
-    pub(crate) fn materialize_effect_sql(
-        &self,
-        head_stage: &str,
-        effect_stage: &str,
-        effect: &ScalarEffectPlan,
-        first_event: u64,
-    ) -> String {
-        assert_scratch_name(head_stage);
-        assert_scratch_name(effect_stage);
-        let mut projection = effect
-            .arguments
-            .iter()
-            .chain(&effect.values)
-            .enumerate()
-            .map(|(column, value)| {
-                format!("{} AS c{column}", self.render_effect_ref(value, "head"))
-            })
-            .collect::<Vec<_>>();
-        projection.push(format!(
-            "CAST('{first_event}' AS UBIGINT) + head.__match_ordinal - 1 AS __ordinal"
-        ));
-        format!(
-            "CREATE TEMP TABLE {effect_stage} AS
-             SELECT {}
-             FROM {head_stage} AS head
-             ORDER BY head.__match_ordinal",
-            projection.join(", ")
-        )
-    }
-
-    fn lookup_equality(&self, matched: &str, existing: &str) -> String {
-        self.lookup
-            .keys
-            .iter()
-            .enumerate()
-            .map(|(column, key)| {
-                format!(
-                    "{existing}.c{column} IS NOT DISTINCT FROM {}",
-                    self.render_match_ref(key, matched)
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(" AND ")
-    }
-
-    fn render_match_ref(&self, value: &ScalarValueRef, matched: &str) -> String {
-        match value {
-            ScalarValueRef::Body(column) => format!("{matched}.b{column}"),
-            ScalarValueRef::Literal(literal) => literal.sql.clone(),
-            ScalarValueRef::Slot(_) => {
-                unreachable!("prewave lookup keys cannot read action slots")
-            }
-        }
-    }
-
-    fn render_slot(
-        &self,
-        slot: usize,
-        matched: &str,
-        existing: &str,
-        first_fresh: u64,
-        match_count: u64,
-    ) -> String {
-        let plan = &self.slots[slot];
-        debug_assert!(plan.action_ordinal < ACTION_COUNT);
-        match &plan.source {
-            ScalarSlotSource::Literal(literal) => literal.sql.clone(),
-            ScalarSlotSource::Lookup => {
-                debug_assert_eq!(plan.ty, ColumnTy::Id);
-                format!("{existing}.c{}", self.lookup.n_keys)
-            }
-            ScalarSlotSource::Fresh { rank, token, label } => {
-                debug_assert_eq!(*token, self.fresh_token);
-                debug_assert_eq!(label.scalar, ScalarSqlType::String);
-                debug_assert_eq!(plan.ty, ColumnTy::Id);
-                format!(
-                    "CAST('{first_fresh}' AS UBIGINT)
-                     + CAST('{rank}' AS UBIGINT) * CAST('{match_count}' AS UBIGINT)
-                     + {matched}.__match_ordinal - 1"
-                )
-            }
-            ScalarSlotSource::Alias(value) => {
-                self.render_head_source_ref(value, matched, existing, first_fresh, match_count)
-            }
-        }
-    }
-
-    fn render_head_source_ref(
-        &self,
-        value: &ScalarValueRef,
-        matched: &str,
-        existing: &str,
-        first_fresh: u64,
-        match_count: u64,
-    ) -> String {
-        match value {
-            ScalarValueRef::Body(column) => format!("{matched}.b{column}"),
-            ScalarValueRef::Literal(literal) => literal.sql.clone(),
-            ScalarValueRef::Slot(slot) => {
-                self.render_slot(*slot, matched, existing, first_fresh, match_count)
-            }
-        }
-    }
-
-    fn render_effect_ref(&self, value: &ScalarValueRef, head: &str) -> String {
-        match value {
-            ScalarValueRef::Body(column) => format!("{head}.b{column}"),
-            ScalarValueRef::Slot(slot) => format!("{head}.s{slot}"),
-            ScalarValueRef::Literal(literal) => literal.sql.clone(),
-        }
-    }
-}
-
 #[derive(Clone)]
 struct BoundValue {
     ty: ColumnTy,
     value: ScalarValueRef,
-}
-
-struct ScalarCompiler<'a> {
-    storage: &'a Storage,
-    base_values: &'a BaseValues,
-    rule_name: &'a str,
-    body_schema: Vec<ColumnTy>,
-    body_patterns: Vec<ScalarValueRef>,
-    bindings: BTreeMap<u32, BoundValue>,
-    slots: Vec<ScalarSlotPlan>,
-}
-
-impl<'a> ScalarCompiler<'a> {
-    fn new(
-        storage: &'a Storage,
-        base_values: &'a BaseValues,
-        rule_name: &'a str,
-        body_info: &TableInfo,
-        body_args: &[GenericAtomTerm<RuleVar, RuleValue>],
-    ) -> Result<Self> {
-        let mut compiler = Self {
-            storage,
-            base_values,
-            rule_name,
-            body_schema: body_info.schema.clone(),
-            body_patterns: Vec::with_capacity(body_info.arity()),
-            bindings: BTreeMap::new(),
-            slots: Vec::new(),
-        };
-        ensure!(
-            body_args.len() == body_info.arity(),
-            "DuckDB scalar-mixed rule `{rule_name}` body arity is incompatible with its View"
-        );
-        for (column, (term, &expected)) in body_args.iter().zip(&body_info.schema).enumerate() {
-            let value = match term {
-                GenericAtomTerm::Var(_, variable) => {
-                    ensure!(
-                        variable.ty == expected,
-                        "DuckDB scalar-mixed rule `{rule_name}` body variable has the wrong type"
-                    );
-                    compiler.bind_body(variable, column)?;
-                    ScalarValueRef::Body(column)
-                }
-                GenericAtomTerm::Literal(_, literal) => {
-                    ensure!(
-                        literal.ty == expected,
-                        "DuckDB scalar-mixed rule `{rule_name}` body literal has the wrong type"
-                    );
-                    let scalar = ScalarSqlType::from_column(base_values, expected)?;
-                    ScalarValueRef::Literal(ScalarLiteral {
-                        value: *literal,
-                        scalar,
-                        sql: scalar.sql_literal(base_values, literal.value)?,
-                    })
-                }
-                GenericAtomTerm::Global(..) => bail!(
-                    "DuckDB scalar-mixed rule `{rule_name}` body contains an unsupported global"
-                ),
-            };
-            compiler.body_patterns.push(value);
-        }
-        Ok(compiler)
-    }
-
-    fn bind_body(&mut self, variable: &RuleVar, column: usize) -> Result<()> {
-        if self.bindings.contains_key(&variable.id) {
-            bail!(
-                "DuckDB scalar-mixed rule `{}` body rebinds SSA variable id {}",
-                self.rule_name,
-                variable.id
-            );
-        }
-        self.bindings.insert(
-            variable.id,
-            BoundValue {
-                ty: variable.ty,
-                value: ScalarValueRef::Body(column),
-            },
-        );
-        Ok(())
-    }
-
-    fn bind_passthrough_alias(
-        &mut self,
-        action_ordinal: usize,
-        action: &GenericCoreAction<RuleActionCall, RuleVar, RuleValue>,
-        expected: ScalarValueRef,
-    ) -> Result<ScalarValueRef> {
-        let GenericCoreAction::LetAtomTerm(_, binding, source) = action else {
-            bail!(
-                "DuckDB scalar-mixed rule `{}` action {action_ordinal} must be an SSA passthrough alias",
-                self.rule_name
-            );
-        };
-        let source = self.compile_term(source, binding.ty, "body-identity alias")?;
-        ensure!(
-            source == expected,
-            "DuckDB scalar-mixed rule `{}` action {action_ordinal} aliases the wrong value",
-            self.rule_name
-        );
-        if self.bindings.contains_key(&binding.id) {
-            bail!(
-                "DuckDB scalar-mixed rule `{}` action {action_ordinal} rebinds SSA variable id {}",
-                self.rule_name,
-                binding.id
-            );
-        }
-        self.bindings.insert(
-            binding.id,
-            BoundValue {
-                ty: binding.ty,
-                value: source.clone(),
-            },
-        );
-        Ok(source)
-    }
-
-    fn bind_slot(
-        &mut self,
-        action_ordinal: usize,
-        variable: &RuleVar,
-        source: ScalarSlotSource,
-    ) -> Result<ScalarValueRef> {
-        if self.bindings.contains_key(&variable.id) {
-            bail!(
-                "DuckDB scalar-mixed rule `{}` action {action_ordinal} rebinds SSA variable id {}",
-                self.rule_name,
-                variable.id
-            );
-        }
-        let slot = self.slots.len();
-        self.slots.push(ScalarSlotPlan {
-            action_ordinal,
-            ty: variable.ty,
-            source,
-        });
-        let value = ScalarValueRef::Slot(slot);
-        self.bindings.insert(
-            variable.id,
-            BoundValue {
-                ty: variable.ty,
-                value: value.clone(),
-            },
-        );
-        Ok(value)
-    }
-
-    fn compile_term(
-        &self,
-        term: &GenericAtomTerm<RuleVar, RuleValue>,
-        expected: ColumnTy,
-        context: &str,
-    ) -> Result<ScalarValueRef> {
-        match term {
-            GenericAtomTerm::Var(_, variable) => {
-                ensure!(
-                    variable.ty == expected,
-                    "DuckDB scalar-mixed rule `{}` {context} has a mistyped variable",
-                    self.rule_name
-                );
-                let binding = self.bindings.get(&variable.id).ok_or_else(|| {
-                    anyhow!(
-                        "DuckDB scalar-mixed rule `{}` {context} uses variable id {} before binding",
-                        self.rule_name,
-                        variable.id
-                    )
-                })?;
-                ensure!(
-                    binding.ty == variable.ty,
-                    "DuckDB scalar-mixed rule `{}` reuses variable id {} with inconsistent type metadata",
-                    self.rule_name,
-                    variable.id
-                );
-                Ok(binding.value.clone())
-            }
-            GenericAtomTerm::Literal(_, literal) => {
-                ensure!(
-                    literal.ty == expected,
-                    "DuckDB scalar-mixed rule `{}` {context} has a mistyped literal",
-                    self.rule_name
-                );
-                let scalar = ScalarSqlType::from_column(self.base_values, expected)?;
-                let sql = scalar.sql_literal(self.base_values, literal.value)?;
-                Ok(ScalarValueRef::Literal(ScalarLiteral {
-                    value: *literal,
-                    scalar,
-                    sql,
-                }))
-            }
-            GenericAtomTerm::Global(..) => bail!(
-                "DuckDB scalar-mixed rule `{}` {context} contains an unsupported global",
-                self.rule_name
-            ),
-        }
-    }
-
-    fn literal_slot(
-        &mut self,
-        action_ordinal: usize,
-        action: &GenericCoreAction<RuleActionCall, RuleVar, RuleValue>,
-        expected_scalar: ScalarSqlType,
-    ) -> Result<ScalarValueRef> {
-        let GenericCoreAction::LetAtomTerm(_, binding, source) = action else {
-            bail!(
-                "DuckDB scalar-mixed rule `{}` action {action_ordinal} must bind a typed literal",
-                self.rule_name
-            );
-        };
-        let value = self.compile_term(source, binding.ty, "literal binding")?;
-        let ScalarValueRef::Literal(literal) = value else {
-            bail!(
-                "DuckDB scalar-mixed rule `{}` action {action_ordinal} must bind a literal",
-                self.rule_name
-            );
-        };
-        ensure!(
-            literal.scalar == expected_scalar,
-            "DuckDB scalar-mixed rule `{}` action {action_ordinal} binds the wrong scalar type",
-            self.rule_name
-        );
-        self.bind_slot(action_ordinal, binding, ScalarSlotSource::Literal(literal))
-    }
-
-    fn lookup_slot(
-        &mut self,
-        action_ordinal: usize,
-        action: &GenericCoreAction<RuleActionCall, RuleVar, RuleValue>,
-        expected_key: ScalarValueRef,
-    ) -> Result<(ScalarValueRef, ScalarLookupPlan)> {
-        let GenericCoreAction::Let(_, binding, call, arguments) = action else {
-            bail!(
-                "DuckDB scalar-mixed rule `{}` action {action_ordinal} must be the action-side lookup",
-                self.rule_name
-            );
-        };
-        let RuleActionCall::Table { id: target, .. } = call else {
-            bail!(
-                "DuckDB scalar-mixed rule `{}` action {action_ordinal} must look up a table",
-                self.rule_name
-            );
-        };
-        let info = self.storage.table_info(*target).with_context(|| {
-            format!(
-                "DuckDB scalar-mixed rule `{}` has an invalid lookup target",
-                self.rule_name
-            )
-        })?;
-        validate_old_lookup(self.base_values, self.rule_name, &info)?;
-        let [argument] = arguments.as_slice() else {
-            bail!(
-                "DuckDB scalar-mixed rule `{}` lookup must have one Id key",
-                self.rule_name
-            );
-        };
-        let key = self.compile_term(argument, ColumnTy::Id, "lookup key")?;
-        ensure!(
-            key == expected_key,
-            "DuckDB scalar-mixed rule `{}` lookup must read the matched View identity",
-            self.rule_name
-        );
-        ensure!(
-            binding.ty == ColumnTy::Id,
-            "DuckDB scalar-mixed rule `{}` lookup result must be Id",
-            self.rule_name
-        );
-        let value = self.bind_slot(action_ordinal, binding, ScalarSlotSource::Lookup)?;
-        Ok((
-            value,
-            ScalarLookupPlan {
-                target: *target,
-                n_keys: info.n_keys,
-                keys: vec![key],
-            },
-        ))
-    }
-
-    fn fresh_slot(
-        &mut self,
-        action_ordinal: usize,
-        action: &GenericCoreAction<RuleActionCall, RuleVar, RuleValue>,
-        rank: u64,
-        fresh_tokens: &BTreeSet<ExternalFunctionId>,
-        expected_token: Option<ExternalFunctionId>,
-    ) -> Result<(ScalarValueRef, ExternalFunctionId)> {
-        let GenericCoreAction::Let(_, binding, call, arguments) = action else {
-            bail!(
-                "DuckDB scalar-mixed rule `{}` action {action_ordinal} must bind get-fresh!",
-                self.rule_name
-            );
-        };
-        let RuleActionCall::Primitive {
-            id,
-            name: _,
-            output,
-        } = call
-        else {
-            bail!(
-                "DuckDB scalar-mixed rule `{}` action {action_ordinal} must call get-fresh!",
-                self.rule_name
-            );
-        };
-        ensure!(
-            fresh_tokens.contains(id)
-                && expected_token.is_none_or(|expected| *id == expected)
-                && *output == ColumnTy::Id
-                && binding.ty == ColumnTy::Id,
-            "DuckDB scalar-mixed rule `{}` action {action_ordinal} has the wrong fresh token or signature",
-            self.rule_name
-        );
-        let [argument] = arguments.as_slice() else {
-            bail!(
-                "DuckDB scalar-mixed rule `{}` action {action_ordinal} get-fresh! requires one String literal",
-                self.rule_name
-            );
-        };
-        let value = self.compile_term(argument, argument_ty(argument), "fresh label")?;
-        let ScalarValueRef::Literal(label) = value else {
-            bail!(
-                "DuckDB scalar-mixed rule `{}` action {action_ordinal} fresh label must be literal",
-                self.rule_name
-            );
-        };
-        ensure!(
-            label.scalar == ScalarSqlType::String,
-            "DuckDB scalar-mixed rule `{}` action {action_ordinal} fresh label must be String",
-            self.rule_name
-        );
-        Ok((
-            self.bind_slot(
-                action_ordinal,
-                binding,
-                ScalarSlotSource::Fresh {
-                    rank,
-                    token: *id,
-                    label,
-                },
-            )?,
-            *id,
-        ))
-    }
-
-    fn alias_slot(
-        &mut self,
-        action_ordinal: usize,
-        action: &GenericCoreAction<RuleActionCall, RuleVar, RuleValue>,
-        expected: ScalarValueRef,
-    ) -> Result<ScalarValueRef> {
-        let GenericCoreAction::LetAtomTerm(_, binding, source) = action else {
-            bail!(
-                "DuckDB scalar-mixed rule `{}` action {action_ordinal} must be an SSA alias",
-                self.rule_name
-            );
-        };
-        let source = self.compile_term(source, binding.ty, "alias source")?;
-        ensure!(
-            source == expected,
-            "DuckDB scalar-mixed rule `{}` action {action_ordinal} aliases the wrong value",
-            self.rule_name
-        );
-        self.bind_slot(action_ordinal, binding, ScalarSlotSource::Alias(source))
-    }
-
-    fn set_effect(
-        &self,
-        action_ordinal: usize,
-        action: &GenericCoreAction<RuleActionCall, RuleVar, RuleValue>,
-        kind: ScalarEffectKind,
-    ) -> Result<(ScalarEffectPlan, TableInfo)> {
-        let GenericCoreAction::Set(_, call, arguments, values) = action else {
-            bail!(
-                "DuckDB scalar-mixed rule `{}` action {action_ordinal} must be a table Set",
-                self.rule_name
-            );
-        };
-        let RuleActionCall::Table { id: target, .. } = call else {
-            bail!(
-                "DuckDB scalar-mixed rule `{}` action {action_ordinal} cannot Set a primitive",
-                self.rule_name
-            );
-        };
-        let info = self.storage.table_info(*target).with_context(|| {
-            format!(
-                "DuckDB scalar-mixed rule `{}` action {action_ordinal} has an invalid target",
-                self.rule_name
-            )
-        })?;
-        ensure!(
-            arguments.len() == info.n_keys && values.len() == info.n_vals,
-            "DuckDB scalar-mixed rule `{}` action {action_ordinal} has the wrong Set arity",
-            self.rule_name
-        );
-        let arguments = arguments
-            .iter()
-            .zip(&info.schema[..info.n_keys])
-            .map(|(term, &ty)| self.compile_term(term, ty, "Set key"))
-            .collect::<Result<Vec<_>>>()?;
-        let values = values
-            .iter()
-            .zip(&info.schema[info.n_keys..])
-            .map(|(term, &ty)| self.compile_term(term, ty, "Set value"))
-            .collect::<Result<Vec<_>>>()?;
-        Ok((
-            ScalarEffectPlan {
-                action_ordinal,
-                event_ordinal: u64::try_from(action_ordinal)?,
-                target: *target,
-                arity: info.arity(),
-                n_keys: info.n_keys,
-                kind,
-                arguments,
-                values,
-                condition_slot: None,
-            },
-            info,
-        ))
-    }
-}
-
-pub(crate) fn compile_scalar_mixed(
-    storage: &Storage,
-    base_values: &BaseValues,
-    native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
-    fresh_tokens: &BTreeSet<ExternalFunctionId>,
-    rule: &RuleSpec,
-) -> Result<Option<ScalarMixedPlan>> {
-    let Some(body_target) = scalar_mixed_owner(storage, rule)? else {
-        return Ok(None);
-    };
-
-    ensure!(
-        rule.seminaive && !rule.no_decomp,
-        "DuckDB scalar-mixed rule `{}` requires seminaive mode with decomposition enabled",
-        rule.name
-    );
-    ensure!(
-        rule.core.body.atoms.len() == 1,
-        "DuckDB scalar-mixed rule `{}` must have exactly one body table",
-        rule.name
-    );
-    let body_atom = &rule.core.body.atoms[0];
-    let RuleBodyCall::Table { id: body, read } = body_atom.head else {
-        bail!(
-            "DuckDB scalar-mixed rule `{}` body must be one Live table",
-            rule.name
-        );
-    };
-    ensure!(
-        body == body_target && read == ReadMode::Live,
-        "DuckDB scalar-mixed rule `{}` body must be the selected Live View",
-        rule.name
-    );
-
-    let graph = validate_scalar_mixed_ordered_union(
-        base_values,
-        storage,
-        native_primitives,
-        fresh_tokens,
-        &rule.name,
-        body,
-    )?;
-    ensure!(
-        fresh_tokens.contains(&graph.fresh_token),
-        "DuckDB scalar-mixed rule `{}` ordered-union graph does not use a live registered get-fresh token",
-        rule.name
-    );
-    let body_info = storage.table_info(body)?;
-    ensure!(
-        rule.core.head.0.len() == RAW_ACTION_COUNT,
-        "DuckDB scalar-mixed rule `{}` must have exactly {RAW_ACTION_COUNT} lowered actions (got {})",
-        rule.name,
-        rule.core.head.0.len()
-    );
-    let actions = &rule.core.head.0;
-    let mut compiler = ScalarCompiler::new(
-        storage,
-        base_values,
-        &rule.name,
-        &body_info,
-        &body_atom.args,
-    )?;
-    let identity = compiler.body_patterns[body_info.n_keys].clone();
-    let body_payload = compiler.body_patterns[body_info.n_keys + 1].clone();
-    ensure!(
-        matches!(identity, ScalarValueRef::Body(_))
-            && matches!(body_payload, ScalarValueRef::Body(_)),
-        "DuckDB scalar-mixed rule `{}` must bind both View output columns",
-        rule.name
-    );
-
-    // Core canonicalization prepends the substituted body identity and splits
-    // every call-valued let into a call plus a passthrough alias. Validate and
-    // collapse that exact 50-action scaffolding back to the 34 semantic actions
-    // whose ordinals are observable in fresh/event allocation.
-    let owner = compiler.bind_passthrough_alias(0, &actions[0], identity.clone())?;
-    let rule_label = compiler.literal_slot(0, &actions[1], ScalarSqlType::String)?;
-    let (lookup_value, lookup) = compiler.lookup_slot(1, &actions[2], owner.clone())?;
-    compiler.bind_passthrough_alias(1, &actions[3], lookup_value.clone())?;
-    let (f0, fresh_token) = compiler.fresh_slot(2, &actions[4], 0, fresh_tokens, None)?;
-    compiler.bind_passthrough_alias(2, &actions[5], f0.clone())?;
-
-    let mut effects = Vec::with_capacity(16);
-    let (sym_first, sym_info) = compiler.set_effect(3, &actions[6], ScalarEffectKind::AssertEq)?;
-    validate_assert_eq_unit(
-        base_values,
-        &rule.name,
-        &sym_info,
-        &[ColumnTy::Id, ColumnTy::Id],
-    )?;
-    expect_set(
-        &rule.name,
-        &sym_first,
-        &[lookup_value.clone(), f0.clone()],
-        true,
-    )?;
-    ensure!(sym_first.target == graph.root.sym);
-    effects.push(sym_first);
-
-    let (f1, _) = compiler.fresh_slot(4, &actions[7], 1, fresh_tokens, Some(fresh_token))?;
-    compiler.bind_passthrough_alias(4, &actions[8], f1.clone())?;
-    let (trans_first, trans_info) =
-        compiler.set_effect(5, &actions[9], ScalarEffectKind::AssertEq)?;
-    validate_assert_eq_unit(
-        base_values,
-        &rule.name,
-        &trans_info,
-        &[ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
-    )?;
-    expect_set(
-        &rule.name,
-        &trans_first,
-        &[f0.clone(), body_payload, f1.clone()],
-        true,
-    )?;
-    ensure!(trans_first.target == graph.root.trans);
-    effects.push(trans_first);
-
-    let (f2, _) = compiler.fresh_slot(6, &actions[10], 2, fresh_tokens, Some(fresh_token))?;
-    compiler.bind_passthrough_alias(6, &actions[11], f2.clone())?;
-    let (nil, nil_info) = compiler.set_effect(7, &actions[12], ScalarEffectKind::AssertEq)?;
-    validate_assert_eq_unit(base_values, &rule.name, &nil_info, &[ColumnTy::Id])?;
-    expect_set(&rule.name, &nil, std::slice::from_ref(&f2), true)?;
-    effects.push(nil);
-
-    let (f3, _) = compiler.fresh_slot(8, &actions[13], 3, fresh_tokens, Some(fresh_token))?;
-    compiler.bind_passthrough_alias(8, &actions[14], f3.clone())?;
-    let (cons, cons_info) = compiler.set_effect(9, &actions[15], ScalarEffectKind::AssertEq)?;
-    validate_assert_eq_unit(
-        base_values,
-        &rule.name,
-        &cons_info,
-        &[ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
-    )?;
-    expect_set(
-        &rule.name,
-        &cons,
-        &[f1.clone(), f2.clone(), f3.clone()],
-        true,
-    )?;
-    effects.push(cons);
-    let proof_list = compiler.alias_slot(10, &actions[16], f3.clone())?;
-
-    let (f4, _) = compiler.fresh_slot(11, &actions[17], 4, fresh_tokens, Some(fresh_token))?;
-    compiler.bind_passthrough_alias(11, &actions[18], f4.clone())?;
-    let (term, term_info) = compiler.set_effect(12, &actions[19], ScalarEffectKind::AssertEq)?;
-    ensure!(
-        term.arguments.last() == Some(&f4),
-        "DuckDB scalar-mixed rule `{}` constructor Set must end in its fresh Id",
-        rule.name
-    );
-    let child_refs = term.arguments[..term.arguments.len() - 1].to_vec();
-    validate_body_key_permutation(
-        &rule.name,
-        &child_refs,
-        &compiler.body_patterns[..body_info.n_keys],
-    )?;
-    let mut term_keys = child_refs
-        .iter()
-        .map(|value| value_ty(value, &compiler))
-        .collect::<Result<Vec<_>>>()?;
-    term_keys.push(ColumnTy::Id);
-    validate_assert_eq_unit(base_values, &rule.name, &term_info, &term_keys)?;
-    expect_unit_value(&rule.name, &term)?;
-    effects.push(term);
-
-    let (f5, _) = compiler.fresh_slot(13, &actions[20], 5, fresh_tokens, Some(fresh_token))?;
-    compiler.bind_passthrough_alias(13, &actions[21], f5.clone())?;
-    let (ast_first, ast_info) =
-        compiler.set_effect(14, &actions[22], ScalarEffectKind::AssertEq)?;
-    validate_assert_eq_unit(
-        base_values,
-        &rule.name,
-        &ast_info,
-        &[ColumnTy::Id, ColumnTy::Id],
-    )?;
-    expect_set(&rule.name, &ast_first, &[f4.clone(), f5.clone()], true)?;
-    effects.push(ast_first);
-
-    let (f6, _) = compiler.fresh_slot(15, &actions[23], 6, fresh_tokens, Some(fresh_token))?;
-    compiler.bind_passthrough_alias(15, &actions[24], f6.clone())?;
-    let (ast_second, ast_second_info) =
-        compiler.set_effect(16, &actions[25], ScalarEffectKind::AssertEq)?;
-    validate_assert_eq_unit(
-        base_values,
-        &rule.name,
-        &ast_second_info,
-        &[ColumnTy::Id, ColumnTy::Id],
-    )?;
-    ensure!(ast_second.target == effects[5].target);
-    expect_set(&rule.name, &ast_second, &[f4.clone(), f6.clone()], true)?;
-    effects.push(ast_second);
-
-    let (f7, _) = compiler.fresh_slot(17, &actions[26], 7, fresh_tokens, Some(fresh_token))?;
-    compiler.bind_passthrough_alias(17, &actions[27], f7.clone())?;
-    let (rule_first, rule_info) =
-        compiler.set_effect(18, &actions[28], ScalarEffectKind::AssertEq)?;
-    validate_assert_eq_unit(
-        base_values,
-        &rule.name,
-        &rule_info,
-        &[
-            rule_value_ty(&rule_label, &compiler)?,
-            ColumnTy::Id,
-            ColumnTy::Id,
-            ColumnTy::Id,
-            ColumnTy::Id,
-        ],
-    )?;
-    expect_set(
-        &rule.name,
-        &rule_first,
-        &[
-            rule_label.clone(),
-            proof_list.clone(),
-            f5.clone(),
-            f6.clone(),
-            f7.clone(),
-        ],
-        true,
-    )?;
-    effects.push(rule_first);
-
-    let (old, old_info) = compiler.set_effect(19, &actions[29], ScalarEffectKind::KeepOld)?;
-    validate_old_target(base_values, &rule.name, &old_info)?;
-    ensure!(
-        old.target == lookup.target,
-        "DuckDB scalar-mixed rule `{}` action 19 must Set the action-1 Old lookup target",
-        rule.name
-    );
-    expect_set(&rule.name, &old, &[f4.clone(), f7.clone()], false)?;
-    effects.push(old);
-
-    let (f8, _) = compiler.fresh_slot(20, &actions[30], 8, fresh_tokens, Some(fresh_token))?;
-    compiler.bind_passthrough_alias(20, &actions[31], f8.clone())?;
-    let (ast_third, ast_third_info) =
-        compiler.set_effect(21, &actions[32], ScalarEffectKind::AssertEq)?;
-    validate_assert_eq_unit(
-        base_values,
-        &rule.name,
-        &ast_third_info,
-        &[ColumnTy::Id, ColumnTy::Id],
-    )?;
-    ensure!(ast_third.target == effects[5].target);
-    expect_set(&rule.name, &ast_third, &[owner.clone(), f8.clone()], true)?;
-    effects.push(ast_third);
-
-    let (f9, _) = compiler.fresh_slot(22, &actions[33], 9, fresh_tokens, Some(fresh_token))?;
-    compiler.bind_passthrough_alias(22, &actions[34], f9.clone())?;
-    let (ast_fourth, ast_fourth_info) =
-        compiler.set_effect(23, &actions[35], ScalarEffectKind::AssertEq)?;
-    validate_assert_eq_unit(
-        base_values,
-        &rule.name,
-        &ast_fourth_info,
-        &[ColumnTy::Id, ColumnTy::Id],
-    )?;
-    ensure!(ast_fourth.target == effects[5].target);
-    expect_set(&rule.name, &ast_fourth, &[f4.clone(), f9.clone()], true)?;
-    effects.push(ast_fourth);
-
-    let (f10, _) = compiler.fresh_slot(24, &actions[36], 10, fresh_tokens, Some(fresh_token))?;
-    compiler.bind_passthrough_alias(24, &actions[37], f10.clone())?;
-    let (rule_second, rule_second_info) =
-        compiler.set_effect(25, &actions[38], ScalarEffectKind::AssertEq)?;
-    validate_assert_eq_unit(
-        base_values,
-        &rule.name,
-        &rule_second_info,
-        &[
-            rule_value_ty(&rule_label, &compiler)?,
-            ColumnTy::Id,
-            ColumnTy::Id,
-            ColumnTy::Id,
-            ColumnTy::Id,
-        ],
-    )?;
-    ensure!(rule_second.target == effects[7].target);
-    expect_set(
-        &rule.name,
-        &rule_second,
-        &[rule_label, proof_list, f8, f9, f10.clone()],
-        true,
-    )?;
-    effects.push(rule_second);
-
-    let (f11, _) = compiler.fresh_slot(26, &actions[39], 11, fresh_tokens, Some(fresh_token))?;
-    compiler.bind_passthrough_alias(26, &actions[40], f11.clone())?;
-    let (trans_second, trans_second_info) =
-        compiler.set_effect(27, &actions[41], ScalarEffectKind::AssertEq)?;
-    validate_assert_eq_unit(
-        base_values,
-        &rule.name,
-        &trans_second_info,
-        &[ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
-    )?;
-    ensure!(trans_second.target == graph.root.trans);
-    expect_set(
-        &rule.name,
-        &trans_second,
-        &[f10, f7.clone(), f11.clone()],
-        true,
-    )?;
-    effects.push(trans_second);
-
-    let (view, _) = compiler.set_effect(28, &actions[42], ScalarEffectKind::OrderedUnion)?;
-    ensure!(
-        view.target == body
-            && view.arguments == child_refs
-            && view.values == [owner.clone(), f11.clone()],
-        "DuckDB scalar-mixed rule `{}` action 28 must Set the selected View with the constructed key and matched identity",
-        rule.name
-    );
-    effects.push(view);
-    let union_alias = compiler.alias_slot(29, &actions[43], owner.clone())?;
-    ensure!(union_alias != owner);
-
-    let (f12, _) = compiler.fresh_slot(30, &actions[44], 12, fresh_tokens, Some(fresh_token))?;
-    compiler.bind_passthrough_alias(30, &actions[45], f12.clone())?;
-    let (sym_second, sym_second_info) =
-        compiler.set_effect(31, &actions[46], ScalarEffectKind::AssertEq)?;
-    validate_assert_eq_unit(
-        base_values,
-        &rule.name,
-        &sym_second_info,
-        &[ColumnTy::Id, ColumnTy::Id],
-    )?;
-    ensure!(sym_second.target == graph.root.sym);
-    expect_set(&rule.name, &sym_second, &[f11.clone(), f12.clone()], true)?;
-    effects.push(sym_second);
-
-    let (f13, _) = compiler.fresh_slot(32, &actions[47], 13, fresh_tokens, Some(fresh_token))?;
-    compiler.bind_passthrough_alias(32, &actions[48], f13.clone())?;
-    let (trans_third, trans_third_info) =
-        compiler.set_effect(33, &actions[49], ScalarEffectKind::AssertEq)?;
-    validate_assert_eq_unit(
-        base_values,
-        &rule.name,
-        &trans_third_info,
-        &[ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
-    )?;
-    ensure!(trans_third.target == graph.root.trans);
-    expect_set(&rule.name, &trans_third, &[f7, f12, f13], true)?;
-    effects.push(trans_third);
-
-    validate_distinct_roles(&rule.name, &effects, &graph)?;
-    ensure!(
-        effects
-            .iter()
-            .filter(|effect| effect.kind != ScalarEffectKind::OrderedUnion)
-            .count()
-            == DIRECT_EFFECT_COUNT as usize
-            && effects.len() == 16,
-        "DuckDB scalar-mixed rule `{}` has the wrong effect topology",
-        rule.name
-    );
-
-    Ok(Some(ScalarMixedPlan {
-        seminaive: rule.seminaive,
-        body,
-        body_schema: body_info.schema,
-        body_patterns: compiler.body_patterns,
-        slots: compiler.slots,
-        lookup,
-        effects,
-        graph,
-        fresh_token,
-    }))
-}
-
-fn scalar_mixed_owner(storage: &Storage, rule: &RuleSpec) -> Result<Option<FunctionId>> {
-    if rule.core.head.0.len() <= 1 || rule.core.body.atoms.len() != 1 {
-        return Ok(None);
-    }
-    let RuleBodyCall::Table {
-        id: body,
-        read: ReadMode::Live,
-    } = rule.core.body.atoms[0].head
-    else {
-        return Ok(None);
-    };
-    let info = storage.table_info(body)?;
-    if !info.can_subsume {
-        return Ok(None);
-    }
-    let sets_body = rule.core.head.0.iter().any(|action| {
-        matches!(
-            action,
-            GenericCoreAction::Set(
-                _,
-                RuleActionCall::Table { id: target, .. },
-                _,
-                _
-            ) if *target == body
-        )
-    });
-    if !sets_body {
-        return Ok(None);
-    }
-    let Some(displaced) = ordered_union_outer(&info.merge) else {
-        return Ok(None);
-    };
-    let displaced_info = storage.table_info(displaced)?;
-    if ordered_union_outer(&displaced_info.merge).is_some() {
-        return Ok(Some(body));
-    }
-    Ok(None)
 }
 
 fn argument_ty(term: &GenericAtomTerm<RuleVar, RuleValue>) -> ColumnTy {
@@ -1182,161 +83,6 @@ fn argument_ty(term: &GenericAtomTerm<RuleVar, RuleValue>) -> ColumnTy {
         GenericAtomTerm::Literal(_, literal) => literal.ty,
         GenericAtomTerm::Global(_, global) => global.ty,
     }
-}
-
-fn validate_old_lookup(base_values: &BaseValues, rule_name: &str, info: &TableInfo) -> Result<()> {
-    ensure!(
-        info.schema == [ColumnTy::Id, ColumnTy::Id]
-            && info.n_keys == 1
-            && info.n_vals == 1
-            && info.n_identity_vals.is_none()
-            && matches!(info.default, DefaultVal::Fail)
-            && matches!(info.merge.as_ref(), MergeFn::Old)
-            && !info.can_subsume
-            && info.write_capability == WriteCapability::KeepOld,
-        "DuckDB scalar-mixed rule `{rule_name}` lookup must be exact Fail/Old [Id] -> Id"
-    );
-    let id = ScalarSqlType::from_column(base_values, ColumnTy::Id)?;
-    ensure!(info.columns.iter().all(|&ty| ty == id));
-    Ok(())
-}
-
-fn validate_old_target(base_values: &BaseValues, rule_name: &str, info: &TableInfo) -> Result<()> {
-    validate_old_lookup(base_values, rule_name, info).map_err(|error| {
-        anyhow!("DuckDB scalar-mixed rule `{rule_name}` Old target is incompatible: {error:#}")
-    })
-}
-
-fn validate_assert_eq_unit(
-    base_values: &BaseValues,
-    rule_name: &str,
-    info: &TableInfo,
-    key_types: &[ColumnTy],
-) -> Result<()> {
-    ensure!(
-        info.n_keys == key_types.len()
-            && info.n_vals == 1
-            && info.arity() == key_types.len() + 1
-            && info.schema[..info.n_keys] == *key_types
-            && ScalarSqlType::from_column(base_values, info.schema[info.n_keys])?
-                == ScalarSqlType::Unit
-            && info.n_identity_vals.is_none()
-            && matches!(info.default, DefaultVal::Fail)
-            && matches!(info.merge.as_ref(), MergeFn::AssertEq)
-            && !info.can_subsume
-            && info.write_capability == WriteCapability::AssertEq,
-        "DuckDB scalar-mixed rule `{rule_name}` AssertEq/Unit target has an incompatible configuration"
-    );
-    Ok(())
-}
-
-fn expect_set(
-    rule_name: &str,
-    effect: &ScalarEffectPlan,
-    expected_arguments: &[ScalarValueRef],
-    unit_value: bool,
-) -> Result<()> {
-    if unit_value {
-        ensure!(
-            effect.arguments == expected_arguments,
-            "DuckDB scalar-mixed rule `{rule_name}` action {} has the wrong typed dataflow",
-            effect.action_ordinal
-        );
-        expect_unit_value(rule_name, effect)?;
-    } else {
-        ensure!(
-            effect
-                .arguments
-                .iter()
-                .chain(&effect.values)
-                .eq(expected_arguments),
-            "DuckDB scalar-mixed rule `{rule_name}` action {} has the wrong Old target dataflow",
-            effect.action_ordinal
-        );
-    }
-    Ok(())
-}
-
-fn expect_unit_value(rule_name: &str, effect: &ScalarEffectPlan) -> Result<()> {
-    let [ScalarValueRef::Literal(literal)] = effect.values.as_slice() else {
-        bail!(
-            "DuckDB scalar-mixed rule `{rule_name}` action {} must Set a Unit literal",
-            effect.action_ordinal
-        );
-    };
-    ensure!(
-        literal.scalar == ScalarSqlType::Unit,
-        "DuckDB scalar-mixed rule `{rule_name}` action {} must Set Unit",
-        effect.action_ordinal
-    );
-    Ok(())
-}
-
-fn validate_body_key_permutation(
-    rule_name: &str,
-    keys: &[ScalarValueRef],
-    body_keys: &[ScalarValueRef],
-) -> Result<()> {
-    ensure!(
-        keys.len() == body_keys.len(),
-        "DuckDB scalar-mixed rule `{rule_name}` constructed key has the wrong arity"
-    );
-    let mut remaining = body_keys.to_vec();
-    for key in keys {
-        let Some(index) = remaining.iter().position(|body| body == key) else {
-            bail!(
-                "DuckDB scalar-mixed rule `{rule_name}` constructed View key must permute body keys"
-            );
-        };
-        remaining.remove(index);
-    }
-    ensure!(
-        remaining.is_empty(),
-        "DuckDB scalar-mixed rule `{rule_name}` constructed View key must use every body key once"
-    );
-    Ok(())
-}
-
-fn value_ty(value: &ScalarValueRef, compiler: &ScalarCompiler<'_>) -> Result<ColumnTy> {
-    Ok(match value {
-        ScalarValueRef::Body(column) => compiler.body_schema[*column],
-        ScalarValueRef::Slot(slot) => compiler.slots[*slot].ty,
-        ScalarValueRef::Literal(literal) => literal.value.ty,
-    })
-}
-
-fn rule_value_ty(value: &ScalarValueRef, compiler: &ScalarCompiler<'_>) -> Result<ColumnTy> {
-    let ty = value_ty(value, compiler)?;
-    ensure!(
-        ScalarSqlType::from_column(compiler.base_values, ty)? == ScalarSqlType::String,
-        "DuckDB scalar-mixed rule `{}` rule label must be String",
-        compiler.rule_name
-    );
-    Ok(ty)
-}
-
-fn validate_distinct_roles(
-    rule_name: &str,
-    effects: &[ScalarEffectPlan],
-    graph: &OrderedUnionGraph,
-) -> Result<()> {
-    let roles = [
-        graph.root.sym,
-        graph.root.trans,
-        effects[2].target,
-        effects[3].target,
-        effects[4].target,
-        effects[5].target,
-        effects[7].target,
-        effects[8].target,
-        graph.root.target,
-        graph.displaced.target,
-    ];
-    ensure!(
-        roles.into_iter().collect::<BTreeSet<_>>().len() == roles.len(),
-        "DuckDB scalar-mixed rule `{rule_name}` aliases distinct generated table roles"
-    );
-    Ok(())
 }
 
 fn assert_scratch_name(name: &str) {
@@ -1404,7 +150,6 @@ pub(crate) struct ScalarActionPlan {
     order_columns: Vec<String>,
     slots: Vec<ScalarActionSlot>,
     effects: Vec<ScalarEffectPlan>,
-    graphs: Vec<OrderedUnionGraph>,
     fresh_slots: u64,
     action_count: u64,
     required_fresh_tokens: BTreeSet<ExternalFunctionId>,
@@ -1475,23 +220,33 @@ impl ScalarActionPlan {
         &self.slots
     }
 
+    pub(crate) fn prediction_targets(&self) -> BTreeSet<FunctionId> {
+        self.slots
+            .iter()
+            .filter_map(|slot| match slot.source {
+                ScalarActionSlotSource::Read(ScalarActionRead::SetIfEmpty { target, .. }) => {
+                    Some(target)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub(crate) fn set_if_empty_target(&self, slot_index: usize) -> Option<FunctionId> {
+        match self.slots[slot_index].source {
+            ScalarActionSlotSource::Read(ScalarActionRead::SetIfEmpty { target, .. }) => {
+                Some(target)
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn effects(&self) -> &[ScalarEffectPlan] {
         &self.effects
     }
 
-    pub(crate) fn graphs(&self) -> &[OrderedUnionGraph] {
-        &self.graphs
-    }
-
     pub(crate) fn owner_checks(&self) -> Vec<(FunctionId, usize, bool)> {
         let mut checks = Vec::new();
-        // A standalone UF aliases the effect target and displaced target. Both
-        // occurrences must request the stronger non-subsumed owner invariant.
-        let displaced_targets = self
-            .graphs
-            .iter()
-            .map(|graph| graph.displaced.target)
-            .collect::<BTreeSet<_>>();
         for slot in &self.slots {
             match &slot.source {
                 ScalarActionSlotSource::Read(read) => {
@@ -1506,17 +261,10 @@ impl ScalarActionPlan {
                 | ScalarActionSlotSource::Expression { .. } => {}
             }
         }
-        checks.extend(self.effects.iter().map(|effect| {
-            (
-                effect.target,
-                effect.n_keys,
-                displaced_targets.contains(&effect.target),
-            )
-        }));
         checks.extend(
-            self.graphs
+            self.effects
                 .iter()
-                .map(|graph| (graph.displaced.target, graph.displaced.n_keys, true)),
+                .map(|effect| (effect.target, effect.n_keys, false)),
         );
         checks
     }
@@ -1582,6 +330,7 @@ impl ScalarActionPlan {
         slot_index: usize,
         first_fresh: u64,
         match_count: u64,
+        prediction_ledger: Option<&str>,
     ) -> String {
         assert_scratch_name(input_stage);
         assert_scratch_name(output_stage);
@@ -1625,70 +374,172 @@ impl ScalarActionPlan {
                     sql_table(*target)
                 )
             }
-            ScalarActionSlotSource::Read(read) => {
-                let (target, n_keys, keys, result_column, fallback, invalid, missing) = match read {
-                    ScalarActionRead::SetIfEmpty {
-                        target,
-                        n_keys,
-                        keys,
-                        defaults,
-                    } => (
-                        *target,
-                        *n_keys,
-                        keys,
-                        *n_keys,
-                        Some(&defaults[0]),
-                        "lookup.__owners > 1",
-                        true,
-                    ),
-                    ScalarActionRead::ViewColumn {
-                        target,
-                        n_keys,
-                        result_column,
-                        keys,
-                        fallback,
-                    } => (
-                        *target,
-                        *n_keys,
-                        keys,
-                        *result_column,
-                        Some(fallback),
-                        "lookup.__owners > 1",
-                        false,
-                    ),
-                    ScalarActionRead::Table { .. } => unreachable!("handled above"),
-                };
-                debug_assert_eq!(keys.len(), n_keys);
-                let equality = render_read_equality(keys, n_keys, "prior");
-                let value = fallback.map_or_else(
-                    || "lookup.__value".to_string(),
-                    |fallback| {
-                        format!(
-                            "CASE WHEN lookup.__owners = 0 THEN {} ELSE lookup.__value END",
-                            render_general_ref(fallback, "prior")
-                        )
-                    },
-                );
-                let missing_projection =
-                    missing.then(|| format!(", lookup.__owners = 0 AS __missing_s{slot_index}"));
+            ScalarActionSlotSource::Read(ScalarActionRead::SetIfEmpty {
+                target,
+                n_keys,
+                keys,
+                ..
+            }) => {
+                let ledger = prediction_ledger.expect("SetIfEmpty requires a prediction ledger");
+                assert_scratch_name(ledger);
+                let durable_equality = render_read_equality(keys, *n_keys, "prior");
+                let ledger_equality =
+                    render_scratch_key_equality(keys, *n_keys, "predicted", "prior");
                 format!(
                     "CREATE TEMP TABLE {output_stage} AS
                      SELECT prior.*,
-                            {value} AS s{slot_index},
-                            {invalid} AS __invalid_s{slot_index}{}
+                            choice.__value AS s{slot_index}
                      FROM {input_stage} AS prior
-                     LEFT JOIN LATERAL (
-                         SELECT count(existing.__generation) AS __owners,
-                                first(existing.c{result_column} ORDER BY existing.__generation)
-                                    AS __value
-                         FROM {} AS existing
-                         WHERE {equality}
-                     ) AS lookup ON TRUE",
-                    missing_projection.unwrap_or_default(),
-                    sql_table(target)
+                     JOIN LATERAL (
+                         SELECT alternatives.__value
+                         FROM (
+                             SELECT existing.c{n_keys} AS __value,
+                                    CAST('0' AS UTINYINT) AS __source
+                             FROM {} AS existing
+                             WHERE {durable_equality}
+                             UNION ALL
+                             SELECT predicted.c{n_keys} AS __value,
+                                    CAST('1' AS UTINYINT) AS __source
+                             FROM {ledger} AS predicted
+                             WHERE {ledger_equality}
+                         ) AS alternatives
+                         ORDER BY alternatives.__source
+                         LIMIT 1
+                     ) AS choice ON TRUE",
+                    sql_table(*target),
+                )
+            }
+            ScalarActionSlotSource::Read(ScalarActionRead::ViewColumn {
+                target,
+                n_keys,
+                result_column,
+                keys,
+                fallback,
+            }) => {
+                let equality = render_read_equality(keys, *n_keys, "prior");
+                format!(
+                    "CREATE TEMP TABLE {output_stage} AS
+                     SELECT prior.*,
+                            choice.__value AS s{slot_index}
+                     FROM {input_stage} AS prior
+                     JOIN LATERAL (
+                         SELECT alternatives.__value
+                         FROM (
+                             SELECT existing.c{result_column} AS __value,
+                                    CAST('0' AS UTINYINT) AS __source
+                             FROM {} AS existing
+                             WHERE {equality}
+                             UNION ALL
+                             SELECT {} AS __value,
+                                    CAST('1' AS UTINYINT) AS __source
+                         ) AS alternatives
+                         ORDER BY alternatives.__source
+                         LIMIT 1
+                     ) AS choice ON TRUE",
+                    sql_table(*target),
+                    render_general_ref(fallback, "prior"),
                 )
             }
         }
+    }
+
+    pub(crate) fn materialize_prediction_winner_sql(
+        &self,
+        input_stage: &str,
+        winner_stage: &str,
+        ledger: &str,
+        slot_index: usize,
+        match_count: u64,
+        event_offset: u64,
+    ) -> Option<String> {
+        assert_scratch_name(input_stage);
+        assert_scratch_name(winner_stage);
+        assert_scratch_name(ledger);
+        let slot = &self.slots[slot_index];
+        let ScalarActionSlotSource::Read(ScalarActionRead::SetIfEmpty {
+            target,
+            n_keys,
+            keys,
+            defaults,
+        }) = &slot.source
+        else {
+            return None;
+        };
+        let mut projection = keys
+            .iter()
+            .chain(defaults)
+            .enumerate()
+            .map(|(column, value)| format!("{} AS c{column}", render_general_ref(value, "prior")))
+            .collect::<Vec<_>>();
+        projection.push(format!(
+            "CAST('{event_offset}' AS UBIGINT)
+             + CAST('{}' AS UBIGINT) * CAST('{match_count}' AS UBIGINT)
+             + prior.__match_ordinal AS __event",
+            slot.runtime_ordinal
+        ));
+        let partition = if *n_keys == 0 {
+            String::new()
+        } else {
+            format!(
+                "PARTITION BY {} ",
+                keys.iter()
+                    .map(|key| render_general_ref(key, "prior"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        projection.push(format!(
+            "row_number() OVER ({partition}ORDER BY prior.__match_ordinal) AS __site_rank"
+        ));
+        let durable_equality = render_row_key_equality(*n_keys, "existing", "candidate");
+        let ledger_equality = render_row_key_equality(*n_keys, "predicted", "candidate");
+        Some(format!(
+            "CREATE TEMP TABLE {winner_stage} AS
+             SELECT candidate.* EXCLUDE (__site_rank)
+             FROM (
+                 SELECT {}
+                 FROM {input_stage} AS prior
+             ) AS candidate
+             WHERE candidate.__site_rank = 1
+               AND NOT EXISTS (
+                   SELECT 1 FROM {} AS existing WHERE {durable_equality}
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM {ledger} AS predicted WHERE {ledger_equality}
+               )",
+            projection.join(", "),
+            sql_table(*target),
+        ))
+    }
+
+    pub(crate) fn prediction_effect_slot(&self, effect: &ScalarEffectPlan) -> Option<usize> {
+        effect.condition_slot.filter(|&slot| {
+            matches!(
+                self.slots[slot].source,
+                ScalarActionSlotSource::Read(ScalarActionRead::SetIfEmpty { .. })
+            )
+        })
+    }
+
+    pub(crate) fn materialize_prediction_effect_sql(
+        &self,
+        winner_stage: &str,
+        effect_stage: &str,
+        effect: &ScalarEffectPlan,
+    ) -> String {
+        assert_scratch_name(winner_stage);
+        assert_scratch_name(effect_stage);
+        let projection = (0..effect.arity)
+            .map(|column| format!("winner.c{column}"))
+            .chain(std::iter::once("winner.__event AS __ordinal".to_string()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "CREATE TEMP TABLE {effect_stage} AS
+             SELECT {projection}
+             FROM {winner_stage} AS winner
+             ORDER BY winner.__event"
+        )
     }
 
     /// Fail lookups validate every input lane against the durable pre-wave
@@ -1744,13 +595,8 @@ impl ScalarActionPlan {
 
     pub(crate) fn slot_invalid_sql(&self, stage: &str, slot_index: usize) -> Option<String> {
         assert_scratch_name(stage);
-        matches!(
-            self.slots[slot_index].source,
-            ScalarActionSlotSource::Read(
-                ScalarActionRead::SetIfEmpty { .. } | ScalarActionRead::ViewColumn { .. }
-            )
-        )
-        .then(|| format!("SELECT EXISTS (SELECT 1 FROM {stage} WHERE __invalid_s{slot_index})"))
+        let _ = slot_index;
+        None
     }
 
     pub(crate) fn slot_error(&self, slot_index: usize) -> String {
@@ -1827,6 +673,7 @@ struct ScalarBodyPlan {
     freshness_columns: Vec<String>,
     order_columns: Vec<String>,
     bindings: BTreeMap<u32, ScalarBodyBinding>,
+    rows: Vec<(FunctionId, Vec<ScalarValueRef>)>,
     required_native_primitives: BTreeMap<ExternalFunctionId, NativePrimitive>,
     required_native_scalar_primitives: BTreeMap<ExternalFunctionId, NativeScalarPrimitive>,
 }
@@ -1845,18 +692,109 @@ fn compile_scalar_body(
         freshness_columns: Vec::new(),
         order_columns: Vec::new(),
         bindings: BTreeMap::new(),
+        rows: Vec::new(),
         required_native_primitives: BTreeMap::new(),
         required_native_scalar_primitives: BTreeMap::new(),
     };
 
+    // Row variables bind independently of source atom order. Ordinary table
+    // rows seed reachability; occurrence rows then bind to a fixed point once
+    // their probe is literal, already bound, or repeated at an indexed column.
+    for (atom_index, atom) in rule.core.body.atoms.iter().enumerate() {
+        if let RuleBodyCall::Table { id, .. } = atom.head {
+            let info = storage.table_info(id)?;
+            ensure!(
+                atom.args.len() == info.arity(),
+                "DuckDB scalar rule `{}` body table has the wrong arity",
+                rule.name
+            );
+            prebind_scalar_row(&rule.name, &mut plan, &atom.args, &info.schema, atom_index)?;
+        }
+    }
+    let mut admitted_indices = BTreeSet::new();
+    loop {
+        let mut changed = false;
+        for (atom_index, atom) in rule.core.body.atoms.iter().enumerate() {
+            let RuleBodyCall::IndexTable { id, any_of, .. } = &atom.head else {
+                continue;
+            };
+            if admitted_indices.contains(&atom_index) {
+                continue;
+            }
+            let info = storage.table_info(*id)?;
+            let any_of = any_of.iter().copied().collect::<BTreeSet<_>>();
+            let (probe, rest) = atom.args.split_first().context("index atom has no probe")?;
+            let (_output, row) = rest.split_last().context("index atom has no Unit output")?;
+            ensure!(
+                row.len() == info.arity(),
+                "DuckDB scalar rule `{}` index row has the wrong arity",
+                rule.name
+            );
+            ensure!(
+                !any_of.is_empty() && any_of.iter().all(|column| *column < info.arity()),
+                "DuckDB scalar rule `{}` index has invalid occurrence columns",
+                rule.name
+            );
+            let bind_column = match probe {
+                GenericAtomTerm::Literal(..) => None,
+                GenericAtomTerm::Var(_, variable) => {
+                    if plan
+                        .bindings
+                        .get(&variable.id)
+                        .is_some_and(|binding| binding.ty == variable.ty)
+                    {
+                        None
+                    } else {
+                        row.iter().enumerate().find_map(|(column, term)| {
+                            matches!(term, GenericAtomTerm::Var(_, row_var) if row_var.id == variable.id && row_var.ty == variable.ty && any_of.contains(&column))
+                                .then_some(column)
+                        }).or_else(|| (any_of.len() == 1).then(|| *any_of.first().unwrap()))
+                    }
+                }
+                GenericAtomTerm::Global(..) => continue,
+            };
+            let ready = matches!(probe, GenericAtomTerm::Literal(..))
+                || matches!(probe, GenericAtomTerm::Var(_, variable) if plan.bindings.get(&variable.id).is_some_and(|binding| binding.ty == variable.ty))
+                || bind_column.is_some();
+            if ready {
+                if let GenericAtomTerm::Var(_, variable) = probe
+                    && !plan.bindings.contains_key(&variable.id)
+                {
+                    let column = bind_column.expect("unbound admitted probe has a binding column");
+                    prebind_scalar_variable(
+                        &rule.name,
+                        &mut plan,
+                        variable,
+                        info.schema[column],
+                        format!("b{atom_index}.c{column}"),
+                    )?;
+                }
+                prebind_scalar_row(&rule.name, &mut plan, row, &info.schema, atom_index)?;
+                admitted_indices.insert(atom_index);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    ensure!(
+        rule.core
+            .body
+            .atoms
+            .iter()
+            .enumerate()
+            .all(
+                |(index, atom)| !matches!(atom.head, RuleBodyCall::IndexTable { .. })
+                    || admitted_indices.contains(&index)
+            ),
+        "DuckDB scalar rule `{}` contains an unreachable occurrence probe",
+        rule.name
+    );
+
     for (atom_index, atom) in rule.core.body.atoms.iter().enumerate() {
         match &atom.head {
             RuleBodyCall::Table { id, read } => {
-                ensure!(
-                    *read == ReadMode::Live,
-                    "DuckDB scalar rule `{}` requests {read:?}; only Live table reads are supported",
-                    rule.name
-                );
                 let info = storage.table_info(*id).with_context(|| {
                     format!(
                         "DuckDB scalar rule `{}` references invalid body table {}",
@@ -1875,8 +813,15 @@ fn compile_scalar_body(
                 let alias = format!("b{atom_index}");
                 plan.match_from
                     .push(format!("{} AS {alias}", sql_table(*id)));
-                plan.match_predicates
-                    .push(format!("{alias}.__subsumed = FALSE"));
+                match read {
+                    ReadMode::Live => plan
+                        .match_predicates
+                        .push(format!("{alias}.__subsumed = FALSE")),
+                    ReadMode::Subsumed => plan
+                        .match_predicates
+                        .push(format!("{alias}.__subsumed = TRUE")),
+                    ReadMode::All => {}
+                }
                 plan.freshness_columns.push(format!("{alias}.__generation"));
                 plan.order_columns.push(format!("{alias}.__generation"));
                 plan.order_columns
@@ -1928,6 +873,108 @@ fn compile_scalar_body(
                         ),
                     }
                 }
+                plan.rows.push((
+                    *id,
+                    atom.args
+                        .iter()
+                        .zip(&info.schema)
+                        .map(|(term, &ty)| {
+                            scalar_body_ref(base_values, &rule.name, &plan.bindings, term, ty)
+                        })
+                        .collect::<Result<Vec<_>>>()?,
+                ));
+            }
+            RuleBodyCall::IndexTable { id, any_of, read } => {
+                let info = storage.table_info(*id)?;
+                let any_of = any_of.iter().copied().collect::<BTreeSet<_>>();
+                ensure!(
+                    !any_of.is_empty(),
+                    "DuckDB scalar rule `{}` index lists no occurrence columns",
+                    rule.name
+                );
+                ensure!(
+                    any_of.iter().all(|column| *column < info.arity()),
+                    "DuckDB scalar rule `{}` index has an out-of-range occurrence column",
+                    rule.name
+                );
+                let (probe, rest) = atom.args.split_first().context("index atom has no probe")?;
+                let (output, row) = rest.split_last().context("index atom has no Unit output")?;
+                ensure!(
+                    row.len() == info.arity(),
+                    "DuckDB scalar rule `{}` index row has the wrong arity",
+                    rule.name
+                );
+                let unit_ty = ColumnTy::Base(base_values.get_ty::<()>());
+                let GenericAtomTerm::Literal(_, output) = output else {
+                    bail!(
+                        "DuckDB scalar rule `{}` index output must be canonical Unit",
+                        rule.name
+                    )
+                };
+                ensure!(
+                    output.ty == unit_ty && output.value == base_values.get(()),
+                    "DuckDB scalar rule `{}` index output must be canonical Unit",
+                    rule.name
+                );
+                let probe_ty = argument_ty(probe);
+                for &column in &any_of {
+                    ensure!(
+                        info.schema[column] == probe_ty,
+                        "DuckDB scalar rule `{}` index probe type disagrees with occurrence column {column}",
+                        rule.name
+                    );
+                }
+                let probe = compile_scalar_body_term(
+                    base_values,
+                    &rule.name,
+                    &plan.bindings,
+                    probe,
+                    probe_ty,
+                    "index probe",
+                )?;
+                let alias = format!("b{atom_index}");
+                plan.match_from
+                    .push(format!("{} AS {alias}", sql_table(*id)));
+                match read {
+                    ReadMode::Live => plan
+                        .match_predicates
+                        .push(format!("{alias}.__subsumed = FALSE")),
+                    ReadMode::Subsumed => plan
+                        .match_predicates
+                        .push(format!("{alias}.__subsumed = TRUE")),
+                    ReadMode::All => {}
+                }
+                plan.match_predicates.push(format!(
+                    "({})",
+                    any_of
+                        .iter()
+                        .map(|column| format!("{alias}.c{column} IS NOT DISTINCT FROM {probe}"))
+                        .collect::<Vec<_>>()
+                        .join(" OR ")
+                ));
+                plan.freshness_columns.push(format!("{alias}.__generation"));
+                plan.order_columns.push(format!("{alias}.__generation"));
+                plan.order_columns
+                    .extend((0..info.arity()).map(|column| format!("{alias}.c{column}")));
+                for (column, (term, &expected)) in row.iter().zip(&info.schema).enumerate() {
+                    bind_scalar_body_term(
+                        base_values,
+                        &rule.name,
+                        &mut plan,
+                        term,
+                        expected,
+                        format!("{alias}.c{column}"),
+                    )?;
+                }
+                plan.rows.push((
+                    *id,
+                    row.iter()
+                        .zip(&info.schema)
+                        .map(|(term, &ty)| {
+                            scalar_body_ref(base_values, &rule.name, &plan.bindings, term, ty)
+                        })
+                        .collect::<Result<Vec<_>>>()?,
+                ));
             }
             RuleBodyCall::Primitive {
                 id,
@@ -2031,6 +1078,54 @@ fn compile_scalar_body(
     Ok(plan)
 }
 
+fn prebind_scalar_row(
+    rule_name: &str,
+    plan: &mut ScalarBodyPlan,
+    row: &[GenericAtomTerm<RuleVar, RuleValue>],
+    schema: &[ColumnTy],
+    atom_index: usize,
+) -> Result<()> {
+    for (column, (term, &expected)) in row.iter().zip(schema).enumerate() {
+        if let GenericAtomTerm::Var(_, variable) = term {
+            prebind_scalar_variable(
+                rule_name,
+                plan,
+                variable,
+                expected,
+                format!("b{atom_index}.c{column}"),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn prebind_scalar_variable(
+    rule_name: &str,
+    plan: &mut ScalarBodyPlan,
+    variable: &RuleVar,
+    expected: ColumnTy,
+    expression: String,
+) -> Result<()> {
+    ensure!(
+        variable.ty == expected,
+        "DuckDB scalar rule `{rule_name}` body variable has the wrong type"
+    );
+    if let Some(binding) = plan.bindings.get(&variable.id) {
+        return ensure_body_metadata(rule_name, variable, binding);
+    }
+    let stage_column = plan.match_projection.len();
+    plan.match_projection.push(expression.clone());
+    plan.bindings.insert(
+        variable.id,
+        ScalarBodyBinding {
+            ty: variable.ty,
+            expression,
+            stage_column,
+        },
+    );
+    Ok(())
+}
+
 fn ensure_body_metadata(
     rule_name: &str,
     variable: &RuleVar,
@@ -2042,6 +1137,93 @@ fn ensure_body_metadata(
         variable.id
     );
     Ok(())
+}
+
+fn bind_scalar_body_term(
+    base_values: &BaseValues,
+    rule_name: &str,
+    plan: &mut ScalarBodyPlan,
+    term: &GenericAtomTerm<RuleVar, RuleValue>,
+    expected: ColumnTy,
+    expression: String,
+) -> Result<()> {
+    match term {
+        GenericAtomTerm::Var(_, variable) => {
+            ensure!(
+                variable.ty == expected,
+                "DuckDB scalar rule `{rule_name}` body variable has the wrong type"
+            );
+            if let Some(binding) = plan.bindings.get(&variable.id) {
+                ensure_body_metadata(rule_name, variable, binding)?;
+                plan.match_predicates.push(format!(
+                    "{expression} IS NOT DISTINCT FROM {}",
+                    binding.expression
+                ));
+            } else {
+                let stage_column = plan.match_projection.len();
+                plan.match_projection.push(expression.clone());
+                plan.bindings.insert(
+                    variable.id,
+                    ScalarBodyBinding {
+                        ty: variable.ty,
+                        expression,
+                        stage_column,
+                    },
+                );
+            }
+        }
+        GenericAtomTerm::Literal(_, literal) => {
+            ensure!(
+                literal.ty == expected,
+                "DuckDB scalar rule `{rule_name}` has a mistyped body literal"
+            );
+            let literal = ScalarSqlType::from_column(base_values, expected)?
+                .sql_literal(base_values, literal.value)?;
+            plan.match_predicates
+                .push(format!("{expression} IS NOT DISTINCT FROM {literal}"));
+        }
+        GenericAtomTerm::Global(..) => {
+            bail!("DuckDB scalar rule `{rule_name}` contains an unsupported body global")
+        }
+    }
+    Ok(())
+}
+
+fn scalar_body_ref(
+    base_values: &BaseValues,
+    rule_name: &str,
+    bindings: &BTreeMap<u32, ScalarBodyBinding>,
+    term: &GenericAtomTerm<RuleVar, RuleValue>,
+    expected: ColumnTy,
+) -> Result<ScalarValueRef> {
+    match term {
+        GenericAtomTerm::Var(_, variable) => {
+            ensure!(
+                variable.ty == expected,
+                "DuckDB scalar rule `{rule_name}` body row has a mistyped variable"
+            );
+            let binding = bindings.get(&variable.id).ok_or_else(|| {
+                anyhow!("DuckDB scalar rule `{rule_name}` body row uses an unbound variable")
+            })?;
+            ensure_body_metadata(rule_name, variable, binding)?;
+            Ok(ScalarValueRef::Body(binding.stage_column))
+        }
+        GenericAtomTerm::Literal(_, literal) => {
+            ensure!(
+                literal.ty == expected,
+                "DuckDB scalar rule `{rule_name}` body row has a mistyped literal"
+            );
+            let scalar = ScalarSqlType::from_column(base_values, expected)?;
+            Ok(ScalarValueRef::Literal(ScalarLiteral {
+                value: *literal,
+                scalar,
+                sql: scalar.sql_literal(base_values, literal.value)?,
+            }))
+        }
+        GenericAtomTerm::Global(..) => {
+            bail!("DuckDB scalar rule `{rule_name}` body row contains an unsupported global")
+        }
+    }
 }
 
 fn compile_scalar_body_term(
@@ -2081,81 +1263,84 @@ fn compile_scalar_body_term(
     }
 }
 
-fn retain_native_merge_dependencies(
-    merge: &MergeFn,
-    native_primitives: &BTreeMap<ExternalFunctionId, NativePrimitive>,
-    required: &mut BTreeMap<ExternalFunctionId, NativePrimitive>,
-) {
-    match merge {
-        MergeFn::Primitive { id, args, .. } => {
-            if let Some(&descriptor) = native_primitives.get(id) {
-                required.insert(*id, descriptor);
-            }
-            for argument in args {
-                retain_native_merge_dependencies(argument, native_primitives, required);
-            }
-        }
-        MergeFn::Function(_, arguments) | MergeFn::Lookup(_, arguments) => {
-            for argument in arguments {
-                retain_native_merge_dependencies(argument, native_primitives, required);
-            }
-        }
-        MergeFn::Columns(columns) => {
-            for column in columns {
-                retain_native_merge_dependencies(column, native_primitives, required);
-            }
-        }
-        MergeFn::Block { actions, result } => {
-            for action in actions {
-                match action {
-                    MergeAction::Set(_, arguments) => {
-                        for argument in arguments {
-                            retain_native_merge_dependencies(argument, native_primitives, required);
-                        }
-                    }
-                    MergeAction::Let { value, .. } => {
-                        retain_native_merge_dependencies(value, native_primitives, required);
-                    }
-                    MergeAction::Union(left, right) => {
-                        retain_native_merge_dependencies(left, native_primitives, required);
-                        retain_native_merge_dependencies(right, native_primitives, required);
-                    }
-                }
-            }
-            retain_native_merge_dependencies(result, native_primitives, required);
-        }
-        MergeFn::AssertEq
-        | MergeFn::UnionId
-        | MergeFn::Old
-        | MergeFn::New
-        | MergeFn::OldCol(_)
-        | MergeFn::NewCol(_)
-        | MergeFn::LetVar(_)
-        | MergeFn::Const { .. } => {}
-    }
-}
-
 struct GeneralScalarCompiler<'a> {
     storage: &'a Storage,
     base_values: &'a BaseValues,
     native_primitives: &'a BTreeMap<ExternalFunctionId, NativePrimitive>,
     native_scalar_primitives: &'a BTreeMap<ExternalFunctionId, NativeScalarPrimitive>,
+    authority_epochs: &'a BTreeMap<ExternalFunctionId, u64>,
     fresh_tokens: &'a BTreeSet<ExternalFunctionId>,
     fd_descriptors: &'a BTreeMap<ExternalFunctionId, FdDescriptor>,
     rule_name: &'a str,
+    body_rows: Vec<(FunctionId, Vec<ScalarValueRef>)>,
     bindings: BTreeMap<u32, BoundValue>,
     slots: Vec<ScalarActionSlot>,
     effects: Vec<ScalarEffectPlan>,
-    graphs: Vec<OrderedUnionGraph>,
     fresh_rank: u64,
     runtime_ordinal: u64,
     required_fresh_tokens: BTreeSet<ExternalFunctionId>,
     required_fd_descriptors: BTreeMap<ExternalFunctionId, FdDescriptor>,
     required_native_primitives: BTreeMap<ExternalFunctionId, NativePrimitive>,
     required_native_scalar_primitives: BTreeMap<ExternalFunctionId, NativeScalarPrimitive>,
+    required_authority_epochs: BTreeMap<ExternalFunctionId, u64>,
 }
 
 impl<'a> GeneralScalarCompiler<'a> {
+    fn retain_merge_program_closure(&mut self, root: FunctionId) -> Result<()> {
+        let mut pending = vec![root];
+        let mut visited = BTreeSet::new();
+        while let Some(target) = pending.pop() {
+            if !visited.insert(target) {
+                continue;
+            }
+            let info = self.storage.table_info(target)?;
+            info.merge_program.ensure_proof_supported(&info.name)?;
+            for (&token, &registered_epoch) in &info.merge_program.required_authorities {
+                ensure!(
+                    self.authority_epochs.get(&token) == Some(&registered_epoch),
+                    "DuckDB scalar rule `{}` target {} has a stale registration authority token {}",
+                    self.rule_name,
+                    target.rep(),
+                    token.rep()
+                );
+                self.required_authority_epochs
+                    .insert(token, registered_epoch);
+            }
+            pending.extend(info.merge_program.write_targets.iter().copied());
+            for op in &info.merge_program.ops {
+                let MergeOpKind::Primitive { primitive, .. } = &op.kind else {
+                    continue;
+                };
+                match primitive {
+                    MergePrimitive::Fresh { token } => {
+                        self.required_fresh_tokens.insert(*token);
+                    }
+                    MergePrimitive::Fd { token, descriptor } => {
+                        self.required_fd_descriptors
+                            .insert(*token, descriptor.clone());
+                    }
+                    MergePrimitive::Scalar(expression) => match expression.authority() {
+                        ScalarAuthority::Native(descriptor) => {
+                            self.required_native_primitives
+                                .insert(expression.token(), descriptor);
+                        }
+                        ScalarAuthority::Typed(descriptor) => {
+                            self.required_native_scalar_primitives
+                                .insert(expression.token(), descriptor);
+                        }
+                    },
+                    MergePrimitive::Unauthenticated { token } => bail!(
+                        "DuckDB scalar rule `{}` target {} has unauthenticated merge token {}",
+                        self.rule_name,
+                        target.rep(),
+                        token.rep()
+                    ),
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn compile_term(
         &self,
         term: &GenericAtomTerm<RuleVar, RuleValue>,
@@ -2252,47 +1437,8 @@ impl<'a> GeneralScalarCompiler<'a> {
             WriteCapability::AssertEq => ScalarEffectKind::AssertEq,
             WriteCapability::KeepOld => ScalarEffectKind::KeepOld,
             WriteCapability::Deferred => {
-                let graph = validate_scalar_action_ordered_union(
-                    self.base_values,
-                    self.storage,
-                    self.native_primitives,
-                    self.fresh_tokens,
-                    self.rule_name,
-                    target,
-                )?;
-                self.required_fresh_tokens.insert(graph.fresh_token);
-                retain_native_merge_dependencies(
-                    info.merge.as_ref(),
-                    self.native_primitives,
-                    &mut self.required_native_primitives,
-                );
-                let displaced = self.storage.table_info(graph.displaced.target).with_context(|| {
-                    format!(
-                        "DuckDB scalar rule `{}` ordered-union graph references invalid displaced target {}",
-                        self.rule_name,
-                        graph.displaced.target.rep()
-                    )
-                })?;
-                retain_native_merge_dependencies(
-                    displaced.merge.as_ref(),
-                    self.native_primitives,
-                    &mut self.required_native_primitives,
-                );
-                if let Some(existing) = self
-                    .graphs
-                    .iter()
-                    .find(|existing| existing.root.target == graph.root.target)
-                {
-                    ensure!(
-                        existing == &graph,
-                        "DuckDB scalar rule `{}` has inconsistent ordered-union graphs for target {}",
-                        self.rule_name,
-                        target.rep()
-                    );
-                } else {
-                    self.graphs.push(graph);
-                }
-                ScalarEffectKind::OrderedUnion
+                self.retain_merge_program_closure(target)?;
+                ScalarEffectKind::GenericMerge
             }
         })
     }
@@ -2334,7 +1480,6 @@ impl<'a> GeneralScalarCompiler<'a> {
             .collect::<Result<Vec<_>>>()?;
         let kind = self.classify_effect(*target, &info)?;
         self.effects.push(ScalarEffectPlan {
-            action_ordinal: raw_action_ordinal,
             event_ordinal: self.runtime_ordinal,
             target: *target,
             arity: info.arity(),
@@ -2343,6 +1488,66 @@ impl<'a> GeneralScalarCompiler<'a> {
             arguments,
             values,
             condition_slot,
+        });
+        Ok(())
+    }
+
+    fn compile_change(
+        &mut self,
+        raw_action_ordinal: usize,
+        change: Change,
+        call: &RuleActionCall,
+        arguments: &[GenericAtomTerm<RuleVar, RuleValue>],
+    ) -> Result<()> {
+        let RuleActionCall::Table { id: target, .. } = call else {
+            bail!(
+                "DuckDB scalar rule `{}` action {raw_action_ordinal} cannot change a primitive",
+                self.rule_name
+            )
+        };
+        let info = self.storage.table_info(*target)?;
+        ensure!(
+            arguments.len() == info.n_keys,
+            "DuckDB scalar rule `{}` action {raw_action_ordinal} has the wrong change key arity",
+            self.rule_name
+        );
+        let keys = arguments
+            .iter()
+            .zip(&info.schema[..info.n_keys])
+            .map(|(term, &ty)| self.compile_term(term, ty, "change key"))
+            .collect::<Result<Vec<_>>>()?;
+        let (kind, values) = match change {
+            Change::Delete => (ScalarEffectKind::Delete, Vec::new()),
+            Change::Subsume => {
+                ensure!(
+                    info.can_subsume,
+                    "DuckDB scalar rule `{}` cannot subsume a nonsubsumable table",
+                    self.rule_name
+                );
+                let mut candidates = self.body_rows.iter().filter(|(id, row)| {
+                    id == target && row.len() == info.arity() && row[..info.n_keys] == keys
+                });
+                let (_, row) = candidates.next().ok_or_else(|| anyhow!(
+                    "DuckDB scalar rule `{}` Subsume does not identify a complete pre-wave body row",
+                    self.rule_name
+                ))?;
+                ensure!(
+                    candidates.next().is_none(),
+                    "DuckDB scalar rule `{}` Subsume ambiguously identifies multiple body rows",
+                    self.rule_name
+                );
+                (ScalarEffectKind::Subsume, row[info.n_keys..].to_vec())
+            }
+        };
+        self.effects.push(ScalarEffectPlan {
+            event_ordinal: self.runtime_ordinal,
+            target: *target,
+            arity: info.arity(),
+            n_keys: info.n_keys,
+            kind,
+            arguments: keys,
+            values,
+            condition_slot: None,
         });
         Ok(())
     }
@@ -2482,7 +1687,6 @@ impl<'a> GeneralScalarCompiler<'a> {
                             )?;
                             let kind = self.classify_effect(target, &info)?;
                             self.effects.push(ScalarEffectPlan {
-                                action_ordinal: raw_action_ordinal,
                                 event_ordinal: self.runtime_ordinal,
                                 target,
                                 arity: info.arity(),
@@ -2584,19 +1788,13 @@ pub(crate) fn compile_scalar_action(
     let authority_epochs = authorities.authority_epochs;
     let fresh_tokens = authorities.fresh_tokens;
     let fd_descriptors = authorities.fd_descriptors;
-    let exact_transcript = looks_like_exact_scalar_transcript(rule);
-    if exact_transcript && scalar_mixed_owner(storage, rule)?.is_some() {
-        compile_scalar_mixed(storage, base_values, native_primitives, fresh_tokens, rule)?
-            .context("DuckDB exact scalar transcript was not owned by its oracle")?;
-    }
     if rule.core.head.0.is_empty()
         || !rule.core.body.atoms.iter().all(|atom| {
             matches!(
                 atom.head,
-                RuleBodyCall::Table {
-                    read: ReadMode::Live,
-                    ..
-                } | RuleBodyCall::Primitive { .. }
+                RuleBodyCall::Table { .. }
+                    | RuleBodyCall::IndexTable { .. }
+                    | RuleBodyCall::Primitive { .. }
             )
         })
         || !rule.core.head.0.iter().all(|action| {
@@ -2605,39 +1803,16 @@ pub(crate) fn compile_scalar_action(
                 GenericCoreAction::Let(..)
                     | GenericCoreAction::LetAtomTerm(..)
                     | GenericCoreAction::Set(..)
+                    | GenericCoreAction::Change(_, Change::Delete | Change::Subsume, ..)
             )
         })
     {
         return Ok(None);
     }
-    let owns_deferred_single_set = match rule.core.head.0.as_slice() {
-        [GenericCoreAction::Set(_, RuleActionCall::Table { id: target, .. }, _, _)] => {
-            storage.table_info(*target)?.write_capability == WriteCapability::Deferred
-        }
-        _ => false,
-    };
-    let owns = rule.core.body.atoms.is_empty()
-        || rule
-            .core
-            .body
-            .atoms
-            .iter()
-            .any(|atom| matches!(atom.head, RuleBodyCall::Primitive { .. }))
-        || rule.core.head.0.len() > 1
-        || owns_deferred_single_set
-        || rule.core.head.0.iter().any(|action| {
-            matches!(
-                action,
-                GenericCoreAction::Let(..) | GenericCoreAction::LetAtomTerm(..)
-            )
-        });
-    if !owns {
-        return Ok(None);
-    }
+    // Once a rule is wholly inside the generic body's and action stream's
+    // supported vocabulary, this compiler owns it. A single direct Set or
+    // Change must not escape to a second executor and split a frozen ruleset.
 
-    // Preserve the reached 50-action compiler as a strict oracle for that
-    // generated family, while executing its accepted transcript through the
-    // general plan below.
     let body = compile_scalar_body(
         storage,
         base_values,
@@ -2660,19 +1835,21 @@ pub(crate) fn compile_scalar_action(
         base_values,
         native_primitives,
         native_scalar_primitives,
+        authority_epochs,
         fresh_tokens,
         fd_descriptors,
         rule_name: &rule.name,
+        body_rows: body.rows,
         bindings,
         slots: Vec::new(),
         effects: Vec::new(),
-        graphs: Vec::new(),
         fresh_rank: 0,
         runtime_ordinal: 0,
         required_fresh_tokens: BTreeSet::new(),
         required_fd_descriptors: BTreeMap::new(),
         required_native_primitives: body.required_native_primitives,
         required_native_scalar_primitives: body.required_native_scalar_primitives,
+        required_authority_epochs: BTreeMap::new(),
     };
 
     for (raw_action_ordinal, action) in rule.core.head.0.iter().enumerate() {
@@ -2696,9 +1873,16 @@ pub(crate) fn compile_scalar_action(
                     .checked_add(1)
                     .context("DuckDB scalar runtime action count overflow")?;
             }
-            GenericCoreAction::Change(..)
-            | GenericCoreAction::Union(..)
-            | GenericCoreAction::Panic(..) => unreachable!("owner vocabulary checked above"),
+            GenericCoreAction::Change(_, change, call, arguments) => {
+                compiler.compile_change(raw_action_ordinal, *change, call, arguments)?;
+                compiler.runtime_ordinal = compiler
+                    .runtime_ordinal
+                    .checked_add(1)
+                    .context("DuckDB scalar runtime action count overflow")?;
+            }
+            GenericCoreAction::Union(..) | GenericCoreAction::Panic(..) => {
+                unreachable!("owner vocabulary checked above")
+            }
         }
     }
     ensure!(
@@ -2715,22 +1899,24 @@ pub(crate) fn compile_scalar_action(
         .chain(compiler.required_fd_descriptors.keys())
         .copied()
         .collect::<BTreeSet<_>>();
-    let required_authority_epochs = required_tokens
-        .into_iter()
-        .map(|token| {
-            authority_epochs
-                .get(&token)
-                .copied()
-                .map(|epoch| (token, epoch))
-                .ok_or_else(|| {
-                    anyhow!(
-                        "DuckDB scalar rule `{}` has no live authority epoch for token {}",
-                        rule.name,
-                        token.rep()
-                    )
-                })
-        })
-        .collect::<Result<BTreeMap<_, _>>>()?;
+    let mut required_authority_epochs = compiler.required_authority_epochs;
+    for token in required_tokens {
+        let epoch = authority_epochs.get(&token).copied().ok_or_else(|| {
+            anyhow!(
+                "DuckDB scalar rule `{}` has no live authority epoch for token {}",
+                rule.name,
+                token.rep()
+            )
+        })?;
+        if let Some(required) = required_authority_epochs.insert(token, epoch) {
+            ensure!(
+                required == epoch,
+                "DuckDB scalar rule `{}` token {} changed authority epoch after table registration",
+                rule.name,
+                token.rep()
+            );
+        }
+    }
 
     Ok(Some(ScalarActionPlan {
         seminaive: rule.seminaive,
@@ -2741,7 +1927,6 @@ pub(crate) fn compile_scalar_action(
         order_columns: body.order_columns,
         slots: compiler.slots,
         effects: compiler.effects,
-        graphs: compiler.graphs,
         fresh_slots: compiler.fresh_rank,
         action_count: compiler.runtime_ordinal,
         required_fresh_tokens: compiler.required_fresh_tokens,
@@ -2777,30 +1962,36 @@ fn render_read_equality(keys: &[ScalarValueRef], n_keys: usize, alias: &str) -> 
     }
 }
 
-fn looks_like_exact_scalar_transcript(rule: &RuleSpec) -> bool {
-    (RAW_ACTION_COUNT - 1..=RAW_ACTION_COUNT).contains(&rule.core.head.0.len())
-        && rule
-            .core
-            .head
-            .0
+fn render_scratch_key_equality(
+    requested_keys: &[ScalarValueRef],
+    n_keys: usize,
+    scratch_alias: &str,
+    requested_alias: &str,
+) -> String {
+    if n_keys == 0 {
+        "TRUE".to_string()
+    } else {
+        requested_keys
             .iter()
-            .filter(|action| matches!(action, GenericCoreAction::LetAtomTerm(..)))
-            .count()
-            >= 14
-        && rule
-            .core
-            .head
-            .0
-            .iter()
-            .filter(|action| matches!(action, GenericCoreAction::Let(..)))
-            .count()
-            >= 14
-        && rule
-            .core
-            .head
-            .0
-            .iter()
-            .filter(|action| matches!(action, GenericCoreAction::Set(..)))
-            .count()
-            >= 14
+            .enumerate()
+            .map(|(column, requested)| {
+                format!(
+                    "{scratch_alias}.c{column} IS NOT DISTINCT FROM {}",
+                    render_general_ref(requested, requested_alias)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" AND ")
+    }
+}
+
+fn render_row_key_equality(n_keys: usize, left: &str, right: &str) -> String {
+    if n_keys == 0 {
+        "TRUE".to_string()
+    } else {
+        (0..n_keys)
+            .map(|column| format!("{left}.c{column} IS NOT DISTINCT FROM {right}.c{column}"))
+            .collect::<Vec<_>>()
+            .join(" AND ")
+    }
 }

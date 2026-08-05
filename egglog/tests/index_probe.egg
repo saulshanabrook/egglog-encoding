@@ -1,0 +1,128 @@
+;; How a declared index is probed: by a variable another atom binds, or by a
+;; value written into the atom directly. See `index_any.egg` for the index
+;; declaration itself.
+
+(function edge (i64 i64) i64 :merge old)
+(index EdgeOcc edge (any 0 1 2))
+(relation touched (i64 i64 i64))
+
+(set (edge 1 2) 3)
+(set (edge 4 5) 6)
+(set (edge 7 8) 1)
+
+;; --- A literal probe ------------------------------------------------------
+
+;; The value is known when the rule is built, so it needs no binder. 1 sits at
+;; an input of the first row and at the *output* of the third.
+(rule ((EdgeOcc 1 p q r)) ((touched p q r)))
+(run 1)
+(check (touched 1 2 3))
+(check (touched 7 8 1))
+(fail (check (touched 4 5 6)))
+
+;; A fully ground atom is a membership test against the index.
+(check (EdgeOcc 1 1 2 3))
+(check (EdgeOcc 1 7 8 1))
+(fail (check (EdgeOcc 1 4 5 6)))
+(fail (check (EdgeOcc 9 1 2 3)))
+
+;; --- A literal probe sees rows added after the rule was built -------------
+
+;; The rows holding a value change as the table grows, so the restriction is
+;; recomputed per run rather than frozen when the rule was declared.
+(set (edge 20 1) 21)
+(run 1)
+(check (touched 20 1 21))
+
+;; A rule declared before any row exists still matches later ones.
+(function link (i64 i64) i64 :merge old)
+(index LinkOcc link (any 0 1 2))
+(relation reached (i64 i64 i64))
+(rule ((LinkOcc 30 p q r)) ((reached p q r)))
+(run 1)
+(fail (check (reached 30 31 32)))
+(set (link 30 31) 32)
+(run 1)
+(check (reached 30 31 32))
+
+;; --- One indexed column ---------------------------------------------------
+
+;; Over a single column, "occurs in any of them" is an equality on that column,
+;; and the probe needs no index at all.
+(function arc (i64 i64) i64 :merge old)
+(index ArcOcc arc (any 1))
+(relation onecol (i64 i64 i64))
+(relation seed (i64))
+(set (arc 40 41) 42)
+(set (arc 41 40) 43)
+(rule ((ArcOcc 41 p q r)) ((onecol p q r)))
+(run 1)
+;; 41 is at column 1 of the first row only.
+(check (onecol 40 41 42))
+(fail (check (onecol 41 40 43)))
+
+;; The probe value also sits at a row column outside the indexed set: both the
+;; occurrence and the fixed column must hold.
+(relation repeated (i64 i64 i64))
+(set (arc 50 50) 51)
+(set (arc 50 52) 53)
+(set (arc 52 50) 54)
+(seed 50)
+;; x must occur in column 1 *and* equal column 0.
+(rule ((seed x) (ArcOcc x x q r)) ((repeated x q r)))
+(run 1)
+(check (repeated 50 50 51))
+;; arc(50,52)=53 has column 1 = 52, not 50.
+(fail (check (repeated 50 52 53)))
+;; Here the occurrence itself is reachable through column 1, but the repeated
+;; row constraint column 0 = x is false. An occurrence-only lowering would
+;; incorrectly admit this row.
+(fail (check (repeated 50 50 54)))
+
+;; --- A literal probe joined against other atoms ---------------------------
+
+;; A literal binds nothing, so this atom is an ordinary one over a narrowed set
+;; of rows and the planner is free to decompose the query around it.
+(relation pick (i64))
+(relation joined (i64 i64))
+(pick 2)
+(rule ((EdgeOcc 1 p q r) (pick q)) ((joined p r)))
+(run 1)
+;; Of the rows holding 1 -- (1,2)=3, (7,8)=1 and (20,1)=21 -- only the first has
+;; a picked middle column.
+(check (joined 1 3))
+(fail (check (joined 7 1)))
+(fail (check (joined 20 21)))
+
+;; The value may occupy *several* of the row's columns. One indexed column among
+;; them is enough for the occurrence to be implied, whichever order they come in.
+(function duo (i64 i64) i64 :merge old)
+(index DuoOcc duo (any 1 2))
+(relation both (i64 i64))
+(set (duo 70 71) 70)
+(set (duo 72 73) 74)
+(seed 70)
+;; x is at column 0, which is unindexed, and at column 2, which is indexed.
+(rule ((seed x) (DuoOcc x x q x)) ((both x q)))
+(run 1)
+(check (both 70 71))
+(fail (check (both 72 73)))
+
+;; Mirroring the occurrence declaration order must preserve the same per-row
+;; disjunction and repeated-variable constraint.
+(index DuoOccMirror duo (any 2 1))
+(relation both-mirror (i64 i64))
+(rule ((seed x) (DuoOccMirror x x q x)) ((both-mirror x q)))
+(run 1)
+(check (both-mirror 70 71))
+(fail (check (both-mirror 72 73)))
+
+;; The same shape with the variable at an *indexed* column: the occurrence is
+;; implied, so the atom means the same as a plain row match.
+(relation implied (i64 i64 i64))
+(set (edge 50 60) 61)
+(rule ((seed x) (EdgeOcc x x q r)) ((implied x q r)))
+(run 1)
+(check (implied 50 60 61))
+;; Column 0 is what x is fixed to, so no other row qualifies.
+(fail (check (implied 50 1 2)))

@@ -6,10 +6,10 @@
 //! [`Backend`] trait is local here.
 
 use std::any::Any;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, RwLock};
 
-use anyhow::{Result, bail};
+use anyhow::{Result, bail, ensure};
 use egglog_bridge::{ActionRegistry, EGraph, QueryEntry, RuleBuilder};
 
 use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
@@ -50,7 +50,185 @@ fn rule_entries(
         .collect()
 }
 
+fn term_ty(term: &GenericAtomTerm<RuleVar, RuleValue>) -> ColumnTy {
+    match term {
+        GenericAtomTerm::Var(_, variable) | GenericAtomTerm::Global(_, variable) => variable.ty,
+        GenericAtomTerm::Literal(_, value) => value.ty,
+    }
+}
+
+#[derive(Default)]
+struct IndexValidation {
+    self_binding_columns: BTreeMap<usize, usize>,
+}
+
+fn validate_index_atoms(egraph: &EGraph, rule: &RuleSpec) -> Result<IndexValidation> {
+    if !rule
+        .core
+        .body
+        .atoms
+        .iter()
+        .any(|atom| matches!(&atom.head, RuleBodyCall::IndexTable { .. }))
+    {
+        return Ok(IndexValidation::default());
+    }
+    let unit_ty = ColumnTy::Base(egraph.base_values().get_ty::<()>());
+    let unit = egraph.base_values().get(());
+    for atom in &rule.core.body.atoms {
+        let RuleBodyCall::IndexTable { id, any_of, .. } = &atom.head else {
+            continue;
+        };
+        let schema = egraph.function_schema(*id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "reference backend cannot add rule {:?}: unregistered index target {:?}",
+                rule.name,
+                id
+            )
+        })?;
+        ensure!(
+            atom.args.len() == schema.len() + 2,
+            "reference backend cannot add rule {:?}: index atom has {}, expected {} arguments",
+            rule.name,
+            atom.args.len(),
+            schema.len() + 2
+        );
+        ensure!(
+            !any_of.is_empty(),
+            "reference backend cannot add rule {:?}: index atom lists no occurrence columns",
+            rule.name
+        );
+        ensure!(
+            any_of.iter().all(|&column| column < schema.len()),
+            "reference backend cannot add rule {:?}: index atom has an out-of-range occurrence column",
+            rule.name
+        );
+        let probe = &atom.args[0];
+        for &column in any_of {
+            ensure!(
+                term_ty(probe) == schema[column],
+                "reference backend cannot add rule {:?}: index probe type disagrees with occurrence column {column}",
+                rule.name
+            );
+        }
+        for (term, &expected) in atom.args[1..=schema.len()].iter().zip(schema) {
+            ensure!(
+                term_ty(term) == expected,
+                "reference backend cannot add rule {:?}: index row has a mistyped column",
+                rule.name
+            );
+        }
+        let Some(GenericAtomTerm::Literal(_, output)) = atom.args.last() else {
+            bail!(
+                "reference backend cannot add rule {:?}: index output must be canonical Unit",
+                rule.name
+            )
+        };
+        ensure!(
+            output.ty == unit_ty && output.value == unit,
+            "reference backend cannot add rule {:?}: index output must be canonical Unit",
+            rule.name
+        );
+    }
+
+    let mut reachable = BTreeSet::<u32>::new();
+    for atom in &rule.core.body.atoms {
+        if !matches!(&atom.head, RuleBodyCall::Table { .. }) {
+            continue;
+        }
+        for term in &atom.args {
+            if let GenericAtomTerm::Var(_, variable) = term {
+                reachable.insert(variable.id);
+            }
+        }
+    }
+    let mut admitted_indices = BTreeSet::<usize>::new();
+    let mut self_binding_columns = BTreeMap::<usize, usize>::new();
+    loop {
+        let mut changed = false;
+        for (atom_index, atom) in rule.core.body.atoms.iter().enumerate() {
+            let RuleBodyCall::IndexTable { id, any_of, .. } = &atom.head else {
+                continue;
+            };
+            if admitted_indices.contains(&atom_index) {
+                continue;
+            }
+            let schema = egraph.function_schema(*id).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "reference backend cannot add rule {:?}: unregistered index target {:?}",
+                    rule.name,
+                    id
+                )
+            })?;
+            let any_of = any_of.iter().copied().collect::<BTreeSet<_>>();
+            let probe = &atom.args[0];
+            let row = &atom.args[1..=schema.len()];
+            let bind_column = match probe {
+                GenericAtomTerm::Literal(..) => None,
+                GenericAtomTerm::Var(_, variable) if reachable.contains(&variable.id) => None,
+                GenericAtomTerm::Var(_, variable) => row
+                    .iter()
+                    .enumerate()
+                    .find_map(|(column, term)| {
+                        (any_of.contains(&column)
+                            && matches!(term, GenericAtomTerm::Var(_, row) if row.id == variable.id))
+                        .then_some(column)
+                    })
+                    .or_else(|| {
+                        (any_of.len() == 1)
+                            .then(|| any_of.iter().next().copied())
+                            .flatten()
+                    }),
+                GenericAtomTerm::Global(..) => continue,
+            };
+            let ready = matches!(probe, GenericAtomTerm::Literal(..))
+                || matches!(probe, GenericAtomTerm::Var(_, variable) if reachable.contains(&variable.id))
+                || bind_column.is_some();
+            if !ready {
+                continue;
+            }
+            if let GenericAtomTerm::Var(_, variable) = probe {
+                if let Some(column) = bind_column {
+                    self_binding_columns.insert(atom_index, column);
+                }
+                reachable.insert(variable.id);
+            }
+            for term in row {
+                if let GenericAtomTerm::Var(_, variable) = term {
+                    reachable.insert(variable.id);
+                }
+            }
+            admitted_indices.insert(atom_index);
+            changed = true;
+        }
+        if !changed {
+            break;
+        }
+    }
+    for (atom_index, atom) in rule.core.body.atoms.iter().enumerate() {
+        if !matches!(&atom.head, RuleBodyCall::IndexTable { .. })
+            || admitted_indices.contains(&atom_index)
+        {
+            continue;
+        }
+        let probe = atom.args.first().and_then(|term| match term {
+            GenericAtomTerm::Var(_, variable) | GenericAtomTerm::Global(_, variable) => {
+                Some(variable.id)
+            }
+            GenericAtomTerm::Literal(..) => None,
+        });
+        bail!(
+            "reference backend cannot add rule {:?}: index probe variable {:?} is not reachable from a row binder",
+            rule.name,
+            probe
+        );
+    }
+    Ok(IndexValidation {
+        self_binding_columns,
+    })
+}
+
 fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
+    let index_validation = validate_index_atoms(egraph, &rule)?;
     let RuleSpec {
         name,
         seminaive,
@@ -61,11 +239,56 @@ fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
     builder.set_no_decomp(no_decomp);
     let mut variables = BTreeMap::new();
 
-    for atom in &core.body.atoms {
+    // A self-binding occurrence is an ordinary row scan: the selected column
+    // supplies the probe, making the disjunction tautological. Alias both rule
+    // variables before lowering any atom so source order cannot split them.
+    for (&atom_index, &column) in &index_validation.self_binding_columns {
+        let atom = &core.body.atoms[atom_index];
+        let GenericAtomTerm::Var(_, probe) = &atom.args[0] else {
+            continue;
+        };
+        let row_term = &atom.args[column + 1];
+        let entry = rule_entry(&mut builder, &mut variables, row_term)?;
+        variables.insert(probe.id, entry);
+    }
+
+    for (atom_index, atom) in core.body.atoms.iter().enumerate() {
         let entries = rule_entries(&mut builder, &mut variables, &atom.args)?;
         match &atom.head {
             RuleBodyCall::Table { id, read } => {
                 builder.query_table(*id, &entries, read.is_subsumed())?;
+            }
+            RuleBodyCall::IndexTable { id, any_of, read } => {
+                // An index is declared as the relation `(value, row…) -> Unit`, so
+                // its atom carries the occurring value, the indexed function's row,
+                // and the relation's own unit output. Only the row belongs to the
+                // underlying function.
+                let (indexed, rest) = entries.split_first().ok_or_else(|| {
+                    anyhow::anyhow!("validated index atom unexpectedly has no probe")
+                })?;
+                let (_unit, row) = rest.split_last().ok_or_else(|| {
+                    anyhow::anyhow!("validated index atom unexpectedly has no Unit output")
+                })?;
+                if index_validation
+                    .self_binding_columns
+                    .contains_key(&atom_index)
+                {
+                    builder.query_table(*id, row, read.is_subsumed())?;
+                } else {
+                    let any_of = any_of
+                        .iter()
+                        .copied()
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .into_iter()
+                        .collect::<Vec<_>>();
+                    builder.query_table_by_occurrence(
+                        *id,
+                        row,
+                        indexed.clone(),
+                        &any_of,
+                        read.is_subsumed(),
+                    )?;
+                }
             }
             RuleBodyCall::Primitive { id, output, .. } => {
                 builder.query_prim(*id, &entries, *output)?;
@@ -290,5 +513,321 @@ impl Backend for EGraph {
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egglog_ast::{
+        core::{GenericAtom, GenericCoreAction, GenericCoreActions, GenericCoreRule, Query},
+        generic_ast::Change,
+        span::Span,
+    };
+    use egglog_numeric_id::NumericId;
+
+    fn index_rule(
+        name: &str,
+        source: FunctionId,
+        any_of: Vec<usize>,
+        args: Vec<GenericAtomTerm<RuleVar, RuleValue>>,
+    ) -> RuleSpec {
+        RuleSpec {
+            name: name.into(),
+            seminaive: false,
+            no_decomp: false,
+            core: GenericCoreRule {
+                span: Span::Panic,
+                body: Query {
+                    atoms: vec![GenericAtom {
+                        span: Span::Panic,
+                        head: RuleBodyCall::IndexTable {
+                            id: source,
+                            any_of,
+                            read: crate::ReadMode::All,
+                        },
+                        args,
+                    }],
+                },
+                head: GenericCoreActions::new(vec![]),
+            },
+        }
+    }
+
+    #[test]
+    fn malformed_index_rules_do_not_consume_reference_rule_ids() {
+        let mut backend = EGraph::default();
+        let unit_ty = ColumnTy::Base(backend.base_values_mut().register_type::<()>());
+        let i64_ty = ColumnTy::Base(backend.base_values_mut().register_type::<i64>());
+        let bool_ty = ColumnTy::Base(backend.base_values_mut().register_type::<bool>());
+        let unit = backend.base_values().get(());
+        let one = backend.base_values().get(1_i64);
+        let yes = backend.base_values().get(true);
+        let source = Backend::add_table(
+            &mut backend,
+            FunctionConfig {
+                schema: vec![i64_ty, bool_ty],
+                n_vals: 1,
+                n_identity_vals: None,
+                default: crate::DefaultVal::Fail,
+                merge: egglog_bridge::MergeFn::Old,
+                name: "reference index validation source".into(),
+                can_subsume: false,
+            },
+        );
+        let reachability_source = Backend::add_table(
+            &mut backend,
+            FunctionConfig {
+                schema: vec![i64_ty, i64_ty, i64_ty],
+                n_vals: 1,
+                n_identity_vals: None,
+                default: crate::DefaultVal::Fail,
+                merge: egglog_bridge::MergeFn::Old,
+                name: "reference index reachability source".into(),
+                can_subsume: false,
+            },
+        );
+        let literal = |value, ty| GenericAtomTerm::Literal(Span::Panic, RuleValue { value, ty });
+        let variable = |id, ty| {
+            GenericAtomTerm::Var(
+                Span::Panic,
+                RuleVar {
+                    id,
+                    name: format!("v{id}").into(),
+                    ty,
+                },
+            )
+        };
+        let valid_args = vec![
+            literal(one, i64_ty),
+            literal(one, i64_ty),
+            literal(yes, bool_ty),
+            literal(unit, unit_ty),
+        ];
+        let x = variable(20, i64_ty);
+        let y = variable(21, i64_ty);
+        let mut cyclic = index_rule(
+            "mutually cyclic probes",
+            reachability_source,
+            vec![0, 1],
+            vec![
+                x.clone(),
+                y.clone(),
+                literal(one, i64_ty),
+                literal(one, i64_ty),
+                literal(unit, unit_ty),
+            ],
+        );
+        cyclic.core.body.atoms.push(GenericAtom {
+            span: Span::Panic,
+            head: RuleBodyCall::IndexTable {
+                id: reachability_source,
+                any_of: vec![0, 1],
+                read: crate::ReadMode::All,
+            },
+            args: vec![
+                y,
+                x.clone(),
+                literal(one, i64_ty),
+                literal(one, i64_ty),
+                literal(unit, unit_ty),
+            ],
+        });
+        let unindexed_repeat = index_rule(
+            "probe repeated only at unindexed column",
+            reachability_source,
+            vec![0, 1],
+            vec![
+                x.clone(),
+                literal(one, i64_ty),
+                literal(one, i64_ty),
+                x,
+                literal(unit, unit_ty),
+            ],
+        );
+        let mut short = valid_args.clone();
+        short.pop();
+        // Registered Reference tables own rebuild rules, so compare with a clean
+        // clone at this exact table state rather than assuming an absolute id.
+        let expected_id = Backend::add_rule(
+            &mut backend.clone(),
+            index_rule(
+                "clean-clone duplicate occurrence columns",
+                source,
+                vec![0, 0],
+                valid_args.clone(),
+            ),
+        )
+        .expect("clean baseline rule is valid");
+        let malformed = vec![
+            cyclic,
+            unindexed_repeat,
+            index_rule("short index", source, vec![0], short),
+            index_rule("empty occurrence set", source, vec![], valid_args.clone()),
+            index_rule(
+                "out-of-range occurrence",
+                source,
+                vec![2],
+                valid_args.clone(),
+            ),
+            index_rule("mixed probe types", source, vec![0, 1], valid_args.clone()),
+            index_rule(
+                "mistyped row",
+                source,
+                vec![0],
+                vec![
+                    literal(one, i64_ty),
+                    literal(yes, bool_ty),
+                    literal(yes, bool_ty),
+                    literal(unit, unit_ty),
+                ],
+            ),
+            index_rule(
+                "nonliteral Unit output",
+                source,
+                vec![0],
+                vec![
+                    literal(one, i64_ty),
+                    literal(one, i64_ty),
+                    literal(yes, bool_ty),
+                    variable(9, unit_ty),
+                ],
+            ),
+            index_rule(
+                "mistyped Unit output",
+                source,
+                vec![0],
+                vec![
+                    literal(one, i64_ty),
+                    literal(one, i64_ty),
+                    literal(yes, bool_ty),
+                    literal(one, i64_ty),
+                ],
+            ),
+            index_rule(
+                "noncanonical Unit output",
+                source,
+                vec![0],
+                vec![
+                    literal(one, i64_ty),
+                    literal(one, i64_ty),
+                    literal(yes, bool_ty),
+                    literal(Value::new(unit.rep() + 1), unit_ty),
+                ],
+            ),
+            index_rule(
+                "unbound probe",
+                reachability_source,
+                vec![0, 1],
+                vec![
+                    variable(10, i64_ty),
+                    literal(one, i64_ty),
+                    literal(one, i64_ty),
+                    literal(one, i64_ty),
+                    literal(unit, unit_ty),
+                ],
+            ),
+            index_rule(
+                "unregistered target",
+                FunctionId::new(source.rep() + 50),
+                vec![0],
+                valid_args.clone(),
+            ),
+        ];
+        for rule in malformed {
+            Backend::add_rule(&mut backend, rule).expect_err("malformed index must be rejected");
+        }
+        let id = Backend::add_rule(
+            &mut backend,
+            index_rule(
+                "valid duplicate occurrence columns",
+                source,
+                vec![0, 0],
+                valid_args,
+            ),
+        )
+        .expect("duplicates have set semantics");
+        assert_eq!(id, expected_id);
+    }
+
+    #[test]
+    fn subsumed_read_of_nonsubsumable_table_is_empty() -> Result<()> {
+        let mut backend = EGraph::default();
+        let unit_ty = ColumnTy::Base(backend.base_values_mut().register_type::<()>());
+        let unit = backend.base_values().get(());
+        let config = |name: &str| FunctionConfig {
+            schema: vec![ColumnTy::Id, unit_ty],
+            n_vals: 1,
+            n_identity_vals: None,
+            default: crate::DefaultVal::Fail,
+            merge: egglog_bridge::MergeFn::AssertEq,
+            name: name.into(),
+            can_subsume: false,
+        };
+        let source = Backend::add_table(&mut backend, config("nonsubsumable source"));
+        let token = Backend::add_table(&mut backend, config("nonsubsumable token"));
+        let key_value = Backend::fresh_id(&mut backend);
+        Backend::add_values(
+            &mut backend,
+            vec![
+                (source, vec![key_value, unit]),
+                (token, vec![key_value, unit]),
+            ],
+        )?;
+        let key = RuleVar {
+            id: 0,
+            name: "key".into(),
+            ty: ColumnTy::Id,
+        };
+        let key_term = GenericAtomTerm::Var(Span::Panic, key);
+        let unit_term = GenericAtomTerm::Literal(
+            Span::Panic,
+            RuleValue {
+                value: unit,
+                ty: unit_ty,
+            },
+        );
+        let id = Backend::add_rule(
+            &mut backend,
+            RuleSpec {
+                name: "nonsubsumable Subsumed is empty".into(),
+                seminaive: false,
+                no_decomp: false,
+                core: GenericCoreRule {
+                    span: Span::Panic,
+                    body: Query {
+                        atoms: vec![GenericAtom {
+                            span: Span::Panic,
+                            head: RuleBodyCall::Table {
+                                id: source,
+                                read: crate::ReadMode::Subsumed,
+                            },
+                            args: vec![key_term.clone(), unit_term],
+                        }],
+                    },
+                    head: GenericCoreActions::new(vec![GenericCoreAction::Change(
+                        Span::Panic,
+                        Change::Delete,
+                        RuleActionCall::Table {
+                            id: token,
+                            name: "token".into(),
+                        },
+                        vec![key_term],
+                    )]),
+                },
+            },
+        )?;
+        Backend::run_rules(
+            &mut backend,
+            RuleSetRun {
+                name: Some("nonsubsumable Subsumed"),
+                rules: &[id],
+            },
+        )?;
+        assert_eq!(
+            Backend::lookup_id(&backend, token, &[key_value]),
+            Some(unit)
+        );
+        Ok(())
     }
 }

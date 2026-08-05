@@ -1,4 +1,4 @@
-//! Differential coverage for the exact native scalar 34-action rule family.
+//! Differential coverage for native scalar body and action-stream lowering.
 
 use std::collections::BTreeSet;
 
@@ -641,8 +641,16 @@ fn ordered_union(
     }
 }
 
-fn standalone_uf_rejection(
+#[derive(Clone, Copy)]
+enum MutatedMergeAdmission {
+    RegistrationReject,
+    RuleReject,
+    RuleAccept,
+}
+
+fn standalone_uf_admission(
     label: &str,
+    expected: MutatedMergeAdmission,
     mutate: impl FnOnce(&mut FunctionConfig, FunctionId, FunctionId, &mut Fixture<EGraph>),
 ) -> Result<()> {
     let mut fixture = Fixture::new_with_key_count(EGraph::new()?, &format!("{label} fixture"), 1)?;
@@ -685,34 +693,70 @@ fn standalone_uf_rejection(
         can_subsume: false,
     };
     mutate(&mut config, target, wrong_proof, &mut fixture);
-    assert_eq!(fixture.backend.add_table(config), target);
+    let registration = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        fixture.backend.add_table(config)
+    }));
 
     let unit_ty = ColumnTy::Base(fixture.types.unit);
-    let error = fixture
-        .backend
-        .add_rule(single_deferred_uf_rule(
-            source,
-            target,
-            unit_ty,
-            fixture.unit_value,
-            &format!("{label} invalid standalone UF rule"),
-        ))
-        .unwrap_err();
-    assert!(
-        format!("{error:#}").contains("DuckDB scalar rule"),
-        "{label} escaped standalone UF admission: {error:#}"
-    );
-    assert_eq!(
-        fixture.backend.add_rule(single_deferred_uf_rule(
-            source,
-            fixture.uf,
-            unit_ty,
-            fixture.unit_value,
-            &format!("{label} valid standalone UF rule"),
-        ))?,
-        RuleId::new(0),
-        "{label} consumed a RuleId"
-    );
+    match (registration, expected) {
+        (Err(_), MutatedMergeAdmission::RegistrationReject) => {
+            assert_eq!(
+                fixture.backend.add_rule(single_deferred_uf_rule(
+                    source,
+                    fixture.uf,
+                    unit_ty,
+                    fixture.unit_value,
+                    &format!("{label} valid after registration rejection"),
+                ))?,
+                RuleId::new(0),
+                "{label} registration rejection consumed a RuleId"
+            );
+        }
+        (Ok(registered), MutatedMergeAdmission::RuleAccept) => {
+            assert_eq!(registered, target);
+            let id = fixture.backend.add_rule(single_deferred_uf_rule(
+                source,
+                target,
+                unit_ty,
+                fixture.unit_value,
+                &format!("{label} mutated generic rule"),
+            ))?;
+            assert_eq!(id, RuleId::new(0), "{label} generic admission");
+        }
+        (Ok(registered), MutatedMergeAdmission::RuleReject) => {
+            assert_eq!(registered, target);
+            let error = fixture
+                .backend
+                .add_rule(single_deferred_uf_rule(
+                    source,
+                    target,
+                    unit_ty,
+                    fixture.unit_value,
+                    &format!("{label} rejected generic rule"),
+                ))
+                .unwrap_err();
+            assert!(
+                format!("{error:#}").contains("DuckDB scalar rule")
+                    || format!("{error:#}").contains("generic merge"),
+                "{label} escaped generic admission boundary: {error:#}"
+            );
+            assert_eq!(
+                fixture.backend.add_rule(single_deferred_uf_rule(
+                    source,
+                    fixture.uf,
+                    unit_ty,
+                    fixture.unit_value,
+                    &format!("{label} valid after rule rejection"),
+                ))?,
+                RuleId::new(0),
+                "{label} rule rejection consumed a RuleId"
+            );
+        }
+        (Err(_), _) => panic!("{label} unexpectedly failed during registration"),
+        (Ok(_), MutatedMergeAdmission::RegistrationReject) => {
+            panic!("{label} unexpectedly passed registration")
+        }
+    }
     Ok(())
 }
 
@@ -872,45 +916,83 @@ fn direct_canary_rule(fixture: &Fixture<EGraph>, name: &str) -> RuleSpec {
     }
 }
 
+fn one_value_set_rule(source: FunctionId, target: FunctionId, name: &str) -> RuleSpec {
+    let key = binding(940, "unsupported merge key", ColumnTy::Id);
+    let value = binding(941, "unsupported merge value", ColumnTy::Id);
+    RuleSpec {
+        name: name.to_string(),
+        seminaive: true,
+        no_decomp: false,
+        core: GenericCoreRule {
+            span: Span::Panic,
+            body: Query {
+                atoms: vec![GenericAtom {
+                    span: Span::Panic,
+                    head: RuleBodyCall::Table {
+                        id: source,
+                        read: ReadMode::Live,
+                    },
+                    args: vec![variable(key.clone()), variable(value.clone())],
+                }],
+            },
+            head: GenericCoreActions::new(vec![set_action(
+                target,
+                vec![variable(key)],
+                vec![variable(value)],
+            )]),
+        },
+    }
+}
+
 fn selected_rejection(
     label: &str,
+    should_accept: bool,
     mutate: impl FnOnce(&mut Fixture<EGraph>, &mut RuleSpec),
 ) -> Result<()> {
     let mut fixture = Fixture::new(EGraph::new()?, label)?;
     let mut invalid = fixture.scalar_rule(&format!("{label} invalid"));
     mutate(&mut fixture, &mut invalid);
-    let error = fixture.backend.add_rule(invalid).unwrap_err();
-    assert!(
-        error.to_string().contains("scalar-mixed"),
-        "{label} escaped selected admission: {error:#}"
-    );
-    assert_eq!(
-        fixture
-            .backend
-            .add_rule(fixture.scalar_rule(&format!("{label} valid")))?,
-        RuleId::new(0)
-    );
+    match (fixture.backend.add_rule(invalid), should_accept) {
+        (Ok(id), true) => assert_eq!(id, RuleId::new(0), "{label} generic admission"),
+        (Err(error), false) => {
+            assert!(
+                format!("{error:#}").contains("DuckDB scalar rule"),
+                "{label} escaped selected admission: {error:#}"
+            );
+            assert_eq!(
+                fixture
+                    .backend
+                    .add_rule(fixture.scalar_rule(&format!("{label} valid")))?,
+                RuleId::new(0)
+            );
+        }
+        (Ok(id), false) => panic!("{label} unexpectedly admitted as {id:?}"),
+        (Err(error), true) => panic!("{label} unexpectedly rejected: {error:#}"),
+    }
     Ok(())
 }
 
 fn unselected_rejection(
     label: &str,
+    should_accept: bool,
     mutate: impl FnOnce(&mut Fixture<EGraph>, &mut RuleSpec),
 ) -> Result<()> {
     let mut fixture = Fixture::new(EGraph::new()?, label)?;
     let mut invalid = fixture.scalar_rule(&format!("{label} invalid"));
     mutate(&mut fixture, &mut invalid);
-    let error = fixture.backend.add_rule(invalid).unwrap_err();
-    assert!(
-        !error.to_string().contains("scalar-mixed"),
-        "{label} was incorrectly selected: {error:#}"
-    );
-    assert_eq!(
-        fixture
-            .backend
-            .add_rule(fixture.scalar_rule(&format!("{label} valid")))?,
-        RuleId::new(0)
-    );
+    match (fixture.backend.add_rule(invalid), should_accept) {
+        (Ok(id), true) => assert_eq!(id, RuleId::new(0), "{label} generic admission"),
+        (Err(_), false) => {
+            assert_eq!(
+                fixture
+                    .backend
+                    .add_rule(fixture.scalar_rule(&format!("{label} valid")))?,
+                RuleId::new(0)
+            );
+        }
+        (Ok(id), false) => panic!("{label} unexpectedly admitted as {id:?}"),
+        (Err(error), true) => panic!("{label} unexpectedly rejected: {error:#}"),
+    }
     Ok(())
 }
 
@@ -1414,6 +1496,14 @@ fn two_matches_are_alpha_equivalent_and_fresh_action_major() -> Result<()> {
     let second = derive_match_fresh(&duckdb_transcript, 21, 72, 80, [4, 3]);
     assert_eq!(
         first,
+        derive_match_fresh(&reference_transcript, 20, 71, 70, [2, 1])
+    );
+    assert_eq!(
+        second,
+        derive_match_fresh(&reference_transcript, 21, 72, 80, [4, 3])
+    );
+    assert_eq!(
+        first,
         std::array::from_fn(|rank| 100 + u32::try_from(rank).unwrap() * 2)
     );
     assert_eq!(
@@ -1555,7 +1645,11 @@ fn missing_and_duplicate_lookups_abort_before_mutation() -> Result<()> {
                 rules: &[rule],
             })
             .unwrap_err();
-        assert!(error.to_string().contains("exactly one pre-wave owner"));
+        if duplicate {
+            assert!(error.to_string().contains("found duplicate owners"));
+        } else {
+            assert!(error.to_string().contains("exactly one pre-wave owner"));
+        }
         assert_eq!(fixture.backend.storage.generation()?, generation);
         assert_eq!(fixture.backend.storage.next_fresh_id()?, 100);
         assert_eq!(watermark(&fixture.backend, rule), 0);
@@ -1697,24 +1791,24 @@ fn a_distinct_live_context_fresh_token_is_accepted() -> Result<()> {
 
 #[test]
 fn selected_mutation_matrix_preserves_rule_id_zero() -> Result<()> {
-    selected_rejection("wrong seminaive", |_, rule| rule.seminaive = false)?;
-    selected_rejection("wrong decomposition", |_, rule| rule.no_decomp = true)?;
-    unselected_rejection("wrong body mode", |_, rule| {
+    selected_rejection("wrong seminaive", true, |_, rule| rule.seminaive = false)?;
+    selected_rejection("wrong decomposition", true, |_, rule| rule.no_decomp = true)?;
+    unselected_rejection("wrong body mode", true, |_, rule| {
         let RuleBodyCall::Table { read, .. } = &mut rule.core.body.atoms[0].head else {
             unreachable!();
         };
         *read = ReadMode::All;
     })?;
-    selected_rejection("short action stream", |_, rule| {
+    selected_rejection("short action stream", true, |_, rule| {
         rule.core.head.0.pop();
     })?;
-    selected_rejection("moved lookup", |_, rule| {
+    selected_rejection("moved lookup", false, |_, rule| {
         rule.core.head.0.swap(2, 4);
     })?;
-    selected_rejection("extra lookup", |_, rule| {
+    selected_rejection("extra lookup", false, |_, rule| {
         rule.core.head.0[1] = rule.core.head.0[2].clone();
     })?;
-    selected_rejection("use before binding", |_, rule| {
+    selected_rejection("use before binding", false, |_, rule| {
         let future = match &rule.core.head.0[7] {
             GenericCoreAction::Let(_, binding, ..) => variable(binding.clone()),
             _ => unreachable!(),
@@ -1724,7 +1818,7 @@ fn selected_mutation_matrix_preserves_rule_id_zero() -> Result<()> {
         };
         keys[0] = future;
     })?;
-    selected_rejection("ssa rebinding", |_, rule| {
+    selected_rejection("ssa rebinding", false, |_, rule| {
         let owner = match &rule.core.body.atoms[0].args[2] {
             GenericAtomTerm::Var(_, owner) => owner.clone(),
             _ => unreachable!(),
@@ -1734,19 +1828,19 @@ fn selected_mutation_matrix_preserves_rule_id_zero() -> Result<()> {
         };
         *binding = owner;
     })?;
-    selected_rejection("wrong fresh type", |fixture, rule| {
+    selected_rejection("wrong fresh type", false, |fixture, rule| {
         let GenericCoreAction::Let(_, binding, ..) = &mut rule.core.head.0[4] else {
             unreachable!();
         };
         binding.ty = ColumnTy::Base(fixture.types.string);
     })?;
-    selected_rejection("wrong set arity", |_, rule| {
+    selected_rejection("wrong set arity", false, |_, rule| {
         let GenericCoreAction::Set(_, _, keys, _) = &mut rule.core.head.0[6] else {
             unreachable!();
         };
         keys.pop();
     })?;
-    selected_rejection("wrong head fresh token", |fixture, rule| {
+    selected_rejection("wrong head fresh token", false, |fixture, rule| {
         let token = fixture
             .backend
             .new_panic("wrong head token must remain declarative".to_string());
@@ -1757,7 +1851,7 @@ fn selected_mutation_matrix_preserves_rule_id_zero() -> Result<()> {
         };
         *id = token;
     })?;
-    selected_rejection("mixed live fresh tokens", |fixture, rule| {
+    selected_rejection("mixed live fresh tokens", true, |fixture, rule| {
         let token = fixture.backend.register_get_fresh();
         let GenericCoreAction::Let(_, _, RuleActionCall::Primitive { id, .. }, _) =
             &mut rule.core.head.0[7]
@@ -1766,7 +1860,7 @@ fn selected_mutation_matrix_preserves_rule_id_zero() -> Result<()> {
         };
         *id = token;
     })?;
-    selected_rejection("wrong fresh signature", |fixture, rule| {
+    selected_rejection("wrong fresh signature", false, |fixture, rule| {
         let GenericCoreAction::Let(_, _, RuleActionCall::Primitive { output, .. }, _) =
             &mut rule.core.head.0[4]
         else {
@@ -1774,7 +1868,7 @@ fn selected_mutation_matrix_preserves_rule_id_zero() -> Result<()> {
         };
         *output = ColumnTy::Base(fixture.types.unit);
     })?;
-    selected_rejection("different old target", |fixture, rule| {
+    selected_rejection("different old target", true, |fixture, rule| {
         let replacement = fixture.backend.add_table(FunctionConfig {
             schema: vec![ColumnTy::Id, ColumnTy::Id],
             n_vals: 1,
@@ -1791,7 +1885,7 @@ fn selected_mutation_matrix_preserves_rule_id_zero() -> Result<()> {
         };
         *id = replacement;
     })?;
-    selected_rejection("wrong ordinary config", |fixture, rule| {
+    selected_rejection("wrong ordinary config", false, |fixture, rule| {
         let GenericCoreAction::Set(_, RuleActionCall::Table { id, .. }, _, _) =
             &mut rule.core.head.0[12]
         else {
@@ -1799,7 +1893,7 @@ fn selected_mutation_matrix_preserves_rule_id_zero() -> Result<()> {
         };
         *id = fixture.old;
     })?;
-    selected_rejection("second view set", |fixture, rule| {
+    selected_rejection("second view set", false, |fixture, rule| {
         let GenericCoreAction::Set(_, RuleActionCall::Table { id, .. }, _, _) =
             &mut rule.core.head.0[46]
         else {
@@ -1807,7 +1901,7 @@ fn selected_mutation_matrix_preserves_rule_id_zero() -> Result<()> {
         };
         *id = fixture.view;
     })?;
-    selected_rejection("wrong action kind", |fixture, rule| {
+    selected_rejection("wrong action kind", false, |fixture, rule| {
         rule.core.head.0[6] = GenericCoreAction::Change(
             Span::Panic,
             Change::Delete,
@@ -1816,13 +1910,116 @@ fn selected_mutation_matrix_preserves_rule_id_zero() -> Result<()> {
         );
     })?;
     for index in [0, 3, 5, 8, 11, 14, 18, 21, 24, 27, 31, 34, 37, 40, 45, 48] {
-        selected_rejection(&format!("scaffolding alias {index}"), move |_, rule| {
-            let GenericCoreAction::LetAtomTerm(_, _, source) = &mut rule.core.head.0[index] else {
-                unreachable!("scaffolding index {index} must be an SSA alias")
-            };
-            *source = literal(Value::new(4_000_000 + index as u32), ColumnTy::Id);
-        })?;
+        selected_rejection(
+            &format!("scaffolding alias {index}"),
+            true,
+            move |_, rule| {
+                let GenericCoreAction::LetAtomTerm(_, _, source) = &mut rule.core.head.0[index]
+                else {
+                    unreachable!("scaffolding index {index} must be an SSA alias")
+                };
+                *source = literal(Value::new(4_000_000 + index as u32), ColumnTy::Id);
+            },
+        )?;
     }
+    Ok(())
+}
+
+#[test]
+fn unsupported_merge_function_lookup_and_fd_reject_before_rule_id_and_state() -> Result<()> {
+    let mut fixture = Fixture::new(EGraph::new()?, "unsupported merge operations")?;
+    let tuple = fixture.backend.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::Old,
+        name: "unsupported merge tuple".to_string(),
+        can_subsume: false,
+    });
+    let fd = fixture
+        .backend
+        .register_set_if_empty("unsupported merge fd".to_string(), 1, 1);
+    let targets = [
+        ("Function", MergeFn::Function(tuple, vec![MergeFn::Old])),
+        ("Lookup", MergeFn::Lookup(tuple, vec![MergeFn::Old])),
+        (
+            "FD",
+            MergeFn::Primitive {
+                id: fd,
+                name: "unsupported merge fd".to_string(),
+                input: vec![ColumnTy::Id, ColumnTy::Id],
+                output: ColumnTy::Id,
+                args: vec![MergeFn::Old, MergeFn::New],
+            },
+        ),
+    ];
+    let generation = fixture.backend.storage.generation()?;
+    let fresh = fixture.backend.storage.next_fresh_id()?;
+    let trace = fixture.backend.storage.latest_rule_sql();
+    for (label, merge) in targets {
+        let target = fixture.backend.add_table(FunctionConfig {
+            schema: vec![ColumnTy::Id, ColumnTy::Id],
+            n_vals: 1,
+            n_identity_vals: None,
+            default: DefaultVal::Fail,
+            merge,
+            name: format!("unsupported merge {label}"),
+            can_subsume: false,
+        });
+        let error = fixture
+            .backend
+            .add_rule(one_value_set_rule(
+                fixture.old,
+                target,
+                &format!("unsupported merge {label} rule"),
+            ))
+            .unwrap_err();
+        assert!(format!("{error:#}").contains(label), "{error:#}");
+        assert_eq!(fixture.backend.storage.generation()?, generation);
+        assert_eq!(fixture.backend.storage.next_fresh_id()?, fresh);
+        assert_eq!(fixture.backend.storage.latest_rule_sql(), trace);
+        assert!(fixture.backend.last_rule_match_counts().is_empty());
+        assert!(fixture.backend.last_rule_insert_counts().is_empty());
+    }
+    assert_eq!(
+        fixture.backend.add_rule(direct_canary_rule(
+            &fixture,
+            "valid after unsupported merges"
+        ))?,
+        RuleId::new(0)
+    );
+    Ok(())
+}
+
+#[test]
+fn table_registered_merge_authority_rejects_same_kind_aba_before_rule_id() -> Result<()> {
+    let mut fixture = Fixture::new(EGraph::new()?, "table registration merge ABA")?;
+    let stale = fixture.primitives.proof_min;
+    fixture.backend.free_external_func(stale);
+    let replacement = fixture
+        .backend
+        .register_native_primitive(NativePrimitive::SelectMinPayload);
+    assert_eq!(replacement, stale, "the canary requires same-id reuse");
+
+    let error = fixture
+        .backend
+        .add_rule(single_deferred_view_rule(
+            fixture.old,
+            fixture.view,
+            "stale table registration merge authority",
+        ))
+        .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("stale registration authority"),
+        "{error:#}"
+    );
+    assert_eq!(
+        fixture
+            .backend
+            .add_rule(direct_canary_rule(&fixture, "valid after table ABA"))?,
+        RuleId::new(0)
+    );
     Ok(())
 }
 
@@ -1835,9 +2032,7 @@ fn self_consistent_nonfresh_token_is_rejected_before_rule_id() -> Result<()> {
         .add_rule(fixture.scalar_rule("fake fresh scalar rule"))
         .unwrap_err();
     assert!(
-        error
-            .to_string()
-            .contains("live registered get-fresh token"),
+        format!("{error:#}").contains("unauthenticated or callback primitive token"),
         "{error:#}"
     );
     assert_eq!(
@@ -1867,9 +2062,7 @@ fn freed_fresh_token_reused_by_ordinary_callback_loses_authority() -> Result<()>
         .add_rule(fixture.scalar_rule("stale fresh scalar rule"))
         .unwrap_err();
     assert!(
-        error
-            .to_string()
-            .contains("live registered get-fresh token"),
+        format!("{error:#}").contains("unauthenticated or callback primitive token"),
         "{error:#}"
     );
     assert_eq!(
@@ -2046,7 +2239,7 @@ fn complete_standalone_uf_scalar_uses_head_then_self_wave_fresh_order() -> Resul
     assert_eq!(duckdb.backend.last_rule_insert_counts(), &[15]);
 
     let trace = duckdb.backend.storage.latest_rule_sql().join("\n");
-    assert!(trace.contains("egglog_scalar_queue_"));
+    assert!(trace.contains("egglog_scalar_generic_queue_"));
     assert!(trace.contains("CAST('1' AS UBIGINT)"));
     for forbidden in [
         "CAST(NULL",
@@ -2063,75 +2256,119 @@ fn complete_standalone_uf_scalar_uses_head_then_self_wave_fresh_order() -> Resul
 }
 
 #[test]
-fn standalone_uf_structural_mutations_fail_before_rule_id() -> Result<()> {
-    standalone_uf_rejection("wrong schema", |config, _, _, fixture| {
-        config.schema[2] = ColumnTy::Base(fixture.types.unit);
-    })?;
-    standalone_uf_rejection("wrong identity count", |config, _, _, _| {
-        config.n_identity_vals = Some(2);
-    })?;
-    standalone_uf_rejection("wrong default", |config, _, _, fixture| {
-        config.default = DefaultVal::Const(fixture.unit_value);
-    })?;
-    standalone_uf_rejection("wrong subsumption", |config, _, _, _| {
-        config.can_subsume = true;
-    })?;
-    standalone_uf_rejection("wrong orientation", |config, target, _, fixture| {
-        config.merge = ordered_union(
-            fixture.primitives,
-            fixture.merge_label,
-            fixture.types,
-            fixture.unit_value,
-            fixture.sym,
-            fixture.trans,
-            target,
-            true,
-        );
-    })?;
-    standalone_uf_rejection("wrong displaced target", |config, _, _, fixture| {
-        let actions = ordered_union_actions_mut(config);
-        let MergeAction::Set(displaced, _) = &mut actions[6] else {
-            unreachable!()
-        };
-        *displaced = fixture.uf;
-    })?;
-    standalone_uf_rejection("wrong action order", |config, _, _, _| {
-        ordered_union_actions_mut(config).swap(3, 4);
-    })?;
-    standalone_uf_rejection("wrong displaced action", |config, _, _, _| {
-        ordered_union_actions_mut(config)[6] =
-            MergeAction::Union(MergeFn::OldCol(0), MergeFn::NewCol(0));
-    })?;
-    standalone_uf_rejection("wrong proof target", |config, _, wrong_proof, _| {
-        let actions = ordered_union_actions_mut(config);
-        let MergeAction::Set(target, _) = &mut actions[3] else {
-            unreachable!()
-        };
-        *target = wrong_proof;
-    })?;
-    standalone_uf_rejection("wrong primitive tag", |config, _, _, fixture| {
-        let actions = ordered_union_actions_mut(config);
-        let MergeAction::Let { value, .. } = &mut actions[0] else {
-            unreachable!()
-        };
-        let MergeFn::Primitive { id, .. } = value else {
-            unreachable!()
-        };
-        *id = fixture.primitives.ordering_max;
-    })?;
-    standalone_uf_rejection("wrong fresh authority", |config, _, _, fixture| {
-        let ordinary = fixture
-            .backend
-            .new_panic("ordinary callback cannot mint merge proofs".to_string());
-        let actions = ordered_union_actions_mut(config);
-        let MergeAction::Let { value, .. } = &mut actions[2] else {
-            unreachable!()
-        };
-        let MergeFn::Primitive { id, .. } = value else {
-            unreachable!()
-        };
-        *id = ordinary;
-    })?;
+fn standalone_uf_structural_mutations_have_exact_generic_admission_outcomes() -> Result<()> {
+    standalone_uf_admission(
+        "wrong schema",
+        MutatedMergeAdmission::RegistrationReject,
+        |config, _, _, fixture| {
+            config.schema[2] = ColumnTy::Base(fixture.types.unit);
+        },
+    )?;
+    standalone_uf_admission(
+        "wrong identity count",
+        MutatedMergeAdmission::RuleAccept,
+        |config, _, _, _| {
+            config.n_identity_vals = Some(2);
+        },
+    )?;
+    standalone_uf_admission(
+        "wrong default",
+        MutatedMergeAdmission::RuleAccept,
+        |config, _, _, fixture| {
+            config.default = DefaultVal::Const(fixture.unit_value);
+        },
+    )?;
+    standalone_uf_admission(
+        "wrong subsumption",
+        MutatedMergeAdmission::RuleAccept,
+        |config, _, _, _| {
+            config.can_subsume = true;
+        },
+    )?;
+    standalone_uf_admission(
+        "wrong orientation",
+        MutatedMergeAdmission::RuleAccept,
+        |config, target, _, fixture| {
+            config.merge = ordered_union(
+                fixture.primitives,
+                fixture.merge_label,
+                fixture.types,
+                fixture.unit_value,
+                fixture.sym,
+                fixture.trans,
+                target,
+                true,
+            );
+        },
+    )?;
+    standalone_uf_admission(
+        "wrong displaced target",
+        MutatedMergeAdmission::RuleAccept,
+        |config, _, _, fixture| {
+            let actions = ordered_union_actions_mut(config);
+            let MergeAction::Set(displaced, _) = &mut actions[6] else {
+                unreachable!()
+            };
+            *displaced = fixture.uf;
+        },
+    )?;
+    standalone_uf_admission(
+        "wrong action order",
+        MutatedMergeAdmission::RuleAccept,
+        |config, _, _, _| {
+            ordered_union_actions_mut(config).swap(3, 4);
+        },
+    )?;
+    standalone_uf_admission(
+        "wrong displaced action",
+        MutatedMergeAdmission::RuleReject,
+        |config, _, _, _| {
+            ordered_union_actions_mut(config)[6] =
+                MergeAction::Union(MergeFn::OldCol(0), MergeFn::NewCol(0));
+        },
+    )?;
+    standalone_uf_admission(
+        "wrong proof target",
+        MutatedMergeAdmission::RuleAccept,
+        |config, _, wrong_proof, _| {
+            let actions = ordered_union_actions_mut(config);
+            let MergeAction::Set(target, _) = &mut actions[3] else {
+                unreachable!()
+            };
+            *target = wrong_proof;
+        },
+    )?;
+    standalone_uf_admission(
+        "wrong primitive tag",
+        MutatedMergeAdmission::RegistrationReject,
+        |config, _, _, fixture| {
+            let actions = ordered_union_actions_mut(config);
+            let MergeAction::Let { value, .. } = &mut actions[0] else {
+                unreachable!()
+            };
+            let MergeFn::Primitive { id, .. } = value else {
+                unreachable!()
+            };
+            *id = fixture.primitives.ordering_max;
+        },
+    )?;
+    standalone_uf_admission(
+        "wrong fresh authority",
+        MutatedMergeAdmission::RuleReject,
+        |config, _, _, fixture| {
+            let ordinary = fixture
+                .backend
+                .new_panic("ordinary callback cannot mint merge proofs".to_string());
+            let actions = ordered_union_actions_mut(config);
+            let MergeAction::Let { value, .. } = &mut actions[2] else {
+                unreachable!()
+            };
+            let MergeFn::Primitive { id, .. } = value else {
+                unreachable!()
+            };
+            *id = ordinary;
+        },
+    )?;
     Ok(())
 }
 
@@ -2257,7 +2494,7 @@ fn standalone_uf_generation_and_quiescence_are_stable() -> Result<()> {
 }
 
 #[test]
-fn standalone_uf_subsumed_owner_rejects_then_retries_exactly() -> Result<()> {
+fn standalone_uf_subsumed_owner_is_replaced_without_resurrection() -> Result<()> {
     let mut fixture = Fixture::new_with_key_count(EGraph::new()?, "standalone subsumed owner", 1)?;
     let source = assert_eq_unit_table(
         &mut fixture.backend,
@@ -2299,14 +2536,14 @@ fn standalone_uf_subsumed_owner_rejects_then_retries_exactly() -> Result<()> {
         Ok(())
     })?;
     let uf = fixture.uf;
-    let physical_owner = |backend: &EGraph| -> Result<(u64, u64, u64, u64, bool)> {
+    let physical_owner = |backend: &EGraph, key: u64| -> Result<(u64, u64, u64, u64, bool)> {
         backend.storage.with_connection(|connection| {
             connection
                 .query_row(
                     &format!(
                         "SELECT c0, c1, c2, __generation, __subsumed FROM {}
-                         WHERE c0 = CAST('1' AS UBIGINT)",
-                        sql_table(uf)
+                         WHERE c0 = CAST('{key}' AS UBIGINT)",
+                        sql_table(uf),
                     ),
                     [],
                     |row| {
@@ -2322,49 +2559,27 @@ fn standalone_uf_subsumed_owner_rejects_then_retries_exactly() -> Result<()> {
                 .map_err(Into::into)
         })
     };
-    let owner_before = physical_owner(&fixture.backend)?;
-    let trace = fixture.backend.storage.latest_rule_sql();
-    let error = fixture
-        .backend
-        .run_rules(RuleSetRun {
-            name: Some("standalone subsumed owner rejection"),
-            rules: &[rule],
-        })
-        .unwrap_err();
-    assert!(error.to_string().contains("subsumed UF owner"), "{error:#}");
-    assert_eq!(fixture.backend.storage.generation()?, generation);
-    assert_eq!(fixture.backend.storage.next_fresh_id()?, 0);
-    assert_eq!(watermark(&fixture.backend, rule), 0);
-    assert_eq!(fixture.backend.storage.latest_rule_sql(), trace);
-    assert_eq!(physical_owner(&fixture.backend)?, owner_before);
-    assert_eq!(fixture.backend.table_size(fixture.uf), 1);
-    assert_eq!(fixture.backend.table_size(fixture.sym), 0);
-    assert_eq!(fixture.backend.table_size(fixture.trans), 0);
-    assert_eq!(fixture.backend.last_rule_match_counts(), &[]);
-    assert_eq!(fixture.backend.last_rule_insert_counts(), &[]);
-    assert_eq!(scalar_scratch_count(&fixture.backend)?, 0);
-
-    fixture.backend.storage.with_connection(|connection| {
-        connection.execute(
-            &format!(
-                "UPDATE {} SET __subsumed = FALSE WHERE c0 = CAST('1' AS UBIGINT)",
-                sql_table(fixture.uf)
-            ),
-            [],
-        )?;
-        Ok(())
-    })?;
     assert!(
         fixture
             .backend
             .run_rules(RuleSetRun {
-                name: Some("standalone retry after clearing subsumption"),
+                name: Some("standalone subsumed owner replacement"),
                 rules: &[rule],
             })?
             .changed()
     );
     assert_eq!(fixture.backend.storage.generation()?, generation + 1);
     assert_eq!(fixture.backend.storage.next_fresh_id()?, 2);
+    assert_eq!(watermark(&fixture.backend, rule), generation);
+    assert_eq!(
+        physical_owner(&fixture.backend, 1)?,
+        (1, 10, 80, generation, true)
+    );
+    assert_eq!(
+        physical_owner(&fixture.backend, 20)?,
+        (20, 10, 1, generation, false)
+    );
+    assert_eq!(fixture.backend.table_size(fixture.uf), 2);
     assert_eq!(
         id_rows(&fixture.backend, fixture.sym, true, fixture.unit_value),
         vec![vec![70, 0]]
@@ -2373,9 +2588,14 @@ fn standalone_uf_subsumed_owner_rejects_then_retries_exactly() -> Result<()> {
         id_rows(&fixture.backend, fixture.trans, true, fixture.unit_value),
         vec![vec![0, 80, 1]]
     );
-    assert_eq!(
-        id_rows(&fixture.backend, fixture.uf, false, fixture.unit_value),
-        vec![vec![1, 10, 80], vec![20, 10, 1]]
+    assert!(
+        !fixture
+            .backend
+            .run_rules(RuleSetRun {
+                name: Some("standalone subsumed owner quiescence"),
+                rules: &[rule],
+            })?
+            .changed()
     );
     assert_eq!(scalar_scratch_count(&fixture.backend)?, 0);
     Ok(())
@@ -2509,6 +2729,8 @@ fn standalone_uf_late_conflict_and_exhaustion_roll_back_then_retry() -> Result<(
                 ],
             ),
         ])?;
+        // This merge program needs exactly two collision Fresh values. Starting
+        // at MAX leaves only one usable Value and must roll back atomically.
         let first_fresh = u64::from(u32::MAX) - 1;
         fixture.backend.storage.set_next_fresh_id(first_fresh)?;
         let rule = fixture.backend.add_rule(single_deferred_uf_rule(
@@ -2741,7 +2963,7 @@ fn collision_exhaustion_rolls_back_then_exact_retry_succeeds() -> Result<()> {
 }
 
 #[test]
-fn mixed_scalar_and_direct_schedule_fails_before_mutation_in_both_orders() -> Result<()> {
+fn formerly_direct_set_shares_one_generic_frozen_schedule() -> Result<()> {
     let mut fixture = Fixture::new(EGraph::new()?, "duckdb mixed schedule")?;
     fixture.advance_fresh_to_100();
     fixture.backend.add_values(vec![
@@ -2757,24 +2979,871 @@ fn mixed_scalar_and_direct_schedule_fails_before_mutation_in_both_orders() -> Re
     let direct = fixture
         .backend
         .add_rule(direct_canary_rule(&fixture, "mixed schedule direct"))?;
-    let generation = fixture.backend.storage.generation()?;
-    for rules in [[scalar, direct], [direct, scalar]] {
-        let error = fixture
+    assert!(
+        fixture
             .backend
             .run_rules(RuleSetRun {
-                name: Some("mixed scalar and direct schedule"),
-                rules: &rules,
-            })
-            .unwrap_err();
-        assert!(error.to_string().contains("cannot mix scalar-mixed"));
-        assert_eq!(fixture.backend.storage.generation()?, generation);
-        assert_eq!(fixture.backend.storage.next_fresh_id()?, 100);
-        assert_eq!(watermark(&fixture.backend, scalar), 0);
-        assert_eq!(watermark(&fixture.backend, direct), 0);
-        assert_eq!(fixture.backend.table_size(fixture.sym), 0);
-        assert_eq!(fixture.backend.table_size(fixture.ast), 0);
-        assert_eq!(scalar_scratch_count(&fixture.backend)?, 0);
+                name: Some("shared generic frozen schedule"),
+                rules: &[direct, scalar],
+            })?
+            .changed()
+    );
+    let mut expected = expected_missing();
+    expected.ast.push(vec![20, 71]);
+    expected.ast.sort();
+    assert_eq!(collect_transcript(&mut fixture), expected);
+    assert_eq!(fixture.backend.table_size(fixture.ast), 5);
+    assert_eq!(fixture.backend.last_rule_match_counts(), &[1, 1]);
+    assert_eq!(scalar_scratch_count(&fixture.backend)?, 0);
+    Ok(())
+}
+
+fn heterogeneous_nested_merge_target_case(
+    backend: &mut impl Backend,
+) -> Result<(FunctionId, FunctionId, FunctionId, Value)> {
+    let string = register_scalar_types(backend).string;
+    let string_ty = ColumnTy::Base(string);
+    let emitted = backend
+        .base_values()
+        .get(Boxed::new("nested exact target".to_string()));
+    let exact = backend.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, string_ty],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::AssertEq,
+        name: "heterogeneous exact nested target".into(),
+        can_subsume: false,
+    });
+    let decoy = backend.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, string_ty],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::AssertEq,
+        name: "heterogeneous same-schema decoy".into(),
+        can_subsume: false,
+    });
+    let owner = backend.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id, string_ty],
+        n_vals: 2,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::Block {
+            actions: vec![
+                MergeAction::Let {
+                    slot: 0,
+                    value: MergeFn::Const {
+                        value: emitted,
+                        ty: string_ty,
+                    },
+                },
+                MergeAction::Set(decoy, vec![MergeFn::OldCol(0), MergeFn::LetVar(0)]),
+            ],
+            result: Box::new(MergeFn::Columns(vec![
+                MergeFn::OldCol(0),
+                MergeFn::LetVar(0),
+            ])),
+        },
+        name: "heterogeneous merge owner".into(),
+        can_subsume: false,
+    });
+    let old = backend
+        .base_values()
+        .get(Boxed::new("old heterogeneous value".to_string()));
+    let new = backend
+        .base_values()
+        .get(Boxed::new("new heterogeneous value".to_string()));
+    backend.add_values(vec![
+        (owner, vec![Value::new(1), Value::new(10), old]),
+        (owner, vec![Value::new(1), Value::new(20), new]),
+    ])?;
+    Ok((owner, exact, decoy, emitted))
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct SevenActionCollisionTranscript {
+    report_changed: bool,
+    source: Vec<Vec<u32>>,
+    owner: Vec<Vec<u32>>,
+    before: Vec<Vec<u32>>,
+    middle: Vec<Vec<u32>>,
+    after: Vec<Vec<u32>>,
+    sym: Vec<Vec<u32>>,
+    trans: Vec<Vec<u32>>,
+    next_fresh: u32,
+}
+
+fn seven_action_middle_target_collision<B: Backend>(
+    mut backend: B,
+    swap_max_to_min: bool,
+    inspect_plan: impl FnOnce(&B, RuleId, FunctionId),
+) -> Result<SevenActionCollisionTranscript> {
+    let types = register_scalar_types(&mut backend);
+    let primitives = register_ordered_primitives(&mut backend);
+    let unit_value = backend.base_values().get(());
+    let merge_label = backend.base_values().get(Boxed::new(
+        "seven-action middle-target proof domain".to_string(),
+    ));
+    let sym = assert_eq_unit_table(
+        &mut backend,
+        "seven-action unary proof target",
+        vec![ColumnTy::Id, ColumnTy::Id],
+        types.unit,
+    );
+    let trans = assert_eq_unit_table(
+        &mut backend,
+        "seven-action binary proof target",
+        vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
+        types.unit,
+    );
+    let same_schema_table = |backend: &mut B, name: &str| {
+        backend.add_table(FunctionConfig {
+            schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
+            n_vals: 2,
+            n_identity_vals: Some(1),
+            default: DefaultVal::Fail,
+            merge: MergeFn::Columns(vec![MergeFn::OldCol(0), MergeFn::OldCol(1)]),
+            name: name.to_string(),
+            can_subsume: false,
+        })
+    };
+    let before = same_schema_table(&mut backend, "same-schema target before literal target");
+    let middle = same_schema_table(&mut backend, "literal middle same-schema target");
+    let after = same_schema_table(&mut backend, "same-schema target after literal target");
+    assert!(before.rep() < middle.rep() && middle.rep() < after.rep());
+
+    let mut merge = ordered_union(
+        primitives,
+        merge_label,
+        types,
+        unit_value,
+        sym,
+        trans,
+        middle,
+        true,
+    );
+    let MergeFn::Block { actions, .. } = &mut merge else {
+        unreachable!("ordered_union always returns a Block")
+    };
+    assert_eq!(actions.len(), 7);
+    let MergeAction::Set(literal_target, _) = &actions[6] else {
+        unreachable!("the seventh canonical action is the displaced Set")
+    };
+    assert_eq!(*literal_target, middle);
+    if swap_max_to_min {
+        let MergeAction::Let { value, .. } = &mut actions[0] else {
+            unreachable!("the first canonical action binds the max-oriented proof")
+        };
+        let MergeFn::Primitive { id, name, .. } = value else {
+            unreachable!("the first canonical Let contains a native primitive")
+        };
+        assert!(
+            name.contains("max"),
+            "the diagnostic must remain misleading"
+        );
+        *id = primitives.proof_min;
     }
+
+    let owner = backend.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
+        n_vals: 2,
+        n_identity_vals: Some(1),
+        default: DefaultVal::Fail,
+        merge,
+        name: "seven-action collision owner".into(),
+        can_subsume: false,
+    });
+    let source = assert_eq_unit_table(
+        &mut backend,
+        "seven-action collision source",
+        vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
+        types.unit,
+    );
+
+    for expected in 0..100 {
+        assert_eq!(backend.fresh_id(), Value::new(expected));
+    }
+    backend.add_values(vec![
+        (owner, vec![Value::new(1), Value::new(50), Value::new(60)]),
+        (
+            source,
+            vec![Value::new(1), Value::new(80), Value::new(90), unit_value],
+        ),
+    ])?;
+    let rule = backend.add_rule(single_deferred_uf_rule(
+        source,
+        owner,
+        ColumnTy::Base(types.unit),
+        unit_value,
+        "seven-action middle-target collision rule",
+    ))?;
+    inspect_plan(&backend, rule, owner);
+    let report = backend.run_rules(RuleSetRun {
+        name: Some("seven-action middle-target collision"),
+        rules: &[rule],
+    })?;
+
+    Ok(SevenActionCollisionTranscript {
+        report_changed: report.changed(),
+        source: id_rows(&backend, source, true, unit_value),
+        owner: id_rows(&backend, owner, false, unit_value),
+        before: id_rows(&backend, before, false, unit_value),
+        middle: id_rows(&backend, middle, false, unit_value),
+        after: id_rows(&backend, after, false, unit_value),
+        sym: id_rows(&backend, sym, true, unit_value),
+        trans: id_rows(&backend, trans, true, unit_value),
+        next_fresh: backend.fresh_id().rep(),
+    })
+}
+
+fn assert_design_b_is_the_only_duckdb_plan(backend: &EGraph, rule: RuleId, owner: FunctionId) {
+    let compiled = &backend.rules[rule.rep() as usize]
+        .as_ref()
+        .expect("differential rule remains registered")
+        .plan;
+    let scalar = compiled
+        .scalar_action()
+        .expect("the production Design-B scalar plan is selected");
+    assert_eq!(scalar.effects().len(), 1);
+    assert_eq!(
+        scalar.effects()[0].kind,
+        crate::action_rule::ScalarEffectKind::GenericMerge
+    );
+    assert_eq!(scalar.effects()[0].target, owner);
+    assert!(compiled.standard_rebuild().is_none());
+    assert!(compiled.marker_rekey().is_none());
+    assert!(compiled.path_compression().is_none());
+}
+
+#[test]
+fn canonical_seven_action_collision_uses_literal_middle_target_like_reference() -> Result<()> {
+    let reference = seven_action_middle_target_collision(
+        egglog_bridge::EGraph::default(),
+        false,
+        |_, _, _| {},
+    )?;
+    let duckdb = seven_action_middle_target_collision(
+        EGraph::new()?,
+        false,
+        assert_design_b_is_the_only_duckdb_plan,
+    )?;
+    assert_eq!(duckdb, reference);
+    assert_eq!(
+        duckdb,
+        SevenActionCollisionTranscript {
+            report_changed: true,
+            source: vec![vec![1, 80, 90]],
+            owner: vec![vec![1, 50, 60]],
+            before: vec![],
+            middle: vec![vec![80, 50, 101]],
+            after: vec![],
+            sym: vec![vec![60, 100]],
+            trans: vec![vec![90, 100, 101]],
+            next_fresh: 102,
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn swapped_select_min_token_beats_misleading_max_diagnostic_like_reference() -> Result<()> {
+    let reference =
+        seven_action_middle_target_collision(egglog_bridge::EGraph::default(), true, |_, _, _| {})?;
+    let duckdb = seven_action_middle_target_collision(
+        EGraph::new()?,
+        true,
+        assert_design_b_is_the_only_duckdb_plan,
+    )?;
+    assert_eq!(duckdb, reference);
+    assert_eq!(duckdb.trans, vec![vec![60, 100, 101]]);
+    assert!(!duckdb.trans.contains(&vec![90, 100, 101]));
+    Ok(())
+}
+
+#[test]
+fn heterogeneous_merge_let_and_literal_nested_target_match_reference() -> Result<()> {
+    let mut duckdb = EGraph::new()?;
+    let (duck_owner, duck_exact, duck_decoy, duck_emitted) =
+        heterogeneous_nested_merge_target_case(&mut duckdb)?;
+    let mut reference = egglog_bridge::EGraph::default();
+    let (reference_owner, reference_exact, reference_decoy, reference_emitted) =
+        heterogeneous_nested_merge_target_case(&mut reference)?;
+
+    assert_eq!(duckdb.table_size(duck_exact), 0);
+    assert_eq!(duckdb.table_size(duck_decoy), 1);
+    assert_eq!(reference.table_size(reference_exact), 0);
+    assert_eq!(reference.table_size(reference_decoy), 1);
+    assert_eq!(
+        duckdb.lookup_row(duck_decoy, &[Value::new(10)]),
+        Some(vec![Value::new(10), duck_emitted])
+    );
+    assert_eq!(
+        reference.lookup_row(reference_decoy, &[Value::new(10)]),
+        Some(vec![Value::new(10), reference_emitted])
+    );
+    assert_eq!(
+        duckdb.lookup_row(duck_owner, &[Value::new(1)]),
+        Some(vec![Value::new(1), Value::new(10), duck_emitted])
+    );
+    assert_eq!(
+        reference.lookup_row(reference_owner, &[Value::new(1)]),
+        Some(vec![Value::new(1), Value::new(10), reference_emitted])
+    );
+    Ok(())
+}
+
+#[test]
+fn merge_old_cannot_be_reinterpreted_through_a_sql_compatible_base_type() -> Result<()> {
+    let mut backend = EGraph::new()?;
+    let unit = register_scalar_types(&mut backend).unit;
+    let boolean = backend.base_values().get_ty::<bool>();
+    let target = backend.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Base(unit), ColumnTy::Base(unit)],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::AssertEq,
+        name: "unit target for mistyped Old".into(),
+        can_subsume: false,
+    });
+    let next = backend.peek_next_function_id();
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        backend.add_table(FunctionConfig {
+            schema: vec![ColumnTy::Id, ColumnTy::Base(boolean)],
+            n_vals: 1,
+            n_identity_vals: None,
+            default: DefaultVal::Fail,
+            merge: MergeFn::Block {
+                actions: vec![MergeAction::Set(target, vec![MergeFn::Old, MergeFn::Old])],
+                result: Box::new(MergeFn::Old),
+            },
+            name: "Bool owner cannot feed Unit target".into(),
+            can_subsume: false,
+        })
+    }))
+    .expect_err("mistyped Old must fail during table registration");
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .expect("registration panic carries a string diagnostic");
+    assert!(
+        message.contains("mistyped Old in merge program"),
+        "{message}"
+    );
+    assert_eq!(backend.peek_next_function_id(), next);
+    assert_eq!(backend.table_size(target), 0);
+    Ok(())
+}
+
+fn cross_key_generic_event_case(backend: &mut impl Backend) -> Result<(FunctionId, FunctionId)> {
+    let sink = backend.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::Old,
+        name: "cross-key event sink".into(),
+        can_subsume: false,
+    });
+    let owner = backend.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::Block {
+            actions: vec![MergeAction::Set(
+                sink,
+                vec![
+                    MergeFn::Const {
+                        value: Value::new(0),
+                        ty: ColumnTy::Id,
+                    },
+                    MergeFn::OldCol(0),
+                ],
+            )],
+            result: Box::new(MergeFn::Old),
+        },
+        name: "cross-key event owner".into(),
+        can_subsume: false,
+    });
+    backend.add_values(vec![(owner, vec![Value::new(2), Value::new(20)])])?;
+    backend.add_values(vec![
+        (owner, vec![Value::new(1), Value::new(10)]),
+        (owner, vec![Value::new(1), Value::new(11)]),
+        (owner, vec![Value::new(2), Value::new(21)]),
+    ])?;
+    Ok((owner, sink))
+}
+
+#[derive(Clone, Copy)]
+enum CrossTargetOrderPath {
+    ScalarAction,
+    NativeInput,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct CrossTargetOrderTranscript {
+    first_sink_owner: Option<Vec<Value>>,
+    second_sink_owner: Option<Vec<Value>>,
+}
+
+fn cross_target_merge_order_case<B: Backend>(
+    mut backend: B,
+    path: CrossTargetOrderPath,
+) -> Result<CrossTargetOrderTranscript> {
+    let sink = backend.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::Old,
+        name: "cross-target KeepOld sink".into(),
+        can_subsume: false,
+    });
+    let mut merge_target = |name: &str, marker: u32| {
+        backend.add_table(FunctionConfig {
+            schema: vec![ColumnTy::Id, ColumnTy::Id],
+            n_vals: 1,
+            n_identity_vals: None,
+            default: DefaultVal::Fail,
+            merge: MergeFn::Block {
+                actions: vec![MergeAction::Set(
+                    sink,
+                    vec![
+                        MergeFn::NewCol(0),
+                        MergeFn::Const {
+                            value: Value::new(marker),
+                            ty: ColumnTy::Id,
+                        },
+                    ],
+                )],
+                result: Box::new(MergeFn::Old),
+            },
+            name: name.into(),
+            can_subsume: false,
+        })
+    };
+    // Deliberately oppose semantic action order and numeric FunctionId order.
+    let low = merge_target("low-id sibling target L", 100);
+    let high = merge_target("high-id sibling target H", 200);
+    assert!(low.rep() < high.rep());
+
+    let source = backend.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id; 4],
+        n_vals: 3,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::Block {
+            actions: vec![
+                MergeAction::Set(high, vec![MergeFn::OldCol(0), MergeFn::NewCol(1)]),
+                MergeAction::Set(low, vec![MergeFn::OldCol(0), MergeFn::NewCol(2)]),
+            ],
+            result: Box::new(MergeFn::Columns(vec![
+                MergeFn::OldCol(0),
+                MergeFn::OldCol(1),
+                MergeFn::OldCol(2),
+            ])),
+        },
+        name: "source writes H then L".into(),
+        can_subsume: false,
+    });
+    backend.add_values(vec![
+        (low, vec![Value::new(1), Value::new(99)]),
+        (low, vec![Value::new(2), Value::new(99)]),
+        (high, vec![Value::new(1), Value::new(99)]),
+        (high, vec![Value::new(2), Value::new(99)]),
+        (
+            source,
+            vec![Value::new(1), Value::new(1), Value::new(99), Value::new(99)],
+        ),
+        (
+            source,
+            vec![Value::new(2), Value::new(2), Value::new(99), Value::new(99)],
+        ),
+    ])?;
+    let candidates = vec![
+        (
+            source,
+            vec![Value::new(1), Value::new(1), Value::new(10), Value::new(20)],
+        ),
+        (
+            source,
+            vec![Value::new(2), Value::new(2), Value::new(20), Value::new(10)],
+        ),
+    ];
+    match path {
+        CrossTargetOrderPath::NativeInput => backend.add_values(candidates)?,
+        CrossTargetOrderPath::ScalarAction => {
+            let trigger = backend.add_table(FunctionConfig {
+                schema: vec![ColumnTy::Id; 4],
+                n_vals: 3,
+                n_identity_vals: None,
+                default: DefaultVal::Fail,
+                merge: MergeFn::Columns(vec![
+                    MergeFn::OldCol(0),
+                    MergeFn::OldCol(1),
+                    MergeFn::OldCol(2),
+                ]),
+                name: "cross-target scalar trigger".into(),
+                can_subsume: false,
+            });
+            backend.add_values(
+                candidates
+                    .into_iter()
+                    .map(|(_, row)| (trigger, row))
+                    .collect(),
+            )?;
+            let key = binding(970, "cross-target source key", ColumnTy::Id);
+            let event = binding(971, "cross-target event", ColumnTy::Id);
+            let high_key = binding(972, "cross-target H sink key", ColumnTy::Id);
+            let low_key = binding(973, "cross-target L sink key", ColumnTy::Id);
+            let rule = backend.add_rule(RuleSpec {
+                name: "scalar cross-target H then L".into(),
+                seminaive: true,
+                no_decomp: false,
+                core: GenericCoreRule {
+                    span: Span::Panic,
+                    body: Query {
+                        atoms: vec![GenericAtom {
+                            span: Span::Panic,
+                            head: RuleBodyCall::Table {
+                                id: trigger,
+                                read: ReadMode::Live,
+                            },
+                            args: vec![
+                                variable(key.clone()),
+                                variable(event.clone()),
+                                variable(high_key.clone()),
+                                variable(low_key.clone()),
+                            ],
+                        }],
+                    },
+                    head: GenericCoreActions::new(vec![set_action(
+                        source,
+                        vec![variable(key)],
+                        vec![variable(event), variable(high_key), variable(low_key)],
+                    )]),
+                },
+            })?;
+            assert!(
+                backend
+                    .run_rules(RuleSetRun {
+                        name: Some("scalar cross-target order witness"),
+                        rules: &[rule],
+                    })?
+                    .changed()
+            );
+        }
+    }
+    Ok(CrossTargetOrderTranscript {
+        first_sink_owner: backend.lookup_row(sink, &[Value::new(10)]),
+        second_sink_owner: backend.lookup_row(sink, &[Value::new(20)]),
+    })
+}
+
+fn exact_equal_effectful_merge_case(
+    backend: &mut impl Backend,
+    preseed_owner: bool,
+    preseed_identical_sink: bool,
+) -> Result<(FunctionId, FunctionId, RuleId)> {
+    let source = backend.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::Old,
+        name: "exact-equal effect source".into(),
+        can_subsume: false,
+    });
+    let sink = backend.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::Old,
+        name: "exact-equal effect sink".into(),
+        can_subsume: false,
+    });
+    let owner = backend.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::Block {
+            actions: vec![MergeAction::Set(
+                sink,
+                vec![
+                    MergeFn::Const {
+                        value: Value::new(0),
+                        ty: ColumnTy::Id,
+                    },
+                    MergeFn::OldCol(0),
+                ],
+            )],
+            result: Box::new(MergeFn::Old),
+        },
+        name: "exact-equal effect owner".into(),
+        can_subsume: false,
+    });
+    let mut rows = vec![(source, vec![Value::new(1), Value::new(10)])];
+    if preseed_owner {
+        rows.push((owner, vec![Value::new(1), Value::new(10)]));
+    }
+    if preseed_identical_sink {
+        rows.push((sink, vec![Value::new(0), Value::new(10)]));
+    }
+    backend.add_values(rows)?;
+    let rule = backend.add_rule(one_value_set_rule(
+        source,
+        owner,
+        "exact-equal effectful collision rule",
+    ))?;
+    Ok((owner, sink, rule))
+}
+
+#[test]
+fn exact_equal_generic_merge_executes_effects_and_matches_reference_reports() -> Result<()> {
+    for preseed_identical_sink in [false, true] {
+        let mut duckdb = EGraph::new()?;
+        let (duck_owner, duck_sink, duck_rule) =
+            exact_equal_effectful_merge_case(&mut duckdb, true, preseed_identical_sink)?;
+        let duck_generation = duckdb.storage.generation()?;
+
+        let mut reference = egglog_bridge::EGraph::default();
+        let (reference_owner, reference_sink, reference_rule) =
+            exact_equal_effectful_merge_case(&mut reference, true, preseed_identical_sink)?;
+
+        let duck_report = duckdb.run_rules(RuleSetRun {
+            name: Some("exact-equal DuckDB effectful collision"),
+            rules: &[duck_rule],
+        })?;
+        let reference_report = Backend::run_rules(
+            &mut reference,
+            RuleSetRun {
+                name: Some("exact-equal reference effectful collision"),
+                rules: &[reference_rule],
+            },
+        )?;
+
+        assert_eq!(duck_report.changed(), reference_report.changed());
+        assert!(reference_report.changed());
+        assert_eq!(
+            duckdb.lookup_row(duck_owner, &[Value::new(1)]),
+            reference.lookup_row(reference_owner, &[Value::new(1)])
+        );
+        assert_eq!(
+            duckdb.lookup_row(duck_sink, &[Value::new(0)]),
+            reference.lookup_row(reference_sink, &[Value::new(0)])
+        );
+        assert_eq!(
+            duckdb.lookup_row(duck_sink, &[Value::new(0)]),
+            Some(vec![Value::new(0), Value::new(10)])
+        );
+        assert_eq!(duckdb.last_rule_match_counts(), &[1]);
+        if preseed_identical_sink {
+            assert_eq!(duckdb.storage.generation()?, duck_generation);
+        } else {
+            assert_eq!(duckdb.storage.generation()?, duck_generation + 1);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn missing_generic_owner_inserts_without_running_merge_effects() -> Result<()> {
+    let mut duckdb = EGraph::new()?;
+    let (duck_owner, duck_sink, duck_rule) =
+        exact_equal_effectful_merge_case(&mut duckdb, false, false)?;
+    let duck_generation = duckdb.storage.generation()?;
+    let mut reference = egglog_bridge::EGraph::default();
+    let (reference_owner, reference_sink, reference_rule) =
+        exact_equal_effectful_merge_case(&mut reference, false, false)?;
+
+    let duck_report = duckdb.run_rules(RuleSetRun {
+        name: Some("missing DuckDB generic owner"),
+        rules: &[duck_rule],
+    })?;
+    let reference_report = Backend::run_rules(
+        &mut reference,
+        RuleSetRun {
+            name: Some("missing reference generic owner"),
+            rules: &[reference_rule],
+        },
+    )?;
+    assert_eq!(duck_report.changed(), reference_report.changed());
+    assert!(reference_report.changed());
+    assert_eq!(
+        duckdb.lookup_row(duck_owner, &[Value::new(1)]),
+        reference.lookup_row(reference_owner, &[Value::new(1)])
+    );
+    assert_eq!(
+        duckdb.lookup_row(duck_owner, &[Value::new(1)]),
+        Some(vec![Value::new(1), Value::new(10)])
+    );
+    assert_eq!(duckdb.table_size(duck_sink), 0);
+    assert_eq!(reference.table_size(reference_sink), 0);
+    assert_eq!(duckdb.storage.generation()?, duck_generation + 1);
+    assert_eq!(duckdb.last_rule_match_counts(), &[1]);
+    Ok(())
+}
+
+#[test]
+fn generic_merge_drain_preserves_cross_key_event_order_like_reference() -> Result<()> {
+    let mut duckdb = EGraph::new()?;
+    let (duck_owner, duck_sink) = cross_key_generic_event_case(&mut duckdb)?;
+    let mut reference = egglog_bridge::EGraph::default();
+    let (reference_owner, reference_sink) = cross_key_generic_event_case(&mut reference)?;
+    assert_eq!(
+        duckdb.lookup_row(duck_sink, &[Value::new(0)]),
+        reference.lookup_row(reference_sink, &[Value::new(0)])
+    );
+    assert_eq!(
+        duckdb.lookup_row(duck_sink, &[Value::new(0)]),
+        Some(vec![Value::new(0), Value::new(10)])
+    );
+    for key in [1, 2] {
+        assert_eq!(
+            duckdb.lookup_row(duck_owner, &[Value::new(key)]),
+            reference.lookup_row(reference_owner, &[Value::new(key)])
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn scalar_cross_target_merges_follow_source_action_then_table_batch_order() -> Result<()> {
+    let reference = cross_target_merge_order_case(
+        egglog_bridge::EGraph::default(),
+        CrossTargetOrderPath::ScalarAction,
+    )?;
+    assert_eq!(
+        reference,
+        CrossTargetOrderTranscript {
+            first_sink_owner: Some(vec![Value::new(10), Value::new(200)]),
+            second_sink_owner: Some(vec![Value::new(20), Value::new(200)]),
+        },
+        "Reference drains every H event before any L event"
+    );
+    let duckdb = cross_target_merge_order_case(EGraph::new()?, CrossTargetOrderPath::ScalarAction)?;
+    assert_eq!(duckdb, reference);
+    Ok(())
+}
+
+#[test]
+fn native_input_cross_target_merges_follow_source_action_then_table_batch_order() -> Result<()> {
+    let reference = cross_target_merge_order_case(
+        egglog_bridge::EGraph::default(),
+        CrossTargetOrderPath::NativeInput,
+    )?;
+    assert_eq!(
+        reference,
+        CrossTargetOrderTranscript {
+            first_sink_owner: Some(vec![Value::new(10), Value::new(200)]),
+            second_sink_owner: Some(vec![Value::new(20), Value::new(200)]),
+        },
+        "Reference drains every H event before any L event"
+    );
+    let duckdb = cross_target_merge_order_case(EGraph::new()?, CrossTargetOrderPath::NativeInput)?;
+    assert_eq!(duckdb, reference);
+    Ok(())
+}
+
+fn cross_key_two_fresh_case(backend: &mut impl Backend) -> Result<(FunctionId, FunctionId)> {
+    let types = register_scalar_types(backend);
+    let fresh = backend.register_get_fresh();
+    let label = backend
+        .base_values()
+        .get(Boxed::new("cross-key merge fresh".to_string()));
+    let fresh_expr = || MergeFn::Primitive {
+        id: fresh,
+        name: "authenticated cross-key fresh".into(),
+        input: vec![ColumnTy::Base(types.string)],
+        output: ColumnTy::Id,
+        args: vec![MergeFn::Const {
+            value: label,
+            ty: ColumnTy::Base(types.string),
+        }],
+    };
+    let first_sink = backend.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::AssertEq,
+        name: "cross-key first fresh sink".into(),
+        can_subsume: false,
+    });
+    let second_sink = backend.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::AssertEq,
+        name: "cross-key second fresh sink".into(),
+        can_subsume: false,
+    });
+    let owner = backend.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::Block {
+            actions: vec![
+                MergeAction::Let {
+                    slot: 0,
+                    value: fresh_expr(),
+                },
+                MergeAction::Set(first_sink, vec![MergeFn::OldCol(0), MergeFn::LetVar(0)]),
+                MergeAction::Let {
+                    slot: 1,
+                    value: fresh_expr(),
+                },
+                MergeAction::Set(second_sink, vec![MergeFn::OldCol(0), MergeFn::LetVar(1)]),
+            ],
+            result: Box::new(MergeFn::Old),
+        },
+        name: "cross-key two-fresh owner".into(),
+        can_subsume: false,
+    });
+    for _ in 0..100 {
+        backend.fresh_id();
+    }
+    backend.add_values(vec![(owner, vec![Value::new(2), Value::new(20)])])?;
+    backend.add_values(vec![
+        (owner, vec![Value::new(1), Value::new(10)]),
+        (owner, vec![Value::new(1), Value::new(11)]),
+        (owner, vec![Value::new(2), Value::new(21)]),
+    ])?;
+    Ok((first_sink, second_sink))
+}
+
+#[test]
+fn generic_merge_cross_key_two_fresh_order_matches_reference_exactly() -> Result<()> {
+    let mut duckdb = EGraph::new()?;
+    let (duck_first, duck_second) = cross_key_two_fresh_case(&mut duckdb)?;
+    let mut reference = egglog_bridge::EGraph::default();
+    let (reference_first, reference_second) = cross_key_two_fresh_case(&mut reference)?;
+    for key in [10, 20] {
+        assert_eq!(
+            duckdb.lookup_row(duck_first, &[Value::new(key)]),
+            reference.lookup_row(reference_first, &[Value::new(key)])
+        );
+        assert_eq!(
+            duckdb.lookup_row(duck_second, &[Value::new(key)]),
+            reference.lookup_row(reference_second, &[Value::new(key)])
+        );
+    }
+    assert_eq!(
+        duckdb.lookup_row(duck_first, &[Value::new(10)]),
+        Some(vec![Value::new(10), Value::new(100)])
+    );
+    assert_eq!(
+        duckdb.lookup_row(duck_second, &[Value::new(10)]),
+        Some(vec![Value::new(10), Value::new(101)])
+    );
+    assert_eq!(duckdb.storage.next_fresh_id()?, 104);
     Ok(())
 }
 
@@ -2844,8 +3913,7 @@ fn unrelated_shapes_preserve_existing_fallthrough_diagnostics() -> Result<()> {
         unreachable!();
     };
     *id = no_view_set.old;
-    let error = no_view_set.backend.add_rule(invalid).unwrap_err();
-    assert!(!error.to_string().contains("scalar-mixed"));
+    no_view_set.backend.add_rule(invalid).unwrap_err();
     assert_eq!(
         no_view_set
             .backend
@@ -2858,7 +3926,6 @@ fn unrelated_shapes_preserve_existing_fallthrough_diagnostics() -> Result<()> {
     invalid.core.body.atoms.clear();
     let error = empty.backend.add_rule(invalid).unwrap_err();
     assert!(error.to_string().contains("empty body"));
-    assert!(!error.to_string().contains("scalar-mixed"));
     assert_eq!(
         empty
             .backend
@@ -2908,7 +3975,7 @@ fn single_set_deferred_ordered_union_matches_reference() -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct TwoGraphTranscript {
     first_sym: Vec<Vec<u32>>,
     first_trans: Vec<Vec<u32>>,

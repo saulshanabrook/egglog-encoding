@@ -16,10 +16,14 @@ run succeeds, so a failed run leaves the previously published page in place.
 The egraphs-good nightly service (``nightly.cs.washington.edu``) checks out this
 repository, runs ``make nightly``, and serves that directory, matching
 ``report=`` in the nightly configuration.
+
+``nightly/output/`` is git-ignored, so this runs the same way locally as it does
+on the host. ``make nightly-local`` is that run at ``--rounds 1``.
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 import shlex
 import shutil
@@ -47,14 +51,13 @@ PAGE_PATH = REPO_ROOT / ".reports.html"
 BRANCH: Target = ("branch", ".")
 TARGETS: tuple[Target, ...] = (BRANCH, ("main", "@origin/main"))
 
-# Every endpoint bench.py can run: dd runs only term and proofs, and
-# proof-extraction is main-only.
+# Endpoints to measure, all on the main backend: proof-extraction is main-only,
+# and the differential-dataflow backend's endpoints — ("dd", "term") and
+# ("dd", "proofs") — are disabled for now. Re-add them here to measure dd again.
 ENDPOINTS: tuple[Endpoint, ...] = (
     ("main", "term"),
     ("main", "proofs"),
     ("main", "proof-extraction"),
-    ("dd", "term"),
-    ("dd", "proofs"),
 )
 
 # Every endpoint is measured against ordinary mode on its own checkout, so the
@@ -62,8 +65,26 @@ ENDPOINTS: tuple[Endpoint, ...] = (
 BASELINE: Endpoint = ("main", "off")
 HEADLINE: Endpoint = ("main", "proofs")
 
+# The nightly host leaves rustup's shim directory off PATH, so cargo resolves to
+# Ubuntu's, which predates rust-toolchain.toml's pin; only rustup honours that
+# pin. Putting the shims first makes cargo fetch the pinned toolchain. `CARGO_HOME`
+# follows the Makefile's CARGO_HOME_DIR, which is where it installs rustup.
+CARGO_BIN_DIR = Path(os.environ.get("CARGO_HOME") or Path.home() / ".cargo") / "bin"
 
-def _run(target: Target, endpoint: Endpoint, *, open_report: bool) -> int:
+
+def _bench_env() -> dict[str, str]:
+    """bench.py's environment: rustup's cargo first, and no browser launch."""
+
+    # Prepend unconditionally: already being *somewhere* on PATH is not enough,
+    # since a directory holding a distro cargo can precede it and still win.
+    shims = str(CARGO_BIN_DIR)
+    path = [entry for entry in os.environ.get("PATH", "").split(os.pathsep) if entry != shims]
+    path.insert(0, shims)
+    # Keep the headless nightly host from launching bench.py's best-effort browser.
+    return {**os.environ, "PATH": os.pathsep.join(path), "BROWSER": "true"}
+
+
+def _run(target: Target, endpoint: Endpoint, *, open_report: bool, rounds: int | None) -> int:
     """Benchmark one endpoint against the baseline on the same checkout."""
 
     label, source = target
@@ -87,33 +108,51 @@ def _run(target: Target, endpoint: Endpoint, *, open_report: bool) -> int:
         # Per-file tables make a long run's progress legible.
         "--detail",
         "files",
+        *(["--rounds", str(rounds)] if rounds is not None else []),
         *(["--open"] if open_report else []),
     ]
     print(f"nightly: {' '.join(shlex.quote(part) for part in command)}", file=sys.stderr)
-    # Keep the headless nightly host from launching bench.py's best-effort browser.
-    env = {**os.environ, "BROWSER": "true"}
-    return subprocess.run(command, cwd=REPO_ROOT, env=env, check=False).returncode
+    return subprocess.run(command, cwd=REPO_ROOT, env=_bench_env(), check=False).returncode
+
+
+def _positive_int(value: str) -> int:
+    """Parse ``--rounds``, which bench.py also requires to be positive."""
+
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be positive")
+    return parsed
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Populate the endpoint cache and publish ``<output_dir>/index.html``."""
 
-    args = tuple(sys.argv[1:] if argv is None else argv)
-    if len(args) > 1:
-        print("usage: nightly_bench.py [output_dir]", file=sys.stderr)
-        return 2
-    output_dir = Path(args[0]).expanduser().resolve() if args else DEFAULT_OUTPUT_DIR
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "output_dir",
+        nargs="?",
+        type=Path,
+        default=DEFAULT_OUTPUT_DIR,
+        help="directory to publish index.html and index.jsonl into",
+    )
+    parser.add_argument(
+        "--rounds",
+        type=_positive_int,
+        help="rounds per endpoint/file, passed to bench.py",
+    )
+    args = parser.parse_args(list(argv) if argv is not None else None)
+    output_dir = args.output_dir.expanduser().resolve()
 
     # Populate the dropdown with every endpoint. A combination that fails to
     # build or run drops one option instead of failing the whole nightly.
     for target in TARGETS:
         for endpoint in ENDPOINTS:
-            if _run(target, endpoint, open_report=False) != 0:
+            if _run(target, endpoint, open_report=False, rounds=args.rounds) != 0:
                 print(f"nightly: skipped {target[0]} {endpoint[0]}/{endpoint[1]}", file=sys.stderr)
 
     # The whole cache is now populated, so this last run re-renders it as the
     # page. Its rows are already cached, so it only rebuilds the report.
-    if _run(BRANCH, HEADLINE, open_report=True) != 0 or not PAGE_PATH.is_file():
+    if _run(BRANCH, HEADLINE, open_report=True, rounds=args.rounds) != 0 or not PAGE_PATH.is_file():
         print("nightly: benchmark did not produce a report", file=sys.stderr)
         return 1
     output_dir.mkdir(parents=True, exist_ok=True)

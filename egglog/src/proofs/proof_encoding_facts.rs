@@ -4,7 +4,6 @@
 
 use super::proof_checker::is_container_side_condition;
 use super::proof_encoding::ProofInstrumentor;
-use crate::proofs::proof_encoding_helpers::Justification;
 use crate::typechecking::FuncType;
 use crate::*;
 
@@ -69,16 +68,9 @@ impl ProofInstrumentor<'_> {
                 ));
 
                 if self.egraph.proof_state.proofs_enabled {
-                    let congr = self.proof_names().congr_constructor.clone();
-                    let proof_sort = self.proof_sort();
                     let mut proof = proof_var;
                     for (i, arg_proof) in arg_proofs.into_iter().enumerate() {
-                        proof = self.mint(
-                            action_lookups,
-                            &congr,
-                            &format!("{proof} {i} {arg_proof}"),
-                            &proof_sort,
-                        );
+                        proof = self.mint_congr(&proof, i, &arg_proof);
                     }
                     proof
                 } else {
@@ -90,16 +82,8 @@ impl ProofInstrumentor<'_> {
                 let (v2, p2) = self.instrument_fact_expr(right_expr, res, action_lookups);
                 res.push(format!("(= {v1} {v2})"));
                 if self.egraph.proof_state.proofs_enabled {
-                    let sym = self.proof_names().eq_sym_constructor.clone();
-                    let trans = self.proof_names().eq_trans_constructor.clone();
-                    let proof_sort = self.proof_sort();
-                    let sym_pf = self.mint(action_lookups, &sym, &p1, &proof_sort);
-                    self.mint(
-                        action_lookups,
-                        &trans,
-                        &format!("{sym_pf} {p2}"),
-                        &proof_sort,
-                    )
+                    let sym_pf = self.mint_sym(&p1);
+                    self.mint_trans(&sym_pf, &p2)
                 } else {
                     "()".to_string()
                 }
@@ -138,7 +122,7 @@ impl ProofInstrumentor<'_> {
                 let proof_code = if self.egraph.proof_state.proofs_enabled {
                     let lit_sort = literal_sort(lit);
                     let lit_str = format!("{lit}");
-                    self.reflexive_fiat_proof(action_lookups, lit_sort.name(), &lit_str)
+                    self.reflexive_fiat_proof(lit_sort.name(), &lit_str)
                 } else {
                     "()".to_string()
                 };
@@ -161,13 +145,19 @@ impl ProofInstrumentor<'_> {
                         // present when the rule fires. Fetch it directly in the
                         // action (the rule is then `:unsafe-seminaive`, see
                         // instrument_rule) instead of as a body join — one fewer
-                        // join per eq-sort body variable. Callers that don't
-                        // build a proof (run :until, check) discard these.
-                        action_lookups
-                            .push(format!("(let {fresh_proof} ({term_proof_name} {var}))"));
+                        // join per eq-sort body variable. Deferred because the
+                        // proof is reflexive, so the composition asking for it
+                        // often drops it; callers that don't build a proof
+                        // (run :until, check) discard these.
+                        self.defer_lookup(
+                            &fresh_proof,
+                            vec![format!("(let {fresh_proof} ({term_proof_name} {var}))")],
+                        );
+                        // A term proof is the term's reflexive anchor.
+                        self.mark_reflexive(&fresh_proof);
                         fresh_proof
                     } else {
-                        self.reflexive_fiat_proof(action_lookups, resolved_var.sort.name(), var)
+                        self.reflexive_fiat_proof(resolved_var.sort.name(), var)
                     },
                 )
             }
@@ -209,17 +199,10 @@ impl ProofInstrumentor<'_> {
                                 "(= (values {fv} {view_proof_var}) ({view_name} {args_str}))"
                             ));
                             if self.proofs_enabled() {
-                                let congr = self.proof_names().congr_constructor.clone();
-                                let proof_sort = self.proof_sort();
                                 let mut proof = view_proof_var;
                                 for (i, arg_proof) in arg_proofs.into_iter().enumerate() {
                                     if let Some(arg_proof) = arg_proof {
-                                        proof = self.mint(
-                                            action_lookups,
-                                            &congr,
-                                            &format!("{proof} {i} {arg_proof}"),
-                                            &proof_sort,
-                                        );
+                                        proof = self.mint_congr(&proof, i, &arg_proof);
                                     }
                                 }
                                 proof
@@ -259,11 +242,7 @@ impl ProofInstrumentor<'_> {
                         } else {
                             // Base primitives produce a literal result; a
                             // reflexive `Fiat` over a literal is checker-valid.
-                            self.reflexive_fiat_proof(
-                                action_lookups,
-                                specialized_primitive.output().name(),
-                                &fv,
-                            )
+                            self.reflexive_fiat_proof(specialized_primitive.output().name(), &fv)
                         };
 
                         (fv.clone(), proof)
@@ -276,51 +255,46 @@ impl ProofInstrumentor<'_> {
         }
     }
 
-    /// Return the instrumented query and a proof that it matched.
-    /// Returns `(body_facts, action_lookups, proof)`. Eq-sort variables'
-    /// `term_proof` fetches are emitted into `action_lookups` as
-    /// `(let p (term_proof v))` lines for the caller to splice into the
-    /// rule's actions (the rule is then `:unsafe-seminaive`). Callers
-    /// that don't build a proof (`run :until`, `check`) discard the
-    /// lookups and the proof.
+    /// Return the instrumented query, the mints its premise proofs need, and one
+    /// premise proof per fact.
+    ///
+    /// Only the mints nothing can defer come back in the second component: the
+    /// `Eval` marker of a container side condition and an eq-sort primitive
+    /// result's `term_proof` fetch. Everything else a premise proof is built
+    /// from is deferred, landing wherever the premise is first read — for a
+    /// rule, the head's own actions. Either component makes the rule
+    /// `:unsafe-seminaive`. A head that names no premise (`(panic …)`) reads
+    /// none of it, so none of it is emitted; callers that build no proof at all
+    /// (`run :until`, `check`) discard the lookups and the premises, and must
+    /// [`ProofInstrumentor::drop_pending_lookups`].
     pub(super) fn instrument_facts(
         &mut self,
         facts: &[ResolvedFact],
-    ) -> (Vec<String>, Vec<String>, String) {
+    ) -> (Vec<String>, Vec<String>, Vec<String>) {
         let mut res = vec![];
         let mut action_lookups = vec![];
-        let mut proof = vec![];
+        let mut premises = vec![];
 
         for fact in facts.iter() {
             let f_proof = self.instrument_fact(fact, &mut res, &mut action_lookups);
-            proof.push(f_proof);
+            premises.push(f_proof);
         }
-
-        // The prooflist mints are actions (emitted into `action_lookups` before
-        // the proof binding). Only proof mode consumes the prooflist; in term
-        // mode it is discarded, so skip the mints to keep `action_lookups` empty.
-        let proof_list = if self.proofs_enabled() {
-            self.format_prooflist(&mut action_lookups, &proof)
-        } else {
-            String::new()
-        };
-        (res, action_lookups, proof_list)
+        (res, action_lookups, premises)
     }
 
-    /// Mint a reflexive `Fiat` proof `value = value` for a term of `sort_name`
-    /// (two identical ASTs under a `Fiat`), appending the mints to `stmts`.
-    fn reflexive_fiat_proof(
-        &mut self,
-        stmts: &mut Vec<String>,
-        sort_name: &str,
-        value: &str,
-    ) -> String {
+    /// [`ProofInstrumentor::fiat_reflexive_proof`] for a term of `sort_name`,
+    /// deferred (see [`ProofInstrumentor::defer_lookup`]): the returned variable
+    /// is bound wherever something first reads it, and nowhere if nothing does.
+    fn reflexive_fiat_proof(&mut self, sort_name: &str, value: &str) -> String {
         let to_ast = self
             .proof_names()
             .sort_to_ast_constructor
             .get(sort_name)
             .unwrap()
             .clone();
-        self.term_proof_for_justification(stmts, value, &to_ast, &Justification::Fiat)
+        let mut group = vec![];
+        let proof = self.fiat_reflexive_proof(&mut group, value, &to_ast);
+        self.defer_lookup(&proof, group);
+        proof
     }
 }

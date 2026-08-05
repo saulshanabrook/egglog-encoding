@@ -80,7 +80,7 @@ pub const W: usize = 48;
 /// A fixed-width relation or binding row flowing through the DD dataflow. Input
 /// rows store relation columns in the low slots. Intermediate binding columns
 /// are assigned by the current `ProjectionPlan` stage, and captured outputs
-/// repack surviving variables into the low slots in [`JoinPlan::var_order`].
+/// repack surviving variables into the low slots in [`JoinPlan`]'s variable order.
 ///
 /// A NEWTYPE over `[u32; W]` (rather than the bare array) because timely's
 /// `ExchangeData` bound required by DD joins is
@@ -181,6 +181,50 @@ pub fn plan_join(rule: &RuleSpec) -> Result<JoinPlan, String> {
 
     for atom in &rule.core.body.atoms {
         match atom.head {
+            // An index atom reads the occurrence view of `id`: the leading arg is
+            // the occurring value, then the base row. The relation's own unit
+            // output trails the args and is not part of the view.
+            RuleBodyCall::IndexTable {
+                id,
+                ref any_of,
+                read,
+            } => {
+                if let Some(col) = any_of.iter().find(|c| **c >= u64::BITS as usize) {
+                    return Err(format!(
+                        "index column {col} is beyond the {} a read key can track",
+                        u64::BITS
+                    ));
+                }
+                let occurrence_cols = any_of.iter().fold(0u64, |m, c| m | (1u64 << c));
+                if occurrence_cols == 0 {
+                    return Err("index atom lists no columns".to_string());
+                }
+                let view_args = atom
+                    .args
+                    .split_last()
+                    .map(|(_unit, rest)| rest)
+                    .unwrap_or(&atom.args);
+                if view_args.len() > W {
+                    return Err(format!("atom arity {} > W {}", view_args.len(), W));
+                }
+                let slots = view_args
+                    .iter()
+                    .map(Slot::from_term)
+                    .collect::<Result<Vec<_>, _>>()?;
+                for s in &slots {
+                    if let Slot::Var(v) = s {
+                        body_vars.insert(*v);
+                    }
+                }
+                atoms.push(PlanAtom {
+                    read_key: ReadKey {
+                        func: id,
+                        mode: read,
+                        occurrence_cols,
+                    },
+                    slots,
+                });
+            }
             RuleBodyCall::Table { id, read } => {
                 if atom.args.len() > W {
                     return Err(format!("atom arity {} > W {}", atom.args.len(), W));
@@ -199,6 +243,7 @@ pub fn plan_join(rule: &RuleSpec) -> Result<JoinPlan, String> {
                     read_key: ReadKey {
                         func: id,
                         mode: read,
+                        occurrence_cols: 0,
                     },
                     slots,
                 });
@@ -406,7 +451,7 @@ pub struct FusedDdJoin {
     /// The fused rules in caller-supplied build order. The sorted rule-index list
     /// identifies the ruleset cache entry but does not reorder these outputs.
     rules: Vec<FusedRule>,
-    /// Current epoch (monotonic; advanced once per [`step`]).
+    /// Current epoch (monotonic; advanced once per [`FusedDdJoin::step`]).
     epoch: u32,
 }
 
@@ -816,6 +861,7 @@ mod tests {
 
     fn live(func: FunctionId) -> ReadKey {
         ReadKey {
+            occurrence_cols: 0,
             func,
             mode: ReadMode::Live,
         }

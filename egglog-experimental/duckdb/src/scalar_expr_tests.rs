@@ -1051,6 +1051,7 @@ fn undefined_action_rolls_back_before_fresh_and_retries_action_major() -> Result
         1,
         0,
         2,
+        None,
     );
     assert!(expression_ctas.contains(" // "));
     assert!(expression_ctas.contains("CASE WHEN"));
@@ -1390,7 +1391,7 @@ fn scalar_admission_rejects_spoofs_and_malformed_signatures_without_rule_ids() -
         scalar_fallback(NativeScalarPrimitive::F64Gt),
     );
     let callback = backend.new_panic("callback must never run".to_string());
-    let unsupported_raw = backend.register_native_primitive(NativePrimitive::SelectMaxPayload);
+    let payload_selector = backend.register_native_primitive(NativePrimitive::SelectMaxPayload);
     let raw_ordering = backend.register_native_primitive(NativePrimitive::OrderingMax);
     let raw_neq = backend.register_native_primitive(NativePrimitive::ValueNeq);
 
@@ -1490,10 +1491,10 @@ fn scalar_admission_rejects_spoofs_and_malformed_signatures_without_rule_ids() -
     assert!(backend.rules.is_empty());
 
     let error = backend
-        .add_rule(valid("unsupported raw descriptor", unsupported_raw))
+        .add_rule(valid("payload selector wrong arity", payload_selector))
         .unwrap_err();
     assert!(
-        format!("{error:#}").contains("not a public scalar expression"),
+        format!("{error:#}").contains("requires exactly four inputs"),
         "{error:#}"
     );
     assert!(backend.rules.is_empty());
@@ -1544,6 +1545,32 @@ fn scalar_admission_rejects_spoofs_and_malformed_signatures_without_rule_ids() -
     assert_eq!(
         backend.lookup_id(target, &[backend.base_values().get(3_i64)]),
         Some(unit)
+    );
+    Ok(())
+}
+
+#[test]
+fn payload_selectors_authenticate_and_render_four_inputs() -> Result<()> {
+    let mut backend = EGraph::new()?;
+    let token = backend.register_native_primitive(NativePrimitive::SelectMinPayload);
+    let expression = ScalarExpression::authenticate(
+        backend.base_values(),
+        &backend.native_primitives,
+        &backend.native_scalar_primitives,
+        token,
+        &[ColumnTy::Id, ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
+        ColumnTy::Id,
+    )?;
+    let rendered = expression.render(&[
+        "left".into(),
+        "left_payload".into(),
+        "right".into(),
+        "right_payload".into(),
+    ]);
+    assert_eq!(rendered.defined, "TRUE");
+    assert_eq!(
+        rendered.value,
+        "CASE WHEN (left) < (right) THEN (left_payload) ELSE (right_payload) END"
     );
     Ok(())
 }

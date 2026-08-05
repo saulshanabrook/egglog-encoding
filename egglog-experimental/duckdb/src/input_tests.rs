@@ -426,6 +426,38 @@ fn ordered_union_identity_equal_input_matches_reference_and_is_physical_noop() -
 }
 
 #[test]
+fn native_input_rejects_table_registration_merge_aba_before_transaction() -> Result<()> {
+    let mut fixture = Fixture::new(EGraph::new()?, "native input merge ABA")?;
+    let stale = fixture.primitives.proof_min;
+    fixture.backend.free_external_func(stale);
+    let replacement = fixture
+        .backend
+        .register_native_primitive(NativePrimitive::SelectMinPayload);
+    assert_eq!(replacement, stale, "the canary requires same-id reuse");
+    let generation = fixture.backend.storage.generation()?;
+    let fresh = fixture.backend.storage.next_fresh_id()?;
+    let trace = fixture.backend.storage.latest_input_sql();
+
+    let error = fixture
+        .backend
+        .add_values(vec![(
+            fixture.view,
+            vec![Value::new(1), Value::new(2), Value::new(3)],
+        )])
+        .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("registration authority"),
+        "{error:#}"
+    );
+    assert_eq!(fixture.backend.storage.generation()?, generation);
+    assert_eq!(fixture.backend.storage.next_fresh_id()?, fresh);
+    assert_eq!(fixture.backend.storage.latest_input_sql(), trace);
+    assert_eq!(fixture.backend.last_input_rows(), 0);
+    assert_eq!(fixture.backend.table_size(fixture.view), 0);
+    Ok(())
+}
+
+#[test]
 fn frontend_shaped_heterogeneous_input_preserves_global_ordinals_and_telemetry() -> Result<()> {
     let mut fixture = Fixture::new(EGraph::new()?, "heterogeneous-opaque")?;
     let first = fixture.backend.add_table(FunctionConfig {
@@ -655,19 +687,26 @@ fn subsumed_view_collisions_preserve_owner_and_corrupt_owners_fail_before_mutati
         )?;
         Ok(())
     })?;
-    let subsumed_uf = fixture
-        .backend
-        .add_values(vec![(
-            fixture.view,
-            vec![Value::new(2), Value::new(70), Value::new(71)],
-        )])
-        .unwrap_err();
-    assert!(subsumed_uf.to_string().contains("subsumed UF owner"));
+    fixture.backend.add_values(vec![(
+        fixture.view,
+        vec![Value::new(2), Value::new(70), Value::new(71)],
+    )])?;
     assert_eq!(
         fixture.backend.lookup_row(fixture.view, &[Value::new(2)]),
-        None
+        Some(vec![Value::new(2), Value::new(70), Value::new(71)])
     );
-    assert_eq!(fixture.backend.storage.generation()?, generation);
+    let subsumed_owners = fixture.backend.storage.with_connection(|connection| {
+        Ok(connection.query_row(
+            &format!(
+                "SELECT count(*) FROM {} WHERE __subsumed",
+                sql_table(fixture.uf)
+            ),
+            [],
+            |row| row.get::<_, u64>(0),
+        )?)
+    })?;
+    assert_eq!(subsumed_owners, 2);
+    assert_eq!(fixture.backend.storage.generation()?, generation + 1);
     assert_eq!(fixture.backend.storage.next_fresh_id()?, fresh);
     Ok(())
 }
@@ -980,11 +1019,15 @@ fn add_three_id_view(fixture: &mut Fixture<EGraph>, name: &str, merge: MergeFn) 
     })
 }
 
-fn assert_input_rejection_preserves_state(
+enum NativeInputOutcome<'a> {
+    Accept,
+    Reject(&'a str),
+}
+
+fn assert_input_outcome(
     fixture: &mut Fixture<EGraph>,
     target: FunctionId,
-    generic_fallthrough: bool,
-    selected_diagnostic: &str,
+    outcome: NativeInputOutcome<'_>,
 ) -> Result<()> {
     let generation = fixture.backend.storage.generation()?;
     let fresh = fixture.backend.storage.next_fresh_id()?;
@@ -992,35 +1035,35 @@ fn assert_input_rejection_preserves_state(
     let sym_rows = fixture.backend.table_size(fixture.sym);
     let trans_rows = fixture.backend.table_size(fixture.trans);
     let uf_rows = fixture.backend.table_size(fixture.uf);
-    let error = fixture
-        .backend
-        .add_values(vec![(
-            target,
-            vec![Value::new(1), Value::new(2), Value::new(3)],
-        )])
-        .unwrap_err();
-    let message = error.to_string();
-    if generic_fallthrough {
-        assert!(
-            message.contains("registered but deferred"),
-            "expected generic Deferred fallthrough, got: {error:#}"
-        );
-    } else {
-        assert!(
-            !message.contains("registered but deferred") && message.contains(selected_diagnostic),
-            "expected selected-family `{selected_diagnostic}` rejection, got: {error:#}"
-        );
+    let result = fixture.backend.add_values(vec![(
+        target,
+        vec![Value::new(1), Value::new(2), Value::new(3)],
+    )]);
+    match outcome {
+        NativeInputOutcome::Accept => {
+            result?;
+            assert_eq!(fixture.backend.table_size(target), 1);
+            assert_eq!(fixture.backend.storage.generation()?, generation + 1);
+            assert_eq!(fixture.backend.last_input_rows(), 1);
+        }
+        NativeInputOutcome::Reject(diagnostic) => {
+            let error = result.unwrap_err();
+            assert!(
+                format!("{error:#}").contains(diagnostic),
+                "expected `{diagnostic}` rejection, got: {error:#}"
+            );
+            assert_eq!(fixture.backend.table_size(target), 0);
+            assert_eq!(fixture.backend.table_size(fixture.sym), sym_rows);
+            assert_eq!(fixture.backend.table_size(fixture.trans), trans_rows);
+            assert_eq!(fixture.backend.table_size(fixture.uf), uf_rows);
+            assert_eq!(fixture.backend.storage.generation()?, generation);
+            assert_eq!(fixture.backend.storage.next_fresh_id()?, fresh);
+            assert_eq!(fixture.backend.storage.latest_input_sql(), trace);
+            assert_eq!(fixture.backend.last_input_rows(), 0);
+            assert_eq!(fixture.backend.last_input_inserted_rows(), 0);
+            assert_eq!(fixture.backend.last_input_target_statements(), 0);
+        }
     }
-    assert_eq!(fixture.backend.table_size(target), 0);
-    assert_eq!(fixture.backend.table_size(fixture.sym), sym_rows);
-    assert_eq!(fixture.backend.table_size(fixture.trans), trans_rows);
-    assert_eq!(fixture.backend.table_size(fixture.uf), uf_rows);
-    assert_eq!(fixture.backend.storage.generation()?, generation);
-    assert_eq!(fixture.backend.storage.next_fresh_id()?, fresh);
-    assert_eq!(fixture.backend.storage.latest_input_sql(), trace);
-    assert_eq!(fixture.backend.last_input_rows(), 0);
-    assert_eq!(fixture.backend.last_input_inserted_rows(), 0);
-    assert_eq!(fixture.backend.last_input_target_statements(), 0);
     Ok(())
 }
 
@@ -1054,14 +1097,11 @@ fn native_input_admission_is_exact_and_supported_deferred_set_is_scalar() -> Res
         name: "ordered-near-shape".into(),
         can_subsume: true,
     });
-    let near_error = fixture
-        .backend
-        .add_values(vec![(
-            near,
-            vec![Value::new(1), Value::new(2), Value::new(3)],
-        )])
-        .unwrap_err();
-    assert!(near_error.to_string().contains("registered but deferred"));
+    fixture.backend.add_values(vec![(
+        near,
+        vec![Value::new(1), Value::new(2), Value::new(3)],
+    )])?;
+    assert_eq!(fixture.backend.table_size(near), 1);
 
     let mut fake_primitive = ordered_union(
         fixture.primitives,
@@ -1104,7 +1144,10 @@ fn native_input_admission_is_exact_and_supported_deferred_set_is_scalar() -> Res
             vec![Value::new(1), Value::new(2), Value::new(3)],
         )])
         .unwrap_err();
-    assert!(malformed_error.to_string().contains("SelectMaxPayload"));
+    assert!(
+        format!("{malformed_error:#}").contains("unauthenticated merge token"),
+        "unexpected unauthenticated primitive error: {malformed_error:#}"
+    );
 
     let unknown = fixture
         .backend
@@ -1148,7 +1191,10 @@ fn native_input_admission_is_exact_and_supported_deferred_set_is_scalar() -> Res
             .to_string()
             .contains("dense")
     );
-    assert_eq!(fixture.backend.storage.generation()?, original_generation);
+    assert_eq!(
+        fixture.backend.storage.generation()?,
+        original_generation + 1
+    );
     assert_eq!(fixture.backend.storage.next_fresh_id()?, original_fresh);
     assert_eq!(fixture.backend.last_input_rows(), 0);
 
@@ -1214,7 +1260,7 @@ fn native_input_admission_is_exact_and_supported_deferred_set_is_scalar() -> Res
 }
 
 #[test]
-fn custom_seven_action_view_with_plain_displaced_target_falls_through() -> Result<()> {
+fn custom_seven_action_view_with_plain_displaced_target_is_generic() -> Result<()> {
     let mut fixture = Fixture::new(EGraph::new()?, "ownership-witness")?;
     let plain_assert_eq = fixture.backend.add_table(FunctionConfig {
         schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
@@ -1227,7 +1273,7 @@ fn custom_seven_action_view_with_plain_displaced_target_falls_through() -> Resul
     });
     let merge = fixture_ordered_union(&fixture, plain_assert_eq, true);
     let custom_view = add_three_id_view(&mut fixture, "custom-seven-action-view", merge);
-    assert_input_rejection_preserves_state(&mut fixture, custom_view, true, "")
+    assert_input_outcome(&mut fixture, custom_view, NativeInputOutcome::Accept)
 }
 
 #[test]
@@ -1260,7 +1306,7 @@ fn owned_graph_admission_mutation_matrix_fails_closed() -> Result<()> {
     });
     let merge = fixture_ordered_union(&fixture, mismatched_uf, true);
     let label_mismatch = add_three_id_view(&mut fixture, "fresh-label-mismatch-view", merge);
-    assert_input_rejection_preserves_state(&mut fixture, label_mismatch, false, "disagree")?;
+    assert_input_outcome(&mut fixture, label_mismatch, NativeInputOutcome::Accept)?;
 
     let nonself_uf_id = fixture.backend.peek_next_function_id();
     let nonself_uf = fixture.backend.add_table(FunctionConfig {
@@ -1274,12 +1320,7 @@ fn owned_graph_admission_mutation_matrix_fails_closed() -> Result<()> {
     });
     let merge = fixture_ordered_union(&fixture, nonself_uf, true);
     let nonself_view = add_three_id_view(&mut fixture, "nonself-displaced-view", merge);
-    assert_input_rejection_preserves_state(
-        &mut fixture,
-        nonself_view,
-        false,
-        "displace into itself",
-    )?;
+    assert_input_outcome(&mut fixture, nonself_view, NativeInputOutcome::Accept)?;
 
     let wrong_orientation_id = fixture.backend.peek_next_function_id();
     let wrong_orientation = fixture.backend.add_table(FunctionConfig {
@@ -1303,11 +1344,10 @@ fn owned_graph_admission_mutation_matrix_fails_closed() -> Result<()> {
     });
     let merge = fixture_ordered_union(&fixture, wrong_orientation, true);
     let wrong_orientation_view = add_three_id_view(&mut fixture, "wrong-orientation-view", merge);
-    assert_input_rejection_preserves_state(
+    assert_input_outcome(
         &mut fixture,
         wrong_orientation_view,
-        false,
-        "merge topology mismatch",
+        NativeInputOutcome::Accept,
     )?;
 
     let wrong_config_id = fixture.backend.peek_next_function_id();
@@ -1322,12 +1362,7 @@ fn owned_graph_admission_mutation_matrix_fails_closed() -> Result<()> {
     });
     let merge = fixture_ordered_union(&fixture, wrong_config, true);
     let wrong_config_view = add_three_id_view(&mut fixture, "wrong-config-view", merge);
-    assert_input_rejection_preserves_state(
-        &mut fixture,
-        wrong_config_view,
-        false,
-        "UF has an incompatible configuration",
-    )?;
+    assert_input_outcome(&mut fixture, wrong_config_view, NativeInputOutcome::Accept)?;
 
     let mut wrong_slot_merge = fixture_ordered_union(&fixture, fixture.uf, true);
     let MergeFn::Block { actions, .. } = &mut wrong_slot_merge else {
@@ -1338,12 +1373,7 @@ fn owned_graph_admission_mutation_matrix_fails_closed() -> Result<()> {
     };
     arguments[0] = MergeFn::LetVar(0);
     let wrong_slot = add_three_id_view(&mut fixture, "wrong-let-slot-view", wrong_slot_merge);
-    assert_input_rejection_preserves_state(
-        &mut fixture,
-        wrong_slot,
-        false,
-        "merge topology mismatch",
-    )?;
+    assert_input_outcome(&mut fixture, wrong_slot, NativeInputOutcome::Accept)?;
 
     let bad_proof = fixture.backend.add_table(FunctionConfig {
         schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Base(fixture.unit)],
@@ -1363,12 +1393,7 @@ fn owned_graph_admission_mutation_matrix_fails_closed() -> Result<()> {
     };
     *target = bad_proof;
     let bad_proof_view = add_three_id_view(&mut fixture, "bad-proof-target-view", bad_proof_merge);
-    assert_input_rejection_preserves_state(
-        &mut fixture,
-        bad_proof_view,
-        false,
-        "proof target is not the exact one-output AssertEq shape",
-    )?;
+    assert_input_outcome(&mut fixture, bad_proof_view, NativeInputOutcome::Accept)?;
 
     let mut bad_result_merge = fixture_ordered_union(&fixture, fixture.uf, true);
     let MergeFn::Block { result, .. } = &mut bad_result_merge else {
@@ -1379,12 +1404,7 @@ fn owned_graph_admission_mutation_matrix_fails_closed() -> Result<()> {
     };
     results[1] = MergeFn::LetVar(0);
     let bad_result = add_three_id_view(&mut fixture, "bad-result-tuple-view", bad_result_merge);
-    assert_input_rejection_preserves_state(
-        &mut fixture,
-        bad_result,
-        false,
-        "merge topology mismatch",
-    )?;
+    assert_input_outcome(&mut fixture, bad_result, NativeInputOutcome::Accept)?;
 
     let mut swapped_tag_merge = fixture_ordered_union(&fixture, fixture.uf, true);
     let MergeFn::Block { actions, .. } = &mut swapped_tag_merge else {
@@ -1399,7 +1419,7 @@ fn owned_graph_admission_mutation_matrix_fails_closed() -> Result<()> {
     *id = fixture.primitives.proof_min;
     *name = "proof-of-max".into();
     let swapped_tag = add_three_id_view(&mut fixture, "swapped-native-tag-view", swapped_tag_merge);
-    assert_input_rejection_preserves_state(&mut fixture, swapped_tag, false, "SelectMaxPayload")?;
+    assert_input_outcome(&mut fixture, swapped_tag, NativeInputOutcome::Accept)?;
 
     let mut malformed_signature_merge = fixture_ordered_union(&fixture, fixture.uf, true);
     let MergeFn::Block { actions, .. } = &mut malformed_signature_merge else {
@@ -1412,17 +1432,20 @@ fn owned_graph_admission_mutation_matrix_fails_closed() -> Result<()> {
         unreachable!()
     };
     *output = ColumnTy::Base(fixture.unit);
-    let malformed_signature = add_three_id_view(
-        &mut fixture,
-        "genuine-tag-malformed-signature-view",
-        malformed_signature_merge,
-    );
-    assert_input_rejection_preserves_state(
-        &mut fixture,
-        malformed_signature,
-        false,
-        "SelectMaxPayload",
-    )?;
+    let malformed_signature = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        add_three_id_view(
+            &mut fixture,
+            "genuine-tag-malformed-signature-view",
+            malformed_signature_merge,
+        )
+    }))
+    .expect_err("mistyped primitive must fail during table registration");
+    let malformed_message = malformed_signature
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| malformed_signature.downcast_ref::<&str>().copied())
+        .expect("registration panic must carry a string diagnostic");
+    assert!(malformed_message.contains("raw SelectMaxPayload requires"));
 
     let alternate_max = fixture
         .backend
@@ -1465,7 +1488,11 @@ fn owned_graph_admission_mutation_matrix_fails_closed() -> Result<()> {
     ));
     assert_eq!(reused, stale, "freed native ids should be reusable");
     let original_view = fixture.view;
-    assert_input_rejection_preserves_state(&mut fixture, original_view, false, "SelectMaxPayload")?;
+    assert_input_outcome(
+        &mut fixture,
+        original_view,
+        NativeInputOutcome::Reject("registration authority"),
+    )?;
 
     Ok(())
 }

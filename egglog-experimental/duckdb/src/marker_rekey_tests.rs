@@ -656,6 +656,7 @@ fn assert_rejected_preserves_rule_id(
     fixture: &mut MarkerFixture,
     rule: RuleSpec,
     fragment: &str,
+    backend_error: Option<&str>,
 ) -> Result<()> {
     let classified = compile_marker_rekey(
         &fixture.inner.backend.storage,
@@ -671,24 +672,22 @@ fn assert_rejected_preserves_rule_id(
     );
     assert!(classifier_error.contains(fragment), "{classifier_error}");
 
-    let registration_error = fixture
-        .inner
-        .backend
-        .add_rule(rule)
-        .unwrap_err()
-        .to_string();
-    assert!(
-        registration_error.contains("marker rekey"),
-        "{registration_error}"
-    );
-    assert!(
-        registration_error.contains(fragment),
-        "{registration_error}"
-    );
+    let next_id = if let Some(backend_error) = backend_error {
+        let error = fixture
+            .inner
+            .backend
+            .add_rule(rule)
+            .expect_err(&format!("expected generic rejection for {fragment}"));
+        assert!(format!("{error:#}").contains(backend_error), "{error:#}");
+        0
+    } else {
+        assert_eq!(fixture.inner.backend.add_rule(rule)?, RuleId::new(0));
+        1
+    };
     let valid_config = marker_config(&fixture.inner, "valid-after-rejection");
     fixture.marker = fixture.inner.backend.add_table(valid_config);
     let valid = fixture.rule("valid-after-rejection", 0, BodyOrder::NeqUfView);
-    assert_eq!(fixture.inner.backend.add_rule(valid)?, RuleId::new(0));
+    assert_eq!(fixture.inner.backend.add_rule(valid)?, RuleId::new(next_id));
     Ok(())
 }
 
@@ -723,7 +722,7 @@ fn marker_tri_state_matrix_is_fail_closed_without_consuming_rule_ids() -> Result
         unreachable!()
     };
     *read = ReadMode::Live;
-    assert_rejected_preserves_rule_id(&mut mode, rule, "requires All")?;
+    assert_rejected_preserves_rule_id(&mut mode, rule, "requires All", None)?;
 
     let mut primitive = MarkerFixture::one_id("bad-primitive")?;
     let mut rule = primitive.rule("bad-primitive-rule", 0, BodyOrder::UfViewNeq);
@@ -732,7 +731,21 @@ fn marker_tri_state_matrix_is_fail_closed_without_consuming_rule_ids() -> Result
     };
     *id = primitive.inner.tokens.ordering_min;
     *name = "!=".into();
-    assert_rejected_preserves_rule_id(&mut primitive, rule, "ValueNeq")?;
+    let classified = compile_marker_rekey(
+        &primitive.inner.backend.storage,
+        primitive.inner.backend.base_values(),
+        &primitive.inner.backend.native_primitives,
+        &primitive.inner.backend.fresh_tokens,
+        &rule,
+    )
+    .unwrap_err();
+    assert!(classified.to_string().contains("ValueNeq"));
+    let error = primitive.inner.backend.add_rule(rule).unwrap_err();
+    assert!(format!("{error:#}").contains("raw OrderingMin scalar lowering"));
+    let valid_config = marker_config(&primitive.inner, "valid-after-rejection");
+    primitive.marker = primitive.inner.backend.add_table(valid_config);
+    let valid = primitive.rule("valid-after-rejection", 0, BodyOrder::NeqUfView);
+    assert_eq!(primitive.inner.backend.add_rule(valid)?, RuleId::new(0));
 
     let mut primitive_output = MarkerFixture::one_id("bad-primitive-output")?;
     let mut rule = primitive_output.rule("bad-primitive-output-rule", 0, BodyOrder::NeqUfView);
@@ -740,7 +753,12 @@ fn marker_tri_state_matrix_is_fail_closed_without_consuming_rule_ids() -> Result
         unreachable!()
     };
     *output = ColumnTy::Id;
-    assert_rejected_preserves_rule_id(&mut primitive_output, rule, "ValueNeq")?;
+    assert_rejected_preserves_rule_id(
+        &mut primitive_output,
+        rule,
+        "ValueNeq",
+        Some("ValueNeq requires"),
+    )?;
 
     let mut primitive_arity = MarkerFixture::one_id("bad-primitive-arity")?;
     let mut rule = primitive_arity.rule("bad-primitive-arity-rule", 0, BodyOrder::ViewUfNeq);
@@ -752,7 +770,12 @@ fn marker_tri_state_matrix_is_fail_closed_without_consuming_rule_ids() -> Result
         .find(|atom| matches!(atom.head, RuleBodyCall::Primitive { .. }))
         .expect("inequality atom");
     inequality.args.pop();
-    assert_rejected_preserves_rule_id(&mut primitive_arity, rule, "wrong arity")?;
+    assert_rejected_preserves_rule_id(
+        &mut primitive_arity,
+        rule,
+        "wrong arity",
+        Some("requires exactly two inputs"),
+    )?;
 
     let mut roles = MarkerFixture::one_id("bad-primitive-roles")?;
     let mut rule = roles.rule("bad-primitive-roles-rule", 0, BodyOrder::ViewUfNeq);
@@ -764,12 +787,12 @@ fn marker_tri_state_matrix_is_fail_closed_without_consuming_rule_ids() -> Result
         .find(|atom| matches!(atom.head, RuleBodyCall::Primitive { .. }))
         .expect("inequality atom");
     inequality.args.swap(0, 1);
-    assert_rejected_preserves_rule_id(&mut roles, rule, "inequality lhs")?;
+    assert_rejected_preserves_rule_id(&mut roles, rule, "inequality lhs", None)?;
 
     let mut order = MarkerFixture::one_id("bad-action-order")?;
     let mut rule = order.rule("bad-action-order-rule", 0, BodyOrder::NeqUfView);
     rule.core.head.0.reverse();
-    assert_rejected_preserves_rule_id(&mut order, rule, "first action")?;
+    assert_rejected_preserves_rule_id(&mut order, rule, "first action", None)?;
 
     let mut change = MarkerFixture::one_id("bad-change-kind")?;
     let mut rule = change.rule("bad-change-kind-rule", 0, BodyOrder::UfViewNeq);
@@ -777,7 +800,12 @@ fn marker_tri_state_matrix_is_fail_closed_without_consuming_rule_ids() -> Result
         unreachable!()
     };
     *kind = Change::Subsume;
-    assert_rejected_preserves_rule_id(&mut change, rule, "must be Delete")?;
+    assert_rejected_preserves_rule_id(
+        &mut change,
+        rule,
+        "must be Delete",
+        Some("cannot subsume a nonsubsumable table"),
+    )?;
 
     let mut action_target = MarkerFixture::one_id("bad-action-target")?;
     let mut rule = action_target.rule("bad-action-target-rule", 0, BodyOrder::ViewUfNeq);
@@ -789,7 +817,12 @@ fn marker_tri_state_matrix_is_fail_closed_without_consuming_rule_ids() -> Result
         name: "opaque-non-table-target".into(),
         output: ColumnTy::Base(action_target.inner.unit),
     };
-    assert_rejected_preserves_rule_id(&mut action_target, rule, "canonical marker Set")?;
+    assert_rejected_preserves_rule_id(
+        &mut action_target,
+        rule,
+        "canonical marker Set",
+        Some("cannot Set a primitive"),
+    )?;
 
     let mut action_unit = MarkerFixture::one_id("bad-action-unit")?;
     let mut rule = action_unit.rule("bad-action-unit-rule", 0, BodyOrder::NeqUfView);
@@ -797,24 +830,29 @@ fn marker_tri_state_matrix_is_fail_closed_without_consuming_rule_ids() -> Result
         unreachable!()
     };
     values[0] = literal(Value::new(17), ColumnTy::Id);
-    assert_rejected_preserves_rule_id(&mut action_unit, rule, "Unit literal")?;
+    assert_rejected_preserves_rule_id(
+        &mut action_unit,
+        rule,
+        "Unit literal",
+        Some("mistyped literal"),
+    )?;
 
     let mut flags = MarkerFixture::one_id("bad-flags")?;
     let mut rule = flags.rule("bad-flags-rule", 0, BodyOrder::ViewUfNeq);
     rule.no_decomp = true;
-    assert_rejected_preserves_rule_id(&mut flags, rule, "seminaive and decomposed")?;
+    assert_rejected_preserves_rule_id(&mut flags, rule, "seminaive and decomposed", None)?;
 
     let mut seminaive = MarkerFixture::one_id("bad-seminaive")?;
     let mut rule = seminaive.rule("bad-seminaive-rule", 0, BodyOrder::UfViewNeq);
     rule.seminaive = false;
-    assert_rejected_preserves_rule_id(&mut seminaive, rule, "seminaive and decomposed")?;
+    assert_rejected_preserves_rule_id(&mut seminaive, rule, "seminaive and decomposed", None)?;
 
     let inner = Fixture::one_id("bad-marker-config")?;
     let mut config = MarkerFixture::with_marker_config(inner, "bad-marker-config", |config| {
         config.merge = MergeFn::Old;
     });
     let rule = config.rule("bad-marker-config-rule", 0, BodyOrder::NeqUfView);
-    assert_rejected_preserves_rule_id(&mut config, rule, "incompatible configuration")?;
+    assert_rejected_preserves_rule_id(&mut config, rule, "incompatible configuration", None)?;
 
     let inner = Fixture::one_id("bad-marker-default")?;
     let unit_value = inner.backend.base_values().get(());
@@ -822,14 +860,14 @@ fn marker_tri_state_matrix_is_fail_closed_without_consuming_rule_ids() -> Result
         config.default = DefaultVal::Const(unit_value);
     });
     let rule = default.rule("bad-marker-default-rule", 0, BodyOrder::UfViewNeq);
-    assert_rejected_preserves_rule_id(&mut default, rule, "incompatible configuration")?;
+    assert_rejected_preserves_rule_id(&mut default, rule, "incompatible configuration", None)?;
 
     let inner = Fixture::one_id("bad-marker-identity")?;
     let mut identity = MarkerFixture::with_marker_config(inner, "bad-marker-identity", |config| {
         config.n_identity_vals = Some(1);
     });
     let rule = identity.rule("bad-marker-identity-rule", 0, BodyOrder::ViewUfNeq);
-    assert_rejected_preserves_rule_id(&mut identity, rule, "incompatible configuration")?;
+    assert_rejected_preserves_rule_id(&mut identity, rule, "incompatible configuration", None)?;
 
     let inner = Fixture::one_id("bad-marker-subsumable")?;
     let mut subsumable =
@@ -837,7 +875,7 @@ fn marker_tri_state_matrix_is_fail_closed_without_consuming_rule_ids() -> Result
             config.can_subsume = true;
         });
     let rule = subsumable.rule("bad-marker-subsumable-rule", 0, BodyOrder::NeqUfView);
-    assert_rejected_preserves_rule_id(&mut subsumable, rule, "incompatible configuration")?;
+    assert_rejected_preserves_rule_id(&mut subsumable, rule, "incompatible configuration", None)?;
 
     let mut alias = MarkerFixture::one_id("bad-alias")?;
     let mut rule = alias.rule("bad-alias-rule", 0, BodyOrder::ViewUfNeq);
@@ -849,7 +887,7 @@ fn marker_tri_state_matrix_is_fail_closed_without_consuming_rule_ids() -> Result
         .find(|atom| matches!(atom.head, RuleBodyCall::Table { id, .. } if id == alias.inner.uf))
         .expect("UF atom");
     uf.args[2] = uf.args[1].clone();
-    assert_rejected_preserves_rule_id(&mut alias, rule, "aliases structurally distinct")?;
+    assert_rejected_preserves_rule_id(&mut alias, rule, "aliases structurally distinct", None)?;
 
     let mut uf_config = MarkerFixture::one_id("bad-uf-config")?;
     let original_uf = uf_config.inner.uf;
@@ -881,7 +919,7 @@ fn marker_tri_state_matrix_is_fail_closed_without_consuming_rule_ids() -> Result
             *id = malformed_uf;
         }
     }
-    assert_rejected_preserves_rule_id(&mut uf_config, rule, "incompatible UF")?;
+    assert_rejected_preserves_rule_id(&mut uf_config, rule, "incompatible UF", None)?;
 
     let mut orientation = MarkerFixture::one_id("bad-uf-orientation")?;
     let original_uf = orientation.inner.uf;
@@ -915,7 +953,7 @@ fn marker_tri_state_matrix_is_fail_closed_without_consuming_rule_ids() -> Result
             *id = opposite;
         }
     }
-    assert_rejected_preserves_rule_id(&mut orientation, rule, "incompatible UF")?;
+    assert_rejected_preserves_rule_id(&mut orientation, rule, "incompatible UF", None)?;
 
     Ok(())
 }

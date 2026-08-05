@@ -21,7 +21,7 @@ pub enum GenericExpr<Head, Leaf> {
     Lit(Span, Literal),
 }
 
-/// Facts are the left-hand side of a [`Command::Rule`].
+/// Facts are the left-hand side of a `Command::Rule`.
 /// They represent a part of a database query.
 /// Facts can be expressions or equality constraints between expressions.
 ///
@@ -63,8 +63,8 @@ where
     Leaf: Clone + PartialEq + Eq + Display + Hash,
 {
     /// Bind a variable to a particular datatype or primitive.
-    /// At the top level (in a [`Command::Action`]), this defines a global variable.
-    /// In a [`Command::Rule`], this defines a local variable in the actions.
+    /// At the top level (in a `Command::Action`), this defines a global variable.
+    /// In a `Command::Rule`, this defines a local variable in the actions.
     Let(Span, Leaf, GenericExpr<Head, Leaf>),
     /// `set` a function to a particular result.
     /// `set` should not be used on datatypes-

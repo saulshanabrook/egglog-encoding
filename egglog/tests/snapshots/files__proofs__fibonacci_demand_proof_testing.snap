@@ -1,6 +1,5 @@
 ---
 source: egglog/tests/files.rs
-assertion_line: 279
 expression: proof_snapshot
 ---
 (let prf0 (Fiat (= () ())))
@@ -101,9 +100,9 @@ expression: proof_snapshot
                                                           (x 0)))
                                                       1))
                                                   (substitution
+                                                    (@rewrite_var__ (Fib 2))
                                                     (a 1)
-                                                    (b 0)
-                                                    (@rewrite_var__ (Fib 2)))))
+                                                    (b 0))))
 (let prf3
   (Rule
                                     (= (Fib 3) (Num 2))
@@ -132,9 +131,9 @@ expression: proof_snapshot
                                         prf2
                                         1))
                                     (substitution
+                                      (@rewrite_var__ (Fib 3))
                                       (a 1)
-                                      (b 1)
-                                      (@rewrite_var__ (Fib 3)))))
+                                      (b 1))))
 (let prf4
   (Rule
                             (= (Fib 4) (Num 3))
@@ -161,7 +160,7 @@ expression: proof_snapshot
                                   0)
                                 prf2
                                 1))
-                            (substitution (a 2) (b 1) (@rewrite_var__ (Fib 4)))))
+                            (substitution (@rewrite_var__ (Fib 4)) (a 2) (b 1))))
 (let prf5
   (Rule
                     (= (Fib 5) (Num 5))
@@ -181,7 +180,7 @@ expression: proof_snapshot
                           0)
                         prf3
                         1))
-                    (substitution (a 3) (b 2) (@rewrite_var__ (Fib 5)))))
+                    (substitution (@rewrite_var__ (Fib 5)) (a 3) (b 2))))
 (Rule
   (= (Fib 7) (Num 13))
   (name "(rewrite (Add (Num a) (Num b)) (Num (+ a b)))")
@@ -221,8 +220,8 @@ expression: proof_snapshot
                 0)
               prf4
               1))
-          (substitution (a 5) (b 3) (@rewrite_var__ (Fib 6))))
+          (substitution (@rewrite_var__ (Fib 6)) (a 5) (b 3)))
         0)
       prf5
       1))
-  (substitution (a 8) (b 5) (@rewrite_var__ (Fib 7))))
+  (substitution (@rewrite_var__ (Fib 7)) (a 8) (b 5)))

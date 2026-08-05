@@ -1,18 +1,22 @@
 use crate::{
     ResolvedCall, Term, TermDag, TermId,
-    ast::{FunctionSubtype, GenericNCommand, ResolvedExpr, ResolvedFact, ResolvedNCommand},
+    ast::{
+        FunctionSubtype, GenericNCommand, ResolvedExpr, ResolvedFact, ResolvedNCommand,
+        ResolvedRule,
+    },
     proofs::{
         proof_checker::{
             ProofCheckError, ProofCheckErrorKind, eval_expr_with_subst, gather_globals, run_merge,
         },
-        proof_encoding_helpers::EncodingNames,
+        proof_encoding_helpers::{EncodingNames, Skeleton},
+        proof_head::{Firing, HeadPlan, HeadWalk, ProofAlgebra},
     },
     typechecking::{FuncType, PrimitiveValidator},
-    util::{HEntry, HashMap, HashSet, IndexSet, SymbolGen},
+    util::{HashMap, HashSet, IEntry, IndexMap, IndexSet, SymbolGen},
 };
 use egglog_ast::generic_ast::Literal;
 use egglog_numeric_id::{DenseIdMap, NumericId, define_id};
-use std::fmt;
+use std::{fmt, rc::Rc};
 
 define_id!(
     RawProofId,
@@ -94,16 +98,32 @@ fn run_merge_subexpr(
     .into())
 }
 
+/// A rule proof's columns, gathered across the chain of head proofs it is the
+/// last of.
+struct RuleColumns {
+    name: String,
+    /// One per premise the encoder recorded: the rule's written body facts, in
+    /// order, then a lookup per global the head mentions.
+    premises: Vec<TermId>,
+    /// One per subterm the head interned before this row's proof, in construction
+    /// order.
+    bridges: Vec<TermId>,
+    /// Which of the head's proofs the row asked about states, as an `i64` term
+    /// (see [`crate::proofs::proof_head`]); the rows further down the chain state
+    /// proofs from earlier in the head's walk.
+    column: TermId,
+}
+
 /// A proof straight from the e-graph, not exposed to users.
 struct RawProofStore {
     term_dag: TermDag,
     /// The proof constructor names, used to recognize each extracted proof
     /// term's head by exact match (rather than substring guessing).
     names: EncodingNames,
-    /// Bidirectional map between proof terms and their ids.
+    /// The proofs parsed so far, hash-consed: a [`RawProofId`] is an index into
+    /// it, and equal ids mean equal trees.
     store: IndexSet<RawProof>,
     term_to_proof: HashMap<TermId, RawProofId>,
-    proof_to_term: HashMap<RawProofId, TermId>,
 }
 
 pub(crate) fn proof_store_from_term(
@@ -134,9 +154,16 @@ pub(crate) fn proof_store_from_term(
 enum RawProof {
     /// Equalities added at the top level are justified by fiat.
     Fiat(TermId, TermId),
-    /// Given a rule name and proofs for each premise, produces a proof of a grounded equality t1 = t2 from the body of the rule.
-    /// The subsitution is implicit- in [`ProofTerm`] they are explicit.
-    Rule(String, Vec<RawProofId>, TermId, TermId),
+    /// Given a rule name and proofs for each premise, produces a proof of a
+    /// grounded equality from the head of the rule. The substitution is implicit —
+    /// in [`Justification::Rule`] it is explicit.
+    ///
+    /// The second list holds one *bridge* premise per subterm the head interned —
+    /// the view-row proof that says which e-class it landed in — in construction
+    /// order. The column names which proof of the head's lowering this is (see
+    /// [`crate::proofs::proof_head`]); conversion derives the equality from that
+    /// and the bridges, so the row stores no terms.
+    Rule(String, Vec<RawProofId>, Vec<RawProofId>, i64),
     /// A term-free merge proof: given proofs `f(…, old) = f(…, old)` and
     /// `f(…, new) = f(…, new)`, the index `idx` identifies which subexpression of the
     /// merge body this justifies (a pre-order index over the body tree). The
@@ -191,6 +218,27 @@ pub struct ProofStore {
     /// these heads over literals is a self-evident value, so the checker accepts a
     /// reflexive `Fiat` over it ([`ProofStore::reflexive_value_term`]).
     pub(super) prim_value_constructors: HashSet<String>,
+    /// Rule name -> where the rule sits in the program being checked.
+    rule_at: HashMap<String, usize>,
+    /// Rule name -> how its head lowers.
+    head_plans: HashMap<String, Rc<HeadPlan>>,
+    /// (Rule name, body premises) -> how far that firing's head has been walked.
+    /// Every rule proof of one firing reads a column out of the array that one
+    /// walk fills.
+    head_walks: HashMap<(String, Vec<ProofId>), HeadWalk>,
+    /// Structural sharing for the proofs conversion synthesizes.
+    synthesized: HashMap<SynthKey, ProofId>,
+}
+
+/// What a synthesized proof is, for sharing one node per distinct value.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(crate) enum SynthKey {
+    /// A rule head's own conclusion: the rule, which of its proofs, and the
+    /// premises that fix the substitution.
+    Rule(String, i64, Vec<ProofId>),
+    Sym(ProofId),
+    Trans(ProofId, ProofId),
+    Congr(ProofId, usize, ProofId),
 }
 
 impl fmt::Debug for ProofStore {
@@ -247,9 +295,10 @@ pub struct Proof {
 /// Some justifications are axioms of egglog, like Sym, Trans, and Congr.
 /// Other justifications are based on user input, like Fiat, Rule, and MergeFn.
 ///
-/// Compared to [`RawProof`], a [`Justification`] is always paired with the [`Proposition`] being proven (in a [`Proof`]).
+/// Compared to the crate-internal `RawProof`, a [`Justification`] is always paired with the
+/// [`Proposition`] being proven (in a [`Proof`]).
 /// Additionally, [`Justification::Rule`] includes the explicit substitution mapping variable names to terms,
-/// while [`RawProof::Rule`] leaves this implicit.
+/// while `RawProof::Rule` leaves this implicit.
 #[derive(Clone, Debug)]
 pub enum Justification {
     /// Equalities added at the top level are justified by fiat.
@@ -258,8 +307,8 @@ pub enum Justification {
     Fiat,
     /// Proves a grounded equality `t1 = t2` which appears
     /// in the body of a rule given a substitution given proofs
-    /// for each premise ([`Fact`]) of the rule.
-    /// If the [`Propostion`] proven is a term like `t = t`,
+    /// for each premise ([`Fact`](crate::ast::Fact)) of the rule.
+    /// If the [`Proposition`] proven is a term like `t = t`,
     /// t may be a subexpression of the body of the rule under the substitution.
     ///
     /// A proof for a premise is an equality t1 = t2 that matches the premise under some substitution.
@@ -268,7 +317,8 @@ pub enum Justification {
     Rule {
         name: String,
         premise_proofs: Vec<ProofId>,
-        substitution: HashMap<String, TermId>,
+        /// Ordered by where each variable first occurs in the rule body.
+        substitution: IndexMap<String, TermId>,
     },
     /// Given two proofs f(c1, c2, ..., old) = f(c1, c2, ..., old) and f(c1, c2, ..., new) = f(c1, c2, ..., new),
     /// proves either:
@@ -312,6 +362,20 @@ pub enum Justification {
     Eval,
 }
 
+/// The [`RawProof`] a constructor states, over its arguments and its
+/// already-parsed nested proofs.
+type BuildProof = fn(&RawProofStore, &[TermId], &[RawProofId]) -> RawProof;
+
+/// How one proof constructor is read: how many arguments it takes, which of
+/// them are nested proofs — in the order they are parsed — and what proof it
+/// states over them. The rule and packed-row constructors are variadic and are
+/// not described here; both readers special-case them.
+struct ProofShape {
+    arity: usize,
+    children: &'static [usize],
+    build: BuildProof,
+}
+
 impl RawProofStore {
     /// After extracting a proof from the e-graph, convert it to a [`RawProof`].
     pub(crate) fn from_extracted(
@@ -324,10 +388,148 @@ impl RawProofStore {
             names: encoding_names.clone(),
             store: IndexSet::default(),
             term_to_proof: HashMap::default(),
-            proof_to_term: HashMap::default(),
         };
+        store.parse_nested_first(term);
         let parsed = store.parse_proof(term);
         (store, parsed)
+    }
+
+    /// Parse the proofs nested in `term_id` deepest first, on an explicit stack,
+    /// visiting them in the order [`Self::parse_proof`] would. It then finds each
+    /// one already parsed, so a deep proof does not need a deep call stack.
+    fn parse_nested_first(&mut self, term_id: TermId) {
+        // `false` means the term's nested proofs still have to be pushed.
+        let mut stack = vec![(term_id, false)];
+        let mut seen: HashSet<TermId> = HashSet::default();
+        while let Some((id, nested_pushed)) = stack.pop() {
+            if nested_pushed {
+                self.parse_proof(id);
+                continue;
+            }
+            if !seen.insert(id) {
+                continue;
+            }
+            stack.push((id, true));
+            // Reversed, so popping visits them in `parse_proof_inner`'s order.
+            stack.extend(
+                self.nested_proofs(id)
+                    .into_iter()
+                    .rev()
+                    .map(|nested| (nested, false)),
+            );
+        }
+    }
+
+    /// The proof terms [`Self::parse_proof_inner`] recurses into, in order. A
+    /// malformed term reports none, leaving the diagnostic to the parse itself.
+    fn nested_proofs(&self, term_id: TermId) -> Vec<TermId> {
+        let Term::App(head, args) = self.term_dag.get(term_id) else {
+            return vec![];
+        };
+        let names = &self.names;
+        if names.fused_rule_arity(head).is_some() || *head == names.rule_link_constructor {
+            let RuleColumns {
+                premises, bridges, ..
+            } = self.rule_columns(term_id);
+            return premises.into_iter().chain(bridges).collect();
+        }
+        if let Some(columns) = names.packed_proof_columns(head)
+            && args.len() == columns + 1
+        {
+            return args[1..].to_vec();
+        }
+        self.shape(head)
+            .filter(|shape| shape.arity == args.len())
+            .map_or(vec![], |shape| {
+                shape.children.iter().map(|&at| args[at]).collect()
+            })
+    }
+
+    /// How the proof constructor `head` names is read, or `None` when `head`
+    /// names none.
+    fn shape(&self, head: &str) -> Option<ProofShape> {
+        let names = &self.names;
+        let shape = |arity, children: &'static [usize], build: BuildProof| {
+            Some(ProofShape {
+                arity,
+                children,
+                build,
+            })
+        };
+        if head == names.fiat_constructor {
+            shape(2, &[], |_, args, _| RawProof::Fiat(args[0], args[1]))
+        } else if head == names.merge_fn_idx_constructor {
+            shape(4, &[1, 2], |store, args, kids| {
+                let function = store.parse_string(args[0]);
+                RawProof::MergeFnIdx(function, kids[0], kids[1], store.parse_index(args[3]))
+            })
+        } else if head == names.merge_fn_row_constructor {
+            shape(3, &[1, 2], |store, args, kids| {
+                RawProof::MergeFnRow(store.parse_string(args[0]), kids[0], kids[1])
+            })
+        } else if head == names.eq_trans_constructor {
+            shape(2, &[0, 1], |_, _, kids| RawProof::Trans(kids[0], kids[1]))
+        } else if head == names.eq_sym_constructor {
+            shape(1, &[0], |_, _, kids| RawProof::Sym(kids[0]))
+        } else if head == names.container_normalize_constructor {
+            shape(1, &[0], |_, _, kids| RawProof::ContainerNormalize(kids[0]))
+        } else if head == names.congr_constructor {
+            shape(3, &[0, 2], |store, args, kids| {
+                RawProof::Congr(kids[0], store.parse_index(args[1]), kids[1])
+            })
+        } else if head == names.congr_all_constructor {
+            shape(2, &[0, 1], |_, _, kids| {
+                RawProof::CongrAll(kids[0], kids[1])
+            })
+        } else if head == names.eval_constructor {
+            shape(0, &[], |_, _, _| RawProof::Eval)
+        } else {
+            None
+        }
+    }
+
+    /// Read a rule proof's columns, walking the chain of links a head adds one of
+    /// per proof it composes.
+    ///
+    /// The premises and the bridges are told apart structurally rather than by
+    /// counting: the row ending the chain carries every premise inline, and each
+    /// link adds exactly one bridge. The column returned is the outermost row's,
+    /// read at the index that row's own asserted arity fixes.
+    fn rule_columns(&self, term_id: TermId) -> RuleColumns {
+        let mut bridges = vec![];
+        let mut column = None;
+        let mut cell = term_id;
+        loop {
+            let Term::App(head, args) = self.term_dag.get(cell) else {
+                panic!("expected a rule proof term. Proof parsing assumes valid proofs.");
+            };
+            if *head == self.names.rule_link_constructor {
+                assert!(args.len() == 3, "{head} should have 3 args");
+                column.get_or_insert(args[2]);
+                bridges.push(args[1]);
+                cell = args[0];
+                continue;
+            }
+            let Some(arity) = self.names.fused_rule_arity(head) else {
+                panic!(
+                    "expected a rule proof constructor, got {head}. Proof parsing assumes valid proofs."
+                );
+            };
+            assert!(
+                args.len() == arity + 2,
+                "{head} should have {} args",
+                arity + 2
+            );
+            // Recorded newest first, since a subterm's view-row proof is only
+            // readable once the subterm is interned.
+            bridges.reverse();
+            return RuleColumns {
+                name: self.parse_string(args[0]),
+                premises: args[1..arity + 1].to_vec(),
+                bridges,
+                column: *column.get_or_insert(args[arity + 1]),
+            };
+        }
     }
 
     fn parse_proof(&mut self, term_id: TermId) -> RawProofId {
@@ -337,8 +539,36 @@ impl RawProofStore {
 
         let proof_id = self.parse_proof_inner(term_id);
         self.term_to_proof.insert(term_id, proof_id);
-        self.proof_to_term.insert(proof_id, term_id);
         proof_id
+    }
+
+    /// [`Self::parse_proof`] for one of the term's own nested proofs, which
+    /// [`Self::parse_nested_first`] has already parsed. A child that pre-pass
+    /// misses recurses from here instead, at the call depth it exists to avoid.
+    fn child_proof(&mut self, term_id: TermId) -> RawProofId {
+        debug_assert!(
+            self.term_to_proof.contains_key(&term_id),
+            "proof child {term_id:?} was not visited before its parent"
+        );
+        self.parse_proof(term_id)
+    }
+
+    /// The composition `skeleton` states, over the proof columns `columns` of a
+    /// packed row.
+    fn instantiate(&mut self, skeleton: &Skeleton, columns: &[TermId]) -> RawProofId {
+        let proof = match skeleton {
+            Skeleton::Leaf(column) => return self.child_proof(columns[*column]),
+            Skeleton::Sym(inner) => RawProof::Sym(self.instantiate(inner, columns)),
+            Skeleton::Trans(left, right) => {
+                let left = self.instantiate(left, columns);
+                RawProof::Trans(left, self.instantiate(right, columns))
+            }
+            Skeleton::Congr(base, child, step) => {
+                let base = self.instantiate(base, columns);
+                RawProof::Congr(base, *child, self.instantiate(step, columns))
+            }
+        };
+        self.add_proof(proof)
     }
 
     fn parse_proof_inner(&mut self, term_id: TermId) -> RawProofId {
@@ -349,89 +579,51 @@ impl RawProofStore {
             );
         };
 
-        let proof = if head == self.names.fiat_constructor {
-            assert!(args.len() == 2, "fiat constructor should have 2 args");
-            RawProof::Fiat(args[0], args[1])
-        } else if head == self.names.rule_constructor {
-            assert!(args.len() == 4, "rule constructor should have 4 args");
-            let name = self.parse_string(args[0]);
-            let premises = self.parse_proof_list(args[1]);
-            RawProof::Rule(name, premises, args[2], args[3])
-        } else if head == self.names.merge_fn_idx_constructor {
-            assert!(args.len() == 4, "merge-idx constructor should have 4 args");
-            let function = self.parse_string(args[0]);
-            let old_proof = self.parse_proof(args[1]);
-            let new_proof = self.parse_proof(args[2]);
-            let idx = self.parse_index(args[3]);
-            RawProof::MergeFnIdx(function, old_proof, new_proof, idx)
-        } else if head == self.names.merge_fn_row_constructor {
-            assert!(args.len() == 3, "merge-row constructor should have 3 args");
-            let function = self.parse_string(args[0]);
-            let old_proof = self.parse_proof(args[1]);
-            let new_proof = self.parse_proof(args[2]);
-            RawProof::MergeFnRow(function, old_proof, new_proof)
-        } else if head == self.names.eq_trans_constructor {
-            assert!(args.len() == 2, "trans constructor should have 2 args");
-            let left = self.parse_proof(args[0]);
-            let right = self.parse_proof(args[1]);
-            RawProof::Trans(left, right)
-        } else if head == self.names.eq_sym_constructor {
-            assert!(args.len() == 1, "sym constructor should have 1 arg");
-            let inner = self.parse_proof(args[0]);
-            RawProof::Sym(inner)
-        } else if head == self.names.container_normalize_constructor {
+        if let Some(columns) = self.names.packed_proof_columns(&head) {
             assert!(
-                args.len() == 1,
-                "container-normalize constructor should have 1 arg"
+                args.len() == columns + 1,
+                "{head} should have {} args",
+                columns + 1
             );
-            let inner = self.parse_proof(args[0]);
-            RawProof::ContainerNormalize(inner)
-        } else if head == self.names.congr_constructor {
-            assert!(args.len() == 3, "congr constructor should have 3 args");
-            let proof = self.parse_proof(args[0]);
-            let child_index = self.parse_index(args[1]);
-            let child_proof = self.parse_proof(args[2]);
-            RawProof::Congr(proof, child_index, child_proof)
-        } else if head == self.names.congr_all_constructor {
-            assert!(args.len() == 2, "congr-all constructor should have 2 args");
-            let proof = self.parse_proof(args[0]);
-            let child_proof = self.parse_proof(args[1]);
-            RawProof::CongrAll(proof, child_proof)
-        } else if head == self.names.eval_constructor {
-            assert!(args.is_empty(), "eval constructor should have no args");
-            RawProof::Eval
-        } else {
-            panic!("Unrecognized proof term head: {head}. Proof parsing assumes valid proofs.");
-        };
+            let spelling = self.parse_string(args[0]);
+            let skeleton = Skeleton::from_spelling(&spelling)
+                .filter(|skeleton| skeleton.width() == columns)
+                .unwrap_or_else(|| {
+                    panic!("{spelling} is not a composition over {head}'s {columns} columns")
+                });
+            return self.instantiate(&skeleton, &args[1..]);
+        }
+
+        if self.names.fused_rule_arity(&head).is_some() || head == self.names.rule_link_constructor
+        {
+            let RuleColumns {
+                name,
+                premises,
+                bridges,
+                column,
+            } = self.rule_columns(term_id);
+            let premises = premises.iter().map(|arg| self.child_proof(*arg)).collect();
+            let bridges = bridges.iter().map(|arg| self.child_proof(*arg)).collect();
+            let column = self.parse_int(column);
+            return self.add_proof(RawProof::Rule(name, premises, bridges, column));
+        }
+
+        let shape = self.shape(&head).unwrap_or_else(|| {
+            panic!("Unrecognized proof term head: {head}. Proof parsing assumes valid proofs.")
+        });
+        assert!(
+            args.len() == shape.arity,
+            "{head} should have {} args",
+            shape.arity
+        );
+        let children: Vec<RawProofId> = shape
+            .children
+            .iter()
+            .map(|&at| self.child_proof(args[at]))
+            .collect();
+        let proof = (shape.build)(self, &args, &children);
 
         self.add_proof(proof)
-    }
-
-    fn parse_proof_list(&mut self, list_term: TermId) -> Vec<RawProofId> {
-        let term = self.term_dag.get(list_term).clone();
-        match term {
-            Term::App(head, args) => {
-                if head == self.names.pnil {
-                    assert!(args.is_empty(), "pnil should not have arguments");
-                    Vec::new()
-                } else if head == self.names.pcons {
-                    assert!(args.len() == 2, "pcons should have 2 arguments");
-                    let head_proof = self.parse_proof(args[0]);
-                    let rest = self.parse_proof_list(args[1]);
-                    let mut list = Vec::with_capacity(rest.len() + 1);
-                    list.push(head_proof);
-                    list.extend(rest);
-                    list
-                } else {
-                    panic!(
-                        "expected proof list constructor, got {head}. Proof parsing assumes valid proofs."
-                    );
-                }
-            }
-            other => {
-                panic!("expected proof list, got {other:?}. Proof parsing assumes valid proofs.")
-            }
-        }
     }
 
     fn parse_string(&self, term_id: TermId) -> String {
@@ -449,6 +641,13 @@ impl RawProofStore {
             other => {
                 panic!("expected non-negative integer literal for congruence index, got {other:?}")
             }
+        }
+    }
+
+    fn parse_int(&self, term_id: TermId) -> i64 {
+        match self.term_dag.get(term_id) {
+            Term::Lit(Literal::Int(i)) => *i,
+            other => panic!("expected integer literal in proof term, got {other:?}"),
         }
     }
 
@@ -474,13 +673,13 @@ impl RawProofStore {
     }
 }
 
-/// True iff `fact` is a custom-function application fact `(= (f args) v)` (either
-/// argument order), for which the checker's proof normal form expects a *reflexive*
-/// premise proof. Constructor and plain equality facts are excluded.
+/// True iff `fact` is a custom-function application fact `(= (f args) v)`, for
+/// which the checker's proof normal form expects a *reflexive* premise proof.
+/// Constructor and plain equality facts are excluded. Proof normal form always
+/// writes the call on the left (see [`crate::proofs::proof_normal_form`]).
 fn is_custom_func_fact(fact: &ResolvedFact) -> bool {
     let call = match fact {
-        ResolvedFact::Eq(_, ResolvedExpr::Call(_, c, _), ResolvedExpr::Var(..))
-        | ResolvedFact::Eq(_, ResolvedExpr::Var(..), ResolvedExpr::Call(_, c, _)) => c,
+        ResolvedFact::Eq(_, ResolvedExpr::Call(_, c, _), ResolvedExpr::Var(..)) => c,
         _ => return false,
     };
     matches!(call, ResolvedCall::Func(ft) if ft.subtype == FunctionSubtype::Custom)
@@ -511,6 +710,19 @@ impl ProofStore {
         &self.id_to_proof[proof_id]
     }
 
+    /// Add a proof, sharing one node per distinct `key`. The e-graph
+    /// hash-conses its own proof rows, so the proofs conversion rebuilds in their
+    /// place must be shared too — otherwise a subproof reached along several paths
+    /// becomes a fresh copy per path, and the proof unfolds into a tree.
+    pub(super) fn push_shared_proof(&mut self, key: SynthKey, proof: Proof) -> ProofId {
+        if let Some(&id) = self.synthesized.get(&key) {
+            return id;
+        }
+        let id = self.id_to_proof.push(proof);
+        self.synthesized.insert(key, id);
+        id
+    }
+
     /// Get a string representation of the proof with the given id.
     /// The string representation is a pretty-printed s-expression block with
     /// let bindings for sub-proofs and sub-terms.
@@ -523,6 +735,25 @@ impl ProofStore {
         buffer
     }
 
+    /// An empty store over `term_dag`.
+    pub(super) fn new(
+        term_dag: TermDag,
+        container_normalizers: HashMap<String, PrimitiveValidator>,
+        prim_value_constructors: HashSet<String>,
+    ) -> ProofStore {
+        ProofStore {
+            term_dag,
+            proof_id: HashMap::default(),
+            id_to_proof: DenseIdMap::new(),
+            container_normalizers,
+            prim_value_constructors,
+            rule_at: HashMap::default(),
+            head_plans: HashMap::default(),
+            head_walks: HashMap::default(),
+            synthesized: HashMap::default(),
+        }
+    }
+
     fn from_raw(
         prog: &Vec<ResolvedNCommand>,
         raw_store: RawProofStore,
@@ -530,13 +761,16 @@ impl ProofStore {
         container_normalizers: HashMap<String, PrimitiveValidator>,
         prim_value_constructors: HashSet<String>,
     ) -> (ProofStore, ProofId) {
-        let mut store = ProofStore {
-            term_dag: raw_store.term_dag.clone(),
-            proof_id: HashMap::default(),
-            id_to_proof: DenseIdMap::new(),
+        let mut store = ProofStore::new(
+            raw_store.term_dag.clone(),
             container_normalizers,
             prim_value_constructors,
-        };
+        );
+        for (at, command) in prog.iter().enumerate() {
+            if let ResolvedNCommand::NormRule { rule } = command {
+                store.rule_at.entry(rule.name.clone()).or_insert(at);
+            }
+        }
         let globals = gather_globals(prog, &mut store.term_dag)
             .unwrap_or_else(|_| panic!("failed to gather globals from program"));
 
@@ -554,20 +788,14 @@ impl ProofStore {
     /// reflexivizing to its RHS lands both premises on the same canonical view row
     /// so the checker's input-match succeeds.
     fn reflexivize_premise(&mut self, premise_id: ProofId) -> ProofId {
-        let prop = self.id_to_proof[premise_id].proposition.clone();
+        let prop = &self.id_to_proof[premise_id].proposition;
         if prop.lhs == prop.rhs {
             return premise_id;
         }
-        // Sym(p) : rhs = lhs
-        let sym_id = self.id_to_proof.push(Proof {
-            proposition: Proposition::new(prop.rhs, prop.lhs),
-            justification: Justification::Sym(premise_id),
-        });
-        // Trans(Sym(p), p) : rhs = rhs
-        self.id_to_proof.push(Proof {
-            proposition: Proposition::new(prop.rhs, prop.rhs),
-            justification: Justification::Trans(sym_id, premise_id),
-        })
+        // Shared, so the two rows of one firing reflexivize a premise to the
+        // same id: the premise vector is both the walk memo's key and the
+        // rule proofs' sharing key.
+        self.reflexive(premise_id)
     }
 
     /// The two `MergeFn*` premise proofs end (rhs) at the colliding view terms
@@ -641,11 +869,13 @@ impl ProofStore {
                 ),
                 justification: Justification::Fiat,
             },
-            RawProof::Rule(name, premise_proofs, lhs, rhs) => {
+            RawProof::Rule(name, premise_proofs, bridge_proofs, raw_column) => {
                 let converted_premises: Vec<ProofId> = premise_proofs
                     .iter()
                     .map(|pid| self.convert_raw_proof(prog, globals, raw_store, *pid))
                     .collect();
+                let rule = self.rule_named(prog, name);
+                let planned = self.head_plan(rule);
 
                 // Rebuild/canonicalization can rewrite a matched custom-function-fact
                 // premise `(= (f args) v)` into a non-reflexive natural->canonical
@@ -654,18 +884,22 @@ impl ProofStore {
                 // rewrites). The checker's function-fact normal form expects a
                 // reflexive premise at the matched (canonical) shape, so reflexivize
                 // those. Equality-fact premises `(= a b)` must stay non-reflexive.
-                let reflex_mask: Vec<bool> = {
-                    let rule = prog
-                        .iter()
-                        .find_map(|cmd| match cmd {
-                            ResolvedNCommand::NormRule { rule } if rule.name == *name => Some(rule),
-                            _ => None,
-                        })
-                        .unwrap_or_else(|| panic!("could not find rule with name {name}"));
-                    rule.body.iter().map(is_custom_func_fact).collect()
-                };
-                // Premises are in body-fact order, one per fact (the checker rejects
-                // any count mismatch), so zip pairs each with its fact's decision.
+                let reflex_mask: Vec<bool> = rule.body.iter().map(is_custom_func_fact).collect();
+                // Premises are in body-fact order, so each pairs with its own fact's
+                // decision. There may be more premises than facts: `remove_globals`
+                // appends a lookup fact per global the rule's *head* mentions, and the
+                // encoder records a premise for each, while `prog` is the program from
+                // before that pass. Those extras are exactly the trailing ones, so
+                // dropping them is what pairs the rest correctly — but a *shorter*
+                // premise list would misalign the mask silently, so require the
+                // encoder's count to cover the body (see
+                // `rule_premises_cover_the_written_body_facts`).
+                assert!(
+                    converted_premises.len() >= reflex_mask.len(),
+                    "rule {name} recorded {} premises for a body of {} facts",
+                    converted_premises.len(),
+                    reflex_mask.len()
+                );
                 let converted_premises: Vec<ProofId> = converted_premises
                     .into_iter()
                     .zip(reflex_mask)
@@ -678,22 +912,57 @@ impl ProofStore {
                     })
                     .collect();
 
-                let mut substitution =
-                    self.compute_rule_substitution(prog, name, &converted_premises);
-                // remove globals from the substitution, since they are not necessary
-                substitution.retain(|var, _term_id| globals.get(var).is_none());
-
-                Proof {
-                    proposition: Proposition::new(
-                        raw_store.unwrap_ast(*lhs),
-                        raw_store.unwrap_ast(*rhs),
-                    ),
-                    justification: Justification::Rule {
-                        name: name.clone(),
-                        premise_proofs: converted_premises,
-                        substitution,
-                    },
+                // This row carries on the walk the last row of the same firing
+                // left off at. A row reached while this one walks starts its own,
+                // so the further of the two is the one kept.
+                let firing_key = (name.clone(), converted_premises.clone());
+                let carried = self.head_walks.remove(&firing_key);
+                let substitution = self.compute_rule_substitution(rule, &converted_premises);
+                // A carried walk brings the bindings the earlier row seeded it
+                // with, so only a walk starting from scratch needs them.
+                let bindings = match &carried {
+                    Some(_) => HashMap::default(),
+                    None => {
+                        let mut bindings = globals.clone();
+                        bindings
+                            .extend(substitution.iter().map(|(var, term)| (var.clone(), *term)));
+                        bindings
+                    }
+                };
+                // A global's value is in every substitution, so recording it in the
+                // proof would only repeat the program.
+                let mut recorded = substitution;
+                recorded.retain(|var, _term| globals.get(var).is_none());
+                // The bridges are in the order the head builds, which is the
+                // order the walk takes them in, so the supply picks up where the
+                // carried walk stopped.
+                let mut next = carried.as_ref().map_or(0, HeadWalk::bridges_taken);
+                let mut firing = Firing::new(
+                    name,
+                    &planned,
+                    bindings,
+                    converted_premises,
+                    recorded,
+                    Box::new(move |store: &mut ProofStore, _to_canonical| {
+                        let raw = *bridge_proofs.get(next)?;
+                        next += 1;
+                        Some(store.convert_raw_proof(prog, globals, raw_store, raw))
+                    }),
+                );
+                if let Some(walk) = carried {
+                    firing.carry_on(walk);
                 }
+                let proof_id = firing.column(self, *raw_column);
+                let walked = firing.into_walk();
+                let further = self
+                    .head_walks
+                    .get(&firing_key)
+                    .is_none_or(|kept| kept.reaches() < walked.reaches());
+                if further {
+                    self.head_walks.insert(firing_key, walked);
+                }
+                self.proof_id.insert(raw_proof.clone(), proof_id);
+                return proof_id;
             }
             RawProof::MergeFnIdx(function, old_raw, new_raw, idx) => {
                 let old_proof_id = self.convert_raw_proof(prog, globals, raw_store, *old_raw);
@@ -760,6 +1029,7 @@ impl ProofStore {
                 let base_lhs = self.id_to_proof[base_id].lhs();
                 let base_rhs = self.id_to_proof[base_id].rhs();
                 let child_rhs = self.id_to_proof[child_id].rhs();
+                self.assert_congr_starts_at_child(base_rhs, *child_index, child_id);
                 let rhs = self.replace_term_child(base_rhs, *child_index, child_rhs);
 
                 Proof {
@@ -805,34 +1075,45 @@ impl ProofStore {
         proof_id
     }
 
+    /// The rule the proof names, which the encoder guarantees is in the program.
+    fn rule_named<'a>(&self, prog: &'a [ResolvedNCommand], rule_name: &str) -> &'a ResolvedRule {
+        let at = *self
+            .rule_at
+            .get(rule_name)
+            .unwrap_or_else(|| panic!("could not find rule with name {rule_name}"));
+        match &prog[at] {
+            ResolvedNCommand::NormRule { rule } => rule,
+            _ => unreachable!("only a rule is recorded"),
+        }
+    }
+
+    /// How `rule`'s head lowers. A property of the rule text, so it is computed
+    /// once per rule.
+    fn head_plan(&mut self, rule: &ResolvedRule) -> Rc<HeadPlan> {
+        if let Some(plan) = self.head_plans.get(&rule.name) {
+            return plan.clone();
+        }
+        let mut minted = 0usize;
+        let mut fresh = || {
+            minted += 1;
+            format!("@union-operand-{minted}")
+        };
+        let plan = Rc::new(HeadPlan::new(&rule.head.0, &mut fresh));
+        self.head_plans.insert(rule.name.clone(), plan.clone());
+        plan
+    }
+
     /// For a given rule and premise proofs, compute the substitution used in the rule application.
     /// The proof has enough information to compute the substitution, we do it here
     /// for convenience.
+    ///
+    /// Entries come out in the order the variables first occur in the rule body.
     fn compute_rule_substitution(
         &self,
-        prog: &[ResolvedNCommand],
-        rule_name: &str,
+        rule: &ResolvedRule,
         premise_proofs: &[ProofId],
-    ) -> HashMap<String, TermId> {
-        let substitution = HashMap::default();
-
-        let Some(rule) = prog.iter().find_map(|cmd| match cmd {
-            ResolvedNCommand::NormRule { rule } if rule.name == rule_name => Some(rule),
-            _ => None,
-        }) else {
-            panic!("could not find rule with name {rule_name}");
-        };
-
-        if rule.body.len() != premise_proofs.len() {
-            panic!(
-                "rule {} has {} premises, but got {} premise proofs",
-                rule_name,
-                rule.body.len(),
-                premise_proofs.len()
-            );
-        }
-
-        let mut current_subst = substitution;
+    ) -> IndexMap<String, TermId> {
+        let mut current_subst = IndexMap::default();
         for (fact, proof_id) in rule.body.iter().zip(premise_proofs.iter()) {
             // Container side conditions carry only an `Eval` marker (no value);
             // their bindings are generated by `check_side_condition` at check
@@ -846,11 +1127,14 @@ impl ProofStore {
         current_subst
     }
 
+    /// Bind the fact's variables from the term its premise proof proves. A
+    /// primitive call contributes no bindings of its own — the value it computes
+    /// is read off the proof instead.
     fn unify_fact(
         &self,
         fact: &ResolvedFact,
         proof_id: ProofId,
-        subst: &mut HashMap<String, TermId>,
+        subst: &mut IndexMap<String, TermId>,
     ) {
         let proof = &self.id_to_proof[proof_id];
         match fact {
@@ -882,13 +1166,13 @@ impl ProofStore {
                     );
                 }
 
-                // bind last child to v
-                let var_child_term = children.last().unwrap();
-                self.add_to_subst(subst, &v.name, *var_child_term);
-                // unify other args
+                // unify the arguments before binding v to the last child, so the
+                // substitution records the variables in the order the fact writes them
                 for (arg_expr, child_term) in args.iter().zip(children.iter()) {
                     self.unify_expr(arg_expr, *child_term, subst);
                 }
+                let var_child_term = children.last().unwrap();
+                self.add_to_subst(subst, &v.name, *var_child_term);
             }
             ResolvedFact::Eq(_, lhs_expr, rhs_expr) => {
                 self.unify_expr(lhs_expr, proof.lhs(), subst);
@@ -900,12 +1184,12 @@ impl ProofStore {
         }
     }
 
-    fn add_to_subst(&self, subst: &mut HashMap<String, TermId>, var: &str, term_id: TermId) {
+    fn add_to_subst(&self, subst: &mut IndexMap<String, TermId>, var: &str, term_id: TermId) {
         match subst.entry(var.to_string()) {
-            HEntry::Vacant(entry) => {
+            IEntry::Vacant(entry) => {
                 entry.insert(term_id);
             }
-            HEntry::Occupied(entry) => {
+            IEntry::Occupied(entry) => {
                 if *entry.get() != term_id {
                     panic!(
                         "conflicting substitutions for variable {}: {:?} vs {:?}",
@@ -922,7 +1206,7 @@ impl ProofStore {
         &self,
         expr: &ResolvedExpr,
         term_id: TermId,
-        substitution: &mut HashMap<String, TermId>,
+        substitution: &mut IndexMap<String, TermId>,
     ) {
         match expr {
             ResolvedExpr::Lit(_, _lit) => (),
@@ -1001,6 +1285,22 @@ impl ProofStore {
             });
         }
         current
+    }
+
+    /// A congruence step's middle-term check, the counterpart of the one
+    /// [`crate::proofs::proof_head::trans`] makes: the child the step rewrites
+    /// has to be the child it starts at. Panics otherwise.
+    fn assert_congr_starts_at_child(&self, base: TermId, child_index: usize, child: ProofId) {
+        let child_lhs = self.id_to_proof[child].lhs();
+        let base_child = match self.term_dag.get(base) {
+            Term::App(_, children) => children.get(child_index).copied(),
+            other => panic!("congruence requires an application term, got {other:?}"),
+        };
+        assert_eq!(
+            base_child,
+            Some(child_lhs),
+            "congruence step {child_index} does not start at that child"
+        );
     }
 
     pub(super) fn replace_term_child(
@@ -1180,5 +1480,449 @@ impl Proof {
     /// Get the justification for the proof
     pub fn justification(&self) -> &Justification {
         &self.justification
+    }
+}
+
+/// A packed row unpacks to exactly the composition its skeleton states. The
+/// compositions below are written out by hand rather than generated, so they are
+/// an oracle rather than a second copy of the instantiation.
+///
+/// [`RawProofStore::add_proof`] hash-conses, so the unpacked row and the
+/// hand-written chain land on the same [`RawProofId`] exactly when they are the
+/// same tree, which is where `assert_agree` compares them.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proofs::proof_encoding_rebuild::rebuild_skeleton;
+    use crate::util::SymbolGen;
+
+    /// One firing of a rebuild rule over a four-child view row, as the proofs
+    /// the rule packs: the row proof `e_old = f(old0 old1 old2 old3)`, a step
+    /// per child column (column 3's is reflexive — that column did not move),
+    /// and the e-class's own move `e_old = e_new`.
+    struct RebuildFiring {
+        raw: RawProofStore,
+        row: TermId,
+        /// `old_j = new_j`, per column.
+        steps: Vec<TermId>,
+        /// `e_old = e_new`.
+        eclass: TermId,
+        old: Vec<TermId>,
+        /// Each column's canonical form; column 3's is its old one.
+        new: Vec<TermId>,
+        e_old: TermId,
+        e_new: TermId,
+    }
+
+    impl RebuildFiring {
+        fn new() -> RebuildFiring {
+            let mut raw = empty_store();
+            let leaf = |raw: &mut RawProofStore, name: String| raw.term_dag.app(name, vec![]);
+            let old: Vec<TermId> = (0..4).map(|j| leaf(&mut raw, format!("old{j}"))).collect();
+            let new: Vec<TermId> = (0..4)
+                .map(|j| match j {
+                    3 => old[3],
+                    _ => leaf(&mut raw, format!("new{j}")),
+                })
+                .collect();
+            let e_old = leaf(&mut raw, "e_old".to_string());
+            let e_new = leaf(&mut raw, "e_new".to_string());
+
+            let row_term = raw.term_dag.app("f".to_string(), old.clone());
+            let row = fiat_term(&mut raw, e_old, row_term);
+            let steps = (0..4)
+                .map(|j| fiat_term(&mut raw, old[j], new[j]))
+                .collect();
+            let eclass = fiat_term(&mut raw, e_old, e_new);
+            RebuildFiring {
+                raw,
+                row,
+                steps,
+                eclass,
+                old,
+                new,
+                e_old,
+                e_new,
+            }
+        }
+
+        /// The proposition `lhs = f(children)`.
+        fn concludes(&mut self, lhs: TermId, children: Vec<TermId>) -> Proposition {
+            let rhs = self.raw.term_dag.app("f".to_string(), children);
+            Proposition::new(lhs, rhs)
+        }
+
+        /// The proof of one of this firing's columns.
+        fn proof(&mut self, column: TermId) -> RawProofId {
+            self.raw.parse_proof(column)
+        }
+
+        /// [`assert_agree`] over this firing's store.
+        fn assert_agree(&self, packed: RawProofId, chain: RawProofId, expected: &Proposition) {
+            assert_agree(&self.raw, packed, chain, expected);
+        }
+    }
+
+    /// Require that the unpacked row `packed` is the same tree as the chain it
+    /// packs, and that the chain proves `expected`.
+    fn assert_agree(
+        raw: &RawProofStore,
+        packed: RawProofId,
+        chain: RawProofId,
+        expected: &Proposition,
+    ) {
+        let mut store =
+            ProofStore::new(raw.term_dag.clone(), HashMap::default(), HashSet::default());
+        let prog = vec![];
+        let globals = HashMap::default();
+        let mut convert = |id| {
+            let converted = store.convert_raw_proof(&prog, &globals, raw, id);
+            store.simplify(converted)
+        };
+        let (packed_proof, chain_proof) = (convert(packed), convert(chain));
+        assert_eq!(store.get(chain_proof).proposition(), expected);
+        assert_eq!(
+            packed,
+            chain,
+            "the unpacked row\n{}\nis not the composition it packs\n{}",
+            store.proof_to_string(packed_proof),
+            store.proof_to_string(chain_proof),
+        );
+    }
+
+    /// A leaf proof of `lhs = rhs`, spelled the way an extracted `Fiat` row is
+    /// (each endpoint wrapped in an `Ast` constructor).
+    fn fiat_term(raw: &mut RawProofStore, lhs: TermId, rhs: TermId) -> TermId {
+        let lhs = raw.term_dag.app("Ast".to_string(), vec![lhs]);
+        let rhs = raw.term_dag.app("Ast".to_string(), vec![rhs]);
+        let head = raw.names.fiat_constructor.clone();
+        raw.term_dag.app(head, vec![lhs, rhs])
+    }
+
+    /// A reflexive `Fiat` row over a nullary term, as an extracted proof term.
+    fn leaf_proof_term(raw: &mut RawProofStore, name: &str) -> TermId {
+        let value = raw.term_dag.app(name.to_string(), vec![]);
+        fiat_term(raw, value, value)
+    }
+
+    /// An empty store whose names are the ones a packed row is spelled with.
+    fn empty_store() -> RawProofStore {
+        RawProofStore {
+            term_dag: TermDag::default(),
+            names: EncodingNames::new(&mut SymbolGen::new("test".to_string())),
+            store: IndexSet::default(),
+            term_to_proof: HashMap::default(),
+        }
+    }
+
+    /// A packed row over `columns`, as the extracted term of the constructor
+    /// carrying `skeleton`.
+    fn packed_term(raw: &mut RawProofStore, skeleton: &Skeleton, columns: Vec<TermId>) -> TermId {
+        assert_eq!(columns.len(), skeleton.width(), "one term per column");
+        let head = raw.names.packed_proof(columns.len());
+        let spelling = raw.term_dag.lit(Literal::String(skeleton.spelling()));
+        let args = std::iter::once(spelling).chain(columns).collect();
+        raw.term_dag.app(head, args)
+    }
+
+    /// [`RawProofStore::from_extracted`]'s parse of one packed row.
+    fn parse(raw: &mut RawProofStore, term: TermId) -> RawProofId {
+        raw.parse_nested_first(term);
+        raw.parse_proof(term)
+    }
+
+    /// A rebuild row's columns: the row proof, then each canonicalized column's
+    /// step proof, then the e-class's own step when it has one.
+    fn rebuild_columns(
+        row: TermId,
+        steps: &[(usize, TermId)],
+        eclass: Option<TermId>,
+    ) -> Vec<TermId> {
+        let mut columns = vec![row];
+        columns.extend(steps.iter().map(|&(_, step)| step));
+        columns.extend(eclass);
+        columns
+    }
+
+    /// One rebuild row, packed and parsed.
+    fn rebuild(
+        raw: &mut RawProofStore,
+        row: TermId,
+        steps: &[(usize, TermId)],
+        eclass: Option<TermId>,
+    ) -> RawProofId {
+        let children: Vec<usize> = steps.iter().map(|&(child, _)| child).collect();
+        let skeleton = rebuild_skeleton(&children, eclass.is_some());
+        let columns = rebuild_columns(row, steps, eclass);
+        let term = packed_term(raw, &skeleton, columns);
+        parse(raw, term)
+    }
+
+    /// Columns 0 and 2 move, and so does the e-class; column 3's step is
+    /// reflexive.
+    #[test]
+    fn rebuild_unpacks_to_the_chain_it_packs() {
+        let mut firing = RebuildFiring::new();
+        let (row, eclass) = (firing.row, firing.eclass);
+        let steps = firing.steps.clone();
+        let packed = rebuild(
+            &mut firing.raw,
+            row,
+            &[(0, steps[0]), (2, steps[2]), (3, steps[3])],
+            Some(eclass),
+        );
+
+        let row = firing.proof(row);
+        let (step0, step2, step3) = (
+            firing.proof(steps[0]),
+            firing.proof(steps[2]),
+            firing.proof(steps[3]),
+        );
+        let eclass = firing.proof(eclass);
+        let at_0 = firing.raw.add_proof(RawProof::Congr(row, 0, step0));
+        let at_2 = firing.raw.add_proof(RawProof::Congr(at_0, 2, step2));
+        let at_3 = firing.raw.add_proof(RawProof::Congr(at_2, 3, step3));
+        let back = firing.raw.add_proof(RawProof::Sym(eclass));
+        let chain = firing.raw.add_proof(RawProof::Trans(back, at_3));
+
+        let children = vec![firing.new[0], firing.old[1], firing.new[2], firing.old[3]];
+        let expected = firing.concludes(firing.e_new, children);
+        firing.assert_agree(packed, chain, &expected);
+    }
+
+    /// A view whose output is not an e-class: only child columns move.
+    #[test]
+    fn rebuild_without_an_eclass_step_unpacks_to_the_chain() {
+        let mut firing = RebuildFiring::new();
+        let row = firing.row;
+        let steps = firing.steps.clone();
+        let packed = rebuild(&mut firing.raw, row, &[(1, steps[1]), (3, steps[3])], None);
+
+        let row = firing.proof(row);
+        let (step1, step3) = (firing.proof(steps[1]), firing.proof(steps[3]));
+        let at_1 = firing.raw.add_proof(RawProof::Congr(row, 1, step1));
+        let chain = firing.raw.add_proof(RawProof::Congr(at_1, 3, step3));
+
+        let children = vec![firing.old[0], firing.new[1], firing.old[2], firing.old[3]];
+        let expected = firing.concludes(firing.e_old, children);
+        firing.assert_agree(packed, chain, &expected);
+    }
+
+    /// Only the e-class moved, so the fold contributes nothing.
+    #[test]
+    fn rebuild_with_no_child_steps_unpacks_to_the_chain() {
+        let mut firing = RebuildFiring::new();
+        let (row, eclass) = (firing.row, firing.eclass);
+        let packed = rebuild(&mut firing.raw, row, &[], Some(eclass));
+
+        let row = firing.proof(row);
+        let eclass = firing.proof(eclass);
+        let back = firing.raw.add_proof(RawProof::Sym(eclass));
+        let chain = firing.raw.add_proof(RawProof::Trans(back, row));
+
+        let children = firing.old.clone();
+        let expected = firing.concludes(firing.e_new, children);
+        firing.assert_agree(packed, chain, &expected);
+    }
+
+    /// A step that names a child it does not start at is rejected rather than
+    /// minting a proof of an equality nothing established.
+    #[test]
+    #[should_panic(expected = "congruence step 1 does not start at that child")]
+    fn a_rebuild_step_at_the_wrong_child_is_rejected() {
+        let mut firing = RebuildFiring::new();
+        let (row, steps) = (firing.row, firing.steps.clone());
+        let packed = rebuild(&mut firing.raw, row, &[(1, steps[0])], None);
+        let mut store = ProofStore::new(
+            firing.raw.term_dag.clone(),
+            HashMap::default(),
+            HashSet::default(),
+        );
+        store.convert_raw_proof(&vec![], &HashMap::default(), &firing.raw, packed);
+    }
+
+    /// Every column of the row is a proof, including the e-class's past the last
+    /// step. A proof `nested_proofs` misses is still parsed, but by
+    /// `parse_proof`'s recursion rather than by `parse_nested_first`'s heap
+    /// stack, so a deep chain through it overflows.
+    #[test]
+    fn a_rebuild_rows_nested_proofs_are_its_row_and_its_steps() {
+        let mut raw = empty_store();
+        let row = leaf_proof_term(&mut raw, "row");
+        let first = leaf_proof_term(&mut raw, "first");
+        let second = leaf_proof_term(&mut raw, "second");
+        let eclass = leaf_proof_term(&mut raw, "eclass");
+        let steps = [(0, first), (2, second)];
+        for (with_eclass, expected) in [
+            (None, vec![row, first, second]),
+            (Some(eclass), vec![row, first, second, eclass]),
+        ] {
+            let skeleton = rebuild_skeleton(&[0, 2], with_eclass.is_some());
+            let columns = rebuild_columns(row, &steps, with_eclass);
+            let term = packed_term(&mut raw, &skeleton, columns);
+            assert_eq!(
+                raw.nested_proofs(term),
+                expected,
+                "a rebuild row nests its row proof, its step proofs and its e-class proof"
+            );
+        }
+    }
+
+    /// A chain of rebuilds parses without recursing per link, on a stack far
+    /// too small to hold one frame per link — through either proof field a link
+    /// can chain on.
+    #[test]
+    fn a_deep_rebuild_chain_parses_without_a_deep_stack() {
+        for through_eclass in [false, true] {
+            std::thread::Builder::new()
+                .stack_size(512 * 1024)
+                .spawn(move || {
+                    let mut raw = empty_store();
+                    let step = leaf_proof_term(&mut raw, "step");
+                    let leaf = leaf_proof_term(&mut raw, "row");
+                    let skeleton = rebuild_skeleton(&[0], through_eclass);
+                    let mut chain = leaf;
+                    for _ in 0..50_000 {
+                        let (row, eclass) = if through_eclass {
+                            (leaf, Some(chain))
+                        } else {
+                            (chain, None)
+                        };
+                        let columns = rebuild_columns(row, &[(0, step)], eclass);
+                        chain = packed_term(&mut raw, &skeleton, columns);
+                    }
+                    RawProofStore::from_extracted(&raw.names, raw.term_dag.clone(), chain);
+                })
+                .expect("spawn")
+                .join()
+                .expect("a deep rebuild chain should parse");
+        }
+    }
+
+    /// The two compositions a merge collision packs, by which endpoint its two
+    /// carried proofs share: the larger side's is column 0 and the smaller
+    /// side's column 1, and whichever points the wrong way is reversed.
+    fn displaced_skeletons() -> [Skeleton; 2] {
+        [
+            Skeleton::Leaf(0).sym().trans(Skeleton::Leaf(1)),
+            Skeleton::Leaf(0).trans(Skeleton::Leaf(1).sym()),
+        ]
+    }
+
+    /// One merge collision under `skeleton`: the larger side's carried proof,
+    /// the smaller side's, and the `hi = lo` the displaced edge has to state.
+    fn collision(raw: &mut RawProofStore, skeleton: &Skeleton) -> (TermId, TermId, Proposition) {
+        let leaf = |raw: &mut RawProofStore, name: &str| raw.term_dag.app(name.into(), vec![]);
+        let hi_term = leaf(raw, "hi");
+        let lo_term = leaf(raw, "lo");
+        let shared_term = leaf(raw, "shared");
+        // The skeleton reverses whichever side does not already run `hi -> lo`.
+        let shared_on_the_left =
+            matches!(skeleton, Skeleton::Trans(left, _) if matches!(**left, Skeleton::Sym(_)));
+        let (hi, lo) = if shared_on_the_left {
+            (
+                fiat_term(raw, shared_term, hi_term),
+                fiat_term(raw, shared_term, lo_term),
+            )
+        } else {
+            (
+                fiat_term(raw, hi_term, shared_term),
+                fiat_term(raw, lo_term, shared_term),
+            )
+        };
+        (hi, lo, Proposition::new(hi_term, lo_term))
+    }
+
+    /// Either way the carried proofs point, the row unpacks to the `Sym` + `Trans`
+    /// pair it packs, proving that the displaced side equals the kept one.
+    #[test]
+    fn displaced_unpacks_to_the_pair_it_packs() {
+        for skeleton in displaced_skeletons() {
+            let mut raw = empty_store();
+            let (hi, lo, expected) = collision(&mut raw, &skeleton);
+            let term = packed_term(&mut raw, &skeleton, vec![hi, lo]);
+            let displaced = parse(&mut raw, term);
+            let (hi, lo) = (raw.parse_proof(hi), raw.parse_proof(lo));
+            let pair = match &skeleton {
+                Skeleton::Trans(left, _) if matches!(**left, Skeleton::Sym(_)) => {
+                    let back = raw.add_proof(RawProof::Sym(hi));
+                    raw.add_proof(RawProof::Trans(back, lo))
+                }
+                _ => {
+                    let back = raw.add_proof(RawProof::Sym(lo));
+                    raw.add_proof(RawProof::Trans(hi, back))
+                }
+            };
+            assert_agree(&raw, displaced, pair, &expected);
+        }
+    }
+
+    /// Both carried proofs nest, so neither is left to `parse_proof`'s recursion
+    /// (see [`a_rebuild_rows_nested_proofs_are_its_row_and_its_steps`]).
+    #[test]
+    fn a_displaced_rows_nested_proofs_are_its_two_carried_proofs() {
+        let mut raw = empty_store();
+        let hi = leaf_proof_term(&mut raw, "hi");
+        let lo = leaf_proof_term(&mut raw, "lo");
+        for skeleton in displaced_skeletons() {
+            let term = packed_term(&mut raw, &skeleton, vec![hi, lo]);
+            assert_eq!(
+                raw.nested_proofs(term),
+                vec![hi, lo],
+                "a displaced row nests both carried proofs"
+            );
+        }
+    }
+
+    /// A chain of displaced edges — one collision's proof carried into the next —
+    /// parses without recursing per link, on a stack far too small to hold one
+    /// frame per link, through either carried proof.
+    #[test]
+    fn a_deep_displaced_chain_parses_without_a_deep_stack() {
+        for skeleton in displaced_skeletons() {
+            for through_lo in [false, true] {
+                let skeleton = skeleton.clone();
+                std::thread::Builder::new()
+                    .stack_size(512 * 1024)
+                    .spawn(move || {
+                        let mut raw = empty_store();
+                        let leaf = leaf_proof_term(&mut raw, "carried");
+                        let mut chain = leaf;
+                        for _ in 0..50_000 {
+                            let columns = if through_lo {
+                                vec![leaf, chain]
+                            } else {
+                                vec![chain, leaf]
+                            };
+                            chain = packed_term(&mut raw, &skeleton, columns);
+                        }
+                        RawProofStore::from_extracted(&raw.names, raw.term_dag.clone(), chain);
+                    })
+                    .expect("spawn")
+                    .join()
+                    .expect("a deep displaced chain should parse");
+            }
+        }
+    }
+
+    /// Every composition a packed row can stand for is recovered from the string
+    /// the row carries, so the encoder and unpacking cannot drift apart.
+    #[test]
+    fn a_packed_rows_string_spells_its_skeleton() {
+        let mut skeletons = displaced_skeletons().to_vec();
+        for steps in 0..4 {
+            for eclass in [false, true] {
+                let children: Vec<usize> = (0..steps).map(|step| 2 * step).collect();
+                skeletons.push(rebuild_skeleton(&children, eclass));
+            }
+        }
+        for skeleton in skeletons {
+            let spelling = skeleton.spelling();
+            assert_eq!(
+                Skeleton::from_spelling(&spelling),
+                Some(skeleton.clone()),
+                "{spelling} should spell {skeleton:?}"
+            );
+        }
     }
 }

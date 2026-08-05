@@ -51,7 +51,7 @@ expression: proof_snapshot
         (Fiat (= t3 t3))
         (Fiat (= (getString 1 "she") (getString 1 "she")))
         (Fiat (= "she" "she")))
-      (substitution (pos 1) (s "she") (a "NP") (@n "she")))
+      (substitution (a "NP") (s "she") (pos 1) (@n "she")))
     (Rule
       (= t4 t4)
       (name
@@ -84,7 +84,7 @@ expression: proof_snapshot
                 (Fiat (= t9 t9))
                 (Fiat (= (getString 2 "eats") (getString 2 "eats")))
                 (Fiat (= "eats" "eats")))
-              (substitution (pos 2) (s "eats") (a "V") (@n "eats")))
+              (substitution (a "V") (s "eats") (pos 2) (@n "eats")))
             (Rule
               (= t10 t10)
               (name
@@ -107,7 +107,7 @@ expression: proof_snapshot
                     prf1
                     (Fiat (= (getString 3 "a") (getString 3 "a")))
                     prf2)
-                  (substitution (pos 3) (s "a") (a "DET") (@n "a")))
+                  (substitution (a "DET") (s "a") (pos 3) (@n "a")))
                 (Rule
                   (= t14 t14)
                   (name
@@ -120,9 +120,9 @@ expression: proof_snapshot
                     (Fiat (= t15 t15))
                     (Fiat (= (getString 4 "fish") (getString 4 "fish")))
                     (Fiat (= "fish" "fish")))
-                  (substitution (pos 4) (s "fish") (a "N") (@n "fish"))))
-              (substitution (p2 1) (s 3) (a "NP") (p1 1) (b "DET") (c "N"))))
-          (substitution (p2 2) (s 2) (a "VP") (p1 1) (b "V") (c "NP")))
+                  (substitution (a "N") (s "fish") (pos 4) (@n "fish"))))
+              (substitution (a "NP") (b "DET") (c "N") (p1 1) (s 3) (p2 1))))
+          (substitution (a "VP") (b "V") (c "NP") (p1 1) (s 2) (p2 2)))
         (Rule
           (= t16 t16)
           (name
@@ -145,7 +145,7 @@ expression: proof_snapshot
                 (Fiat (= t19 t19))
                 (Fiat (= (getString 5 "with") (getString 5 "with")))
                 (Fiat (= "with" "with")))
-              (substitution (pos 5) (s "with") (a "P") (@n "with")))
+              (substitution (a "P") (s "with") (pos 5) (@n "with")))
             (Rule
               (= t20 t20)
               (name
@@ -168,7 +168,7 @@ expression: proof_snapshot
                     prf1
                     (Fiat (= (getString 6 "a") (getString 6 "a")))
                     prf2)
-                  (substitution (pos 6) (s "a") (a "DET") (@n "a")))
+                  (substitution (a "DET") (s "a") (pos 6) (@n "a")))
                 (Rule
                   (= t22 t22)
                   (name
@@ -181,11 +181,11 @@ expression: proof_snapshot
                     (Fiat (= t23 t23))
                     (Fiat (= (getString 7 "fork") (getString 7 "fork")))
                     (Fiat (= "fork" "fork")))
-                  (substitution (pos 7) (s "fork") (a "N") (@n "fork"))))
-              (substitution (p2 1) (s 6) (a "NP") (p1 1) (b "DET") (c "N"))))
-          (substitution (p2 2) (s 5) (a "PP") (p1 1) (b "P") (c "NP"))))
-      (substitution (p2 3) (s 2) (a "VP") (p1 3) (b "VP") (c "PP"))))
-  (substitution (p2 6) (s 1) (a "S") (p1 1) (b "NP") (c "VP")))
+                  (substitution (a "N") (s "fork") (pos 7) (@n "fork"))))
+              (substitution (a "NP") (b "DET") (c "N") (p1 1) (s 6) (p2 1))))
+          (substitution (a "PP") (b "P") (c "NP") (p1 1) (s 5) (p2 2))))
+      (substitution (a "VP") (b "VP") (c "PP") (p1 3) (s 2) (p2 3))))
+  (substitution (a "S") (b "NP") (c "VP") (p1 1) (s 1) (p2 6)))
 (let t0 (P 5 1 (NonTerm "S")))
 (let t1 (Prod (NonTerm "S") (NonTerm "B") (NonTerm "C")))
 (let t2 (P 3 1 (NonTerm "B")))
@@ -248,7 +248,7 @@ expression: proof_snapshot
                 prf1
                 (Fiat (= (getString 1 "a") (getString 1 "a")))
                 prf2)
-              (substitution (pos 1) (s "a") (a "A") (@n "a")))
+              (substitution (a "A") (s "a") (pos 1) (@n "a")))
             (Rule
               (= t8 t8)
               (name
@@ -261,8 +261,8 @@ expression: proof_snapshot
                 prf3
                 (Fiat (= (getString 2 "b") (getString 2 "b")))
                 prf4)
-              (substitution (pos 2) (s "b") (a "B") (@n "b"))))
-          (substitution (p2 1) (s 1) (a "C") (p1 1) (b "A") (c "B")))
+              (substitution (a "B") (s "b") (pos 2) (@n "b"))))
+          (substitution (a "C") (b "A") (c "B") (p1 1) (s 1) (p2 1)))
         (Rule
           (= t10 t10)
           (name
@@ -275,8 +275,8 @@ expression: proof_snapshot
             (Fiat (= t11 t11))
             (Fiat (= (getString 3 "a") (getString 3 "a")))
             prf2)
-          (substitution (pos 3) (s "a") (a "C") (@n "a"))))
-      (substitution (p2 1) (s 1) (a "B") (p1 2) (b "C") (c "C")))
+          (substitution (a "C") (s "a") (pos 3) (@n "a"))))
+      (substitution (a "B") (b "C") (c "C") (p1 2) (s 1) (p2 1)))
     (Rule
       (= t12 t12)
       (name
@@ -296,7 +296,7 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
           (premises prf1 (Fiat (= (getString 4 "a") (getString 4 "a"))) prf2)
-          (substitution (pos 4) (s "a") (a "A") (@n "a")))
+          (substitution (a "A") (s "a") (pos 4) (@n "a")))
         (Rule
           (= t14 t14)
           (name
@@ -306,9 +306,9 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
           (premises prf3 (Fiat (= (getString 5 "b") (getString 5 "b"))) prf4)
-          (substitution (pos 5) (s "b") (a "B") (@n "b"))))
-      (substitution (p2 1) (s 4) (a "C") (p1 1) (b "A") (c "B"))))
-  (substitution (p2 2) (s 1) (a "S") (p1 3) (b "B") (c "C")))
+          (substitution (a "B") (s "b") (pos 5) (@n "b"))))
+      (substitution (a "C") (b "A") (c "B") (p1 1) (s 4) (p2 1))))
+  (substitution (a "S") (b "B") (c "C") (p1 3) (s 1) (p2 2)))
 (let t0 (P 5 1 (NonTerm "S")))
 (let t1 (Prod (NonTerm "S") (NonTerm "A") (NonTerm "B")))
 (let t2 (P 3 1 (NonTerm "A")))
@@ -368,7 +368,7 @@ expression: proof_snapshot
                 prf1
                 (Fiat (= (getString 1 "a") (getString 1 "a")))
                 prf2)
-              (substitution (pos 1) (s "a") (a "C") (@n "a")))
+              (substitution (a "C") (s "a") (pos 1) (@n "a")))
             (Rule
               (= t8 t8)
               (name
@@ -381,8 +381,8 @@ expression: proof_snapshot
                 prf1
                 (Fiat (= (getString 2 "a") (getString 2 "a")))
                 prf2)
-              (substitution (pos 2) (s "a") (a "C") (@n "a"))))
-          (substitution (p2 1) (s 1) (a "B") (p1 1) (b "C") (c "C")))
+              (substitution (a "C") (s "a") (pos 2) (@n "a"))))
+          (substitution (a "B") (b "C") (c "C") (p1 1) (s 1) (p2 1)))
         (Rule
           (= t9 t9)
           (name
@@ -395,8 +395,8 @@ expression: proof_snapshot
             (Fiat (= t10 t10))
             (Fiat (= (getString 3 "a") (getString 3 "a")))
             prf2)
-          (substitution (pos 3) (s "a") (a "A") (@n "a"))))
-      (substitution (p2 1) (s 1) (a "A") (p1 2) (b "B") (c "A")))
+          (substitution (a "A") (s "a") (pos 3) (@n "a"))))
+      (substitution (a "A") (b "B") (c "A") (p1 2) (s 1) (p2 1)))
     (Rule
       (= t11 t11)
       (name
@@ -416,7 +416,7 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
           (premises prf1 (Fiat (= (getString 4 "a") (getString 4 "a"))) prf2)
-          (substitution (pos 4) (s "a") (a "C") (@n "a")))
+          (substitution (a "C") (s "a") (pos 4) (@n "a")))
         (Rule
           (= t13 t13)
           (name
@@ -426,9 +426,9 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
           (premises prf1 (Fiat (= (getString 5 "a") (getString 5 "a"))) prf2)
-          (substitution (pos 5) (s "a") (a "C") (@n "a"))))
-      (substitution (p2 1) (s 4) (a "B") (p1 1) (b "C") (c "C"))))
-  (substitution (p2 2) (s 1) (a "S") (p1 3) (b "A") (c "B")))
+          (substitution (a "C") (s "a") (pos 5) (@n "a"))))
+      (substitution (a "B") (b "C") (c "C") (p1 1) (s 4) (p2 1))))
+  (substitution (a "S") (b "A") (c "B") (p1 3) (s 1) (p2 2)))
 (let t0 (P 5 1 (NonTerm "A")))
 (let t1 (Prod (NonTerm "A") (NonTerm "B") (NonTerm "A")))
 (let prf0 (Fiat (= t1 t1)))
@@ -475,7 +475,7 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
           (premises prf2 (Fiat (= (getString 1 "a") (getString 1 "a"))) prf3)
-          (substitution (pos 1) (s "a") (a "C") (@n "a")))
+          (substitution (a "C") (s "a") (pos 1) (@n "a")))
         (Rule
           (= t6 t6)
           (name
@@ -485,8 +485,8 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
           (premises prf2 (Fiat (= (getString 2 "a") (getString 2 "a"))) prf3)
-          (substitution (pos 2) (s "a") (a "C") (@n "a"))))
-      (substitution (p2 1) (s 1) (a "B") (p1 1) (b "C") (c "C")))
+          (substitution (a "C") (s "a") (pos 2) (@n "a"))))
+      (substitution (a "B") (b "C") (c "C") (p1 1) (s 1) (p2 1)))
     (Rule
       (= t7 t7)
       (name
@@ -519,7 +519,7 @@ expression: proof_snapshot
                 prf2
                 (Fiat (= (getString 3 "a") (getString 3 "a")))
                 prf3)
-              (substitution (pos 3) (s "a") (a "C") (@n "a")))
+              (substitution (a "C") (s "a") (pos 3) (@n "a")))
             (Rule
               (= t10 t10)
               (name
@@ -532,8 +532,8 @@ expression: proof_snapshot
                 prf2
                 (Fiat (= (getString 4 "a") (getString 4 "a")))
                 prf3)
-              (substitution (pos 4) (s "a") (a "C") (@n "a"))))
-          (substitution (p2 1) (s 3) (a "B") (p1 1) (b "C") (c "C")))
+              (substitution (a "C") (s "a") (pos 4) (@n "a"))))
+          (substitution (a "B") (b "C") (c "C") (p1 1) (s 3) (p2 1)))
         (Rule
           (= t11 t11)
           (name
@@ -546,6 +546,6 @@ expression: proof_snapshot
             (Fiat (= t12 t12))
             (Fiat (= (getString 5 "a") (getString 5 "a")))
             prf3)
-          (substitution (pos 5) (s "a") (a "A") (@n "a"))))
-      (substitution (p2 1) (s 3) (a "A") (p1 2) (b "B") (c "A"))))
-  (substitution (p2 3) (s 1) (a "A") (p1 2) (b "B") (c "A")))
+          (substitution (a "A") (s "a") (pos 5) (@n "a"))))
+      (substitution (a "A") (b "B") (c "A") (p1 2) (s 3) (p2 1))))
+  (substitution (a "A") (b "B") (c "A") (p1 2) (s 1) (p2 3)))
