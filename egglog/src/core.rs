@@ -22,7 +22,10 @@ pub use egglog_ast::core::{
 };
 use egglog_ast::generic_ast::{GenericAction, GenericActions, GenericExpr};
 use egglog_ast::span::Span;
-use typechecking::{FuncType, PrimitiveValidator, PrimitiveWithId, TypeError};
+use typechecking::{
+    FuncType, PrimitiveAuthority, PrimitiveRegistrationId, PrimitiveValidator, PrimitiveWithId,
+    TypeError,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum HeadOrEq<Head> {
@@ -70,6 +73,17 @@ impl SpecializedPrimitive {
         &self.input
     }
 
+    /// Get the frontend-owned identity of this primitive registration.
+    pub(crate) fn registration_id(&self) -> PrimitiveRegistrationId {
+        self.prim_with_id.registration_id()
+    }
+
+    /// Get the semantics declared by this primitive's registration site.
+    #[allow(dead_code)]
+    pub(crate) fn authority(&self) -> &PrimitiveAuthority {
+        self.prim_with_id.authority()
+    }
+
     /// Get the external function ID of this primitive
     pub(crate) fn external_id(&self, ctx: crate::Context) -> ExternalFunctionId {
         self.prim_with_id.context_ids[ctx].unwrap_or_else(|| {
@@ -89,12 +103,13 @@ impl SpecializedPrimitive {
 impl PartialEq for SpecializedPrimitive {
     fn eq(&self, other: &Self) -> bool {
         // This is the key used when resolved atoms are deduplicated by
-        // `(head, inputs)`. The context-id map identifies the primitive
-        // registration, while the concrete input/output sorts identify the
-        // specialization of generic primitives. The primitive name and
+        // `(head, inputs)`. The frontend registration ID identifies the
+        // primitive definition without making backend callback tokens part of
+        // resolved-program identity. The concrete input/output sorts identify
+        // the specialization of generic primitives. The primitive name and
         // validator are registration metadata, so they are intentionally not
         // separate key fields.
-        self.prim_with_id.context_ids == other.prim_with_id.context_ids
+        self.registration_id() == other.registration_id()
             && self.output.name() == other.output.name()
             && self.input.len() == other.input.len()
             && self
@@ -109,7 +124,7 @@ impl Eq for SpecializedPrimitive {}
 
 impl Hash for SpecializedPrimitive {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.prim_with_id.context_ids.hash(state);
+        self.registration_id().hash(state);
         self.output.name().hash(state);
         self.input.len().hash(state);
         for input in &self.input {
@@ -975,6 +990,8 @@ impl ResolvedRuleExt for ResolvedRule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
 
     type TestCoreRule = GenericCoreRule<String, String, String>;
 
@@ -992,6 +1009,40 @@ mod tests {
 
     fn value_eq_string(_at1: &GenericAtomTerm<String>, _at2: &GenericAtomTerm<String>) -> String {
         "value-eq".to_string()
+    }
+
+    fn hash_value(value: &impl Hash) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        value.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    #[test]
+    fn specialized_primitive_identity_uses_registration_not_runtime_tokens() {
+        let egraph = EGraph::default();
+        let min = egraph.type_info.get_prims("ordering-min").unwrap()[0].clone();
+        let max = egraph.type_info.get_prims("ordering-max").unwrap()[0].clone();
+        assert_ne!(min.registration_id(), max.registration_id());
+        assert_ne!(min.context_ids, max.context_ids);
+
+        let sort: ArcSort = Arc::new(EqSort {
+            name: "PrimitiveIdentityTest".to_owned(),
+        });
+        let specialize = |registration: PrimitiveWithId| SpecializedPrimitive {
+            prim_with_id: registration,
+            input: vec![sort.clone(), sort.clone()],
+            output: sort.clone(),
+        };
+
+        let original = specialize(min.clone());
+        let mut same_registration_new_runtime_tokens = min;
+        same_registration_new_runtime_tokens.context_ids = max.context_ids;
+        let retokened = specialize(same_registration_new_runtime_tokens);
+        assert_eq!(original, retokened);
+        assert_eq!(hash_value(&original), hash_value(&retokened));
+
+        let different_registration = specialize(max);
+        assert_ne!(original, different_registration);
     }
 
     #[test]

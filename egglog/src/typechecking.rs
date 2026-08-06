@@ -183,10 +183,54 @@ impl Hash for FuncType {
 /// or None if it is invalid.
 pub type PrimitiveValidator = Arc<dyn Fn(&mut TermDag, &[TermId]) -> Option<TermId> + Send + Sync>;
 
+/// Frontend-owned semantic authority for one primitive registration.
+///
+/// This is recorded at the registration site.  A compiler must never recover
+/// one of these meanings from the primitive's display name, type signature,
+/// registration order, or the schema of a nearby function.  Proof view names
+/// are retained here only as exact unresolved references; snapshot capture
+/// resolves them to nominal function identities before they become portable.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PrimitiveAuthority {
+    Native(NativePrimitive),
+    NativeScalar(NativeScalarPrimitive),
+    GetFresh,
+    SetIfEmpty {
+        target_view: String,
+    },
+    ViewColumn {
+        target_view: String,
+        /// Zero-based value-column index, excluding key columns.
+        value_column: usize,
+    },
+    /// An ordinary callback whose semantics are unavailable to a standalone
+    /// compiler.  Its runtime token and context mask remain fully usable by
+    /// normal backends, but standalone preflight must reject it if reached.
+    Opaque,
+}
+
+/// Stable identity of one primitive registration inside a [`TypeInfo`].
+///
+/// This is frontend identity, not a backend callback token.  Independent
+/// frontends that perform the same registrations in the same deterministic
+/// order assign the same IDs, while two registrations remain distinct even
+/// when their names and signatures are identical.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub(crate) struct PrimitiveRegistrationId(u32);
+
+impl PrimitiveRegistrationId {
+    #[allow(dead_code)]
+    pub(crate) const fn ordinal(self) -> u32 {
+        self.0
+    }
+}
+
 #[derive(Clone)]
 pub struct PrimitiveWithId {
     pub(crate) primitive: Arc<dyn Primitive>,
     pub(crate) validator: Option<PrimitiveValidator>,
+    pub(crate) registration_id: PrimitiveRegistrationId,
+    pub(crate) authority: PrimitiveAuthority,
     /// Runtime entrypoints for the contexts this primitive is valid in.
     /// The primitive definition is stored once, while each context keeps
     /// its own backend id so higher-order dispatch can still recover the
@@ -221,6 +265,16 @@ impl PrimitiveWithId {
     pub fn is_valid_in_context(&self, context: Context) -> bool {
         self.context_ids[context].is_some()
     }
+
+    /// Return the semantic authority recorded by the registration site.
+    pub(crate) fn authority(&self) -> &PrimitiveAuthority {
+        &self.authority
+    }
+
+    /// Return this registration's frontend-owned identity.
+    pub(crate) fn registration_id(&self) -> PrimitiveRegistrationId {
+        self.registration_id
+    }
 }
 
 impl Debug for PrimitiveWithId {
@@ -237,6 +291,7 @@ pub struct TypeInfo {
     reserved_primitives: HashSet<&'static str>,
     pub(crate) sorts: HashMap<String, Arc<dyn Sort>>,
     primitives: HashMap<String, Vec<PrimitiveWithId>>,
+    next_primitive_registration_id: u32,
     func_types: HashMap<String, FuncType>,
     pub(crate) global_sorts: HashMap<String, ArcSort>,
     /// Sorts that do not allow union (e.g., from `:no-union` sorts or relations).
@@ -331,6 +386,7 @@ impl EGraph {
         self.register_per_context(
             x,
             validator,
+            PrimitiveAuthority::Opaque,
             PureState::valid_contexts(),
             |backend, x, ctx| {
                 backend.register_external_func(Box::new(PurePrimWrapper { prim: x, ctx }))
@@ -353,6 +409,7 @@ impl EGraph {
         self.register_per_context(
             x,
             validator,
+            PrimitiveAuthority::Native(native),
             PureState::valid_contexts(),
             move |backend, _x, _ctx| backend.register_native_primitive(native),
         );
@@ -373,6 +430,7 @@ impl EGraph {
         self.register_per_context(
             x,
             validator,
+            PrimitiveAuthority::NativeScalar(native),
             PureState::valid_contexts(),
             move |backend, x, ctx| {
                 backend.register_native_scalar_primitive(
@@ -392,6 +450,7 @@ impl EGraph {
         self.register_registry_primitive::<T, WrapWrite>(
             x,
             validator,
+            PrimitiveAuthority::Opaque,
             WriteState::valid_contexts(),
         );
     }
@@ -402,7 +461,12 @@ impl EGraph {
     where
         T: ReadPrim + Clone,
     {
-        self.register_registry_primitive::<T, WrapRead>(x, validator, ReadState::valid_contexts());
+        self.register_registry_primitive::<T, WrapRead>(
+            x,
+            validator,
+            PrimitiveAuthority::Opaque,
+            ReadState::valid_contexts(),
+        );
     }
 
     /// Register a [`FullPrim`]. Pass `None` for the validator if not
@@ -411,19 +475,25 @@ impl EGraph {
     where
         T: FullPrim + Clone,
     {
-        self.register_registry_primitive::<T, WrapFull>(x, validator, FullState::valid_contexts());
+        self.register_registry_primitive::<T, WrapFull>(
+            x,
+            validator,
+            PrimitiveAuthority::Opaque,
+            FullState::valid_contexts(),
+        );
     }
 
     fn register_registry_primitive<T, S>(
         &mut self,
         x: T,
         validator: Option<PrimitiveValidator>,
+        authority: PrimitiveAuthority,
         valid_ctxs: &[Context],
     ) where
         T: Primitive + Clone,
         S: RegistryWrap<T> + 'static,
     {
-        self.register_per_context(x, validator, valid_ctxs, |backend, x, ctx| {
+        self.register_per_context(x, validator, authority, valid_ctxs, |backend, x, ctx| {
             if let Some(registry) = backend.action_registry().cloned() {
                 backend.register_external_func(Box::new(RegistryPrimWrapper::<T, S> {
                     prim: x,
@@ -449,15 +519,20 @@ impl EGraph {
     pub(crate) fn add_backend_op_primitive<T, F>(
         &mut self,
         prim: T,
+        authority: PrimitiveAuthority,
         valid_ctxs: &[Context],
         mut make_id: F,
     ) where
         T: Primitive + Clone,
         F: FnMut(&mut dyn Backend, Context) -> ExternalFunctionId,
     {
-        self.register_per_context(prim, None, valid_ctxs, move |backend, _x, ctx| {
-            make_id(backend, ctx)
-        });
+        self.register_per_context(
+            prim,
+            None,
+            authority,
+            valid_ctxs,
+            move |backend, _x, ctx| make_id(backend, ctx),
+        );
     }
 
     /// Shared registration engine. Stores one primitive definition, plus
@@ -473,6 +548,7 @@ impl EGraph {
         &mut self,
         x: T,
         validator: Option<PrimitiveValidator>,
+        authority: PrimitiveAuthority,
         valid_ctxs: &[Context],
         mut build_wrapper: F,
     ) where
@@ -497,6 +573,13 @@ impl EGraph {
                         .register_primitive(x.clone(), ctx, &mut build_wrapper)
                 })
             });
+            let registration_id =
+                PrimitiveRegistrationId(eg.type_info.next_primitive_registration_id);
+            eg.type_info.next_primitive_registration_id = eg
+                .type_info
+                .next_primitive_registration_id
+                .checked_add(1)
+                .expect("primitive registration identity space exhausted");
             eg.type_info
                 .primitives
                 .entry(name)
@@ -504,6 +587,8 @@ impl EGraph {
                 .push(PrimitiveWithId {
                     primitive,
                     validator: validator.clone(),
+                    registration_id,
+                    authority: authority.clone(),
                     context_ids,
                 });
             match eg.proof_state.original_typechecking.as_deref_mut() {

@@ -8,6 +8,7 @@ pub mod constraint;
 mod core;
 mod exec_state;
 pub mod extract;
+pub mod frontend_snapshot;
 pub mod prelude;
 mod proofs;
 
@@ -16,6 +17,7 @@ mod serialize;
 pub mod sort;
 mod termdag;
 mod typechecking;
+pub mod typed_input;
 pub mod util;
 pub use command_macro::{CommandMacro, CommandMacroRegistry};
 
@@ -4237,6 +4239,39 @@ mod tests {
     }
 
     #[derive(Clone)]
+    struct AuthorityDecoy;
+
+    impl Primitive for AuthorityDecoy {
+        fn name(&self) -> &str {
+            "authority-decoy"
+        }
+
+        fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+            SimpleTypeConstraint::new(
+                self.name(),
+                vec![
+                    I64Sort.to_arcsort(),
+                    I64Sort.to_arcsort(),
+                    I64Sort.to_arcsort(),
+                ],
+                span.clone(),
+            )
+            .into_box()
+        }
+    }
+
+    impl PurePrim for AuthorityDecoy {
+        fn apply<'a, 'db>(&self, state: PureState<'a, 'db>, args: &[Value]) -> Option<Value> {
+            let [left, right] = args else {
+                return None;
+            };
+            let left = state.base_values().unwrap::<i64>(*left);
+            let right = state.base_values().unwrap::<i64>(*right);
+            Some(state.base_values().get::<i64>(left + right))
+        }
+    }
+
+    #[derive(Clone)]
     struct FullOnly;
 
     impl Primitive for FullOnly {
@@ -4300,27 +4335,54 @@ mod tests {
 
     #[test]
     fn compile_only_proof_resolution_registers_fresh_and_view_ops() {
-        let mut egraph = EGraph::new_compile_only(true);
-        let resolved = egraph
-            .resolve_program_compile_only(
-                None,
-                r#"
+        let source = r#"
                 (datatype X (Leaf i64))
                 (let $x (Leaf 1))
                 (run 1)
                 (check (= $x $x))
-                "#,
-            )
-            .unwrap();
+                "#;
+        let mut egraph = EGraph::new_compile_only(true);
+        let resolved = egraph.resolve_program_compile_only(None, source).unwrap();
+        let mut again = EGraph::new_compile_only(true);
+        let resolved_again = again.resolve_program_compile_only(None, source).unwrap();
 
         assert!(!resolved.execution.is_empty());
         assert!(!resolved.proof_check.is_empty());
-        assert!(
-            egraph
-                .type_info
-                .get_prims(crate::proofs::proof_fresh::GET_FRESH_PRIM_NAME)
-                .is_some()
-        );
+        assert_eq!(resolved.execution, resolved_again.execution);
+        assert_eq!(resolved.proof_check, resolved_again.proof_check);
+        assert_eq!(compile_only_state(&egraph), compile_only_state(&again));
+
+        let write_only_contexts = |primitive: &typechecking::PrimitiveWithId| {
+            assert_eq!(
+                Context::ALL.map(|context| primitive.is_valid_in_context(context)),
+                [false, true, false, true]
+            );
+        };
+        let assert_registration_is_deterministic = |name: &str| {
+            let first = egraph.type_info.get_prims(name).unwrap();
+            let second = again.type_info.get_prims(name).unwrap();
+            assert_eq!(first.len(), second.len());
+            for (first, second) in first.iter().zip(second) {
+                assert_eq!(first.registration_id(), second.registration_id());
+                assert_eq!(
+                    first.registration_id().ordinal(),
+                    second.registration_id().ordinal()
+                );
+                assert_eq!(first.authority(), second.authority());
+                assert_eq!(first.context_ids, second.context_ids);
+            }
+        };
+
+        let fresh = egraph
+            .type_info
+            .get_prims(crate::proofs::proof_fresh::GET_FRESH_PRIM_NAME)
+            .unwrap();
+        assert!(fresh.iter().all(|primitive| matches!(
+            primitive.authority(),
+            typechecking::PrimitiveAuthority::GetFresh
+        )));
+        fresh.iter().for_each(&write_only_contexts);
+        assert_registration_is_deterministic(crate::proofs::proof_fresh::GET_FRESH_PRIM_NAME);
 
         let view_name = resolved
             .execution
@@ -4334,22 +4396,88 @@ mod tests {
                 _ => None,
             })
             .expect("proof instrumentation should declare Leaf's logical view");
-        assert!(
-            egraph
-                .type_info
-                .get_prims(&crate::proofs::proof_fresh::set_if_empty_prim_name(
-                    view_name
-                ))
-                .is_some(),
-            "set-if-empty was not registered for view {view_name}"
+        let set_if_empty_name = crate::proofs::proof_fresh::set_if_empty_prim_name(view_name);
+        let set_if_empty = egraph.type_info.get_prims(&set_if_empty_name).unwrap();
+        assert!(set_if_empty.iter().all(|primitive| matches!(
+            primitive.authority(),
+            typechecking::PrimitiveAuthority::SetIfEmpty { target_view }
+                if target_view == view_name
+        )));
+        set_if_empty.iter().for_each(&write_only_contexts);
+        assert_registration_is_deterministic(&set_if_empty_name);
+
+        let view_proof_name = crate::proofs::proof_fresh::view_proof_prim_name(view_name);
+        let view_proof = egraph.type_info.get_prims(&view_proof_name).unwrap();
+        assert!(view_proof.iter().all(|primitive| matches!(
+            primitive.authority(),
+            typechecking::PrimitiveAuthority::ViewColumn {
+                target_view,
+                value_column: 1,
+            } if target_view == view_name
+        )));
+        view_proof.iter().for_each(&write_only_contexts);
+        assert_registration_is_deterministic(&view_proof_name);
+
+        let uf_name = egraph
+            .proof_state
+            .uf_parent
+            .get("X")
+            .expect("proof instrumentation should register X's UF relation");
+        for (primitive_name, expected_column) in [
+            (
+                crate::proofs::proof_container_rebuild::uf_canon_prim_name(uf_name),
+                0,
+            ),
+            (
+                crate::proofs::proof_container_rebuild::uf_canon_proof_prim_name(uf_name),
+                1,
+            ),
+        ] {
+            let primitives = egraph.type_info.get_prims(&primitive_name).unwrap();
+            assert!(primitives.iter().all(|primitive| matches!(
+                primitive.authority(),
+                typechecking::PrimitiveAuthority::ViewColumn {
+                    target_view,
+                    value_column,
+                } if target_view == uf_name && *value_column == expected_column
+            )));
+            primitives.iter().for_each(&write_only_contexts);
+            assert_registration_is_deterministic(&primitive_name);
+        }
+    }
+
+    #[test]
+    fn primitive_authority_is_registration_site_data_not_name_or_signature() {
+        let mut egraph = EGraph::default();
+        egraph.add_pure_primitive(AuthorityDecoy, None);
+        egraph.add_native_scalar_primitive(AuthorityDecoy, None, NativeScalarPrimitive::I64Add);
+
+        let registrations = egraph.type_info.get_prims("authority-decoy").unwrap();
+        assert_eq!(registrations.len(), 2);
+        assert_ne!(
+            registrations[0].registration_id(),
+            registrations[1].registration_id()
         );
-        assert!(
-            egraph
-                .type_info
-                .get_prims(&crate::proofs::proof_fresh::view_proof_prim_name(view_name))
-                .is_some(),
-            "proof-column read was not registered for view {view_name}"
-        );
+        assert!(matches!(
+            registrations[0].authority(),
+            typechecking::PrimitiveAuthority::Opaque
+        ));
+        assert!(matches!(
+            registrations[1].authority(),
+            typechecking::PrimitiveAuthority::NativeScalar(NativeScalarPrimitive::I64Add)
+        ));
+        assert!(registrations.iter().all(|primitive| {
+            Context::ALL
+                .into_iter()
+                .all(|context| primitive.is_valid_in_context(context))
+        }));
+        assert_ne!(registrations[0].context_ids, registrations[1].context_ids);
+
+        let ordering_min = &egraph.type_info.get_prims("ordering-min").unwrap()[0];
+        assert!(matches!(
+            ordering_min.authority(),
+            typechecking::PrimitiveAuthority::Native(NativePrimitive::OrderingMin)
+        ));
     }
 
     #[test]
@@ -4538,6 +4666,16 @@ mod tests {
         });
 
         egraph.add_pure_primitive(InnerProduct { vec: int_vec_sort }, None);
+        let registration = &egraph.type_info.get_prims("inner-product").unwrap()[0];
+        assert!(matches!(
+            registration.authority(),
+            typechecking::PrimitiveAuthority::Opaque
+        ));
+        assert!(
+            Context::ALL
+                .into_iter()
+                .all(|context| registration.is_valid_in_context(context))
+        );
 
         egraph
             .parse_and_run_program(

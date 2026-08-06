@@ -68,6 +68,10 @@ pub(crate) fn register_uf_canon(
             key_sort: sort.clone(),
             out_sort: sort.clone(),
         },
+        crate::typechecking::PrimitiveAuthority::ViewColumn {
+            target_view: uf_name.to_owned(),
+            value_column: 0,
+        },
         WriteState::valid_contexts(),
         move |backend, _| backend.register_view_column_read(table.clone(), 1, 0),
     );
@@ -83,6 +87,10 @@ pub(crate) fn register_uf_canon(
                 name: uf_canon_proof_prim_name(uf_name),
                 key_sort: sort,
                 out_sort: proof_sort,
+            },
+            crate::typechecking::PrimitiveAuthority::ViewColumn {
+                target_view: uf_name.to_owned(),
+                value_column: 1,
             },
             WriteState::valid_contexts(),
             move |backend, _| backend.register_view_column_read(table.clone(), 1, 1),

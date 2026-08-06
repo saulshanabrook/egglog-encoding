@@ -56,6 +56,9 @@ pub(crate) fn register_set_if_empty(
     let name = view_name.to_string();
     eg.add_backend_op_primitive(
         set_if_empty,
+        crate::typechecking::PrimitiveAuthority::SetIfEmpty {
+            target_view: view_name.to_owned(),
+        },
         WriteState::valid_contexts(),
         move |backend, _| backend.register_set_if_empty(name.clone(), n_keys, out_arity),
     );
@@ -70,6 +73,10 @@ pub(crate) fn register_set_if_empty(
         let name = view_name.to_string();
         eg.add_backend_op_primitive(
             view_proof,
+            crate::typechecking::PrimitiveAuthority::ViewColumn {
+                target_view: view_name.to_owned(),
+                value_column: 1,
+            },
             WriteState::valid_contexts(),
             // The proof is output column 1 of the FD view `(eclass, proof)`; the
             // backend itself stays proof-agnostic (a generic view-column read).
@@ -148,13 +155,18 @@ pub(crate) fn register_get_fresh(eg: &mut EGraph) {
     if !eg.backend.supports_fresh_ids_for_typechecking() {
         return;
     }
-    eg.add_backend_op_primitive(GetFresh, WriteState::valid_contexts(), |backend, _| {
-        let fresh_id = backend.register_get_fresh();
-        if let Some(registry) = backend.action_registry() {
-            registry.write().unwrap().register_fresh_id(fresh_id);
-        }
-        fresh_id
-    });
+    eg.add_backend_op_primitive(
+        GetFresh,
+        crate::typechecking::PrimitiveAuthority::GetFresh,
+        WriteState::valid_contexts(),
+        |backend, _| {
+            let fresh_id = backend.register_get_fresh();
+            if let Some(registry) = backend.action_registry() {
+                registry.write().unwrap().register_fresh_id(fresh_id);
+            }
+            fresh_id
+        },
+    );
 }
 
 /// `get-fresh! "Sort" -> Sort`: mint a fresh id of the named eq-sort from the

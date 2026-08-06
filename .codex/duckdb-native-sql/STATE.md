@@ -4175,3 +4175,97 @@ then result roots; lazy Function argument evaluation behind the owner old/new
 guard; Lookup's old-value fallback; and all Union/UnionId operands even when a
 consumer rejects them. DuckDB-private linked `MergeProgram` is not this public
 IR and must not be promoted as one.
+
+### Checkpoint 2 slices B/C accepted: nominal core and typed input (2026-08-05)
+
+The next checkpoint-2 substrate is accepted on parent commit
+`529e3a23fd5e008e038a40c762c97043e2f05a17`. This remains an intermediate
+slice, not completion of the public compile-only snapshot and not a standalone
+SQL compiler claim.
+
+`frontend_snapshot` now publishes a backend-neutral, command-neutral core DTO
+with dense nominal `SortId`, `FunctionId`, specialized `PrimitiveId`, `RuleId`,
+`RulesetId`, merge-value IDs, rule variables, and merge-let slots. It owns exact
+typed literals; scalar and Eq/container sort semantics; function schemas,
+defaults, identity-value prefixes, subsumption and display metadata; explicit
+primitive authority; generic rule atoms/actions including occurrence-index
+reads; and exact ruleset membership.
+
+Design B remains the only semantic route. All references use exact IDs. A
+function or primitive name is diagnostic only, and same-schema/same-name decoys
+remain distinct. The public lazy merge arena specifies ordered action roots
+followed by result roots, explicit old/new owner guards, Lookup fallback to the
+owning old value, exact Function/Lookup/Set targets, and every Union operand.
+`SetIfEmpty` intentionally accepts tuple proof-FD views: its input is the full
+key-plus-all-values schema and its fixed scalar result is value column zero.
+
+Validation is fail-closed and iterative. It checks dense identity arenas,
+nominal arity and type equality, scalar-sort uniqueness, ruleset-local rule-name
+uniqueness, union authority, subsumption capability, fixed-point occurrence
+reachability, exact index probe/full-row/Unit shape, lazy merge roots and slots,
+and the global Function/Lookup/SetIfEmpty/ViewColumn read-dependency DAG. A
+20,000-node merge-chain canary establishes stack-safe validation.
+
+Primitive registrations now receive a deterministic frontend-owned
+`PrimitiveRegistrationId` and an explicit `PrimitiveAuthority` at their
+registration site. Resolved primitive equality/hash uses that registration ID
+plus exact specialization sorts, never backend callback tokens. Runtime
+dispatch still uses its context-specific external-function token. Proof fresh,
+set-if-empty, view-column, and UF-column registrations retain their exact target
+view/column authority for later fail-closed nominal linking.
+
+`typed_input` owns the exact byte buffer from one logical file read, path
+metadata, resolved/effective schema, ordered duplicate rows, source row and
+physical-line ordinals, and exact scalar values including f64 bits. Its target
+is the snapshot's concrete nominal `FunctionId`; arbitrary generic/backend
+handles cannot enter the DTO. Schema preflight rejects invalid constructor and
+custom-function output arities before I/O while preserving the current TSV,
+trim, Unit, constructor/custom, nullary, and all-Unit behavior.
+
+Accepted bytes:
+
+```text
+egglog/src/frontend_snapshot.rs               ac74d48bf13d97ae1d3e9712e36ff540cecda929bb83df695298bf8ee511f1c9
+egglog/src/typed_input.rs                      dcfd7935e3d35b8a06602ffea6f76904300a26e1872f0dcb75f3b5f626aa39ca
+egglog/src/core.rs                             0b668ce565ffc2522a583f3acefd353fc8ff7f2f1e6d3f9b9b0a7a60f042a929
+egglog/src/typechecking.rs                     26d6a53e20c07f49ee942771a09de3cb98874698730f5badce7f31def1f36693
+egglog/src/lib.rs                              39464a1b82c4ec052ccaecfb6697170dbf4dd49ce762a8328b8ee8b272ad3e27
+egglog/src/proofs/proof_fresh.rs               b90ab4b66592346591decbd59857879231df8b8df50e119002233d9168808216
+egglog/src/proofs/proof_container_rebuild.rs   646d93bb60b817864d25f17f15b1ce500a7ae7bd76d7c3b69d57f203f72dd171
+```
+
+Validation passed on the final bytes: 16/16 nominal-snapshot tests, 13/13
+typed-input tests, 128/128 Egglog library tests, all 810 file/proof corpus
+cases, all remaining package integration and doctest groups, workspace/all-
+target compilation, strict Clippy, rustdoc with warnings denied, formatting,
+and `git diff --check`. Independent read-only review reauthenticated the two
+new public modules and returned PASS after its findings were repaired.
+
+One non-admission debt is frozen explicitly. Compile-only resolution retains
+Push/Pop without restoring frontend scope, so declarations inside a pushed
+scope can remain in its private `TypeInfo`. Push/Pop are unsupported by the
+standalone compiler. The next public snapshot entrypoint must scan and reject
+either command before nominal catalog, rule, primitive, or input capture; no
+leaked state may become an admitted snapshot or artifact. Do not broaden this
+substrate by invoking `run_command` or installing a backend.
+
+Checkpoint 2 still requires:
+
+1. a full public envelope with explicit index declarations, primitive context
+   and effect masks, full rule evaluation/include-subsumed modes, costs and
+   unextractable metadata, structured schedules, commands, checks/prints/input,
+   and source/output ordinals;
+2. a pure capture/linker from both finalized compile-only streams to nominal
+   catalogs, exact merge programs, and generic `RuleSpec`s;
+3. registration-ID plus authority linking to exact nominal primitive and
+   function IDs, with same-name/schema and registration-order decoys;
+4. one owned input payload shared by proof and execution views; and
+5. panic-on-backend and double-capture byte/digest determinism gates.
+
+The next implementation slice is the early command preflight plus full snapshot
+envelope and pure nominal capture mapper. Its first focused verification command
+after adding the mapper tests is:
+
+```text
+cargo test -p egglog frontend_capture --lib
+```
