@@ -4601,3 +4601,57 @@ producer slice:
 ```text
 /opt/homebrew/bin/timeout 110 cargo test -p egglog command_origin --lib
 ```
+
+### Checkpoint 2 slice H accepted: per-view direct source anchors (2026-08-06)
+
+`FrontendProgram::validate` now requires every parsed nonempty source
+subcommand to have at least one direct `CommandOrigin::Source` anchor in each
+retained program view independently. The former union of execution and
+proof-check source uses allowed one view to hide lost provenance in the other;
+that is incompatible with Design B because the two views have independent
+nominal identity spaces and are not positionally recoverable from one another.
+
+Execution-only validation retains the same semantic requirement with an
+execution-qualified diagnostic. Proof-instrumented validation now checks the
+execution view and proof-check view separately after their structural and input
+projection validation. Zero-subcommand physical groups remain valid and
+vacuously covered. Recursive `Fail` descendants still participate, and only a
+direct `Source` counts; a generated command's exact trigger cannot substitute
+for the missing source anchor.
+
+The asymmetric canary proves both formerly accepted failures: complete direct
+coverage in execution with only generated proof-check commands, and complete
+direct coverage in proof-check with only generated execution commands. Each
+fails at the missing view's deterministic source path.
+
+Authenticated implementation bytes before this state append:
+
+```text
+base HEAD                                         a9b9c015e20a71bf7b473f3f18e2ff3f3c70c9de
+tracked validator diff                           e2daa82cf2c54a2e09658d2102aef17f2f597989f51eefc8b9acfc8ae9d3f847
+egglog/src/frontend_program.rs                   db6d9713ebfa9387487b844b0e7272283f7aecd10b9e4f09dbb10a91b1ed8631
+```
+
+Validation on the final formatted bytes:
+
+```text
+cargo test -p egglog frontend_program --lib                  36 passed
+cargo test -p egglog --lib                                  246 passed
+cargo clippy -p egglog --lib --tests -- -D warnings          passed
+make proof-tests                                              passed (216 cases)
+cargo fmt --all -- --check                                   passed
+git diff --check                                              passed
+independent per-view source-anchor review                     PASS
+```
+
+Accepted boundary: this validator does not invent the anchors. Producer-owned
+recursive `CommandOriginAt` sidecars must supply them in both finalized views;
+any source subcommand erased from either view must retain an explicit logical
+command envelope or fail closed. The next slice implements that carrier through
+built-in desugaring and global elimination before enabling proof producers.
+
+Exact next verification command:
+
+```text
+/opt/homebrew/bin/timeout 110 cargo test -p egglog command_origin --lib
+```

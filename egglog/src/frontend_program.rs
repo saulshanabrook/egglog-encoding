@@ -1124,7 +1124,7 @@ impl FrontendProgram {
         validate_source(&self.source)?;
         validate_inputs(&self.inputs, "inputs")?;
 
-        let directly_used_sources = match &self.streams {
+        match &self.streams {
             ProgramStreams::ExecutionOnly { execution } => {
                 execution.validate("execution", &self.source, &self.inputs, true)?;
                 validate_input_uses(
@@ -1132,7 +1132,11 @@ impl FrontendProgram {
                     &self.inputs,
                     "execution.inputs",
                 )?;
-                execution.direct_source_uses()
+                validate_direct_source_coverage(
+                    &self.source,
+                    &execution.direct_source_uses(),
+                    "execution",
+                )?;
             }
             ProgramStreams::ProofInstrumented {
                 execution,
@@ -1150,29 +1154,46 @@ impl FrontendProgram {
                         "execution and proof-check projections do not share the exact payload sequence per source subcommand",
                     ));
                 }
-                let mut directly_used_sources = execution.direct_source_uses();
-                directly_used_sources.extend(proof_check.direct_source_uses());
-                directly_used_sources
-            }
-        };
-        for group in &self.source.groups {
-            for subcommand in &group.subcommands {
-                let source = SourceSubcommandRef::new(group.id, subcommand.id);
-                if !directly_used_sources.contains(&source) {
-                    return Err(invalid(
-                        format!(
-                            "source.groups[{}].subcommands[{}]",
-                            group.id.ordinal(),
-                            subcommand.id.ordinal()
-                        ),
-                        "parsed source subcommand has no direct Source origin in either retained stream",
-                    ));
-                }
+                validate_direct_source_coverage(
+                    &self.source,
+                    &execution.direct_source_uses(),
+                    "execution",
+                )?;
+                validate_direct_source_coverage(
+                    &self.source,
+                    &proof_check.direct_source_uses(),
+                    "proof_check",
+                )?;
             }
         }
 
         Ok(())
     }
+}
+
+fn validate_direct_source_coverage(
+    source: &SourceDocument,
+    directly_used_sources: &BTreeSet<SourceSubcommandRef>,
+    stream: &str,
+) -> ValidationResult {
+    for group in &source.groups {
+        for subcommand in &group.subcommands {
+            let source = SourceSubcommandRef::new(group.id, subcommand.id);
+            if !directly_used_sources.contains(&source) {
+                return Err(invalid(
+                    format!(
+                        "{stream}.source.groups[{}].subcommands[{}]",
+                        group.id.ordinal(),
+                        subcommand.id.ordinal()
+                    ),
+                    format!(
+                        "parsed source subcommand has no direct Source origin in the {stream} retained view"
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_source(source: &SourceDocument) -> ValidationResult {
@@ -4870,6 +4891,53 @@ mod tests {
             command.origin = CommandOrigin::Source(source_ref(0, 1));
         }
         program.validate().unwrap();
+    }
+
+    #[test]
+    fn every_proof_view_independently_anchors_each_parsed_subcommand() {
+        let execution = base_view();
+        let mut proof_check = base_view();
+        for command in &mut proof_check.commands {
+            command.origin = CommandOrigin::Generated {
+                trigger: Some(source_ref(0, 0)),
+                role: GeneratedCommandRole::ProofInstrumentation,
+            };
+        }
+        let mut missing_proof_anchor = FrontendProgram {
+            source: source_document(),
+            inputs: Vec::new(),
+            streams: ProgramStreams::ProofInstrumented {
+                execution,
+                proof_check,
+            },
+        };
+
+        let error = missing_proof_anchor.validate().unwrap_err();
+        assert_eq!(error.path, "proof_check.source.groups[0].subcommands[0]");
+        assert!(error.message.contains("proof_check retained view"));
+
+        let ProgramStreams::ProofInstrumented {
+            execution,
+            proof_check,
+        } = &mut missing_proof_anchor.streams
+        else {
+            unreachable!()
+        };
+        proof_check.commands[0].origin = CommandOrigin::Source(source_ref(0, 0));
+        execution.commands[0].origin = CommandOrigin::Generated {
+            trigger: Some(source_ref(0, 0)),
+            role: GeneratedCommandRole::TermEncoding,
+        };
+        for command in &mut execution.commands[1..] {
+            command.origin = CommandOrigin::Generated {
+                trigger: Some(source_ref(0, 0)),
+                role: GeneratedCommandRole::TermEncoding,
+            };
+        }
+
+        let error = missing_proof_anchor.validate().unwrap_err();
+        assert_eq!(error.path, "execution.source.groups[0].subcommands[0]");
+        assert!(error.message.contains("execution retained view"));
     }
 
     #[test]
