@@ -4,11 +4,38 @@
 //! authoritative incoming origin is composed afterward, so no command name,
 //! schema, span, or rendered form participates in provenance.
 
+use std::fmt::Display;
+use std::hash::Hash;
+
 use thiserror::Error;
 
-use crate::NCommand;
+use crate::ast::GenericNCommand;
 use crate::frontend_program::{CommandOrigin, GeneratedCommandRole};
+use crate::typechecking::{FinalizedProgram, SortAuthorityAt};
 use crate::util::{HashMap, HashSet};
+use crate::{NCommand, ResolvedNCommand};
+
+/// The only command shape provenance is allowed to inspect.
+///
+/// Both frontend command forests expose `Fail` nesting through this private
+/// trait.  Producers never recover identity from names, schemas, spans, or
+/// display text.
+pub(crate) trait OriginCommandNode: Sized {
+    fn fail_children(&self) -> Option<&[Self]>;
+}
+
+impl<Head, Leaf> OriginCommandNode for GenericNCommand<Head, Leaf>
+where
+    Head: Clone + Display,
+    Leaf: Clone + PartialEq + Eq + Display + Hash,
+{
+    fn fail_children(&self) -> Option<&[Self]> {
+        let GenericNCommand::Fail(_, children) = self else {
+            return None;
+        };
+        Some(children)
+    }
+}
 
 /// How one desugared command node relates to the producer's input command.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -39,8 +66,8 @@ pub(crate) struct CommandOriginAt {
 pub(crate) struct ExactCommandOrigins(Vec<CommandOriginAt>);
 
 impl ExactCommandOrigins {
-    fn try_new(
-        commands: &[NCommand],
+    pub(crate) fn try_new<C: OriginCommandNode>(
+        commands: &[C],
         origins: Vec<CommandOriginAt>,
     ) -> Result<Self, CommandOriginError> {
         validate_paths(commands, &origins, |origin| &origin.command_path)?;
@@ -53,10 +80,143 @@ impl ExactCommandOrigins {
     pub(crate) fn as_slice(&self) -> &[CommandOriginAt] {
         &self.0
     }
+}
 
-    #[cfg(test)]
-    pub(crate) fn into_vec(self) -> Vec<CommandOriginAt> {
-        self.0
+/// A command forest that cannot be detached from its exact producer origins.
+///
+/// Fields are deliberately private.  Transitions can inspect both components,
+/// but no API returns a bare command vector.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct OriginatedProgram<C> {
+    commands: Vec<C>,
+    origins: ExactCommandOrigins,
+}
+
+impl<C: OriginCommandNode> OriginatedProgram<C> {
+    pub(crate) fn try_new(
+        commands: Vec<C>,
+        origins: ExactCommandOrigins,
+    ) -> Result<Self, CommandOriginError> {
+        origins.validate(&commands)?;
+        Ok(Self { commands, origins })
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), CommandOriginError> {
+        self.origins.validate(&self.commands)
+    }
+
+    pub(crate) fn commands(&self) -> &[C] {
+        &self.commands
+    }
+
+    pub(crate) fn origins(&self) -> &ExactCommandOrigins {
+        &self.origins
+    }
+}
+
+/// A finalized command forest that cannot be detached from its exact producer
+/// origins or its nominal sort authorities.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct OriginatedFinalizedProgram {
+    finalized: FinalizedProgram,
+    origins: ExactCommandOrigins,
+}
+
+impl OriginatedFinalizedProgram {
+    pub(crate) fn try_new(
+        finalized: FinalizedProgram,
+        origins: ExactCommandOrigins,
+    ) -> Result<Self, CommandOriginError> {
+        validate_sort_authorities(&finalized)?;
+        origins.validate(&finalized.commands)?;
+        Ok(Self { finalized, origins })
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), CommandOriginError> {
+        validate_sort_authorities(&self.finalized)?;
+        self.origins.validate(&self.finalized.commands)
+    }
+
+    pub(crate) fn commands(&self) -> &[ResolvedNCommand] {
+        &self.finalized.commands
+    }
+
+    #[allow(dead_code)] // consumed by the pending standalone snapshot mapper
+    pub(crate) fn sort_authorities(&self) -> &[SortAuthorityAt] {
+        &self.finalized.sort_authorities
+    }
+
+    pub(crate) fn origins(&self) -> &ExactCommandOrigins {
+        &self.origins
+    }
+
+    /// Apply one provenance-preserving transition.  The callback must return
+    /// both authority carriers, and the result is revalidated before it can
+    /// become another originated value.
+    pub(crate) fn try_transform<E>(
+        self,
+        transform: impl FnOnce(
+            FinalizedProgram,
+            ExactCommandOrigins,
+        ) -> Result<(FinalizedProgram, ExactCommandOrigins), E>,
+    ) -> Result<Self, E>
+    where
+        E: From<CommandOriginError>,
+    {
+        self.validate().map_err(E::from)?;
+        let (finalized, origins) = transform(self.finalized, self.origins)?;
+        Self::try_new(finalized, origins).map_err(E::from)
+    }
+
+    /// Atomically append another originated forest.  One pre-append top-level
+    /// offset rebases both exact-origin paths and sort-authority paths.
+    #[allow(dead_code)] // used by the pending compile-only grouped transition
+    pub(crate) fn appended(self, other: Self) -> Result<Self, CommandOriginError> {
+        self.validate()?;
+        other.validate()?;
+
+        let offset = self.finalized.commands.len();
+        let mut candidate_commands = self.finalized.commands;
+        candidate_commands.extend(other.finalized.commands);
+
+        let mut candidate_sort_authorities = self.finalized.sort_authorities;
+        candidate_sort_authorities.extend(other.finalized.sort_authorities.into_iter().map(
+            |mut authority| {
+                let top = authority
+                    .command_path
+                    .first_mut()
+                    .expect("validated sort-authority paths are never empty");
+                *top += offset;
+                authority
+            },
+        ));
+        let candidate_finalized = FinalizedProgram {
+            commands: candidate_commands,
+            sort_authorities: candidate_sort_authorities,
+        };
+
+        let mut candidate_origin_entries = self.origins.0;
+        candidate_origin_entries.extend(other.origins.0.into_iter().map(|mut entry| {
+            let top = entry
+                .command_path
+                .first_mut()
+                .expect("validated command-origin paths are never empty");
+            *top += offset;
+            entry
+        }));
+        let candidate_origins =
+            ExactCommandOrigins::try_new(&candidate_finalized.commands, candidate_origin_entries)?;
+        Self::try_new(candidate_finalized, candidate_origins)
+    }
+}
+
+impl ExactCommandOrigins {
+    pub(crate) fn validate<C: OriginCommandNode>(
+        &self,
+        commands: &[C],
+    ) -> Result<(), CommandOriginError> {
+        validate_paths(commands, &self.0, |origin| &origin.command_path)?;
+        validate_origins(&self.0)
     }
 }
 
@@ -216,10 +376,70 @@ pub(crate) enum CommandOriginError {
         command_path: Vec<usize>,
         enclosing_path: Vec<usize>,
     },
+    #[error(
+        "command at path {command_path:?} moved source trigger backwards from {previous:?} to {current:?}"
+    )]
+    SourceTriggerMovedBackward {
+        command_path: Vec<usize>,
+        previous: crate::frontend_program::SourceSubcommandRef,
+        current: crate::frontend_program::SourceSubcommandRef,
+    },
+    #[error(
+        "source-less generated command at path {command_path:?} appears after source-associated commands"
+    )]
+    SourceLessAfterSource { command_path: Vec<usize> },
+    #[error("finalized sort path {command_path:?} has no nominal authority stamp")]
+    MissingSortAuthority { command_path: Vec<usize> },
+    #[error("sort authority targets missing or non-Sort command path {command_path:?}")]
+    UnexpectedSortAuthority { command_path: Vec<usize> },
+    #[error("sort command path {command_path:?} received duplicate nominal authority stamps")]
+    DuplicateSortAuthority { command_path: Vec<usize> },
+}
+
+fn validate_sort_authorities(program: &FinalizedProgram) -> Result<(), CommandOriginError> {
+    fn collect(commands: &[ResolvedNCommand], path: &mut Vec<usize>, paths: &mut Vec<Vec<usize>>) {
+        for (index, command) in commands.iter().enumerate() {
+            path.push(index);
+            match command {
+                ResolvedNCommand::Sort { .. } => paths.push(path.clone()),
+                ResolvedNCommand::Fail(_, nested) => collect(nested, path, paths),
+                _ => {}
+            }
+            path.pop();
+        }
+    }
+
+    let mut expected = Vec::new();
+    collect(&program.commands, &mut Vec::new(), &mut expected);
+    let expected_set = expected.iter().cloned().collect::<HashSet<_>>();
+    let mut actual = HashSet::default();
+    for authority in &program.sort_authorities {
+        if !actual.insert(authority.command_path.clone()) {
+            return Err(CommandOriginError::DuplicateSortAuthority {
+                command_path: authority.command_path.clone(),
+            });
+        }
+    }
+    if let Some(command_path) = expected.into_iter().find(|path| !actual.contains(path)) {
+        return Err(CommandOriginError::MissingSortAuthority { command_path });
+    }
+    if let Some(command_path) = program
+        .sort_authorities
+        .iter()
+        .map(|authority| &authority.command_path)
+        .find(|path| !expected_set.contains(*path))
+    {
+        return Err(CommandOriginError::UnexpectedSortAuthority {
+            command_path: command_path.clone(),
+        });
+    }
+    Ok(())
 }
 
 fn validate_origins(origins: &[CommandOriginAt]) -> Result<(), CommandOriginError> {
     let mut triggers_by_path = HashMap::default();
+    let mut previous_source = None;
+    let mut saw_source_associated = false;
     for entry in origins {
         if let CommandOrigin::Generated { trigger, role } = &entry.origin {
             if let GeneratedCommandRole::Other(description) = role {
@@ -244,6 +464,23 @@ fn validate_origins(origins: &[CommandOriginAt]) -> Result<(), CommandOriginErro
             CommandOrigin::Source(source) => Some(*source),
             CommandOrigin::Generated { trigger, .. } => *trigger,
         };
+        if let Some(current) = trigger {
+            if let Some(previous) = previous_source
+                && current < previous
+            {
+                return Err(CommandOriginError::SourceTriggerMovedBackward {
+                    command_path: entry.command_path.clone(),
+                    previous,
+                    current,
+                });
+            }
+            previous_source = Some(current);
+            saw_source_associated = true;
+        } else if saw_source_associated {
+            return Err(CommandOriginError::SourceLessAfterSource {
+                command_path: entry.command_path.clone(),
+            });
+        }
         if entry.command_path.len() > 1 {
             let enclosing_path = entry.command_path[..entry.command_path.len() - 1].to_vec();
             let enclosing_trigger = triggers_by_path
@@ -261,8 +498,8 @@ fn validate_origins(origins: &[CommandOriginAt]) -> Result<(), CommandOriginErro
     Ok(())
 }
 
-fn validate_paths<T>(
-    commands: &[NCommand],
+fn validate_paths<C: OriginCommandNode, T>(
+    commands: &[C],
     entries: &[T],
     path: impl Fn(&T) -> &[usize],
 ) -> Result<(), CommandOriginError> {
@@ -298,7 +535,10 @@ fn validate_paths<T>(
     Ok(())
 }
 
-fn validate_path(commands: &[NCommand], path: &[usize]) -> Result<(), CommandOriginError> {
+fn validate_path<C: OriginCommandNode>(
+    commands: &[C],
+    path: &[usize],
+) -> Result<(), CommandOriginError> {
     if path.is_empty() {
         return Err(CommandOriginError::EmptyPath);
     }
@@ -313,7 +553,7 @@ fn validate_path(commands: &[NCommand], path: &[usize]) -> Result<(), CommandOri
         if depth + 1 == path.len() {
             return Ok(());
         }
-        let NCommand::Fail(_, nested) = command else {
+        let Some(nested) = command.fail_children() else {
             return Err(CommandOriginError::DescentThroughNonFail {
                 command_path: path.to_vec(),
             });
@@ -323,11 +563,15 @@ fn validate_path(commands: &[NCommand], path: &[usize]) -> Result<(), CommandOri
     unreachable!("nonempty command path returned without visiting a command")
 }
 
-fn collect_paths(commands: &[NCommand], path: &mut Vec<usize>, output: &mut Vec<Vec<usize>>) {
+fn collect_paths<C: OriginCommandNode>(
+    commands: &[C],
+    path: &mut Vec<usize>,
+    output: &mut Vec<Vec<usize>>,
+) {
     for (index, command) in commands.iter().enumerate() {
         path.push(index);
         output.push(path.clone());
-        if let NCommand::Fail(_, nested) = command {
+        if let Some(nested) = command.fail_children() {
             collect_paths(nested, path, output);
         }
         path.pop();
@@ -344,6 +588,23 @@ mod tests {
 
     fn leaf() -> NCommand {
         NCommand::PrintSize(Span::Panic, None)
+    }
+
+    fn resolved_leaf() -> ResolvedNCommand {
+        ResolvedNCommand::PrintSize(Span::Panic, None)
+    }
+
+    fn resolved_sort(name: &str) -> ResolvedNCommand {
+        ResolvedNCommand::Sort {
+            span: Span::Panic,
+            name: name.to_owned(),
+            presort_and_args: None,
+            uf: None,
+            proof_func: None,
+            container_rebuild: None,
+            proof_constructors: None,
+            unionable: true,
+        }
     }
 
     fn inherit(path: &[usize]) -> CommandOriginDispositionAt {
@@ -504,5 +765,284 @@ mod tests {
                 enclosing_path,
             }) if command_path == [0, 0] && enclosing_path == [0]
         ));
+    }
+
+    #[test]
+    fn command_origin_exact_sidecar_validates_resolved_forests_without_inference() {
+        let commands = vec![ResolvedNCommand::Fail(
+            Span::Panic,
+            vec![resolved_leaf(), resolved_leaf()],
+        )];
+        let trigger = source(2, 4);
+        let origins = ExactCommandOrigins::try_new(
+            &commands,
+            vec![
+                CommandOriginAt {
+                    command_path: vec![0],
+                    origin: CommandOrigin::Source(trigger),
+                },
+                CommandOriginAt {
+                    command_path: vec![0, 0],
+                    origin: CommandOrigin::Generated {
+                        trigger: Some(trigger),
+                        role: GeneratedCommandRole::TermEncoding,
+                    },
+                },
+                CommandOriginAt {
+                    command_path: vec![0, 1],
+                    origin: CommandOrigin::Generated {
+                        trigger: Some(trigger),
+                        role: GeneratedCommandRole::ProofInstrumentation,
+                    },
+                },
+            ],
+        )
+        .unwrap();
+        assert!(origins.validate(&commands).is_ok());
+
+        let mismatched = FinalizedProgram::new(vec![resolved_leaf(), resolved_leaf()], Vec::new());
+        assert!(matches!(
+            OriginatedFinalizedProgram::try_new(mismatched, origins),
+            Err(CommandOriginError::DescentThroughNonFail { command_path })
+                if command_path == [0, 0]
+        ));
+    }
+
+    #[test]
+    fn command_origin_rejects_backward_and_nonprefix_source_less_order() {
+        let commands = vec![leaf(), leaf()];
+        assert!(matches!(
+            ExactCommandOrigins::try_new(
+                &commands,
+                vec![
+                    CommandOriginAt {
+                        command_path: vec![0],
+                        origin: CommandOrigin::Source(source(1, 1)),
+                    },
+                    CommandOriginAt {
+                        command_path: vec![1],
+                        origin: CommandOrigin::Source(source(1, 0)),
+                    },
+                ],
+            ),
+            Err(CommandOriginError::SourceTriggerMovedBackward { command_path, .. })
+                if command_path == [1]
+        ));
+        assert!(matches!(
+            ExactCommandOrigins::try_new(
+                &commands,
+                vec![
+                    CommandOriginAt {
+                        command_path: vec![0],
+                        origin: CommandOrigin::Source(source(0, 0)),
+                    },
+                    CommandOriginAt {
+                        command_path: vec![1],
+                        origin: CommandOrigin::Generated {
+                            trigger: None,
+                            role: GeneratedCommandRole::ProofHeader,
+                        },
+                    },
+                ],
+            ),
+            Err(CommandOriginError::SourceLessAfterSource { command_path })
+                if command_path == [1]
+        ));
+        ExactCommandOrigins::try_new(
+            &commands,
+            vec![
+                CommandOriginAt {
+                    command_path: vec![0],
+                    origin: CommandOrigin::Generated {
+                        trigger: None,
+                        role: GeneratedCommandRole::FrontendPrelude,
+                    },
+                },
+                CommandOriginAt {
+                    command_path: vec![1],
+                    origin: CommandOrigin::Source(source(0, 0)),
+                },
+            ],
+        )
+        .unwrap();
+    }
+
+    fn originated_resolved_leaf(origin: CommandOrigin) -> OriginatedFinalizedProgram {
+        let commands = vec![resolved_leaf()];
+        let origins = ExactCommandOrigins::try_new(
+            &commands,
+            vec![CommandOriginAt {
+                command_path: vec![0],
+                origin,
+            }],
+        )
+        .unwrap();
+        OriginatedFinalizedProgram::try_new(FinalizedProgram::new(commands, Vec::new()), origins)
+            .unwrap()
+    }
+
+    #[test]
+    fn originated_append_rebases_origins_and_sort_authority_with_one_offset() {
+        use crate::typechecking::{SortAuthorityAt, SortRegistrationId};
+
+        let left = originated_resolved_leaf(CommandOrigin::Source(source(0, 0)));
+        let right_commands = vec![ResolvedNCommand::Fail(
+            Span::Panic,
+            vec![resolved_sort("S")],
+        )];
+        let right_origins = ExactCommandOrigins::try_new(
+            &right_commands,
+            vec![
+                CommandOriginAt {
+                    command_path: vec![0],
+                    origin: CommandOrigin::Source(source(0, 1)),
+                },
+                CommandOriginAt {
+                    command_path: vec![0, 0],
+                    origin: CommandOrigin::Generated {
+                        trigger: Some(source(0, 1)),
+                        role: GeneratedCommandRole::FrontendDesugaring,
+                    },
+                },
+            ],
+        )
+        .unwrap();
+        let sort_id = SortRegistrationId::new(9);
+        let right = OriginatedFinalizedProgram::try_new(
+            FinalizedProgram::new(
+                right_commands,
+                vec![SortAuthorityAt {
+                    command_path: vec![0, 0],
+                    local: sort_id,
+                    source: None,
+                }],
+            ),
+            right_origins,
+        )
+        .unwrap();
+
+        let appended = left.appended(right).unwrap();
+        assert_eq!(appended.commands().len(), 2);
+        assert_eq!(
+            appended
+                .origins()
+                .as_slice()
+                .iter()
+                .map(|entry| entry.command_path.clone())
+                .collect::<Vec<_>>(),
+            vec![vec![0], vec![1], vec![1, 0]]
+        );
+        assert_eq!(appended.sort_authorities()[0].command_path, [1, 0]);
+        assert_eq!(appended.sort_authorities()[0].local, sort_id);
+    }
+
+    #[test]
+    fn originated_finalized_rejects_malformed_sort_authority_without_panicking() {
+        let commands = vec![resolved_sort("S")];
+        let origins = ExactCommandOrigins::try_new(
+            &commands,
+            vec![CommandOriginAt {
+                command_path: vec![0],
+                origin: CommandOrigin::Source(source(0, 0)),
+            }],
+        )
+        .unwrap();
+        assert!(matches!(
+            OriginatedFinalizedProgram::try_new(
+                FinalizedProgram {
+                    commands,
+                    sort_authorities: Vec::new(),
+                },
+                origins,
+            ),
+            Err(CommandOriginError::MissingSortAuthority { command_path })
+                if command_path == [0]
+        ));
+    }
+
+    #[test]
+    fn originated_finalized_rejects_duplicate_and_unexpected_sort_authority() {
+        use crate::typechecking::{SortAuthorityAt, SortRegistrationId};
+
+        let trigger = source(0, 0);
+        let sort_commands = vec![resolved_sort("S")];
+        let sort_origins = ExactCommandOrigins::try_new(
+            &sort_commands,
+            vec![CommandOriginAt {
+                command_path: vec![0],
+                origin: CommandOrigin::Source(trigger),
+            }],
+        )
+        .unwrap();
+        let authority = SortAuthorityAt {
+            command_path: vec![0],
+            local: SortRegistrationId::new(9),
+            source: None,
+        };
+        assert!(matches!(
+            OriginatedFinalizedProgram::try_new(
+                FinalizedProgram {
+                    commands: sort_commands,
+                    sort_authorities: vec![authority.clone(), authority],
+                },
+                sort_origins,
+            ),
+            Err(CommandOriginError::DuplicateSortAuthority { command_path })
+                if command_path == [0]
+        ));
+
+        let leaf_commands = vec![resolved_leaf()];
+        let leaf_origins = ExactCommandOrigins::try_new(
+            &leaf_commands,
+            vec![CommandOriginAt {
+                command_path: vec![0],
+                origin: CommandOrigin::Source(trigger),
+            }],
+        )
+        .unwrap();
+        assert!(matches!(
+            OriginatedFinalizedProgram::try_new(
+                FinalizedProgram {
+                    commands: leaf_commands,
+                    sort_authorities: vec![SortAuthorityAt {
+                        command_path: vec![0],
+                        local: SortRegistrationId::new(10),
+                        source: None,
+                    }],
+                },
+                leaf_origins,
+            ),
+            Err(CommandOriginError::UnexpectedSortAuthority { command_path })
+                if command_path == [0]
+        ));
+    }
+
+    #[test]
+    fn originated_append_fails_closed_on_cross_boundary_origin_order() {
+        let original = originated_resolved_leaf(CommandOrigin::Source(source(2, 0)));
+        let snapshot = original.clone();
+        let backward = originated_resolved_leaf(CommandOrigin::Source(source(1, 0)));
+        assert!(matches!(
+            original.clone().appended(backward),
+            Err(CommandOriginError::SourceTriggerMovedBackward { command_path, .. })
+                if command_path == [1]
+        ));
+        assert_eq!(original, snapshot);
+
+        let source_less = originated_resolved_leaf(CommandOrigin::Generated {
+            trigger: None,
+            role: GeneratedCommandRole::ProofHeader,
+        });
+        assert!(matches!(
+            original.clone().appended(source_less),
+            Err(CommandOriginError::SourceLessAfterSource { command_path })
+                if command_path == [1]
+        ));
+
+        let prefix = originated_resolved_leaf(CommandOrigin::Generated {
+            trigger: None,
+            role: GeneratedCommandRole::FrontendPrelude,
+        });
+        assert!(prefix.appended(original).is_ok());
     }
 }

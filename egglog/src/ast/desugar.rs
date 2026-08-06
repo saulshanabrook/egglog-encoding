@@ -1,8 +1,8 @@
 use super::{Rewrite, Rule};
 use crate::ast::{Action, Actions, Expr, Fact};
 use crate::command_origin::{
-    CommandOriginDisposition, CommandOriginDispositionAt, CommandOriginError, ExactCommandOrigins,
-    LocalCommandOrigins,
+    CommandOriginDisposition, CommandOriginDispositionAt, CommandOriginError, LocalCommandOrigins,
+    OriginatedProgram,
 };
 use crate::frontend_program::{CommandOrigin, GeneratedCommandRole};
 use crate::*;
@@ -25,10 +25,16 @@ pub(crate) fn desugar_command_with_origin(
     parser: &mut Parser,
     proof_testing: bool,
     incoming: &CommandOrigin,
-) -> Result<(Vec<NCommand>, ExactCommandOrigins), DesugarCommandOriginError> {
-    let desugared = desugar_command_with_dispositions(command, parser, proof_testing)?;
+) -> Result<OriginatedProgram<NCommand>, DesugarCommandOriginError> {
+    // Origin composition can reject an otherwise valid fanout.  Desugar on a
+    // staged parser so such a provenance failure cannot consume fresh names or
+    // registration identities before the command forest is admitted whole.
+    let mut staged_parser = parser.clone();
+    let desugared = desugar_command_with_dispositions(command, &mut staged_parser, proof_testing)?;
     let origins = desugared.origins.compose(&desugared.commands, incoming)?;
-    Ok((desugared.commands, origins))
+    let originated = OriginatedProgram::try_new(desugared.commands, origins)?;
+    *parser = staged_parser;
+    Ok(originated)
 }
 
 /// A failure either from ordinary desugaring or from exact-origin composition.
@@ -646,9 +652,12 @@ mod tests {
     ) -> (Vec<NCommand>, Vec<CommandOriginAt>) {
         let mut parser = Parser::default();
         let command = parse_one(&mut parser, source);
-        let (commands, origins) =
+        let originated =
             desugar_command_with_origin(command, &mut parser, proof_testing, incoming).unwrap();
-        (commands, origins.into_vec())
+        (
+            originated.commands().to_vec(),
+            originated.origins().as_slice().to_vec(),
+        )
     }
 
     fn assert_source_pattern(origins: &[CommandOriginAt], expected: &[(&[usize], bool)]) {
@@ -787,6 +796,7 @@ mod tests {
 
             let mut parser = Parser::default();
             let relation = parse_one(&mut parser, "(relation edge (i64))");
+            let fresh_before = parser.symbol_gen.clone();
             assert!(matches!(
                 desugar_command_with_origin(relation, &mut parser, false, &incoming),
                 Err(DesugarCommandOriginError::Origin(
@@ -796,6 +806,7 @@ mod tests {
                     }
                 )) if command_path == [0]
             ));
+            assert_eq!(parser.symbol_gen, fresh_before);
         }
     }
 
@@ -832,11 +843,11 @@ mod tests {
         let mut origin_parser = Parser::default();
 
         let legacy = desugar_command(command.clone(), &mut legacy_parser, false).unwrap();
-        let (origin_aware, _) =
+        let origin_aware =
             desugar_command_with_origin(command, &mut origin_parser, false, &source_origin())
                 .unwrap();
 
-        assert_eq!(origin_aware, legacy);
+        assert_eq!(origin_aware.commands(), legacy);
         assert_eq!(origin_parser.symbol_gen, legacy_parser.symbol_gen);
     }
 }

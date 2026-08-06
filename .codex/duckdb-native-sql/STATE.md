@@ -4787,3 +4787,139 @@ Exact next verification command:
 ```text
 /opt/homebrew/bin/timeout 110 cargo test -p egglog command_origin --lib
 ```
+
+## Checkpoint 2: transactional originated type-state and atomic global production
+
+The user selected Design B as the sole production architecture. Exact
+producer-stamped identities and provenance are authority. Names, schemas,
+storage shapes, output order, and command/schedule resemblance are diagnostic
+only; there is no Design-A reconstruction path or fallback.
+
+This slice carries the mandatory recursive command-origin forest through
+shape-preserving typechecking and global elimination without exposing a bare
+command extraction path. `OriginatedProgram<C>` and
+`OriginatedFinalizedProgram` keep commands, exact recursive origins, and final
+sort authority bonded. All paths are unique, total, recursive-preorder paths;
+source origins are monotone; source-less generated commands form only the
+validated prefix; and append consumes both carriers while rebasing command
+origins and sort authority with one shared offset.
+
+Origin-aware desugaring now runs on a staged `Parser` and commits it only after
+origin composition and carrier construction succeed. A source-less fanout that
+needs a generated sibling therefore returns a structured provenance error
+without consuming fresh symbols or registration identities. Successful
+desugaring remains byte-for-byte command-compatible with the legacy producer
+and consumes fresh symbols identically.
+
+Originated typechecking is compile-only and transactionally stages the entire
+`EGraph`. It validates command origins and the complete supplied source-sort
+vector before ordinary typechecking, then commits only after the finalized
+origin/sort carrier validates. Empty, invalid, non-`Sort`, duplicate target,
+duplicate source, missing proof view, unknown or retired proof registration,
+and already-linked/shared source arcs are structured errors. A late ordinary
+`TypeError` after a valid cross-view sort link leaves both views, allocators,
+catalogs, link maps, backend tokens, and parser state unpublished.
+
+Global elimination no longer has a provenance preplanner parallel to command
+production. Each transformation branch emits a `ProducedCommand` containing
+the command and its `Inherit` or `Generated(GlobalElimination)` disposition
+together. `Let` produces generated Function then inherited Set; `LetBegin`
+produces generated Function then inherited action block. Recursive `Fail`
+rebases actual emitted-command offsets and preserves every child's own full
+incoming origin. Sort authority follows the exact inherited production for
+its input path. Fresh state is cloned and committed only after commands,
+origins, and sort authority validate jointly. A discriminating drift canary
+asserts the command variant and disposition pair, not merely their paths.
+
+Authenticated implementation bytes before this state append:
+
+```text
+base HEAD                                         a4205e8fe0ee77c0b0629fd9d640b2a716dee444
+four-file binary diff                            9dbd95108145a70792829bd58afdda930d1d063904c400c000c58febfd7eb91d
+egglog/src/command_origin.rs                     027bf2794cf48d157e7661045151335d83c2adf07dd7bae3cb463f84b6850302
+egglog/src/ast/desugar.rs                        c6750c17ac85d6caf2b80e8f468b8a0ea0a1df1847ebdbaec193540da5fb45c2
+egglog/src/typechecking.rs                       30960fed22439622f751582305ab7676571859e23f39ad556f79912f631019b7
+egglog/src/ast/remove_globals.rs                 ee2b025d44ac92d4533b86be1a34c2eb74fc4ca55f5d6d70b7e2fcc931cdb5a7
+```
+
+Validation on the final authenticated bytes:
+
+```text
+cargo test -p egglog command_origin --lib                  17 passed
+cargo test -p egglog ast::remove_globals::tests --lib       9 passed
+cargo test -p egglog originated_ --lib                     12 passed
+cargo test -p egglog --lib                                279 passed
+make proof-tests                                             passed (208 + 8)
+cargo clippy -p egglog --all-targets -- -D warnings         passed
+cargo fmt --all -- --check                                  passed
+git diff --check HEAD                                       passed
+independent atomic-global-production review                  PASS
+independent carrier/source-preflight review                  PASS
+```
+
+Accepted boundaries and activation blockers:
+
+1. The crate-private sparse `Vec<SourceSortAuthorityAt>` remains solely in the
+   unused originated typecheck substrate and tests. It can validate supplied
+   entries but cannot authenticate an omitted entry or two swapped live source
+   IDs. It is a hard activation blocker, not a fallback. Before any production
+   caller, replace it with a private, total, producer-bonded disposition for
+   every recursive `Sort`, using view-qualified exact authority and explicit
+   linked versus local-only intent.
+2. The live `desugar_term_encoded_command`/`SortLineage` adapter in `lib.rs`
+   remains the legacy current production path and contains assertion-based
+   association. The Design-B integration slice must replace it atomically; it
+   must not route the final mapper or compiler through this pending API.
+3. Command provenance still cannot authenticate nodes inside a structured
+   schedule. A mandatory total schedule-node carrier, including exact Run and
+   proof-maintenance anchors, precedes proof-producer integration.
+4. Proof producers, logical Input occurrence/payload authority, exact function
+   and ruleset lineage, and command-macro fanout dispositions remain mandatory
+   producer work. Repeated-trigger vectors and positional zips cannot be
+   removed until those products arrive together.
+5. `egglog/src/runtime_function_registry.rs` remains an unrelated untracked
+   draft. It was not edited, tested, staged, or included in this checkpoint.
+
+Scoreboard: grouped source capture, exact per-view anchors, nominal sort,
+callable, primitive, binding, and rule identity, producer-stamped desugaring,
+transactional originated typechecking, and atomic global elimination are
+accepted. Production activation remains blocked on the total sort and schedule
+carriers. SQL emission remains blocked.
+
+Circle roster for the next slice:
+
+- integration/API artifact: total producer-bonded per-`Sort` disposition plus
+  mandatory schedule origins in the originated carrier; write set
+  `command_origin.rs`, new `schedule_origin.rs`, narrow typechecking/source
+  capture plumbing, and later `lib.rs`; forbidden shortcut sparse vectors,
+  raw cross-view IDs, or optional sidecars; verification omission/swap/wrong-
+  view and topology corruption tests; stop on any need to inspect names or
+  schemas; no movement means production still accepts detached lineage;
+- engine-semantics artifact: exact structured schedule census and proof rebuild
+  template; write set initially read-only, then schedule producer tests;
+  forbidden shortcut shape-based maintenance recognition or sequence
+  flattening; verification exact nine-node rebuild and Repeat/Saturate nesting;
+  stop on lost `:until` adjacency; no movement means no authenticated Run node;
+- compiler-lowering artifact: no SQL write set until the total carrier passes;
+  forbidden shortcut positional command/schedule zips; verification mapper
+  panics if any mandatory authority is absent; stop on any emitted SQL from the
+  legacy adapter; no movement is expected in this carrier slice;
+- semantic-oracle artifact: same-shaped/swapped sort and schedule decoys,
+  nested `Fail`, source-less failure, and late-error rollback canaries; write
+  set tests only; forbidden shortcut diagnostic comparison; verification
+  focused corruption matrix plus full `egglog` lib and proof suite; stop on
+  state mutation after rejection; no movement means no new corruption flips;
+- artifacts/benchmarks artifact: none; write set empty; forbidden shortcut
+  publishing a partial bundle; verification deferred; stop on any SQL/manifest
+  output; no movement is expected;
+- independent-review artifact: authenticated total-carrier/schedule diff;
+  write set empty; forbidden shortcut trusting producer output without path,
+  anchor, trigger, and view-domain validation; verification exact hashes plus
+  two independent read-only reviews; stop on the first inference path; no
+  movement means no closing authenticated PASS.
+
+Exact next verification command:
+
+```text
+/opt/homebrew/bin/timeout 110 cargo test -p egglog command_origin --lib
+```

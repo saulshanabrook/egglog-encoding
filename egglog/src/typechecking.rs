@@ -1,6 +1,7 @@
 use std::hash::Hasher;
 
 use crate::Context;
+use crate::command_origin::{CommandOriginError, OriginatedFinalizedProgram, OriginatedProgram};
 use crate::constraint::ResolvedBindingScope;
 use crate::proofs::proof_container_rebuild::register_container_rebuild_from_spec;
 use crate::{
@@ -1080,6 +1081,134 @@ impl EGraph {
         Ok(FinalizedProgram::new(commands, sort_authorities))
     }
 
+    /// Typecheck an exact-origin command forest without permitting either
+    /// authority sidecar to detach from the transition.
+    #[allow(dead_code)] // integrated by the pending compile-only source pipeline
+    pub(crate) fn typecheck_originated_program_with_sort_authority(
+        &mut self,
+        program: OriginatedProgram<NCommand>,
+        source_authorities: Vec<SourceSortAuthorityAt>,
+    ) -> Result<OriginatedFinalizedProgram, OriginatedTypecheckError> {
+        if !self.backend.is_compile_only() {
+            return Err(OriginatedTypecheckError::RuntimeFrontend);
+        }
+        program.validate()?;
+        self.preflight_originated_source_sort_authorities(program.commands(), &source_authorities)?;
+        let origins = program.origins().clone();
+        let mut staged = self.clone();
+        let finalized =
+            staged.typecheck_program_with_sort_authority(program.commands(), source_authorities)?;
+        let originated = OriginatedFinalizedProgram::try_new(finalized, origins)?;
+        *self = staged;
+        Ok(originated)
+    }
+
+    /// Validate every producer-stamped source-sort link before ordinary
+    /// typechecking can register a local sort or advance an identity allocator.
+    ///
+    /// The legacy transition retains assertion-based validation for detached
+    /// callers.  The originated transition must instead fail structurally and
+    /// consult only the exact proof-checking registration ledger: sort names,
+    /// schemas, and equivalent arcs are deliberately not authority.
+    fn preflight_originated_source_sort_authorities(
+        &self,
+        program: &[NCommand],
+        source_authorities: &[SourceSortAuthorityAt],
+    ) -> Result<(), OriginatedTypecheckError> {
+        fn command_at_path<'a>(
+            commands: &'a [NCommand],
+            path: &[usize],
+        ) -> Result<&'a NCommand, OriginatedTypecheckError> {
+            if path.is_empty() {
+                return Err(OriginatedTypecheckError::EmptySourceSortAuthorityPath);
+            }
+
+            let mut commands = commands;
+            for (depth, index) in path.iter().copied().enumerate() {
+                let Some(command) = commands.get(index) else {
+                    return Err(OriginatedTypecheckError::InvalidSourceSortAuthorityPath {
+                        command_path: path.to_vec(),
+                    });
+                };
+                if depth + 1 == path.len() {
+                    return Ok(command);
+                }
+                let NCommand::Fail(_, nested) = command else {
+                    return Err(OriginatedTypecheckError::InvalidSourceSortAuthorityPath {
+                        command_path: path.to_vec(),
+                    });
+                };
+                commands = nested;
+            }
+            unreachable!("nonempty source-sort path returned without visiting a command")
+        }
+
+        let mut destinations = HashSet::default();
+        let mut sources = HashMap::default();
+        for authority in source_authorities {
+            let command = command_at_path(program, &authority.command_path)?;
+            if !matches!(command, NCommand::Sort { .. }) {
+                return Err(
+                    OriginatedTypecheckError::SourceSortAuthorityTargetsNonSort {
+                        command_path: authority.command_path.clone(),
+                    },
+                );
+            }
+            if !destinations.insert(authority.command_path.clone()) {
+                return Err(OriginatedTypecheckError::DuplicateSourceSortAuthority {
+                    command_path: authority.command_path.clone(),
+                });
+            }
+            if let Some(first_command_path) =
+                sources.insert(authority.source, authority.command_path.clone())
+            {
+                return Err(OriginatedTypecheckError::DuplicateSourceSortRegistration {
+                    source_registration: authority.source,
+                    first_command_path,
+                    command_path: authority.command_path.clone(),
+                });
+            }
+        }
+
+        if source_authorities.is_empty() {
+            return Ok(());
+        }
+        let original = self
+            .proof_state
+            .original_typechecking
+            .as_deref()
+            .ok_or(OriginatedTypecheckError::MissingSourceSortProofView)?;
+        for authority in source_authorities {
+            let Some(source_registration) = original.type_info.sort_registration(authority.source)
+            else {
+                return Err(OriginatedTypecheckError::UnknownSourceSortRegistration {
+                    command_path: authority.command_path.clone(),
+                    source_registration: authority.source,
+                });
+            };
+            let source_arc_key = TypeInfo::sort_arc_key(&source_registration.sort);
+            let existing_local = self
+                .type_info
+                .sort_registrations_by_arc
+                .get(&source_arc_key)
+                .or_else(|| {
+                    self.type_info
+                        .linked_sort_registrations_by_arc
+                        .get(&source_arc_key)
+                });
+            if let Some(existing_local) = existing_local {
+                return Err(
+                    OriginatedTypecheckError::SourceSortRegistrationAlreadyLinked {
+                        command_path: authority.command_path.clone(),
+                        source_registration: authority.source,
+                        existing_local: *existing_local,
+                    },
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// Validate an index declaration and register it as a read-only relation
     /// `(value, <row of `function`>)`, so its atoms resolve like any other.
     fn typecheck_index(
@@ -1597,6 +1726,50 @@ impl EGraph {
         });
         res
     }
+}
+
+/// Exact failure boundary for the shape-preserving originated typecheck.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum OriginatedTypecheckError {
+    #[error("originated typechecking requires a compile-only frontend")]
+    RuntimeFrontend,
+    #[error("source-sort authority paths must not be empty")]
+    EmptySourceSortAuthorityPath,
+    #[error("source-sort authority path {command_path:?} is not a valid command path")]
+    InvalidSourceSortAuthorityPath { command_path: Vec<usize> },
+    #[error("source-sort authority path {command_path:?} targets a non-Sort command")]
+    SourceSortAuthorityTargetsNonSort { command_path: Vec<usize> },
+    #[error("sort command path {command_path:?} received duplicate source-sort authority")]
+    DuplicateSourceSortAuthority { command_path: Vec<usize> },
+    #[error(
+        "proof-checking sort registration {source_registration:?} is linked to both {first_command_path:?} and {command_path:?}"
+    )]
+    DuplicateSourceSortRegistration {
+        source_registration: SortRegistrationId,
+        first_command_path: Vec<usize>,
+        command_path: Vec<usize>,
+    },
+    #[error("source-sort authority requires an exact proof-checking program view")]
+    MissingSourceSortProofView,
+    #[error(
+        "source-sort authority at path {command_path:?} names unknown proof-checking sort registration {source_registration:?}"
+    )]
+    UnknownSourceSortRegistration {
+        command_path: Vec<usize>,
+        source_registration: SortRegistrationId,
+    },
+    #[error(
+        "source-sort authority at path {command_path:?} names proof-checking registration {source_registration:?}, whose arc is already canonical or linked to execution registration {existing_local:?}"
+    )]
+    SourceSortRegistrationAlreadyLinked {
+        command_path: Vec<usize>,
+        source_registration: SortRegistrationId,
+        existing_local: SortRegistrationId,
+    },
+    #[error(transparent)]
+    Type(#[from] TypeError),
+    #[error(transparent)]
+    Origin(#[from] CommandOriginError),
 }
 
 impl TypeInfo {
@@ -2754,6 +2927,10 @@ pub enum TypeError {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::ast::desugar::desugar_command_with_origin;
+    use crate::frontend_program::{
+        CommandOrigin, GeneratedCommandRole, SourceGroupId, SourceSubcommandId, SourceSubcommandRef,
+    };
     use crate::{EGraph, Error};
 
     #[derive(Debug)]
@@ -2810,6 +2987,104 @@ mod test {
                 .extend(ast::desugar::desugar_command(command, &mut egraph.parser, false).unwrap());
         }
         desugared
+    }
+
+    fn source_ref(group: u32, subcommand: u32) -> SourceSubcommandRef {
+        SourceSubcommandRef::new(
+            SourceGroupId::new(group),
+            SourceSubcommandId::new(subcommand),
+        )
+    }
+
+    fn originated_one(egraph: &mut EGraph, source: &str) -> OriginatedProgram<NCommand> {
+        let parsed = egraph.parse_program(None, source).unwrap();
+        let [command] = parsed.as_slice() else {
+            panic!("expected one parsed command: {parsed:?}")
+        };
+        desugar_command_with_origin(
+            command.clone(),
+            &mut egraph.parser,
+            false,
+            &CommandOrigin::Source(source_ref(0, 0)),
+        )
+        .unwrap()
+    }
+
+    type SortMutationState = (
+        SymbolGen,
+        Vec<SortRegistrationId>,
+        Option<SortRegistrationId>,
+        Vec<String>,
+        usize,
+        usize,
+        usize,
+        Vec<(SortRegistrationId, usize)>,
+    );
+
+    fn sort_mutation_state(egraph: &EGraph) -> SortMutationState {
+        let mut names = egraph.type_info.sorts.keys().cloned().collect::<Vec<_>>();
+        names.sort();
+        let (next_external_function_id, sort_tokens) = match &egraph.backend {
+            BackendSlot::CompileOnly(state) => (
+                state.next_external_function_id,
+                state
+                    .sort_tokens
+                    .iter()
+                    .map(|(registration, token)| (*registration, *token))
+                    .collect(),
+            ),
+            BackendSlot::Runtime(_) => panic!("test requires a compile-only frontend"),
+        };
+        (
+            egraph.parser.symbol_gen.clone(),
+            egraph
+                .type_info
+                .sort_registrations_in_order()
+                .map(|registration| registration.identity)
+                .collect(),
+            egraph.type_info.sort_registration_high_water,
+            names,
+            egraph.type_info.linked_sort_arcs.len(),
+            egraph.type_info.linked_sort_registrations_by_arc.len(),
+            next_external_function_id,
+            sort_tokens,
+        )
+    }
+
+    fn originated_typecheck_error_without_sort_mutation(
+        egraph: &mut EGraph,
+        program: OriginatedProgram<NCommand>,
+        source_authorities: Vec<SourceSortAuthorityAt>,
+    ) -> OriginatedTypecheckError {
+        let local_before = sort_mutation_state(egraph);
+        let proof_before = egraph
+            .proof_state
+            .original_typechecking
+            .as_deref()
+            .map(sort_mutation_state);
+        let error = egraph
+            .typecheck_originated_program_with_sort_authority(program, source_authorities)
+            .unwrap_err();
+        assert_eq!(sort_mutation_state(egraph), local_before);
+        assert_eq!(
+            egraph
+                .proof_state
+                .original_typechecking
+                .as_deref()
+                .map(sort_mutation_state),
+            proof_before
+        );
+        error
+    }
+
+    fn declare_proof_source_sort(egraph: &mut EGraph, name: &str) -> SortRegistrationId {
+        egraph
+            .proof_state
+            .original_typechecking
+            .as_deref_mut()
+            .expect("test requires a proof-checking program view")
+            .declare_sort_with_registration(name, &None, span!())
+            .unwrap()
     }
 
     fn function_identity(func: &FuncType) -> FunctionRegistrationId {
@@ -2942,6 +3217,411 @@ mod test {
         };
         *name = "diagnostic-only".to_owned();
         assert_eq!(resolved.sort_authorities[0].local, resolutions[0]);
+    }
+
+    #[test]
+    fn originated_typecheck_preserves_relation_origins_and_requires_compile_only() {
+        let trigger = source_ref(3, 5);
+        let mut egraph = EGraph::new_compile_only(false);
+        let parsed = egraph
+            .parse_program(None, "(relation edge (i64 i64))")
+            .unwrap();
+        let [command] = parsed.as_slice() else {
+            panic!("expected one parsed relation: {parsed:?}")
+        };
+        let originated = desugar_command_with_origin(
+            command.clone(),
+            &mut egraph.parser,
+            false,
+            &CommandOrigin::Source(trigger),
+        )
+        .unwrap();
+        let finalized = egraph
+            .typecheck_originated_program_with_sort_authority(originated.clone(), Vec::new())
+            .unwrap();
+        assert_eq!(finalized.commands().len(), 2);
+        assert_eq!(
+            finalized
+                .origins()
+                .as_slice()
+                .iter()
+                .map(|entry| (entry.command_path.clone(), entry.origin.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    vec![0],
+                    CommandOrigin::Generated {
+                        trigger: Some(trigger),
+                        role: GeneratedCommandRole::FrontendDesugaring,
+                    },
+                ),
+                (vec![1], CommandOrigin::Source(trigger)),
+            ]
+        );
+
+        let mut runtime = EGraph::default();
+        let fresh_before = runtime.parser.symbol_gen.clone();
+        assert!(matches!(
+            runtime.typecheck_originated_program_with_sort_authority(originated, Vec::new()),
+            Err(OriginatedTypecheckError::RuntimeFrontend)
+        ));
+        assert_eq!(runtime.parser.symbol_gen, fresh_before);
+    }
+
+    #[test]
+    fn originated_source_sort_preflight_rejects_empty_and_invalid_paths_without_mutation() {
+        let authority = |command_path| SourceSortAuthorityAt {
+            command_path,
+            source: SortRegistrationId::new(0),
+        };
+
+        let mut empty = EGraph::new_compile_only(false);
+        let program = originated_one(&mut empty, "(sort Local)");
+        assert!(matches!(
+            originated_typecheck_error_without_sort_mutation(
+                &mut empty,
+                program,
+                vec![authority(Vec::new())],
+            ),
+            OriginatedTypecheckError::EmptySourceSortAuthorityPath
+        ));
+
+        let mut invalid = EGraph::new_compile_only(false);
+        let program = originated_one(&mut invalid, "(sort Local)");
+        assert!(matches!(
+            originated_typecheck_error_without_sort_mutation(
+                &mut invalid,
+                program,
+                vec![authority(vec![0, 0])],
+            ),
+            OriginatedTypecheckError::InvalidSourceSortAuthorityPath { command_path }
+                if command_path == [0, 0]
+        ));
+
+        let mut out_of_range = EGraph::new_compile_only(false);
+        let program = originated_one(&mut out_of_range, "(sort Local)");
+        assert!(matches!(
+            originated_typecheck_error_without_sort_mutation(
+                &mut out_of_range,
+                program,
+                vec![authority(vec![1])],
+            ),
+            OriginatedTypecheckError::InvalidSourceSortAuthorityPath { command_path }
+                if command_path == [1]
+        ));
+    }
+
+    #[test]
+    fn originated_source_sort_preflight_rejects_non_sort_and_duplicate_without_mutation() {
+        let mut non_sort = EGraph::new_compile_only(false);
+        let program = originated_one(&mut non_sort, "(print-size)");
+        assert!(matches!(
+            originated_typecheck_error_without_sort_mutation(
+                &mut non_sort,
+                program,
+                vec![SourceSortAuthorityAt {
+                    command_path: vec![0],
+                    source: SortRegistrationId::new(0),
+                }],
+            ),
+            OriginatedTypecheckError::SourceSortAuthorityTargetsNonSort { command_path }
+                if command_path == [0]
+        ));
+
+        let mut duplicate = EGraph::new_compile_only(false);
+        let program = originated_one(&mut duplicate, "(sort Local)");
+        let authority = SourceSortAuthorityAt {
+            command_path: vec![0],
+            source: SortRegistrationId::new(0),
+        };
+        assert!(matches!(
+            originated_typecheck_error_without_sort_mutation(
+                &mut duplicate,
+                program,
+                vec![authority.clone(), authority],
+            ),
+            OriginatedTypecheckError::DuplicateSourceSortAuthority { command_path }
+                if command_path == [0]
+        ));
+
+        let mut duplicate_source = EGraph::new_compile_only(true);
+        let source = declare_proof_source_sort(&mut duplicate_source, "Source");
+        let program = originated_one(&mut duplicate_source, "(fail (sort Left) (sort Right))");
+        assert!(matches!(
+            originated_typecheck_error_without_sort_mutation(
+                &mut duplicate_source,
+                program,
+                vec![
+                    SourceSortAuthorityAt {
+                        command_path: vec![0, 0],
+                        source,
+                    },
+                    SourceSortAuthorityAt {
+                        command_path: vec![0, 1],
+                        source,
+                    },
+                ],
+            ),
+            OriginatedTypecheckError::DuplicateSourceSortRegistration {
+                source_registration,
+                first_command_path,
+                command_path,
+            } if source_registration == source
+                && first_command_path == [0, 0]
+                && command_path == [0, 1]
+        ));
+    }
+
+    #[test]
+    fn originated_source_sort_preflight_requires_exact_proof_registration_without_mutation() {
+        let mut missing_view = EGraph::new_compile_only(false);
+        let program = originated_one(&mut missing_view, "(sort Local)");
+        assert!(matches!(
+            originated_typecheck_error_without_sort_mutation(
+                &mut missing_view,
+                program,
+                vec![SourceSortAuthorityAt {
+                    command_path: vec![0],
+                    source: SortRegistrationId::new(0),
+                }],
+            ),
+            OriginatedTypecheckError::MissingSourceSortProofView
+        ));
+
+        let mut unknown = EGraph::new_compile_only(true);
+        let source = unknown
+            .declare_sort_with_registration("ExecutionOnly", &None, span!())
+            .unwrap();
+        assert!(
+            unknown
+                .proof_state
+                .original_typechecking
+                .as_deref()
+                .unwrap()
+                .type_info
+                .sort_registration(source)
+                .is_none()
+        );
+        let program = originated_one(&mut unknown, "(sort Local)");
+        assert!(matches!(
+            originated_typecheck_error_without_sort_mutation(
+                &mut unknown,
+                program,
+                vec![SourceSortAuthorityAt {
+                    command_path: vec![0],
+                    source,
+                }],
+            ),
+            OriginatedTypecheckError::UnknownSourceSortRegistration {
+                command_path,
+                source_registration: actual,
+            } if command_path == [0] && actual == source
+        ));
+
+        let mut canonical = EGraph::new_compile_only(true);
+        let source = canonical
+            .proof_state
+            .original_typechecking
+            .as_deref()
+            .unwrap()
+            .type_info
+            .sort_registrations_in_order()
+            .next()
+            .unwrap()
+            .identity;
+        let program = originated_one(&mut canonical, "(sort Local)");
+        assert!(matches!(
+            originated_typecheck_error_without_sort_mutation(
+                &mut canonical,
+                program,
+                vec![SourceSortAuthorityAt {
+                    command_path: vec![0],
+                    source,
+                }],
+            ),
+            OriginatedTypecheckError::SourceSortRegistrationAlreadyLinked {
+                command_path,
+                source_registration,
+                ..
+            } if command_path == [0] && source_registration == source
+        ));
+
+        let mut late_invalid = EGraph::new_compile_only(true);
+        let good_source = declare_proof_source_sort(&mut late_invalid, "GoodSource");
+        late_invalid
+            .declare_sort_with_registration("ExecutionPadding", &None, span!())
+            .unwrap();
+        let unknown_source = late_invalid
+            .declare_sort_with_registration("ExecutionOnly", &None, span!())
+            .unwrap();
+        assert!(
+            late_invalid
+                .proof_state
+                .original_typechecking
+                .as_deref()
+                .unwrap()
+                .type_info
+                .sort_registration(unknown_source)
+                .is_none()
+        );
+        let program = originated_one(&mut late_invalid, "(fail (sort GoodLocal) (sort BadLocal))");
+        assert!(matches!(
+            originated_typecheck_error_without_sort_mutation(
+                &mut late_invalid,
+                program,
+                vec![
+                    SourceSortAuthorityAt {
+                        command_path: vec![0, 0],
+                        source: good_source,
+                    },
+                    SourceSortAuthorityAt {
+                        command_path: vec![0, 1],
+                        source: unknown_source,
+                    },
+                ],
+            ),
+            OriginatedTypecheckError::UnknownSourceSortRegistration {
+                command_path,
+                source_registration,
+            } if command_path == [0, 1] && source_registration == unknown_source
+        ));
+        assert!(!late_invalid.type_info.sorts.contains_key("GoodLocal"));
+
+        let mut retired = EGraph::new_compile_only(true);
+        let retired_source = {
+            let original = retired
+                .proof_state
+                .original_typechecking
+                .as_deref_mut()
+                .unwrap();
+            original.push();
+            let source = original
+                .declare_sort_with_registration("RetiredSource", &None, span!())
+                .unwrap();
+            original.pop().unwrap();
+            source
+        };
+        assert!(
+            retired
+                .proof_state
+                .original_typechecking
+                .as_deref()
+                .unwrap()
+                .type_info
+                .sort_registration(retired_source)
+                .is_none()
+        );
+        let program = originated_one(&mut retired, "(sort Local)");
+        assert!(matches!(
+            originated_typecheck_error_without_sort_mutation(
+                &mut retired,
+                program,
+                vec![SourceSortAuthorityAt {
+                    command_path: vec![0],
+                    source: retired_source,
+                }],
+            ),
+            OriginatedTypecheckError::UnknownSourceSortRegistration {
+                command_path,
+                source_registration,
+            } if command_path == [0] && source_registration == retired_source
+        ));
+    }
+
+    #[test]
+    fn originated_source_sort_preflight_admits_exact_proof_registration() {
+        let mut egraph = EGraph::new_compile_only(true);
+        let source = declare_proof_source_sort(&mut egraph, "Source");
+        let program = originated_one(&mut egraph, "(sort Local)");
+        let finalized = egraph
+            .typecheck_originated_program_with_sort_authority(
+                program,
+                vec![SourceSortAuthorityAt {
+                    command_path: vec![0],
+                    source,
+                }],
+            )
+            .unwrap();
+        assert_eq!(finalized.sort_authorities().len(), 1);
+        let local = finalized.sort_authorities()[0].local;
+        assert_eq!(finalized.sort_authorities()[0].source, Some(source));
+        assert_eq!(local, source, "raw IDs intentionally collide across views");
+        assert!(egraph.type_info.sorts.contains_key("Local"));
+        let local_arc = egraph
+            .type_info
+            .sort_registration(local)
+            .unwrap()
+            .sort
+            .clone();
+        let source_arc = egraph
+            .proof_state
+            .original_typechecking
+            .as_deref()
+            .unwrap()
+            .type_info
+            .sort_registration(source)
+            .unwrap()
+            .sort
+            .clone();
+        assert_eq!(
+            egraph
+                .type_info
+                .sort_registration_for_arc(&source_arc)
+                .unwrap()
+                .identity,
+            local
+        );
+        assert_eq!(
+            egraph
+                .proof_state
+                .original_typechecking
+                .as_deref()
+                .unwrap()
+                .type_info
+                .sort_registration_for_arc(&local_arc)
+                .unwrap()
+                .identity,
+            source
+        );
+
+        let second = originated_one(&mut egraph, "(sort Second)");
+        assert!(matches!(
+            originated_typecheck_error_without_sort_mutation(
+                &mut egraph,
+                second,
+                vec![SourceSortAuthorityAt {
+                    command_path: vec![0],
+                    source,
+                }],
+            ),
+            OriginatedTypecheckError::SourceSortRegistrationAlreadyLinked {
+                command_path,
+                source_registration,
+                ..
+            } if command_path == [0] && source_registration == source
+        ));
+    }
+
+    #[test]
+    fn originated_typecheck_rolls_back_late_type_error_after_valid_source_sort() {
+        let mut egraph = EGraph::new_compile_only(true);
+        let source = declare_proof_source_sort(&mut egraph, "Source");
+        let program = originated_one(
+            &mut egraph,
+            "(fail (sort Local) (function bad () Missing :no-merge))",
+        );
+        assert!(matches!(
+            originated_typecheck_error_without_sort_mutation(
+                &mut egraph,
+                program,
+                vec![SourceSortAuthorityAt {
+                    command_path: vec![0, 0],
+                    source,
+                }],
+            ),
+            OriginatedTypecheckError::Type(_)
+        ));
+        assert!(!egraph.type_info.sorts.contains_key("Local"));
     }
 
     #[test]
