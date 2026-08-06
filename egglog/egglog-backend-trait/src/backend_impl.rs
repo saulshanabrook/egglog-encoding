@@ -267,6 +267,15 @@ impl Backend for EGraph {
         EGraph::register_view_column_read(self, view_name, n_keys, col_idx)
     }
 
+    fn register_view_column_lookup(
+        &mut self,
+        view_name: String,
+        n_keys: usize,
+        col_idx: usize,
+    ) -> ExternalFunctionId {
+        EGraph::register_view_column_lookup(self, view_name, n_keys, col_idx)
+    }
+
     fn set_report_level(&mut self, level: ReportLevel) {
         EGraph::set_report_level(self, level);
     }

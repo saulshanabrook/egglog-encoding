@@ -14,6 +14,7 @@ from syrupy.assertion import SnapshotAssertion
 from benchmarking import models
 from benchmarking.reports.catalog import ReportCatalog, ReportMessage, ReportTable, report_id
 from benchmarking.reports.presentation import (
+    PHASE_LABELS,
     build_report_catalog,
     format_duration,
     report_file_labels,
@@ -155,7 +156,7 @@ def test_detail_level_is_cumulative(tmp_path: Path) -> None:
         assert tuple(section.id for section in catalog.sections) == section_ids
 
 
-def test_phase_detail_has_one_six_row_table_per_file_and_one_guide(tmp_path: Path) -> None:
+def test_phase_detail_has_one_row_per_phase_and_one_guide(tmp_path: Path) -> None:
     report_path, comparison = _pair_case(tmp_path)
     catalog = build_report_catalog(ReportStore(report_path), comparison, "phases")
 
@@ -165,7 +166,7 @@ def test_phase_detail_has_one_six_row_table_per_file_and_one_guide(tmp_path: Pat
     assert len(tables) == len(comparison.files)
     expected_columns = ("phase", "baseline", "candidate", "delta", "wall_delta")
     assert all(tuple(column.id for column in table.columns) == expected_columns for table in tables)
-    assert all(len(table.rows) == 6 for table in tables)
+    assert all(len(table.rows) == len(PHASE_LABELS) for table in tables)
 
 
 def test_negative_outside_residual_keeps_an_explicit_warning(tmp_path: Path) -> None:

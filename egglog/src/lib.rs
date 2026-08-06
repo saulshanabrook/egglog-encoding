@@ -8,6 +8,7 @@ pub mod constraint;
 mod core;
 mod exec_state;
 pub mod extract;
+pub mod phase_timers;
 pub mod prelude;
 mod proofs;
 
@@ -77,6 +78,7 @@ use std::iter::once;
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 pub use termdag::{OrdTerm, Term, TermDag, TermId};
 use thiserror::Error;
 use typechecking::FuncType;
@@ -340,6 +342,10 @@ pub struct EGraph {
     proof_state: EncodingState,
     /// In proof mode, this is the program before proof instrumentation and the version we use for proof checking.
     proof_check_program: Vec<ResolvedNCommand>,
+    /// Which row of its sort's shared table each global occupies.
+    global_slots: remove_globals::GlobalSlots,
+    /// Where wall time outside rule-set execution went.
+    phase_timings: phase_timers::PhaseTimings,
 }
 
 /// A user-defined command allows users to inject custom command that can be called
@@ -435,6 +441,70 @@ impl Default for EGraph {
 }
 
 impl EGraph {
+    /// Register the globals a program declares. `remove_globals` runs after
+    /// typechecking, so nothing else registers what it declares, and it hoists a
+    /// shared table out of any `fail` wrapping the binding that declared it, so
+    /// every declaration is reachable here.
+    fn register_declared_globals(&mut self, commands: &[ResolvedNCommand]) {
+        for command in commands {
+            if let GenericNCommand::Function(fdecl) = command
+                && fdecl.internal_let
+            {
+                if fdecl.internal_global_table {
+                    self.type_info.global_tables.insert(fdecl.name.clone());
+                } else if let Some(sort) = self.type_info.sorts.get(fdecl.schema.output()) {
+                    let sort = sort.clone();
+                    self.type_info.global_sorts.insert(fdecl.name.clone(), sort);
+                }
+            }
+        }
+    }
+
+    /// Name-check the globals `remove_globals` just gave a shared-table row.
+    /// They have no function declaration of their own, so nothing else registers
+    /// the name or the alias that pattern variables must not shadow.
+    ///
+    /// The reservations stay pending until [`Self::resolve_command`] either keeps
+    /// or discards them, so that a rejection anywhere later in resolving the same
+    /// command still unwinds them.
+    fn check_slotted_global_names(&mut self) -> Result<(), Error> {
+        let mut slotted = self.global_slots.take_new();
+        let mut checked = Ok(());
+        for slot in &mut slotted {
+            if slot.named {
+                continue;
+            }
+            if let Err(err) = self.names.check(slot.name.clone(), slot.span.clone()) {
+                checked = Err(err);
+                break;
+            }
+            slot.named = true;
+            self.names.track_global_alias(&slot.name, &slot.span);
+        }
+        self.global_slots.put_back(slotted);
+        checked
+    }
+
+    /// Undo the rows and names reserved while resolving a command that was then
+    /// rejected, so that nothing it named or declared outlives it.
+    fn discard_slotted_globals(&mut self) {
+        let slotted = self.global_slots.take_new();
+        for slot in &slotted {
+            if slot.named {
+                self.names.forget(&slot.name);
+            }
+        }
+        self.global_slots.give_back(slotted);
+    }
+
+    /// The key column of every shared global table.
+    fn global_key_sort(&self) -> ArcSort {
+        self.type_info
+            .get_sort_by_name("i64")
+            .expect("the i64 sort is always registered")
+            .clone()
+    }
+
     /// Construct an `EGraph` backed by the given [`Backend`] implementation.
     ///
     /// [`EGraph::default`] uses the in-memory reference backend
@@ -448,6 +518,8 @@ impl EGraph {
             backend,
             parser,
             names: Default::default(),
+            global_slots: Default::default(),
+            phase_timings: Default::default(),
             pushed_egraph: Default::default(),
             functions: Default::default(),
             rulesets: Default::default(),
@@ -864,13 +936,17 @@ impl EGraph {
 
     /// Pop the current egraph off the stack, replacing
     /// it with the previously pushed egraph.
-    /// It preserves the run report and messages from the popped
+    /// It preserves the run report, the timings and messages from the popped
     /// egraph.
     pub fn pop(&mut self) -> Result<(), Error> {
         match self.pushed_egraph.take() {
             Some(mut e) => {
                 // Preserve the overall report from the popped egraph
                 std::mem::swap(&mut self.overall_run_report, &mut e.overall_run_report);
+                // Time spent inside the scope was still spent. Timings only ever
+                // go up, which the phase wrappers rely on to measure nesting.
+                std::mem::swap(&mut self.phase_timings, &mut e.phase_timings);
+                std::mem::swap(&mut self.parser.parse_time, &mut e.parser.parse_time);
                 // Preserve the symbol generator so that fresh symbols
                 // generated after pop don't collide with ones generated before pop.
                 std::mem::swap(&mut self.parser.symbol_gen, &mut e.parser.symbol_gen);
@@ -1150,8 +1226,46 @@ impl EGraph {
     /// Extract rows of a table using the default cost model with name sym
     /// The `include_output` parameter controls whether the output column is always extracted
     /// For functions, the output column is usually useful
-    /// Print up to `n` the tuples in a given function.
-    /// Print all tuples if `n` is not provided.
+    /// The row a global was written to, shown under the global's own name rather
+    /// than the shared table's. Empty when `n` is 0.
+    fn global_row_to_dag(
+        &self,
+        global: &str,
+        table: &str,
+        id: i64,
+        n: usize,
+    ) -> Result<(Function, TermDag, Vec<(TermId, TermId)>), Error> {
+        let (keys, values, mut termdag) = self.function_to_dag(table, usize::MAX, true)?;
+        let bound = keys
+            .into_iter()
+            .zip(values.expect("asked for the output column"))
+            .find_map(|(key, value)| match termdag.get(key) {
+                Term::App(_, children) if children.len() == 1 => {
+                    matches!(termdag.get(children[0]), Term::Lit(Literal::Int(k)) if *k == id)
+                        .then_some(value)
+                }
+                _ => None,
+            });
+        let named = termdag.app(global.to_owned(), vec![]);
+        let function = self
+            .functions
+            .get(table)
+            .expect("function_to_dag checked the table")
+            .clone();
+        Ok((
+            function,
+            termdag,
+            bound
+                .filter(|_| n > 0)
+                .map(|value| (named, value))
+                .into_iter()
+                .collect(),
+        ))
+    }
+
+    /// Print up to `n` of the tuples in a given function, or all of them if `n`
+    /// is not provided. A global is one row of its sort's shared table, and is
+    /// printed under its own name.
     pub fn print_function(
         &mut self,
         sym: &str,
@@ -1170,14 +1284,24 @@ impl EGraph {
             }
         };
 
-        let (terms, outputs, termdag) = self.function_to_dag(sym, n, true)?;
-        let f = self
-            .functions
-            .get(sym)
-            // function_to_dag should have checked this
-            .unwrap();
-        let terms_and_outputs: Vec<_> = terms.into_iter().zip(outputs.unwrap()).collect();
-        let output = CommandOutput::PrintFunction(f.clone(), termdag, terms_and_outputs, mode);
+        let (f, termdag, terms_and_outputs) = match self.global_slots.slot(sym) {
+            Some((table, id)) => self.global_row_to_dag(sym, table, id, n)?,
+            None => {
+                let (terms, outputs, termdag) = self.function_to_dag(sym, n, true)?;
+                let f = self
+                    .functions
+                    .get(sym)
+                    // function_to_dag should have checked this
+                    .unwrap()
+                    .clone();
+                (
+                    f,
+                    termdag,
+                    terms.into_iter().zip(outputs.unwrap()).collect(),
+                )
+            }
+        };
+        let output = CommandOutput::PrintFunction(f, termdag, terms_and_outputs, mode);
         match file {
             Some(mut file) => {
                 log::info!("Writing output to file");
@@ -1386,6 +1510,8 @@ impl EGraph {
     /// This applies every match it finds (under semi-naive).
     /// See [`EGraph::step_rules_with_scheduler`] for more fine-grained control.
     ///
+    /// The iteration is recorded in the overall run report, whatever ran it.
+    ///
     /// This will return an error if an egglog primitive returns None in an action.
     pub fn step_rules(&mut self, ruleset: &str) -> Result<RunReport, Error> {
         fn collect_rule_ids(
@@ -1418,7 +1544,9 @@ impl EGraph {
             })
             .map_err(|e| Error::BackendError(e.to_string()))?;
 
-        Ok(RunReport::singleton(ruleset, iteration_report))
+        let report = RunReport::singleton(ruleset, iteration_report);
+        self.overall_run_report.union(report.clone());
+        Ok(report)
     }
 
     fn add_rule(&mut self, rule: ast::ResolvedRule) -> Result<String, Error> {
@@ -1739,7 +1867,12 @@ impl EGraph {
             output_sort,
             context,
         )?;
-        Ok(remove_globals::remove_globals_expr(resolved))
+        let key_sort = self.global_key_sort();
+        Ok(remove_globals::remove_globals_expr(
+            resolved,
+            &self.global_slots,
+            &key_sort,
+        ))
     }
 
     /// Replace literal `(unstable-fn "...")` targets with hidden evaluator bindings.
@@ -2004,7 +2137,58 @@ impl EGraph {
         }
     }
 
+    /// Runs a command, charging what it costs to the phase it belongs to.
+    ///
+    /// A command is charged only its own cost, excluding the rule sets it drove
+    /// and any command it ran in turn. A command under no phase (a `check`, a
+    /// print) leaves its time in the unattributed residual.
     fn run_command(&mut self, command: ResolvedNCommand) -> Result<Vec<CommandOutput>, Error> {
+        #[derive(Clone, Copy)]
+        enum Charge {
+            Install,
+            Actions,
+            Extraction,
+            Schedule,
+            None,
+        }
+        let charge = match &command {
+            ResolvedNCommand::Function(_)
+            | ResolvedNCommand::NormRule { .. }
+            | ResolvedNCommand::Index { .. }
+            | ResolvedNCommand::Sort { .. } => Charge::Install,
+            ResolvedNCommand::CoreAction(_) | ResolvedNCommand::CoreActions(_) => Charge::Actions,
+            ResolvedNCommand::ProveExists(..) => Charge::Extraction,
+            ResolvedNCommand::RunSchedule(_) | ResolvedNCommand::UserDefined(..) => {
+                Charge::Schedule
+            }
+            _ => Charge::None,
+        };
+        let start = std::time::Instant::now();
+        let recorded_before = self.get_overall_run_report().total_ruleset_time();
+        let accounted_before = self.accounted_time();
+        let out = self.run_command_inner(command);
+        // A user-defined command can do both: the extended scheduler drives rule
+        // sets and re-enters the command loop.
+        let nested = (self
+            .get_overall_run_report()
+            .total_ruleset_time()
+            .saturating_sub(recorded_before))
+            + (self.accounted_time().saturating_sub(accounted_before));
+        let own = start.elapsed().saturating_sub(nested);
+        match charge {
+            Charge::Install => self.phase_timings.install += own,
+            Charge::Actions => self.phase_timings.actions += own,
+            Charge::Extraction => self.phase_timings.proof_extraction += own,
+            Charge::Schedule => self.phase_timings.schedule += own,
+            Charge::None => {}
+        }
+        out
+    }
+
+    fn run_command_inner(
+        &mut self,
+        command: ResolvedNCommand,
+    ) -> Result<Vec<CommandOutput>, Error> {
         match command {
             // Sorts are already declared during typechecking
             ResolvedNCommand::Sort {
@@ -2070,7 +2254,7 @@ impl EGraph {
                 let report = self.run_schedule(&sched)?;
                 log::info!("Ran schedule {sched}.");
                 log::info!("Report: {report}");
-                self.overall_run_report.union(report.clone());
+                // Already recorded by `step_rules`, per iteration.
                 return Ok(vec![CommandOutput::RunSchedule(report)]);
             }
             ResolvedNCommand::PrintOverallStatistics(span, file) => match file {
@@ -2612,7 +2796,18 @@ impl EGraph {
         } else {
             let mut typechecked = self.typecheck_program(&desugared)?;
 
-            typechecked = remove_globals::remove_globals(typechecked, &mut self.parser.symbol_gen);
+            let key_sort = self.global_key_sort();
+            typechecked = remove_globals::remove_globals(
+                typechecked,
+                &mut self.parser.symbol_gen,
+                &mut self.global_slots,
+                key_sort,
+                true,
+            );
+            self.check_slotted_global_names()?;
+            // `remove_globals` runs after typechecking, so the tables it declares
+            // are registered here rather than by a later typecheck.
+            self.register_declared_globals(&typechecked);
             for command in &typechecked {
                 self.names.check_shadowing(command)?;
             }
@@ -2624,6 +2819,24 @@ impl EGraph {
     /// Leverages previous type information in the [`EGraph`] to do so, adding new type information.
     /// When will_run is true, adds to `desugared_commands_run_so_far`, which is used for proof checking.
     fn resolve_command(&mut self, command: Command) -> Result<ResolvedNCommands, Error> {
+        // Whatever resolving a command costs beyond the phases it nests is
+        // desugaring: `remove_globals`, macro expansion, shadowing checks.
+        let start = std::time::Instant::now();
+        let accounted_before = self.accounted_time();
+        let resolved = self.resolve_command_inner(command);
+        // Whatever rows and names the command reserved are its own: keep them if it
+        // resolved, and unwind them if any stage rejected it.
+        if resolved.is_err() {
+            self.discard_slotted_globals();
+        } else {
+            self.global_slots.take_new();
+        }
+        let nested = self.accounted_time().saturating_sub(accounted_before);
+        self.phase_timings.desugar += start.elapsed().saturating_sub(nested);
+        resolved
+    }
+
+    fn resolve_command_inner(&mut self, command: Command) -> Result<ResolvedNCommands, Error> {
         let resolved_before_proofs = self.resolve_command_before_proofs(command)?;
 
         // Add term encoding when it is enabled
@@ -2640,28 +2853,30 @@ impl EGraph {
             // natively at run time by `EGraph::native_input` straight into the
             // encoded tables. Globals get the same function-style desugaring
             // (`remove_globals`) as the non-encoding path.
-            let typechecked_no_globals =
-                remove_globals::remove_globals(resolved_before_proofs, &mut self.parser.symbol_gen);
+            let key_sort = self.global_key_sort();
+            let typechecked_no_globals = remove_globals::remove_globals(
+                resolved_before_proofs,
+                &mut self.parser.symbol_gen,
+                &mut self.global_slots,
+                key_sort,
+                true,
+            );
+            self.check_slotted_global_names()?;
             // The term encoder runs before the encoded program is typechecked, so it
-            // can't rely on the later typecheck to populate `global_sorts`. Register
-            // the new global functions' sorts eagerly so `is_global` recognizes them
-            // while encoding.
-            for command in &typechecked_no_globals {
-                if let GenericNCommand::Function(fdecl) = command
-                    && fdecl.internal_let
-                    && let Some(output_sort) = self.type_info.sorts.get(fdecl.schema.output())
-                {
-                    self.type_info
-                        .global_sorts
-                        .insert(fdecl.name.clone(), output_sort.clone());
-                }
-            }
+            // can't rely on the later typecheck to register these.
+            self.register_declared_globals(&typechecked_no_globals);
             for command in &typechecked_no_globals {
                 self.names.check_shadowing(command)?;
             }
 
+            let start = std::time::Instant::now();
+            let parse_before = self.parser.parse_time;
             let term_encoding_added =
-                ProofInstrumentor::add_term_encoding(self, typechecked_no_globals)?;
+                ProofInstrumentor::add_term_encoding(self, typechecked_no_globals);
+            // The encoder parses the text it emits, which is the `parse` phase.
+            let nested_parse = self.parser.parse_time.saturating_sub(parse_before);
+            self.phase_timings.encode += start.elapsed().saturating_sub(nested_parse);
+            let term_encoding_added = term_encoding_added?;
             let mut new_typechecked = vec![];
             for new_cmd in term_encoding_added {
                 let desugared =
@@ -2674,9 +2889,13 @@ impl EGraph {
                 let desugared_typechecked = self.typecheck_program(&desugared)?;
                 // Remove the globals the term encoding itself introduced (its minted
                 // `let`s), the same way source-level globals were removed above.
+                let key_sort = self.global_key_sort();
                 let desugared_typechecked = remove_globals::remove_globals(
                     desugared_typechecked,
                     &mut self.parser.symbol_gen,
+                    &mut self.global_slots,
+                    key_sort,
+                    false,
                 );
 
                 new_typechecked.extend(desugared_typechecked);
@@ -2806,6 +3025,25 @@ impl EGraph {
     ) -> Result<Vec<CommandOutput>, Error> {
         let parsed = self.parser.get_program_from_string(filename, input)?;
         self.run_program(parsed)
+    }
+
+    /// Total time charged to some phase so far.
+    ///
+    /// A phase wrapper reads this before and after the work it times, so that
+    /// what a nested phase already claimed is not charged to the outer one too.
+    fn accounted_time(&self) -> Duration {
+        self.phase_timings().total()
+    }
+
+    /// Where wall time outside rule-set execution went, for this e-graph.
+    ///
+    /// The parse phase is kept on the parser, which also serves the REPL, so it
+    /// is read back here rather than accumulated with the rest.
+    pub fn phase_timings(&self) -> phase_timers::PhaseTimings {
+        phase_timers::PhaseTimings {
+            parse: self.parser.parse_time,
+            ..self.phase_timings
+        }
     }
 
     /// Get the number of tuples in the database.
@@ -4224,13 +4462,150 @@ mod tests {
             )
             .unwrap();
 
+        let (table, id) = egraph.global_slots.slot("$x").expect("$x is a global");
         match resolved {
             ResolvedExpr::Call(_, ResolvedCall::Func(func), children) => {
-                assert_eq!(func.name, "$x");
-                assert!(children.is_empty());
+                assert_eq!(func.name, table);
+                assert!(
+                    table.starts_with(INTERNAL_SYMBOL_PREFIX),
+                    "{table} is reserved"
+                );
+                assert_eq!(func.input.len(), 1, "the table is keyed by a slot id");
                 assert_eq!(func.output().name(), I64Sort.name());
+                assert!(
+                    matches!(children.as_slice(), [ResolvedExpr::Lit(_, Literal::Int(key))] if *key == id),
+                    "expected a read of row {id} of {table}, got {children:?}",
+                );
             }
             other => panic!("expected global function call rewrite, got {other:?}"),
+        }
+    }
+
+    /// Serialization names a global by the global, not by the table its sort shares.
+    #[test]
+    fn test_serialization_names_a_global_not_its_table() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(None, "(datatype Math (Num i64)) (let $mine (Num 7))")
+            .unwrap();
+        let serialized = egraph.serialize(SerializeConfig::default());
+        let bindings: Vec<&String> = serialized
+            .egraph
+            .class_data
+            .values()
+            .filter_map(|class| class.extra.get("let"))
+            .collect();
+        assert_eq!(bindings, vec!["$mine"], "{bindings:?}");
+    }
+
+    /// A desugared program is printed so it can be re-parsed, and the encoding has
+    /// to accept the replay. `:internal-global-table` is not surface syntax, so a
+    /// replayed shared table arrives as a plain `:internal-let` function.
+    #[test]
+    fn test_desugared_globals_replay_under_the_encoding() {
+        let source = "(datatype Math (Num i64))
+                      (let $m (Num 4))
+                      (let $n 7)
+                      (check (= $m (Num 4)))";
+        let desugared = {
+            let mut egraph = EGraph::default();
+            let resolved = egraph.resolve_program(None, source).unwrap();
+            crate::ast::sanitize_internal_names(&resolved)
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        for mut egraph in [EGraph::default(), EGraph::new_with_term_encoding()] {
+            egraph
+                .parse_and_run_program(None, &desugared)
+                .unwrap_or_else(|err| panic!("replay failed: {err}\n{desugared}"));
+        }
+    }
+
+    /// `print-function` and `get-size!` report a global under its own name, and do
+    /// not report the shared table it lives in.
+    #[test]
+    fn test_globals_are_reported_under_their_own_name() {
+        let mut egraph = EGraph::default();
+        let out = egraph
+            .parse_and_run_program(
+                None,
+                "(datatype Math (Num i64))
+                 (let $x (Num 1))
+                 (let $n 2)
+                 (print-function $x 10)
+                 (print-function $x 0)
+                 (print-function $n 10)",
+            )
+            .unwrap()
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>();
+        assert!(out[0].contains("($x) -> (Num 1)"), "{out:?}");
+        // `n` bounds a global's row as it bounds any other function's.
+        assert!(!out[1].contains("$x"), "{out:?}");
+        assert!(out[2].contains("($n) -> 2"), "{out:?}");
+    }
+
+    /// A command rejected *after* its globals were name-checked also has to give
+    /// them back: the name has to be bindable again, and the table it declared has
+    /// to be declared again by whoever needs it next.
+    #[test]
+    fn test_rejection_after_name_checking_releases_the_globals() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(None, "(datatype Math (Num i64)) (relation y ())")
+            .unwrap();
+        // Rejected by shadow checking, which runs after the globals are named.
+        egraph
+            .parse_and_run_program(None, "(let $x (begin (let y 1) (Num 2)))")
+            .expect_err("the block's local `y` shadows the relation");
+        // The table `$x` reserved must still get declared for `$z`.
+        egraph
+            .parse_and_run_program(None, "(let $z (Num 3)) (check (= $z (Num 3)))")
+            .unwrap();
+        // And `$x` itself must be free to bind.
+        egraph
+            .parse_and_run_program(None, "(let $x (Num 4)) (check (= $x (Num 4)))")
+            .unwrap();
+    }
+
+    /// One command can reserve rows for several globals, and a rejection has to
+    /// release every one of them, not just the row that failed.
+    #[test]
+    fn test_rejection_releases_every_global_the_command_reserved() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(None, "(datatype Math (Num i64)) (relation b ())")
+            .unwrap();
+        egraph
+            .parse_and_run_program(None, "(fail (let $a (Num 1)) (let b (Num 2)))")
+            .expect_err("`b` shadows the relation");
+        // `$a` was named before `b` was rejected, so it has to be unburned.
+        egraph
+            .parse_and_run_program(None, "(let $a (Num 5)) (check (= $a (Num 5)))")
+            .unwrap();
+    }
+
+    /// A rejected command hands its rows back, and a table it declared with them,
+    /// so the next global of that sort still declares one to write into.
+    #[test]
+    fn test_rejected_first_global_of_a_sort_leaves_no_stranded_table() {
+        for (shadowed, rejected, accepted) in [
+            ("(relation foo ())", "(let foo 3)", "(let $y 4)"),
+            (
+                "(datatype Math (Num i64)) (relation bar ())",
+                "(let bar (Num 1))",
+                "(let $z (Num 2))",
+            ),
+        ] {
+            let mut egraph = EGraph::default();
+            egraph.parse_and_run_program(None, shadowed).unwrap();
+            egraph
+                .parse_and_run_program(None, rejected)
+                .expect_err("shadowing a declared name is rejected");
+            egraph.parse_and_run_program(None, accepted).unwrap();
         }
     }
 

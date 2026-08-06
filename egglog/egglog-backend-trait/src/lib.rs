@@ -433,6 +433,20 @@ pub trait Backend: Send + Sync {
         ))
     }
 
+    /// Like [`Backend::register_view_column_read`], but with no fallback:
+    /// `(keys) -> column`, failing the action when the key is absent. The default
+    /// registers a panic.
+    fn register_view_column_lookup(
+        &mut self,
+        view_name: String,
+        _n_keys: usize,
+        _col_idx: usize,
+    ) -> ExternalFunctionId {
+        self.new_panic(format!(
+            "this backend does not support view-column lookups for view `{view_name}`"
+        ))
+    }
+
     // -- diagnostics --------------------------------------------------------
 
     /// Set the verbosity of the per-iteration timing report.

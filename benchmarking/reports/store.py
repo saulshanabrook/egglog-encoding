@@ -26,14 +26,15 @@ from ..models import (
 type ReportSchemaVersion = Literal[1]
 REPORT_SCHEMA_VERSION: Final[ReportSchemaVersion] = 1
 
-type TimingSummarySchemaVersion = Literal[2]
-TIMING_SUMMARY_SCHEMA_VERSION: Final[TimingSummarySchemaVersion] = 2
+type TimingSummarySchemaVersion = Literal[3]
+TIMING_SUMMARY_SCHEMA_VERSION: Final[TimingSummarySchemaVersion] = 3
 
 
 class RulesetTimingRecord(TypedDict):
     """Persisted engine time for one ruleset."""
 
     name: str
+    assembly_ns: int
     search_ns: int
     apply_ns: int
     unattributed_ns: int
@@ -41,11 +42,25 @@ class RulesetTimingRecord(TypedDict):
     rebuild_ns: int
 
 
+class OutsidePhasesRecord(TypedDict):
+    """Persisted engine time for the phases no ruleset timer covers."""
+
+    parse_ns: int
+    typecheck_ns: int
+    desugar_ns: int
+    encode_ns: int
+    install_ns: int
+    actions_ns: int
+    schedule_ns: int
+    proof_extraction_ns: int
+
+
 class TimingSummaryRecord(TypedDict):
     """Versioned engine timing summary embedded in one successful row."""
 
     schema_version: TimingSummarySchemaVersion
     rulesets: list[RulesetTimingRecord]
+    outside_rulesets: OutsidePhasesRecord
 
 
 class ReportRecord(TypedDict):

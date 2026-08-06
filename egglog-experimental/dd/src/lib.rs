@@ -197,6 +197,9 @@ pub(crate) struct ViewOp {
     pub(crate) out_arity: usize,
     /// Output column to read (view-column read only).
     pub(crate) col_idx: usize,
+    /// Whether an absent key fails rather than returning the caller's fallback
+    /// (view-column read only).
+    pub(crate) strict: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1065,11 +1068,15 @@ impl<'a> MergeTransaction<'a> {
         let view = self.view_op_table(op)?;
         let n_keys = op.n_keys;
         let key: Row = args[..n_keys].into();
-        let fallback = args[n_keys];
-        Ok(match self.current_row(view, n_keys, &key) {
-            Some(current) => current.values[op.col_idx],
-            None => fallback,
-        })
+        match self.current_row(view, n_keys, &key) {
+            Some(current) => Ok(current.values[op.col_idx]),
+            None if op.strict => Err(anyhow!(
+                "view `{}` holds no row for the key read by column {}",
+                op.view_name,
+                op.col_idx
+            )),
+            None => Ok(args[n_keys]),
+        }
     }
 
     fn view_op_table(&self, op: &ViewOp) -> Result<FunctionId> {
@@ -2643,6 +2650,7 @@ impl Backend for EGraph {
                 n_keys,
                 out_arity,
                 col_idx: 0,
+                strict: false,
             },
         );
         id
@@ -2666,6 +2674,32 @@ impl Backend for EGraph {
                 // A view-column reader never inserts, so out_arity is unused.
                 out_arity: 0,
                 col_idx,
+                strict: false,
+            },
+        );
+        id
+    }
+
+    fn register_view_column_lookup(
+        &mut self,
+        view_name: String,
+        n_keys: usize,
+        col_idx: usize,
+    ) -> ExternalFunctionId {
+        let id = Backend::new_panic(
+            self,
+            format!(
+                "view-column lookup for `{view_name}` reached the db path; DD must intercept it"
+            ),
+        );
+        self.view_column_read_ops.insert(
+            id,
+            ViewOp {
+                view_name,
+                n_keys,
+                out_arity: 0,
+                col_idx,
+                strict: true,
             },
         );
         id

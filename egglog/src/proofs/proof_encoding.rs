@@ -718,11 +718,25 @@ impl<'a> ProofInstrumentor<'a> {
         self.parse_program(&code)
     }
 
-    /// A global is a `:internal-let` function; in the encoding it is treated like a
+    /// A global whose value is an e-class; in the encoding it is treated like a
     /// nullary constructor (FD view, congruence merge, readable value+proof) rather
     /// than a `:no-merge` custom function.
+    ///
+    /// A global of a base sort holds a value rather than naming a term, so it has
+    /// no e-class to be congruent over and encodes as an ordinary custom function.
     pub(super) fn is_encoded_global(&self, fdecl: &ResolvedFunctionDecl) -> bool {
-        fdecl.internal_let
+        fdecl.internal_let && holds_eclasses(fdecl.resolved_schema.output())
+    }
+
+    /// Whether the call names a global: a row of a shared table, or the global's
+    /// own function.
+    ///
+    /// Both spellings are needed because `:internal-global-table` is not part of
+    /// the surface syntax: a desugared program replayed from text declares its
+    /// shared tables as plain `:internal-let` functions, which register as
+    /// globals rather than as global tables.
+    pub(super) fn names_a_global(&self, name: &str, _args: &[ResolvedExpr]) -> bool {
+        self.egraph.type_info.is_global_table(name) || self.egraph.type_info.is_global(name)
     }
 
     /// Whether the function's output value *is* its e-class, so the term relation
@@ -900,11 +914,20 @@ impl<'a> ProofInstrumentor<'a> {
         // The deferred delete/subsume markers are keyed on children with no output,
         // so they are plain `Unit` relations (not term nodes) — the encoding mints
         // no e-class there and extraction never reads them as terms.
+        //
+        // A global's term relation is marked `:internal-let` as well, so extraction
+        // knows the row only names the e-class and reconstructs the term it was
+        // bound to instead.
+        let term_flags = if fdecl.internal_let {
+            " :internal-let"
+        } else {
+            ""
+        };
         self.parse_program(&format!(
             "
             {fresh_sort_decl}
             {to_ast_view_sort}
-            (function {name} ({term_sorts} {view_sort}) Unit :no-merge :internal-hidden :internal-term-node)
+            (function {name} ({term_sorts} {view_sort}) Unit :no-merge :internal-hidden :internal-term-node{term_flags})
             {packed_decl}{view_decl}
             {index_decls}
             (function {to_delete_name} ({in_sorts}) Unit :no-merge :internal-hidden)
@@ -947,23 +970,33 @@ impl<'a> ProofInstrumentor<'a> {
                 );
                 let run = emit.head.claim(HeadPosition::Set);
 
-                // Global definition `(set (x) e)`: x is a nullary `:internal-let`
-                // function aliasing e. Store e's value+proof directly in x's FD view
-                // (x's e-class *is* e's) — no term mint, which would use the wrong
-                // arity for x's term relation (its output is the eclass, so it has
-                // no separate output column).
-                if generic_exprs.is_empty() && self.egraph.type_info.is_global(&func_type.name) {
+                // Global definition `(set (x k…) e)`: the row aliases e, so store
+                // e's value+proof directly in the FD view. Minting a term would use
+                // the wrong arity, the term relation having no output column.
+                //
+                // Only when e is an e-class. A global of a base sort holds a value,
+                // so its row carries one like any custom function's does.
+                let is_global_row = self.names_a_global(&func_type.name, generic_exprs)
+                    && holds_eclasses(func_type.output());
+                if is_global_row {
                     let e_value = exprs.pop().expect("a set has a value");
                     let proof = if self.proofs_enabled() {
                         self.global_value_proof(emit, func_type, &e_value)
                     } else {
                         "()".to_string()
                     };
-                    // Term row (`x`'s e-class is e's) + the FD view `() -> (val, proof)`.
+                    // Term row (the row's e-class is e's) + the FD view
+                    // `(keys) -> (val, proof)`.
+                    let keys: Vec<String> = exprs.iter().map(|a| a.value.clone()).collect();
                     let e_value = e_value.value;
-                    emit.stmts
-                        .push(format!("(set ({} {e_value}) ())", func_type.name));
-                    let update = self.update_fd_view(&func_type.name, &[], &e_value, &proof);
+                    let mut row = keys.clone();
+                    row.push(e_value.clone());
+                    emit.stmts.push(format!(
+                        "(set ({} {}) ())",
+                        func_type.name,
+                        ListDisplay(&row, " ")
+                    ));
+                    let update = self.update_fd_view(&func_type.name, &keys, &e_value, &proof);
                     emit.stmts.push(update);
                     return;
                 }
@@ -1357,8 +1390,22 @@ impl<'a> ProofInstrumentor<'a> {
     ///
     /// The signature requires the fallback pair, so both are bare fresh ids: no
     /// row says anything about either, since nothing ever reads them.
-    fn lookup_global(&mut self, name: &str, res: &mut Vec<String>) -> String {
+    fn lookup_global(
+        &mut self,
+        name: &str,
+        keys: &[String],
+        holds_eclass: bool,
+        res: &mut Vec<String>,
+    ) -> String {
         let view = self.view_name(name);
+        // A global whose value is not an e-class has nothing to canonicalize and
+        // no id to mint for an absent row: read the value column by key.
+        if !holds_eclass {
+            let read = crate::proofs::proof_fresh::view_value_prim_name(&view);
+            let vx = self.fresh_var();
+            res.push(format!("(let {vx} ({read} {}))", ListDisplay(keys, " ")));
+            return vx;
+        }
         let set_if_empty = crate::proofs::proof_fresh::set_if_empty_prim_name(&view);
         let view_sort = self.term_sort(name);
         let fresh_e = self.fresh_id(res, &view_sort);
@@ -1369,8 +1416,12 @@ impl<'a> ProofInstrumentor<'a> {
             "()".to_string()
         };
         let vx = self.fresh_var();
+        let mut row = keys.to_vec();
+        row.push(fresh_e);
+        row.push(fallback_proof);
         res.push(format!(
-            "(let {vx} ({set_if_empty} {fresh_e} {fallback_proof}))"
+            "(let {vx} ({set_if_empty} {}))",
+            ListDisplay(&row, " ")
         ));
         vx
     }
@@ -1692,6 +1743,15 @@ impl<'a> ProofInstrumentor<'a> {
                     .iter()
                     .map(|a| self.instrument_merge_body(emit, a, fname, idx))
                     .collect::<Vec<_>>();
+                // A global here is read, not built: it already has a row, and
+                // building one would write the merge's own term relation with the
+                // global's key in place of an argument.
+                if self.names_a_global(&func_type.name, args) {
+                    let keys: Vec<String> = arg_vars.iter().map(|a| a.value.clone()).collect();
+                    let holds_eclass = holds_eclasses(func_type.output());
+                    let read = self.lookup_global(&func_type.name, &keys, holds_eclass, emit.stmts);
+                    return Operand::plain(read);
+                }
                 self.add_term_and_view(&mut emit.justified_by(&node), func_type, &arg_vars, None)
             }
             // A container-producing primitive (e.g. `set-intersect`): build the
@@ -1752,12 +1812,20 @@ impl<'a> ProofInstrumentor<'a> {
                     ResolvedCall::Func(func_type) => {
                         if func_type.subtype == FunctionSubtype::Custom {
                             // Proof normal form bans looking up custom functions in
-                            // actions, except encoded globals: a nullary
-                            // `:internal-let` function whose value is read from its
-                            // FD view (see `lookup_global`). This is the only custom
-                            // lookup allowed here.
-                            if self.egraph.type_info.is_global(&func_type.name) {
-                                Operand::plain(self.lookup_global(&func_type.name, emit.stmts))
+                            // actions. An encoded global is the one exception: its
+                            // value is read from its FD view (see `lookup_global`).
+                            if self.egraph.type_info.is_global(&func_type.name)
+                                || self.egraph.type_info.is_global_table(&func_type.name)
+                            {
+                                let keys: Vec<String> =
+                                    args.iter().map(|a| a.value.clone()).collect();
+                                let holds_eclass = holds_eclasses(func_type.output());
+                                Operand::plain(self.lookup_global(
+                                    &func_type.name,
+                                    &keys,
+                                    holds_eclass,
+                                    emit.stmts,
+                                ))
                             } else {
                                 panic!(
                                     "Found a function lookup in actions, should have been prevented by typechecking"
@@ -2290,4 +2358,10 @@ fn command_skips_rebuild(command: &ResolvedNCommand) -> bool {
         ResolvedNCommand::CoreActions(actions) => actions.0.iter().all(action_skips_rebuild),
         _ => false,
     }
+}
+
+/// Whether values of `sort` are, or contain, e-classes, so a row holding one goes
+/// stale and needs the encoding's term and rebuild machinery.
+pub(super) fn holds_eclasses(sort: &ArcSort) -> bool {
+    sort.is_eq_sort() || sort.is_container_sort()
 }

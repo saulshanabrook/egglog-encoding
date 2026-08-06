@@ -17,7 +17,7 @@ fn temporary_directory() -> PathBuf {
 }
 
 #[test]
-fn dd_timing_summary_v2_splits_search_and_apply_for_every_named_ruleset() {
+fn dd_timing_summary_v3_splits_search_and_apply_for_every_named_ruleset() {
     let directory = temporary_directory();
     let program_path = directory.join("program.egg");
     let summary_path = directory.join("summary.json");
@@ -58,10 +58,23 @@ fn dd_timing_summary_v2_splits_search_and_apply_for_every_named_ruleset() {
 
     let summary: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let summary_object = summary.as_object().unwrap();
-    assert_eq!(summary_object.len(), 2);
-    assert!(summary_object.contains_key("schema_version"));
-    assert!(summary_object.contains_key("rulesets"));
-    assert_eq!(summary["schema_version"], 2);
+    assert_eq!(summary_object.len(), 3);
+    for key in ["schema_version", "rulesets", "outside_rulesets"] {
+        assert!(summary_object.contains_key(key));
+    }
+    assert_eq!(summary["schema_version"], 3);
+    for phase in [
+        "parse_ns",
+        "typecheck_ns",
+        "desugar_ns",
+        "encode_ns",
+        "install_ns",
+        "actions_ns",
+        "schedule_ns",
+        "proof_extraction_ns",
+    ] {
+        assert!(summary["outside_rulesets"][phase].is_u64());
+    }
 
     let rulesets = summary["rulesets"].as_array().unwrap();
     let names = rulesets
@@ -71,9 +84,10 @@ fn dd_timing_summary_v2_splits_search_and_apply_for_every_named_ruleset() {
     assert!(names.windows(2).all(|pair| pair[0] < pair[1]));
     for ruleset in rulesets {
         let ruleset_object = ruleset.as_object().unwrap();
-        assert_eq!(ruleset_object.len(), 6);
+        assert_eq!(ruleset_object.len(), 7);
         for field in [
             "name",
+            "assembly_ns",
             "search_ns",
             "apply_ns",
             "unattributed_ns",
@@ -84,6 +98,7 @@ fn dd_timing_summary_v2_splits_search_and_apply_for_every_named_ruleset() {
         }
         assert!(ruleset["name"].is_string());
         for field in [
+            "assembly_ns",
             "search_ns",
             "apply_ns",
             "unattributed_ns",

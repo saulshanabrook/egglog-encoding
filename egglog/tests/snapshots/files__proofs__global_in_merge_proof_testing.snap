@@ -1,0 +1,25 @@
+---
+source: egglog/tests/files.rs
+expression: proof_snapshot
+---
+(Rule
+  (= (@ExistsConstructor) (@ExistsConstructor))
+  (name "@prove_exists_rule")
+  (premises
+    (Merge
+      (= (running 1 13) (running 1 13))
+      running
+      (Fiat (= (running 1 3) (running 1 3)))
+      (Fiat (= (running 1 99) (running 1 99))))
+    (Fiat (= 13 13)))
+  (substitution (@n 13)))
+(let t0 (pinned 1 (Num 9)))
+(let t1 (pinned 1 (Num 1)))
+(let t2 (pinned 1 (Num 2)))
+(Rule
+  (= (@ExistsConstructor1) (@ExistsConstructor1))
+  (name "@prove_exists_rule1")
+  (premises
+    (Merge (= t0 t0) pinned (Fiat (= t1 t1)) (Fiat (= t2 t2)))
+    (Fiat (= (Num 9) (Num 9))))
+  (substitution (@n1 (Num 9))))

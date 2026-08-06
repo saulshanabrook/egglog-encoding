@@ -68,11 +68,13 @@ fn run_merge_subexpr(
     term_dag: &mut TermDag,
     func_name: &str,
     prog: &[ResolvedNCommand],
+    globals: &HashMap<String, TermId>,
     old_term: TermId,
     new_term: TermId,
     idx: usize,
 ) -> Result<(TermId, HashSet<Proposition>), ProofCheckError> {
-    let mut subst = HashMap::default();
+    // As in `run_merge`: a merge body may read a global.
+    let mut subst = globals.clone();
     subst.insert("old".to_string(), old_term);
     subst.insert("new".to_string(), new_term);
     for cmd in prog {
@@ -976,6 +978,7 @@ impl ProofStore {
                     &mut self.term_dag,
                     function,
                     prog,
+                    globals,
                     old_output,
                     new_output,
                     *idx,
@@ -992,9 +995,15 @@ impl ProofStore {
                 // `merged` is the whole merge body evaluated on the two premise outputs.
                 let (view_head, input_args, old_output, new_output) =
                     self.merge_premise_view(old_proof_id, new_proof_id);
-                let (merged_child, _props) =
-                    run_merge(&mut self.term_dag, function, prog, old_output, new_output)
-                        .unwrap_or_else(|e| panic!("failed to run merge for {function}: {e}"));
+                let (merged_child, _props) = run_merge(
+                    &mut self.term_dag,
+                    function,
+                    prog,
+                    globals,
+                    old_output,
+                    new_output,
+                )
+                .unwrap_or_else(|e| panic!("failed to run merge for {function}: {e}"));
                 let mut merged_args = input_args;
                 merged_args.push(merged_child);
                 let to_prove = self.term_dag.app(view_head, merged_args);

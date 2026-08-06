@@ -157,10 +157,17 @@ impl EGraph {
                 let out = &row.vals[n_keys];
                 let class_id = self.value_to_class_id(function.schema.output(), *out);
                 if function.decl.internal_let {
+                    // Globals of a sort share a table, so the key says which one.
+                    let bound = inps
+                        .first()
+                        .map(|key| self.backend.base_values().unwrap::<i64>(*key))
+                        .and_then(|key| self.global_slots.global_at(name, key))
+                        .unwrap_or(name)
+                        .to_owned();
                     let_bindings
                         .entry(class_id.clone())
                         .or_insert_with(Vec::new)
-                        .push(name.clone());
+                        .push(bound);
                 } else {
                     all_calls.push((
                         function,

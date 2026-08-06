@@ -4,6 +4,7 @@
 
 use super::proof_checker::is_container_side_condition;
 use super::proof_encoding::ProofInstrumentor;
+use crate::proofs::proof_encoding::holds_eclasses;
 use crate::typechecking::FuncType;
 use crate::*;
 
@@ -67,14 +68,20 @@ impl ProofInstrumentor<'_> {
                     "(= (values {v} {proof_var}) ({view_name} {children_str}))"
                 ));
 
-                if self.egraph.proof_state.proofs_enabled {
+                if !self.egraph.proof_state.proofs_enabled {
+                    "()".to_string()
+                } else if self.names_a_global(head.name(), args) && !holds_eclasses(head.output()) {
+                    let value = v.name.clone();
+                    // As in `instrument_fact_expr`. A custom function with a
+                    // base-sort output keeps the row's proof: its row is
+                    // established, where a global's only records a value.
+                    self.reflexive_fiat_proof(head.output().name(), &value)
+                } else {
                     let mut proof = proof_var;
                     for (i, arg_proof) in arg_proofs.into_iter().enumerate() {
                         proof = self.mint_congr(&proof, i, &arg_proof);
                     }
                     proof
-                } else {
-                    "()".to_string()
                 }
             }
             ResolvedFact::Eq(_span, left_expr, right_expr) => {
@@ -182,7 +189,8 @@ impl ProofInstrumentor<'_> {
                         // the e-class + proof.
                         assert!(
                             func_type.subtype == FunctionSubtype::Constructor
-                                || self.egraph.type_info.is_global(&func_type.name),
+                                || self.egraph.type_info.is_global(&func_type.name)
+                                || self.egraph.type_info.is_global_table(&func_type.name),
                             "Only constructor (or global) function calls are allowed in fact expressions due to proof normal form. Got {func_type:?}",
                         );
 
@@ -198,7 +206,14 @@ impl ProofInstrumentor<'_> {
                             res.push(format!(
                                 "(= (values {fv} {view_proof_var}) ({view_name} {args_str}))"
                             ));
-                            if self.proofs_enabled() {
+                            if !self.proofs_enabled() {
+                                "()".to_string()
+                            } else if !holds_eclasses(func_type.output()) {
+                                // The row's term names the slot as well as the
+                                // value, so it lines up with nothing else. The value
+                                // stands for itself, as a literal would.
+                                self.reflexive_fiat_proof(func_type.output().name(), &fv)
+                            } else {
                                 let mut proof = view_proof_var;
                                 for (i, arg_proof) in arg_proofs.into_iter().enumerate() {
                                     if let Some(arg_proof) = arg_proof {
@@ -206,8 +221,6 @@ impl ProofInstrumentor<'_> {
                                     }
                                 }
                                 proof
-                            } else {
-                                "()".to_string()
                             }
                         };
                         (fv, proof)

@@ -388,6 +388,24 @@ impl EGraph {
         )))
     }
 
+    /// Read output column `col_idx` of the FD view `view_name` by its
+    /// `n_keys` keys, with no fallback: the action fails when the key is absent.
+    pub fn register_view_column_lookup(
+        &mut self,
+        view_name: String,
+        n_keys: usize,
+        col_idx: usize,
+    ) -> ExternalFunctionId {
+        let registry = self.action_registry.clone();
+        self.register_external_func(Box::new(make_external_func(
+            move |state: &mut ExecutionState, args: &[Value]| {
+                let registry = registry.read().unwrap();
+                let action = registry.lookup_table(&view_name)?.clone();
+                action.lookup_value_col(state, &args[..n_keys], col_idx)
+            },
+        )))
+    }
+
     pub fn free_external_func(&mut self, func: ExternalFunctionId) {
         // A cached panic with more than one reference is kept alive (just
         // decrement); one at its last reference — or any func that is not a
@@ -808,7 +826,7 @@ impl EGraph {
         let ts = self.next_ts();
 
         let uf_size_before = self.db.get_table(self.uf_table).len();
-        let rule_set_report =
+        let (assembly_time, rule_set_report) =
             run_rules_impl(&mut self.db, &mut self.rules, rules, ts, self.report_level)?;
         if let Some(message) = self.panic_message.lock().unwrap().take() {
             return Err(PanicError(message).into());
@@ -817,6 +835,7 @@ impl EGraph {
         let mut iteration_report = IterationReport {
             rule_set_report,
             rebuild_time: Duration::ZERO,
+            assembly_time,
         };
         let uf_size_after = self.db.get_table(self.uf_table).len();
         if uf_size_before == uf_size_after {
@@ -933,6 +952,7 @@ impl EGraph {
                                 ts,
                                 ReportLevel::TimeOnly,
                             )?
+                            .1
                             .changed;
                         }
                         // Reset the rule we did not run. These two should be equivalent.
@@ -948,6 +968,7 @@ impl EGraph {
                             ts,
                             ReportLevel::TimeOnly,
                         )?
+                        .1
                         .changed;
                         for rule in &info.incremental_rebuild_rules {
                             self.rules[*rule].last_run_at = ts;
@@ -1021,6 +1042,7 @@ impl EGraph {
                 ts,
                 ReportLevel::TimeOnly,
             )?
+            .1
             .changed;
             scratch.clear();
             let ts = self.next_ts();
@@ -1037,6 +1059,7 @@ impl EGraph {
                     ts,
                     ReportLevel::TimeOnly,
                 )?
+                .1
                 .changed;
                 scratch.clear();
             }
@@ -2134,7 +2157,9 @@ fn run_rules_impl(
     rules: &[RuleId],
     next_ts: Timestamp,
     report_level: ReportLevel,
-) -> Result<RuleSetReport> {
+) -> Result<(Duration, RuleSetReport)> {
+    // Both loops get rules ready to run, and no other timer covers them.
+    let assembly_timer = Instant::now();
     for rule in rules {
         let info = &mut rule_info[*rule];
         if info.cached_plan.is_none() {
@@ -2150,7 +2175,8 @@ fn run_rules_impl(
         info.last_run_at = next_ts;
     }
     let ruleset = rsb.build();
-    Ok(db.run_rule_set(&ruleset, report_level))
+    let assembly = assembly_timer.elapsed();
+    Ok((assembly, db.run_rule_set(&ruleset, report_level)))
 }
 
 // These markers are just used to make it easy to distinguish time spent in

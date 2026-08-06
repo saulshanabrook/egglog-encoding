@@ -22,15 +22,59 @@ from .store import CacheKey, IndexedRecord, ReportStore
 MetricName = Literal["wall_sec", "max_rss_bytes"]
 ResultClass = Literal["higher", "invalid", "lower", "point_only", "unclear"]
 SummaryKind = Literal["suite", "lowest_file", "highest_file"]
-PhaseName = Literal["search", "apply", "unattributed", "merge", "rebuild", "outside"]
-RulesetPhaseName = Literal["search", "apply", "unattributed", "merge", "rebuild"]
+PhaseName = Literal[
+    "assembly",
+    "search",
+    "apply",
+    "unattributed",
+    "merge",
+    "rebuild",
+    "parse",
+    "typecheck",
+    "desugar",
+    "encode",
+    "install",
+    "actions",
+    "schedule",
+    "proof_extraction",
+    "outside",
+]
+RulesetPhaseName = Literal["assembly", "search", "apply", "unattributed", "merge", "rebuild"]
+"""Phases recorded outside every ruleset, keyed by their timing-summary field."""
+OutsidePhaseName = Literal[
+    "parse",
+    "typecheck",
+    "desugar",
+    "encode",
+    "install",
+    "actions",
+    "schedule",
+    "proof_extraction",
+]
 
 type _MetricKey = tuple[int, int, MetricName]
 type _ObservationKey = tuple[int, int]
 
 _METRICS: tuple[MetricName, ...] = ("wall_sec", "max_rss_bytes")
-_RULESET_PHASES: tuple[RulesetPhaseName, ...] = ("search", "apply", "unattributed", "merge", "rebuild")
-_PHASES: tuple[PhaseName, ...] = (*_RULESET_PHASES, "outside")
+_RULESET_PHASES: tuple[RulesetPhaseName, ...] = (
+    "assembly",
+    "search",
+    "apply",
+    "unattributed",
+    "merge",
+    "rebuild",
+)
+_OUTSIDE_PHASES: tuple[OutsidePhaseName, ...] = (
+    "parse",
+    "typecheck",
+    "desugar",
+    "encode",
+    "install",
+    "actions",
+    "schedule",
+    "proof_extraction",
+)
+_PHASES: tuple[PhaseName, ...] = (*_RULESET_PHASES, *_OUTSIDE_PHASES, "outside")
 
 
 class Estimate(NamedTuple):
@@ -57,8 +101,9 @@ class PhaseEstimate(NamedTuple):
 
 
 class PhaseValues(NamedTuple):
-    """Five recorded timing components aggregated for one observation/ruleset."""
+    """The recorded timing components aggregated for one observation/ruleset."""
 
+    assembly: float
     search: float
     apply: float
     unattributed: float
@@ -70,6 +115,8 @@ class PhaseValues(NamedTuple):
         return sum(self)
 
     def phase(self, name: RulesetPhaseName) -> float:
+        if name == "assembly":
+            return self.assembly
         if name == "search":
             return self.search
         if name == "apply":
@@ -82,7 +129,7 @@ class PhaseValues(NamedTuple):
 
 
 class RulesetDelta(NamedTuple):
-    """One exact total delta and its five timing-component deltas."""
+    """One exact total delta and the per-phase deltas that make it up."""
 
     total: float
     phases: PhaseValues
@@ -442,6 +489,7 @@ def _timing_aggregates(
             per_ruleset: dict[str, PhaseValues] = {}
             for ruleset in summary["rulesets"]:
                 totals = PhaseValues(
+                    float(ruleset["assembly_ns"]),
                     float(ruleset["search_ns"]),
                     float(ruleset["apply_ns"]),
                     float(ruleset["unattributed_ns"]),
@@ -452,9 +500,23 @@ def _timing_aggregates(
             recorded = _sum_totals(per_ruleset.values())
             for phase in _RULESET_PHASES:
                 aggregate.phases[phase].append(recorded.phase(phase))
+            outside = summary["outside_rulesets"]
+            outside_values: dict[OutsidePhaseName, float] = {
+                "parse": float(outside["parse_ns"]),
+                "typecheck": float(outside["typecheck_ns"]),
+                "desugar": float(outside["desugar_ns"]),
+                "encode": float(outside["encode_ns"]),
+                "install": float(outside["install_ns"]),
+                "actions": float(outside["actions_ns"]),
+                "schedule": float(outside["schedule_ns"]),
+                "proof_extraction": float(outside["proof_extraction_ns"]),
+            }
+            for outside_phase, value in outside_values.items():
+                aggregate.phases[outside_phase].append(value)
+            outside_total = sum(outside_values.values())
             wall_sec = record["wall_sec"]
             if wall_sec is not None:
-                aggregate.phases["outside"].append(wall_sec * 1_000_000_000.0 - recorded.total)
+                aggregate.phases["outside"].append(wall_sec * 1_000_000_000.0 - recorded.total - outside_total)
             for name, totals in per_ruleset.items():
                 samples = aggregate.rulesets.setdefault(
                     name,
@@ -467,11 +529,12 @@ def _timing_aggregates(
     return result
 
 
-_ZERO_PHASE_TOTALS = PhaseValues(0.0, 0.0, 0.0, 0.0, 0.0)
+_ZERO_PHASE_TOTALS = PhaseValues(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
 
 def _add_totals(left: PhaseValues, right: PhaseValues) -> PhaseValues:
     return PhaseValues(
+        left.assembly + right.assembly,
         left.search + right.search,
         left.apply + right.apply,
         left.unattributed + right.unattributed,
@@ -552,7 +615,14 @@ def _ruleset_phase_deltas(
         baseline = _ruleset_estimate(timing[(0, file_order)], name, phase, t_critical)
         return _estimate_point(candidate) - _estimate_point(baseline)
 
-    return PhaseValues(delta("search"), delta("apply"), delta("unattributed"), delta("merge"), delta("rebuild"))
+    return PhaseValues(
+        delta("assembly"),
+        delta("search"),
+        delta("apply"),
+        delta("unattributed"),
+        delta("merge"),
+        delta("rebuild"),
+    )
 
 
 def _sample_estimate(

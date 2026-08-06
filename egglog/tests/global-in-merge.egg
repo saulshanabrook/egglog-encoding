@@ -1,0 +1,17 @@
+; A `:merge` body may read a global. The global already has a row, so the read
+; must not be encoded as building one — doing so wrote the merge's own term
+; relation with the global's slot key where an argument belonged.
+(datatype Math (Num i64))
+
+(let $step 10)
+(let $fallback (Num 9))
+
+(function running (i64) i64 :merge (+ old $step))
+(set (running 1) 3)
+(set (running 1) 99)
+(check (= (running 1) 13))
+
+(function pinned (i64) Math :merge $fallback)
+(set (pinned 1) (Num 1))
+(set (pinned 1) (Num 2))
+(check (= (pinned 1) (Num 9)))
