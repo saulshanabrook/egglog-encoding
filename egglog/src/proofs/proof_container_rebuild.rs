@@ -13,6 +13,10 @@ use crate::exec_state::{Internal, RegistrySealed};
 use crate::*;
 use egglog_bridge::TableAction;
 
+fn sort_arc_key(sort: &ArcSort) -> usize {
+    Arc::as_ptr(sort) as *const () as usize
+}
+
 /// Mint a fresh proof id and assert the relation row `(<action> args… out ())`,
 /// returning `out`. Proof constructors are relations, so a proof node is created
 /// by minting its id rather than by a constructor's lookup-or-insert.
@@ -54,13 +58,10 @@ pub(crate) fn uf_canon_proof_prim_name(uf_name: &str) -> String {
 /// encoding and on re-parse.
 pub(crate) fn register_uf_canon(
     eg: &mut EGraph,
-    sort_name: &str,
+    sort: ArcSort,
     uf_name: &str,
     proofs_enabled: bool,
 ) {
-    let Some(sort) = eg.get_sort_by_name(sort_name).cloned() else {
-        return;
-    };
     let table = uf_name.to_string();
     eg.add_backend_op_primitive(
         UfCanonCol {
@@ -78,9 +79,12 @@ pub(crate) fn register_uf_canon(
 
     // The proof column is `Unit` in term mode, and no rule reads it there.
     if proofs_enabled {
-        let proof_sort: ArcSort = std::sync::Arc::new(EqSort {
-            name: eg.proof_state.proof_names.proof_datatype.clone(),
-        });
+        let proof_sort = eg
+            .proof_state
+            .proof_sort
+            .as_ref()
+            .cloned()
+            .expect("proof-enabled UF canonicalization requires the registered Proof sort");
         let table = uf_name.to_string();
         eg.add_backend_op_primitive(
             UfCanonCol {
@@ -133,12 +137,9 @@ impl Primitive for UfCanonCol {
 /// exist before the rebuild rules — both during encoding and on re-parse.
 pub(crate) fn register_container_rebuild_from_spec(
     eg: &mut EGraph,
-    sort_name: &str,
+    container_sort: ArcSort,
     spec: &ContainerRebuildSpec,
 ) {
-    let Some(container_sort) = eg.get_sort_by_name(sort_name).cloned() else {
-        return;
-    };
     // Each element eq-sort's single UF table, recovered from proof_state (filled
     // by the element sorts' `:internal-uf` on re-parse) rather than the spec.
     let mut uf_names = HashMap::default();
@@ -171,9 +172,12 @@ pub(crate) fn register_container_rebuild_from_spec(
         let trans_name = names.eq_trans_constructor.clone();
         let sym_name = names.eq_sym_constructor.clone();
         let container_normalize_name = names.container_normalize_constructor.clone();
-        let proof_sort: ArcSort = std::sync::Arc::new(EqSort {
-            name: names.proof_datatype.clone(),
-        });
+        let proof_sort = eg
+            .proof_state
+            .proof_sort
+            .as_ref()
+            .cloned()
+            .expect("container proof rebuild requires the registered Proof sort");
         eg.add_full_primitive(
             ContainerRebuildProof {
                 name: proof_prim.clone(),
@@ -193,11 +197,12 @@ pub(crate) fn register_container_rebuild_from_spec(
 
 /// Each transitively-reachable eq-sort element's single UF table, from
 /// `proof_state.uf_parent` (filled by element sorts' `:internal-uf`).
-fn collect_element_uf_names(eg: &EGraph, sort: &ArcSort, out: &mut HashMap<String, String>) {
+fn collect_element_uf_names(eg: &EGraph, sort: &ArcSort, out: &mut HashMap<usize, String>) {
     for elem in sort.inner_sorts() {
         if elem.is_eq_sort() {
-            if let Some(uf) = eg.proof_state.uf_parent.get(elem.name()) {
-                out.insert(elem.name().to_string(), uf.clone());
+            let identity = eg.type_info.expect_sort_registration_id(&elem);
+            if let Some(uf) = eg.proof_state.uf_parent_by_sort.get(&identity) {
+                out.insert(sort_arc_key(&elem), uf.clone());
             }
         } else if elem.is_eq_container_sort() {
             collect_element_uf_names(eg, &elem, out);
@@ -207,9 +212,10 @@ fn collect_element_uf_names(eg: &EGraph, sort: &ArcSort, out: &mut HashMap<Strin
 
 /// The `<CSort>Proof` table for `sort` and every nested container sort, from
 /// `proof_state.proof_func_parent` (filled by `:internal-proof-func`).
-fn collect_container_proof_names(eg: &EGraph, sort: &ArcSort, out: &mut HashMap<String, String>) {
-    if let Some(cp) = eg.proof_state.proof_func_parent.get(sort.name()) {
-        out.insert(sort.name().to_string(), cp.clone());
+fn collect_container_proof_names(eg: &EGraph, sort: &ArcSort, out: &mut HashMap<usize, String>) {
+    let identity = eg.type_info.expect_sort_registration_id(sort);
+    if let Some(cp) = eg.proof_state.proof_func_parent_by_sort.get(&identity) {
+        out.insert(sort_arc_key(sort), cp.clone());
     }
     for elem in sort.inner_sorts() {
         if elem.is_eq_container_sort() {
@@ -245,7 +251,7 @@ fn rebuild_container_value_rec(
     state: &mut ReadState,
     sort: &ArcSort,
     value: Value,
-    uf_names: &HashMap<String, String>,
+    uf_names: &HashMap<usize, String>,
     proof_mode: bool,
 ) -> Option<Value> {
     let elements = {
@@ -277,7 +283,7 @@ fn rebuild_container_value_rec(
 /// A missing row means the element is already a root.
 fn lookup_uf_row<'a, 'db: 'a, S>(
     state: &S,
-    uf_names: &HashMap<String, String>,
+    uf_names: &HashMap<usize, String>,
     esort: &ArcSort,
     eval: Value,
     proof_mode: bool,
@@ -285,7 +291,7 @@ fn lookup_uf_row<'a, 'db: 'a, S>(
 where
     S: RegistrySealed<'a, 'db>,
 {
-    let uf_name = uf_names.get(esort.name())?;
+    let uf_name = uf_names.get(&sort_arc_key(esort))?;
     let action = state.registry().lookup_table(uf_name)?;
     let values = action.lookup_values(state.es(), &[eval])?;
     Some((values[0], proof_mode.then(|| values[1])))
@@ -300,8 +306,8 @@ where
 struct ContainerRebuild {
     name: String,
     container_sort: ArcSort,
-    /// element-sort name -> single `UF_<E>` table name (all reachable eq-sorts)
-    uf_names: HashMap<String, String>,
+    /// Exact element-sort arc -> single `UF_<E>` table name.
+    uf_names: HashMap<usize, String>,
     /// Whether the single UF row has a second proof value column.
     proof_mode: bool,
 }
@@ -344,10 +350,10 @@ struct ContainerRebuildProof {
     name: String,
     container_sort: ArcSort,
     proof_sort: ArcSort,
-    /// element-sort name -> single `UF_<E>` table name (all reachable eq-sorts)
-    uf_names: HashMap<String, String>,
-    /// container-sort name -> `<CSort>Proof` table name (all reachable containers)
-    cproof_names: HashMap<String, String>,
+    /// Exact element-sort arc -> single `UF_<E>` table name.
+    uf_names: HashMap<usize, String>,
+    /// Exact container-sort arc -> `<CSort>Proof` table name.
+    cproof_names: HashMap<usize, String>,
     /// `CongrAll` / `Trans` / `Sym` / `ContainerNormalize` proof constructor names
     congr_all_name: String,
     trans_name: String,
@@ -394,7 +400,7 @@ fn rebuild_container_proof_rec(
 ) -> Option<(Value, Value)> {
     // Reflexive base proof `value = value`.
     let base = state
-        .lookup(prim.cproof_names.get(sort.name())?, value)
+        .lookup(prim.cproof_names.get(&sort_arc_key(sort))?, value)
         .expect("container proof lookup failed")?;
     let elements = {
         let cvs = state.container_values();
@@ -462,7 +468,7 @@ fn rebuild_container_proof_rec(
         let trans_action = state.registry().lookup_table(&prim.trans_name)?.clone();
         let cproof_action = state
             .registry()
-            .lookup_table(prim.cproof_names.get(sort.name())?)?
+            .lookup_table(prim.cproof_names.get(&sort_arc_key(sort))?)?
             .clone();
         // Sym(current): rebuilt = value;  Trans(Sym(current), current): rebuilt = rebuilt.
         let sym_p = mint_proof_row(state, &sym_action, &[current])?;
@@ -480,16 +486,15 @@ impl ProofInstrumentor<'_> {
     /// [`register_container_rebuild_from_spec`]).
     pub(super) fn build_container_rebuild_spec(
         &mut self,
-        container_sort: &ArcSort,
+        source_sort: SortRegistrationId,
     ) -> ContainerRebuildSpec {
-        let sort_name = container_sort.name().to_string();
         let proof_mode = self.egraph.proof_state.proofs_enabled;
 
         let internal_rebuild_prim = self.egraph.parser.symbol_gen.fresh("container_rebuild");
         self.egraph
             .proof_state
             .container_rebuild_name
-            .insert(sort_name.clone(), internal_rebuild_prim.clone());
+            .insert(source_sort, internal_rebuild_prim.clone());
 
         let internal_rebuild_proof_prim = proof_mode.then(|| {
             let proof_prim = self
@@ -500,7 +505,7 @@ impl ProofInstrumentor<'_> {
             self.egraph
                 .proof_state
                 .container_rebuild_proof_name
-                .insert(sort_name, proof_prim.clone());
+                .insert(source_sort, proof_prim.clone());
             proof_prim
         });
 
@@ -512,10 +517,17 @@ impl ProofInstrumentor<'_> {
 
     /// The (already-built) container value-rebuild primitive name for a sort.
     pub(super) fn container_rebuild_prim(&mut self, container_sort: &ArcSort) -> String {
+        let source_sort = self
+            .egraph
+            .proof_state
+            .original_typechecking
+            .as_ref()
+            .and_then(|typechecker| typechecker.type_info.sort_registration_id(container_sort))
+            .expect("container rebuild lookup requires exact source sort authority");
         self.egraph
             .proof_state
             .container_rebuild_name
-            .get(container_sort.name())
+            .get(&source_sort)
             .cloned()
             .unwrap_or_else(|| {
                 panic!(
@@ -527,10 +539,17 @@ impl ProofInstrumentor<'_> {
 
     /// The (already-built) container proof-rebuild primitive name for a sort.
     pub(super) fn container_rebuild_proof_prim(&mut self, container_sort: &ArcSort) -> String {
+        let source_sort = self
+            .egraph
+            .proof_state
+            .original_typechecking
+            .as_ref()
+            .and_then(|typechecker| typechecker.type_info.sort_registration_id(container_sort))
+            .expect("container proof rebuild lookup requires exact source sort authority");
         self.egraph
             .proof_state
             .container_rebuild_proof_name
-            .get(container_sort.name())
+            .get(&source_sort)
             .cloned()
             .unwrap_or_else(|| {
                 panic!(

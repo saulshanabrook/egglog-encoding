@@ -89,6 +89,7 @@ pub use termdag::{OrdTerm, Term, TermDag, TermId};
 use thiserror::Error;
 use typechecking::FuncType;
 pub use typechecking::PrimitiveValidator;
+pub use typechecking::SortRegistrationId;
 pub use typechecking::TypeError;
 pub use typechecking::TypeInfo;
 use util::*;
@@ -96,9 +97,11 @@ use util::*;
 use crate::ast::desugar::desugar_command;
 use crate::ast::*;
 use crate::core::{GenericActionsExt, ResolvedRuleExt};
-use crate::proofs::proof_encoding::{EncodingState, ProofInstrumentor};
+use crate::proofs::proof_encoding::{EncodingState, ProofInstrumentor, SortLineage};
+#[cfg(test)]
+use crate::proofs::proof_encoding_helpers::finalized_program_supports_proofs;
 use crate::proofs::proof_encoding_helpers::{
-    ProofEncodingUnsupportedReason, command_supports_proof_encoding,
+    ProofEncodingUnsupportedReason, command_supports_proof_encoding_with_sort_authorities,
 };
 use crate::proofs::proof_extraction::ProveExistsError;
 use crate::proofs::proof_format::{ProofId, ProofStore};
@@ -379,7 +382,7 @@ struct CompileOnlyBackendState {
     next_external_function_id: usize,
     /// Nominal sort registrations in deterministic declaration order. These
     /// are typechecking tokens, not backend [`ColumnTy`] ids.
-    sort_tokens: IndexMap<String, usize>,
+    sort_tokens: IndexMap<SortRegistrationId, usize>,
 }
 
 impl BackendSlot {
@@ -399,15 +402,12 @@ impl BackendSlot {
 
     /// Register a sort for typechecking without asking a compile-only frontend
     /// to manufacture backend-specific storage types.
-    fn register_sort(&mut self, sort: &ArcSort) {
+    fn register_sort(&mut self, identity: SortRegistrationId, sort: &ArcSort) {
         match self {
             Self::Runtime(backend) => sort.register_type(backend.as_mut()),
             Self::CompileOnly(state) => {
                 let next = state.sort_tokens.len();
-                state
-                    .sort_tokens
-                    .entry(sort.name().to_owned())
-                    .or_insert(next);
+                state.sort_tokens.entry(identity).or_insert(next);
             }
         }
     }
@@ -740,19 +740,19 @@ impl EGraph {
 }
 
 struct ResolvedNCommands {
-    desugared: Vec<ResolvedNCommand>,
+    desugared: typechecking::FinalizedProgram,
     /// In proof mode, populated with the desugared program before instrumented with proofs
-    desugared_before_proofs: Vec<ResolvedNCommand>,
+    desugared_before_proofs: typechecking::FinalizedProgram,
 }
 
 struct ResolvedNCommandsWithOutput {
     outputs: Vec<CommandOutput>,
-    resolved: Vec<ResolvedNCommand>,
+    resolved: typechecking::FinalizedProgram,
     /// Source-command ordinal for each entry in `resolved`. Populated only in
     /// compile-only mode.
     resolved_source_ordinals: Vec<u64>,
     /// In proof mode, populated with the desugared program before instrumented with proofs
-    resolved_before_proofs: Vec<ResolvedNCommand>,
+    resolved_before_proofs: typechecking::FinalizedProgram,
     /// Source-command ordinal for each entry in `resolved_before_proofs`.
     /// Populated only in compile-only mode.
     resolved_before_proofs_source_ordinals: Vec<u64>,
@@ -779,8 +779,12 @@ pub(crate) struct CompileOnlyResolvedCommand {
 pub(crate) struct CompileOnlyResolvedProgram {
     /// Proof-instrumented, typechecked, global-eliminated execution commands.
     pub(crate) execution: Vec<CompileOnlyResolvedCommand>,
+    /// Exact recursive command-path authority for execution-view Sorts.
+    pub(crate) execution_sort_authorities: Vec<typechecking::SortAuthorityAt>,
     /// The corresponding pre-instrumentation commands used for proof checking.
     pub(crate) proof_check: Vec<CompileOnlyResolvedCommand>,
+    /// Exact recursive command-path authority for proof-check-view Sorts.
+    pub(crate) proof_check_sort_authorities: Vec<typechecking::SortAuthorityAt>,
     /// Parsed top-level commands in source order. Entry `i` owns every command
     /// carrying `source_command_ordinal == i` in either finalized stream.
     pub(crate) source_commands: Vec<String>,
@@ -952,6 +956,78 @@ fn preflight_standalone_resolved_commands(commands: &[ResolvedNCommand]) -> Resu
     Ok(())
 }
 
+/// Desugar one proof-generated command while attaching exact source-view sort
+/// authority at the producer-stamped command path. Paths follow raw `Command`
+/// nesting through `fail`; they are never recovered from a sort name or from
+/// the generated command's shape.
+fn desugar_term_encoded_command(
+    command: Command,
+    parser: &mut Parser,
+    proof_testing: bool,
+    lineages: Vec<SortLineage>,
+) -> Result<(Vec<NCommand>, Vec<typechecking::SourceSortAuthorityAt>), Error> {
+    if lineages.is_empty() {
+        return Ok((desugar_command(command, parser, proof_testing)?, Vec::new()));
+    }
+
+    if lineages
+        .iter()
+        .any(|lineage| lineage.command_path.is_empty())
+    {
+        let [lineage] = lineages.as_slice() else {
+            panic!("one generated command received overlapping sort lineage stamps");
+        };
+        assert!(
+            lineage.command_path.is_empty(),
+            "one generated command mixed self and descendant sort lineage stamps"
+        );
+        let desugared = desugar_command(command, parser, proof_testing)?;
+        let [NCommand::Sort { .. }] = desugared.as_slice() else {
+            panic!("proof instrumentation attached sort lineage to a non-sort command");
+        };
+        return Ok((
+            desugared,
+            vec![typechecking::SourceSortAuthorityAt {
+                command_path: vec![0],
+                source: lineage.source,
+            }],
+        ));
+    }
+
+    let Command::Fail(span, commands) = command else {
+        panic!("proof instrumentation attached descendant lineage outside a fail command");
+    };
+    let mut lineages_by_child = (0..commands.len())
+        .map(|_| Vec::new())
+        .collect::<Vec<Vec<SortLineage>>>();
+    for mut lineage in lineages {
+        let child = lineage.command_path.remove(0);
+        let Some(child_lineages) = lineages_by_child.get_mut(child) else {
+            panic!("proof instrumentation emitted an out-of-range nested sort lineage stamp");
+        };
+        child_lineages.push(lineage);
+    }
+
+    let mut nested = Vec::new();
+    let mut source_authorities = Vec::new();
+    for (command, child_lineages) in commands.into_iter().zip(lineages_by_child) {
+        let (child_commands, mut child_authorities) =
+            desugar_term_encoded_command(command, parser, proof_testing, child_lineages)?;
+        let offset = nested.len();
+        for authority in &mut child_authorities {
+            let first = authority
+                .command_path
+                .first_mut()
+                .expect("source sort authority paths are never empty");
+            *first += offset;
+            authority.command_path.insert(0, 0);
+        }
+        source_authorities.extend(child_authorities);
+        nested.extend(child_commands);
+    }
+    Ok((vec![NCommand::Fail(span, nested)], source_authorities))
+}
+
 #[derive(Debug, Error)]
 #[error("Not found: {0}")]
 pub struct NotFoundError(String);
@@ -974,7 +1050,12 @@ impl EGraph {
 
     /// Enable the term/proof encoding pipeline with `typechecker` as the head of
     /// the re-typechecking chain.
-    fn enable_term_encoding(&mut self, typechecker: EGraph) {
+    fn enable_term_encoding(&mut self, mut typechecker: EGraph) {
+        self.type_info
+            .set_view_domain(typechecking::FrontendViewDomain::Execution);
+        typechecker
+            .type_info
+            .set_view_domain(typechecking::FrontendViewDomain::ProofCheck);
         self.proof_state.original_typechecking = Some(Box::new(typechecker));
     }
 
@@ -1220,14 +1301,18 @@ impl EGraph {
         self.pushed_egraph = Some(Box::new(prev));
     }
 
-    fn preserve_global_function_identity_history_from(&mut self, newer: &Self) {
+    fn preserve_frontend_identity_history_from(&mut self, newer: &Self) {
         self.type_info
             .preserve_global_function_identity_history_from(&newer.type_info);
+        self.type_info
+            .preserve_primitive_registration_high_water_from(&newer.type_info);
+        self.type_info
+            .preserve_sort_registration_high_water_from(&newer.type_info);
         if let (Some(previous), Some(current)) = (
             self.proof_state.original_typechecking.as_deref_mut(),
             newer.proof_state.original_typechecking.as_deref(),
         ) {
-            previous.preserve_global_function_identity_history_from(current);
+            previous.preserve_frontend_identity_history_from(current);
         }
     }
 
@@ -1247,7 +1332,7 @@ impl EGraph {
                 // registrations even though their diagnostic names leave the
                 // active catalog. Keep that authority census monotone alongside
                 // the registration generator's high-water mark.
-                e.preserve_global_function_identity_history_from(self);
+                e.preserve_frontend_identity_history_from(self);
                 *self = *e;
                 Ok(())
             }
@@ -1591,7 +1676,7 @@ impl EGraph {
         let resolved =
             proof_check_eg.process_program_internal(prog, ProgramProcessingMode::ResolvePublic)?;
 
-        self.proof_check_program = resolved.resolved_before_proofs;
+        self.proof_check_program = resolved.resolved_before_proofs.commands;
         Ok(())
     }
 
@@ -2075,9 +2160,9 @@ impl EGraph {
         let resolved = self.resolve_command(command)?;
         if self.are_proofs_enabled() {
             self.proof_check_program
-                .extend(resolved.desugared_before_proofs);
+                .extend(resolved.desugared_before_proofs.commands);
         }
-        let resolved_commands = resolved.desugared;
+        let resolved_commands = resolved.desugared.commands;
 
         assert_eq!(resolved_commands.len(), 1);
         let resolved_command = resolved_commands.into_iter().next().unwrap();
@@ -2993,17 +3078,31 @@ impl EGraph {
     fn resolve_command_before_proofs(
         &mut self,
         command: Command,
-    ) -> Result<Vec<ResolvedNCommand>, Error> {
+    ) -> Result<typechecking::FinalizedProgram, Error> {
         let desugared = desugar_command(command, &mut self.parser, self.proof_state.proof_testing)?;
         if let Some(original_typechecking) = self.proof_state.original_typechecking.as_mut() {
             // Typecheck using the original egraph
             // TODO this is ugly- we don't need an entire e-graph just for type information.
-            let typechecked = original_typechecking.typecheck_program(&desugared)?;
+            let typechecked = original_typechecking
+                .typecheck_program_with_sort_authority(&desugared, Vec::new())?;
 
-            for command in &typechecked {
-                if let Err(reason) = command_supports_proof_encoding(
-                    &command.to_command(),
+            let mut authorities_by_command = (0..typechecked.commands.len())
+                .map(|_| Vec::new())
+                .collect::<Vec<Vec<typechecking::SortAuthorityAt>>>();
+            for mut authority in typechecked.sort_authorities.iter().cloned() {
+                let top = authority.command_path.remove(0);
+                authorities_by_command
+                    .get_mut(top)
+                    .expect("validated proof-admission sort path was out of range")
+                    .push(authority);
+            }
+            for (command, sort_authorities) in
+                typechecked.commands.iter().zip(authorities_by_command)
+            {
+                if let Err(reason) = command_supports_proof_encoding_with_sort_authorities(
+                    command,
                     &original_typechecking.type_info,
+                    &sort_authorities,
                 ) {
                     // Proof checking needs each input expanded into top-level
                     // fiat actions, which cannot preserve a surrounding
@@ -3028,12 +3127,18 @@ impl EGraph {
                 }
             }
 
-            Ok(proof_form(typechecked, &mut self.parser.symbol_gen))
+            let commands = proof_form(typechecked.commands, &mut self.parser.symbol_gen);
+            Ok(typechecking::FinalizedProgram::new(
+                commands,
+                typechecked.sort_authorities,
+            ))
         } else {
-            let mut typechecked = self.typecheck_program(&desugared)?;
-
-            typechecked = remove_globals::remove_globals(typechecked, &mut self.parser.symbol_gen);
-            for command in &typechecked {
+            let typechecked = self.typecheck_program_with_sort_authority(&desugared, Vec::new())?;
+            let typechecked = remove_globals::remove_globals_with_sort_authority(
+                typechecked,
+                &mut self.parser.symbol_gen,
+            );
+            for command in &typechecked.commands {
                 self.names.check_shadowing(command)?;
             }
             Ok(typechecked)
@@ -3050,7 +3155,7 @@ impl EGraph {
         if self.proof_state.original_typechecking.is_none() {
             Ok(ResolvedNCommands {
                 desugared: resolved_before_proofs,
-                desugared_before_proofs: vec![],
+                desugared_before_proofs: typechecking::FinalizedProgram::empty(),
             })
         } else {
             // The proof checker consumes the per-row top-level fiat actions.
@@ -3060,13 +3165,15 @@ impl EGraph {
             // natively at run time by `EGraph::native_input` straight into the
             // encoded tables. Globals get the same function-style desugaring
             // (`remove_globals`) as the non-encoding path.
-            let typechecked_no_globals =
-                remove_globals::remove_globals(resolved_before_proofs, &mut self.parser.symbol_gen);
+            let typechecked_no_globals = remove_globals::remove_globals_with_sort_authority(
+                resolved_before_proofs,
+                &mut self.parser.symbol_gen,
+            );
             // The term encoder runs before the encoded program is typechecked, so it
             // can't rely on the later typecheck to populate `global_sorts`. Register
             // the new global functions' sorts eagerly so `is_global` recognizes them
             // while encoding.
-            for command in &typechecked_no_globals {
+            for command in &typechecked_no_globals.commands {
                 if let GenericNCommand::Function(fdecl) = command
                     && fdecl.internal_let
                     && let Some(output_sort) = self.type_info.sorts.get(fdecl.schema.output())
@@ -3076,33 +3183,76 @@ impl EGraph {
                         .insert(fdecl.name.clone(), output_sort.clone());
                 }
             }
-            for command in &typechecked_no_globals {
+            for command in &typechecked_no_globals.commands {
                 self.names.check_shadowing(command)?;
             }
 
             let term_encoding_added =
                 ProofInstrumentor::add_term_encoding(self, typechecked_no_globals)?;
-            let mut new_typechecked = vec![];
-            for new_cmd in term_encoding_added {
-                let desugared =
-                    desugar_command(new_cmd, &mut self.parser, self.proof_state.proof_testing)?;
+            let mut new_typechecked = Vec::new();
+            let mut new_sort_authorities = Vec::new();
+            let mut sort_lineages = term_encoding_added.sort_lineages.into_iter().peekable();
+            for (generated_index, new_cmd) in term_encoding_added.commands.into_iter().enumerate() {
+                let mut command_lineages = Vec::new();
+                loop {
+                    let Some(next_index) = sort_lineages.peek().map(|lineage| {
+                        *lineage
+                            .command_path
+                            .first()
+                            .expect("sort lineage paths are never empty")
+                    }) else {
+                        break;
+                    };
+                    assert!(
+                        next_index >= generated_index,
+                        "proof instrumentation emitted unordered sort lineage stamps"
+                    );
+                    if next_index != generated_index {
+                        break;
+                    }
+                    let mut lineage = sort_lineages.next().unwrap();
+                    lineage.command_path.remove(0);
+                    command_lineages.push(lineage);
+                }
+                let (desugared, source_authorities) = desugar_term_encoded_command(
+                    new_cmd,
+                    &mut self.parser,
+                    self.proof_state.proof_testing,
+                    command_lineages,
+                )?;
                 for cmd in &desugared {
                     log::trace!("Desugared term encoding: {}", cmd.to_command());
                 }
 
                 // Now typecheck using self, adding term type information.
-                let desugared_typechecked = self.typecheck_program(&desugared)?;
+                let desugared_typechecked =
+                    self.typecheck_program_with_sort_authority(&desugared, source_authorities)?;
                 // Remove the globals the term encoding itself introduced (its minted
                 // `let`s), the same way source-level globals were removed above.
-                let desugared_typechecked = remove_globals::remove_globals(
+                let desugared_typechecked = remove_globals::remove_globals_with_sort_authority(
                     desugared_typechecked,
                     &mut self.parser.symbol_gen,
                 );
-
-                new_typechecked.extend(desugared_typechecked);
+                let offset = new_typechecked.len();
+                for mut authority in desugared_typechecked.sort_authorities {
+                    let top = authority
+                        .command_path
+                        .first_mut()
+                        .expect("finalized sort authority paths are never empty");
+                    *top += offset;
+                    new_sort_authorities.push(authority);
+                }
+                new_typechecked.extend(desugared_typechecked.commands);
             }
+            assert!(
+                sort_lineages.next().is_none(),
+                "proof instrumentation emitted an out-of-range sort lineage stamp"
+            );
             Ok(ResolvedNCommands {
-                desugared: new_typechecked,
+                desugared: typechecking::FinalizedProgram::new(
+                    new_typechecked,
+                    new_sort_authorities,
+                ),
                 desugared_before_proofs: per_row_before_proofs,
             })
         }
@@ -3116,9 +3266,9 @@ impl EGraph {
         mode: ProgramProcessingMode,
     ) -> Result<ResolvedNCommandsWithOutput, Error> {
         let mut outputs = Vec::new();
-        let mut desugared_before_proofs = Vec::new();
+        let mut desugared_before_proofs = typechecking::FinalizedProgram::empty();
         let mut desugared_before_proofs_source_ordinals = Vec::new();
-        let mut desugared = Vec::new();
+        let mut desugared = typechecking::FinalizedProgram::empty();
         let mut desugared_source_ordinals = Vec::new();
         let mut source_commands = Vec::new();
 
@@ -3167,29 +3317,29 @@ impl EGraph {
                     // run program internal on these include commands
                     let resolved = self.process_program_internal(included_program, mode)?;
                     outputs.extend(resolved.outputs);
-                    desugared.extend(resolved.resolved);
-                    desugared_before_proofs.extend(resolved.resolved_before_proofs);
+                    desugared.append(resolved.resolved);
+                    desugared_before_proofs.append(resolved.resolved_before_proofs);
                 } else {
                     let resolved = self.resolve_command(command)?;
                     if mode.runs_commands() && self.are_proofs_enabled() {
                         self.proof_check_program
-                            .extend(resolved.desugared_before_proofs.clone());
+                            .extend(resolved.desugared_before_proofs.commands.clone());
                     }
 
                     if let Some(source_command_ordinal) = source_command_ordinal {
                         desugared_before_proofs_source_ordinals.extend(std::iter::repeat_n(
                             source_command_ordinal,
-                            resolved.desugared_before_proofs.len(),
+                            resolved.desugared_before_proofs.commands.len(),
                         ));
                         desugared_source_ordinals.extend(std::iter::repeat_n(
                             source_command_ordinal,
-                            resolved.desugared.len(),
+                            resolved.desugared.commands.len(),
                         ));
                     }
-                    desugared_before_proofs.extend(resolved.desugared_before_proofs);
-                    desugared.extend(resolved.desugared.clone());
+                    desugared_before_proofs.append(resolved.desugared_before_proofs);
+                    desugared.append(resolved.desugared.clone());
 
-                    for processed in resolved.desugared {
+                    for processed in resolved.desugared.commands {
                         // Public desugaring retains its historical scoped-state
                         // behavior. Compiler resolution retains Push/Pop in the
                         // stream without executing either command.
@@ -3237,9 +3387,22 @@ impl EGraph {
         filename: Option<String>,
         input: &str,
     ) -> Result<Vec<ResolvedCommand>, Error> {
+        Ok(self
+            .resolve_program_with_sort_authority(filename, input)?
+            .commands
+            .into_iter()
+            .map(|command| command.to_command())
+            .collect())
+    }
+
+    pub(crate) fn resolve_program_with_sort_authority(
+        &mut self,
+        filename: Option<String>,
+        input: &str,
+    ) -> Result<typechecking::FinalizedProgram, Error> {
         let parsed = self.parser.get_program_from_string(filename, input)?;
         let res = self.process_program_internal(parsed, ProgramProcessingMode::ResolvePublic)?;
-        Ok(res.resolved.into_iter().map(|c| c.to_command()).collect())
+        Ok(res.resolved)
     }
 
     /// Resolve source through the complete frontend pipeline without attaching
@@ -3269,14 +3432,14 @@ impl EGraph {
             preflight_standalone_source_commands(&parsed)?;
             let resolved =
                 self.process_program_internal(parsed, ProgramProcessingMode::CompileOnly)?;
-            preflight_standalone_resolved_commands(&resolved.resolved)?;
-            preflight_standalone_resolved_commands(&resolved.resolved_before_proofs)?;
-            if resolved.resolved.len() != resolved.resolved_source_ordinals.len() {
+            preflight_standalone_resolved_commands(&resolved.resolved.commands)?;
+            preflight_standalone_resolved_commands(&resolved.resolved_before_proofs.commands)?;
+            if resolved.resolved.commands.len() != resolved.resolved_source_ordinals.len() {
                 return Err(Error::StandaloneSnapshotInvariant {
                     message: "execution command/source-origin cardinality mismatch",
                 });
             }
-            if resolved.resolved_before_proofs.len()
+            if resolved.resolved_before_proofs.commands.len()
                 != resolved.resolved_before_proofs_source_ordinals.len()
             {
                 return Err(Error::StandaloneSnapshotInvariant {
@@ -3292,11 +3455,19 @@ impl EGraph {
                 return Err(error);
             }
         };
+        let typechecking::FinalizedProgram {
+            commands: execution_commands,
+            sort_authorities: execution_sort_authorities,
+        } = resolved.resolved;
+        let typechecking::FinalizedProgram {
+            commands: proof_check_commands,
+            sort_authorities: proof_check_sort_authorities,
+        } = resolved.resolved_before_proofs;
         Ok(CompileOnlyResolvedProgram {
             execution: resolved
                 .resolved_source_ordinals
                 .into_iter()
-                .zip(resolved.resolved)
+                .zip(execution_commands)
                 .map(
                     |(source_command_ordinal, command)| CompileOnlyResolvedCommand {
                         source_command_ordinal,
@@ -3304,10 +3475,11 @@ impl EGraph {
                     },
                 )
                 .collect(),
+            execution_sort_authorities,
             proof_check: resolved
                 .resolved_before_proofs_source_ordinals
                 .into_iter()
-                .zip(resolved.resolved_before_proofs)
+                .zip(proof_check_commands)
                 .map(
                     |(source_command_ordinal, command)| CompileOnlyResolvedCommand {
                         source_command_ordinal,
@@ -3315,6 +3487,7 @@ impl EGraph {
                     },
                 )
                 .collect(),
+            proof_check_sort_authorities,
             source_commands: resolved.source_commands,
         })
     }
@@ -3385,6 +3558,12 @@ impl EGraph {
     /// Returns all sorts that satisfy the predicate.
     pub fn get_arcsorts_by(&self, f: impl Fn(&ArcSort) -> bool) -> Vec<ArcSort> {
         self.type_info.get_arcsorts_by(f)
+    }
+
+    /// Whether two sort carriers resolve to the same exact authority in this
+    /// e-graph's frontend view.
+    pub fn same_sort(&self, left: &ArcSort, right: &ArcSort) -> bool {
+        self.type_info.same_sort(left, right)
     }
 
     /// Returns the sort with the given name if it exists.
@@ -4586,6 +4765,38 @@ mod tests {
         }
     }
 
+    fn type_info_sort_registration_fingerprint(
+        type_info: &TypeInfo,
+    ) -> Vec<(
+        SortRegistrationId,
+        String,
+        typechecking::RegisteredSortKind,
+        bool,
+    )> {
+        type_info
+            .sort_registrations_in_order()
+            .map(|registration| {
+                (
+                    registration.identity,
+                    registration.sort.name().to_owned(),
+                    registration.kind,
+                    registration.unionable,
+                )
+            })
+            .collect()
+    }
+
+    fn sort_registration_fingerprint(
+        egraph: &EGraph,
+    ) -> Vec<(
+        SortRegistrationId,
+        String,
+        typechecking::RegisteredSortKind,
+        bool,
+    )> {
+        type_info_sort_registration_fingerprint(&egraph.type_info)
+    }
+
     #[test]
     #[should_panic(expected = "compile-only frontend attempted to access an execution backend")]
     fn compile_only_backend_slot_panics_on_execution_access() {
@@ -4640,6 +4851,254 @@ mod tests {
         assert!(egraph.type_info.get_func_type("Edge").is_none());
         assert!(egraph.functions.is_empty());
         assert!(egraph.pushed_egraph.is_none());
+    }
+
+    #[test]
+    fn compile_only_late_failure_rolls_back_sort_ledger_and_allocator() {
+        let mut attempted = EGraph::new_compile_only(false);
+        let before_sorts = sort_registration_fingerprint(&attempted);
+        let before_backend = compile_only_state(&attempted).clone();
+        let error = attempted
+            .resolve_program_compile_only(
+                None,
+                "(sort MustRollback)\n(function broken (MissingSort) i64 :no-merge)",
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            Error::TypeError(TypeError::UndefinedSort(name, _)) if name == "MissingSort"
+        ));
+        assert_eq!(sort_registration_fingerprint(&attempted), before_sorts);
+        assert_eq!(compile_only_state(&attempted), &before_backend);
+        assert!(attempted.get_sort_by_name("MustRollback").is_none());
+
+        let mut fresh = EGraph::new_compile_only(false);
+        let attempted_result = attempted
+            .resolve_program_compile_only(None, "(sort Stable)")
+            .unwrap();
+        let fresh_result = fresh
+            .resolve_program_compile_only(None, "(sort Stable)")
+            .unwrap();
+        assert_eq!(attempted_result.execution, fresh_result.execution);
+        assert_eq!(
+            sort_registration_fingerprint(&attempted),
+            sort_registration_fingerprint(&fresh)
+        );
+        assert_eq!(compile_only_state(&attempted), compile_only_state(&fresh));
+    }
+
+    #[test]
+    fn compile_only_proof_late_failure_rolls_back_cross_view_sort_links() {
+        let mut attempted = EGraph::new_compile_only(true);
+        let before_execution_sorts = sort_registration_fingerprint(&attempted);
+        let before_execution_links = attempted.type_info.linked_sort_arc_count();
+        let before_backend = compile_only_state(&attempted).clone();
+        let before_source_sorts = type_info_sort_registration_fingerprint(
+            &attempted
+                .proof_state
+                .original_typechecking
+                .as_ref()
+                .expect("proof mode retains its source-program typechecking view")
+                .type_info,
+        );
+        let before_source_links = attempted
+            .proof_state
+            .original_typechecking
+            .as_ref()
+            .unwrap()
+            .type_info
+            .linked_sort_arc_count();
+
+        let error = attempted
+            .resolve_program_compile_only(
+                None,
+                "(sort MustRollback)\n(function broken (MissingSort) i64 :no-merge)",
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            Error::TypeError(TypeError::UndefinedSort(name, _)) if name == "MissingSort"
+        ));
+        assert_eq!(
+            sort_registration_fingerprint(&attempted),
+            before_execution_sorts
+        );
+        assert_eq!(
+            attempted.type_info.linked_sort_arc_count(),
+            before_execution_links
+        );
+        assert_eq!(compile_only_state(&attempted), &before_backend);
+        let attempted_source = &attempted
+            .proof_state
+            .original_typechecking
+            .as_ref()
+            .unwrap()
+            .type_info;
+        assert_eq!(
+            type_info_sort_registration_fingerprint(attempted_source),
+            before_source_sorts
+        );
+        assert_eq!(
+            attempted_source.linked_sort_arc_count(),
+            before_source_links
+        );
+        assert!(attempted.get_sort_by_name("MustRollback").is_none());
+        assert!(
+            attempted
+                .proof_state
+                .original_typechecking
+                .as_ref()
+                .unwrap()
+                .get_sort_by_name("MustRollback")
+                .is_none()
+        );
+
+        let mut fresh = EGraph::new_compile_only(true);
+        let attempted_result = attempted
+            .resolve_program_compile_only(None, "(sort Stable)")
+            .unwrap();
+        let fresh_result = fresh
+            .resolve_program_compile_only(None, "(sort Stable)")
+            .unwrap();
+        let stable_rendering = |commands: &[CompileOnlyResolvedCommand]| {
+            commands
+                .iter()
+                .map(|command| {
+                    (
+                        command.source_command_ordinal,
+                        command.command.to_command().to_string(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            stable_rendering(&attempted_result.execution),
+            stable_rendering(&fresh_result.execution)
+        );
+        assert_eq!(
+            stable_rendering(&attempted_result.proof_check),
+            stable_rendering(&fresh_result.proof_check)
+        );
+        assert_eq!(
+            attempted_result.execution_sort_authorities,
+            fresh_result.execution_sort_authorities
+        );
+        assert_eq!(
+            attempted_result.proof_check_sort_authorities,
+            fresh_result.proof_check_sort_authorities
+        );
+        assert_eq!(
+            sort_registration_fingerprint(&attempted),
+            sort_registration_fingerprint(&fresh)
+        );
+        assert_eq!(
+            attempted.type_info.linked_sort_arc_count(),
+            fresh.type_info.linked_sort_arc_count()
+        );
+        let attempted_source = &attempted
+            .proof_state
+            .original_typechecking
+            .as_ref()
+            .unwrap()
+            .type_info;
+        let fresh_source = &fresh
+            .proof_state
+            .original_typechecking
+            .as_ref()
+            .unwrap()
+            .type_info;
+        assert_eq!(
+            type_info_sort_registration_fingerprint(attempted_source),
+            type_info_sort_registration_fingerprint(fresh_source)
+        );
+        assert_eq!(
+            attempted_source.linked_sort_arc_count(),
+            fresh_source.linked_sort_arc_count()
+        );
+        assert_eq!(compile_only_state(&attempted), compile_only_state(&fresh));
+    }
+
+    #[test]
+    fn compile_only_proof_nested_fail_sorts_keep_exact_cross_view_lineage() {
+        let mut egraph = EGraph::new_compile_only(true);
+        egraph
+            .resolve_program_compile_only(
+                None,
+                r#"
+                (fail
+                  (sort BeforeFailure)
+                  (fail
+                    (sort DeeplyNested)
+                    (check (= 1 2)))
+                  (check (= 1 2))
+                  (sort AfterFailure))
+                "#,
+            )
+            .unwrap();
+
+        let source_type_info = &egraph
+            .proof_state
+            .original_typechecking
+            .as_ref()
+            .expect("proof mode retains its source-program typechecking view")
+            .type_info;
+        for name in ["BeforeFailure", "DeeplyNested", "AfterFailure"] {
+            let execution_arc = egraph
+                .type_info
+                .sorts
+                .get(name)
+                .unwrap_or_else(|| panic!("execution view lost nested sort {name}"));
+            let source_arc = source_type_info
+                .sorts
+                .get(name)
+                .unwrap_or_else(|| panic!("source view lost nested sort {name}"));
+            assert!(
+                egraph.type_info.same_sort(execution_arc, source_arc),
+                "execution view did not retain producer lineage for {name}"
+            );
+            assert!(
+                source_type_info.same_sort(execution_arc, source_arc),
+                "source view did not retain producer lineage for {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn compile_only_sort_sidecar_remaps_through_nested_global_expansion() {
+        let mut egraph = EGraph::new_compile_only(false);
+        let resolved = egraph
+            .resolve_program_compile_only(
+                None,
+                r#"
+                (fail
+                  (let $global 1)
+                  (sort NestedAfterGlobal)
+                  (check (= 1 2)))
+                "#,
+            )
+            .unwrap();
+
+        let [authority] = resolved.execution_sort_authorities.as_slice() else {
+            panic!("expected exactly one finalized sort authority")
+        };
+        assert_eq!(authority.command_path, [0, 2]);
+        assert!(authority.source.is_none());
+        let ResolvedNCommand::Fail(_, nested) = &resolved.execution[0].command else {
+            panic!("source fail did not remain one transaction command")
+        };
+        assert!(matches!(
+            &nested[2],
+            ResolvedNCommand::Sort { name, .. } if name == "NestedAfterGlobal"
+        ));
+        assert_eq!(
+            egraph
+                .type_info
+                .sort_registration(authority.local)
+                .unwrap()
+                .sort
+                .name(),
+            "NestedAfterGlobal"
+        );
     }
 
     #[test]
@@ -4800,8 +5259,33 @@ mod tests {
 
         assert!(!resolved.execution.is_empty());
         assert!(!resolved.proof_check.is_empty());
-        assert_eq!(resolved.execution, resolved_again.execution);
-        assert_eq!(resolved.proof_check, resolved_again.proof_check);
+        let stable_rendering = |commands: &[CompileOnlyResolvedCommand]| {
+            commands
+                .iter()
+                .map(|command| {
+                    (
+                        command.source_command_ordinal,
+                        command.command.to_command().to_string(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            stable_rendering(&resolved.execution),
+            stable_rendering(&resolved_again.execution)
+        );
+        assert_eq!(
+            stable_rendering(&resolved.proof_check),
+            stable_rendering(&resolved_again.proof_check)
+        );
+        assert_eq!(
+            resolved.execution_sort_authorities,
+            resolved_again.execution_sort_authorities
+        );
+        assert_eq!(
+            resolved.proof_check_sort_authorities,
+            resolved_again.proof_check_sort_authorities
+        );
         assert_eq!(resolved.source_commands, resolved_again.source_commands);
         assert_eq!(resolved.source_commands.len(), 4);
         for stream in [&resolved.execution, &resolved.proof_check] {
@@ -4813,6 +5297,145 @@ mod tests {
             }));
         }
         assert_eq!(compile_only_state(&egraph), compile_only_state(&again));
+
+        fn sort_name_at_path<'a>(
+            commands: &'a [CompileOnlyResolvedCommand],
+            path: &[usize],
+        ) -> &'a str {
+            let (top, rest) = path.split_first().unwrap();
+            let mut command = &commands[*top].command;
+            for child in rest {
+                let ResolvedNCommand::Fail(_, nested) = command else {
+                    panic!("sort authority path traversed a non-Fail command")
+                };
+                command = &nested[*child];
+            }
+            let ResolvedNCommand::Sort { name, .. } = command else {
+                panic!("sort authority path targeted a non-Sort command")
+            };
+            name
+        }
+
+        let execution_sorts = resolved
+            .execution_sort_authorities
+            .iter()
+            .map(|authority| {
+                (
+                    sort_name_at_path(&resolved.execution, &authority.command_path),
+                    authority.local,
+                )
+            })
+            .collect::<Vec<_>>();
+        let proof_sorts = resolved
+            .proof_check_sort_authorities
+            .iter()
+            .map(|authority| {
+                (
+                    sort_name_at_path(&resolved.proof_check, &authority.command_path),
+                    authority.local,
+                )
+            })
+            .collect::<Vec<_>>();
+        let (execution_name, proof_name, colliding_identity) = execution_sorts
+            .iter()
+            .find_map(|(execution_name, execution_identity)| {
+                proof_sorts.iter().find_map(|(proof_name, proof_identity)| {
+                    (*execution_identity == *proof_identity && execution_name != proof_name)
+                        .then_some((*execution_name, *proof_name, *execution_identity))
+                })
+            })
+            .expect("proof and execution views should exhibit a raw-ID collision canary");
+        assert_eq!(
+            egraph
+                .type_info
+                .sort_registration(colliding_identity)
+                .unwrap()
+                .sort
+                .name(),
+            execution_name
+        );
+        let proof_type_info = &egraph
+            .proof_state
+            .original_typechecking
+            .as_ref()
+            .expect("proof mode retains its source-program typechecking view")
+            .type_info;
+        assert_eq!(
+            proof_type_info
+                .sort_registration(colliding_identity)
+                .unwrap()
+                .sort
+                .name(),
+            proof_name
+        );
+        assert_ne!(execution_name, proof_name);
+
+        let execution_x_identity = execution_sorts
+            .iter()
+            .find_map(|(name, identity)| (*name == "X").then_some(*identity))
+            .expect("execution view should retain the source X sort");
+        let proof_x_identity = proof_sorts
+            .iter()
+            .find_map(|(name, identity)| (*name == "X").then_some(*identity))
+            .expect("proof-check view should retain the source X sort");
+        let execution_x_arc = egraph
+            .type_info
+            .sort_registration(execution_x_identity)
+            .unwrap()
+            .sort
+            .clone();
+        let proof_x_arc = proof_type_info
+            .sort_registration(proof_x_identity)
+            .unwrap()
+            .sort
+            .clone();
+        assert_eq!(
+            proof_type_info
+                .sort_registration_for_arc(&execution_x_arc)
+                .unwrap()
+                .identity,
+            proof_x_identity,
+            "the execution producer arc should resolve through its explicit source-view link"
+        );
+        assert_eq!(
+            egraph
+                .type_info
+                .sort_registration_for_arc(&proof_x_arc)
+                .unwrap()
+                .identity,
+            execution_x_identity,
+            "the source producer arc should resolve through its explicit execution-view link"
+        );
+        assert!(
+            egraph.type_info.same_sort(&execution_x_arc, &proof_x_arc),
+            "the execution view should equate its canonical arc with the stamped source arc"
+        );
+        assert!(
+            proof_type_info.same_sort(&execution_x_arc, &proof_x_arc),
+            "the source view should equate its canonical arc with the stamped execution arc"
+        );
+        let same_shaped_decoy: ArcSort = Arc::new(EqSort {
+            name: "X".to_owned(),
+        });
+        assert!(
+            egraph
+                .type_info
+                .sort_registration_for_arc(&same_shaped_decoy)
+                .is_none(),
+            "same-shaped execution decoys must not inherit explicit lineage"
+        );
+        assert!(
+            proof_type_info
+                .sort_registration_for_arc(&same_shaped_decoy)
+                .is_none(),
+            "same-shaped source decoys must not inherit explicit lineage"
+        );
+        assert!(
+            !egraph
+                .type_info
+                .same_sort(&execution_x_arc, &same_shaped_decoy)
+        );
+        assert!(!proof_type_info.same_sort(&proof_x_arc, &same_shaped_decoy));
 
         let write_only_contexts = |primitive: &typechecking::PrimitiveWithId| {
             assert_eq!(
@@ -5160,7 +5783,7 @@ mod tests {
             .pop()
             .unwrap();
         let mut resolved = egraph.resolve_command_before_proofs(command).unwrap();
-        let ResolvedNCommand::Function(declaration) = resolved.pop().unwrap() else {
+        let ResolvedNCommand::Function(declaration) = resolved.commands.pop().unwrap() else {
             panic!("function declaration did not remain a resolved function");
         };
         let mut merge = declaration.merge.unwrap();
@@ -5232,22 +5855,82 @@ mod tests {
     fn proof_support_accepts_container_sort_declarations() {
         let mut egraph = EGraph::default();
         let resolved = egraph
-            .resolve_program(None, "(datatype X (x))\n(sort XPair (Pair X i64))")
+            .resolve_program_with_sort_authority(
+                None,
+                "(datatype X (x))\n(sort XPair (Pair X i64))",
+            )
             .unwrap();
-        assert!(program_supports_proofs(&resolved, &egraph.type_info));
+        assert!(finalized_program_supports_proofs(
+            &resolved,
+            &egraph.type_info
+        ));
 
         let mut egraph = EGraph::default();
         let resolved = egraph
-            .resolve_program(None, "(datatype X (x))\n(sort XFn (UnstableFn (X) X))")
+            .resolve_program_with_sort_authority(
+                None,
+                "(datatype X (x))\n(sort XFn (UnstableFn (X) X))",
+            )
             .unwrap();
-        assert!(program_supports_proofs(&resolved, &egraph.type_info));
+        assert!(finalized_program_supports_proofs(
+            &resolved,
+            &egraph.type_info
+        ));
+    }
+
+    #[test]
+    fn proof_support_uses_exact_function_output_not_diagnostic_schema() {
+        let mut egraph = EGraph::default();
+        let mut resolved = egraph
+            .resolve_program_with_sort_authority(
+                None,
+                r#"
+                (datatype E (Mk))
+                (function scalar () i64 :no-merge)
+                (function eclass () E :no-merge)
+                "#,
+            )
+            .unwrap();
+
+        let scalar = resolved
+            .commands
+            .iter_mut()
+            .find(|command| {
+                matches!(command, ResolvedNCommand::Function(function) if function.name == "scalar")
+            })
+            .expect("resolved scalar function");
+        let ResolvedNCommand::Function(function) = scalar else {
+            unreachable!()
+        };
+        function.schema.outputs[0] = "E".to_owned();
+        assert!(
+            command_supports_proof_encoding_with_sort_authorities(scalar, &egraph.type_info, &[])
+                .is_ok(),
+            "a diagnostic eq-sort spelling must not override the exact i64 output"
+        );
+
+        let eclass = resolved
+            .commands
+            .iter_mut()
+            .find(|command| {
+                matches!(command, ResolvedNCommand::Function(function) if function.name == "eclass")
+            })
+            .expect("resolved eclass function");
+        let ResolvedNCommand::Function(function) = eclass else {
+            unreachable!()
+        };
+        function.schema.outputs[0] = "i64".to_owned();
+        assert!(matches!(
+            command_supports_proof_encoding_with_sort_authorities(eclass, &egraph.type_info, &[]),
+            Err(ProofEncodingUnsupportedReason::NoMergeEqSortFunction)
+        ));
     }
 
     #[test]
     fn proof_support_rejects_unstable_fn_primitives_without_validators() {
         let mut egraph = EGraph::default();
         let resolved = egraph
-            .resolve_program(
+            .resolve_program_with_sort_authority(
                 None,
                 r#"
                 (datatype X (x))
@@ -5257,14 +5940,17 @@ mod tests {
                 "#,
             )
             .unwrap();
-        assert!(!program_supports_proofs(&resolved, &egraph.type_info));
+        assert!(!finalized_program_supports_proofs(
+            &resolved,
+            &egraph.type_info
+        ));
     }
 
     #[test]
     fn proof_support_accepts_set_primitive_validators() {
         let mut egraph = EGraph::default();
         let resolved = egraph
-            .resolve_program(
+            .resolve_program_with_sort_authority(
                 None,
                 r#"
                 (sort ISet (Set i64))
@@ -5282,7 +5968,10 @@ mod tests {
             )
             .unwrap();
 
-        assert!(program_supports_proofs(&resolved, &egraph.type_info));
+        assert!(finalized_program_supports_proofs(
+            &resolved,
+            &egraph.type_info
+        ));
     }
 
     /// `set-get` indexes the runtime value order, which the proof checker
@@ -5291,7 +5980,7 @@ mod tests {
     fn proof_support_rejects_set_get() {
         let mut egraph = EGraph::default();
         let resolved = egraph
-            .resolve_program(
+            .resolve_program_with_sort_authority(
                 None,
                 r#"
                 (sort ISet (Set i64))
@@ -5300,7 +5989,10 @@ mod tests {
             )
             .unwrap();
 
-        assert!(!program_supports_proofs(&resolved, &egraph.type_info));
+        assert!(!finalized_program_supports_proofs(
+            &resolved,
+            &egraph.type_info
+        ));
     }
 
     #[test]

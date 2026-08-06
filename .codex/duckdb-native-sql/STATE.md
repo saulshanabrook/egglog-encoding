@@ -4387,3 +4387,116 @@ Exact next command after committing this accepted substrate:
 ```text
 cargo test -p egglog sort_registration --lib
 ```
+
+### Checkpoint 2 slice F accepted: producer-stamped sort authority (2026-08-06)
+
+Design B is now the sole architecture. Exact resolved function, index,
+primitive, binding, and sort registrations are semantic authority. Names,
+textual schemas, Rust storage types, declaration order, and equal numeric
+ordinals from different frontend views are diagnostic/display data only. No
+Design A fallback or proof-role inference remains in this slice.
+
+Every admitted sort now receives a monotone, stream-local
+`SortRegistrationId`. `TypeInfo` owns O(1) indexes for its canonical arcs,
+explicitly linked sibling-view arcs, and the seven exact builtin definitions.
+Resolved specializations retain canonical local arcs; an unstamped lookalike
+fails closed. Pop, parser replacement, proof-view cloning, and compile-only
+rollback preserve the high-water marks so retired authority is never reused.
+Primitive registrations are view-qualified, while raw `ResolvedCall` and
+`FuncType` equality is explicitly local-catalog only.
+
+`FinalizedProgram` carries a private recursive `SortAuthorityAt` sidecar. Its
+command paths cover exactly every nested `Sort`, and producer stamps are
+remapped through macro expansion, proof normalization, input lowering, global
+elimination, term encoding, append, and nested `Fail`. Proof admission and
+proof instrumentation consume that exact sidecar. Container meaning is read
+from the producer-stamped registration rather than `presort_and_args`, a sort
+name, or a storage shape. The constructor/custom-function proof gate likewise
+uses the exact resolved `FunctionSubtype` and exact output sort; a regression
+canary protects ordinary constructors from the custom `:no-merge` rejection.
+
+`BaseSort` and `ContainerSort` expose a canonical-self registration hook, and
+presort families are stamped by exact producer `TypeId`. Maybe, Either, Vec,
+MultiSet, Set, Map, Pair, and UnstableFn specializations use those identities.
+Same-name, same-schema, and same-storage decoys remain literal decoys. A legacy
+extension that constructs a fresh custom `to_arcsort()` inside a later
+constraint must migrate to the canonical-self hook; guessing its meaning would
+reintroduce Design A and is intentionally forbidden.
+
+Authenticated implementation digest before this state append:
+
+```text
+HEAD before checkpoint commit                     6eb81a06ba5f35fa2883be88bbdb752983f7fda3
+independent scoped Design B digest                 81db004d05843ff121f19fcc739fd9dbf981e5902895b0a760332543e9eef496
+egglog/src/frontend_program.rs                     e59486472c1b418e314a00b9b16f395a4b700c65384c0e4b5dff29462f605630
+egglog/src/frontend_snapshot.rs                    fb0336f418f5f1cbdc9ce7f305a105984e5a810d706a398c1c26d5607c3f89aa
+egglog/src/core.rs                                 5e8d831fa2f2218d8917e0ab0e69aeec87a06abe8b37adec78b495edb5afdfa6
+egglog/src/typechecking.rs                         d8df448d9a8a0e70d319e184f09475b585073cb18c5c75acfd4a0c227fc8aaa3
+egglog/src/proofs/proof_encoding.rs                3f01ccab5f715971ea89b8e895813724c2754ff96c698170d068e64d1e316bb9
+egglog/src/proofs/proof_encoding_helpers.rs        b6c35c4742b7245c228a2068a4f0a0f2f26c3de7780b71c22494cf08623c64ef
+egglog-experimental/src/container_primitives.rs    79cb75010ae9435236de82cae72479924af238cee71edd0831c2ff1d80cd98d9
+```
+
+Validation on the final implementation bytes:
+
+```text
+cargo test -p egglog --lib                                      236 passed
+cargo test -p egglog-experimental --lib                           2 passed
+cargo clippy -p egglog --lib --tests -- -D warnings              passed
+cargo clippy -p egglog-experimental --lib --tests -- -D warnings passed
+make proof-tests                                                  passed (216 cases)
+cargo fmt --all -- --check                                       passed
+git diff --check                                                  passed
+independent final-byte Design B review                            PASS
+```
+
+Accepted no-go facts and risks:
+
+1. Raw resolved-call equality is local-catalog only; the snapshot mapper must
+   qualify execution and proof streams separately and must never compare raw
+   ordinals across them.
+2. Fresh legacy custom-sort wrappers fail closed. The supported migration is
+   the explicit canonical-self registration hook, never name/type/shape
+   recovery.
+3. `TypeInfo::add_presort` now requires a `'static` producer so it can carry
+   exact `TypeId` authority; lifetime-parameterized downstream presorts require
+   an explicit redesign rather than heuristic compatibility.
+4. Primitive-registration callback panics restore the detached proof view, but
+   the broader registration operation is not promised transactional if an
+   external caller catches that panic.
+5. Runtime `Fail` stops at its first failing child while typechecking remains
+   eager. The standalone mapper must model the runtime first-error/output-prefix
+   contract and may not treat later typechecked auxiliaries as executed.
+
+Scoreboard: checkpoint 0 merge/integration and checkpoint 1 stock-DuckDB kernel
+are complete. Checkpoint 2 now has exact nominal function/index/primitive,
+binding, scalar, and sort authority, but grouped physical-source capture and
+the pure two-view mapper remain open. SQL emission, EqSat standalone replay,
+the four-workload corpus, and benchmark integration remain pending.
+
+Circle roster for the next frontier:
+
+- integration/API owns `frontend_capture.rs` plus narrow parser/`lib.rs`
+  plumbing; it must preserve physical groups, zero-command groups, exact
+  subcommand ranges, and EOF trivia; flattened text reconstruction is
+  forbidden; verify with `cargo test -p egglog frontend_capture --lib`; stop
+  on any backend access or ambiguous producer fan-out;
+- engine semantics is read-only because the stock kernel is already pinned;
+  host feedback and backend callbacks remain forbidden; no movement is
+  expected until a real snapshot reaches lowering;
+- compiler lowering owns the later exact runtime-function registry and pure
+  mapper link; it may consume exact IDs only; verify with same-name/schema
+  decoys and cross-view qualification; stop at the first unresolved carrier;
+- semantic oracle owns source-group, first-error, proof-sidecar, and output
+  prefix canaries; table-size-only evidence is forbidden; verify with
+  `make proof-tests` after each captured-view change;
+- artifacts/benchmarks remain read-only until whole-program preflight and
+  byte-identical double capture pass; trace harvesting is forbidden;
+- independent review remains read-only and reauthenticates every accepted
+  carrier slice; accepting diagnostic inference is an immediate stop.
+
+Exact next command after this checkpoint commit:
+
+```text
+/opt/homebrew/bin/timeout 110 cargo test -p egglog frontend_capture --lib
+```

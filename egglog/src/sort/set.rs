@@ -132,9 +132,7 @@ impl ContainerSort for SetSort {
             .collect()
     }
 
-    fn register_primitives(&self, eg: &mut EGraph) {
-        let arc = self.clone().to_arcsort();
-
+    fn register_primitives_with_sort(&self, eg: &mut EGraph, arc: ArcSort) {
         // Proof term form of a set: `(set-of e0 e1 ...)` sorted and
         // deduplicated, matching `reconstruct_termdag`. Each validator
         // round-trips through a Rust `BTreeSet` (see `set_term_to_btreeset`),

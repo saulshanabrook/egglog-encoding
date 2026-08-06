@@ -804,18 +804,18 @@ pub enum GeneratedCommandRole {
 pub enum CommandOrigin {
     Source(SourceSubcommandRef),
     Generated {
-        /// The triggering physical transaction, absent only for a global proof
-        /// header or frontend prelude.
-        source_group: Option<SourceGroupId>,
+        /// The exact triggering parsed subcommand, absent only for a global
+        /// proof header or frontend prelude.
+        trigger: Option<SourceSubcommandRef>,
         role: GeneratedCommandRole,
     },
 }
 
 impl CommandOrigin {
-    fn source_group(&self) -> Option<SourceGroupId> {
+    fn source_trigger(&self) -> Option<SourceSubcommandRef> {
         match self {
-            Self::Source(source) => Some(source.group),
-            Self::Generated { source_group, .. } => *source_group,
+            Self::Source(source) => Some(*source),
+            Self::Generated { trigger, .. } => *trigger,
         }
     }
 
@@ -1147,7 +1147,7 @@ impl FrontendProgram {
                 if proof_inputs != execution_inputs {
                     return Err(invalid(
                         "streams.inputs",
-                        "execution and proof-check projections do not share the exact payload sequence per source group",
+                        "execution and proof-check projections do not share the exact payload sequence per source subcommand",
                     ));
                 }
                 let mut directly_used_sources = execution.direct_source_uses();
@@ -1311,8 +1311,8 @@ impl ProgramView {
     fn input_uses(
         &self,
         projection: InputProjection,
-    ) -> ValidationResult<BTreeMap<SourceGroupId, Vec<InputPayloadId>>> {
-        let mut uses = BTreeMap::<SourceGroupId, Vec<InputPayloadId>>::new();
+    ) -> ValidationResult<BTreeMap<SourceSubcommandRef, Vec<InputPayloadId>>> {
+        let mut uses = BTreeMap::<SourceSubcommandRef, Vec<InputPayloadId>>::new();
         for envelope in &self.commands {
             let mut stack = vec![(&envelope.command, &envelope.origin)];
             while let Some((command, origin)) = stack.pop() {
@@ -1334,13 +1334,13 @@ impl ProgramView {
                                 "input target plan is attached to the wrong program projection",
                             ));
                         }
-                        let source_group = origin.source_group().ok_or_else(|| {
+                        let source = origin.source_trigger().ok_or_else(|| {
                             invalid(
                                 "streams.inputs",
-                                "input command has no exact source-group association",
+                                "input command has no exact source-subcommand association",
                             )
                         })?;
-                        uses.entry(source_group).or_default().push(*payload);
+                        uses.entry(source).or_default().push(*payload);
                     }
                     ProgramCommand::Fail(block) => {
                         stack.extend(
@@ -1376,7 +1376,7 @@ enum InputProjection {
 }
 
 fn validate_input_uses(
-    uses: &BTreeMap<SourceGroupId, Vec<InputPayloadId>>,
+    uses: &BTreeMap<SourceSubcommandRef, Vec<InputPayloadId>>,
     inputs: &[InputPayload],
     path: &str,
 ) -> ValidationResult {
@@ -1763,18 +1763,8 @@ impl<'a> Catalog<'a> {
     }
 
     fn validate_indexes(&self) -> ValidationResult {
-        let mut names = BTreeSet::new();
-        for function in &self.view.core.functions {
-            names.insert(function.name.as_str());
-        }
         for declaration in &self.view.indexes {
             let path = format!("{}.index[{}]", self.path, declaration.id.ordinal());
-            if !names.insert(declaration.name.as_str()) {
-                return Err(invalid(
-                    &path,
-                    format!("duplicate function/index name `{}`", declaration.name),
-                ));
-            }
             let target = self.function(declaration.target, &format!("{path}.target"))?;
             if declaration.any_of.is_empty() {
                 return Err(invalid(format!("{path}.any_of"), "index any_of is empty"));
@@ -2315,7 +2305,7 @@ impl<'a> Catalog<'a> {
                 source,
                 &mut source_order,
                 &mut used_schedules,
-                envelope.origin.source_group(),
+                envelope.origin.source_trigger(),
                 &path,
             )?;
 
@@ -2368,7 +2358,7 @@ impl<'a> Catalog<'a> {
         source: &SourceDocument,
         source_order: &mut SourceOrder,
         used_schedules: &mut BTreeSet<ScheduleId>,
-        enclosing_group: Option<SourceGroupId>,
+        enclosing_source: Option<SourceSubcommandRef>,
         path: &str,
     ) -> ValidationResult {
         // Fail blocks may nest arbitrarily; preserve their sequential catalog
@@ -2378,7 +2368,7 @@ impl<'a> Catalog<'a> {
             path: String,
             nested: Option<(&'a FailCommand, usize, String)>,
             inside_fail: bool,
-            enclosing_group: Option<SourceGroupId>,
+            enclosing_source: Option<SourceSubcommandRef>,
         }
 
         let mut stack = vec![PendingCommand {
@@ -2386,7 +2376,7 @@ impl<'a> Catalog<'a> {
             path: path.to_owned(),
             nested: None,
             inside_fail: false,
-            enclosing_group,
+            enclosing_source,
         }];
         while let Some(pending) = stack.pop() {
             let PendingCommand {
@@ -2394,9 +2384,9 @@ impl<'a> Catalog<'a> {
                 path,
                 nested,
                 inside_fail,
-                enclosing_group,
+                enclosing_source,
             } = pending;
-            let mut current_group = enclosing_group;
+            let mut current_source = enclosing_source;
             if let Some((nested, index, arena)) = nested {
                 validate_dense_id(nested.ordinal.ordinal(), index, &arena)?;
                 if nested.display.resolved.is_empty() {
@@ -2406,13 +2396,13 @@ impl<'a> Catalog<'a> {
                     ));
                 }
                 validate_ordered_origin(&nested.origin, source, source_order, &path)?;
-                if nested.origin.source_group() != enclosing_group {
+                if nested.origin.source_trigger() != enclosing_source {
                     return Err(invalid(
                         format!("{path}.origin"),
-                        "nested Fail command is not associated with its enclosing source group",
+                        "nested Fail command is not associated with its enclosing source trigger",
                     ));
                 }
-                current_group = nested.origin.source_group();
+                current_source = nested.origin.source_trigger();
             }
             if inside_fail
                 && matches!(
@@ -2538,7 +2528,7 @@ impl<'a> Catalog<'a> {
                                 path: format!("{path}.fail.commands[{index}]"),
                                 nested: Some((nested, index, arena.clone())),
                                 inside_fail: true,
-                                enclosing_group: current_group,
+                                enclosing_source: current_source,
                             }),
                     );
                 }
@@ -3158,9 +3148,25 @@ fn validate_origin(
                 })?;
             Ok(())
         }
-        CommandOrigin::Generated { source_group, role } => {
-            if let Some(group) = source_group {
-                validate_group(*group)?;
+        CommandOrigin::Generated { trigger, role } => {
+            if let Some(source_ref) = trigger {
+                let group = validate_group(source_ref.group)?;
+                let index = usize::try_from(source_ref.subcommand.ordinal())
+                    .map_err(|_| invalid(path, "source subcommand ID is not addressable"))?;
+                group
+                    .subcommands
+                    .get(index)
+                    .filter(|candidate| candidate.id == source_ref.subcommand)
+                    .ok_or_else(|| {
+                        invalid(
+                            format!("{path}.origin"),
+                            format!(
+                                "dangling source subcommand ID {} in group {}",
+                                source_ref.subcommand.ordinal(),
+                                source_ref.group.ordinal()
+                            ),
+                        )
+                    })?;
             }
             if let GeneratedCommandRole::Other(description) = role {
                 return Err(invalid(
@@ -3172,10 +3178,10 @@ fn validate_origin(
                 role,
                 GeneratedCommandRole::FrontendPrelude | GeneratedCommandRole::ProofHeader
             );
-            if source_less != source_group.is_none() {
+            if source_less != trigger.is_none() {
                 return Err(invalid(
                     format!("{path}.origin"),
-                    "generated-command role has the wrong source-group association",
+                    "generated-command role has the wrong source-trigger association",
                 ));
             }
             Ok(())
@@ -3185,8 +3191,8 @@ fn validate_origin(
 
 #[derive(Default)]
 struct SourceOrder {
-    previous_group: Option<SourceGroupId>,
-    previous_direct: Option<SourceSubcommandRef>,
+    previous_source: Option<SourceSubcommandRef>,
+    saw_source_associated: bool,
 }
 
 fn validate_ordered_origin(
@@ -3196,31 +3202,23 @@ fn validate_ordered_origin(
     path: &str,
 ) -> ValidationResult {
     validate_origin(origin, source, path)?;
-    if let Some(group) = origin.source_group() {
+    if let Some(current) = origin.source_trigger() {
         if order
-            .previous_group
-            .is_some_and(|previous| group < previous)
+            .previous_source
+            .is_some_and(|previous| current < previous)
         {
             return Err(invalid(
                 format!("{path}.origin"),
-                "source group ID moved backwards",
+                "source trigger moved backwards",
             ));
         }
-        if order.previous_group != Some(group) {
-            order.previous_group = Some(group);
-            order.previous_direct = None;
-        }
-    }
-    if let Some(direct) = origin.direct_source() {
-        if order.previous_direct.is_some_and(|previous| {
-            previous.group == direct.group && direct.subcommand < previous.subcommand
-        }) {
-            return Err(invalid(
-                format!("{path}.origin"),
-                "direct source subcommand ID moved backwards within its group",
-            ));
-        }
-        order.previous_direct = Some(direct);
+        order.previous_source = Some(current);
+        order.saw_source_associated = true;
+    } else if order.saw_source_associated {
+        return Err(invalid(
+            format!("{path}.origin"),
+            "source-less generated command appears after source-associated commands",
+        ));
     }
     Ok(())
 }
@@ -3379,13 +3377,18 @@ impl PrefixState {
         functions: &[FunctionId],
         path: &str,
     ) -> ValidationResult {
-        let mut expected = BTreeSet::new();
+        let mut expected = Vec::new();
         for function in self.function_order.iter().copied() {
             let declaration = catalog.function(function, path)?;
             if !declaration.internal_hidden && !declaration.internal_let {
-                expected.insert(function);
+                expected.push((declaration.display.print_size_name.clone(), function));
             }
         }
+        expected.sort();
+        let expected = expected
+            .into_iter()
+            .map(|(_, function)| function)
+            .collect::<Vec<_>>();
         let actual = functions.iter().copied().collect::<BTreeSet<_>>();
         if actual.len() != functions.len() {
             return Err(invalid(
@@ -3393,10 +3396,16 @@ impl PrefixState {
                 "all-functions print-size list repeats an exact ID",
             ));
         }
-        if actual != expected {
+        if actual != expected.iter().copied().collect::<BTreeSet<_>>() {
             return Err(invalid(
                 path,
                 "all-functions print-size list does not contain every exact prefix-visible public ID",
+            ));
+        }
+        if functions != expected {
+            return Err(invalid(
+                path,
+                "all-functions print-size list is not in lexical display-name order",
             ));
         }
         Ok(())
@@ -3787,7 +3796,7 @@ impl PrefixState {
 
 #[derive(Default)]
 struct VariableCatalog {
-    entries: BTreeMap<RuleVarId, (String, SortId)>,
+    entries: BTreeMap<RuleVarId, SortId>,
     order: Vec<RuleVarId>,
 }
 
@@ -3800,17 +3809,16 @@ impl VariableCatalog {
     ) -> ValidationResult {
         catalog.sort(variable.sort, path)?;
         match self.entries.get(&variable.id) {
-            Some((name, sort)) if name != &variable.name || *sort != variable.sort => Err(invalid(
+            Some(sort) if *sort != variable.sort => Err(invalid(
                 path,
                 format!(
-                    "variable ID {} is reused with a different name or sort",
+                    "variable ID {} is reused with a different sort",
                     variable.id.ordinal()
                 ),
             )),
             Some(_) => Ok(()),
             None => {
-                self.entries
-                    .insert(variable.id, (variable.name.clone(), variable.sort));
+                self.entries.insert(variable.id, variable.sort);
                 self.order.push(variable.id);
                 Ok(())
             }
@@ -4563,7 +4571,7 @@ mod tests {
         let mut view = base_view();
         for command in &mut view.commands {
             command.origin = CommandOrigin::Generated {
-                source_group: None,
+                trigger: None,
                 role: GeneratedCommandRole::FrontendPrelude,
             };
         }
@@ -4662,7 +4670,7 @@ mod tests {
             CommandOrigin::Source(source_ref(9, 0)),
             CommandOrigin::Source(source_ref(0, 9)),
             CommandOrigin::Generated {
-                source_group: Some(SourceGroupId::new(9)),
+                trigger: Some(source_ref(9, 0)),
                 role: GeneratedCommandRole::ProofMaintenance,
             },
         ] {
@@ -4674,18 +4682,18 @@ mod tests {
 
         for origin in [
             CommandOrigin::Generated {
-                source_group: Some(SourceGroupId::new(0)),
+                trigger: Some(source_ref(0, 0)),
                 role: GeneratedCommandRole::ProofHeader,
             },
             CommandOrigin::Generated {
-                source_group: None,
+                trigger: None,
                 role: GeneratedCommandRole::ProofMaintenance,
             },
         ] {
             let mut view = base_view();
             view.commands[0].origin = origin;
             let error = program(view).validate().unwrap_err();
-            assert!(error.message.contains("wrong source-group association"));
+            assert!(error.message.contains("wrong source-trigger association"));
         }
     }
 
@@ -4694,7 +4702,7 @@ mod tests {
         let mut view = base_view();
         view.commands[0].origin = CommandOrigin::Source(source_ref(0, 0));
         view.commands[1].origin = CommandOrigin::Generated {
-            source_group: Some(SourceGroupId::new(0)),
+            trigger: Some(source_ref(0, 0)),
             role: GeneratedCommandRole::FrontendDesugaring,
         };
         for command in &mut view.commands[2..] {
@@ -4714,7 +4722,52 @@ mod tests {
         execution.commands[0].origin = CommandOrigin::Source(source_ref(0, 1));
         execution.commands[2].origin = CommandOrigin::Source(source_ref(0, 0));
         let error = reversed.validate().unwrap_err();
-        assert!(error.message.contains("subcommand ID moved backwards"));
+        assert!(error.message.contains("source trigger moved backwards"));
+    }
+
+    #[test]
+    fn generated_triggers_are_ordered_and_source_less_headers_form_a_prefix() {
+        let mut view = base_view();
+        view.commands[0].origin = CommandOrigin::Source(source_ref(0, 0));
+        view.commands[1].origin = CommandOrigin::Source(source_ref(0, 1));
+        for command in &mut view.commands[2..] {
+            command.origin = CommandOrigin::Generated {
+                trigger: Some(source_ref(0, 1)),
+                role: GeneratedCommandRole::FrontendDesugaring,
+            };
+        }
+        let exact = FrontendProgram {
+            source: source_document_with(&[("", "(two-command-macro)", 2)], ""),
+            inputs: Vec::new(),
+            streams: ProgramStreams::ExecutionOnly { execution: view },
+        };
+        exact.validate().unwrap();
+
+        let mut reversed = exact.clone();
+        let ProgramStreams::ExecutionOnly { execution } = &mut reversed.streams else {
+            unreachable!()
+        };
+        execution.commands[2].origin = CommandOrigin::Generated {
+            trigger: Some(source_ref(0, 0)),
+            role: GeneratedCommandRole::FrontendDesugaring,
+        };
+        let error = reversed.validate().unwrap_err();
+        assert!(error.message.contains("source trigger moved backwards"));
+
+        let mut late_header = exact;
+        let ProgramStreams::ExecutionOnly { execution } = &mut late_header.streams else {
+            unreachable!()
+        };
+        execution.commands[2].origin = CommandOrigin::Generated {
+            trigger: None,
+            role: GeneratedCommandRole::ProofHeader,
+        };
+        let error = late_header.validate().unwrap_err();
+        assert!(
+            error
+                .message
+                .contains("source-less generated command appears after")
+        );
     }
 
     #[test]
@@ -4738,7 +4791,7 @@ mod tests {
         execution.commands[0].origin = CommandOrigin::Source(source_ref(1, 0));
         execution.commands[1].origin = CommandOrigin::Source(source_ref(0, 0));
         let error = reversed.validate().unwrap_err();
-        assert!(error.message.contains("group ID moved backwards"));
+        assert!(error.message.contains("source trigger moved backwards"));
     }
 
     #[test]
@@ -4784,7 +4837,7 @@ mod tests {
         for origin in [
             CommandOrigin::Source(source_ref(0, 0)),
             CommandOrigin::Generated {
-                source_group: Some(SourceGroupId::new(0)),
+                trigger: Some(source_ref(0, 0)),
                 role: GeneratedCommandRole::ProofMaintenance,
             },
         ] {
@@ -4824,7 +4877,7 @@ mod tests {
         let mut view = base_view();
         for command in &mut view.commands {
             command.origin = CommandOrigin::Generated {
-                source_group: Some(SourceGroupId::new(0)),
+                trigger: Some(source_ref(0, 0)),
                 role: GeneratedCommandRole::FrontendDesugaring,
             };
         }
@@ -4847,7 +4900,7 @@ mod tests {
         ] {
             let mut view = base_view();
             view.commands[0].origin = CommandOrigin::Generated {
-                source_group: Some(SourceGroupId::new(0)),
+                trigger: Some(source_ref(0, 0)),
                 role,
             };
             program(view).validate().unwrap();
@@ -4911,7 +4964,7 @@ mod tests {
     }
 
     #[test]
-    fn all_print_size_membership_is_exact_but_display_names_do_not_reorder_it() {
+    fn all_print_size_membership_is_exact_and_display_order_is_lexical() {
         let mut view = base_view();
         view.commands.insert(
             4,
@@ -4930,6 +4983,15 @@ mod tests {
         view.core.functions[0].display.print_size_name = "z-renamed".to_owned();
         view.core.functions[1].name = "a-renamed".to_owned();
         view.core.functions[1].display.print_size_name = "a-renamed".to_owned();
+        let error = program(view.clone()).validate().unwrap_err();
+        assert!(error.message.contains("lexical display-name order"));
+
+        let ProgramCommand::PrintSize(PrintSizeTarget::All { functions }) =
+            &mut view.commands[4].command
+        else {
+            unreachable!()
+        };
+        functions.reverse();
         program(view.clone()).validate().unwrap();
 
         let ProgramCommand::PrintSize(PrintSizeTarget::All { functions }) =
@@ -4949,9 +5011,12 @@ mod tests {
     #[test]
     fn exact_index_identity_is_not_inferred_from_equal_shape() {
         let mut view = base_view();
+        let duplicate_diagnostic = view.core.functions[0].name.clone();
         view.indexes.push(IndexDecl {
             id: IndexId::new(1),
-            name: "left-index-decoy".to_owned(),
+            // A diagnostic may collide with a function or another index after
+            // resolution. IndexId, not this spelling, remains authoritative.
+            name: duplicate_diagnostic,
             target: LEFT,
             any_of: vec![0],
         });
@@ -5014,6 +5079,48 @@ mod tests {
         }
         let error = program(view).validate().unwrap_err();
         assert!(error.message.contains("index ID 1 is not available"));
+    }
+
+    #[test]
+    fn query_variable_identity_ignores_diagnostic_spelling_but_not_sort() {
+        let mut view = base_view();
+        view.commands.push(command(
+            5,
+            ProgramCommand::Check {
+                facts: FactQuery {
+                    primitive_context: PrimitiveCallContext::Read,
+                    atoms: vec![QueryAtom {
+                        call: QueryCall::Table {
+                            target: LEFT,
+                            read: ReadMode::All,
+                        },
+                        terms: vec![
+                            RuleTerm::Variable(RuleVar {
+                                id: RuleVarId::new(0),
+                                name: "first-diagnostic".to_owned(),
+                                sort: I64,
+                            }),
+                            RuleTerm::Variable(RuleVar {
+                                id: RuleVarId::new(0),
+                                name: "second-diagnostic".to_owned(),
+                                sort: I64,
+                            }),
+                        ],
+                    }],
+                },
+            },
+        ));
+        program(view.clone()).validate().unwrap();
+
+        let ProgramCommand::Check { facts } = &mut view.commands[5].command else {
+            unreachable!()
+        };
+        let RuleTerm::Variable(second) = &mut facts.atoms[0].terms[1] else {
+            unreachable!()
+        };
+        second.sort = UNIT;
+        let error = program(view).validate().unwrap_err();
+        assert!(error.message.contains("sort"), "{error:?}");
     }
 
     #[test]
@@ -5306,7 +5413,7 @@ mod tests {
     }
 
     #[test]
-    fn nested_fail_commands_cannot_cross_the_enclosing_source_group() {
+    fn nested_fail_commands_cannot_cross_the_enclosing_source_trigger() {
         let mut view = base_view();
         let mut nested = fail_command(
             0,
@@ -5337,7 +5444,7 @@ mod tests {
         }
         .validate()
         .unwrap_err();
-        assert!(error.message.contains("enclosing source group"));
+        assert!(error.message.contains("enclosing source trigger"));
     }
 
     #[test]
@@ -5430,21 +5537,23 @@ mod tests {
         exact.validate().unwrap();
 
         let mut retargeted = exact;
-        retargeted.source = source_document_with(
-            &[("", "(input left \"facts.tsv\")", 1), (" ", "(run)", 0)],
-            "",
-        );
+        retargeted.source = source_document_with(&[("", "(input-and-run-macro)", 2)], "");
         let ProgramStreams::ProofInstrumented { proof_check, .. } = &mut retargeted.streams else {
             unreachable!()
         };
-        for command in &mut proof_check.commands[2..] {
+        proof_check.commands[2].origin = CommandOrigin::Source(source_ref(0, 1));
+        for command in &mut proof_check.commands[3..] {
             command.origin = CommandOrigin::Generated {
-                source_group: Some(SourceGroupId::new(1)),
+                trigger: Some(source_ref(0, 1)),
                 role: GeneratedCommandRole::ProofInstrumentation,
             };
         }
         let error = retargeted.validate().unwrap_err();
-        assert!(error.message.contains("payload sequence per source group"));
+        assert!(
+            error
+                .message
+                .contains("payload sequence per source subcommand")
+        );
     }
 
     #[test]

@@ -23,8 +23,8 @@ pub use egglog_ast::core::{
 use egglog_ast::generic_ast::{GenericAction, GenericActions, GenericExpr};
 use egglog_ast::span::Span;
 use typechecking::{
-    FuncType, PrimitiveAuthority, PrimitiveRegistrationId, PrimitiveValidator, PrimitiveWithId,
-    TypeError,
+    FrontendAuthority, FuncType, PrimitiveAuthority, PrimitiveRegistrationId, PrimitiveValidator,
+    PrimitiveWithId, SortRegistrationId, TypeError,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,11 +53,45 @@ impl<Head> HeadOrEq<Head> {
 #[derive(Debug, Clone)]
 pub struct SpecializedPrimitive {
     prim_with_id: PrimitiveWithId,
+    registration_authority: FrontendAuthority<PrimitiveRegistrationId>,
     input: Vec<ArcSort>,
+    input_identities: Vec<SortRegistrationId>,
+    input_authorities: Vec<FrontendAuthority<SortRegistrationId>>,
     output: ArcSort,
+    output_identity: SortRegistrationId,
+    output_authority: FrontendAuthority<SortRegistrationId>,
 }
 
 impl SpecializedPrimitive {
+    fn new(
+        prim_with_id: PrimitiveWithId,
+        input: Vec<ArcSort>,
+        output: ArcSort,
+        typeinfo: &TypeInfo,
+    ) -> Self {
+        let input_identities = input
+            .iter()
+            .map(|sort| typeinfo.expect_sort_registration_id(sort))
+            .collect::<Vec<_>>();
+        let input_authorities = input_identities
+            .iter()
+            .map(|identity| typeinfo.sort_authority(*identity))
+            .collect();
+        let output_identity = typeinfo.expect_sort_registration_id(&output);
+        let output_authority = typeinfo.sort_authority(output_identity);
+        let registration_authority = prim_with_id.registration_authority();
+        Self {
+            prim_with_id,
+            registration_authority,
+            input,
+            input_identities,
+            input_authorities,
+            output,
+            output_identity,
+            output_authority,
+        }
+    }
+
     /// Get the name of this primitive
     pub fn name(&self) -> &str {
         self.prim_with_id.primitive.name()
@@ -73,7 +107,18 @@ impl SpecializedPrimitive {
         &self.input
     }
 
+    #[allow(dead_code)] // consumed by the standalone snapshot mapper
+    pub(crate) fn input_identities(&self) -> &[SortRegistrationId] {
+        &self.input_identities
+    }
+
+    #[allow(dead_code)] // consumed by the standalone snapshot mapper
+    pub(crate) fn output_identity(&self) -> SortRegistrationId {
+        self.output_identity
+    }
+
     /// Get the frontend-owned identity of this primitive registration.
+    #[allow(dead_code)] // consumed by the standalone snapshot mapper
     pub(crate) fn registration_id(&self) -> PrimitiveRegistrationId {
         self.prim_with_id.registration_id()
     }
@@ -109,14 +154,9 @@ impl PartialEq for SpecializedPrimitive {
         // the specialization of generic primitives. The primitive name and
         // validator are registration metadata, so they are intentionally not
         // separate key fields.
-        self.registration_id() == other.registration_id()
-            && self.output.name() == other.output.name()
-            && self.input.len() == other.input.len()
-            && self
-                .input
-                .iter()
-                .zip(&other.input)
-                .all(|(a, b)| a.name() == b.name())
+        self.registration_authority == other.registration_authority
+            && self.output_authority == other.output_authority
+            && self.input_authorities == other.input_authorities
     }
 }
 
@@ -124,15 +164,19 @@ impl Eq for SpecializedPrimitive {}
 
 impl Hash for SpecializedPrimitive {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.registration_id().hash(state);
-        self.output.name().hash(state);
-        self.input.len().hash(state);
-        for input in &self.input {
-            input.name().hash(state);
-        }
+        self.registration_authority.hash(state);
+        self.output_authority.hash(state);
+        self.input_authorities.hash(state);
     }
 }
 
+/// A resolved call in one frontend view.
+///
+/// `Func` ordinals and `Values` pointers are local-catalog keys only. Portable
+/// snapshot mapping consumes each view separately and qualifies those keys;
+/// callers must not compare raw calls from independent catalogs. Primitive
+/// specializations carry their deterministic view discriminator explicitly
+/// because proof instrumentation compares those keys across sibling views.
 #[derive(Debug, Clone)]
 pub enum ResolvedCall {
     Func(FuncType),
@@ -150,7 +194,10 @@ impl PartialEq for ResolvedCall {
             (ResolvedCall::Func(a), ResolvedCall::Func(b)) => a == b,
             (ResolvedCall::Primitive(a), ResolvedCall::Primitive(b)) => a == b,
             (ResolvedCall::Values(a), ResolvedCall::Values(b)) => {
-                a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.name() == y.name())
+                a.len() == b.len()
+                    && a.iter()
+                        .zip(b)
+                        .all(|(left, right)| Arc::ptr_eq(left, right))
             }
             _ => false,
         }
@@ -165,7 +212,16 @@ impl Hash for ResolvedCall {
         match self {
             ResolvedCall::Func(f) => f.hash(state),
             ResolvedCall::Primitive(p) => p.hash(state),
-            ResolvedCall::Values(sorts) => sorts.iter().for_each(|s| s.name().hash(state)),
+            ResolvedCall::Values(values) => {
+                values.len().hash(state);
+                for sort in values {
+                    // `Arc::ptr_eq` compares only the allocation address and
+                    // deliberately ignores trait-object metadata. Hash the
+                    // same thin data address so Eq and Hash cannot disagree if
+                    // equivalent vtables are duplicated or deduplicated.
+                    (Arc::as_ptr(sort) as *const ()).hash(state);
+                }
+            }
         }
     }
 }
@@ -186,7 +242,7 @@ impl ResolvedCall {
             // `values` has no single output; its first column is returned only so that callers
             // that incidentally ask for "a" sort do not panic. Tuple-output uses are routed
             // specially before this is consulted.
-            ResolvedCall::Values(sorts) => &sorts[0],
+            ResolvedCall::Values(values) => &values[0],
         }
     }
 
@@ -200,7 +256,7 @@ impl ResolvedCall {
                 types
             }
             ResolvedCall::Primitive(prim) => prim.input().to_vec(),
-            ResolvedCall::Values(sorts) => sorts.clone(),
+            ResolvedCall::Values(values) => values.clone(),
         }
     }
 
@@ -214,9 +270,13 @@ impl ResolvedCall {
     ) -> Option<ResolvedCall> {
         if let Some(ty) = typeinfo.get_func_type(head) {
             // As long as input types match, a result is returned.
-            let expected = ty.input.iter().map(|s| s.name());
-            let actual = types.iter().map(|s| s.name());
-            if expected.eq(actual) {
+            if ty.input.len() == types.len()
+                && ty
+                    .input
+                    .iter()
+                    .zip(types)
+                    .all(|(expected, actual)| typeinfo.same_sort(expected, actual))
+            {
                 return Some(ResolvedCall::Func(ty.clone()));
             }
         }
@@ -230,9 +290,12 @@ impl ResolvedCall {
         ctx: crate::Context,
     ) -> ResolvedCall {
         if let Some(ty) = typeinfo.get_func_type(head) {
-            let expected = ty.input.iter().chain(ty.outputs.iter()).map(|s| s.name());
-            let actual = types.iter().map(|s| s.name());
-            if expected.eq(actual) {
+            let expected = ty.input.iter().chain(ty.outputs.iter());
+            if ty.input.len() + ty.outputs.len() == types.len()
+                && expected
+                    .zip(types)
+                    .all(|(expected, actual)| typeinfo.same_sort(expected, actual))
+            {
                 return ResolvedCall::Func(ty.clone());
             }
         }
@@ -249,11 +312,12 @@ impl ResolvedCall {
                 );
             }
             let (out, inp) = types.split_last().unwrap();
-            return ResolvedCall::Primitive(SpecializedPrimitive {
-                prim_with_id: picked.clone(),
-                input: inp.to_vec(),
-                output: out.clone(),
-            });
+            return ResolvedCall::Primitive(SpecializedPrimitive::new(
+                picked.clone(),
+                inp.to_vec(),
+                out.clone(),
+                typeinfo,
+            ));
         }
 
         panic!("No resolution for {head:?} in context {ctx:?}");
@@ -984,11 +1048,12 @@ impl ResolvedRuleExt for ResolvedRule {
             panic!("frontend did not register exact value-eq primitive authority")
         });
         let value_eq = |at1: &ResolvedAtomTerm, at2: &ResolvedAtomTerm| {
-            ResolvedCall::Primitive(SpecializedPrimitive {
-                prim_with_id: value_eq.clone(),
-                input: vec![atom_term_sort(at1), atom_term_sort(at2)],
-                output: UnitSort.to_arcsort(),
-            })
+            ResolvedCall::Primitive(SpecializedPrimitive::new(
+                value_eq.clone(),
+                vec![atom_term_sort(at1), atom_term_sort(at2)],
+                UnitSort.to_arcsort(),
+                typeinfo,
+            ))
         };
 
         let rule = self.to_core_rule(typeinfo, fresh_gen, union_to_set_optimization)?;
@@ -1011,6 +1076,30 @@ mod tests {
     use super::*;
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
+
+    #[derive(Clone)]
+    struct ScopedIdentityPrimitive(&'static str);
+
+    impl Primitive for ScopedIdentityPrimitive {
+        fn name(&self) -> &str {
+            self.0
+        }
+
+        fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+            crate::constraint::SimpleTypeConstraint::new(
+                self.0,
+                vec![I64Sort.to_arcsort(), I64Sort.to_arcsort()],
+                span.clone(),
+            )
+            .into_box()
+        }
+    }
+
+    impl PurePrim for ScopedIdentityPrimitive {
+        fn apply<'a, 'db>(&self, _state: PureState<'a, 'db>, args: &[Value]) -> Option<Value> {
+            args.first().copied()
+        }
+    }
 
     type TestCoreRule = GenericCoreRule<String, String, String>;
 
@@ -1044,13 +1133,14 @@ mod tests {
         assert_ne!(min.registration_id(), max.registration_id());
         assert_ne!(min.context_ids, max.context_ids);
 
-        let sort: ArcSort = Arc::new(EqSort {
-            name: "PrimitiveIdentityTest".to_owned(),
-        });
-        let specialize = |registration: PrimitiveWithId| SpecializedPrimitive {
-            prim_with_id: registration,
-            input: vec![sort.clone(), sort.clone()],
-            output: sort.clone(),
+        let sort = egraph.get_sort_by_name("i64").unwrap().clone();
+        let specialize = |registration: PrimitiveWithId| {
+            SpecializedPrimitive::new(
+                registration,
+                vec![sort.clone(), sort.clone()],
+                sort.clone(),
+                &egraph.type_info,
+            )
         };
 
         let original = specialize(min.clone());
@@ -1062,6 +1152,142 @@ mod tests {
 
         let different_registration = specialize(max);
         assert_ne!(original, different_registration);
+    }
+
+    #[test]
+    fn primitive_registration_authority_is_not_reused_after_pop() {
+        let mut egraph = EGraph::default();
+        let i64_sort = egraph.get_sort_by_name("i64").unwrap().clone();
+
+        egraph.push();
+        egraph.add_pure_primitive(ScopedIdentityPrimitive("popped-identity"), None);
+        let popped_registration = egraph.type_info.get_prims("popped-identity").unwrap()[0].clone();
+        let popped = SpecializedPrimitive::new(
+            popped_registration,
+            vec![i64_sort.clone()],
+            i64_sort.clone(),
+            &egraph.type_info,
+        );
+
+        egraph.pop().unwrap();
+        egraph.add_pure_primitive(ScopedIdentityPrimitive("replacement-identity"), None);
+        let replacement_registration =
+            egraph.type_info.get_prims("replacement-identity").unwrap()[0].clone();
+        assert_ne!(
+            popped.registration_id(),
+            replacement_registration.registration_id(),
+            "pop reused a primitive authority retained by resolved IR"
+        );
+        let replacement = SpecializedPrimitive::new(
+            replacement_registration,
+            vec![i64_sort.clone()],
+            i64_sort,
+            &egraph.type_info,
+        );
+        assert_ne!(popped, replacement);
+        assert_ne!(hash_value(&popped), hash_value(&replacement));
+    }
+
+    #[test]
+    fn primitive_specialization_and_values_use_exact_sort_registrations() {
+        let mut egraph = EGraph::default();
+        egraph.declare_sort("Left", &None, span!()).unwrap();
+        egraph.declare_sort("Right", &None, span!()).unwrap();
+        let left = egraph.get_sort_by_name("Left").unwrap().clone();
+        let right = egraph.get_sort_by_name("Right").unwrap().clone();
+        let registration = egraph.type_info.get_prims("ordering-min").unwrap()[0].clone();
+
+        let left_specialization = SpecializedPrimitive::new(
+            registration.clone(),
+            vec![left.clone(), left.clone()],
+            left.clone(),
+            &egraph.type_info,
+        );
+        let right_specialization = SpecializedPrimitive::new(
+            registration,
+            vec![right.clone(), right.clone()],
+            right.clone(),
+            &egraph.type_info,
+        );
+        assert_ne!(left_specialization, right_specialization);
+        assert_ne!(
+            hash_value(&left_specialization),
+            hash_value(&right_specialization)
+        );
+        assert_ne!(
+            left_specialization.output_identity(),
+            right_specialization.output_identity()
+        );
+        assert_ne!(
+            left_specialization.input_identities(),
+            right_specialization.input_identities()
+        );
+
+        let left_values = ResolvedCall::Values(vec![left.clone()]);
+        let left_values_clone = ResolvedCall::Values(vec![left]);
+        let right_values = ResolvedCall::Values(vec![right]);
+        assert_eq!(left_values, left_values_clone);
+        assert_eq!(hash_value(&left_values), hash_value(&left_values_clone));
+        assert_ne!(left_values, right_values);
+        assert_ne!(hash_value(&left_values), hash_value(&right_values));
+    }
+
+    #[test]
+    fn view_qualified_primitive_collisions_do_not_alias_specializations() {
+        let mut proof_mode = EGraph::new_compile_only(true);
+        proof_mode
+            .resolve_program_compile_only(None, "(sort ViewLocal)")
+            .unwrap();
+        let proof_check = proof_mode
+            .proof_state
+            .original_typechecking
+            .as_deref()
+            .expect("proof mode retains a proof-check catalog");
+
+        let execution_sort = proof_mode.get_sort_by_name("ViewLocal").unwrap().clone();
+        let proof_sort = proof_check.get_sort_by_name("ViewLocal").unwrap().clone();
+        let execution_values = ResolvedCall::Values(vec![execution_sort.clone()]);
+        let execution_values_clone = ResolvedCall::Values(vec![execution_sort.clone()]);
+        assert_eq!(execution_values, execution_values_clone);
+        let same_named_decoy: ArcSort = Arc::new(EqSort {
+            name: "ViewLocal".to_owned(),
+        });
+        assert!(
+            proof_mode
+                .type_info
+                .canonical_sort_arc(&same_named_decoy)
+                .is_none()
+        );
+        assert_ne!(
+            execution_values,
+            ResolvedCall::Values(vec![same_named_decoy])
+        );
+
+        let execution_primitive =
+            proof_mode.type_info.get_prims("ordering-min").unwrap()[0].clone();
+        let proof_primitive = proof_check.type_info.get_prims("ordering-min").unwrap()[0].clone();
+        assert_eq!(
+            execution_primitive.registration_id(),
+            proof_primitive.registration_id(),
+            "the canary requires a colliding primitive ordinal"
+        );
+        let execution_specialization = SpecializedPrimitive::new(
+            execution_primitive,
+            vec![execution_sort.clone(), execution_sort.clone()],
+            execution_sort,
+            &proof_mode.type_info,
+        );
+        let proof_specialization = SpecializedPrimitive::new(
+            proof_primitive,
+            vec![proof_sort.clone(), proof_sort.clone()],
+            proof_sort,
+            &proof_check.type_info,
+        );
+        assert_ne!(execution_specialization, proof_specialization);
+        assert_ne!(
+            hash_value(&execution_specialization),
+            hash_value(&proof_specialization)
+        );
     }
 
     #[test]

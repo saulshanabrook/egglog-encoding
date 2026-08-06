@@ -847,6 +847,18 @@ pub trait BaseSort: Any + Send + Sync + Debug {
     type Base: BaseValue;
     fn name(&self) -> &str;
     fn register_primitives(&self, _eg: &mut EGraph) {}
+
+    /// Register primitives with the exact catalog arc admitted for this sort.
+    ///
+    /// New primitive-producing implementations should override this hook and
+    /// retain `canonical_self` in every type constraint. The default preserves
+    /// source compatibility for existing callbacks, but a legacy callback that
+    /// manufactures `self.clone().to_arcsort()` receives an unstamped carrier
+    /// and fails exact resolution. Such callbacks must migrate to this hook.
+    fn register_primitives_with_sort(&self, eg: &mut EGraph, canonical_self: ArcSort) {
+        let _ = canonical_self;
+        self.register_primitives(eg);
+    }
     fn reconstruct_termdag(&self, _: &BaseValues, _: Value, _: &mut TermDag) -> TermId;
 
     /// For a base sort whose values termify as an application rather than a
@@ -867,6 +879,43 @@ pub trait BaseSort: Any + Send + Sync + Debug {
 
 #[derive(Debug)]
 struct BaseSortImpl<T: BaseSort>(T);
+
+/// Exact built-in base-sort definition carried by a freshly constructed
+/// [`BaseSortImpl`]. This classifier is intentionally adjacent to the private
+/// wrapper: callers must not infer built-in meaning from a sort's name or its
+/// Rust storage type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum BuiltinSortKind {
+    Unit,
+    String,
+    Bool,
+    I64,
+    F64,
+    BigInt,
+    BigRat,
+}
+
+pub(crate) fn builtin_sort_kind(sort: &ArcSort) -> Option<BuiltinSortKind> {
+    let sort = sort.clone().as_arc_any();
+    let sort = sort.as_ref();
+    if sort.is::<BaseSortImpl<UnitSort>>() {
+        Some(BuiltinSortKind::Unit)
+    } else if sort.is::<BaseSortImpl<StringSort>>() {
+        Some(BuiltinSortKind::String)
+    } else if sort.is::<BaseSortImpl<BoolSort>>() {
+        Some(BuiltinSortKind::Bool)
+    } else if sort.is::<BaseSortImpl<I64Sort>>() {
+        Some(BuiltinSortKind::I64)
+    } else if sort.is::<BaseSortImpl<F64Sort>>() {
+        Some(BuiltinSortKind::F64)
+    } else if sort.is::<BaseSortImpl<BigIntSort>>() {
+        Some(BuiltinSortKind::BigInt)
+    } else if sort.is::<BaseSortImpl<BigRatSort>>() {
+        Some(BuiltinSortKind::BigRat)
+    } else {
+        None
+    }
+}
 
 impl<T: BaseSort> Sort for BaseSortImpl<T> {
     fn name(&self) -> &str {
@@ -890,7 +939,8 @@ impl<T: BaseSort> Sort for BaseSortImpl<T> {
     }
 
     fn register_primitives(self: Arc<Self>, eg: &mut EGraph) {
-        self.0.register_primitives(eg)
+        let canonical_self: ArcSort = self.clone();
+        self.0.register_primitives_with_sort(eg, canonical_self)
     }
 
     /// Reconstruct a leaf base value in a TermDag
@@ -921,6 +971,18 @@ pub trait ContainerSort: Any + Send + Sync + Debug {
     fn inner_sorts(&self) -> Vec<ArcSort>;
     fn inner_values(&self, _: &ContainerValues, _: Value) -> Vec<(ArcSort, Value)>;
     fn register_primitives(&self, _eg: &mut EGraph) {}
+
+    /// Register primitives with the exact catalog arc admitted for this sort.
+    ///
+    /// Primitive-producing implementations should override this method and use
+    /// and retain `canonical_self` in every type constraint instead of
+    /// manufacturing a fresh wrapper with [`Self::to_arcsort`]. The default
+    /// preserves source compatibility, while legacy primitive-producing
+    /// callbacks fail closed until they migrate to this exact hook.
+    fn register_primitives_with_sort(&self, eg: &mut EGraph, canonical_self: ArcSort) {
+        let _ = canonical_self;
+        self.register_primitives(eg);
+    }
     fn reconstruct_termdag(
         &self,
         _: &ContainerValues,
@@ -995,7 +1057,8 @@ impl<T: ContainerSort> Sort for ContainerSortImpl<T> {
     }
 
     fn register_primitives(self: Arc<Self>, eg: &mut EGraph) {
-        self.0.register_primitives(eg);
+        let canonical_self: ArcSort = self.clone();
+        self.0.register_primitives_with_sort(eg, canonical_self);
     }
 
     fn reconstruct_termdag_container(
@@ -1034,6 +1097,188 @@ pub fn add_container_sort(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Clone, Debug)]
+    struct LegacyFreshWrapperContainer(&'static str);
+
+    #[derive(Clone, Debug)]
+    struct PanickingRegistrationContainer;
+
+    #[derive(Clone)]
+    struct ProofViewRetentionPrimitive;
+
+    impl Primitive for ProofViewRetentionPrimitive {
+        fn name(&self) -> &str {
+            "proof-view-retention-probe"
+        }
+
+        fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+            crate::constraint::SimpleTypeConstraint::new(
+                self.name(),
+                vec![I64Sort.to_arcsort(), I64Sort.to_arcsort()],
+                span.clone(),
+            )
+            .into_box()
+        }
+    }
+
+    impl PurePrim for ProofViewRetentionPrimitive {
+        fn apply<'a, 'db>(&self, _state: PureState<'a, 'db>, args: &[Value]) -> Option<Value> {
+            args.first().copied()
+        }
+    }
+
+    impl ContainerSort for LegacyFreshWrapperContainer {
+        type Container = VecContainer;
+
+        fn name(&self) -> &str {
+            self.0
+        }
+
+        fn is_eq_container_sort(&self) -> bool {
+            false
+        }
+
+        fn inner_sorts(&self) -> Vec<ArcSort> {
+            vec![I64Sort.to_arcsort()]
+        }
+
+        fn inner_values(&self, _: &ContainerValues, _: Value) -> Vec<(ArcSort, Value)> {
+            unreachable!("legacy registration canary never constructs a container value")
+        }
+
+        fn register_primitives(&self, eg: &mut EGraph) {
+            let own_fresh_carrier = self.clone().to_arcsort();
+            let other_name = if self.0 == "LegacyFreshA" {
+                "LegacyFreshB"
+            } else {
+                "LegacyFreshA"
+            };
+            let other_fresh_carrier = Self(other_name).to_arcsort();
+            let canonical = eg
+                .get_sort_by_name(self.name())
+                .expect("sort is admitted before its primitive callback")
+                .clone();
+            assert!(
+                !eg.type_info.same_sort(&own_fresh_carrier, &canonical),
+                "a legacy fresh wrapper gained catalog authority from callback scope"
+            );
+            assert!(
+                !eg.type_info.same_sort(&other_fresh_carrier, &canonical),
+                "a differently parameterized instance aliased the admitted sort"
+            );
+        }
+
+        fn reconstruct_termdag(
+            &self,
+            _: &ContainerValues,
+            _: Value,
+            _: &mut TermDag,
+            _: Vec<TermId>,
+        ) -> TermId {
+            unreachable!("legacy registration canary never reconstructs a value")
+        }
+
+        fn serialized_name(&self, _: &ContainerValues, _: Value) -> String {
+            unreachable!("legacy registration canary never serializes a value")
+        }
+    }
+
+    impl ContainerSort for PanickingRegistrationContainer {
+        type Container = VecContainer;
+
+        fn name(&self) -> &str {
+            "PanickingRegistrationContainer"
+        }
+
+        fn is_eq_container_sort(&self) -> bool {
+            false
+        }
+
+        fn inner_sorts(&self) -> Vec<ArcSort> {
+            vec![I64Sort.to_arcsort()]
+        }
+
+        fn inner_values(&self, _: &ContainerValues, _: Value) -> Vec<(ArcSort, Value)> {
+            unreachable!("panic canary never constructs a container value")
+        }
+
+        fn register_primitives_with_sort(&self, _: &mut EGraph, _: ArcSort) {
+            panic!("integrated sort-registration panic canary")
+        }
+
+        fn reconstruct_termdag(
+            &self,
+            _: &ContainerValues,
+            _: Value,
+            _: &mut TermDag,
+            _: Vec<TermId>,
+        ) -> TermId {
+            unreachable!("panic canary never reconstructs a value")
+        }
+
+        fn serialized_name(&self, _: &ContainerValues, _: Value) -> String {
+            unreachable!("panic canary never serializes a value")
+        }
+    }
+
+    #[test]
+    fn legacy_container_fresh_wrappers_fail_closed_during_registration() {
+        let mut egraph = EGraph::new_compile_only(false);
+        add_container_sort(
+            &mut egraph,
+            LegacyFreshWrapperContainer("LegacyFreshA"),
+            span!(),
+        )
+        .unwrap();
+        add_container_sort(
+            &mut egraph,
+            LegacyFreshWrapperContainer("LegacyFreshB"),
+            span!(),
+        )
+        .unwrap();
+
+        for name in ["LegacyFreshA", "LegacyFreshB"] {
+            let fresh = LegacyFreshWrapperContainer(name).to_arcsort();
+            assert!(
+                egraph.type_info.sort_registration_for_arc(&fresh).is_none(),
+                "same-definition carriers outside registration must fail closed"
+            );
+        }
+    }
+
+    #[test]
+    fn panicking_sort_registration_restores_the_proof_view_chain() {
+        let mut egraph = EGraph::new_compile_only(true);
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = add_container_sort(&mut egraph, PanickingRegistrationContainer, span!());
+        }));
+        assert!(panic.is_err());
+        assert!(egraph.proof_state.original_typechecking.is_some());
+
+        egraph.add_pure_primitive(ProofViewRetentionPrimitive, None);
+        let execution = egraph
+            .type_info
+            .get_prims("proof-view-retention-probe")
+            .expect("execution view lost post-panic primitive registration");
+        let proof_check = egraph
+            .proof_state
+            .original_typechecking
+            .as_ref()
+            .and_then(|typechecker| {
+                typechecker
+                    .type_info
+                    .get_prims("proof-view-retention-probe")
+            })
+            .expect("proof-check view was not restored after callback panic");
+        assert_eq!(execution.len(), 1);
+        assert_eq!(proof_check.len(), 1);
+        assert_eq!(
+            execution[0].registration_id(),
+            proof_check[0].registration_id(),
+            "restored sibling views advanced incompatible primitive streams"
+        );
+    }
 
     fn build_test_database() -> Result<EGraph, Error> {
         let mut egraph = EGraph::default();

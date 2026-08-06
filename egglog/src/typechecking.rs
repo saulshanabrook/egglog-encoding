@@ -143,10 +143,203 @@ impl IndexRegistrationId {
     }
 }
 
-/// Exact callable selected by type resolution.
+/// Deterministic frontend identity of one successfully admitted sort.
+///
+/// The ordinal is local to one frontend stream. It has no meaning without the
+/// [`TypeInfo`] that allocated it and is deliberately independent of backend
+/// column/type tokens.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SortRegistrationId(u32);
+
+impl SortRegistrationId {
+    pub(crate) const fn new(ordinal: u32) -> Self {
+        Self(ordinal)
+    }
+
+    pub const fn ordinal(self) -> u32 {
+        self.0
+    }
+}
+
+/// Exact sort authority attached beside one finalized command.
+///
+/// `command_path` addresses a command recursively through `Fail` children.
+/// The command enum remains source-compatible; nominal metadata is never
+/// reconstructed from a sort name or schema.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct SortAuthorityAt {
+    pub(crate) command_path: Vec<usize>,
+    pub(crate) local: SortRegistrationId,
+    pub(crate) source: Option<SortRegistrationId>,
+}
+
+/// Producer-stamped source-view authority awaiting execution-view typecheck.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct SourceSortAuthorityAt {
+    pub(crate) command_path: Vec<usize>,
+    pub(crate) source: SortRegistrationId,
+}
+
+/// Finalized commands plus their private exact sort-authority sidecar.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FinalizedProgram {
+    pub(crate) commands: Vec<ResolvedNCommand>,
+    pub(crate) sort_authorities: Vec<SortAuthorityAt>,
+}
+
+impl FinalizedProgram {
+    pub(crate) fn empty() -> Self {
+        Self {
+            commands: Vec::new(),
+            sort_authorities: Vec::new(),
+        }
+    }
+
+    pub(crate) fn new(
+        commands: Vec<ResolvedNCommand>,
+        sort_authorities: Vec<SortAuthorityAt>,
+    ) -> Self {
+        let program = Self {
+            commands,
+            sort_authorities,
+        };
+        program.validate_sort_authority_shape();
+        program
+    }
+
+    // Kept for the source-compatible typechecking wrapper below.
+    #[allow(dead_code)]
+    pub(crate) fn into_commands(self) -> Vec<ResolvedNCommand> {
+        self.commands
+    }
+
+    pub(crate) fn append(&mut self, mut other: Self) {
+        self.validate_sort_authority_shape();
+        other.validate_sort_authority_shape();
+        let offset = self.commands.len();
+        for authority in &mut other.sort_authorities {
+            let top = authority
+                .command_path
+                .first_mut()
+                .expect("sort authority paths are never empty");
+            *top += offset;
+        }
+        self.commands.extend(other.commands);
+        self.sort_authorities.extend(other.sort_authorities);
+        self.validate_sort_authority_shape();
+    }
+
+    pub(crate) fn validate_sort_authority_shape(&self) {
+        fn collect_sort_paths(
+            commands: &[ResolvedNCommand],
+            path: &mut Vec<usize>,
+            paths: &mut HashSet<Vec<usize>>,
+        ) {
+            for (index, command) in commands.iter().enumerate() {
+                path.push(index);
+                match command {
+                    ResolvedNCommand::Sort { .. } => {
+                        assert!(
+                            paths.insert(path.clone()),
+                            "one finalized sort occupied the same command path twice"
+                        );
+                    }
+                    ResolvedNCommand::Fail(_, nested) => {
+                        collect_sort_paths(nested, path, paths);
+                    }
+                    _ => {}
+                }
+                path.pop();
+            }
+        }
+
+        let mut expected = HashSet::default();
+        collect_sort_paths(&self.commands, &mut Vec::new(), &mut expected);
+        let actual = self
+            .sort_authorities
+            .iter()
+            .map(|authority| authority.command_path.clone())
+            .collect::<HashSet<_>>();
+        assert_eq!(
+            actual.len(),
+            self.sort_authorities.len(),
+            "one finalized sort path received duplicate authority stamps"
+        );
+        assert_eq!(
+            actual, expected,
+            "finalized sort authority sidecar did not cover exactly the Sort commands"
+        );
+    }
+}
+
+/// Deterministic domain of a frontend catalog.
+///
+/// Registration ordinals remain local to one catalog.  Resolved values that
+/// can be compared across the execution and proof-check views must therefore
+/// carry this discriminator alongside their local ordinal.  The two variants
+/// are deterministic across clean compilations; no process-unique token is
+/// part of resolved-program identity.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub(crate) enum FrontendViewDomain {
+    #[default]
+    Execution,
+    ProofCheck,
+}
+
+/// A view-qualified frontend authority used by cross-view-comparable IR.
+///
+/// The raw registration remains intentionally view-local and public APIs keep
+/// exposing its ordinal.  Only producer code can attach a view domain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub(crate) struct FrontendAuthority<Identity> {
+    domain: FrontendViewDomain,
+    identity: Identity,
+}
+
+impl<Identity> FrontendAuthority<Identity> {
+    const fn new(domain: FrontendViewDomain, identity: Identity) -> Self {
+        Self { domain, identity }
+    }
+}
+
+/// Exact semantic class recorded when a sort is admitted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum RegisteredSortKind {
+    Unit,
+    String,
+    Bool,
+    I64,
+    F64,
+    BigInt,
+    BigRat,
+    Eq,
+    Container,
+    Opaque,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SortRegistration {
+    pub(crate) identity: SortRegistrationId,
+    pub(crate) sort: ArcSort,
+    #[allow(dead_code)] // consumed by the standalone snapshot mapper
+    pub(crate) kind: RegisteredSortKind,
+    pub(crate) unionable: bool,
+    presort_family: Option<std::any::TypeId>,
+}
+
+#[derive(Clone, Copy)]
+struct PresortRegistration {
+    make_sort: MkSort,
+    family: std::any::TypeId,
+}
+
+/// Exact callable selected by type resolution inside one local frontend view.
 ///
 /// Function and index registrations occupy separate nominal domains so an
-/// index can never be mistaken for a same-shaped function table.
+/// index can never be mistaken for a same-shaped function table. Raw callable
+/// ordinals are deliberately view-local; portable snapshot mapping qualifies
+/// execution and proof-check catalogs independently and never compares their
+/// `CallableIdentity` values directly.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum CallableIdentity {
     Function(FunctionRegistrationId),
@@ -251,6 +444,8 @@ pub struct PrimitiveWithId {
     pub(crate) primitive: Arc<dyn Primitive>,
     pub(crate) validator: Option<PrimitiveValidator>,
     pub(crate) registration_id: PrimitiveRegistrationId,
+    /// View-qualified registration authority stamped by the producer.
+    registration_authority: FrontendAuthority<PrimitiveRegistrationId>,
     pub(crate) authority: PrimitiveAuthority,
     /// Runtime entrypoints for the contexts this primitive is valid in.
     /// The primitive definition is stored once, while each context keeps
@@ -279,7 +474,9 @@ impl PrimitiveWithId {
             constraints,
             range: HashSet::default(),
         };
-        problem.solve(|sort| sort.name()).is_ok()
+        problem
+            .solve(|left, right| typeinfo.same_sort(left, right))
+            .is_ok()
     }
 
     /// Returns whether this primitive has a runtime entrypoint for `context`.
@@ -296,6 +493,10 @@ impl PrimitiveWithId {
     pub(crate) fn registration_id(&self) -> PrimitiveRegistrationId {
         self.registration_id
     }
+
+    pub(crate) fn registration_authority(&self) -> FrontendAuthority<PrimitiveRegistrationId> {
+        self.registration_authority
+    }
 }
 
 impl Debug for PrimitiveWithId {
@@ -307,10 +508,33 @@ impl Debug for PrimitiveWithId {
 /// Stores resolved typechecking information.
 #[derive(Clone, Default)]
 pub struct TypeInfo {
-    mksorts: HashMap<String, MkSort>,
+    /// Deterministic owner of every registration in this catalog.
+    view_domain: FrontendViewDomain,
+    mksorts: HashMap<String, PresortRegistration>,
     // TODO(yz): I want to get rid of this as now we have user-defined primitives and constraint based type checking
     reserved_primitives: HashSet<&'static str>,
     pub(crate) sorts: HashMap<String, Arc<dyn Sort>>,
+    /// Stream-local nominal sort authority in successful admission order.
+    sort_registrations: IndexMap<SortRegistrationId, SortRegistration>,
+    /// O(1) exact lookup for canonical catalog arcs. The pointed-to `Arc`s are
+    /// retained by `sort_registrations`, so addresses cannot be recycled while
+    /// an entry is live.
+    sort_registrations_by_arc: HashMap<usize, SortRegistrationId>,
+    /// O(1) lookup for the seven exact built-in definitions, whose constraints
+    /// intentionally manufacture fresh wrappers.
+    builtin_sort_registrations: HashMap<crate::prelude::BuiltinSortKind, SortRegistrationId>,
+    /// Greatest sort authority ever allocated in this frontend stream,
+    /// including registrations retired by `pop`. Unlike the live ledger, this
+    /// watermark is monotone and repairs a publicly replaced parser without
+    /// permitting raw-ID reuse.
+    sort_registration_high_water: Option<SortRegistrationId>,
+    /// Canonical arcs from an explicitly linked sibling program view. Each
+    /// entry is producer-stamped during proof instrumentation; it is never
+    /// reconstructed from names, schemas, storage types, or raw-ID equality.
+    linked_sort_arcs: Vec<ArcSort>,
+    /// O(1) producer-stamped sibling-view arc lookup. `linked_sort_arcs` owns
+    /// the matching `Arc`s and therefore pins every address in this index.
+    linked_sort_registrations_by_arc: HashMap<usize, SortRegistrationId>,
     primitives: HashMap<String, Vec<PrimitiveWithId>>,
     next_primitive_registration_id: u32,
     value_eq_registration_id: Option<PrimitiveRegistrationId>,
@@ -322,8 +546,6 @@ pub struct TypeInfo {
     /// `pop`. Resolved historical commands keep those identities, so proof
     /// admission must not fall back to their now-unbound names.
     global_function_identity_history: HashSet<FunctionRegistrationId>,
-    /// Sorts that do not allow union (e.g., from `:no-union` sorts or relations).
-    pub(crate) non_unionable_sorts: HashSet<String>,
     /// Declared indexes, by the name their atoms are written with.
     pub(crate) indexes: HashMap<String, IndexInfo>,
 }
@@ -393,46 +615,145 @@ impl EGraph {
         presort_and_args: &Option<(String, Vec<Expr>)>,
         span: Span,
     ) -> Result<(), TypeError> {
+        self.declare_sort_with_registration(name, presort_and_args, span)
+            .map(|_| ())
+    }
+
+    fn declare_sort_with_registration(
+        &mut self,
+        name: impl Into<String>,
+        presort_and_args: &Option<(String, Vec<Expr>)>,
+        span: Span,
+    ) -> Result<SortRegistrationId, TypeError> {
         let name = name.into();
         if self.type_info.func_types.contains_key(&name) {
             return Err(TypeError::FunctionAlreadyBound(name, span));
         }
 
-        let sort = match presort_and_args {
-            None => Arc::new(EqSort { name }),
+        let (sort, presort_family) = match presort_and_args {
+            None => (Arc::new(EqSort { name }) as ArcSort, None),
             Some((presort, args)) => {
-                if let Some(mksort) = self.type_info.mksorts.get(presort) {
-                    mksort(&mut self.type_info, name, args)?
+                if let Some(registration) = self.type_info.mksorts.get(presort).copied() {
+                    (
+                        (registration.make_sort)(&mut self.type_info, name, args)?,
+                        Some(registration.family),
+                    )
                 } else {
                     return Err(TypeError::PresortNotFound(presort.clone(), span));
                 }
             }
         };
 
-        self.add_arcsort(sort, span)
+        self.add_arcsort_with_registration(sort, presort_family, span)
     }
 
     /// Add a user-defined sort to the e-graph.
     pub fn add_arcsort(&mut self, sort: ArcSort, span: Span) -> Result<(), TypeError> {
-        self.backend.register_sort(&sort);
+        self.add_arcsort_with_registration(sort, None, span)
+            .map(|_| ())
+    }
 
+    fn add_arcsort_with_registration(
+        &mut self,
+        sort: ArcSort,
+        presort_family: Option<std::any::TypeId>,
+        span: Span,
+    ) -> Result<SortRegistrationId, TypeError> {
         let name = sort.name();
-        match self.type_info.sorts.entry(name.to_owned()) {
-            HEntry::Occupied(_) => Err(TypeError::SortAlreadyBound(name.to_owned(), span)),
-            HEntry::Vacant(e) => {
-                e.insert(sort.clone());
-                // A sort's primitives already reach the term-encoding typechecker
-                // through its OWN `add_arcsort` when it typechecks the sort
-                // command, so don't propagate them again from here (that would
-                // double-register and make primitive resolution ambiguous).
-                // Detach the typechecker while the sort registers, so only direct
-                // `add_*_primitive` calls propagate to it.
-                let saved = self.proof_state.original_typechecking.take();
-                sort.register_primitives(self);
-                self.proof_state.original_typechecking = saved;
-                Ok(())
-            }
+        if self.type_info.sorts.contains_key(name) {
+            return Err(TypeError::SortAlreadyBound(name.to_owned(), span));
         }
+
+        // Allocate only after all fallible construction and duplicate checks
+        // have succeeded. The backend token is downstream of this nominal
+        // identity and cannot define it.
+        if let Some(high_water) = self.type_info.sort_registration_high_water {
+            self.parser
+                .symbol_gen
+                .observe_sort_registration_id(high_water);
+        }
+        let identity = self.parser.symbol_gen.fresh_sort_registration_id();
+        self.backend.register_sort(identity, &sort);
+        let kind = TypeInfo::classify_registered_sort(&sort);
+        let unionable = sort.is_eq_sort() && !sort.is_container_sort();
+        self.type_info.sorts.insert(name.to_owned(), sort.clone());
+        assert!(
+            !self.type_info.sort_registrations.contains_key(&identity),
+            "sort registration allocator reused live identity {identity:?}"
+        );
+        let replaced = self.type_info.sort_registrations.insert(
+            identity,
+            SortRegistration {
+                identity,
+                sort: sort.clone(),
+                kind,
+                unionable,
+                presort_family,
+            },
+        );
+        debug_assert!(replaced.is_none());
+        let arc_key = TypeInfo::sort_arc_key(&sort);
+        assert!(
+            self.type_info
+                .sort_registrations_by_arc
+                .insert(arc_key, identity)
+                .is_none(),
+            "one canonical sort arc was admitted with two authorities"
+        );
+        if let Some(builtin) = crate::prelude::builtin_sort_kind(&sort) {
+            assert!(
+                self.type_info
+                    .builtin_sort_registrations
+                    .insert(builtin, identity)
+                    .is_none(),
+                "one exact built-in sort definition was admitted twice"
+            );
+        }
+        self.type_info.sort_registration_high_water = Some(identity);
+
+        // A sort's primitives already reach the term-encoding typechecker
+        // through its OWN `add_arcsort` when it typechecks the sort command, so
+        // don't propagate them again from here (that would double-register and
+        // make primitive resolution ambiguous). Detach the typechecker while
+        // the sort registers, so only direct `add_*_primitive` calls propagate.
+        let saved = self.proof_state.original_typechecking.take();
+        let registration = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            sort.register_primitives(self);
+        }));
+        self.proof_state.original_typechecking = saved;
+        if let Err(payload) = registration {
+            std::panic::resume_unwind(payload);
+        }
+        Ok(identity)
+    }
+
+    fn link_sort_to_original_view(
+        &mut self,
+        local: SortRegistrationId,
+        source: SortRegistrationId,
+    ) {
+        let local_sort = self
+            .type_info
+            .sort_registration(local)
+            .expect("newly finalized execution sort registration disappeared")
+            .sort
+            .clone();
+        let original = self
+            .proof_state
+            .original_typechecking
+            .as_deref_mut()
+            .expect("source-sort lineage requires a proof-checking program view");
+        let source_sort = original
+            .type_info
+            .sort_registration(source)
+            .expect("instrumentation stamped an unknown source sort registration")
+            .sort
+            .clone();
+
+        self.type_info.register_linked_sort_arc(source_sort, local);
+        original
+            .type_info
+            .register_linked_sort_arc(local_sort, source);
     }
 
     /// Register a [`PurePrim`]. Pass `None` for the validator if not
@@ -671,6 +992,7 @@ impl EGraph {
                     "value-eq authority registered more than once in one frontend"
                 );
             }
+            let registration_authority = eg.type_info.qualify_authority(registration_id);
             eg.type_info
                 .primitives
                 .entry(name)
@@ -679,6 +1001,7 @@ impl EGraph {
                     primitive,
                     validator: validator.clone(),
                     registration_id,
+                    registration_authority,
                     authority: authority.clone(),
                     context_ids,
                 });
@@ -691,15 +1014,70 @@ impl EGraph {
 }
 
 impl EGraph {
+    // Kept as the source-compatible entry point for callers that do not carry
+    // producer-stamped sort authority.
+    #[allow(dead_code)]
+    #[allow(clippy::ptr_arg)]
     pub(crate) fn typecheck_program(
         &mut self,
         program: &Vec<NCommand>,
     ) -> Result<Vec<ResolvedNCommand>, TypeError> {
-        let mut result = vec![];
-        for command in program {
-            result.push(self.typecheck_command(command)?);
+        self.typecheck_program_with_sort_authority(program, Vec::new())
+            .map(FinalizedProgram::into_commands)
+    }
+
+    pub(crate) fn typecheck_program_with_sort_authority(
+        &mut self,
+        program: &[NCommand],
+        source_authorities: Vec<SourceSortAuthorityAt>,
+    ) -> Result<FinalizedProgram, TypeError> {
+        fn command_at_path<'a>(commands: &'a [NCommand], path: &[usize]) -> Option<&'a NCommand> {
+            let (first, rest) = path.split_first()?;
+            let command = commands.get(*first)?;
+            if rest.is_empty() {
+                return Some(command);
+            }
+            let NCommand::Fail(_, nested) = command else {
+                return None;
+            };
+            command_at_path(nested, rest)
         }
-        Ok(result)
+
+        let mut pending_sources = HashMap::default();
+        for source in source_authorities {
+            assert!(
+                matches!(
+                    command_at_path(program, &source.command_path),
+                    Some(NCommand::Sort { .. })
+                ),
+                "source sort authority targeted a missing or non-Sort command path"
+            );
+            assert!(
+                pending_sources
+                    .insert(source.command_path, source.source)
+                    .is_none(),
+                "one execution sort received duplicate source-view authority"
+            );
+        }
+
+        let mut commands = Vec::with_capacity(program.len());
+        let mut sort_authorities = Vec::new();
+        let mut path = Vec::new();
+        for (index, command) in program.iter().enumerate() {
+            path.push(index);
+            commands.push(self.typecheck_command_with_sort_authority(
+                command,
+                &mut path,
+                &mut pending_sources,
+                &mut sort_authorities,
+            )?);
+            path.pop();
+        }
+        assert!(
+            pending_sources.is_empty(),
+            "typechecking did not consume every producer-stamped source sort authority"
+        );
+        Ok(FinalizedProgram::new(commands, sort_authorities))
     }
 
     /// Validate an index declaration and register it as a read-only relation
@@ -751,7 +1129,7 @@ impl EGraph {
             })?;
             match &value_sort {
                 None => value_sort = Some(sort.clone()),
-                Some(prev) if prev.name() == sort.name() => {}
+                Some(prev) if self.type_info.same_sort(prev, sort) => {}
                 Some(prev) => {
                     return Err(TypeError::IndexColumnSortMismatch(
                         name.to_owned(),
@@ -790,7 +1168,13 @@ impl EGraph {
         })
     }
 
-    fn typecheck_command(&mut self, command: &NCommand) -> Result<ResolvedNCommand, TypeError> {
+    fn typecheck_command_with_sort_authority(
+        &mut self,
+        command: &NCommand,
+        command_path: &mut Vec<usize>,
+        pending_sources: &mut HashMap<Vec<usize>, SortRegistrationId>,
+        sort_authorities: &mut Vec<SortAuthorityAt>,
+    ) -> Result<ResolvedNCommand, TypeError> {
         let symbol_gen = &mut self.parser.symbol_gen;
 
         let command: ResolvedNCommand = match command {
@@ -866,10 +1250,24 @@ impl EGraph {
             } => {
                 // Note this is bad since typechecking should be pure and idempotent
                 // Otherwise typechecking the same program twice will fail
-                self.declare_sort(name.clone(), presort_and_args, span.clone())?;
+                let resolution = self.declare_sort_with_registration(
+                    name.clone(),
+                    presort_and_args,
+                    span.clone(),
+                )?;
+                let resolved_sort = self
+                    .type_info
+                    .sort_registration(resolution)
+                    .expect("newly declared sort registration disappeared")
+                    .sort
+                    .clone();
+                let source = pending_sources.remove(command_path.as_slice());
+                if let Some(source) = source {
+                    self.link_sort_to_original_view(resolution, source);
+                }
                 // Mark as non-unionable if the sort declaration says so
                 if !unionable {
-                    self.type_info.non_unionable_sorts.insert(name.clone());
+                    self.type_info.mark_sort_non_unionable(resolution);
                 }
                 // Record this sort's UF / proof tables in proof_state (as
                 // run_command also does) so the container rebuild registration
@@ -879,11 +1277,14 @@ impl EGraph {
                     self.proof_state
                         .uf_parent
                         .insert(name.clone(), uf_ctor.clone());
+                    self.proof_state
+                        .uf_parent_by_sort
+                        .insert(resolution, uf_ctor.clone());
                     // The rebuild rules canonicalize a term in their action
                     // through these, derived from the sort's `@UF_<S>` table.
                     crate::proofs::proof_container_rebuild::register_uf_canon(
                         self,
-                        name,
+                        resolved_sort.clone(),
                         uf_ctor,
                         proof_func.is_some(),
                     );
@@ -892,11 +1293,15 @@ impl EGraph {
                     self.proof_state
                         .proof_func_parent
                         .insert(name.clone(), pf.clone());
+                    self.proof_state
+                        .proof_func_parent_by_sort
+                        .insert(resolution, pf.clone());
                 }
                 // The Proof sort records the global proof constructors; restore
                 // them into proof_state so container rebuild can recover them
                 // (the `Proof` datatype name is this sort's own name).
                 if let Some(pc) = proof_constructors {
+                    self.proof_state.proof_sort = Some(resolved_sort.clone());
                     let names = &mut self.proof_state.proof_names;
                     names.proof_datatype = name.clone();
                     names.congr_constructor = pc.congr.clone();
@@ -910,8 +1315,13 @@ impl EGraph {
                 // available both during encoding and when the desugared program
                 // is re-parsed.
                 if let Some(spec) = container_rebuild {
-                    register_container_rebuild_from_spec(self, name, spec);
+                    register_container_rebuild_from_spec(self, resolved_sort, spec);
                 }
+                sort_authorities.push(SortAuthorityAt {
+                    command_path: command_path.clone(),
+                    local: resolution,
+                    source,
+                });
                 ResolvedNCommand::Sort {
                     span: span.clone(),
                     name: name.clone(),
@@ -1026,7 +1436,10 @@ impl EGraph {
                     &Default::default(),
                     Context::Full,
                 )?;
-                if res_variants.output_type().name() != I64Sort.name() {
+                if !self
+                    .type_info
+                    .same_sort(&res_variants.output_type(), &I64Sort.to_arcsort())
+                {
                     return Err(TypeError::Mismatch {
                         expr: variants.clone(),
                         expected: I64Sort.to_arcsort(),
@@ -1040,12 +1453,20 @@ impl EGraph {
                 span.clone(),
                 self.type_info.typecheck_facts(symbol_gen, facts)?,
             ),
-            NCommand::Fail(span, cmds) => ResolvedNCommand::Fail(
-                span.clone(),
-                cmds.iter()
-                    .map(|cmd| self.typecheck_command(cmd))
-                    .collect::<Result<_, _>>()?,
-            ),
+            NCommand::Fail(span, cmds) => {
+                let mut nested = Vec::with_capacity(cmds.len());
+                for (index, command) in cmds.iter().enumerate() {
+                    command_path.push(index);
+                    nested.push(self.typecheck_command_with_sort_authority(
+                        command,
+                        command_path,
+                        pending_sources,
+                        sort_authorities,
+                    )?);
+                    command_path.pop();
+                }
+                ResolvedNCommand::Fail(span.clone(), nested)
+            }
             NCommand::RunSchedule(schedule) => ResolvedNCommand::RunSchedule(
                 self.type_info.typecheck_schedule(symbol_gen, schedule)?,
             ),
@@ -1179,17 +1600,209 @@ impl EGraph {
 }
 
 impl TypeInfo {
+    fn sort_arc_key(sort: &ArcSort) -> usize {
+        Arc::as_ptr(sort) as *const () as usize
+    }
+
+    fn qualify_authority<Identity>(&self, identity: Identity) -> FrontendAuthority<Identity> {
+        FrontendAuthority::new(self.view_domain, identity)
+    }
+
+    pub(crate) fn set_view_domain(&mut self, domain: FrontendViewDomain) {
+        self.view_domain = domain;
+        for primitive in self.primitives.values_mut().flatten() {
+            primitive.registration_authority =
+                FrontendAuthority::new(domain, primitive.registration_id);
+        }
+    }
+
+    pub(crate) fn sort_authority(
+        &self,
+        identity: SortRegistrationId,
+    ) -> FrontendAuthority<SortRegistrationId> {
+        assert!(
+            self.sort_registrations.contains_key(&identity),
+            "cannot qualify unknown sort registration {identity:?}"
+        );
+        self.qualify_authority(identity)
+    }
+
+    fn classify_registered_sort(sort: &ArcSort) -> RegisteredSortKind {
+        match crate::prelude::builtin_sort_kind(sort) {
+            Some(crate::prelude::BuiltinSortKind::Unit) => RegisteredSortKind::Unit,
+            Some(crate::prelude::BuiltinSortKind::String) => RegisteredSortKind::String,
+            Some(crate::prelude::BuiltinSortKind::Bool) => RegisteredSortKind::Bool,
+            Some(crate::prelude::BuiltinSortKind::I64) => RegisteredSortKind::I64,
+            Some(crate::prelude::BuiltinSortKind::F64) => RegisteredSortKind::F64,
+            Some(crate::prelude::BuiltinSortKind::BigInt) => RegisteredSortKind::BigInt,
+            Some(crate::prelude::BuiltinSortKind::BigRat) => RegisteredSortKind::BigRat,
+            None if sort.is_container_sort() => RegisteredSortKind::Container,
+            None if sort.is_eq_sort() => RegisteredSortKind::Eq,
+            None => RegisteredSortKind::Opaque,
+        }
+    }
+
+    #[allow(dead_code)] // consumed by the standalone snapshot mapper
+    pub(crate) fn sort_registrations_in_order(&self) -> impl Iterator<Item = &SortRegistration> {
+        self.sort_registrations.values()
+    }
+
+    #[allow(dead_code)] // consumed by the standalone snapshot mapper
+    pub(crate) fn sort_registration(
+        &self,
+        identity: SortRegistrationId,
+    ) -> Option<&SortRegistration> {
+        self.sort_registrations.get(&identity)
+    }
+
+    pub(crate) fn preserve_sort_registration_high_water_from(&mut self, newer: &Self) {
+        self.sort_registration_high_water = match (
+            self.sort_registration_high_water,
+            newer.sort_registration_high_water,
+        ) {
+            (Some(previous), Some(current)) => Some(previous.max(current)),
+            (previous, current) => previous.or(current),
+        };
+    }
+
+    fn register_linked_sort_arc(&mut self, sort: ArcSort, identity: SortRegistrationId) {
+        assert!(
+            self.sort_registrations.contains_key(&identity),
+            "cannot link an arc to unknown local sort registration {identity:?}"
+        );
+        let arc_key = Self::sort_arc_key(&sort);
+        if let Some(existing) = self.sort_registrations_by_arc.get(&arc_key) {
+            assert_eq!(
+                *existing, identity,
+                "linked-view arc conflicts with canonical local sort authority"
+            );
+            return;
+        }
+        if let Some(existing) = self.linked_sort_registrations_by_arc.get(&arc_key) {
+            assert_eq!(
+                *existing, identity,
+                "one linked-view arc was stamped with two local authorities"
+            );
+            return;
+        }
+        assert!(
+            self.linked_sort_registrations_by_arc
+                .insert(arc_key, identity)
+                .is_none()
+        );
+        self.linked_sort_arcs.push(sort);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn linked_sort_arc_count(&self) -> usize {
+        self.linked_sort_arcs.len()
+    }
+
+    /// Resolve an in-memory sort carrier to exact stream-local authority.
+    ///
+    /// Canonical catalog arcs resolve by pointer, followed by producer-stamped
+    /// pointers from an explicitly linked sibling program view. Fresh wrapper
+    /// arcs are accepted only for the seven concrete built-in definitions,
+    /// which are routinely manufactured by literal and polymorphic
+    /// constraints. Names, backend storage types, and other structural
+    /// properties are never used.
+    pub(crate) fn sort_registration_for_arc(&self, sort: &ArcSort) -> Option<&SortRegistration> {
+        let arc_key = Self::sort_arc_key(sort);
+        if let Some(identity) = self.sort_registrations_by_arc.get(&arc_key) {
+            let registration = self
+                .sort_registrations
+                .get(identity)
+                .expect("canonical arc index referenced a retired sort registration");
+            debug_assert!(Arc::ptr_eq(&registration.sort, sort));
+            return Some(registration);
+        }
+
+        if let Some(identity) = self.linked_sort_registrations_by_arc.get(&arc_key) {
+            return self.sort_registrations.get(identity);
+        }
+
+        let builtin = crate::prelude::builtin_sort_kind(sort)?;
+        let identity = self.builtin_sort_registrations.get(&builtin)?;
+        self.sort_registrations.get(identity)
+    }
+
+    pub(crate) fn sort_registration_id(&self, sort: &ArcSort) -> Option<SortRegistrationId> {
+        self.sort_registration_for_arc(sort)
+            .map(|registration| registration.identity)
+    }
+
+    /// Normalize an admitted carrier to this view's canonical catalog arc.
+    ///
+    /// Explicitly linked sibling-view arcs and fresh exact built-ins are
+    /// accepted by the lookup above, but resolved in-memory IR retains only the
+    /// local canonical pointer. Unstamped decoys fail closed.
+    pub(crate) fn canonical_sort_arc(&self, sort: &ArcSort) -> Option<ArcSort> {
+        self.sort_registration_for_arc(sort)
+            .map(|registration| registration.sort.clone())
+    }
+
+    pub(crate) fn expect_sort_registration_id(&self, sort: &ArcSort) -> SortRegistrationId {
+        self.sort_registration_id(sort).unwrap_or_else(|| {
+            panic!(
+                "resolved IR retained noncanonical sort without registered authority: {:?}",
+                sort
+            )
+        })
+    }
+
+    /// Whether two sort carriers resolve to the same exact authority in this
+    /// frontend view.
+    pub fn same_sort(&self, left: &ArcSort, right: &ArcSort) -> bool {
+        match (
+            self.sort_registration_id(left),
+            self.sort_registration_id(right),
+        ) {
+            (Some(left), Some(right)) => left == right,
+            _ => false,
+        }
+    }
+
+    fn mark_sort_non_unionable(&mut self, identity: SortRegistrationId) {
+        self.sort_registrations
+            .get_mut(&identity)
+            .expect("newly admitted sort registration disappeared")
+            .unionable = false;
+    }
+
     /// Adds a sort constructor to the typechecker's known set of types.
-    pub fn add_presort<S: Presort>(&mut self, span: Span) -> Result<(), TypeError> {
+    pub fn add_presort<S: Presort + 'static>(&mut self, span: Span) -> Result<(), TypeError> {
         let name = S::presort_name();
         match self.mksorts.entry(name.to_owned()) {
             HEntry::Occupied(_) => Err(TypeError::SortAlreadyBound(name.to_owned(), span)),
             HEntry::Vacant(e) => {
-                e.insert(S::make_sort);
+                e.insert(PresortRegistration {
+                    make_sort: S::make_sort,
+                    family: std::any::TypeId::of::<S>(),
+                });
                 self.reserved_primitives.extend(S::reserved_primitives());
                 Ok(())
             }
         }
+    }
+
+    /// Return canonical sorts produced by exactly `S`'s registered presort
+    /// constructor. Directly registered or storage-compatible custom sorts are
+    /// not members of this family.
+    pub fn get_arcsorts_by_presort<S: Presort + 'static>(&self) -> Vec<ArcSort> {
+        let family = std::any::TypeId::of::<S>();
+        self.sort_registrations
+            .values()
+            .filter(|registration| registration.presort_family == Some(family))
+            .map(|registration| registration.sort.clone())
+            .collect()
+    }
+
+    /// Whether `sort` has exact authority from `S`'s registered presort
+    /// constructor in this frontend view.
+    pub fn is_sort_from_presort<S: Presort + 'static>(&self, sort: &ArcSort) -> bool {
+        let family = std::any::TypeId::of::<S>();
+        self.sort_registration_for_arc(sort)
+            .is_some_and(|registration| registration.presort_family == Some(family))
     }
 
     /// Returns all sorts that satisfy the type and predicate.
@@ -1260,7 +1873,8 @@ impl TypeInfo {
     /// A sort is unionable if it's an eq_sort and not marked as non-unionable
     /// (e.g., from `(sort Foo :no-union)` or relation desugaring).
     pub fn is_sort_unionable(&self, sort: &ArcSort) -> bool {
-        sort.is_eq_sort() && !self.non_unionable_sorts.contains(sort.name())
+        self.sort_registration_for_arc(sort)
+            .is_some_and(|registration| registration.unionable)
     }
 
     fn function_to_functype(
@@ -1452,7 +2066,7 @@ impl TypeInfo {
                             Context::Write,
                         )?
                     };
-                    if !is_tuple && result.output_type().name() != outputs[0].name() {
+                    if !is_tuple && !self.same_sort(&result.output_type(), &outputs[0]) {
                         return Err(TypeError::Mismatch {
                             expr: merge.result.clone(),
                             expected: outputs[0].clone(),
@@ -1532,7 +2146,7 @@ impl TypeInfo {
                 Context::Write,
             )?;
             let actual = resolved.output_type();
-            if actual.name() != expected.name() {
+            if !self.same_sort(&actual, expected) {
                 return Err(TypeError::Mismatch {
                     expr: arg.clone(),
                     expected: expected.clone(),
@@ -1543,7 +2157,16 @@ impl TypeInfo {
         }
         Ok(GenericExpr::Call(
             merge.span(),
-            ResolvedCall::Values(outputs.to_vec()),
+            ResolvedCall::Values(
+                outputs
+                    .iter()
+                    .map(|sort| {
+                        self.canonical_sort_arc(sort).unwrap_or_else(|| {
+                            panic!("values constructor retained noncanonical output sort: {sort:?}")
+                        })
+                    })
+                    .collect(),
+            ),
             resolved_args,
         ))
     }
@@ -1643,7 +2266,7 @@ impl TypeInfo {
         )?;
 
         let assignment = problem
-            .solve(|sort: &ArcSort| sort.name())
+            .solve(|left, right| self.same_sort(left, right))
             .map_err(|e| e.to_type_error())?;
 
         let mut resolved_bindings = ResolvedBindingScope::default();
@@ -1732,7 +2355,7 @@ impl TypeInfo {
         // primitives may inspect the database but not write to it.
         problem.add_query(&query, self, Context::Read)?;
         let assignment = problem
-            .solve(|sort: &ArcSort| sort.name())
+            .solve(|left, right| self.same_sort(left, right))
             .map_err(|e| e.to_type_error())?;
         let mut resolved_bindings = ResolvedBindingScope::default();
         let annotated_facts = assignment.annotate_facts(
@@ -1795,7 +2418,7 @@ impl TypeInfo {
         }
 
         let assignment = problem
-            .solve(|sort: &ArcSort| sort.name())
+            .solve(|left, right| self.same_sort(left, right))
             .map_err(|e| e.to_type_error())?;
 
         let annotated_actions = assignment.annotate_actions(
@@ -1881,7 +2504,7 @@ impl TypeInfo {
         problem.add_binding(output_atom, output_sort.clone());
 
         let assignment = problem
-            .solve(|sort: &ArcSort| sort.name())
+            .solve(|left, right| self.same_sort(left, right))
             .map_err(|e| e.to_type_error())?;
 
         let mut resolved_bindings = ResolvedBindingScope::default();
@@ -1899,7 +2522,7 @@ impl TypeInfo {
         match annotated_actions.0.into_iter().next().unwrap() {
             ResolvedAction::Expr(_, resolved_expr) => {
                 let actual = resolved_expr.output_type();
-                if actual.name() != output_sort.name() {
+                if !self.same_sort(&actual, &output_sort) {
                     return Err(TypeError::Mismatch {
                         expr: expr.clone(),
                         expected: output_sort,
@@ -1996,6 +2619,16 @@ impl TypeInfo {
     pub(crate) fn preserve_global_function_identity_history_from(&mut self, newer: &Self) {
         self.global_function_identity_history
             .extend(newer.global_function_identity_history.iter().copied());
+    }
+
+    /// Preserve the primitive allocator's monotone frontier when a scope is
+    /// popped. Resolved specializations may outlive the active scope, so a
+    /// later registration in the same deterministic view domain must never
+    /// reuse their authority.
+    pub(crate) fn preserve_primitive_registration_high_water_from(&mut self, newer: &Self) {
+        self.next_primitive_registration_id = self
+            .next_primitive_registration_id
+            .max(newer.next_primitive_registration_id);
     }
 
     /// Check if an expression contains non-global function lookups (FunctionSubtype::Custom calls).
@@ -2123,6 +2756,52 @@ mod test {
     use super::*;
     use crate::{EGraph, Error};
 
+    #[derive(Debug)]
+    struct I64StorageDecoy;
+
+    impl crate::prelude::BaseSort for I64StorageDecoy {
+        type Base = i64;
+
+        fn name(&self) -> &str {
+            "i64-storage-decoy"
+        }
+
+        fn reconstruct_termdag(
+            &self,
+            _base_values: &crate::core_relations::BaseValues,
+            _value: Value,
+            _termdag: &mut TermDag,
+        ) -> TermId {
+            unreachable!("sort-registration tests do not reconstruct decoy values")
+        }
+    }
+
+    #[derive(Clone)]
+    struct SameNameSortPrimitive {
+        output: ArcSort,
+    }
+
+    impl Primitive for SameNameSortPrimitive {
+        fn name(&self) -> &str {
+            "same-name-sort-primitive"
+        }
+
+        fn get_type_constraints(&self, span: &Span) -> Box<dyn constraint::TypeConstraint> {
+            constraint::SimpleTypeConstraint::new(
+                self.name(),
+                vec![self.output.clone()],
+                span.clone(),
+            )
+            .into_box()
+        }
+    }
+
+    impl PurePrim for SameNameSortPrimitive {
+        fn apply<'a, 'db>(&self, _state: PureState<'a, 'db>, _args: &[Value]) -> Option<Value> {
+            None
+        }
+    }
+
     fn desugar_program(egraph: &mut EGraph, program: &str) -> Vec<NCommand> {
         let parsed = egraph.parse_program(None, program).unwrap();
         let mut desugared = Vec::new();
@@ -2145,6 +2824,406 @@ mod test {
             panic!("expected a resolved function call, got {call:?}");
         };
         func
+    }
+
+    #[test]
+    fn sort_registration_uses_pointer_then_exact_builtin_definition() {
+        let mut egraph = EGraph::new_compile_only(false);
+        let registrations = egraph
+            .type_info
+            .sort_registrations_in_order()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            registrations
+                .iter()
+                .map(|registration| registration.kind)
+                .collect::<Vec<_>>(),
+            vec![
+                RegisteredSortKind::Unit,
+                RegisteredSortKind::String,
+                RegisteredSortKind::Bool,
+                RegisteredSortKind::I64,
+                RegisteredSortKind::F64,
+                RegisteredSortKind::BigInt,
+                RegisteredSortKind::BigRat,
+            ]
+        );
+        assert!(registrations.iter().all(|registration| {
+            egraph
+                .type_info
+                .sort_registration(registration.identity)
+                .is_some_and(|roundtrip| Arc::ptr_eq(&registration.sort, &roundtrip.sort))
+        }));
+
+        let canonical_i64 = egraph.get_sort_by_name("i64").unwrap().clone();
+        let i64_identity = egraph.type_info.expect_sort_registration_id(&canonical_i64);
+        assert_eq!(
+            egraph
+                .type_info
+                .expect_sort_registration_id(&I64Sort.to_arcsort()),
+            i64_identity,
+            "fresh built-in wrappers resolve by their exact concrete definition"
+        );
+
+        crate::prelude::add_base_sort(&mut egraph, I64StorageDecoy, span!()).unwrap();
+        let decoy = egraph
+            .get_sort_by_name("i64-storage-decoy")
+            .unwrap()
+            .clone();
+        let decoy_registration = egraph.type_info.sort_registration_for_arc(&decoy).unwrap();
+        assert_eq!(decoy_registration.kind, RegisteredSortKind::Opaque);
+        assert_ne!(decoy_registration.identity, i64_identity);
+        assert_eq!(
+            egraph
+                .type_info
+                .expect_sort_registration_id(&I64Sort.to_arcsort()),
+            i64_identity,
+            "sharing i64 storage cannot make a custom base sort an i64"
+        );
+
+        let fresh_decoy = crate::prelude::BaseSort::to_arcsort(I64StorageDecoy);
+        assert!(
+            egraph
+                .type_info
+                .sort_registration_for_arc(&fresh_decoy)
+                .is_none(),
+            "noncanonical custom base-sort wrappers must fail closed"
+        );
+    }
+
+    #[test]
+    fn sort_registration_distinguishes_eq_arcs_and_finalized_commands_carry_authority() {
+        let mut egraph = EGraph::new_compile_only(false);
+        let mut desugared = desugar_program(&mut egraph, "(sort Left)\n(sort Right)");
+        let NCommand::Sort { unionable, .. } = &mut desugared[1] else {
+            unreachable!()
+        };
+        *unionable = false;
+        let mut resolved = egraph
+            .typecheck_program_with_sort_authority(&desugared, Vec::new())
+            .unwrap();
+        let resolutions = resolved
+            .sort_authorities
+            .iter()
+            .map(|authority| authority.local)
+            .collect::<Vec<_>>();
+        assert_ne!(resolutions[0], resolutions[1]);
+        assert!(
+            egraph
+                .type_info
+                .sort_registration(resolutions[0])
+                .unwrap()
+                .unionable
+        );
+        assert!(
+            !egraph
+                .type_info
+                .sort_registration(resolutions[1])
+                .unwrap()
+                .unionable
+        );
+
+        let left = egraph.get_sort_by_name("Left").unwrap().clone();
+        let right = egraph.get_sort_by_name("Right").unwrap().clone();
+        assert!(!egraph.type_info.same_sort(&left, &right));
+        let same_named_noncanonical: ArcSort = Arc::new(EqSort {
+            name: "Left".to_owned(),
+        });
+        assert!(
+            egraph
+                .type_info
+                .sort_registration_for_arc(&same_named_noncanonical)
+                .is_none(),
+            "same-name EqSort clones are not authority"
+        );
+
+        let ResolvedNCommand::Sort { name, .. } = &mut resolved.commands[0] else {
+            unreachable!()
+        };
+        *name = "diagnostic-only".to_owned();
+        assert_eq!(resolved.sort_authorities[0].local, resolutions[0]);
+    }
+
+    #[test]
+    fn public_sort_variant_keeps_its_legacy_literal_shape() {
+        let command: NCommand = NCommand::Sort {
+            span: span!(),
+            name: "LegacyLiteral".to_owned(),
+            presort_and_args: None,
+            uf: None,
+            proof_func: None,
+            container_rebuild: None,
+            proof_constructors: None,
+            unionable: true,
+        };
+        let NCommand::Sort { name, .. } = command else {
+            unreachable!()
+        };
+        assert_eq!(name, "LegacyLiteral");
+    }
+
+    #[test]
+    fn primitive_inference_rejects_same_named_noncanonical_eq_sort() {
+        let mut egraph = EGraph::default();
+        let desugared = desugar_program(&mut egraph, "(sort Exact)");
+        egraph.typecheck_program(&desugared).unwrap();
+        let canonical = egraph.get_sort_by_name("Exact").unwrap().clone();
+        let same_named_decoy: ArcSort = Arc::new(EqSort {
+            name: "Exact".to_owned(),
+        });
+        assert_eq!(canonical.name(), same_named_decoy.name());
+        assert!(!egraph.type_info.same_sort(&canonical, &same_named_decoy));
+
+        egraph.add_pure_primitive(
+            SameNameSortPrimitive {
+                output: same_named_decoy,
+            },
+            None,
+        );
+        let primitive = egraph
+            .type_info
+            .get_prims("same-name-sort-primitive")
+            .unwrap()
+            .first()
+            .unwrap();
+        assert!(
+            !primitive.accept(&[canonical], &egraph.type_info),
+            "constraint inference must not accept a noncanonical sort through its diagnostic name"
+        );
+    }
+
+    #[test]
+    fn equality_inference_rejects_same_named_noncanonical_eq_sort() {
+        let mut egraph = EGraph::new_compile_only(false);
+        let desugared = desugar_program(&mut egraph, "(sort Exact)");
+        egraph.typecheck_program(&desugared).unwrap();
+        let canonical = egraph.get_sort_by_name("Exact").unwrap().clone();
+        let same_named_decoy: ArcSort = Arc::new(EqSort {
+            name: "Exact".to_owned(),
+        });
+        let left = AtomTerm::Literal(Span::Panic, Literal::Int(0));
+        let right = AtomTerm::Literal(Span::Panic, Literal::Int(1));
+        let problem = Problem {
+            constraints: vec![
+                constraint::assign(left.clone(), canonical.clone()),
+                constraint::assign(right.clone(), same_named_decoy.clone()),
+                constraint::eq(left, right),
+            ],
+            range: HashSet::default(),
+        };
+
+        let error = problem
+            .solve(|left, right| egraph.type_info.same_sort(left, right))
+            .err()
+            .expect("distinct sort authorities must make equality inference inconsistent");
+        assert!(matches!(
+            error,
+            constraint::ConstraintError::InconsistentConstraint(_, expected, actual)
+                if Arc::ptr_eq(&expected, &canonical)
+                    && Arc::ptr_eq(&actual, &same_named_decoy)
+        ));
+    }
+
+    #[test]
+    fn rejected_sorts_do_not_consume_registration_ids_and_pop_keeps_high_water() {
+        let mut egraph = EGraph::new_compile_only(false);
+        let first = egraph
+            .declare_sort_with_registration("First", &None, span!())
+            .unwrap();
+        assert!(
+            egraph
+                .declare_sort_with_registration("First", &None, span!())
+                .is_err()
+        );
+        let second = egraph
+            .declare_sort_with_registration("Second", &None, span!())
+            .unwrap();
+        assert_eq!(second.ordinal(), first.ordinal() + 1);
+
+        let missing_presort = Some(("MissingPresort".to_owned(), vec![]));
+        assert!(
+            egraph
+                .declare_sort_with_registration("Rejected", &missing_presort, span!())
+                .is_err()
+        );
+        let third = egraph
+            .declare_sort_with_registration("Third", &None, span!())
+            .unwrap();
+        assert_eq!(third.ordinal(), second.ordinal() + 1);
+
+        let function = desugar_program(&mut egraph, "(function FunctionConflict () i64 :no-merge)");
+        egraph.typecheck_program(&function).unwrap();
+        assert!(
+            egraph
+                .declare_sort_with_registration("FunctionConflict", &None, span!())
+                .is_err()
+        );
+        let fourth = egraph
+            .declare_sort_with_registration("Fourth", &None, span!())
+            .unwrap();
+        assert_eq!(fourth.ordinal(), third.ordinal() + 1);
+
+        egraph.push();
+        let scoped = egraph
+            .declare_sort_with_registration("Scoped", &None, span!())
+            .unwrap();
+        egraph.pop().unwrap();
+        let after_pop = egraph
+            .declare_sort_with_registration("AfterPop", &None, span!())
+            .unwrap();
+        assert!(after_pop.ordinal() > scoped.ordinal());
+        assert!(egraph.get_sort_by_name("Scoped").is_none());
+    }
+
+    #[test]
+    fn sort_ledger_restores_high_water_after_parser_replacement() {
+        let mut egraph = EGraph::new_compile_only(false);
+        let prior_max = egraph
+            .type_info
+            .sort_registrations_in_order()
+            .map(|registration| registration.identity.ordinal())
+            .max()
+            .unwrap();
+        egraph.parser = Parser::default();
+        let next = egraph
+            .declare_sort_with_registration("AfterParserSwap", &None, span!())
+            .unwrap();
+        assert_eq!(next.ordinal(), prior_max + 1);
+
+        egraph.push();
+        let retired = egraph
+            .declare_sort_with_registration("RetiredByPop", &None, span!())
+            .unwrap();
+        egraph.pop().unwrap();
+        egraph.parser = Parser::default();
+        let after_retired = egraph
+            .declare_sort_with_registration("AfterRetiredParserSwap", &None, span!())
+            .unwrap();
+        assert!(after_retired.ordinal() > retired.ordinal());
+    }
+
+    #[test]
+    fn proof_views_preserve_retired_sort_high_water_after_parser_replacement() {
+        let mut egraph = EGraph::new_compile_only(true);
+        egraph.push();
+        let retired_execution = egraph
+            .declare_sort_with_registration("RetiredExecution", &None, span!())
+            .unwrap();
+        let retired_source = egraph
+            .proof_state
+            .original_typechecking
+            .as_deref_mut()
+            .unwrap()
+            .declare_sort_with_registration("RetiredSource", &None, span!())
+            .unwrap();
+        egraph.pop().unwrap();
+
+        egraph.parser = Parser::default();
+        egraph
+            .proof_state
+            .original_typechecking
+            .as_deref_mut()
+            .unwrap()
+            .parser = Parser::default();
+        let next_execution = egraph
+            .declare_sort_with_registration("NextExecution", &None, span!())
+            .unwrap();
+        let next_source = egraph
+            .proof_state
+            .original_typechecking
+            .as_deref_mut()
+            .unwrap()
+            .declare_sort_with_registration("NextSource", &None, span!())
+            .unwrap();
+        assert!(next_execution.ordinal() > retired_execution.ordinal());
+        assert!(next_source.ordinal() > retired_source.ordinal());
+    }
+
+    #[test]
+    fn mutual_datatype_schemas_retain_exact_registered_sort_arcs() {
+        let mut egraph = EGraph::new_compile_only(false);
+        let desugared = desugar_program(
+            &mut egraph,
+            r#"
+            (datatype*
+              (Left (MkLeft Right))
+              (Right (MkRight Left)))
+            "#,
+        );
+        egraph.typecheck_program(&desugared).unwrap();
+
+        let left = egraph.get_sort_by_name("Left").unwrap();
+        let right = egraph.get_sort_by_name("Right").unwrap();
+        let mk_left = egraph.type_info.get_func_type("MkLeft").unwrap();
+        let mk_right = egraph.type_info.get_func_type("MkRight").unwrap();
+        assert!(Arc::ptr_eq(&mk_left.input[0], right));
+        assert!(Arc::ptr_eq(mk_left.output(), left));
+        assert!(Arc::ptr_eq(&mk_right.input[0], left));
+        assert!(Arc::ptr_eq(mk_right.output(), right));
+        assert_eq!(
+            egraph
+                .type_info
+                .expect_sort_registration_id(mk_left.output()),
+            egraph.type_info.expect_sort_registration_id(left)
+        );
+    }
+
+    #[test]
+    fn normal_container_program_keeps_canonical_registered_output_sort() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (sort IntVec (Vec i64))
+                (let $ints (vec-of 1 2 3))
+                (check (= (vec-length $ints) 3))
+                "#,
+            )
+            .unwrap();
+
+        let int_vec = egraph.get_sort_by_name("IntVec").unwrap();
+        let registration = egraph.type_info.sort_registration_for_arc(int_vec).unwrap();
+        assert_eq!(registration.kind, RegisteredSortKind::Container);
+        assert!(!registration.unionable);
+        let global = egraph.type_info.get_global_sort("$ints").unwrap();
+        assert!(Arc::ptr_eq(global, int_vec));
+    }
+
+    #[test]
+    fn nested_and_same_shaped_containers_do_not_alias() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (sort Inner (Vec i64))
+                (sort Twin (Vec i64))
+                (sort Outer (Vec Inner))
+                (relation AcceptInner (Inner))
+                (relation AcceptTwin (Twin))
+                (relation AcceptOuter (Outer))
+                (AcceptInner (vec-of 1))
+                (AcceptTwin (vec-of 2))
+                (AcceptOuter (vec-of (vec-of 3)))
+                (check (AcceptInner (vec-of 1)))
+                (check (AcceptTwin (vec-of 2)))
+                (check (AcceptOuter (vec-of (vec-of 3))))
+                "#,
+            )
+            .unwrap();
+
+        let inner = egraph.get_sort_by_name("Inner").unwrap();
+        let twin = egraph.get_sort_by_name("Twin").unwrap();
+        let outer = egraph.get_sort_by_name("Outer").unwrap();
+        let inner_identity = egraph.type_info.expect_sort_registration_id(inner);
+        let twin_identity = egraph.type_info.expect_sort_registration_id(twin);
+        let outer_identity = egraph.type_info.expect_sort_registration_id(outer);
+        assert_ne!(inner_identity, twin_identity);
+        assert_ne!(inner_identity, outer_identity);
+        assert_ne!(twin_identity, outer_identity);
+        assert!(Arc::ptr_eq(&outer.inner_sorts()[0], inner));
+        assert!(!Arc::ptr_eq(&outer.inner_sorts()[0], twin));
     }
 
     #[test]
@@ -2508,12 +3587,13 @@ mod test {
     #[test]
     #[should_panic(expected = "one resolved binding authority was assigned incompatible sorts")]
     fn binding_scope_rejects_one_authority_with_different_sorts() {
+        let egraph = EGraph::new_compile_only(false);
         let mut scope = ResolvedBindingScope::default();
         let binding = ResolvedVarBinding::Lexical {
             id: ResolvedBindingId::new(23),
         };
-        scope.observe_sort(binding, &I64Sort.to_arcsort());
-        scope.observe_sort(binding, &StringSort.to_arcsort());
+        scope.observe_sort(binding, &I64Sort.to_arcsort(), &egraph.type_info);
+        scope.observe_sort(binding, &StringSort.to_arcsort(), &egraph.type_info);
     }
 
     #[test]

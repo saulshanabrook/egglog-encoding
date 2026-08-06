@@ -1,5 +1,4 @@
 use crate::Write;
-use std::any::TypeId;
 use std::iter::zip;
 
 use super::*;
@@ -130,9 +129,7 @@ impl ContainerSort for VecSort {
             .collect()
     }
 
-    fn register_primitives(&self, eg: &mut EGraph) {
-        let arc: Arc<dyn Sort> = self.clone().to_arcsort();
-
+    fn register_primitives_with_sort(&self, eg: &mut EGraph, arc: ArcSort) {
         // The proof "term form" of a vec: `(vec-of e0 e1 ...)`, or `(vec-empty)`
         // when empty, matching `reconstruct_termdag`. The validator lets the
         // proof checker evaluate `vec-of`/`vec-empty` applications.
@@ -201,7 +198,7 @@ impl ContainerSort for VecSort {
             );
         }
         // vec-range
-        if self.element.name() == "i64" {
+        if eg.same_sort(&self.element, &I64Sort.to_arcsort()) {
             add_primitive!(eg, "vec-range" = {self.clone(): VecSort} |end: i64| -> @VecContainer (arc) { VecContainer {
                 do_rebuild: self.ctx.is_eq_container_sort(),
                 data: {
@@ -212,13 +209,11 @@ impl ContainerSort for VecSort {
                 }
             } });
         }
-        let all_vec_sorts = eg
-            .type_info
-            .get_arcsorts_by(|f| f.value_type() == Some(TypeId::of::<VecContainer>()));
+        let all_vec_sorts = eg.type_info.get_arcsorts_by_presort::<VecSort>();
         for fn_sort in eg.type_info.get_sorts::<FunctionSort>() {
             for vec_sort in &all_vec_sorts {
                 try_registering_vec_map(eg, fn_sort.clone(), vec_sort.clone(), arc.clone());
-                if vec_sort.name() != arc.name() {
+                if !eg.same_sort(vec_sort, &arc) {
                     try_registering_vec_map(eg, fn_sort.clone(), arc.clone(), vec_sort.clone());
                 }
             }
@@ -258,9 +253,22 @@ pub(crate) fn try_registering_vec_map(
     input_vec: ArcSort,
     output_vec: ArcSort,
 ) {
+    if !eg.type_info.is_sort_from_presort::<VecSort>(&input_vec)
+        || !eg.type_info.is_sort_from_presort::<VecSort>(&output_vec)
+    {
+        return;
+    }
+    let input_sorts = input_vec.inner_sorts();
+    let [input_element] = input_sorts.as_slice() else {
+        return;
+    };
+    let output_sorts = output_vec.inner_sorts();
+    let [output_element] = output_sorts.as_slice() else {
+        return;
+    };
     if fn_.inputs().len() != 1
-        || fn_.inputs()[0].name() != input_vec.inner_sorts()[0].name()
-        || fn_.output().name() != output_vec.inner_sorts()[0].name()
+        || !eg.same_sort(&fn_.inputs()[0], input_element)
+        || !eg.same_sort(&fn_.output(), output_element)
     {
         return;
     }
@@ -276,9 +284,7 @@ pub(crate) fn try_registering_vec_map(
 }
 
 pub(crate) fn register_vec_primitives_for_function(eg: &mut EGraph, fn_: Arc<FunctionSort>) {
-    let all_vec_sorts = eg
-        .type_info
-        .get_arcsorts_by(|f| f.value_type() == Some(TypeId::of::<VecContainer>()));
+    let all_vec_sorts = eg.type_info.get_arcsorts_by_presort::<VecSort>();
     for input_vec in &all_vec_sorts {
         for output_vec in &all_vec_sorts {
             try_registering_vec_map(eg, fn_.clone(), input_vec.clone(), output_vec.clone());
@@ -398,6 +404,45 @@ impl WritePrim for Union {
 mod tests {
     use super::*;
 
+    #[derive(Clone, Debug)]
+    struct VecStorageDecoy {
+        element: ArcSort,
+    }
+
+    impl ContainerSort for VecStorageDecoy {
+        type Container = VecContainer;
+
+        fn name(&self) -> &str {
+            "VecStorageDecoy"
+        }
+
+        fn is_eq_container_sort(&self) -> bool {
+            false
+        }
+
+        fn inner_sorts(&self) -> Vec<ArcSort> {
+            vec![self.element.clone()]
+        }
+
+        fn inner_values(&self, _: &ContainerValues, _: Value) -> Vec<(ArcSort, Value)> {
+            unreachable!("authority decoy never constructs a value")
+        }
+
+        fn reconstruct_termdag(
+            &self,
+            _: &ContainerValues,
+            _: Value,
+            _: &mut TermDag,
+            _: Vec<TermId>,
+        ) -> TermId {
+            unreachable!("authority decoy never reconstructs a value")
+        }
+
+        fn serialized_name(&self, _: &ContainerValues, _: Value) -> String {
+            unreachable!("authority decoy never serializes a value")
+        }
+    }
+
     #[test]
     fn test_vec_make_expr() {
         let mut egraph = EGraph::default();
@@ -427,5 +472,36 @@ mod tests {
                 ),
             )
             .unwrap();
+    }
+
+    #[test]
+    fn vec_function_helpers_reject_same_storage_decoys() {
+        let mut egraph = EGraph::default();
+        let element = egraph.get_sort_by_name("i64").unwrap().clone();
+        let decoy = VecStorageDecoy { element }.to_arcsort();
+        egraph.add_arcsort(decoy.clone(), span!()).unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(sort RealVec (Vec i64))\n(sort I64Fn (UnstableFn (i64) i64))",
+            )
+            .unwrap();
+
+        let real_vec = egraph.get_sort_by_name("RealVec").unwrap().clone();
+        let function = egraph.get_sort_by_name("I64Fn").unwrap().clone();
+        assert!(egraph.type_info.is_sort_from_presort::<VecSort>(&real_vec));
+        assert!(!egraph.type_info.is_sort_from_presort::<VecSort>(&decoy));
+        let maps = egraph
+            .type_info
+            .get_prims("unstable-vec-map")
+            .expect("real Vec and function sorts should register map helpers");
+        assert!(maps.iter().any(|primitive| primitive.accept(
+            &[function.clone(), real_vec.clone(), real_vec.clone()],
+            &egraph.type_info
+        )));
+        assert!(maps.iter().all(|primitive| !primitive.accept(
+            &[function.clone(), decoy.clone(), decoy.clone()],
+            &egraph.type_info
+        )));
     }
 }

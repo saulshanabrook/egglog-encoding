@@ -1,11 +1,10 @@
 use egglog::ast::{Expr, Literal};
-use egglog::prelude::ContainerSort;
+use egglog::prelude::{BaseSort, ContainerSort, F64Sort};
 use egglog::sort::{ContainerValues, F, Presort, ValueRebuilder};
 use egglog::{
     ArcSort, ContainerValue, EGraph, Term, TermDag, TermId, TypeError, TypeInfo, Value,
     add_primitive_with_validator,
 };
-use std::any::TypeId;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct MaybeContainer {
@@ -111,9 +110,7 @@ impl ContainerSort for MaybeSort {
             .collect()
     }
 
-    fn register_primitives(&self, eg: &mut EGraph) {
-        let arc = self.clone().to_arcsort();
-
+    fn register_primitives_with_sort(&self, eg: &mut EGraph, arc: ArcSort) {
         add_primitive_with_validator!(
             eg,
             "maybe-none" = {self.clone(): MaybeSort} || -> @MaybeContainer (arc) { MaybeContainer {
@@ -181,7 +178,7 @@ impl ContainerSort for MaybeSort {
             }
         );
 
-        if self.element().name() == "f64" {
+        if eg.same_sort(&self.element(), &F64Sort.to_arcsort()) {
             add_primitive_with_validator!(
                 eg,
                 "maybe-f64-merge-with-tol" = |old: @MaybeContainer (arc), new: @MaybeContainer (arc), tol: F| -?> @MaybeContainer (arc) {{
@@ -225,7 +222,7 @@ impl ContainerSort for MaybeSort {
 
 pub fn maybe_sorts(type_info: &TypeInfo) -> Vec<(ArcSort, ArcSort)> {
     type_info
-        .get_arcsorts_by(|sort| sort.value_type() == Some(TypeId::of::<MaybeContainer>()))
+        .get_arcsorts_by_presort::<MaybeSort>()
         .into_iter()
         .filter_map(|sort| {
             let inner_sorts = sort.inner_sorts();
@@ -270,5 +267,29 @@ fn maybe_f64(termdag: &TermDag, term: TermId) -> Option<Option<f64>> {
             }
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::new_experimental_egraph;
+
+    #[test]
+    fn maybe_and_either_primitives_use_canonical_container_arcs() {
+        let mut egraph = new_experimental_egraph();
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (sort IntOrBool (Either i64 bool))
+                (sort OptionalIntOrBool (Maybe IntOrBool))
+                (relation Accept (OptionalIntOrBool))
+                (Accept (maybe-some (either-left 7)))
+                (Accept (maybe-some (either-right true)))
+                (check (Accept (maybe-some (either-left 7))))
+                (check (Accept (maybe-some (either-right true))))
+                "#,
+            )
+            .unwrap();
     }
 }

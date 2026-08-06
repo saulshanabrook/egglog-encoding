@@ -5,7 +5,6 @@ use egglog::{
     ArcSort, ContainerValue, EGraph, TermDag, TermId, TypeError, TypeInfo, Value,
     add_primitive_with_validator,
 };
-use std::any::TypeId;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum EitherData {
@@ -135,9 +134,7 @@ impl ContainerSort for EitherSort {
         }
     }
 
-    fn register_primitives(&self, eg: &mut EGraph) {
-        let arc = self.clone().to_arcsort();
-
+    fn register_primitives_with_sort(&self, eg: &mut EGraph, arc: ArcSort) {
         add_primitive_with_validator!(
             eg,
             "either-left" = {self.clone(): EitherSort} |left: # (self.left())| -> @EitherContainer (arc) {
@@ -244,7 +241,7 @@ impl ContainerSort for EitherSort {
 
 pub fn either_sorts(type_info: &TypeInfo) -> Vec<(ArcSort, ArcSort, ArcSort)> {
     type_info
-        .get_arcsorts_by(|sort| sort.value_type() == Some(TypeId::of::<EitherContainer>()))
+        .get_arcsorts_by_presort::<EitherSort>()
         .into_iter()
         .filter_map(|sort| {
             let inner_sorts = sort.inner_sorts();

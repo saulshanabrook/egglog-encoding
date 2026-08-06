@@ -179,9 +179,7 @@ impl ContainerSort for MapSort {
             .collect()
     }
 
-    fn register_primitives(&self, eg: &mut EGraph) {
-        let arc = self.clone().to_arcsort();
-
+    fn register_primitives_with_sort(&self, eg: &mut EGraph, arc: ArcSort) {
         // The proof "term form" of a map is the flat `(map-of k0 v0 k1 v1 ...)`
         // in canonical key order (like `set-of`/`vec-of`), matching
         // `reconstruct_termdag`. Each validator round-trips through a Rust

@@ -142,9 +142,7 @@ impl ContainerSort for MultiSetSort {
             .collect()
     }
 
-    fn register_primitives(&self, eg: &mut EGraph) {
-        let arc = self.clone().to_arcsort();
-
+    fn register_primitives_with_sort(&self, eg: &mut EGraph, arc: ArcSort) {
         // Proof term form of a multiset: `(multiset-of e0 e1 ...)`, matching
         // `reconstruct_termdag`. (Count merging for proof checking of
         // collapsing multisets is refined in the MultiSet proof stage.)
@@ -211,28 +209,26 @@ impl ContainerSort for MultiSetSort {
             xs.data.iter_counts().find(|(v, _)| *v == x).map(|(_, c)| c as i64).unwrap_or(0)
         });
 
-        // Add multiset-sum-multisets if the inner arcsort is also a multiset
-        for other_multiset_sort in eg.type_info.get_arcsorts_by(|f| {
-            f.name() == self.element.name()
-            // We can't query directly by arcsort type since it's wrapped in a ContainerSort which is not public
-                && f.value_type() == Some(TypeId::of::<MultiSetContainer>())
-        }) {
+        // Add multiset-sum-multisets only when the element carries exact
+        // producer-stamped MultiSet presort authority.
+        if eg
+            .type_info
+            .is_sort_from_presort::<MultiSetSort>(&self.element)
+        {
             eg.add_pure_primitive(
                 SumMultisets {
                     name: "multiset-sum-multisets".into(),
-                    multiset: other_multiset_sort.clone(),
+                    multiset: self.element.clone(),
                     multiset_of_multisets: arc.clone(),
                 },
                 None,
             );
         }
-        let all_ms_sorts = eg
-            .type_info
-            .get_arcsorts_by(|f| f.value_type() == Some(TypeId::of::<MultiSetContainer>()));
+        let all_ms_sorts = eg.type_info.get_arcsorts_by_presort::<MultiSetSort>();
         for fn_sort in eg.type_info.get_sorts::<FunctionSort>() {
             for ms_sort in &all_ms_sorts {
                 try_registering_multiset_map(eg, fn_sort.clone(), ms_sort.clone(), arc.clone());
-                if ms_sort.name() != arc.name() {
+                if !eg.same_sort(ms_sort, &arc) {
                     try_registering_multiset_map(eg, fn_sort.clone(), arc.clone(), ms_sort.clone());
                 }
             }
@@ -285,9 +281,24 @@ pub(crate) fn try_registering_multiset_map(
     input_ms: ArcSort,
     output_ms: ArcSort,
 ) {
+    if !eg.type_info.is_sort_from_presort::<MultiSetSort>(&input_ms)
+        || !eg
+            .type_info
+            .is_sort_from_presort::<MultiSetSort>(&output_ms)
+    {
+        return;
+    }
+    let input_sorts = input_ms.inner_sorts();
+    let [input_element] = input_sorts.as_slice() else {
+        return;
+    };
+    let output_sorts = output_ms.inner_sorts();
+    let [output_element] = output_sorts.as_slice() else {
+        return;
+    };
     if fn_.inputs().len() != 1
-        || fn_.inputs()[0].name() != input_ms.inner_sorts()[0].name()
-        || fn_.output().name() != output_ms.inner_sorts()[0].name()
+        || !eg.same_sort(&fn_.inputs()[0], input_element)
+        || !eg.same_sort(&fn_.output(), output_element)
     {
         return;
     }
@@ -303,9 +314,7 @@ pub(crate) fn try_registering_multiset_map(
 }
 
 pub(crate) fn register_multiset_primitives_for_function(eg: &mut EGraph, fn_: Arc<FunctionSort>) {
-    let all_ms_sorts = eg
-        .type_info
-        .get_arcsorts_by(|f| f.value_type() == Some(TypeId::of::<MultiSetContainer>()));
+    let all_ms_sorts = eg.type_info.get_arcsorts_by_presort::<MultiSetSort>();
     for input_ms in &all_ms_sorts {
         for output_ms in &all_ms_sorts {
             try_registering_multiset_map(eg, fn_.clone(), input_ms.clone(), output_ms.clone());
@@ -321,12 +330,16 @@ fn try_registering_multiset_non_map_primitives(
     fn_: Arc<FunctionSort>,
     multiset: ArcSort,
 ) {
+    if !eg.type_info.is_sort_from_presort::<MultiSetSort>(&multiset) {
+        return;
+    }
     let element = multiset.inner_sorts()[0].clone();
-    let element_name = element.name();
+    let unit_sort = UnitSort.to_arcsort();
+    let i64_sort = I64Sort.to_arcsort();
 
     if fn_.inputs().len() == 1
-        && fn_.inputs()[0].name() == element_name
-        && fn_.output().name() == "Unit"
+        && eg.same_sort(&fn_.inputs()[0], &element)
+        && eg.same_sort(&fn_.output(), &unit_sort)
     {
         eg.add_pure_primitive(
             Filter {
@@ -349,9 +362,9 @@ fn try_registering_multiset_non_map_primitives(
     }
 
     if fn_.inputs().len() == 2
-        && fn_.inputs()[0].name() == element_name
-        && fn_.inputs()[1].name() == element_name
-        && fn_.output().name() == element_name
+        && eg.same_sort(&fn_.inputs()[0], &element)
+        && eg.same_sort(&fn_.inputs()[1], &element)
+        && eg.same_sort(&fn_.output(), &element)
     {
         eg.add_pure_primitive(
             Reduce {
@@ -365,9 +378,9 @@ fn try_registering_multiset_non_map_primitives(
     }
 
     if fn_.inputs().len() == 2
-        && fn_.inputs()[0].name() == multiset.name()
-        && fn_.inputs()[1].name() == element_name
-        && fn_.output().name() == "i64"
+        && eg.same_sort(&fn_.inputs()[0], &multiset)
+        && eg.same_sort(&fn_.inputs()[1], &element)
+        && eg.same_sort(&fn_.output(), &i64_sort)
     {
         let unit = eg.type_info.get_sort_by_name("Unit").unwrap().clone();
         eg.add_full_primitive(
@@ -391,8 +404,8 @@ fn try_registering_multiset_non_map_primitives(
     }
 
     if fn_.inputs().len() == 1
-        && fn_.inputs()[0].name() == element_name
-        && fn_.output().name() == multiset.name()
+        && eg.same_sort(&fn_.inputs()[0], &element)
+        && eg.same_sort(&fn_.output(), &multiset)
     {
         eg.add_pure_primitive(
             FlatMap {
@@ -877,6 +890,114 @@ impl WritePrim for UnionValues {
             state.union(first, v).ok()?;
         }
         Some(first)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Clone, Debug)]
+    struct MultiSetStorageDecoy {
+        element: ArcSort,
+    }
+
+    impl ContainerSort for MultiSetStorageDecoy {
+        type Container = MultiSetContainer;
+
+        fn name(&self) -> &str {
+            "MultiSetStorageDecoy"
+        }
+
+        fn is_eq_container_sort(&self) -> bool {
+            false
+        }
+
+        fn inner_sorts(&self) -> Vec<ArcSort> {
+            vec![self.element.clone()]
+        }
+
+        fn inner_values(&self, _: &ContainerValues, _: Value) -> Vec<(ArcSort, Value)> {
+            unreachable!("authority decoy never constructs a value")
+        }
+
+        fn reconstruct_termdag(
+            &self,
+            _: &ContainerValues,
+            _: Value,
+            _: &mut TermDag,
+            _: Vec<TermId>,
+        ) -> TermId {
+            unreachable!("authority decoy never reconstructs a value")
+        }
+
+        fn serialized_name(&self, _: &ContainerValues, _: Value) -> String {
+            unreachable!("authority decoy never serializes a value")
+        }
+    }
+
+    #[test]
+    fn multiset_function_helpers_reject_same_storage_decoys() {
+        let mut egraph = EGraph::default();
+        let element = egraph.get_sort_by_name("i64").unwrap().clone();
+        let decoy = MultiSetStorageDecoy { element }.to_arcsort();
+        egraph.add_arcsort(decoy.clone(), span!()).unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(sort RealMultiSet (MultiSet i64))\n\
+                 (sort I64Fn (UnstableFn (i64) i64))\n\
+                 (sort PredicateFn (UnstableFn (i64) Unit))",
+            )
+            .unwrap();
+
+        let real_multiset = egraph.get_sort_by_name("RealMultiSet").unwrap().clone();
+        let map_function = egraph.get_sort_by_name("I64Fn").unwrap().clone();
+        let predicate_function = egraph.get_sort_by_name("PredicateFn").unwrap().clone();
+        assert!(
+            egraph
+                .type_info
+                .is_sort_from_presort::<MultiSetSort>(&real_multiset)
+        );
+        assert!(
+            !egraph
+                .type_info
+                .is_sort_from_presort::<MultiSetSort>(&decoy)
+        );
+
+        let maps = egraph
+            .type_info
+            .get_prims("unstable-multiset-map")
+            .expect("real MultiSet and function sorts should register map helpers");
+        assert!(maps.iter().any(|primitive| primitive.accept(
+            &[
+                map_function.clone(),
+                real_multiset.clone(),
+                real_multiset.clone(),
+            ],
+            &egraph.type_info
+        )));
+        assert!(maps.iter().all(|primitive| !primitive.accept(
+            &[map_function.clone(), decoy.clone(), decoy.clone()],
+            &egraph.type_info
+        )));
+
+        let filters = egraph
+            .type_info
+            .get_prims("unstable-multiset-filter")
+            .expect("real MultiSet and predicate sorts should register filter helpers");
+        assert!(filters.iter().any(|primitive| primitive.accept(
+            &[
+                predicate_function.clone(),
+                real_multiset.clone(),
+                real_multiset.clone(),
+            ],
+            &egraph.type_info
+        )));
+        assert!(filters.iter().all(|primitive| !primitive.accept(
+            &[predicate_function.clone(), decoy.clone(), decoy.clone()],
+            &egraph.type_info
+        )));
     }
 }
 

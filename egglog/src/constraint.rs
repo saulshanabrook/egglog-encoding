@@ -22,7 +22,7 @@ use std::{fmt::Debug, iter::once, mem::swap};
 #[derive(Debug, Default)]
 pub(crate) struct ResolvedBindingScope {
     bindings: crate::util::IndexMap<String, ResolvedVarBinding>,
-    observed_sorts: crate::util::HashMap<ResolvedVarBinding, String>,
+    observed_sorts: crate::util::HashMap<ResolvedVarBinding, SortRegistrationId>,
 }
 
 impl ResolvedBindingScope {
@@ -52,11 +52,16 @@ impl ResolvedBindingScope {
     /// repeated authority with a different sort must be rejected here, at the
     /// capture/typecheck boundary, instead of being allowed to masquerade as a
     /// second map key downstream.
-    pub(crate) fn observe_sort(&mut self, binding: ResolvedVarBinding, sort: &ArcSort) {
-        let sort_name = sort.name().to_owned();
-        if let Some(previous) = self.observed_sorts.insert(binding, sort_name.clone()) {
+    pub(crate) fn observe_sort(
+        &mut self,
+        binding: ResolvedVarBinding,
+        sort: &ArcSort,
+        typeinfo: &TypeInfo,
+    ) {
+        let identity = typeinfo.expect_sort_registration_id(sort);
+        if let Some(previous) = self.observed_sorts.insert(binding, identity) {
             assert_eq!(
-                previous, sort_name,
+                previous, identity,
                 "one resolved binding authority was assigned incompatible sorts"
             );
         }
@@ -112,15 +117,36 @@ pub trait Constraint<Var, Value>: dyn_clone::DynClone {
     /// or Err if the constraint cannot be satisfied.
     ///
     /// `update` is allowed to modify the constraint itself, e.g. to convert a delayed constraint into an immediate one.
-    /// The `key` function gets a string representation of the value for display.
+    /// `key` is the legacy public comparison/display hook. The frontend's
+    /// nominal type solver uses [`Constraint::update_exact`] instead.
     fn update(
         &mut self,
         assignment: &mut Assignment<Var, Value>,
         key: fn(&Value) -> &str,
     ) -> Result<bool, ConstraintError<Var, Value>>;
 
+    /// Update using an exact semantic equivalence relation.
+    ///
+    /// Existing downstream implementations remain source-compatible through
+    /// `update`. If they do not provide this exact hook, they may continue to
+    /// operate only when they never consult the legacy string key; consulting
+    /// it fails closed instead of silently recovering identity from a name.
+    fn update_exact(
+        &mut self,
+        assignment: &mut Assignment<Var, Value>,
+        _equivalent: &dyn Fn(&Value, &Value) -> bool,
+    ) -> Result<bool, ConstraintError<Var, Value>> {
+        self.update(assignment, legacy_constraint_key_is_unavailable::<Value>)
+    }
+
     /// Returns a human-readable string representation of this constraint.
     fn pretty(&self) -> String;
+}
+
+fn legacy_constraint_key_is_unavailable<Value>(_: &Value) -> &str {
+    panic!(
+        "legacy Constraint::update requested a display key during exact nominal solving; implement Constraint::update_exact"
+    )
 }
 
 dyn_clone::clone_trait_object!(<Var, Value> Constraint<Var, Value>);
@@ -240,6 +266,28 @@ where
         Ok(updated)
     }
 
+    fn update_exact(
+        &mut self,
+        assignment: &mut Assignment<Var, Value>,
+        equivalent: &dyn Fn(&Value, &Value) -> bool,
+    ) -> Result<bool, ConstraintError<Var, Value>> {
+        let mut updated = false;
+        if let DelayedConstraint::Delayed(delayed) = &self.constraint {
+            let watch_vals: Option<Vec<&Value>> =
+                self.watch_vars.iter().map(|v| assignment.get(v)).collect();
+            let Some(watch_vals) = watch_vals else {
+                return Ok(false);
+            };
+            self.constraint = DelayedConstraint::Constraint(delayed(&watch_vals));
+            updated = true;
+        }
+        let DelayedConstraint::Constraint(constraint) = &mut self.constraint else {
+            unreachable!("update_exact");
+        };
+        updated |= constraint.update_exact(assignment, equivalent)?;
+        Ok(updated)
+    }
+
     fn pretty(&self) -> String {
         let vars: String = self
             .watch_vars
@@ -288,6 +336,30 @@ where
         }
     }
 
+    fn update_exact(
+        &mut self,
+        assignment: &mut Assignment<Var, Value>,
+        equivalent: &dyn Fn(&Value, &Value) -> bool,
+    ) -> Result<bool, ConstraintError<Var, Value>> {
+        match (assignment.0.get(&self.0), assignment.0.get(&self.1)) {
+            (Some(value), None) => {
+                assignment.insert(self.1.clone(), value.clone());
+                Ok(true)
+            }
+            (None, Some(value)) => {
+                assignment.insert(self.0.clone(), value.clone());
+                Ok(true)
+            }
+            (Some(v1), Some(v2)) if equivalent(v1, v2) => Ok(false),
+            (Some(v1), Some(v2)) => Err(ConstraintError::InconsistentConstraint(
+                self.0.clone(),
+                v1.clone(),
+                v2.clone(),
+            )),
+            (None, None) => Ok(false),
+        }
+    }
+
     fn pretty(&self) -> String {
         format!("{:?} = {:?}", self.0, self.1)
     }
@@ -325,6 +397,25 @@ where
         }
     }
 
+    fn update_exact(
+        &mut self,
+        assignment: &mut Assignment<Var, Value>,
+        equivalent: &dyn Fn(&Value, &Value) -> bool,
+    ) -> Result<bool, ConstraintError<Var, Value>> {
+        match assignment.0.get(&self.0) {
+            None => {
+                assignment.insert(self.0.clone(), self.1.clone());
+                Ok(true)
+            }
+            Some(value) if equivalent(value, &self.1) => Ok(false),
+            Some(value) => Err(ConstraintError::InconsistentConstraint(
+                self.0.clone(),
+                self.1.clone(),
+                value.clone(),
+            )),
+        }
+    }
+
     fn pretty(&self) -> String {
         format!("{:?} = {:?}", self.0, self.1)
     }
@@ -345,8 +436,27 @@ where
     ) -> Result<bool, ConstraintError<Var, Value>> {
         let orig_assignment = assignment.clone();
         let mut updated = false;
+        for constraint in &mut self.0 {
+            match constraint.update(assignment, key) {
+                Ok(changed) => updated |= changed,
+                Err(error) => {
+                    *assignment = orig_assignment;
+                    return Err(error);
+                }
+            }
+        }
+        Ok(updated)
+    }
+
+    fn update_exact(
+        &mut self,
+        assignment: &mut Assignment<Var, Value>,
+        equivalent: &dyn Fn(&Value, &Value) -> bool,
+    ) -> Result<bool, ConstraintError<Var, Value>> {
+        let orig_assignment = assignment.clone();
+        let mut updated = false;
         for c in self.0.iter_mut() {
-            match c.update(assignment, key) {
+            match c.update_exact(assignment, equivalent) {
                 Ok(upd) => updated |= upd,
                 Err(error) => {
                     // In the case of failure,
@@ -393,8 +503,58 @@ where
         let mut result_constraint = None;
 
         let cs = std::mem::take(&mut self.0);
+        for mut constraint in cs {
+            match constraint.update(assignment, key) {
+                Ok(updated) => {
+                    success_count += 1;
+                    if success_count > 1 {
+                        break;
+                    }
+                    result_constraint = Some(constraint);
+                    if updated {
+                        swap(&mut result_assignment, assignment);
+                    }
+                    assignment_updated = updated;
+                }
+                Err(error) => errors.push(error),
+            }
+        }
+
+        match success_count.cmp(&1) {
+            std::cmp::Ordering::Equal => {
+                self.0 = vec![result_constraint.unwrap()];
+                *assignment = result_assignment;
+                Ok(assignment_updated)
+            }
+            std::cmp::Ordering::Greater => {
+                self.0 = orig_cs;
+                *assignment = orig_assignment;
+                Ok(false)
+            }
+            std::cmp::Ordering::Less => {
+                self.0 = orig_cs;
+                *assignment = orig_assignment;
+                Err(ConstraintError::NoConstraintSatisfied(errors))
+            }
+        }
+    }
+
+    fn update_exact(
+        &mut self,
+        assignment: &mut Assignment<Var, Value>,
+        equivalent: &dyn Fn(&Value, &Value) -> bool,
+    ) -> Result<bool, ConstraintError<Var, Value>> {
+        let mut success_count = 0;
+        let orig_assignment = assignment.clone();
+        let orig_cs = self.0.clone();
+        let mut result_assignment = assignment.clone();
+        let mut assignment_updated = false;
+        let mut errors = vec![];
+        let mut result_constraint = None;
+
+        let cs = std::mem::take(&mut self.0);
         for mut c in cs {
-            let result = c.update(assignment, key);
+            let result = c.update_exact(assignment, equivalent);
             match result {
                 Ok(updated) => {
                     success_count += 1;
@@ -602,7 +762,7 @@ impl Assignment<AtomTerm, ArcSort> {
                     self.get(&AtomTerm::Var(Span::Panic, var.clone()))
                         .expect("All variables should be assigned before annotation")
                 };
-                bindings.observe_sort(binding, ty);
+                bindings.observe_sort(binding, ty, typeinfo);
                 ResolvedExpr::Var(
                     span.clone(),
                     ResolvedVar {
@@ -631,8 +791,23 @@ impl Assignment<AtomTerm, ArcSort> {
                 // (its outputs live on the `values` side of the destructure/set), so it resolves
                 // from input types alone.
                 if head.as_str() == "values" {
-                    let sorts = args.iter().map(|arg| arg.output_type()).collect();
-                    return GenericExpr::Call(span.clone(), ResolvedCall::Values(sorts), args);
+                    let sorts = args.iter().map(|arg| arg.output_type()).collect::<Vec<_>>();
+                    return GenericExpr::Call(
+                        span.clone(),
+                        ResolvedCall::Values(
+                            sorts
+                                .iter()
+                                .map(|sort| {
+                                    typeinfo.canonical_sort_arc(sort).unwrap_or_else(|| {
+                                        panic!(
+                                            "values constructor retained noncanonical sort: {sort:?}"
+                                        )
+                                    })
+                                })
+                                .collect(),
+                        ),
+                        args,
+                    );
                 }
                 if let Some(ty) = typeinfo.get_func_type(head).filter(|t| t.is_tuple_output()) {
                     let input_types: Vec<_> = args.iter().map(|arg| arg.output_type()).collect();
@@ -710,7 +885,7 @@ impl Assignment<AtomTerm, ArcSort> {
                 if let_binding.is_some() {
                     bindings.bind_exact(var.clone(), binding);
                 }
-                bindings.observe_sort(binding, ty);
+                bindings.observe_sort(binding, ty, typeinfo);
                 Ok(ResolvedAction::Let(
                     span.clone(),
                     ResolvedVar {
@@ -794,7 +969,7 @@ impl Assignment<AtomTerm, ArcSort> {
                 let rhs = self.annotate_expr(rhs, typeinfo, symbol_gen, bindings, ctx);
 
                 let sort = lhs.output_type();
-                assert_eq!(sort.name(), rhs.output_type().name());
+                assert!(typeinfo.same_sort(&sort, &rhs.output_type()));
                 if !sort.is_eq_sort() {
                     return Err(TypeError::NonEqsortUnion(sort, span.clone()));
                 }
@@ -843,16 +1018,19 @@ where
     Var: cmp::Eq + PartialEq + Hash + Clone + Debug + 'static,
     Value: Clone + Debug + 'static,
 {
+    /// Solve using one stable semantic equivalence relation for assigned
+    /// values. The predicate must remain an equivalence relation for the whole
+    /// solve; diagnostic renderings are not admissible identity keys.
     pub(crate) fn solve(
         mut self,
-        key: fn(&Value) -> &str,
+        equivalent: impl Fn(&Value, &Value) -> bool,
     ) -> Result<Assignment<Var, Value>, ConstraintError<Var, Value>> {
         let mut assignment = Assignment(HashMap::default());
         let mut changed = true;
         while changed {
             changed = false;
             for constraint in self.constraints.iter_mut() {
-                changed |= constraint.update(&mut assignment, key)?;
+                changed |= constraint.update_exact(&mut assignment, &equivalent)?;
             }
         }
 
@@ -1381,12 +1559,79 @@ pub(crate) fn grounded_check(
         }
     }
 
-    let _assignment = problem.solve(|_| "grounded").map_err(|err| match err {
-        ConstraintError::UnconstrainedVar(ResolvedAtomTerm::Var(span, v)) => {
-            TypeError::Ungrounded(v.to_string(), span)
-        }
-        _ => panic!("unexpected constraint error in groundedness check {err:?}"),
-    })?;
+    let _assignment = problem
+        .solve(|left, right| left == right)
+        .map_err(|err| match err {
+            ConstraintError::UnconstrainedVar(ResolvedAtomTerm::Var(span, v)) => {
+                TypeError::Ungrounded(v.to_string(), span)
+            }
+            _ => panic!("unexpected constraint error in groundedness check {err:?}"),
+        })?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod compatibility_tests {
+    use super::*;
+
+    #[derive(Clone)]
+    struct LegacyIgnoresKey;
+
+    impl Constraint<u8, String> for LegacyIgnoresKey {
+        fn update(
+            &mut self,
+            assignment: &mut Assignment<u8, String>,
+            _key: fn(&String) -> &str,
+        ) -> Result<bool, ConstraintError<u8, String>> {
+            Ok(assignment.insert(0, "legacy".to_owned()).is_none())
+        }
+
+        fn pretty(&self) -> String {
+            "legacy-ignores-key".to_owned()
+        }
+    }
+
+    #[derive(Clone)]
+    struct LegacyUsesKey;
+
+    impl Constraint<u8, String> for LegacyUsesKey {
+        fn update(
+            &mut self,
+            _assignment: &mut Assignment<u8, String>,
+            key: fn(&String) -> &str,
+        ) -> Result<bool, ConstraintError<u8, String>> {
+            let value = "legacy".to_owned();
+            let _ = key(&value);
+            Ok(false)
+        }
+
+        fn pretty(&self) -> String {
+            "legacy-uses-key".to_owned()
+        }
+    }
+
+    #[test]
+    fn legacy_constraint_implementations_compile_and_fail_closed_on_key_use() {
+        let mut assignment = Assignment(HashMap::default());
+        let mut ignores_key = LegacyIgnoresKey;
+        assert!(
+            ignores_key
+                .update_exact(&mut assignment, &|left, right| left == right)
+                .unwrap()
+        );
+        assert_eq!(assignment.get(&0).map(String::as_str), Some("legacy"));
+
+        let mut uses_key = LegacyUsesKey;
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = uses_key.update_exact(&mut assignment, &|left, right| left == right);
+        }));
+        let payload = panic.unwrap_err();
+        let message = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .unwrap_or_default();
+        assert!(message.contains("exact nominal solving"));
+    }
 }

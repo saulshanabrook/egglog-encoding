@@ -681,16 +681,9 @@ impl<'a> Catalog<'a> {
     }
 
     fn validate_sorts(&self) -> ValidationResult {
-        let mut names = BTreeSet::new();
         let mut scalar_semantics = BTreeMap::new();
         for sort in self.sorts.values() {
             let path = format!("sort[{}]", sort.id.ordinal());
-            if !names.insert(sort.name.as_str()) {
-                return Err(invalid(
-                    path,
-                    format!("duplicate sort name `{}`", sort.name),
-                ));
-            }
             if sort.unionable && !matches!(sort.semantics, SortSemantics::Eq) {
                 return Err(invalid(&path, "only an Eq sort may be marked unionable"));
             }
@@ -772,15 +765,8 @@ impl<'a> Catalog<'a> {
     }
 
     fn validate_functions(&self) -> ValidationResult {
-        let mut names = BTreeSet::new();
         for function in self.functions.values() {
             let path = format!("function[{}]", function.id.ordinal());
-            if !names.insert(function.name.as_str()) {
-                return Err(invalid(
-                    &path,
-                    format!("duplicate function name `{}`", function.name),
-                ));
-            }
             if !(1..=function.schema.len()).contains(&function.n_values) {
                 return Err(invalid(
                     format!("{path}.n_values"),
@@ -1116,16 +1102,9 @@ impl<'a> Catalog<'a> {
     }
 
     fn validate_rulesets(&self) -> ValidationResult {
-        let mut names = BTreeSet::new();
         let mut memberships = BTreeMap::new();
         for ruleset in self.rulesets.values() {
             let path = format!("ruleset[{}]", ruleset.id.ordinal());
-            if !names.insert(ruleset.name.as_str()) {
-                return Err(invalid(
-                    &path,
-                    format!("duplicate ruleset name `{}`", ruleset.name),
-                ));
-            }
             let mut local = BTreeSet::new();
             for (index, rule_id) in ruleset.rules.iter().enumerate() {
                 let rule = self.rules.get(rule_id).copied().ok_or_else(|| {
@@ -1172,22 +1151,7 @@ impl<'a> Catalog<'a> {
     }
 
     fn validate_rules(&self) -> ValidationResult {
-        let mut names_by_ruleset = BTreeMap::<RulesetId, BTreeSet<&str>>::new();
         for rule in self.rules.values() {
-            if !names_by_ruleset
-                .entry(rule.ruleset)
-                .or_default()
-                .insert(rule.name.as_str())
-            {
-                return Err(invalid(
-                    format!("rule[{}]", rule.id.ordinal()),
-                    format!(
-                        "duplicate rule name `{}` in ruleset {}",
-                        rule.name,
-                        rule.ruleset.ordinal()
-                    ),
-                ));
-            }
             RuleValidator::new(self, rule).validate()?;
         }
         Ok(())
@@ -1685,7 +1649,7 @@ impl<'a> MergeValidator<'a> {
 struct RuleValidator<'a> {
     catalog: &'a Catalog<'a>,
     rule: &'a RuleSpec,
-    variables: BTreeMap<RuleVarId, (String, SortId)>,
+    variables: BTreeMap<RuleVarId, SortId>,
     variable_order: Vec<RuleVarId>,
 }
 
@@ -1990,17 +1954,16 @@ impl<'a> RuleValidator<'a> {
     fn collect_variable(&mut self, variable: &RuleVar, path: &str) -> ValidationResult {
         self.catalog.sort(variable.sort, path)?;
         match self.variables.get(&variable.id) {
-            Some((name, sort)) if name != &variable.name || *sort != variable.sort => Err(invalid(
+            Some(sort) if *sort != variable.sort => Err(invalid(
                 path,
                 format!(
-                    "variable ID {} is reused with a different name or sort",
+                    "variable ID {} is reused with a different sort",
                     variable.id.ordinal()
                 ),
             )),
             Some(_) => Ok(()),
             None => {
-                self.variables
-                    .insert(variable.id, (variable.name.clone(), variable.sort));
+                self.variables.insert(variable.id, variable.sort);
                 self.variable_order.push(variable.id);
                 Ok(())
             }
@@ -2407,6 +2370,45 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_diagnostic_names_do_not_alias_nominal_authority() {
+        let mut snapshot = fixture();
+
+        snapshot.sorts[2].name = snapshot.sorts[1].name.clone();
+        snapshot.functions[1].name = snapshot.functions[0].name.clone();
+        snapshot.functions[1].display.print_size_name = snapshot.functions[1].name.clone();
+        snapshot.rulesets.push(RulesetDecl {
+            id: RulesetId::new(1),
+            name: snapshot.rulesets[0].name.clone(),
+            rules: Vec::new(),
+        });
+
+        snapshot.validate().unwrap();
+        assert_ne!(snapshot.sorts[1].id, snapshot.sorts[2].id);
+        assert_ne!(snapshot.functions[0].id, snapshot.functions[1].id);
+        assert_ne!(snapshot.rulesets[0].id, snapshot.rulesets[1].id);
+    }
+
+    #[test]
+    fn exact_rule_variable_identity_ignores_diagnostic_spelling_but_not_sort() {
+        let mut snapshot = fixture();
+        {
+            let RuleTerm::Variable(repeated) = &mut snapshot.rules[0].body[1].terms[0] else {
+                unreachable!()
+            };
+            assert_eq!(repeated.id, RuleVarId::new(0));
+            repeated.name = "unrelated-display-spelling".to_owned();
+        }
+        snapshot.validate().unwrap();
+
+        let RuleTerm::Variable(repeated) = &mut snapshot.rules[0].body[1].terms[0] else {
+            unreachable!()
+        };
+        repeated.sort = BOOL;
+        let error = snapshot.validate().unwrap_err();
+        assert!(error.message.contains("different sort"));
+    }
+
+    #[test]
     fn constructor_view_display_uses_the_exact_target_identity() {
         let mut snapshot = fixture();
         let decoy_name = snapshot.function(DECOY).unwrap().name.clone();
@@ -2486,29 +2488,22 @@ mod tests {
     }
 
     #[test]
-    fn rule_names_are_diagnostic_keys_scoped_to_their_ruleset() {
+    fn duplicate_rule_names_do_not_alias_exact_rule_membership() {
         let mut snapshot = fixture();
         let mut second_rule = snapshot.rules[0].clone();
         second_rule.id = RuleId::new(1);
-        second_rule.ruleset = RulesetId::new(1);
         snapshot.rules.push(second_rule);
-        snapshot.rulesets.push(RulesetDecl {
-            id: RulesetId::new(1),
-            name: "other".into(),
-            rules: vec![RuleId::new(1)],
-        });
+        snapshot.rulesets[0].rules.push(RuleId::new(1));
 
         snapshot.validate().unwrap();
 
-        snapshot.rules[1].ruleset = RulesetId::new(0);
-        snapshot.rulesets[0].rules.push(RuleId::new(1));
-        snapshot.rulesets[1].rules.clear();
+        snapshot.rules[1].ruleset = RulesetId::new(99);
         assert!(
             snapshot
                 .validate()
                 .unwrap_err()
                 .message
-                .contains("duplicate rule name")
+                .contains("different ruleset ID")
         );
     }
 

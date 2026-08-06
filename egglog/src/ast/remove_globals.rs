@@ -8,7 +8,7 @@
 use crate::*;
 use crate::{
     core::ResolvedCall,
-    typechecking::{CallableIdentity, FuncType},
+    typechecking::{CallableIdentity, FinalizedProgram, FuncType, SortAuthorityAt},
 };
 use egglog_ast::generic_ast::{GenericAction, GenericExpr, GenericFact, GenericRule};
 
@@ -45,6 +45,9 @@ struct GlobalRemover<'a> {
 ///        (= fresh_var_for_x (x)))
 ///       ((Add fresh_var_for_x fresh_var_for_x)))
 /// ```
+// Kept as the source-compatible entry point for callers that do not carry the
+// private finalized-program authority sidecar.
+#[allow(dead_code)]
 pub(crate) fn remove_globals(
     prog: Vec<ResolvedNCommand>,
     fresh: &mut SymbolGen,
@@ -53,6 +56,49 @@ pub(crate) fn remove_globals(
     prog.into_iter()
         .flat_map(|cmd| remover.remove_globals_cmd(cmd))
         .collect()
+}
+
+/// Remove globals while explicitly remapping the private sort-authority
+/// sidecar through every command expansion and nested `Fail` flattening.
+pub(crate) fn remove_globals_with_sort_authority(
+    program: FinalizedProgram,
+    fresh: &mut SymbolGen,
+) -> FinalizedProgram {
+    program.validate_sort_authority_shape();
+    let mut authorities_by_command = (0..program.commands.len())
+        .map(|_| Vec::new())
+        .collect::<Vec<Vec<SortAuthorityAt>>>();
+    for mut authority in program.sort_authorities {
+        let top = authority
+            .command_path
+            .first()
+            .copied()
+            .expect("sort authority paths are never empty");
+        authority.command_path.remove(0);
+        authorities_by_command
+            .get_mut(top)
+            .expect("validated sort authority had an out-of-range top-level path")
+            .push(authority);
+    }
+
+    let mut remover = GlobalRemover { fresh };
+    let mut commands = Vec::new();
+    let mut sort_authorities = Vec::new();
+    for (command, authorities) in program.commands.into_iter().zip(authorities_by_command) {
+        let offset = commands.len();
+        let (produced, mut produced_authorities) =
+            remover.remove_globals_cmd_with_sort_authority(command, authorities);
+        for authority in &mut produced_authorities {
+            let top = authority
+                .command_path
+                .first_mut()
+                .expect("remapped sort authority paths are never empty");
+            *top += offset;
+        }
+        commands.extend(produced);
+        sort_authorities.extend(produced_authorities);
+    }
+    FinalizedProgram::new(commands, sort_authorities)
 }
 
 fn resolved_var_to_call(var: &ResolvedVar) -> ResolvedCall {
@@ -90,6 +136,78 @@ fn remove_globals_action(action: ResolvedAction) -> ResolvedAction {
 }
 
 impl GlobalRemover<'_> {
+    fn remove_globals_cmd_with_sort_authority(
+        &mut self,
+        cmd: ResolvedNCommand,
+        authorities: Vec<SortAuthorityAt>,
+    ) -> (Vec<ResolvedNCommand>, Vec<SortAuthorityAt>) {
+        if let GenericNCommand::Fail(span, commands) = cmd {
+            let mut authorities_by_child = (0..commands.len())
+                .map(|_| Vec::new())
+                .collect::<Vec<Vec<SortAuthorityAt>>>();
+            for mut authority in authorities {
+                let child = authority
+                    .command_path
+                    .first()
+                    .copied()
+                    .expect("a Fail descendant sort authority omitted its child path");
+                authority.command_path.remove(0);
+                authorities_by_child
+                    .get_mut(child)
+                    .expect("validated Fail sort authority had an out-of-range child path")
+                    .push(authority);
+            }
+
+            let mut nested = Vec::new();
+            let mut remapped = Vec::new();
+            for (command, child_authorities) in commands.into_iter().zip(authorities_by_child) {
+                let offset = nested.len();
+                let (produced, mut produced_authorities) =
+                    self.remove_globals_cmd_with_sort_authority(command, child_authorities);
+                for authority in &mut produced_authorities {
+                    let child = authority
+                        .command_path
+                        .first_mut()
+                        .expect("remapped Fail sort authority paths are never empty");
+                    *child += offset;
+                    authority.command_path.insert(0, 0);
+                }
+                nested.extend(produced);
+                remapped.extend(produced_authorities);
+            }
+            return (vec![GenericNCommand::Fail(span, nested)], remapped);
+        }
+
+        if matches!(cmd, GenericNCommand::Sort { .. }) {
+            let [mut authority] = <[SortAuthorityAt; 1]>::try_from(authorities)
+                .expect("every finalized Sort must carry exactly one authority stamp");
+            assert!(
+                authority.command_path.is_empty(),
+                "a non-Fail Sort authority carried a descendant path"
+            );
+            let produced = self.remove_globals_cmd(cmd);
+            assert!(
+                matches!(produced.as_slice(), [GenericNCommand::Sort { .. }]),
+                "global removal changed a Sort into a different command shape"
+            );
+            authority.command_path.push(0);
+            return (produced, vec![authority]);
+        }
+
+        assert!(
+            authorities.is_empty(),
+            "a non-Sort command received sort authority metadata"
+        );
+        let produced = self.remove_globals_cmd(cmd);
+        assert!(
+            !produced
+                .iter()
+                .any(|command| matches!(command, GenericNCommand::Sort { .. })),
+            "global removal generated an unstamped Sort"
+        );
+        (produced, Vec::new())
+    }
+
     fn remove_globals_cmd(&mut self, cmd: ResolvedNCommand) -> Vec<ResolvedNCommand> {
         match cmd {
             GenericNCommand::CoreAction(action) => match action {

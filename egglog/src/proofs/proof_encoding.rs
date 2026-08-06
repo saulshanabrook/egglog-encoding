@@ -5,7 +5,7 @@ use crate::proofs::proof_encoding_helpers::{
 use crate::proofs::proof_head::{
     Head, HeadPlan, HeadPosition, HeadProof, HeadRun, ProofAlgebra, constructor_operand,
 };
-use crate::typechecking::FuncType;
+use crate::typechecking::{FinalizedProgram, FuncType, SortAuthorityAt};
 use crate::*;
 
 pub(crate) fn is_exact_global_function(egraph: &EGraph, function: &FuncType) -> bool {
@@ -197,15 +197,19 @@ pub(crate) struct ViewIndex {
 #[derive(Clone)]
 pub(crate) struct EncodingState {
     pub uf_parent: HashMap<String, String>,
+    /// Exact local sort registration -> generated UF table name.
+    pub uf_parent_by_sort: HashMap<SortRegistrationId, String>,
     /// Maps sort name -> proof function name (set from :internal-proof-func annotation).
     pub proof_func_parent: HashMap<String, String>,
+    /// Exact local sort registration -> generated proof table name.
+    pub proof_func_parent_by_sort: HashMap<SortRegistrationId, String>,
     /// Maps container sort name -> the name of its registered container-rebuild
     /// primitive (`ContainerRebuild`). Cached so each container sort gets
     /// a single rebuild primitive shared across all functions using it.
-    pub container_rebuild_name: HashMap<String, String>,
+    pub container_rebuild_name: HashMap<SortRegistrationId, String>,
     /// Maps container sort name -> the name of its registered proof-producing
     /// container-rebuild primitive (`ContainerRebuildProof`). Proof mode only.
-    pub container_rebuild_proof_name: HashMap<String, String>,
+    pub container_rebuild_proof_name: HashMap<SortRegistrationId, String>,
     /// Function name -> the rebuild indexes declared on its view, one per
     /// distinct eq-sort among the view's columns (see [`ViewIndex`]).
     pub view_index: HashMap<String, Vec<ViewIndex>>,
@@ -219,6 +223,9 @@ pub(crate) struct EncodingState {
     /// Whether extracted proofs are verified.
     pub verify_proofs: bool,
     pub proof_names: EncodingNames,
+    /// Exact local catalog arc for the proof datatype. Diagnostic proof names
+    /// remain only generated table/display references.
+    pub proof_sort: Option<ArcSort>,
     /// Test-only knob: annotate RHS-reading rules `:naive` (the safe
     /// whole-database baseline) instead of `:unsafe-seminaive`, so tests can
     /// assert the two produce the same database.
@@ -229,7 +236,9 @@ impl EncodingState {
     pub(crate) fn new(symbol_gen: &mut SymbolGen) -> Self {
         Self {
             uf_parent: HashMap::default(),
+            uf_parent_by_sort: HashMap::default(),
             proof_func_parent: HashMap::default(),
+            proof_func_parent_by_sort: HashMap::default(),
             container_rebuild_name: HashMap::default(),
             container_rebuild_proof_name: HashMap::default(),
             view_index: HashMap::default(),
@@ -239,6 +248,7 @@ impl EncodingState {
             proof_names: EncodingNames::new(symbol_gen),
             proof_testing: false,
             verify_proofs: true,
+            proof_sort: None,
             force_proof_naive: false,
         }
     }
@@ -260,6 +270,20 @@ pub(crate) struct ProofInstrumentor<'a> {
     /// Declarations of the packed constructors the compositions written so far
     /// need, to be emitted ahead of the command using them.
     packed_decls: Vec<String>,
+}
+
+/// Proof-instrumented commands plus exact source-sort lineage stamped by the
+/// producer that emitted each execution-view sort command.
+pub(crate) struct TermEncodedProgram {
+    pub(crate) commands: Vec<Command>,
+    pub(crate) sort_lineages: Vec<SortLineage>,
+}
+
+/// Producer-stamped path from the generated program root through nested
+/// `fail` command lists to one execution-view sort declaration.
+pub(crate) struct SortLineage {
+    pub(crate) command_path: Vec<usize>,
+    pub(crate) source: SortRegistrationId,
 }
 
 /// A held-back proof: finished statements, emitted as they stand (see
@@ -293,28 +317,50 @@ impl<'a> ProofInstrumentor<'a> {
     /// Make a term state and use it to instrument the code.
     pub(crate) fn add_term_encoding(
         egraph: &'a mut EGraph,
-        program: Vec<ResolvedNCommand>,
-    ) -> Result<Vec<Command>, Error> {
+        program: FinalizedProgram,
+    ) -> Result<TermEncodedProgram, Error> {
         Self::new(egraph).add_term_encoding_helper(program)
     }
 
     pub(crate) fn lower_inputs(
         egraph: &EGraph,
-        program: Vec<ResolvedNCommand>,
-    ) -> Result<Vec<ResolvedNCommand>, Error> {
-        let mut lowered = Vec::with_capacity(program.len());
-        for command in program {
+        program: FinalizedProgram,
+    ) -> Result<FinalizedProgram, Error> {
+        program.validate_sort_authority_shape();
+        let mut authorities_by_command = (0..program.commands.len())
+            .map(|_| Vec::new())
+            .collect::<Vec<Vec<SortAuthorityAt>>>();
+        for mut authority in program.sort_authorities {
+            let top = authority.command_path.remove(0);
+            authorities_by_command
+                .get_mut(top)
+                .expect("validated input-lowering authority path was out of range")
+                .push(authority);
+        }
+
+        let mut lowered = Vec::with_capacity(program.commands.len());
+        let mut sort_authorities = Vec::new();
+        for (command, mut authorities) in program.commands.into_iter().zip(authorities_by_command) {
             if let ResolvedNCommand::Input { span, name, file } = &command {
+                assert!(
+                    authorities.is_empty(),
+                    "an Input command carried sort authority metadata"
+                );
                 lowered.extend(
                     Self::input_actions(egraph, span, name, file)?
                         .into_iter()
                         .map(ResolvedNCommand::CoreAction),
                 );
             } else {
+                let top = lowered.len();
                 lowered.push(command);
+                for authority in &mut authorities {
+                    authority.command_path.insert(0, top);
+                }
+                sort_authorities.extend(authorities);
             }
         }
-        Ok(lowered)
+        Ok(FinalizedProgram::new(lowered, sort_authorities))
     }
 
     /// Mint a `Rule` or `Fiat` proof of the equality `a = b`. Only `Fiat` names
@@ -1798,7 +1844,7 @@ impl<'a> ProofInstrumentor<'a> {
                             match &arg.connector {
                                 Some(connector) if container_proof && asort.is_eq_sort() => {
                                     let (value, natural) = (&arg.value, &arg.natural);
-                                    let uf = self.uf_name(asort.name());
+                                    let uf = self.uf_name_for_sort(asort);
                                     let conn = self.connector_node(emit, connector);
                                     // The `@UF` row reads the connector directly,
                                     // not through a mint.
@@ -2055,9 +2101,20 @@ impl<'a> ProofInstrumentor<'a> {
     fn term_encode_command(
         &mut self,
         command: &ResolvedNCommand,
+        sort_authorities: Vec<SortAuthorityAt>,
         res: &mut Vec<Command>,
+        sort_lineages: &mut Vec<SortLineage>,
     ) -> Result<(), Error> {
         log::trace!("Term encoding for {command}");
+        if !matches!(
+            command,
+            ResolvedNCommand::Sort { .. } | ResolvedNCommand::Fail(..)
+        ) {
+            assert!(
+                sort_authorities.is_empty(),
+                "a non-Sort proof-instrumentation command carried sort authority metadata"
+            );
+        }
         match &command {
             ResolvedNCommand::Sort {
                 span,
@@ -2066,12 +2123,27 @@ impl<'a> ProofInstrumentor<'a> {
                 unionable,
                 ..
             } => {
-                // After the proof-encoding gate, any sort carrying a presort
-                // is one of the supported container sorts. Containers have no
-                // per-sort union-find (they are canonicalized structurally),
-                // so they get `uf: None` and `find_canonical` leaves their
-                // value unchanged during extraction.
-                let is_container = presort_and_args.is_some();
+                let [source_authority] = <[SortAuthorityAt; 1]>::try_from(sort_authorities)
+                    .expect("proof instrumentation requires one finalized source sort authority");
+                assert!(
+                    source_authority.command_path.is_empty(),
+                    "a non-Fail source Sort authority carried a descendant path"
+                );
+                let source_resolution = source_authority.local;
+                let source_sort = self
+                    .egraph
+                    .proof_state
+                    .original_typechecking
+                    .as_ref()
+                    .and_then(|typechecker| {
+                        typechecker.type_info.sort_registration(source_resolution)
+                    })
+                    .map(|registration| registration.sort.clone())
+                    .expect("proof instrumentation received unknown source sort authority");
+                // Container meaning comes from the exact producer-stamped
+                // source registration. `presort_and_args` remains only the
+                // syntax that must be re-emitted; it is not authority.
+                let is_container = source_sort.is_container_sort();
                 let uf_name = if is_container {
                     None
                 } else {
@@ -2092,19 +2164,14 @@ impl<'a> ProofInstrumentor<'a> {
                 // primitives can be re-registered when this desugared Sort
                 // command is typechecked / re-parsed.
                 let container_rebuild = if is_container {
-                    let container_sort = self
-                        .egraph
-                        .proof_state
-                        .original_typechecking
-                        .as_ref()
-                        .and_then(|tc| tc.get_sort_by_name(name).cloned())
-                        .unwrap_or_else(|| {
-                            panic!("container sort {name} not found while term-encoding")
-                        });
-                    Some(self.build_container_rebuild_spec(&container_sort))
+                    Some(self.build_container_rebuild_spec(source_resolution))
                 } else {
                     None
                 };
+                sort_lineages.push(SortLineage {
+                    command_path: vec![res.len()],
+                    source: source_resolution,
+                });
                 res.push(Command::Sort {
                     span: span.clone(),
                     name: name.clone(),
@@ -2162,8 +2229,29 @@ impl<'a> ProofInstrumentor<'a> {
                 // Encode every wrapped command and keep the whole flattened result
                 // inside one `fail` (a single command can encode to several).
                 let mut encoded = vec![];
-                for cmd in cmds {
-                    self.term_encode_command(cmd, &mut encoded)?;
+                let mut nested_sort_lineages = vec![];
+                let mut authorities_by_child = (0..cmds.len())
+                    .map(|_| Vec::new())
+                    .collect::<Vec<Vec<SortAuthorityAt>>>();
+                for mut authority in sort_authorities {
+                    let child = authority.command_path.remove(0);
+                    authorities_by_child
+                        .get_mut(child)
+                        .expect("validated Fail sort authority path was out of range")
+                        .push(authority);
+                }
+                for (cmd, child_authorities) in cmds.iter().zip(authorities_by_child) {
+                    self.term_encode_command(
+                        cmd,
+                        child_authorities,
+                        &mut encoded,
+                        &mut nested_sort_lineages,
+                    )?;
+                }
+                let fail_index = res.len();
+                for mut lineage in nested_sort_lineages {
+                    lineage.command_path.insert(0, fail_index);
+                    sort_lineages.push(lineage);
                 }
                 res.push(Command::Fail(span.clone(), encoded));
             }
@@ -2239,9 +2327,11 @@ impl<'a> ProofInstrumentor<'a> {
 
     pub(crate) fn add_term_encoding_helper(
         &mut self,
-        program: Vec<ResolvedNCommand>,
-    ) -> Result<Vec<Command>, Error> {
+        program: FinalizedProgram,
+    ) -> Result<TermEncodedProgram, Error> {
+        program.validate_sort_authority_shape();
         let mut res = vec![];
+        let mut sort_lineages = vec![];
 
         if !self.egraph.proof_state.term_header_added {
             res.extend(self.term_header());
@@ -2252,24 +2342,53 @@ impl<'a> ProofInstrumentor<'a> {
             self.egraph.proof_state.term_header_added = true;
         }
         if self.egraph.proof_state.proofs_enabled {
-            let arities = self.rule_arity_header(&program);
+            let arities = self.rule_arity_header(&program.commands);
             res.extend(arities);
         }
 
-        for command in program {
+        let mut authorities_by_command = (0..program.commands.len())
+            .map(|_| Vec::new())
+            .collect::<Vec<Vec<SortAuthorityAt>>>();
+        for mut authority in program.sort_authorities {
+            let top = authority.command_path.remove(0);
+            authorities_by_command
+                .get_mut(top)
+                .expect("validated source sort authority path was out of range")
+                .push(authority);
+        }
+
+        for (command, command_authorities) in
+            program.commands.into_iter().zip(authorities_by_command)
+        {
             let at = res.len();
-            self.term_encode_command(&command, &mut res)?;
+            self.term_encode_command(&command, command_authorities, &mut res, &mut sort_lineages)?;
             // A packed constructor is a property of the composition written, so
             // it is declared with the first command writing one — ahead of that
             // command, and outside any `fail` wrapping it.
-            res.splice(at..at, self.take_packed_decls());
+            let packed_decls = self.take_packed_decls();
+            let inserted = packed_decls.len();
+            if inserted > 0 {
+                for lineage in &mut sort_lineages {
+                    let top_level = lineage
+                        .command_path
+                        .first_mut()
+                        .expect("sort lineage paths are never empty");
+                    if *top_level >= at {
+                        *top_level += inserted;
+                    }
+                }
+            }
+            res.splice(at..at, packed_decls);
 
             if !command_skips_rebuild(&command) {
                 res.push(Command::RunSchedule(self.rebuild()));
             }
         }
 
-        Ok(res)
+        Ok(TermEncodedProgram {
+            commands: res,
+            sort_lineages,
+        })
     }
 }
 

@@ -301,11 +301,12 @@ impl TypeConstraint for FunctionCTorTypeConstraint {
                     .skip(n_partial_args)
                     .cloned()
                     .collect();
-                if expected_output.name() != actual_output.name()
+                if !typeinfo.same_sort(&expected_output, &actual_output)
+                    || expected_input.len() != actual_input.len()
                     || expected_input
                         .iter()
-                        .map(|s| s.name())
-                        .ne(actual_input.iter().map(|s| s.name()))
+                        .zip(&actual_input)
+                        .any(|(expected, actual)| !typeinfo.same_sort(expected, actual))
                 {
                     return vec![constraint::impossible(
                         constraint::ImpossibleConstraint::FunctionMismatch {

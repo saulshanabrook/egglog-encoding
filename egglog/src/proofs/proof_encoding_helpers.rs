@@ -11,6 +11,7 @@ use crate::{
     },
     core::ResolvedCall,
     proofs::proof_encoding::ProofInstrumentor,
+    typechecking::{FinalizedProgram, SortAuthorityAt, SortRegistrationId},
     util::{FreshGen, HashMap, HashSet, SymbolGen},
 };
 
@@ -388,6 +389,24 @@ impl ProofInstrumentor<'_> {
                 .insert(sort.to_string(), fresh_name.clone());
             fresh_name
         }
+    }
+
+    /// Select the already-declared UF table for an exact resolved sort.
+    ///
+    /// `uf_name` above is a source-symbol generator used while declaring a
+    /// sort. Once resolved IR carries an [`crate::ArcSort`], semantic routing
+    /// must use the producer-stamped local registration instead of regenerating
+    /// or looking up authority from the sort's diagnostic name.
+    pub(crate) fn uf_name_for_sort(&self, sort: &crate::ArcSort) -> String {
+        let identity = self.egraph.type_info.expect_sort_registration_id(sort);
+        self.egraph
+            .proof_state
+            .uf_parent_by_sort
+            .get(&identity)
+            .cloned()
+            .unwrap_or_else(|| {
+                panic!("resolved eq sort {identity:?} has no declared proof UF relation")
+            })
     }
 
     pub(crate) fn parse_program(&mut self, input: &str) -> Vec<Command> {
@@ -838,12 +857,13 @@ pub fn file_supports_proofs_with_egraph(path: &Path, mut egraph: EGraph) -> bool
     };
 
     let filename = canonical.to_string_lossy().into_owned();
-    let desugared = match egraph.resolve_program(Some(filename.clone()), &contents) {
-        Ok(commands) => commands,
-        Err(_) => return false,
-    };
+    let desugared =
+        match egraph.resolve_program_with_sort_authority(Some(filename.clone()), &contents) {
+            Ok(commands) => commands,
+            Err(_) => return false,
+        };
 
-    program_supports_proofs(&desugared, &egraph.type_info)
+    finalized_program_supports_proofs(&desugared, &egraph.type_info)
 }
 
 /// Reasons why a command doesn't support proof encoding
@@ -908,13 +928,48 @@ pub enum ProofEncodingUnsupportedReason {
 }
 
 /// Checks whether a desugared program supports proof encoding.
+///
+/// This compatibility API does not carry the frontend's private sort-authority
+/// sidecar. It therefore rejects presort declarations conservatively. Source
+/// and compiler paths use `finalized_program_supports_proofs`, which preserves
+/// valid container behavior through exact producer authority.
 pub fn program_supports_proofs(commands: &[ResolvedCommand], type_info: &TypeInfo) -> bool {
     for command in commands {
-        if let Err(reason) = command_supports_proof_encoding_impl(command, type_info) {
+        if let Err(reason) = command_supports_proof_encoding(command, type_info) {
             let cmd = command.to_string();
             log::debug!(
                 "program does not support proofs: {reason}\n  command: {}",
                 &cmd[..cmd.len().min(160)]
+            );
+            return false;
+        }
+    }
+    true
+}
+
+pub(crate) fn finalized_program_supports_proofs(
+    program: &FinalizedProgram,
+    type_info: &TypeInfo,
+) -> bool {
+    program.validate_sort_authority_shape();
+    let mut authorities_by_command = (0..program.commands.len())
+        .map(|_| Vec::new())
+        .collect::<Vec<Vec<SortAuthorityAt>>>();
+    for mut authority in program.sort_authorities.iter().cloned() {
+        let top = authority.command_path.remove(0);
+        authorities_by_command
+            .get_mut(top)
+            .expect("validated proof-support sort path was out of range")
+            .push(authority);
+    }
+    for (command, authorities) in program.commands.iter().zip(authorities_by_command) {
+        if let Err(reason) =
+            command_supports_proof_encoding_with_sort_authorities(command, type_info, &authorities)
+        {
+            let command = command.to_string();
+            log::debug!(
+                "program does not support proofs: {reason}\n  command: {}",
+                &command[..command.len().min(160)]
             );
             return false;
         }
@@ -989,12 +1044,51 @@ pub(crate) fn command_supports_proof_encoding(
     command: &ResolvedCommand,
     type_info: &TypeInfo,
 ) -> Result<(), ProofEncodingUnsupportedReason> {
-    command_supports_proof_encoding_impl(command, type_info)
+    command_supports_proof_encoding_impl(
+        command,
+        None,
+        type_info,
+        &HashMap::default(),
+        &mut Vec::new(),
+    )
+}
+
+/// Check a finalized command using its exact producer-stamped sort sidecar.
+///
+/// The compatibility wrapper above has no nominal carrier and therefore
+/// rejects presort declarations fail-closed. The finalized frontend path must
+/// use this entry point so a container is admitted from registration authority
+/// rather than its diagnostic name or syntax shape.
+pub(crate) fn command_supports_proof_encoding_with_sort_authorities(
+    command: &ResolvedNCommand,
+    type_info: &TypeInfo,
+    authorities: &[SortAuthorityAt],
+) -> Result<(), ProofEncodingUnsupportedReason> {
+    let mut by_path = HashMap::default();
+    for authority in authorities {
+        assert!(
+            by_path
+                .insert(authority.command_path.clone(), authority.local)
+                .is_none(),
+            "one finalized sort path carried duplicate proof-admission authority"
+        );
+    }
+    let display_command = command.to_command();
+    command_supports_proof_encoding_impl(
+        &display_command,
+        Some(command),
+        type_info,
+        &by_path,
+        &mut Vec::new(),
+    )
 }
 
 fn command_supports_proof_encoding_impl(
     command: &ResolvedCommand,
+    exact_command: Option<&ResolvedNCommand>,
     type_info: &TypeInfo,
+    sort_authorities: &HashMap<Vec<usize>, SortRegistrationId>,
+    command_path: &mut Vec<usize>,
 ) -> Result<(), ProofEncodingUnsupportedReason> {
     // `:unsafe-seminaive` rules perform arbitrary reads against the live
     // database; the term/proof encoding can't represent that.
@@ -1017,9 +1111,22 @@ fn command_supports_proof_encoding_impl(
     }
     // Tuple-output functions store multiple value columns, which the term/proof encoding (built
     // around single-output constructor views) does not model.
-    if let crate::ast::GenericCommand::Function { schema, .. } = command
-        && schema.is_tuple_output()
-    {
+    let tuple_output = match exact_command {
+        Some(ResolvedNCommand::Function(function))
+            if function.subtype == crate::ast::FunctionSubtype::Custom =>
+        {
+            let ResolvedCall::Func(function) = &function.resolved_schema else {
+                unreachable!("a resolved function declaration must carry a function schema")
+            };
+            function.is_tuple_output()
+        }
+        Some(_) => false,
+        None => matches!(
+            command,
+            crate::ast::GenericCommand::Function { schema, .. } if schema.is_tuple_output()
+        ),
+    };
+    if tuple_output {
         return Err(ProofEncodingUnsupportedReason::TupleOutputFunction);
     }
 
@@ -1043,16 +1150,31 @@ fn command_supports_proof_encoding_impl(
     // `Constructor` commands (not `Function`), and encoded globals (`:internal-let`,
     // produced by `remove_globals` before this check in the plain-resolve path
     // `file_supports_proofs` uses) have their own FD-view encoding — both excluded.
-    if let crate::ast::GenericCommand::Function {
-        merge: None,
-        let_binding: false,
-        schema,
-        ..
-    } = command
-        && type_info
-            .get_sort_by_name(schema.output())
-            .is_some_and(|sort| sort.is_eq_sort())
-    {
+    let no_merge_eq_sort = match exact_command {
+        Some(ResolvedNCommand::Function(function))
+            if function.subtype == crate::ast::FunctionSubtype::Custom
+                && function.merge.is_none()
+                && !function.internal_let =>
+        {
+            let ResolvedCall::Func(function) = &function.resolved_schema else {
+                unreachable!("a resolved function declaration must carry a function schema")
+            };
+            function.output().is_eq_sort()
+        }
+        Some(_) => false,
+        // The compatibility carrier has only diagnostic schema strings. With
+        // no producer-stamped output identity it cannot distinguish an eq sort
+        // from a same-named decoy, so Design B rejects the ambiguous case.
+        None => matches!(
+            command,
+            crate::ast::GenericCommand::Function {
+                merge: None,
+                let_binding: false,
+                ..
+            }
+        ),
+    };
+    if no_merge_eq_sort {
         return Err(ProofEncodingUnsupportedReason::NoMergeEqSortFunction);
     }
 
@@ -1141,12 +1263,12 @@ fn command_supports_proof_encoding_impl(
     // Now check command-specific constraints
     match command {
         GenericCommand::Sort {
-            name,
             presort_and_args: Some(_),
             ..
-        } => type_info
-            .get_sort_by_name(name)
-            .filter(|sort| sort.is_container_sort())
+        } => sort_authorities
+            .get(command_path.as_slice())
+            .and_then(|identity| type_info.sort_registration(*identity))
+            .filter(|registration| registration.sort.is_container_sort())
             .map(|_| ())
             .ok_or(ProofEncodingUnsupportedReason::SortWithPresort),
         GenericCommand::Sort { uf: Some(_), .. } => {
@@ -1170,11 +1292,32 @@ fn command_supports_proof_encoding_impl(
             }
         }
         GenericCommand::Fail(_, commands) => {
-            for command in commands {
+            let exact_commands = match exact_command {
+                Some(ResolvedNCommand::Fail(_, exact_commands)) => {
+                    assert_eq!(
+                        commands.len(),
+                        exact_commands.len(),
+                        "resolved fail command lost a child while forming its diagnostic view"
+                    );
+                    Some(exact_commands.as_slice())
+                }
+                Some(_) => unreachable!("resolved command variants diverged from their view"),
+                None => None,
+            };
+            for (index, command) in commands.iter().enumerate() {
                 if let GenericCommand::Input { .. } = command {
                     return Err(ProofEncodingUnsupportedReason::FailInputCommand);
                 }
-                command_supports_proof_encoding(command, type_info)?;
+                command_path.push(index);
+                let result = command_supports_proof_encoding_impl(
+                    command,
+                    exact_commands.map(|commands| &commands[index]),
+                    type_info,
+                    sort_authorities,
+                    command_path,
+                );
+                command_path.pop();
+                result?;
             }
             Ok(())
         }

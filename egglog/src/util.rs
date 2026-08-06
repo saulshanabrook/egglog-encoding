@@ -1,7 +1,7 @@
 use crate::{
     ast::{ResolvedBindingId, ResolvedVar, ResolvedVarBinding},
     core::ResolvedCall,
-    typechecking::{FunctionRegistrationId, IndexRegistrationId},
+    typechecking::{FunctionRegistrationId, IndexRegistrationId, SortRegistrationId},
 };
 
 pub(crate) type BuildHasher = std::hash::BuildHasherDefault<rustc_hash::FxHasher>;
@@ -28,6 +28,7 @@ pub struct SymbolGen {
     // never reuse an identity held by a resolved command from the popped scope.
     next_function_registration_id: u32,
     next_index_registration_id: u32,
+    next_sort_registration_id: u32,
     next_resolved_binding_id: u32,
 }
 
@@ -41,6 +42,7 @@ impl SymbolGen {
             leave_off_zero: true,
             next_function_registration_id: 0,
             next_index_registration_id: 0,
+            next_sort_registration_id: 0,
             next_resolved_binding_id: 0,
         }
     }
@@ -61,6 +63,26 @@ impl SymbolGen {
             .checked_add(1)
             .expect("index registration identity space exhausted");
         identity
+    }
+
+    pub(crate) fn fresh_sort_registration_id(&mut self) -> SortRegistrationId {
+        let identity = SortRegistrationId::new(self.next_sort_registration_id);
+        self.next_sort_registration_id = self
+            .next_sort_registration_id
+            .checked_add(1)
+            .expect("sort registration identity space exhausted");
+        identity
+    }
+
+    /// Advance this generator past an exact sort registration retained by the
+    /// owning type catalog. This repairs high-water state when a caller swaps
+    /// in a fresh parser without changing the already-admitted catalog.
+    pub(crate) fn observe_sort_registration_id(&mut self, identity: SortRegistrationId) {
+        let next = identity
+            .ordinal()
+            .checked_add(1)
+            .expect("sort registration identity space exhausted");
+        self.next_sort_registration_id = self.next_sort_registration_id.max(next);
     }
 
     pub(crate) fn fresh_resolved_binding_id(&mut self) -> ResolvedBindingId {
@@ -145,7 +167,7 @@ impl FreshGen<ResolvedCall, ResolvedVar> for SymbolGen {
         let sort = match name_hint {
             ResolvedCall::Func(f) => f.output().clone(),
             ResolvedCall::Primitive(prim) => prim.output().clone(),
-            ResolvedCall::Values(sorts) => sorts[0].clone(),
+            ResolvedCall::Values(values) => values[0].clone(),
         };
         ResolvedVar {
             name,

@@ -1,13 +1,13 @@
-use crate::either::{EitherContainer, EitherData};
+use crate::either::{EitherContainer, EitherData, EitherSort};
 use crate::maybe::{MaybeContainer, maybe_sorts};
 use egglog::ast::{Literal, Span};
 use egglog::constraint::{self, Constraint, TypeConstraint};
-use egglog::sort::PairContainer;
+use egglog::prelude::{BaseSort, BoolSort, I64Sort};
+use egglog::sort::{PairContainer, PairSort};
 use egglog::{
     ArcSort, Atom, AtomTerm, Core, EGraph, Primitive, PurePrim, PureState, Term, TermDag, TermId,
     TypeInfo, Value,
 };
-use std::any::TypeId;
 use std::sync::Arc;
 
 type TypeConstraints = Vec<Box<dyn Constraint<AtomTerm, ArcSort>>>;
@@ -255,29 +255,34 @@ fn bound_merge<'a, 'db>(
 }
 
 fn pair_i64_sorts(type_info: &TypeInfo) -> Vec<ArcSort> {
-    type_info.get_arcsorts_by(|sort| {
-        if sort.value_type() != Some(TypeId::of::<PairContainer>()) {
-            return false;
-        }
-        let inner_sorts = sort.inner_sorts();
-        inner_sorts
-            .get(1)
-            .is_some_and(|second| second.name() == "i64")
-    })
+    let i64_sort = I64Sort.to_arcsort();
+    type_info
+        .get_arcsorts_by_presort::<PairSort>()
+        .into_iter()
+        .filter(|sort| {
+            let inner_sorts = sort.inner_sorts();
+            inner_sorts
+                .get(1)
+                .is_some_and(|second| type_info.same_sort(second, &i64_sort))
+        })
+        .collect()
 }
 
 fn bound_sorts(type_info: &TypeInfo) -> Vec<ArcSort> {
+    let i64_sort = I64Sort.to_arcsort();
+    let bool_sort = BoolSort.to_arcsort();
     maybe_sorts(type_info)
         .into_iter()
         .filter_map(|(sort, element)| {
-            if element.value_type() != Some(TypeId::of::<EitherContainer>()) {
+            if !type_info.is_sort_from_presort::<EitherSort>(&element) {
                 return None;
             }
             let inner_sorts = element.inner_sorts();
             let [left, right] = inner_sorts.as_slice() else {
                 return None;
             };
-            (left.name() == "i64" && right.name() == "bool").then_some(sort)
+            (type_info.same_sort(left, &i64_sort) && type_info.same_sort(right, &bool_sort))
+                .then_some(sort)
         })
         .collect()
 }
@@ -388,5 +393,121 @@ fn bound_bool_term(termdag: &TermDag, term: TermId) -> Option<TermId> {
             }
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{MaybeSort, new_experimental_egraph};
+    use egglog::Error;
+    use egglog::prelude::ContainerSort;
+    use egglog::sort::{ContainerValues, EqSort};
+
+    #[derive(Clone, Debug)]
+    struct MaybeStorageDecoySort {
+        name: String,
+        element: ArcSort,
+    }
+
+    impl ContainerSort for MaybeStorageDecoySort {
+        type Container = MaybeContainer;
+
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn is_eq_container_sort(&self) -> bool {
+            self.element.is_eq_sort() || self.element.is_eq_container_sort()
+        }
+
+        fn inner_sorts(&self) -> Vec<ArcSort> {
+            vec![self.element.clone()]
+        }
+
+        fn inner_values(
+            &self,
+            container_values: &ContainerValues,
+            value: Value,
+        ) -> Vec<(ArcSort, Value)> {
+            container_values
+                .get_val::<MaybeContainer>(value)
+                .unwrap()
+                .data
+                .iter()
+                .map(|value| (self.element.clone(), *value))
+                .collect()
+        }
+
+        fn reconstruct_termdag(
+            &self,
+            _container_values: &ContainerValues,
+            _value: Value,
+            _termdag: &mut TermDag,
+            _element_terms: Vec<TermId>,
+        ) -> TermId {
+            unreachable!("the authority decoy never reaches reconstruction")
+        }
+
+        fn serialized_name(&self, _container_values: &ContainerValues, _value: Value) -> String {
+            self.name.clone()
+        }
+    }
+
+    #[test]
+    fn bound_specialization_requires_exact_maybe_and_either_presort_authority() {
+        let mut egraph = new_experimental_egraph();
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (sort BoundValue (Either i64 bool))
+                (sort Bound (Maybe BoundValue))
+                (function best () Bound :merge (maybe-either-i64-bool-min old new))
+                (set (best) (maybe-some (either-left 7)))
+                (set (best) (maybe-some (either-left 3)))
+                (check (= (best) (maybe-some (either-left 3))))
+                "#,
+            )
+            .unwrap();
+
+        let bound = egraph.get_sort_by_name("Bound").unwrap().clone();
+        let bound_value = egraph.get_sort_by_name("BoundValue").unwrap().clone();
+        assert!(egraph.type_info().is_sort_from_presort::<MaybeSort>(&bound));
+        assert!(
+            egraph
+                .type_info()
+                .is_sort_from_presort::<EitherSort>(&bound_value)
+        );
+
+        let storage_decoy = MaybeStorageDecoySort {
+            name: "BoundStorageDecoy".to_owned(),
+            element: bound_value,
+        }
+        .to_arcsort();
+        egraph
+            .add_arcsort(storage_decoy.clone(), egglog::span!())
+            .unwrap();
+        assert!(
+            !egraph
+                .type_info()
+                .is_sort_from_presort::<MaybeSort>(&storage_decoy)
+        );
+        let same_name_decoy: ArcSort = Arc::new(EqSort {
+            name: "Bound".to_owned(),
+        });
+        assert!(
+            !egraph
+                .type_info()
+                .is_sort_from_presort::<MaybeSort>(&same_name_decoy)
+        );
+
+        let error = egraph
+            .parse_and_run_program(
+                None,
+                "(function rejected () BoundStorageDecoy :merge (maybe-either-i64-bool-min old new))",
+            )
+            .unwrap_err();
+        assert!(matches!(error, Error::TypeError(_)));
     }
 }
