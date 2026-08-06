@@ -33,6 +33,20 @@ impl<K: NumericId> Default for NotificationList<K> {
 }
 
 impl<K: NumericId> NotificationList<K> {
+    /// Copy the current notifications into an independent list.
+    ///
+    /// Unlike [`Clone`], which intentionally shares notification state between
+    /// worker handles, resetting either the returned list or this list does not
+    /// affect the other.
+    pub fn fork(&self) -> Self {
+        let notified = self.inner.notified.lock().unwrap().clone();
+        let fork = Self::default();
+        for item in notified {
+            fork.notify(item);
+        }
+        fork
+    }
+
     /// Notify a given item.
     ///
     /// It is expected that the space of `item`s is fairly dense: this implementation will use O(n)

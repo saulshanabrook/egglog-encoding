@@ -4,6 +4,7 @@
 /.reports*.html
 /.profiles/
 /.paper-artifact/
+/.paper-build/
 /.paper-results/
 /.bench-worktrees/
 /.uv/

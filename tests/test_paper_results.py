@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from paper_benchmarking.jsonio import serialize_json_document
+from paper_benchmarking.jsonio import serialize_json_document, serialize_json_line
 from paper_benchmarking.models import CommandSpec, ProcessLane
-from paper_benchmarking.results import ResultStore
+from paper_benchmarking.results import ResultStore, read_run_records
 from paper_benchmarking.runner import build_run_manifest
 
 from .paper_fixtures import fake_artifact_cache
@@ -64,3 +65,15 @@ def test_result_store_never_overwrites_a_run_directory(tmp_path: Path) -> None:
 
     with pytest.raises(FileExistsError):
         ResultStore.create(tmp_path, "fixed-run")
+
+
+def test_run_record_reader_ignores_an_unframed_final_row(tmp_path: Path) -> None:
+    path = tmp_path / "runs.jsonl"
+    path.write_bytes(b'{"sequence":1}\n{"sequence":2}')
+
+    assert read_run_records(path) == [{"sequence": 1}]
+
+
+def test_json_serialization_rejects_nonfinite_values() -> None:
+    with pytest.raises(ValueError, match="Out of range float values"):
+        serialize_json_line({"wall_sec": math.nan})

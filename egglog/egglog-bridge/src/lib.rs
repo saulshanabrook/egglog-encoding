@@ -111,6 +111,17 @@ impl Timestamp {
     }
 }
 
+/// A deferred seminaive cursor update produced by [`EGraph::probe_rule`].
+///
+/// Dropping this value leaves the rule's cursor unchanged. Committing it after
+/// accepting the probed batch makes the next run observe only newer rows.
+#[derive(Debug)]
+pub struct RuleCursorAdvance {
+    rule: RuleId,
+    before: Timestamp,
+    after: Timestamp,
+}
+
 /// The state associated with an egglog program.
 #[derive(Clone)]
 pub struct EGraph {
@@ -797,11 +808,48 @@ impl EGraph {
         &self.action_registry
     }
 
+    /// Return backend-owned state associated with a registered external function.
+    pub fn external_function(&self, id: ExternalFunctionId) -> &dyn ExternalFunction {
+        self.db.external_function(id)
+    }
+
     /// Run the given rules, returning whether the database changed.
     ///
     /// If the given rules are malformed, this method can return an error.
     pub fn run_rules(&mut self, rules: &[RuleId]) -> Result<IterationReport> {
         self.run_rules_inner(rules)
+    }
+
+    /// Run one rule without committing its seminaive cursor.
+    ///
+    /// This is used by schedulers that must inspect a complete batch before
+    /// deciding whether it counts as an accepted seminaive iteration.
+    pub fn probe_rule(&mut self, rule: RuleId) -> Result<(IterationReport, RuleCursorAdvance)> {
+        let before = self.rules[rule].last_run_at;
+        let result = self.run_rules_inner(&[rule]);
+        let after = self.rules[rule].last_run_at;
+        self.rules[rule].last_run_at = before;
+
+        result.map(|report| {
+            (
+                report,
+                RuleCursorAdvance {
+                    rule,
+                    before,
+                    after,
+                },
+            )
+        })
+    }
+
+    /// Commit the seminaive cursor from a successful [`EGraph::probe_rule`].
+    pub fn commit_rule_cursor(&mut self, advance: RuleCursorAdvance) {
+        let current = self.rules[advance.rule].last_run_at;
+        assert_eq!(
+            current, advance.before,
+            "rule cursor changed between scheduler probe and commit"
+        );
+        self.rules[advance.rule].last_run_at = advance.after;
     }
 
     fn run_rules_inner(&mut self, rules: &[RuleId]) -> Result<IterationReport> {
@@ -2187,7 +2235,7 @@ pub type SideChannel<T> = Arc<Mutex<Option<T>>>;
 /// both and fully replace our use of `Panic`.
 struct LazyPanic<F>(Arc<Lazy<String, F>>, SideChannel<String>);
 
-impl<F: FnOnce() -> String + Send> ExternalFunction for LazyPanic<F> {
+impl<F: FnOnce() -> String + Send + 'static> ExternalFunction for LazyPanic<F> {
     fn invoke(&self, state: &mut core_relations::ExecutionState, args: &[Value]) -> Option<Value> {
         assert!(args.is_empty());
         state.trigger_early_stop();

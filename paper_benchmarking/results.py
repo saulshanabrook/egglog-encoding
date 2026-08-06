@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-from .jsonio import serialize_json_line, write_json_document
+from .jsonio import serialize_json_line, write_json_document, write_text_document
 
 _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
@@ -25,6 +25,7 @@ class ResultStore:
     runs_path: Path
     logs_path: Path
     summary_path: Path
+    status_path: Path
 
     @classmethod
     def create(cls, results_root: Path, run_id: str) -> ResultStore:
@@ -47,6 +48,7 @@ class ResultStore:
             runs_path=runs_path,
             logs_path=logs_path,
             summary_path=path / "summary.md",
+            status_path=path / "status.json",
         )
 
     def write_manifest(self, manifest: dict[str, object]) -> None:
@@ -68,19 +70,33 @@ class ResultStore:
     def write_summary(self, summary: str) -> None:
         """Write the exact Markdown returned on stdout."""
 
-        self.summary_path.write_text(summary, encoding="utf-8")
+        write_text_document(self.summary_path, summary)
+
+    def write_status(self, state: str, *, success: bool | None = None, error: str | None = None) -> None:
+        """Atomically publish the latest lifecycle state for this run."""
+
+        write_json_document(
+            self.status_path,
+            {"error": error, "run_id": self.run_id, "state": state, "success": success},
+        )
 
 
 def read_run_records(path: Path) -> list[dict[str, Any]]:
     """Read process rows in physical append order."""
 
     records: list[dict[str, Any]] = []
-    with path.open("rb") as handle:
-        for line in handle:
+    payload = path.read_bytes()
+    lines = payload.splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        if index == len(lines) - 1 and not line.endswith(b"\n"):
+            break
+        try:
             value = json.loads(line)
-            if not isinstance(value, dict):
-                raise ValueError(f"paper process row is not an object: {path}")
-            records.append(cast(dict[str, Any], value))
+        except json.JSONDecodeError:
+            raise
+        if not isinstance(value, dict):
+            raise ValueError(f"paper process row is not an object: {path}")
+        records.append(cast(dict[str, Any], value))
     return records
 
 
@@ -104,14 +120,19 @@ def render_markdown_summary(
         f"- Evaluations: {evaluation_text}",
         f"- Artifact archive SHA-256: `{artifact.get('archive_sha256')}`",
         f"- Repository commit: `{repository.get('git_sha')}`",
+        f"- Repository dirty: `{'yes' if repository.get('is_dirty') else 'no'}`",
+        f"- Repository diff SHA-256: `{repository.get('diff_sha256', '-')}`",
         f"- Machine: `{machine.get('system')} {machine.get('machine')}`",
         "",
         "## Lane Summary",
         "",
-        "Wall and RSS aggregates include successful timed observations only; timeouts remain statuses.",
+        (
+            "Wall aggregates include successful timed observations only; "
+            "timeouts and infrastructure errors remain statuses."
+        ),
         "",
-        "| Evaluation | Lane | Success | Failure | Timed out | Median wall | Peak RSS |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
+        "| Evaluation | Lane | Success | Failure | Timed out | Infra error | Not run | Median wall |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for lane in lanes:
         evaluation = str(lane.get("evaluation"))
@@ -126,11 +147,8 @@ def render_markdown_summary(
         statuses = [record.get("status") for record in observations]
         successful = [record for record in observations if record.get("status") == "success"]
         walls = [float(value) for record in successful if isinstance((value := record.get("wall_sec")), int | float)]
-        rss_values = [
-            int(value)
-            for record in successful
-            if isinstance((value := record.get("max_rss_bytes")), int) and not isinstance(value, bool)
-        ]
+        planned = lane.get("observations")
+        planned_count = len(planned) if isinstance(planned, list) else len(observations)
         lines.append(
             "| "
             + " | ".join(
@@ -140,8 +158,9 @@ def render_markdown_summary(
                     str(statuses.count("success")),
                     str(statuses.count("failure")),
                     str(statuses.count("timed-out")),
+                    str(statuses.count("infrastructure-error")),
+                    str(max(0, planned_count - len(observations))),
                     _format_wall(statistics.median(walls) if walls else None),
-                    _format_rss(max(rss_values) if rss_values else None),
                 )
             )
             + " |"
@@ -153,8 +172,8 @@ def render_markdown_summary(
             "",
             "## Timed Observations",
             "",
-            "| Evaluation | Lane | Round | Status | Wall | Peak RSS |",
-            "| --- | --- | ---: | --- | ---: | ---: |",
+            "| Evaluation | Lane | Round | Status | Wall |",
+            "| --- | --- | ---: | --- | ---: |",
         ]
     )
     for record in observations:
@@ -167,18 +186,17 @@ def render_markdown_summary(
                     _cell(record.get("round")),
                     _cell(record.get("status")),
                     _format_wall(_number(record.get("wall_sec"))),
-                    _format_rss(_integer(record.get("max_rss_bytes"))),
                 )
             )
             + " |"
         )
 
-    hooks = [record for record in records if record.get("phase") in {"build", "prepare"}]
+    hooks = [record for record in records if record.get("phase") in {"build", "prepare", "validate"}]
     if hooks:
         lines.extend(
             [
                 "",
-                "## Build And Preparation",
+                "## Untimed Hooks",
                 "",
                 "| Evaluation | Lane | Phase | Command | Status |",
                 "| --- | --- | --- | --- | --- |",
@@ -219,15 +237,5 @@ def _number(value: object) -> float | None:
     return None
 
 
-def _integer(value: object) -> int | None:
-    if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    return None
-
-
 def _format_wall(value: float | None) -> str:
     return "-" if value is None else f"{value:.3f} s"
-
-
-def _format_rss(value: int | None) -> str:
-    return "-" if value is None else f"{value / (1024 * 1024):.1f} MiB"

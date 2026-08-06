@@ -1,21 +1,20 @@
-"""Execute paper lane processes with isolated logs, timeout, wall, and RSS data."""
+"""Execute paper lane processes with isolated logs, timeouts, and wall time."""
 
 from __future__ import annotations
 
 import os
-import resource
 import signal
 import subprocess
-import sys
 import threading
 import time
 from collections.abc import Callable, Mapping
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, TextIO
 
 from .models import CommandSpec, ProcessOutcome
+from .provenance import isoformat_utc, resolve_executable
 
 
 class ProcessExecutor(Protocol):
@@ -33,7 +32,7 @@ class ProcessExecutor(Protocol):
 
 
 class SubprocessExecutor:
-    """Run commands as isolated process groups and account with ``wait4``."""
+    """Run commands as isolated process groups with blocking deadline waits."""
 
     def __init__(
         self,
@@ -63,10 +62,12 @@ class SubprocessExecutor:
             stderr_path.open("w", encoding="utf-8", errors="replace") as stderr,
         ):
             try:
+                executable = resolve_executable(command, environment)
                 process = subprocess.Popen(
-                    command.argv,
+                    (str(executable), *command.argv[1:]),
                     cwd=command.cwd,
                     env=dict(environment),
+                    stdin=subprocess.DEVNULL,
                     text=True,
                     stdout=stdout,
                     stderr=stderr,
@@ -74,88 +75,86 @@ class SubprocessExecutor:
                 )
             except OSError as error:
                 stderr.write(f"{error}\n")
+                _sync_logs(stdout, stderr)
                 finished_at = self._now()
                 return ProcessOutcome(
-                    status="failure",
-                    started_at=_isoformat(started_at),
-                    finished_at=_isoformat(finished_at),
-                    wall_sec=self._timer() - start,
-                    max_rss_bytes=None,
+                    status="infrastructure-error",
+                    started_at=isoformat_utc(started_at),
+                    finished_at=isoformat_utc(finished_at),
+                    wall_sec=None,
                     error_message=str(error),
                 )
             try:
-                return_code, usage = wait4_process(process, command.timeout_sec)
+                return_code = wait_process(process, command.timeout_sec)
             except subprocess.TimeoutExpired:
+                _sync_logs(stdout, stderr)
                 finished_at = self._now()
                 return ProcessOutcome(
                     status="timed-out",
-                    started_at=_isoformat(started_at),
-                    finished_at=_isoformat(finished_at),
+                    started_at=isoformat_utc(started_at),
+                    finished_at=isoformat_utc(finished_at),
                     wall_sec=None,
-                    max_rss_bytes=None,
                     error_message=f"timed out after {command.timeout_sec:g} seconds",
                 )
             except BaseException:
                 terminate_process_group(process)
                 raise
+            kill_remaining_process_group(process.pid)
             wall_sec = self._timer() - start
             finished_at = self._now()
+            _sync_logs(stdout, stderr)
 
-        max_rss_bytes = ru_maxrss_to_bytes(usage.ru_maxrss)
         if return_code == 0:
             return ProcessOutcome(
                 status="success",
-                started_at=_isoformat(started_at),
-                finished_at=_isoformat(finished_at),
+                started_at=isoformat_utc(started_at),
+                finished_at=isoformat_utc(finished_at),
                 wall_sec=wall_sec,
-                max_rss_bytes=max_rss_bytes,
             )
         exit_code = return_code if return_code >= 0 else None
         signal_number = -return_code if return_code < 0 else None
         message = read_log_tail(stderr_path) or read_log_tail(stdout_path) or "process exited with non-zero status"
         return ProcessOutcome(
             status="failure",
-            started_at=_isoformat(started_at),
-            finished_at=_isoformat(finished_at),
+            started_at=isoformat_utc(started_at),
+            finished_at=isoformat_utc(finished_at),
             wall_sec=wall_sec,
-            max_rss_bytes=max_rss_bytes,
             exit_code=exit_code,
             signal=signal_number,
             error_message=message[-1000:],
         )
 
 
-def wait4_process(
-    process: subprocess.Popen[str],
-    timeout_sec: float,
-) -> tuple[int, resource.struct_rusage]:
-    """Wait for one child without adding polling delay to wall time."""
+def wait_process(process: subprocess.Popen[str], timeout_sec: float) -> int:
+    """Wait without polling while one lock owns deadline classification."""
 
-    timed_out = threading.Event()
-    finished = threading.Event()
+    lock = threading.Lock()
+    completed = False
+    expired = False
 
     def expire() -> None:
-        if finished.is_set():
-            return
-        timed_out.set()
-        with suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGKILL)
+        nonlocal expired
+        with lock:
+            if completed:
+                return
+            expired = True
+            kill_remaining_process_group(process.pid)
 
     timer = threading.Timer(timeout_sec, expire)
+    timer.start()
     try:
-        timer.start()
-        waited_pid, status, usage = os.wait4(process.pid, 0)
+        waited_pid, status = os.waitpid(process.pid, 0)
+        assert waited_pid == process.pid
+        return_code = os.waitstatus_to_exitcode(status)
+        process.returncode = return_code
+        with lock:
+            completed = True
     finally:
-        finished.set()
         timer.cancel()
-        with suppress(RuntimeError):
-            timer.join()
-    assert waited_pid == process.pid
-    return_code = os.waitstatus_to_exitcode(status)
-    process.returncode = return_code
-    if timed_out.is_set():
+        timer.join()
+    if expired:
         raise subprocess.TimeoutExpired(process.args, timeout_sec)
-    return return_code, usage
+    return return_code
 
 
 def terminate_process_group(process: subprocess.Popen[str] | subprocess.Popen[bytes]) -> None:
@@ -166,14 +165,11 @@ def terminate_process_group(process: subprocess.Popen[str] | subprocess.Popen[by
     process.wait()
 
 
-def ru_maxrss_to_bytes(ru_maxrss: int, platform: str = sys.platform) -> int | None:
-    """Normalize macOS byte and Linux kibibyte peak-RSS units."""
+def kill_remaining_process_group(process_group: int) -> None:
+    """Kill descendants left behind after the process-group leader exits."""
 
-    if ru_maxrss <= 0:
-        return None
-    if platform == "darwin":
-        return ru_maxrss
-    return ru_maxrss * 1024
+    with suppress(ProcessLookupError):
+        os.killpg(process_group, signal.SIGKILL)
 
 
 def read_log_tail(path: Path, limit: int = 4096) -> str:
@@ -186,6 +182,7 @@ def read_log_tail(path: Path, limit: int = 4096) -> str:
         return handle.read().decode("utf-8", errors="replace").strip()
 
 
-def _isoformat(value: datetime) -> str:
-    normalized = value.astimezone(UTC)
-    return normalized.isoformat(timespec="microseconds").replace("+00:00", "Z")
+def _sync_logs(*handles: TextIO) -> None:
+    for handle in handles:
+        handle.flush()
+        os.fsync(handle.fileno())

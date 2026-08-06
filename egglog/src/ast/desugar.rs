@@ -299,6 +299,7 @@ fn desugar_prove(parser: &mut Parser, span: Span, query: Vec<Fact>) -> Vec<NComm
         NCommand::RunSchedule(GenericSchedule::Run(
             span.clone(),
             GenericRunConfig {
+                scheduler: None,
                 ruleset,
                 until: None,
             },

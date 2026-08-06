@@ -15,14 +15,18 @@ from .paper_fixtures import ROOT, fake_artifact_cache
 
 def test_paper_cache_and_result_roots_are_git_ignored() -> None:
     completed = subprocess.run(
-        ("git", "check-ignore", ".paper-artifact/probe", ".paper-results/probe"),
+        ("git", "check-ignore", ".paper-artifact/probe", ".paper-build/probe", ".paper-results/probe"),
         cwd=ROOT,
         check=True,
         capture_output=True,
         text=True,
     )
 
-    assert completed.stdout.splitlines() == [".paper-artifact/probe", ".paper-results/probe"]
+    assert completed.stdout.splitlines() == [
+        ".paper-artifact/probe",
+        ".paper-build/probe",
+        ".paper-results/probe",
+    ]
 
 
 def test_local_lane_does_not_touch_bench_or_default_reports(tmp_path: Path) -> None:
@@ -37,7 +41,7 @@ def test_local_lane_does_not_touch_bench_or_default_reports(tmp_path: Path) -> N
             CommandSpec(
                 label="noop",
                 argv=(sys.executable, "-c", "pass"),
-                cwd=tmp_path,
+                cwd=ROOT,
                 timeout_sec=2,
             ),
         ),

@@ -118,6 +118,22 @@ fn notification_list_single_threaded() {
 }
 
 #[test]
+fn notification_list_fork_is_independent() {
+    let original = NotificationList::<usize>::default();
+    original.notify(1);
+    original.notify(3);
+    let fork = original.fork();
+
+    assert_eq!(original.reset().as_slice(), [1, 3]);
+    assert_eq!(fork.reset().as_slice(), [1, 3]);
+
+    original.notify(5);
+    fork.notify(7);
+    assert_eq!(original.reset().as_slice(), [5]);
+    assert_eq!(fork.reset().as_slice(), [7]);
+}
+
+#[test]
 fn notification_list_multi_threaded() {
     for _ in 0..10 {
         let list = NotificationList::<usize>::default();

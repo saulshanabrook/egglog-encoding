@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
 from paper_benchmarking.artifact import UnsafeArchiveError, setup_artifact, verify_artifact_cache
+from paper_benchmarking.hashing import sha256_file
 
 from .paper_fixtures import write_artifact_archive
 
@@ -70,4 +72,48 @@ def test_cache_verification_rejects_modified_extracted_file(tmp_path: Path) -> N
     (cache.artifact_root / "README.md").write_text("modified\n", encoding="utf-8")
 
     with pytest.raises(ValueError, match="extracted metadata changed|extracted file hash changed"):
+        verify_artifact_cache(cache.root, expected_sha256=digest)
+
+
+def test_setup_refuses_to_replace_an_existing_directory(tmp_path: Path) -> None:
+    archive = tmp_path / "artifact.tar.gz"
+    digest = write_artifact_archive(archive)
+    destination = tmp_path / "important"
+    destination.mkdir()
+    sentinel = destination / "keep.txt"
+    sentinel.write_text("keep\n", encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="already exists"):
+        setup_artifact(destination, archive_path=archive, expected_sha256=digest)
+
+    assert sentinel.read_text(encoding="utf-8") == "keep\n"
+
+
+def test_cache_verification_derives_inventory_from_archive(tmp_path: Path) -> None:
+    archive = tmp_path / "artifact.tar.gz"
+    digest = write_artifact_archive(archive)
+    cache = setup_artifact(tmp_path / "cache", archive_path=archive, expected_sha256=digest)
+    payload = cache.artifact_root / "eqlog" / "Cargo.toml"
+    payload.write_text("forged\n", encoding="utf-8")
+    manifest = json.loads(cache.manifest_path.read_text(encoding="utf-8"))
+    record = next(record for record in manifest["files"] if record["path"] == "artifact/eqlog/Cargo.toml")
+    record["size_bytes"] = payload.stat().st_size
+    record["sha256"] = sha256_file(payload)
+    cache.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="manifest does not match its archive"):
+        verify_artifact_cache(cache.root, expected_sha256=digest)
+
+
+def test_cache_verification_rejects_unmanifested_payload(tmp_path: Path) -> None:
+    archive = tmp_path / "artifact.tar.gz"
+    digest = write_artifact_archive(archive)
+    cache = setup_artifact(tmp_path / "cache", archive_path=archive, expected_sha256=digest)
+    (cache.artifact_root / "eqlog" / ".cargo").mkdir()
+    (cache.artifact_root / "eqlog" / ".cargo" / "config.toml").write_text(
+        "[build]\nrustflags = []\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="tree does not match its archive"):
         verify_artifact_cache(cache.root, expected_sha256=digest)

@@ -13,8 +13,8 @@ from typing import Literal
 type Preset = Literal["quick", "representative", "artifact-full"]
 type Evaluation = Literal["math", "pointer", "herbie"]
 type EvaluationSelection = Literal["math", "pointer", "herbie", "all"]
-type ProcessPhase = Literal["build", "prepare", "observation"]
-type ProcessStatus = Literal["success", "failure", "timed-out"]
+type ProcessPhase = Literal["build", "prepare", "observation", "validate"]
+type ProcessStatus = Literal["success", "failure", "timed-out", "infrastructure-error"]
 
 PRESETS: tuple[Preset, ...] = ("quick", "representative", "artifact-full")
 EVALUATIONS: tuple[Evaluation, ...] = ("math", "pointer", "herbie")
@@ -32,6 +32,10 @@ class CommandSpec:
     cwd: Path
     timeout_sec: float
     env: Mapping[str, str] = field(default_factory=dict)
+    expected_stdout_lines: tuple[str, ...] | None = None
+    expected_stdout_csv_record: tuple[str, str, int] | None = None
+    runtime_executables: tuple[str, ...] = ()
+    runtime_artifacts: tuple[Path, ...] = ()
 
     def __post_init__(self) -> None:
         if _SAFE_LABEL.fullmatch(self.label) is None:
@@ -49,6 +53,19 @@ class CommandSpec:
                 raise ValueError(f"invalid process environment entry: {key!r}")
             normalized_env[key] = value
         object.__setattr__(self, "env", MappingProxyType(normalized_env))
+        if self.expected_stdout_lines is not None and any("\0" in value for value in self.expected_stdout_lines):
+            raise ValueError("process output expectations must not contain NUL bytes")
+        if self.expected_stdout_csv_record is not None:
+            benchmark, engine, size = self.expected_stdout_csv_record
+            if not benchmark or not engine or "\0" in benchmark or "\0" in engine or size < 0:
+                raise ValueError("invalid expected stdout CSV record")
+        if any(not executable or "\0" in executable for executable in self.runtime_executables):
+            raise ValueError("runtime executable names must be nonempty and contain no NUL bytes")
+        object.__setattr__(
+            self,
+            "runtime_artifacts",
+            tuple(path.expanduser().absolute() for path in self.runtime_artifacts),
+        )
 
 
 @dataclass(frozen=True)
@@ -60,6 +77,7 @@ class ProcessLane:
     observations: tuple[CommandSpec, ...]
     build: tuple[CommandSpec, ...] = ()
     prepare: tuple[CommandSpec, ...] = ()
+    validate: tuple[CommandSpec, ...] = ()
     input_paths: tuple[Path, ...] = ()
     versions: Mapping[str, str] = field(default_factory=dict)
 
@@ -85,7 +103,6 @@ class ProcessOutcome:
     started_at: str
     finished_at: str
     wall_sec: float | None
-    max_rss_bytes: int | None
     exit_code: int | None = None
     signal: int | None = None
     error_message: str | None = None

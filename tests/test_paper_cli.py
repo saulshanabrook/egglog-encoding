@@ -71,7 +71,7 @@ def test_run_dispatches_injected_local_lane_and_isolates_child_logs(
                             "-c",
                             "import sys; print('child-only-stdout'); print('child-only-stderr', file=sys.stderr)",
                         ),
-                        cwd=tmp_path,
+                        cwd=ROOT,
                         timeout_sec=2,
                     ),
                 ),
@@ -109,7 +109,7 @@ def test_run_dispatches_injected_local_lane_and_isolates_child_logs(
     assert "child-only-stderr" in next((result_dir / "logs").glob("*.stderr.log")).read_text(encoding="utf-8")
 
 
-def test_run_fails_before_creating_results_when_adapter_is_missing(
+def test_run_rejects_unimplemented_broad_herbie_preset_before_creating_results(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -119,12 +119,20 @@ def test_run_fails_before_creating_results_when_adapter_is_missing(
     results = tmp_path / "results"
 
     status = main(
-        ("run", "quick", "herbie", "--artifact-dir", str(cache.root), "--results-dir", str(results)),
+        (
+            "run",
+            "representative",
+            "herbie",
+            "--artifact-dir",
+            str(cache.root),
+            "--results-dir",
+            str(results),
+        ),
         expected_archive_sha256=digest,
     )
     captured = capsys.readouterr()
 
     assert status == 2
     assert captured.out == ""
-    assert "adapters are not implemented for: herbie" in captured.err
+    assert "supports only the quick preset" in captured.err
     assert not results.exists()

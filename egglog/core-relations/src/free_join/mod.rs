@@ -1,5 +1,6 @@
 //! Execute queries against a database using a variant of Free Join.
 use std::{
+    any::Any,
     mem,
     sync::{
         Arc,
@@ -192,15 +193,22 @@ define_id!(pub ExternalFunctionId, u32, "A user-defined operation that can be in
 ///
 /// This is a useful, if low-level, interface for extending this database with
 /// functionality and state not built into the core model.
-pub trait ExternalFunction: dyn_clone::DynClone + Send + Sync {
+pub trait ExternalFunction: Any + dyn_clone::DynClone + Send + Sync {
     /// Invoke the function with mutable access to the database. If a value is
     /// not returned, halt the execution of the current rule.
     fn invoke(&self, state: &mut ExecutionState, args: &[Value]) -> Option<Value>;
 }
 
+impl dyn ExternalFunction {
+    /// Return this external function as [`Any`] for backend-owned state access.
+    pub fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// Automatically generate an `ExternalFunction` implementation from a function.
 pub fn make_external_func<
-    F: Fn(&mut ExecutionState, &[Value]) -> Option<Value> + Clone + Send + Sync,
+    F: Fn(&mut ExecutionState, &[Value]) -> Option<Value> + Clone + Send + Sync + 'static,
 >(
     f: F,
 ) -> impl ExternalFunction {
@@ -208,7 +216,7 @@ pub fn make_external_func<
     struct Wrapped<F>(F);
     impl<F> ExternalFunction for Wrapped<F>
     where
-        F: Fn(&mut ExecutionState, &[Value]) -> Option<Value> + Clone + Send + Sync,
+        F: Fn(&mut ExecutionState, &[Value]) -> Option<Value> + Clone + Send + Sync + 'static,
     {
         fn invoke(&self, state: &mut ExecutionState, args: &[Value]) -> Option<Value> {
             (self.0)(state, args)
@@ -294,7 +302,7 @@ impl Counters {
 /// A collection of tables and indexes over them.
 ///
 /// A database also owns the memory pools used by its tables.
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct Database {
     // NB: some fields are pub(crate) to allow some internal modules to avoid
     // borrowing the whole table.
@@ -319,6 +327,21 @@ pub struct Database {
     total_size_estimate: usize,
 }
 
+impl Clone for Database {
+    fn clone(&self) -> Self {
+        Self {
+            tables: self.tables.clone(),
+            counters: self.counters.clone(),
+            external_functions: self.external_functions.clone(),
+            container_values: self.container_values.clone(),
+            notification_list: self.notification_list.fork(),
+            deps: self.deps.clone(),
+            base_values: self.base_values.clone(),
+            total_size_estimate: self.total_size_estimate,
+        }
+    }
+}
+
 impl Database {
     /// Create an empty Database.
     ///
@@ -339,6 +362,11 @@ impl Database {
         f: Box<dyn ExternalFunction + 'static>,
     ) -> ExternalFunctionId {
         self.external_functions.push(f)
+    }
+
+    /// Return a registered external function without moving it out of the database.
+    pub fn external_function(&self, id: ExternalFunctionId) -> &dyn ExternalFunction {
+        self.external_functions[id].as_ref()
     }
 
     /// Free an existing external function. Make sure not to use `id` afterwards.

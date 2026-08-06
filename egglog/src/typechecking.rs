@@ -1214,7 +1214,14 @@ impl TypeInfo {
                 span.clone(),
                 Box::new(self.typecheck_schedule(symbol_gen, schedule)?),
             ),
-            Schedule::Run(span, RunConfig { ruleset, until }) => {
+            Schedule::Run(
+                span,
+                RunConfig {
+                    scheduler,
+                    ruleset,
+                    until,
+                },
+            ) => {
                 let until = until
                     .as_ref()
                     .map(|facts| self.typecheck_facts(symbol_gen, facts))
@@ -1222,6 +1229,7 @@ impl TypeInfo {
                 ResolvedSchedule::Run(
                     span.clone(),
                     ResolvedRunConfig {
+                        scheduler: scheduler.clone(),
                         ruleset: ruleset.clone(),
                         until,
                     },

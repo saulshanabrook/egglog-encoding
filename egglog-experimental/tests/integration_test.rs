@@ -475,9 +475,133 @@ fn test_top_level_let_scheduler_persists_on_the_egraph() {
 
     assert_eq!(
         eval_get_size(&mut egraph, &["S"]),
-        3,
-        "ordinary back-off should replay the queued copy backlog and should not depend on fresh rematching"
+        4,
+        "a rejected seminaive batch must be discarded and searched again from the last accepted cursor"
     );
+}
+
+#[test]
+fn test_backoff_rejects_grown_delta_again() {
+    let mut egraph = egglog_experimental::new_experimental_egraph();
+
+    egraph
+        .parse_and_run_program(
+            None,
+            r#"
+        (ruleset copy)
+        (ruleset grow)
+        (relation R (i64))
+        (relation S (i64))
+        (relation Seed ())
+        (R 0)
+        (R 1)
+        (R 2)
+        (Seed)
+        (rule ((R x)) ((S x)) :ruleset copy :name "copy")
+        (rule ((Seed)) ((R 3) (R 4)) :ruleset grow :name "grow")
+        (let-scheduler bo (back-off :match-limit 2 :ban-length 2))
+        (run-schedule
+          (seq
+            (run-with bo copy)
+            (run grow)
+            (run-with bo copy)))
+        "#,
+        )
+        .unwrap();
+
+    assert_eq!(eval_get_size(&mut egraph, &["R"]), 5);
+    assert_eq!(
+        eval_get_size(&mut egraph, &["S"]),
+        0,
+        "the second attempt must see all five unaccepted delta rows and re-ban"
+    );
+}
+
+#[test]
+fn test_backoff_does_not_replay_deleted_rejected_match() {
+    let mut egraph = egglog_experimental::new_experimental_egraph();
+
+    egraph
+        .parse_and_run_program(
+            None,
+            r#"
+        (ruleset copy)
+        (relation R (i64))
+        (relation S (i64))
+        (R 0)
+        (R 1)
+        (R 2)
+        (rule ((R x)) ((S x)) :ruleset copy :name "copy")
+        (let-scheduler bo (back-off :match-limit 2 :ban-length 2))
+        (run-schedule (run-with bo copy))
+        (delete (R 2))
+        (run-schedule (run-with bo copy))
+        "#,
+        )
+        .unwrap();
+
+    assert_eq!(eval_get_size(&mut egraph, &["R"]), 2);
+    assert_eq!(
+        eval_get_size(&mut egraph, &["S"]),
+        2,
+        "a deleted row from a rejected batch must not be replayed"
+    );
+}
+
+#[test]
+fn test_backoff_delta_starts_after_last_accepted_batch() {
+    let mut egraph = egglog_experimental::new_experimental_egraph();
+
+    egraph
+        .parse_and_run_program(
+            None,
+            r#"
+        (ruleset copy)
+        (relation R (i64))
+        (relation S (i64))
+        (R 0)
+        (R 1)
+        (rule ((R x)) ((S x)) :ruleset copy :name "copy")
+        (let-scheduler bo (back-off :match-limit 2 :ban-length 2))
+        (run-schedule (run-with bo copy))
+        (R 2)
+        (R 3)
+        (R 4)
+        (run-schedule (run-with bo copy))
+        (delete (R 3))
+        (run-schedule (run-with bo copy))
+        "#,
+        )
+        .unwrap();
+
+    assert_eq!(eval_get_size(&mut egraph, &["R"]), 4);
+    assert_eq!(
+        eval_get_size(&mut egraph, &["S"]),
+        4,
+        "the retried delta must include live rows since the accepted cursor, not older rows"
+    );
+}
+
+#[test]
+fn test_backoff_counts_ground_rule_matches() {
+    let mut egraph = egglog_experimental::new_experimental_egraph();
+
+    egraph
+        .parse_and_run_program(
+            None,
+            r#"
+        (ruleset ground)
+        (relation Seed ())
+        (relation Hit ())
+        (Seed)
+        (rule ((Seed)) ((Hit)) :ruleset ground :name "ground")
+        (let-scheduler bo (back-off :match-limit 2 :ban-length 2))
+        (run-schedule (run-with bo ground))
+        "#,
+        )
+        .unwrap();
+
+    assert_eq!(eval_get_size(&mut egraph, &["Hit"]), 1);
 }
 
 #[test]
@@ -491,6 +615,22 @@ fn test_top_level_let_scheduler_survives_egraph_clone() {
 
     assert_eq!(eval_get_size(&mut cloned, &["S"]), 1);
     assert_eq!(eval_get_size(&mut original, &["S"]), 1);
+}
+
+#[test]
+fn test_initialized_top_level_scheduler_survives_egraph_clone() {
+    let mut original = new_copy_egraph();
+    let_backoff(&mut original);
+    run_bo_copy(&mut original);
+
+    let mut cloned = original.clone();
+    cloned.parse_and_run_program(None, "(R 1)").unwrap();
+    original.parse_and_run_program(None, "(R 2)").unwrap();
+    run_bo_copy(&mut cloned);
+    run_bo_copy(&mut original);
+
+    assert_eq!(eval_get_size(&mut cloned, &["S"]), 2);
+    assert_eq!(eval_get_size(&mut original, &["S"]), 2);
 }
 
 #[test]
@@ -509,6 +649,81 @@ fn test_top_level_let_scheduler_redeclaration_returns_error() {
 
     run_bo_copy(&mut egraph);
     assert_eq!(eval_get_size(&mut egraph, &["S"]), 1);
+}
+
+#[test]
+fn run_with_is_preserved_in_term_and_proof_modes() {
+    for mut egraph in [
+        egglog_experimental::new_experimental_egraph_with_term_encoding(),
+        egglog_experimental::new_experimental_egraph_with_proofs(),
+    ] {
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (ruleset copy)
+                (relation R (i64))
+                (relation S (i64))
+                (R 0)
+                (R 1)
+                (rule ((R x)) ((S x)) :ruleset copy :name "copy")
+                (let-scheduler reject (back-off :match-limit 1 :ban-length 1))
+                (run-schedule (run-with reject copy))
+                "#,
+            )
+            .unwrap();
+
+        assert!(
+            egraph.parse_and_run_program(None, "(check (S 0))").is_err(),
+            "the cap-one scheduler must reject the complete two-row batch"
+        );
+
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (let-scheduler accept (back-off :match-limit 10 :ban-length 1))
+                (run-schedule (run-with accept copy))
+                (check (S 0) (S 1))
+                "#,
+            )
+            .unwrap();
+
+        if egraph.are_proofs_enabled() {
+            egraph.parse_and_run_program(None, "(prove (S 0))").unwrap();
+        }
+    }
+}
+
+#[test]
+fn scheduler_driven_saturate_is_preserved_in_term_and_proof_modes() {
+    for mut egraph in [
+        egglog_experimental::new_experimental_egraph_with_term_encoding(),
+        egglog_experimental::new_experimental_egraph_with_proofs(),
+    ] {
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (ruleset copy)
+                (relation R (i64))
+                (relation S (i64))
+                (R 0)
+                (R 1)
+                (R 2)
+                (R 3)
+                (rule ((R x)) ((S x)) :ruleset copy :name "copy")
+                (let-scheduler bo (back-off :match-limit 1 :ban-length 3))
+                (run-schedule (saturate (run-with bo copy)))
+                (check (S 0) (S 1) (S 2) (S 3))
+                "#,
+            )
+            .unwrap();
+
+        if egraph.are_proofs_enabled() {
+            egraph.parse_and_run_program(None, "(prove (S 0))").unwrap();
+        }
+    }
 }
 
 #[test]
@@ -567,6 +782,37 @@ fn test_top_level_let_scheduler_survives_pop_when_declared_before_push() {
 
     run_bo_copy(&mut egraph);
     assert_eq!(eval_get_size(&mut egraph, &["S"]), 1);
+}
+
+#[test]
+fn test_initialized_top_level_scheduler_survives_push_pop_in_all_modes() {
+    for mut egraph in [
+        egglog_experimental::new_experimental_egraph(),
+        egglog_experimental::new_experimental_egraph_with_term_encoding(),
+        egglog_experimental::new_experimental_egraph_with_proofs(),
+    ] {
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (ruleset copy)
+                (relation R (i64))
+                (relation S (i64))
+                (R 0)
+                (rule ((R x)) ((S x)) :ruleset copy :name "copy")
+                (let-scheduler bo (back-off :match-limit 10 :ban-length 1))
+                (run-schedule (run-with bo copy))
+                (check (S 0))
+                (push)
+                (R 1)
+                (pop)
+                (R 2)
+                (run-schedule (run-with bo copy))
+                (check (S 2))
+                "#,
+            )
+            .unwrap();
+    }
 }
 
 #[test]

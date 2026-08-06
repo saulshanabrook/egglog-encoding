@@ -61,8 +61,6 @@ use egglog::{
 use egglog_reports::RunReport;
 use lazy_static::lazy_static;
 
-type PermanentSchedulerState = HashMap<String, SchedulerId>;
-
 /// The `run-schedule` user-defined command.
 ///
 /// See the [module-level documentation](self) for the full schedule language.
@@ -195,11 +193,7 @@ impl ScheduleState {
                             .iter()
                             .rfind(|(n, _)| n == scheduler_name)
                             .map(|(_, id)| *id)
-                            .or_else(|| {
-                                egraph
-                                    .extension_state::<PermanentSchedulerState>()
-                                    .and_then(|state| state.get(scheduler_name).copied())
-                            })
+                            .or_else(|| egraph.named_scheduler(scheduler_name))
                             .ok_or_else(|| {
                                 egglog::Error::ParseError(ParseError(
                                     scheduler_span.clone(),
@@ -370,6 +364,10 @@ impl UserDefinedCommand for RunExtendedSchedule {
 }
 
 impl UserDefinedCommand for LetSchedulerCommand {
+    fn is_proof_transparent(&self) -> bool {
+        true
+    }
+
     fn update(
         &self,
         egraph: &mut egglog::EGraph,
@@ -380,11 +378,7 @@ impl UserDefinedCommand for LetSchedulerCommand {
                 Expr::Var(span, name),
                 Expr::Call(scheduler_span, scheduler_name, scheduler_args),
             ] => {
-                if egraph
-                    .extension_state::<PermanentSchedulerState>()
-                    .and_then(|state| state.get(name).copied())
-                    .is_some()
-                {
+                if egraph.named_scheduler(name).is_some() {
                     return Err(egglog::Error::ParseError(ParseError(
                         span.clone(),
                         format!("Scheduler {name} already exists"),
@@ -393,10 +387,10 @@ impl UserDefinedCommand for LetSchedulerCommand {
 
                 let scheduler =
                     build_scheduler(egraph, scheduler_span, scheduler_name, scheduler_args)?;
-                let id = egraph.add_scheduler(scheduler);
-                egraph
-                    .extension_state_or_default::<PermanentSchedulerState>()
-                    .insert(name.clone(), id);
+                let id = egraph
+                    .add_named_scheduler(name.clone(), scheduler)
+                    .expect("scheduler name was checked before insertion");
+                debug_assert_eq!(egraph.named_scheduler(name), Some(id));
                 Ok(vec![])
             }
             invalid => Err(egglog::Error::ParseError(ParseError(
@@ -447,7 +441,7 @@ mod schedulers {
 
     use egglog::{
         ast::{Expr, Literal},
-        scheduler::{Matches, Scheduler},
+        scheduler::{BatchDecision, Scheduler, SearchPlan, SearchResult},
     };
     use log::{debug, info};
 
@@ -529,95 +523,151 @@ mod schedulers {
     impl Scheduler for BackOffScheduler {
         fn can_stop(&mut self, rules: &[&str], _ruleset: &str) -> bool {
             let stats = &mut self.stats;
-            let n_stats = stats.len();
-
-            let mut banned: Vec<(&str, RuleStats)> = rules
+            let min_delta = rules
                 .iter()
                 .filter_map(|rule| {
-                    let s = stats.remove(*rule).unwrap();
+                    let s = stats.get(*rule).unwrap();
                     if s.banned_until > s.iteration {
-                        Some((*rule, s))
+                        Some(s.banned_until - s.iteration)
                     } else {
                         None
                     }
                 })
-                .collect();
+                .min();
 
-            let result = if banned.is_empty() {
-                true
-            } else {
-                let min_delta = banned
-                    .iter()
-                    .map(|(_, s)| {
-                        assert!(s.banned_until >= s.iteration);
-                        s.banned_until - s.iteration
-                    })
-                    .min()
-                    .expect("banned cannot be empty here");
-
-                let mut unbanned = vec![];
-                for (name, s) in &mut banned {
-                    s.banned_until -= min_delta;
-                    if s.banned_until == s.iteration {
-                        unbanned.push(*name);
-                    }
-                }
-
-                assert!(!unbanned.is_empty());
-                info!(
-                    "Banned {}/{}, fast-forwarded by {} to unban {}",
-                    banned.len(),
-                    n_stats,
-                    min_delta,
-                    unbanned.join(", "),
-                );
-
-                false
+            let Some(min_delta) = min_delta else {
+                return true;
             };
 
-            // Recover the banned stats
-            for (rule, s) in banned {
-                stats.insert(rule.to_owned(), s);
+            let mut banned_count = 0;
+            let mut unbanned = vec![];
+            for rule in rules {
+                let s = stats.get_mut(*rule).unwrap();
+                if s.banned_until > s.iteration {
+                    banned_count += 1;
+                    s.banned_until -= min_delta;
+                    if s.banned_until == s.iteration {
+                        unbanned.push(*rule);
+                    }
+                }
             }
 
-            result
+            assert!(!unbanned.is_empty());
+            info!(
+                "Banned {}/{}, fast-forwarded by {} to unban {}",
+                banned_count,
+                rules.len(),
+                min_delta,
+                unbanned.join(", "),
+            );
+            false
         }
 
-        fn filter_matches(&mut self, rule: &str, _ruleset: &str, matches: &mut Matches) -> bool {
+        fn plan_search(&mut self, rule: &str, _ruleset: &str) -> SearchPlan {
             let stats = self.get_stats(rule.to_owned());
-            stats.iteration += 1;
+            stats.iteration = stats.iteration.saturating_add(1);
 
             if stats.iteration < stats.banned_until {
                 debug!(
                     "Skipping {} ({}-{}), banned until {}...",
                     rule, stats.times_applied, stats.times_banned, stats.banned_until,
                 );
-                return false;
+                return SearchPlan::Skip;
             }
 
             let threshold = stats
                 .match_limit
                 .checked_shl(stats.times_banned as u32)
-                .unwrap();
-            let total_len: usize = matches.match_size();
-            if total_len > threshold {
-                let ban_length = stats.ban_length << stats.times_banned;
-                stats.times_banned += 1;
-                stats.banned_until = stats.iteration + ban_length;
-                info!(
-                    "Banning {} ({}-{}) for {} iters: {} < {}",
-                    rule, stats.times_applied, stats.times_banned, ban_length, threshold, total_len,
-                );
-                false
-            } else {
-                stats.times_applied += 1;
-                debug!(
-                    "Choosing all matches for {} ({}-{})",
-                    rule, stats.times_applied, stats.times_banned
-                );
-                matches.choose_all();
-                true
+                .unwrap_or(usize::MAX);
+            SearchPlan::Search {
+                max_matches: Some(threshold),
             }
+        }
+
+        fn finish_search(
+            &mut self,
+            rule: &str,
+            _ruleset: &str,
+            result: SearchResult<'_>,
+        ) -> BatchDecision {
+            let stats = self.get_stats(rule.to_owned());
+            match result {
+                SearchResult::LimitExceeded { at_least } => {
+                    let threshold = stats
+                        .match_limit
+                        .checked_shl(stats.times_banned as u32)
+                        .unwrap_or(usize::MAX);
+                    let ban_length = stats
+                        .ban_length
+                        .checked_shl(stats.times_banned as u32)
+                        .unwrap_or(usize::MAX);
+                    stats.times_banned = stats.times_banned.saturating_add(1);
+                    stats.banned_until = stats.iteration.saturating_add(ban_length);
+                    info!(
+                        "Banning {} ({}-{}) for {} iters: {} < {}",
+                        rule,
+                        stats.times_applied,
+                        stats.times_banned,
+                        ban_length,
+                        threshold,
+                        at_least,
+                    );
+                    BatchDecision::Reject
+                }
+                SearchResult::Complete(matches) => {
+                    stats.times_applied = stats.times_applied.saturating_add(1);
+                    debug!(
+                        "Applying all {} matches for {} ({}-{})",
+                        matches.match_size(),
+                        rule,
+                        stats.times_applied,
+                        stats.times_banned
+                    );
+                    BatchDecision::ApplyAll
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn fast_forward_preserves_unbanned_rule_state() {
+            let mut scheduler = BackOffScheduler {
+                default_match_limit: 2,
+                default_ban_length: 2,
+                stats: HashMap::new(),
+            };
+
+            assert_eq!(
+                scheduler.plan_search("banned", ""),
+                SearchPlan::Search {
+                    max_matches: Some(2)
+                }
+            );
+            assert_eq!(
+                scheduler.plan_search("unbanned", ""),
+                SearchPlan::Search {
+                    max_matches: Some(2)
+                }
+            );
+            assert_eq!(
+                scheduler.finish_search("banned", "", SearchResult::LimitExceeded { at_least: 3 }),
+                BatchDecision::Reject
+            );
+
+            assert!(!scheduler.can_stop(&["banned", "unbanned"], ""));
+            assert_eq!(scheduler.stats["unbanned"].iteration, 1);
+
+            assert_eq!(
+                scheduler.plan_search("unbanned", ""),
+                SearchPlan::Search {
+                    max_matches: Some(2)
+                }
+            );
+            assert_eq!(scheduler.stats["unbanned"].iteration, 2);
         }
     }
 }

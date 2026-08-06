@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TextIO, cast
 
+from .adapters import production_registry
 from .artifact import EXPECTED_ARCHIVE_SHA256, render_setup_summary, setup_artifact, verify_artifact_cache
 from .lanes import LaneRegistry
 from .models import (
@@ -37,7 +38,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     source.add_argument("--url", help="artifact archive URL to download")
     setup_parser.add_argument(
         "--cache-dir",
-        default=".paper-artifact",
+        default=None,
         help="artifact cache directory (default: .paper-artifact)",
     )
 
@@ -46,12 +47,12 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     run_parser.add_argument("evaluation", choices=EVALUATION_SELECTIONS)
     run_parser.add_argument(
         "--artifact-dir",
-        default=".paper-artifact",
+        default=None,
         help="verified artifact cache directory (default: .paper-artifact)",
     )
     run_parser.add_argument(
         "--results-dir",
-        default=".paper-results",
+        default=None,
         help="exclusive run directory root (default: .paper-results)",
     )
     run_parser.add_argument("--run-id", default=None, help="explicit result directory id")
@@ -84,7 +85,11 @@ def main(
 
     try:
         if args.command == "setup":
-            cache_root = _resolve_path(str(args.cache_dir), invocation_cwd)
+            cache_root = (
+                root / ".paper-artifact"
+                if args.cache_dir is None
+                else _resolve_path(str(args.cache_dir), invocation_cwd)
+            )
             if args.archive is None and args.url is None:
                 print(f"Verifying cached paper artifact at {cache_root}", file=diagnostics)
                 cache = verify_artifact_cache(cache_root, expected_sha256=expected_archive_sha256)
@@ -103,11 +108,19 @@ def main(
         preset = cast(Preset, str(args.preset))
         selection = cast(EvaluationSelection, str(args.evaluation))
         evaluations = expand_evaluations(selection)
-        artifact_root = _resolve_path(str(args.artifact_dir), invocation_cwd)
-        results_root = _resolve_path(str(args.results_dir), invocation_cwd)
+        artifact_root = (
+            root / ".paper-artifact"
+            if args.artifact_dir is None
+            else _resolve_path(str(args.artifact_dir), invocation_cwd)
+        )
+        results_root = (
+            root / ".paper-results"
+            if args.results_dir is None
+            else _resolve_path(str(args.results_dir), invocation_cwd)
+        )
         print(f"Verifying paper artifact cache at {artifact_root}", file=diagnostics)
         artifact = verify_artifact_cache(artifact_root, expected_sha256=expected_archive_sha256)
-        registry = lane_registry or LaneRegistry()
+        registry = lane_registry or production_registry(root)
         lanes = registry.lanes_for(preset, evaluations, artifact.artifact_root)
         created_at = clock()
         run_id = str(args.run_id) if args.run_id is not None else _new_run_id(created_at)
@@ -127,6 +140,8 @@ def main(
             report=lambda message: print(message, file=diagnostics),
         )
         output.write(result.summary)
+        if result.infrastructure_error:
+            return 2
         return 0 if result.success else 1
     except (OSError, ValueError, subprocess.SubprocessError, tarfile.TarError) as error:
         print(f"error: {error}", file=diagnostics)

@@ -7,7 +7,7 @@ import tarfile
 from collections.abc import Sequence
 from pathlib import Path
 
-from paper_benchmarking.artifact import REQUIRED_ARCHIVE_MEMBERS, ArtifactCache
+from paper_benchmarking.artifact import REQUIRED_ARCHIVE_MEMBERS, ArtifactCache, setup_artifact
 from paper_benchmarking.hashing import sha256_file
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,22 +33,9 @@ def write_artifact_archive(
 
 
 def fake_artifact_cache(root: Path) -> ArtifactCache:
-    """Return a lightweight already-verified artifact record for runner tests."""
+    """Create a tiny, fully verified artifact cache for runner tests."""
 
-    root.mkdir(parents=True, exist_ok=True)
-    artifact_root = root / "artifact"
-    artifact_root.mkdir(exist_ok=True)
-    archive_path = root / "archive.tar.gz"
-    manifest_path = root / "manifest.json"
-    archive_path.write_bytes(b"archive")
-    manifest_path.write_text("{}\n", encoding="utf-8")
-    return ArtifactCache(
-        root=root,
-        artifact_root=artifact_root,
-        archive_path=archive_path,
-        manifest_path=manifest_path,
-        archive_sha256="a" * 64,
-        tree_sha256="b" * 64,
-        manifest_sha256="c" * 64,
-        file_count=1,
-    )
+    root.parent.mkdir(parents=True, exist_ok=True)
+    archive = root.with_suffix(".tar.gz")
+    digest = write_artifact_archive(archive)
+    return setup_artifact(root, archive_path=archive, expected_sha256=digest)

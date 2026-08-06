@@ -15,12 +15,29 @@ pub struct RationalSort;
 impl BaseSort for RationalSort {
     type Base = R;
 
+    fn prim_value_constructor(&self) -> Option<String> {
+        Some("rational".to_owned())
+    }
+
     fn name(&self) -> &str {
         "Rational"
     }
 
     #[rustfmt::skip]
     fn register_primitives(&self, eg: &mut EGraph) {
+        let rational_validator = |termdag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
+            let [numer, denom] = args else { return None };
+            let Term::Lit(Literal::Int(numer)) = termdag.get(*numer) else { return None };
+            let Term::Lit(Literal::Int(denom)) = termdag.get(*denom) else { return None };
+            if *denom == 0 {
+                return None;
+            }
+            let value = Rational64::new(*numer, *denom);
+            let numer = termdag.lit(Literal::Int(*value.numer()));
+            let denom = termdag.lit(Literal::Int(*value.denom()));
+            Some(termdag.app("rational".to_owned(), vec![numer, denom]))
+        };
+
         add_primitive!(eg, "+" = |a: R, b: R| -?> R { a.0.checked_add(&b.0).map(R::new) });
         add_primitive!(eg, "-" = |a: R, b: R| -?> R { a.0.checked_sub(&b.0).map(R::new) });
         add_primitive!(eg, "*" = |a: R, b: R| -?> R { a.0.checked_mul(&b.0).map(R::new) });
@@ -33,7 +50,9 @@ impl BaseSort for RationalSort {
         add_primitive!(eg, "floor" = |a: R| -> R { R::new(a.0.floor()) });
         add_primitive!(eg, "ceil" = |a: R| -> R { R::new(a.0.ceil()) });
         add_primitive!(eg, "round" = |a: R| -> R { R::new(a.0.round()) });
-        add_primitive!(eg, "rational" = |a: i64, b: i64| -> R { R::new(Rational64::new(a, b)) });
+        add_primitive_with_validator!(eg, "rational" = |a: i64, b: i64| -?> R {
+            (b != 0).then(|| R::new(Rational64::new(a, b)))
+        }, rational_validator);
         add_primitive!(eg, "numer" = |a: R| -> i64 { *a.0.numer() });
         add_primitive!(eg, "denom" = |a: R| -> i64 { *a.0.denom() });
 
@@ -109,5 +128,43 @@ impl BaseSort for RationalSort {
         let denom = termdag.lit(Literal::Int(*denom));
 
         termdag.app("rational".into(), vec![numer, denom])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    const CANONICAL_RATIONAL_PROGRAM: &str = r#"
+        (datatype E (Num Rational))
+        (relation Seen (E))
+        (Seen (Num (rational 2 2)))
+        (check (Seen (Num (rational 1 1))))
+    "#;
+
+    #[test]
+    fn rational_constructor_is_canonical_in_term_and_proof_modes() {
+        for mut egraph in [
+            crate::new_experimental_egraph_with_term_encoding(),
+            crate::new_experimental_egraph_with_proofs(),
+        ] {
+            egraph
+                .parse_and_run_program(None, CANONICAL_RATIONAL_PROGRAM)
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn zero_denominator_is_partial() {
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            crate::new_experimental_egraph()
+                .parse_and_run_program(None, "(let invalid (rational 1 0))")
+        }));
+
+        assert!(
+            result.is_ok(),
+            "rational must not panic on a zero denominator"
+        );
+        assert!(result.unwrap().is_err());
     }
 }

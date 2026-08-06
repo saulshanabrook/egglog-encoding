@@ -2,9 +2,9 @@
 ; Adapted from pointer-analysis-benchmark/main.egg in the PLDI 2023 artifact
 ; "Better Together: Unifying Datalog and Equality Saturation". The checked-in
 ; facts contain every row from each relation consumed from the postgresql-9.5.2
-; initdb.bc dataset. Three legacy functions are constructors here because
-; current egglog requires merge modes and rejects rule-body lookups on
-; :no-merge functions. See data/pointer-analysis-initdb.PROVENANCE.md.
+; initdb.bc dataset. Three legacy lookup-or-create functions are represented as
+; constructors because current egglog disallows custom-function lookups in
+; seminaive rule actions. See data/pointer-analysis-initdb.PROVENANCE.md.
 
 ;; functions
 (relation function_name (String))
@@ -201,7 +201,8 @@
     (union (A alloc1) (A alloc2))
 ))
 
-(run 100000)
+(let-scheduler paper-backoff (back-off :match-limit 10000000 :ban-length 5))
+(run-schedule (saturate (run-with paper-backoff)))
 
 (check (= (expr_points_to "</home/anonymous/eqlog-steensgaard-analysis-benchmark/benchmarks/postgresql-9.5.2/initdb.bc>:setup_pgdata:3:0:@strlen")
           (A "*global_alloc@strlen")))
