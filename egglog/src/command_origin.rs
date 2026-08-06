@@ -9,8 +9,9 @@ use std::hash::Hash;
 
 use thiserror::Error;
 
-use crate::ast::GenericNCommand;
+use crate::ast::{GenericCommand, GenericNCommand};
 use crate::frontend_program::{CommandOrigin, GeneratedCommandRole};
+use crate::schedule_origin::{ExactScheduleOrigins, ScheduleCommandNode, ScheduleOriginError};
 use crate::typechecking::{FinalizedProgram, SortAuthorityAt};
 use crate::util::{HashMap, HashSet};
 use crate::{NCommand, ResolvedNCommand};
@@ -31,6 +32,19 @@ where
 {
     fn fail_children(&self) -> Option<&[Self]> {
         let GenericNCommand::Fail(_, children) = self else {
+            return None;
+        };
+        Some(children)
+    }
+}
+
+impl<Head, Leaf> OriginCommandNode for GenericCommand<Head, Leaf>
+where
+    Head: Clone + Display,
+    Leaf: Clone + PartialEq + Eq + Display + Hash,
+{
+    fn fail_children(&self) -> Option<&[Self]> {
+        let GenericCommand::Fail(_, children) = self else {
             return None;
         };
         Some(children)
@@ -75,6 +89,27 @@ impl ExactCommandOrigins {
         Ok(Self(origins))
     }
 
+    /// Stamp one producer-assigned origin across a freshly parsed command
+    /// forest. Recursive paths remain exact even though every nested `Fail`
+    /// command belongs to the same parsed subcommand.
+    pub(crate) fn uniform<C: OriginCommandNode>(
+        commands: &[C],
+        origin: CommandOrigin,
+    ) -> Result<Self, CommandOriginError> {
+        let mut paths = Vec::new();
+        collect_paths(commands, &mut Vec::new(), &mut paths);
+        Self::try_new(
+            commands,
+            paths
+                .into_iter()
+                .map(|command_path| CommandOriginAt {
+                    command_path,
+                    origin: origin.clone(),
+                })
+                .collect(),
+        )
+    }
+
     /// Entries are in deterministic recursive command preorder.
     #[allow(dead_code)] // consumed by the pending compile-only mapper
     pub(crate) fn as_slice(&self) -> &[CommandOriginAt] {
@@ -90,19 +125,30 @@ impl ExactCommandOrigins {
 pub(crate) struct OriginatedProgram<C> {
     commands: Vec<C>,
     origins: ExactCommandOrigins,
+    schedule_origins: ExactScheduleOrigins,
 }
 
-impl<C: OriginCommandNode> OriginatedProgram<C> {
+impl<C: OriginCommandNode + ScheduleCommandNode> OriginatedProgram<C> {
     pub(crate) fn try_new(
         commands: Vec<C>,
         origins: ExactCommandOrigins,
+        schedule_origins: ExactScheduleOrigins,
     ) -> Result<Self, CommandOriginError> {
         origins.validate(&commands)?;
-        Ok(Self { commands, origins })
+        schedule_origins.validate(&commands, &origins)?;
+        Ok(Self {
+            commands,
+            origins,
+            schedule_origins,
+        })
     }
 
     pub(crate) fn validate(&self) -> Result<(), CommandOriginError> {
-        self.origins.validate(&self.commands)
+        self.origins.validate(&self.commands).and_then(|()| {
+            self.schedule_origins
+                .validate(&self.commands, &self.origins)
+                .map_err(CommandOriginError::from)
+        })
     }
 
     pub(crate) fn commands(&self) -> &[C] {
@@ -112,6 +158,11 @@ impl<C: OriginCommandNode> OriginatedProgram<C> {
     pub(crate) fn origins(&self) -> &ExactCommandOrigins {
         &self.origins
     }
+
+    #[allow(dead_code)] // consumed by the pending standalone snapshot mapper
+    pub(crate) fn schedule_origins(&self) -> &ExactScheduleOrigins {
+        &self.schedule_origins
+    }
 }
 
 /// A finalized command forest that cannot be detached from its exact producer
@@ -120,21 +171,31 @@ impl<C: OriginCommandNode> OriginatedProgram<C> {
 pub(crate) struct OriginatedFinalizedProgram {
     finalized: FinalizedProgram,
     origins: ExactCommandOrigins,
+    schedule_origins: ExactScheduleOrigins,
 }
 
 impl OriginatedFinalizedProgram {
     pub(crate) fn try_new(
         finalized: FinalizedProgram,
         origins: ExactCommandOrigins,
+        schedule_origins: ExactScheduleOrigins,
     ) -> Result<Self, CommandOriginError> {
         validate_sort_authorities(&finalized)?;
         origins.validate(&finalized.commands)?;
-        Ok(Self { finalized, origins })
+        schedule_origins.validate(&finalized.commands, &origins)?;
+        Ok(Self {
+            finalized,
+            origins,
+            schedule_origins,
+        })
     }
 
     pub(crate) fn validate(&self) -> Result<(), CommandOriginError> {
         validate_sort_authorities(&self.finalized)?;
-        self.origins.validate(&self.finalized.commands)
+        self.origins.validate(&self.finalized.commands)?;
+        self.schedule_origins
+            .validate(&self.finalized.commands, &self.origins)?;
+        Ok(())
     }
 
     pub(crate) fn commands(&self) -> &[ResolvedNCommand] {
@@ -150,6 +211,11 @@ impl OriginatedFinalizedProgram {
         &self.origins
     }
 
+    #[allow(dead_code)] // consumed by the pending standalone snapshot mapper
+    pub(crate) fn schedule_origins(&self) -> &ExactScheduleOrigins {
+        &self.schedule_origins
+    }
+
     /// Apply one provenance-preserving transition.  The callback must return
     /// both authority carriers, and the result is revalidated before it can
     /// become another originated value.
@@ -158,14 +224,19 @@ impl OriginatedFinalizedProgram {
         transform: impl FnOnce(
             FinalizedProgram,
             ExactCommandOrigins,
-        ) -> Result<(FinalizedProgram, ExactCommandOrigins), E>,
+            ExactScheduleOrigins,
+        ) -> Result<
+            (FinalizedProgram, ExactCommandOrigins, ExactScheduleOrigins),
+            E,
+        >,
     ) -> Result<Self, E>
     where
         E: From<CommandOriginError>,
     {
         self.validate().map_err(E::from)?;
-        let (finalized, origins) = transform(self.finalized, self.origins)?;
-        Self::try_new(finalized, origins).map_err(E::from)
+        let (finalized, origins, schedule_origins) =
+            transform(self.finalized, self.origins, self.schedule_origins)?;
+        Self::try_new(finalized, origins, schedule_origins).map_err(E::from)
     }
 
     /// Atomically append another originated forest.  One pre-append top-level
@@ -206,7 +277,29 @@ impl OriginatedFinalizedProgram {
         }));
         let candidate_origins =
             ExactCommandOrigins::try_new(&candidate_finalized.commands, candidate_origin_entries)?;
-        Self::try_new(candidate_finalized, candidate_origins)
+
+        let mut candidate_schedule_entries = self.schedule_origins.into_entries();
+        candidate_schedule_entries.extend(other.schedule_origins.into_entries().into_iter().map(
+            |mut entry| {
+                let top = entry
+                    .address
+                    .command_path
+                    .first_mut()
+                    .expect("validated schedule command paths are never empty");
+                *top += offset;
+                entry
+            },
+        ));
+        let candidate_schedule_origins = ExactScheduleOrigins::try_new(
+            &candidate_finalized.commands,
+            &candidate_origins,
+            candidate_schedule_entries,
+        )?;
+        Self::try_new(
+            candidate_finalized,
+            candidate_origins,
+            candidate_schedule_origins,
+        )
     }
 }
 
@@ -326,6 +419,8 @@ impl LocalCommandOrigins {
 /// Exact rejection reasons for malformed or unanchored command provenance.
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub(crate) enum CommandOriginError {
+    #[error(transparent)]
+    Schedule(#[from] ScheduleOriginError),
     #[error("command-origin paths must not be empty")]
     EmptyPath,
     #[error("duplicate command-origin path {command_path:?}")]
@@ -582,6 +677,7 @@ fn collect_paths<C: OriginCommandNode>(
 mod tests {
     use egglog_ast::span::Span;
 
+    use crate::ast::{GenericRunConfig, GenericSchedule};
     use crate::frontend_program::{SourceGroupId, SourceSubcommandId, SourceSubcommandRef};
 
     use super::*;
@@ -592,6 +688,16 @@ mod tests {
 
     fn resolved_leaf() -> ResolvedNCommand {
         ResolvedNCommand::PrintSize(Span::Panic, None)
+    }
+
+    fn resolved_run() -> ResolvedNCommand {
+        ResolvedNCommand::RunSchedule(GenericSchedule::Run(
+            Span::Panic,
+            GenericRunConfig {
+                ruleset: String::new(),
+                until: None,
+            },
+        ))
     }
 
     fn resolved_sort(name: &str) -> ResolvedNCommand {
@@ -605,6 +711,13 @@ mod tests {
             proof_constructors: None,
             unionable: true,
         }
+    }
+
+    fn no_resolved_schedules(
+        commands: &[ResolvedNCommand],
+        origins: &ExactCommandOrigins,
+    ) -> ExactScheduleOrigins {
+        ExactScheduleOrigins::try_new(commands, origins, Vec::new()).unwrap()
     }
 
     fn inherit(path: &[usize]) -> CommandOriginDispositionAt {
@@ -801,8 +914,9 @@ mod tests {
         assert!(origins.validate(&commands).is_ok());
 
         let mismatched = FinalizedProgram::new(vec![resolved_leaf(), resolved_leaf()], Vec::new());
+        let schedules = no_resolved_schedules(&mismatched.commands, &origins);
         assert!(matches!(
-            OriginatedFinalizedProgram::try_new(mismatched, origins),
+            OriginatedFinalizedProgram::try_new(mismatched, origins, schedules),
             Err(CommandOriginError::DescentThroughNonFail { command_path })
                 if command_path == [0, 0]
         ));
@@ -877,8 +991,13 @@ mod tests {
             }],
         )
         .unwrap();
-        OriginatedFinalizedProgram::try_new(FinalizedProgram::new(commands, Vec::new()), origins)
-            .unwrap()
+        let schedules = no_resolved_schedules(&commands, &origins);
+        OriginatedFinalizedProgram::try_new(
+            FinalizedProgram::new(commands, Vec::new()),
+            origins,
+            schedules,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -907,6 +1026,7 @@ mod tests {
             ],
         )
         .unwrap();
+        let right_schedules = no_resolved_schedules(&right_commands, &right_origins);
         let sort_id = SortRegistrationId::new(9);
         let right = OriginatedFinalizedProgram::try_new(
             FinalizedProgram::new(
@@ -918,6 +1038,7 @@ mod tests {
                 }],
             ),
             right_origins,
+            right_schedules,
         )
         .unwrap();
 
@@ -937,6 +1058,65 @@ mod tests {
     }
 
     #[test]
+    fn originated_append_rebases_only_current_schedule_address() {
+        use crate::schedule_origin::ScheduleNodeOrigin;
+
+        let left = originated_resolved_leaf(CommandOrigin::Source(source(0, 0)));
+        let commands = vec![resolved_run()];
+        let origins =
+            ExactCommandOrigins::uniform(&commands, CommandOrigin::Source(source(0, 1))).unwrap();
+        let schedules = ExactScheduleOrigins::source_input(&commands, &origins).unwrap();
+        let right = OriginatedFinalizedProgram::try_new(
+            FinalizedProgram::new(commands, Vec::new()),
+            origins,
+            schedules,
+        )
+        .unwrap();
+
+        let appended = left.appended(right).unwrap();
+        let [schedule] = appended.schedule_origins().as_slice() else {
+            panic!("expected one appended schedule node")
+        };
+        assert_eq!(schedule.address.command_path, [1]);
+        assert!(matches!(
+            &schedule.origin,
+            ScheduleNodeOrigin::Source { source_site, .. }
+                if source_site.command_path == [0]
+        ));
+    }
+
+    #[test]
+    fn originated_constructor_rejects_schedule_topology_mutation_without_sidecar_update() {
+        let commands = vec![resolved_run()];
+        let trigger = CommandOrigin::Source(source(0, 0));
+        let origins = ExactCommandOrigins::uniform(&commands, trigger.clone()).unwrap();
+        let schedules = ExactScheduleOrigins::source_input(&commands, &origins).unwrap();
+
+        let mutated = vec![ResolvedNCommand::RunSchedule(GenericSchedule::Repeat(
+            Span::Panic,
+            1,
+            Box::new(GenericSchedule::Run(
+                Span::Panic,
+                GenericRunConfig {
+                    ruleset: String::new(),
+                    until: None,
+                },
+            )),
+        ))];
+        let mutated_origins = ExactCommandOrigins::uniform(&mutated, trigger).unwrap();
+        assert!(matches!(
+            OriginatedFinalizedProgram::try_new(
+                FinalizedProgram::new(mutated, Vec::new()),
+                mutated_origins,
+                schedules,
+            ),
+            Err(CommandOriginError::Schedule(
+                ScheduleOriginError::MissingAddress { address }
+            )) if address.schedule_path == [0]
+        ));
+    }
+
+    #[test]
     fn originated_finalized_rejects_malformed_sort_authority_without_panicking() {
         let commands = vec![resolved_sort("S")];
         let origins = ExactCommandOrigins::try_new(
@@ -947,6 +1127,7 @@ mod tests {
             }],
         )
         .unwrap();
+        let schedules = no_resolved_schedules(&commands, &origins);
         assert!(matches!(
             OriginatedFinalizedProgram::try_new(
                 FinalizedProgram {
@@ -954,6 +1135,7 @@ mod tests {
                     sort_authorities: Vec::new(),
                 },
                 origins,
+                schedules,
             ),
             Err(CommandOriginError::MissingSortAuthority { command_path })
                 if command_path == [0]
@@ -979,6 +1161,7 @@ mod tests {
             local: SortRegistrationId::new(9),
             source: None,
         };
+        let sort_schedules = no_resolved_schedules(&sort_commands, &sort_origins);
         assert!(matches!(
             OriginatedFinalizedProgram::try_new(
                 FinalizedProgram {
@@ -986,6 +1169,7 @@ mod tests {
                     sort_authorities: vec![authority.clone(), authority],
                 },
                 sort_origins,
+                sort_schedules,
             ),
             Err(CommandOriginError::DuplicateSortAuthority { command_path })
                 if command_path == [0]
@@ -1000,6 +1184,7 @@ mod tests {
             }],
         )
         .unwrap();
+        let leaf_schedules = no_resolved_schedules(&leaf_commands, &leaf_origins);
         assert!(matches!(
             OriginatedFinalizedProgram::try_new(
                 FinalizedProgram {
@@ -1011,6 +1196,7 @@ mod tests {
                     }],
                 },
                 leaf_origins,
+                leaf_schedules,
             ),
             Err(CommandOriginError::UnexpectedSortAuthority { command_path })
                 if command_path == [0]

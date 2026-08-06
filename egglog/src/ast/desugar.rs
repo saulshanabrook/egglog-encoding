@@ -1,10 +1,15 @@
 use super::{Rewrite, Rule};
 use crate::ast::{Action, Actions, Expr, Fact};
 use crate::command_origin::{
-    CommandOriginDisposition, CommandOriginDispositionAt, CommandOriginError, LocalCommandOrigins,
-    OriginatedProgram,
+    CommandOriginDisposition, CommandOriginDispositionAt, CommandOriginError, ExactCommandOrigins,
+    LocalCommandOrigins, OriginatedProgram,
 };
 use crate::frontend_program::{CommandOrigin, GeneratedCommandRole};
+use crate::schedule_origin::{
+    ExactScheduleOrigins, GeneratedScheduleRole, LocalScheduleAnchor, LocalScheduleOrigins,
+    ScheduleNodeAddress, ScheduleOriginDisposition, ScheduleOriginDispositionAt,
+    ScheduleOriginError,
+};
 use crate::*;
 use egglog_ast::span::Span;
 
@@ -30,9 +35,24 @@ pub(crate) fn desugar_command_with_origin(
     // staged parser so such a provenance failure cannot consume fresh names or
     // registration identities before the command forest is admitted whole.
     let mut staged_parser = parser.clone();
+    let input_commands = vec![command.clone()];
+    let input_origins = ExactCommandOrigins::uniform(&input_commands, incoming.clone())?;
+    let input_schedule_origins =
+        ExactScheduleOrigins::source_input(&input_commands, &input_origins)?;
     let desugared = desugar_command_with_dispositions(command, &mut staged_parser, proof_testing)?;
-    let origins = desugared.origins.compose(&desugared.commands, incoming)?;
-    let originated = OriginatedProgram::try_new(desugared.commands, origins)?;
+    let DesugaredCommand {
+        commands,
+        origins: local_origins,
+        schedule_origins: local_schedule_origins,
+    } = desugared;
+    let origins = local_origins.compose(&commands, incoming)?;
+    let schedule_origins = local_schedule_origins.compose(
+        &input_origins,
+        &input_schedule_origins,
+        &commands,
+        &origins,
+    )?;
+    let originated = OriginatedProgram::try_new(commands, origins, schedule_origins)?;
     *parser = staged_parser;
     Ok(originated)
 }
@@ -44,27 +64,63 @@ pub(crate) enum DesugarCommandOriginError {
     Desugar(#[from] Error),
     #[error(transparent)]
     Origin(#[from] CommandOriginError),
+    #[error(transparent)]
+    Schedule(#[from] ScheduleOriginError),
 }
 
 struct DesugaredCommand {
     commands: Vec<NCommand>,
     origins: LocalCommandOrigins,
+    schedule_origins: LocalScheduleOrigins,
 }
 
 impl DesugaredCommand {
     fn inherited(command: NCommand) -> Self {
-        Self::top_level(vec![command], vec![CommandOriginDisposition::Inherit])
+        let commands = vec![command];
+        let origins =
+            LocalCommandOrigins::from_top_level(&commands, vec![CommandOriginDisposition::Inherit])
+                .expect("desugar producer emitted an invalid inherited command-origin plan");
+        let schedule_origins = LocalScheduleOrigins::identity(&commands)
+            .expect("desugar producer emitted an invalid inherited schedule-origin plan");
+        Self {
+            commands,
+            origins,
+            schedule_origins,
+        }
     }
 
     fn top_level(commands: Vec<NCommand>, dispositions: Vec<CommandOriginDisposition>) -> Self {
         let origins = LocalCommandOrigins::from_top_level(&commands, dispositions)
             .expect("desugar producer emitted an invalid top-level command-origin plan");
-        Self { commands, origins }
+        let schedule_origins = LocalScheduleOrigins::empty(&commands)
+            .expect("schedule-bearing desugar output requires an explicit producer plan");
+        Self {
+            commands,
+            origins,
+            schedule_origins,
+        }
+    }
+
+    fn top_level_with_schedules(
+        commands: Vec<NCommand>,
+        dispositions: Vec<CommandOriginDisposition>,
+        schedule_entries: Vec<ScheduleOriginDispositionAt>,
+    ) -> Self {
+        let origins = LocalCommandOrigins::from_top_level(&commands, dispositions)
+            .expect("desugar producer emitted an invalid top-level command-origin plan");
+        let schedule_origins = LocalScheduleOrigins::try_new(&commands, schedule_entries)
+            .expect("desugar producer emitted an invalid explicit schedule-origin plan");
+        Self {
+            commands,
+            origins,
+            schedule_origins,
+        }
     }
 
     fn recursive(
         commands: Vec<NCommand>,
         entries: Vec<CommandOriginDispositionAt>,
+        schedule_entries: Vec<ScheduleOriginDispositionAt>,
         contains_empty_producer: bool,
     ) -> Self {
         let origins = LocalCommandOrigins::try_new_with_empty_producer(
@@ -73,17 +129,75 @@ impl DesugaredCommand {
             contains_empty_producer,
         )
         .expect("desugar producer emitted an invalid recursive command-origin plan");
-        Self { commands, origins }
+        let schedule_origins = LocalScheduleOrigins::try_new(&commands, schedule_entries)
+            .expect("desugar producer emitted an invalid recursive schedule-origin plan");
+        Self {
+            commands,
+            origins,
+            schedule_origins,
+        }
     }
 
-    fn into_parts(self) -> (Vec<NCommand>, Vec<CommandOriginDispositionAt>, bool) {
+    fn into_parts(
+        self,
+    ) -> (
+        Vec<NCommand>,
+        Vec<CommandOriginDispositionAt>,
+        Vec<ScheduleOriginDispositionAt>,
+        bool,
+    ) {
         let (origins, contains_empty_producer) = self.origins.into_parts();
-        (self.commands, origins, contains_empty_producer)
+        (
+            self.commands,
+            origins,
+            self.schedule_origins.into_entries(),
+            contains_empty_producer,
+        )
     }
 }
 
 fn generated() -> CommandOriginDisposition {
     CommandOriginDisposition::Generated(GeneratedCommandRole::FrontendDesugaring)
+}
+
+fn rebase_child_schedule_disposition(
+    entry: &mut ScheduleOriginDispositionAt,
+    child_index: usize,
+    output_offset: usize,
+) {
+    let output_top = entry
+        .address
+        .command_path
+        .first_mut()
+        .expect("validated child schedule output paths are nonempty");
+    *output_top += output_offset;
+    entry.address.command_path.insert(0, 0);
+
+    fn rebase_input(path: &mut Vec<usize>, child_index: usize) {
+        let input_top = path
+            .first_mut()
+            .expect("validated child schedule input paths are nonempty");
+        assert_eq!(
+            *input_top, 0,
+            "one-command desugar child inputs always start at command zero"
+        );
+        *input_top = child_index;
+        path.insert(0, 0);
+    }
+
+    match &mut entry.disposition {
+        ScheduleOriginDisposition::Inherit { input } => {
+            rebase_input(&mut input.command_path, child_index)
+        }
+        ScheduleOriginDisposition::Generated { anchor, .. } => match anchor {
+            LocalScheduleAnchor::Command { input_command_path } => {
+                rebase_input(input_command_path, child_index)
+            }
+            LocalScheduleAnchor::Node { input } => {
+                rebase_input(&mut input.command_path, child_index)
+            }
+        },
+    }
 }
 
 fn desugar_command_with_dispositions(
@@ -327,12 +441,17 @@ fn desugar_command_with_dispositions(
                 command_path: vec![0],
                 disposition: CommandOriginDisposition::Inherit,
             }];
+            let mut schedule_dispositions = Vec::new();
             let mut contains_empty_producer = false;
-            for cmd in cmds {
+            for (child_index, cmd) in cmds.into_iter().enumerate() {
                 let child = desugar_command_with_dispositions(cmd, parser, proof_testing)?;
                 let offset = desugared.len();
-                let (child_commands, child_dispositions, child_contains_empty_producer) =
-                    child.into_parts();
+                let (
+                    child_commands,
+                    child_dispositions,
+                    child_schedule_dispositions,
+                    child_contains_empty_producer,
+                ) = child.into_parts();
                 contains_empty_producer |= child_contains_empty_producer;
                 for mut disposition in child_dispositions {
                     let top = disposition
@@ -343,11 +462,16 @@ fn desugar_command_with_dispositions(
                     disposition.command_path.insert(0, 0);
                     dispositions.push(disposition);
                 }
+                for mut disposition in child_schedule_dispositions {
+                    rebase_child_schedule_disposition(&mut disposition, child_index, offset);
+                    schedule_dispositions.push(disposition);
+                }
                 desugared.extend(child_commands);
             }
             DesugaredCommand::recursive(
                 vec![NCommand::Fail(span, desugared)],
                 dispositions,
+                schedule_dispositions,
                 contains_empty_producer,
             )
         }
@@ -436,7 +560,7 @@ fn desugar_prove(parser: &mut Parser, span: Span, query: Vec<Fact>) -> Desugared
         // get a proof for the constructor
         NCommand::ProveExists(span, constructor_name),
     ];
-    DesugaredCommand::top_level(
+    DesugaredCommand::top_level_with_schedules(
         commands,
         vec![
             generated(),
@@ -446,6 +570,18 @@ fn desugar_prove(parser: &mut Parser, span: Span, query: Vec<Fact>) -> Desugared
             generated(),
             CommandOriginDisposition::Inherit,
         ],
+        vec![ScheduleOriginDispositionAt {
+            address: ScheduleNodeAddress {
+                command_path: vec![4],
+                schedule_path: Vec::new(),
+            },
+            disposition: ScheduleOriginDisposition::Generated {
+                role: GeneratedScheduleRole::FrontendDesugaring,
+                anchor: LocalScheduleAnchor::Command {
+                    input_command_path: vec![0],
+                },
+            },
+        }],
     )
 }
 
@@ -626,6 +762,7 @@ where
 mod tests {
     use crate::command_origin::CommandOriginAt;
     use crate::frontend_program::{SourceGroupId, SourceSubcommandId, SourceSubcommandRef};
+    use crate::schedule_origin::{ExactScheduleAnchor, ScheduleNodeOrigin};
 
     use super::*;
 
@@ -849,5 +986,98 @@ mod tests {
 
         assert_eq!(origin_aware.commands(), legacy);
         assert_eq!(origin_parser.symbol_gen, legacy_parser.symbol_gen);
+    }
+
+    #[test]
+    fn schedule_origin_prove_run_is_generated_at_its_exact_command_anchor() {
+        let mut parser = Parser::default();
+        let command = parse_one(&mut parser, "(prove (= 1 1))");
+        let originated =
+            desugar_command_with_origin(command, &mut parser, false, &source_origin()).unwrap();
+        let [schedule] = originated.schedule_origins().as_slice() else {
+            panic!(
+                "prove desugaring must generate exactly one Run schedule node: {:?}",
+                originated.schedule_origins()
+            )
+        };
+        assert_eq!(schedule.address.command_path, [4]);
+        assert!(schedule.address.schedule_path.is_empty());
+        assert!(matches!(
+            &schedule.origin,
+            ScheduleNodeOrigin::Generated {
+                trigger,
+                role: GeneratedScheduleRole::FrontendDesugaring,
+                anchor: ExactScheduleAnchor::Command {
+                    input_command_path,
+                    origin: CommandOrigin::Source(anchor),
+                },
+                producer_site,
+            } if *trigger == source_ref()
+                && *anchor == source_ref()
+                && input_command_path == &[0]
+                && producer_site == &schedule.address
+        ));
+    }
+
+    #[test]
+    fn schedule_origin_nested_fail_rebases_current_paths_but_keeps_exact_source_sites() {
+        let mut parser = Parser::default();
+        let command = parse_one(
+            &mut parser,
+            "(fail (run-schedule (repeat 0 (saturate (run)))) (fail (run-schedule (seq (run) (run)))))",
+        );
+        let originated =
+            desugar_command_with_origin(command, &mut parser, false, &source_origin()).unwrap();
+        let schedules = originated.schedule_origins().as_slice();
+        assert!(!schedules.is_empty());
+        assert!(
+            schedules
+                .iter()
+                .any(|entry| entry.address.command_path == [0, 0])
+        );
+        assert!(
+            schedules
+                .iter()
+                .any(|entry| entry.address.command_path == [0, 1, 0])
+        );
+        for entry in schedules {
+            assert!(matches!(
+                &entry.origin,
+                ScheduleNodeOrigin::Source { source, source_site }
+                    if *source == source_ref() && source_site == &entry.address
+            ));
+        }
+    }
+
+    #[test]
+    fn generated_schedule_input_without_producer_sidecar_rejects_before_fresh_mutation() {
+        let mut parser = Parser::default();
+        let command = parse_one(&mut parser, "(run 1)");
+        let fresh_before = parser.symbol_gen.clone();
+        let incoming = CommandOrigin::Generated {
+            trigger: Some(source_ref()),
+            role: GeneratedCommandRole::MacroExpansion,
+        };
+        assert!(matches!(
+            desugar_command_with_origin(command, &mut parser, false, &incoming),
+            Err(DesugarCommandOriginError::Schedule(
+                ScheduleOriginError::UnstampedGeneratedInput { .. }
+            ))
+        ));
+        assert_eq!(parser.symbol_gen, fresh_before);
+    }
+
+    #[test]
+    fn schedule_origin_survives_until_typechecking_without_topology_recovery() {
+        let mut egraph = EGraph::new_compile_only(false);
+        let command = parse_one(&mut egraph.parser, "(run 3 :until (= 1 1))");
+        let originated =
+            desugar_command_with_origin(command, &mut egraph.parser, false, &source_origin())
+                .unwrap();
+        let before = originated.schedule_origins().clone();
+        let finalized = egraph
+            .typecheck_originated_program_with_sort_authority(originated, Vec::new())
+            .unwrap();
+        assert_eq!(finalized.schedule_origins(), &before);
     }
 }

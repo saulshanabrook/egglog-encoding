@@ -13,6 +13,10 @@ use crate::{
     },
     core::ResolvedCall,
     frontend_program::{CommandOrigin, GeneratedCommandRole},
+    schedule_origin::{
+        ExactScheduleOrigins, LocalScheduleOrigins, ScheduleNodeAddress, ScheduleOriginDisposition,
+        ScheduleOriginDispositionAt, collect_schedule_addresses,
+    },
     typechecking::{CallableIdentity, FinalizedProgram, FuncType, SortAuthorityAt},
     util::{HashMap, HashSet},
 };
@@ -328,14 +332,24 @@ pub(crate) fn remove_globals_originated(
 
     let mut staged_fresh = fresh.clone();
     let transformed = program.try_transform(
-        |finalized, incoming_origins| -> Result<_, RemoveGlobalsOriginError> {
+        |finalized,
+         incoming_origins,
+         incoming_schedule_origins|
+         -> Result<_, RemoveGlobalsOriginError> {
             let removed = remove_globals_with_productions(finalized, &mut staged_fresh);
             let origins = materialize_global_elimination_origins(
                 &removed.finalized.commands,
-                removed.origins,
-                incoming_origins,
+                &removed.origins,
+                &incoming_origins,
             )?;
-            Ok((removed.finalized, origins))
+            let schedule_origins = materialize_global_elimination_schedule_origins(
+                &removed.finalized.commands,
+                &removed.origins,
+                &incoming_origins,
+                &incoming_schedule_origins,
+                &origins,
+            )?;
+            Ok((removed.finalized, origins, schedule_origins))
         },
     )?;
     *fresh = staged_fresh;
@@ -403,8 +417,8 @@ fn preflight_global_elimination_origins(
 
 fn materialize_global_elimination_origins(
     commands: &[ResolvedNCommand],
-    produced: Vec<ProducedOriginAt>,
-    incoming: ExactCommandOrigins,
+    produced: &[ProducedOriginAt],
+    incoming: &ExactCommandOrigins,
 ) -> Result<ExactCommandOrigins, CommandOriginError> {
     let incoming = incoming
         .as_slice()
@@ -412,14 +426,14 @@ fn materialize_global_elimination_origins(
         .map(|origin| (origin.command_path.clone(), origin.origin.clone()))
         .collect::<HashMap<_, _>>();
     let origins = produced
-        .into_iter()
+        .iter()
         .map(|produced| {
             let incoming = incoming.get(&produced.input_command_path).ok_or_else(|| {
                 CommandOriginError::MissingPath {
                     command_path: produced.input_command_path.clone(),
                 }
             })?;
-            let origin = match produced.disposition {
+            let origin = match &produced.disposition {
                 CommandOriginDisposition::Inherit => incoming.clone(),
                 CommandOriginDisposition::Generated(role) => CommandOrigin::Generated {
                     trigger: Some(source_trigger(incoming).ok_or_else(|| {
@@ -428,16 +442,65 @@ fn materialize_global_elimination_origins(
                             role: role.clone(),
                         }
                     })?),
-                    role,
+                    role: role.clone(),
                 },
             };
             Ok(CommandOriginAt {
-                command_path: produced.command_path,
+                command_path: produced.command_path.clone(),
                 origin,
             })
         })
         .collect::<Result<Vec<_>, CommandOriginError>>()?;
     ExactCommandOrigins::try_new(commands, origins)
+}
+
+fn materialize_global_elimination_schedule_origins(
+    commands: &[ResolvedNCommand],
+    produced: &[ProducedOriginAt],
+    incoming_command_origins: &ExactCommandOrigins,
+    incoming_schedule_origins: &ExactScheduleOrigins,
+    output_command_origins: &ExactCommandOrigins,
+) -> Result<ExactScheduleOrigins, CommandOriginError> {
+    let produced_by_output = produced
+        .iter()
+        .map(|origin| (origin.command_path.clone(), origin))
+        .collect::<HashMap<_, _>>();
+    let entries = collect_schedule_addresses(commands)
+        .into_iter()
+        .map(|address| {
+            let produced = produced_by_output
+                .get(&address.command_path)
+                .ok_or_else(|| CommandOriginError::MissingPath {
+                    command_path: address.command_path.clone(),
+                })?;
+            if !matches!(produced.disposition, CommandOriginDisposition::Inherit) {
+                return Err(
+                    crate::schedule_origin::ScheduleOriginError::GeneratedGlobalSchedule {
+                        command_path: address.command_path.clone(),
+                    }
+                    .into(),
+                );
+            }
+            Ok(ScheduleOriginDispositionAt {
+                disposition: ScheduleOriginDisposition::Inherit {
+                    input: ScheduleNodeAddress {
+                        command_path: produced.input_command_path.clone(),
+                        schedule_path: address.schedule_path.clone(),
+                    },
+                },
+                address,
+            })
+        })
+        .collect::<Result<Vec<_>, CommandOriginError>>()?;
+    let local = LocalScheduleOrigins::try_new(commands, entries)?;
+    local
+        .compose(
+            incoming_command_origins,
+            incoming_schedule_origins,
+            commands,
+            output_command_origins,
+        )
+        .map_err(CommandOriginError::from)
 }
 
 fn resolved_var_to_call(var: &ResolvedVar) -> ResolvedCall {
@@ -667,6 +730,7 @@ mod tests {
     use crate::ast::desugar::{desugar_command, desugar_command_with_origin};
     use crate::command_origin::{CommandOriginAt, ExactCommandOrigins, OriginatedProgram};
     use crate::frontend_program::{SourceGroupId, SourceSubcommandId, SourceSubcommandRef};
+    use crate::schedule_origin::ExactScheduleOrigins;
     use crate::typechecking::SourceSortAuthorityAt;
 
     use super::*;
@@ -714,6 +778,7 @@ mod tests {
         let parsed = egraph.parse_program(None, source_text).unwrap();
         let mut commands = Vec::new();
         let mut origin_entries = Vec::new();
+        let mut schedule_origin_entries = Vec::new();
         for (source_index, command) in parsed.into_iter().enumerate() {
             let originated = desugar_command_with_origin(
                 command,
@@ -733,9 +798,26 @@ mod tests {
                     entry
                 },
             ));
+            schedule_origin_entries.extend(
+                originated
+                    .schedule_origins()
+                    .as_slice()
+                    .iter()
+                    .cloned()
+                    .map(|mut entry| {
+                        *entry
+                            .address
+                            .command_path
+                            .first_mut()
+                            .expect("desugared schedule-origin paths are never empty") += offset;
+                        entry
+                    }),
+            );
         }
         let origins = ExactCommandOrigins::try_new(&commands, origin_entries).unwrap();
-        let originated = OriginatedProgram::try_new(commands, origins).unwrap();
+        let schedule_origins =
+            ExactScheduleOrigins::try_new(&commands, &origins, schedule_origin_entries).unwrap();
+        let originated = OriginatedProgram::try_new(commands, origins, schedule_origins).unwrap();
         egraph
             .typecheck_originated_program_with_sort_authority(originated, Vec::new())
             .unwrap()
@@ -935,7 +1017,9 @@ mod tests {
             ],
         )
         .unwrap();
-        let program = OriginatedProgram::try_new(commands, origins).unwrap();
+        let schedule_origins =
+            ExactScheduleOrigins::try_new(&commands, &origins, Vec::new()).unwrap();
+        let program = OriginatedProgram::try_new(commands, origins, schedule_origins).unwrap();
         let finalized = egraph
             .typecheck_originated_program_with_sort_authority(program, Vec::new())
             .unwrap();
@@ -1175,5 +1259,30 @@ mod tests {
             )) if command_path == [0, 0]
         ));
         assert_eq!(egraph.parser.symbol_gen, fresh_before);
+    }
+
+    #[test]
+    fn global_elimination_rebases_only_current_schedule_command_paths() {
+        let mut egraph = EGraph::new_compile_only(false);
+        let program = resolve_program_originated(&mut egraph, "(let x 1)\n(run 0)");
+        let before = program.schedule_origins().as_slice();
+        assert!(!before.is_empty());
+        assert!(before.iter().all(|entry| entry.address.command_path == [1]));
+        assert!(before.iter().all(|entry| matches!(
+            &entry.origin,
+            crate::schedule_origin::ScheduleNodeOrigin::Source { source_site, .. }
+                if source_site.command_path == [0]
+        )));
+        let before_len = before.len();
+
+        let removed = remove_globals_originated(program, &mut egraph.parser.symbol_gen).unwrap();
+        let after = removed.schedule_origins().as_slice();
+        assert_eq!(after.len(), before_len);
+        assert!(after.iter().all(|entry| entry.address.command_path == [2]));
+        assert!(after.iter().all(|entry| matches!(
+            &entry.origin,
+            crate::schedule_origin::ScheduleNodeOrigin::Source { source_site, .. }
+                if source_site.command_path == [0]
+        )));
     }
 }

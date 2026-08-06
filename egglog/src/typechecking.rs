@@ -1095,10 +1095,11 @@ impl EGraph {
         program.validate()?;
         self.preflight_originated_source_sort_authorities(program.commands(), &source_authorities)?;
         let origins = program.origins().clone();
+        let schedule_origins = program.schedule_origins().clone();
         let mut staged = self.clone();
         let finalized =
             staged.typecheck_program_with_sort_authority(program.commands(), source_authorities)?;
-        let originated = OriginatedFinalizedProgram::try_new(finalized, origins)?;
+        let originated = OriginatedFinalizedProgram::try_new(finalized, origins, schedule_origins)?;
         *self = staged;
         Ok(originated)
     }

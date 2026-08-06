@@ -15,6 +15,7 @@ pub mod frontend_snapshot;
 pub mod prelude;
 mod proofs;
 
+mod schedule_origin;
 pub mod scheduler;
 mod serialize;
 pub mod sort;
