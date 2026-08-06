@@ -4500,3 +4500,104 @@ Exact next command after this checkpoint commit:
 ```text
 /opt/homebrew/bin/timeout 110 cargo test -p egglog frontend_capture --lib
 ```
+
+### Checkpoint 2 slice G accepted: grouped source capture and exact triggers (2026-08-06)
+
+The compile-only frontend now starts from
+`Parser::get_program_from_string_grouped` and immediately captures one owned,
+lossless `SourceDocument`. Exact source bytes, optional logical name, dense
+physical `SourceGroupId`s, group-local `SourceSubcommandId`s, leading trivia,
+command byte ranges, zero-subcommand groups, and the EOF trailer survive the
+entire clone-backed resolution transaction. Unicode offsets remain UTF-8 byte
+ranges; no command rendering or span heuristic reconstructs source structure.
+
+The old global `u64 source_command_ordinal` and normalized
+`source_commands: Vec<String>` tables are gone. Each finalized execution and
+proof-check command instead carries its exact `SourceSubcommandRef` trigger.
+Commands from one parser-macro fanout have distinct subcommand IDs but retain
+the same physical group, which is the later DuckDB statement/rollback boundary.
+Nested `Fail`, desugared, global-eliminated, and proof-generated commands carry
+only this mechanical association at this stage; the crate-private carrier
+explicitly disclaims final public `CommandOrigin` meaning.
+
+Post-parse `CommandMacroRegistry` producers are fail-closed under compile-only
+capture until their public API can return explicit provenance. Every individual
+macro stage must produce exactly one command and may then inherit the source
+trigger. Zero output or fanout aborts and restores the complete frontend. The
+guard is per stage, not merely on the final vector: an adversarial macro that
+fans out followed by another that deletes one branch is rejected before the
+later macro can hide the ambiguity. Ordinary Run/ResolvePublic processing keeps
+the existing zero/many-output macro semantics unchanged.
+
+Authenticated bytes before this state append:
+
+```text
+base HEAD                                         1c88373f67e6868e67c9105addc01a60268f0b09
+tracked grouped-capture diff                      5b084ffa20b1430986c516c4bb2a33f3022202cff8d7d4431ff795a7cd4aac38
+egglog/src/frontend_capture.rs                    edcb75671f27dea9689f2de51b1dfa7b53a0c446ce1c3869263c10554fbe6a03
+egglog/src/command_macro.rs                       aac088a5d0d61295a60fce6ae76b007a3b3cd5fd8f54f600e648e5f6ae481125
+egglog/src/lib.rs                                 debe983fc2ee54e47c7dd2273b47ca0857bca777a05884420078aeaa2bfc40a6
+egglog/src/ast/parse.rs (unchanged)               8bedec512837ffe493fc3ec398d3be89eb47fd79574cf0ed5427e338551f086a
+```
+
+Validation on the final bytes:
+
+```text
+cargo test -p egglog frontend_capture --lib                  7 passed
+cargo test -p egglog --lib                                  245 passed
+cargo clippy -p egglog --lib --tests -- -D warnings          passed
+make proof-tests                                              passed (216 cases)
+cargo fmt --all -- --check                                   passed
+git diff --check                                              passed
+independent grouped-source review                             PASS
+```
+
+Accepted boundaries and remaining provenance work:
+
+1. `source_trigger` is an exact physical association, not a generated-role
+   stamp. The public mapper may not turn every associated command into
+   `CommandOrigin::Source`.
+2. Built-in desugaring, global elimination, proof input lowering, term
+   encoding, proof headers/instrumentation/maintenance, and recursive `Fail`
+   remapping must emit a producer-owned recursive origin sidecar. Roles may not
+   be inferred from final names, schemas, spans, shapes, or positions.
+3. A sidecar must cover every recursive command node exactly once. One-to-one
+   transformations inherit; fanout explicitly selects one inherited semantic
+   output and stamps every generated sibling; zero-output producers either
+   retain a separate semantic record or reject.
+4. Input needs one shared read and owned payload before proof-check row
+   lowering. Empty input cannot disappear merely because it generates zero row
+   actions.
+5. Only `FrontendPrelude` and `ProofHeader` may be source-less; this decision
+   belongs to the producer. Proof maintenance remains adjacent to its exact
+   triggering Run and final maintenance to its source command.
+
+Scoreboard: exact identity plus grouped physical capture are accepted. The
+remaining checkpoint-2 frontier is producer-stamped recursive command origins,
+one shared input payload, exact runtime function/target registries, and the pure
+two-view public mapper. SQL emission and all later correctness/benchmark gates
+remain pending.
+
+Circle roster for the next frontier:
+
+- integration/API owns the recursive `CommandOriginAt` carrier and grouped
+  trigger plumbing; write set is narrow frontend command-production paths;
+  forbidden shortcut is classifying final commands; stop on missing/duplicate
+  recursive coverage;
+- compiler lowering owns exact runtime function and primitive-target links
+  only after producer origins stabilize; names and equal local ordinals remain
+  forbidden authority;
+- semantic oracle owns per-producer origin tables, nested-Fail path remapping,
+  source-less header ordering, input-zero-row retention, and rollback canaries;
+  verify with focused origin tests plus `make proof-tests`;
+- engine semantics and artifacts/benchmarks remain read-only; no host feedback,
+  trace harvesting, or publication is allowed before public snapshot validation;
+- independent review authenticates each producer slice and rejects the first
+  inferred role or uncovered parsed subcommand.
+
+Exact next verification command after implementing the first recursive-origin
+producer slice:
+
+```text
+/opt/homebrew/bin/timeout 110 cargo test -p egglog command_origin --lib
+```

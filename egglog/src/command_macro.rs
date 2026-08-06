@@ -60,4 +60,35 @@ impl CommandMacroRegistry {
 
         Ok(commands)
     }
+
+    /// Apply every registered macro while requiring each individual stage to
+    /// preserve exactly one command.
+    ///
+    /// The standalone frontend can inherit one parsed source trigger through
+    /// a one-to-one transformation. It cannot recover provenance after an
+    /// intermediate fan-out or deletion, even if a later macro happens to
+    /// collapse the final result back to one command. Ordinary execution keeps
+    /// using [`Self::apply`] and retains the public macro API's zero/many-output
+    /// semantics.
+    pub(crate) fn apply_one_to_one_for_standalone(
+        &self,
+        command: Command,
+        symbol_gen: &mut SymbolGen,
+        type_info: &TypeInfo,
+    ) -> Result<Command, Error> {
+        let mut command = command;
+        for macro_impl in &self.macros {
+            let mut transformed = macro_impl.transform(command, symbol_gen, type_info)?;
+            if transformed.len() != 1 {
+                let message = if transformed.is_empty() {
+                    "zero-output command-macro expansion lacks standalone provenance"
+                } else {
+                    "multi-output command-macro expansion lacks standalone provenance"
+                };
+                return Err(Error::StandaloneSnapshotInvariant { message });
+            }
+            command = transformed.pop().unwrap();
+        }
+        Ok(command)
+    }
 }
