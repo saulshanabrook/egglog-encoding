@@ -8,6 +8,7 @@ pub mod constraint;
 mod core;
 mod exec_state;
 pub mod extract;
+pub mod frontend_program;
 pub mod frontend_snapshot;
 pub mod prelude;
 mod proofs;
@@ -676,9 +677,7 @@ impl EGraph {
             }
         );
 
-        add_primitive!(&mut eg, "value-eq" = |a: #, b: #| -?> () {
-            (a == b).then_some(())
-        });
+        eg.add_value_eq_primitive();
         eg.add_native_primitive(
             NativeBinaryValuePrimitive::all_equal("ordering-min"),
             None,
@@ -720,9 +719,10 @@ impl EGraph {
                 };
                 Some(if test == cand { *if_eq } else { *els })
             });
-        eg.add_pure_primitive(
+        eg.add_native_primitive(
             proofs::proof_encoding_helpers::SelectEqProof,
             Some(select_eq_validator),
+            NativePrimitive::SelectEqPayload,
         );
 
         eg.rulesets
@@ -748,19 +748,42 @@ struct ResolvedNCommands {
 struct ResolvedNCommandsWithOutput {
     outputs: Vec<CommandOutput>,
     resolved: Vec<ResolvedNCommand>,
+    /// Source-command ordinal for each entry in `resolved`. Populated only in
+    /// compile-only mode.
+    resolved_source_ordinals: Vec<u64>,
     /// In proof mode, populated with the desugared program before instrumented with proofs
     resolved_before_proofs: Vec<ResolvedNCommand>,
+    /// Source-command ordinal for each entry in `resolved_before_proofs`.
+    /// Populated only in compile-only mode.
+    resolved_before_proofs_source_ordinals: Vec<u64>,
+    /// Deterministic parsed rendering of each top-level source command. The
+    /// compiler retains the original source bytes separately for hashing; this
+    /// table exists to define physical transaction/output grouping.
+    source_commands: Vec<String>,
+}
+
+/// One finalized command and the top-level source command whose transaction it
+/// belongs to. Instrumentation can emit many finalized commands for one source
+/// command, so execution/proof streams cannot be positionally zipped.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CompileOnlyResolvedCommand {
+    pub(crate) source_command_ordinal: u64,
+    pub(crate) command: ResolvedNCommand,
 }
 
 /// The two finalized command streams produced by the backend-free frontend.
 /// This is crate-private compiler plumbing; it is intentionally not the public
 /// standalone-program snapshot API.
 #[allow(dead_code)]
+#[derive(Debug)]
 pub(crate) struct CompileOnlyResolvedProgram {
     /// Proof-instrumented, typechecked, global-eliminated execution commands.
-    pub(crate) execution: Vec<ResolvedNCommand>,
+    pub(crate) execution: Vec<CompileOnlyResolvedCommand>,
     /// The corresponding pre-instrumentation commands used for proof checking.
-    pub(crate) proof_check: Vec<ResolvedNCommand>,
+    pub(crate) proof_check: Vec<CompileOnlyResolvedCommand>,
+    /// Parsed top-level commands in source order. Entry `i` owns every command
+    /// carrying `source_command_ordinal == i` in either finalized stream.
+    pub(crate) source_commands: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -779,6 +802,154 @@ impl ProgramProcessingMode {
     fn executes_push_pop(self) -> bool {
         matches!(self, Self::Run | Self::ResolvePublic)
     }
+
+    fn builds_standalone_snapshot(self) -> bool {
+        matches!(self, Self::CompileOnly)
+    }
+}
+
+/// Why a source command cannot enter the standalone SQL compilation pipeline.
+///
+/// This is intentionally separate from proof-encoding support: these forms can
+/// be meaningful to the normal runtime while still preventing a self-contained,
+/// atomically published SQL artifact.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StandalonePreflightReason {
+    /// Included files are not yet represented in the artifact's source/hash
+    /// manifest, so following the path would make admission non-self-contained.
+    Include,
+    /// Snapshot/restore changes frontend name and type visibility. The
+    /// standalone compiler does not currently expose scoped catalog state.
+    Push,
+    /// See [`StandalonePreflightReason::Push`].
+    Pop,
+    /// Presort-backed values include the built-in containers and dynamic
+    /// function handles that are outside this milestone's typed SQL surface.
+    Presort,
+    /// Generic extraction requires runtime term reconstruction and is not an
+    /// observable supported by the standalone artifact.
+    Extract,
+    /// Proof extraction/testing output is a separate follow-up from proof-mode
+    /// relational/check parity.
+    ProofExtraction,
+    /// Function-row printing and its optional filesystem target are outside the
+    /// admitted source-output event vocabulary.
+    PrintFunction,
+    /// Statistics may be printed as an event, but the artifact cannot write a
+    /// source-selected file.
+    FileStatistics,
+    /// Generic expression output writes a source-selected file.
+    Output,
+    /// User-defined commands are host callbacks with no portable SQL authority.
+    UserDefined,
+    /// A command that should have been eliminated by the finalized frontend
+    /// pipeline survived into capture.
+    ResidualFrontendForm,
+}
+
+impl Display for StandalonePreflightReason {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Include => "include commands are not part of a self-contained source artifact",
+            Self::Push => "push commands require scoped frontend state",
+            Self::Pop => "pop commands require scoped frontend state",
+            Self::Presort => "presort-backed sorts do not have standalone SQL authority",
+            Self::Extract => "extraction commands are outside standalone relational parity",
+            Self::ProofExtraction => {
+                "proof extraction commands are outside standalone relational parity"
+            }
+            Self::PrintFunction => "print-function commands are not standalone output events",
+            Self::FileStatistics => {
+                "file-targeted print-stats commands cannot write from the SQL artifact"
+            }
+            Self::Output => "output commands cannot write from the SQL artifact",
+            Self::UserDefined => "user-defined commands require a host callback",
+            Self::ResidualFrontendForm => {
+                "an unlowered frontend-only command survived final resolution"
+            }
+        })
+    }
+}
+
+/// Reject source forms that must not mutate compile-only frontend state before
+/// whole-program admission has succeeded.
+///
+/// `Fail` is recursive: wrapping a stateful command does not make its type and
+/// catalog effects safe to capture. This pass runs both on the parsed program
+/// and on each macro expansion, before includes are opened or commands are
+/// desugared/typechecked.
+fn preflight_standalone_source_commands(commands: &[Command]) -> Result<(), Error> {
+    for command in commands {
+        let reason = match command {
+            Command::Include(..) => Some(StandalonePreflightReason::Include),
+            Command::Push(..) => Some(StandalonePreflightReason::Push),
+            Command::Pop(..) => Some(StandalonePreflightReason::Pop),
+            Command::Sort {
+                presort_and_args: Some(_),
+                ..
+            } => Some(StandalonePreflightReason::Presort),
+            Command::Extract(..) => Some(StandalonePreflightReason::Extract),
+            Command::Prove(..) | Command::ProveExists(..) => {
+                Some(StandalonePreflightReason::ProofExtraction)
+            }
+            Command::PrintFunction(..) => Some(StandalonePreflightReason::PrintFunction),
+            Command::PrintOverallStatistics(_, Some(_)) => {
+                Some(StandalonePreflightReason::FileStatistics)
+            }
+            Command::Output { .. } => Some(StandalonePreflightReason::Output),
+            Command::UserDefined(..) => Some(StandalonePreflightReason::UserDefined),
+            Command::Fail(_, nested) => {
+                preflight_standalone_source_commands(nested)?;
+                None
+            }
+            _ => None,
+        };
+        if let Some(reason) = reason {
+            return Err(Error::UnsupportedStandaloneCommand {
+                command: command.to_string(),
+                reason,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Recheck both finalized streams before any nominal catalog or command arena
+/// is published. This catches unsupported forms manufactured by desugaring or
+/// proof instrumentation and treats a surviving `LetBegin` as an internal
+/// frontend invariant failure.
+fn preflight_standalone_resolved_commands(commands: &[ResolvedNCommand]) -> Result<(), Error> {
+    for command in commands {
+        let reason = match command {
+            ResolvedNCommand::Sort {
+                presort_and_args: Some(_),
+                ..
+            } => Some(StandalonePreflightReason::Presort),
+            ResolvedNCommand::LetBegin(..) => Some(StandalonePreflightReason::ResidualFrontendForm),
+            ResolvedNCommand::Extract(..) => Some(StandalonePreflightReason::Extract),
+            ResolvedNCommand::PrintFunction(..) => Some(StandalonePreflightReason::PrintFunction),
+            ResolvedNCommand::PrintOverallStatistics(_, Some(_)) => {
+                Some(StandalonePreflightReason::FileStatistics)
+            }
+            ResolvedNCommand::ProveExists(..) => Some(StandalonePreflightReason::ProofExtraction),
+            ResolvedNCommand::Output { .. } => Some(StandalonePreflightReason::Output),
+            ResolvedNCommand::Push(..) => Some(StandalonePreflightReason::Push),
+            ResolvedNCommand::Pop(..) => Some(StandalonePreflightReason::Pop),
+            ResolvedNCommand::UserDefined(..) => Some(StandalonePreflightReason::UserDefined),
+            ResolvedNCommand::Fail(_, nested) => {
+                preflight_standalone_resolved_commands(nested)?;
+                None
+            }
+            _ => None,
+        };
+        if let Some(reason) = reason {
+            return Err(Error::UnsupportedStandaloneCommand {
+                command: command.to_command().to_string(),
+                reason,
+            });
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Error)]
@@ -1049,6 +1220,17 @@ impl EGraph {
         self.pushed_egraph = Some(Box::new(prev));
     }
 
+    fn preserve_global_function_identity_history_from(&mut self, newer: &Self) {
+        self.type_info
+            .preserve_global_function_identity_history_from(&newer.type_info);
+        if let (Some(previous), Some(current)) = (
+            self.proof_state.original_typechecking.as_deref_mut(),
+            newer.proof_state.original_typechecking.as_deref(),
+        ) {
+            previous.preserve_global_function_identity_history_from(current);
+        }
+    }
+
     /// Pop the current egraph off the stack, replacing
     /// it with the previously pushed egraph.
     /// It preserves the run report and messages from the popped
@@ -1061,6 +1243,11 @@ impl EGraph {
                 // Preserve the symbol generator so that fresh symbols
                 // generated after pop don't collide with ones generated before pop.
                 std::mem::swap(&mut self.parser.symbol_gen, &mut e.parser.symbol_gen);
+                // Resolved commands inside the popped scope retain exact global
+                // registrations even though their diagnostic names leave the
+                // active catalog. Keep that authority census monotone alongside
+                // the registration generator's high-water mark.
+                e.preserve_global_function_identity_history_from(self);
                 *self = *e;
                 Ok(())
             }
@@ -1071,7 +1258,6 @@ impl EGraph {
     fn translate_expr_to_mergefn(
         &self,
         expr: &ResolvedExpr,
-        lets: &HashMap<String, usize>,
     ) -> Result<egglog_bridge::MergeFn, Error> {
         match expr {
             GenericExpr::Lit(_, literal) => {
@@ -1079,30 +1265,25 @@ impl EGraph {
                 let ty = sort::literal_sort(literal).column_ty(self.backend.base_values());
                 Ok(egglog_bridge::MergeFn::Const { value: val, ty })
             }
-            GenericExpr::Var(span, resolved_var) => {
-                let name = resolved_var.name.as_str();
-                // A `let`-bound variable resolves to its environment slot. Otherwise: single-output
-                // merges use `old`/`new`; tuple-output merges use `old0`, `new0`, `old1`, ... to
-                // refer to the old/new value of a specific output column.
-                if let Some(&slot) = lets.get(name) {
-                    Ok(egglog_bridge::MergeFn::LetVar(slot))
-                } else if name == "old" {
-                    Ok(egglog_bridge::MergeFn::Old)
-                } else if name == "new" {
-                    Ok(egglog_bridge::MergeFn::New)
-                } else if let Some(i) = name.strip_prefix("old").and_then(|s| s.parse().ok()) {
-                    Ok(egglog_bridge::MergeFn::OldCol(i))
-                } else if let Some(i) = name.strip_prefix("new").and_then(|s| s.parse().ok()) {
-                    Ok(egglog_bridge::MergeFn::NewCol(i))
-                } else {
-                    // NB: type-checking should already catch unbound variables here.
-                    Err(TypeError::Unbound(resolved_var.name.clone(), span.clone()).into())
+            GenericExpr::Var(_, resolved_var) => match resolved_var.binding {
+                ResolvedVarBinding::MergeOld { column } => {
+                    Ok(egglog_bridge::MergeFn::OldCol(column))
                 }
-            }
+                ResolvedVarBinding::MergeNew { column } => {
+                    Ok(egglog_bridge::MergeFn::NewCol(column))
+                }
+                ResolvedVarBinding::MergeLet { slot } => Ok(egglog_bridge::MergeFn::LetVar(slot)),
+                ResolvedVarBinding::Lexical { .. } | ResolvedVarBinding::Global { .. } => {
+                    Err(Error::BackendError(format!(
+                        "resolved merge variable {:?} lacks merge binding authority",
+                        resolved_var.name
+                    )))
+                }
+            },
             GenericExpr::Call(_, ResolvedCall::Func(f), args) => {
                 let translated_args = args
                     .iter()
-                    .map(|arg| self.translate_expr_to_mergefn(arg, lets))
+                    .map(|arg| self.translate_expr_to_mergefn(arg))
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(egglog_bridge::MergeFn::Function(
                     self.functions[&f.name].backend_id,
@@ -1112,7 +1293,7 @@ impl EGraph {
             GenericExpr::Call(_, ResolvedCall::Primitive(p), args) => {
                 let mut translated_args = args
                     .iter()
-                    .map(|arg| self.translate_expr_to_mergefn(arg, lets))
+                    .map(|arg| self.translate_expr_to_mergefn(arg))
                     .collect::<Result<Vec<_>, _>>()?;
                 let mut input = p
                     .input()
@@ -1183,24 +1364,14 @@ impl EGraph {
         self_ref: (&str, egglog_bridge::FunctionId),
     ) -> Result<egglog_bridge::MergeFn, Error> {
         use egglog_bridge::MergeFn;
-        // Assign each `let`-bound variable an environment slot, in block order, so `set`/`union`
-        // args and the result can refer to it via `MergeFn::LetVar`. Built up front because the
-        // result is lowered before the actions.
-        let mut lets = HashMap::<String, usize>::default();
-        for action in merge.actions.iter() {
-            if let GenericAction::Let(_, var, _) = action {
-                let slot = lets.len();
-                lets.insert(var.name.as_str().to_owned(), slot);
-            }
-        }
         // Lower the result value (a `(values ...)` result becomes one column per element).
         let result = match &merge.result {
             GenericExpr::Call(_, ResolvedCall::Values(_), cols) => MergeFn::Columns(
                 cols.iter()
-                    .map(|e| self.translate_expr_to_mergefn(e, &lets))
+                    .map(|e| self.translate_expr_to_mergefn(e))
                     .collect::<Result<Vec<_>, _>>()?,
             ),
-            expr => self.translate_expr_to_mergefn(expr, &lets)?,
+            expr => self.translate_expr_to_mergefn(expr)?,
         };
         if merge.actions.is_empty() {
             return Ok(result);
@@ -1209,7 +1380,7 @@ impl EGraph {
         let actions = merge
             .actions
             .iter()
-            .map(|a| self.translate_merge_action(a, &lets, self_ref))
+            .map(|a| self.translate_merge_action(a, self_ref))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(MergeFn::Block {
             actions,
@@ -1222,18 +1393,25 @@ impl EGraph {
     fn translate_merge_action(
         &self,
         action: &ResolvedAction,
-        lets: &HashMap<String, usize>,
         self_ref: (&str, egglog_bridge::FunctionId),
     ) -> Result<egglog_bridge::MergeAction, Error> {
         use egglog_bridge::MergeAction;
         match action {
-            GenericAction::Let(_, var, expr) => Ok(MergeAction::Let {
-                slot: lets[var.name.as_str()],
-                value: self.translate_expr_to_mergefn(expr, lets)?,
-            }),
+            GenericAction::Let(_, var, expr) => {
+                let ResolvedVarBinding::MergeLet { slot } = var.binding else {
+                    return Err(Error::BackendError(format!(
+                        "resolved merge let {:?} lacks slot authority",
+                        var.name
+                    )));
+                };
+                Ok(MergeAction::Let {
+                    slot,
+                    value: self.translate_expr_to_mergefn(expr)?,
+                })
+            }
             GenericAction::Union(_, a, b) => Ok(MergeAction::Union(
-                self.translate_expr_to_mergefn(a, lets)?,
-                self.translate_expr_to_mergefn(b, lets)?,
+                self.translate_expr_to_mergefn(a)?,
+                self.translate_expr_to_mergefn(b)?,
             )),
             GenericAction::Set(_, ResolvedCall::Func(f), keys, val) => {
                 // The function being declared is not in `functions` yet; its id was peeked.
@@ -1252,16 +1430,16 @@ impl EGraph {
                 };
                 let mut args = keys
                     .iter()
-                    .map(|k| self.translate_expr_to_mergefn(k, lets))
+                    .map(|k| self.translate_expr_to_mergefn(k))
                     .collect::<Result<Vec<_>, _>>()?;
                 // A tuple-output target is set with `(values ...)`; expand it into value columns.
                 match val {
                     GenericExpr::Call(_, ResolvedCall::Values(_), cols) => {
                         for c in cols {
-                            args.push(self.translate_expr_to_mergefn(c, lets)?);
+                            args.push(self.translate_expr_to_mergefn(c)?);
                         }
                     }
-                    _ => args.push(self.translate_expr_to_mergefn(val, lets)?),
+                    _ => args.push(self.translate_expr_to_mergefn(val)?),
                 }
                 Ok(MergeAction::Set(backend_id, args))
             }
@@ -2037,6 +2215,9 @@ impl EGraph {
                         ResolvedVar {
                             name: binding_name,
                             sort: children[0].output_type(),
+                            binding: ResolvedVarBinding::Lexical {
+                                id: self.parser.symbol_gen.fresh_resolved_binding_id(),
+                            },
                             is_global_ref: false,
                         },
                     ));
@@ -2090,6 +2271,9 @@ impl EGraph {
         let result_var = ResolvedVar {
             name: self.parser.symbol_gen.fresh("eval_resolved_expr"),
             sort: expr.output_type(),
+            binding: ResolvedVarBinding::Lexical {
+                id: self.parser.symbol_gen.fresh_resolved_binding_id(),
+            },
             is_global_ref: false,
         };
         let actions = ResolvedActions::singleton(ResolvedAction::Let(
@@ -2933,9 +3117,23 @@ impl EGraph {
     ) -> Result<ResolvedNCommandsWithOutput, Error> {
         let mut outputs = Vec::new();
         let mut desugared_before_proofs = Vec::new();
+        let mut desugared_before_proofs_source_ordinals = Vec::new();
         let mut desugared = Vec::new();
+        let mut desugared_source_ordinals = Vec::new();
+        let mut source_commands = Vec::new();
 
         for before_expanded_command in program {
+            let source_command_ordinal = if mode.builds_standalone_snapshot() {
+                let ordinal = u64::try_from(source_commands.len()).map_err(|_| {
+                    Error::StandaloneOrdinalOverflow {
+                        arena: "source commands",
+                    }
+                })?;
+                source_commands.push(before_expanded_command.to_string());
+                Some(ordinal)
+            } else {
+                None
+            };
             // First do user-provided macro expansion for this command,
             // which may rely on type information from previous commands.
             let macro_type_info = self
@@ -2949,6 +3147,14 @@ impl EGraph {
                 &mut self.parser.symbol_gen,
                 macro_type_info,
             )?;
+
+            // A macro can manufacture an unsupported stateful command even
+            // when the parsed source itself was admissible. Check the complete
+            // expansion before following an include or typechecking any sibling
+            // command from that expansion.
+            if mode.builds_standalone_snapshot() {
+                preflight_standalone_source_commands(&macro_expanded)?;
+            }
 
             for command in macro_expanded {
                 // handle include specially- we keep them as-is for desugaring
@@ -2970,6 +3176,16 @@ impl EGraph {
                             .extend(resolved.desugared_before_proofs.clone());
                     }
 
+                    if let Some(source_command_ordinal) = source_command_ordinal {
+                        desugared_before_proofs_source_ordinals.extend(std::iter::repeat_n(
+                            source_command_ordinal,
+                            resolved.desugared_before_proofs.len(),
+                        ));
+                        desugared_source_ordinals.extend(std::iter::repeat_n(
+                            source_command_ordinal,
+                            resolved.desugared.len(),
+                        ));
+                    }
                     desugared_before_proofs.extend(resolved.desugared_before_proofs);
                     desugared.extend(resolved.desugared.clone());
 
@@ -2995,7 +3211,10 @@ impl EGraph {
         Ok(ResolvedNCommandsWithOutput {
             outputs,
             resolved_before_proofs: desugared_before_proofs,
+            resolved_before_proofs_source_ordinals: desugared_before_proofs_source_ordinals,
             resolved: desugared,
+            resolved_source_ordinals: desugared_source_ordinals,
+            source_commands,
         })
     }
 
@@ -3024,8 +3243,11 @@ impl EGraph {
     }
 
     /// Resolve source through the complete frontend pipeline without attaching
-    /// or invoking an execution backend. Push/pop commands remain in the
-    /// returned stream for compiler preflight and are never executed here.
+    /// or invoking an execution backend.
+    ///
+    /// Stateful raw source forms are rejected for the whole program before any
+    /// command is typechecked. Macro expansions receive the same check before
+    /// processing, with the complete frontend transaction restored on failure.
     #[allow(dead_code)]
     pub(crate) fn resolve_program_compile_only(
         &mut self,
@@ -3036,11 +3258,64 @@ impl EGraph {
             self.backend.is_compile_only(),
             "resolve_program_compile_only requires EGraph::new_compile_only"
         );
-        let parsed = self.parser.get_program_from_string(filename, input)?;
-        let resolved = self.process_program_internal(parsed, ProgramProcessingMode::CompileOnly)?;
+        // Macro expansion is type-dependent, so a command late in the source
+        // cannot always be admitted before earlier declarations are resolved.
+        // Resolve against this clone-backed transaction and restore every
+        // frontend-owned allocator/catalog/parser field if any later phase
+        // rejects. Successful resolution commits the accumulated typed state.
+        let checkpoint = self.clone();
+        let resolved = (|| {
+            let parsed = self.parser.get_program_from_string(filename, input)?;
+            preflight_standalone_source_commands(&parsed)?;
+            let resolved =
+                self.process_program_internal(parsed, ProgramProcessingMode::CompileOnly)?;
+            preflight_standalone_resolved_commands(&resolved.resolved)?;
+            preflight_standalone_resolved_commands(&resolved.resolved_before_proofs)?;
+            if resolved.resolved.len() != resolved.resolved_source_ordinals.len() {
+                return Err(Error::StandaloneSnapshotInvariant {
+                    message: "execution command/source-origin cardinality mismatch",
+                });
+            }
+            if resolved.resolved_before_proofs.len()
+                != resolved.resolved_before_proofs_source_ordinals.len()
+            {
+                return Err(Error::StandaloneSnapshotInvariant {
+                    message: "proof-check command/source-origin cardinality mismatch",
+                });
+            }
+            Ok(resolved)
+        })();
+        let resolved = match resolved {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                *self = checkpoint;
+                return Err(error);
+            }
+        };
         Ok(CompileOnlyResolvedProgram {
-            execution: resolved.resolved,
-            proof_check: resolved.resolved_before_proofs,
+            execution: resolved
+                .resolved_source_ordinals
+                .into_iter()
+                .zip(resolved.resolved)
+                .map(
+                    |(source_command_ordinal, command)| CompileOnlyResolvedCommand {
+                        source_command_ordinal,
+                        command,
+                    },
+                )
+                .collect(),
+            proof_check: resolved
+                .resolved_before_proofs_source_ordinals
+                .into_iter()
+                .zip(resolved.resolved_before_proofs)
+                .map(
+                    |(source_command_ordinal, command)| CompileOnlyResolvedCommand {
+                        source_command_ordinal,
+                        command,
+                    },
+                )
+                .collect(),
+            source_commands: resolved.source_commands,
         })
     }
 
@@ -4176,6 +4451,19 @@ pub enum Error {
         reason: ProofEncodingUnsupportedReason,
     },
     #[error(
+        "Command is not supported by standalone SQL compilation.\n\
+         Reason: {reason}\n\
+         Offending command: {command}"
+    )]
+    UnsupportedStandaloneCommand {
+        command: String,
+        reason: StandalonePreflightReason,
+    },
+    #[error("standalone snapshot {arena} exceed the u64 ordinal domain")]
+    StandaloneOrdinalOverflow { arena: &'static str },
+    #[error("standalone frontend invariant failed: {message}")]
+    StandaloneSnapshotInvariant { message: &'static str },
+    #[error(
         "`{api}` is incompatible with proof mode: {reason} \
          Disable proofs or make the operation a command in the syntax of the egglog language and use `EGraph::parse_and_run`."
     )]
@@ -4306,31 +4594,195 @@ mod tests {
     }
 
     #[test]
-    fn compile_only_resolution_is_backend_free_and_retains_push_pop() {
-        let source = "(push)\n(relation Edge (i64 i64))\n(pop)";
+    fn compile_only_resolution_rejects_push_pop_before_frontend_mutation() {
+        let source = "(relation Edge (i64 i64))\n(push)\n(pop)";
         let mut first = EGraph::new_compile_only(false);
-        let first_resolved = first.resolve_program_compile_only(None, source).unwrap();
+        let first_error = first
+            .resolve_program_compile_only(None, source)
+            .unwrap_err();
         let mut second = EGraph::new_compile_only(false);
-        let second_resolved = second.resolve_program_compile_only(None, source).unwrap();
+        let second_error = second
+            .resolve_program_compile_only(None, source)
+            .unwrap_err();
 
         assert!(matches!(
-            first_resolved.execution.first(),
-            Some(ResolvedNCommand::Push(1))
+            first_error,
+            Error::UnsupportedStandaloneCommand {
+                reason: StandalonePreflightReason::Push,
+                ..
+            }
         ));
-        assert!(first_resolved.execution.iter().any(
-            |command| matches!(command, ResolvedNCommand::Function(decl) if decl.name == "Edge")
-        ));
-        assert!(matches!(
-            first_resolved.execution.last(),
-            Some(ResolvedNCommand::Pop(_, 1))
-        ));
-        assert!(first_resolved.proof_check.is_empty());
-        assert_eq!(first_resolved.execution, second_resolved.execution);
+        assert_eq!(first_error.to_string(), second_error.to_string());
 
-        // Running either command would populate these execution-owned fields.
+        // Whole-program preflight runs before the preceding declaration can
+        // leak into the compile-only type or execution state.
+        assert!(first.type_info.get_func_type("Edge").is_none());
         assert!(first.functions.is_empty());
         assert!(first.pushed_egraph.is_none());
         assert_eq!(compile_only_state(&first), compile_only_state(&second));
+    }
+
+    #[test]
+    fn compile_only_resolution_rejects_nested_pop_before_frontend_mutation() {
+        let source = "(relation Edge (i64 i64))\n(fail (pop))";
+        let mut egraph = EGraph::new_compile_only(false);
+        let error = egraph
+            .resolve_program_compile_only(None, source)
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            Error::UnsupportedStandaloneCommand {
+                reason: StandalonePreflightReason::Pop,
+                ..
+            }
+        ));
+        assert!(egraph.type_info.get_func_type("Edge").is_none());
+        assert!(egraph.functions.is_empty());
+        assert!(egraph.pushed_egraph.is_none());
+    }
+
+    #[test]
+    fn compile_only_resolution_rejects_include_before_opening_it() {
+        let mut egraph = EGraph::new_compile_only(false);
+        let error = egraph
+            .resolve_program_compile_only(None, "(include \"certainly-missing.egg\")")
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            Error::UnsupportedStandaloneCommand {
+                reason: StandalonePreflightReason::Include,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn compile_only_resolution_preflights_macro_expansions() {
+        struct ExpandToPush;
+
+        impl CommandMacro for ExpandToPush {
+            fn transform(
+                &self,
+                command: Command,
+                _symbol_gen: &mut crate::util::SymbolGen,
+                _type_info: &TypeInfo,
+            ) -> Result<Vec<Command>, Error> {
+                Ok(if matches!(command, Command::AddRuleset(..)) {
+                    vec![Command::Push(1)]
+                } else {
+                    vec![command]
+                })
+            }
+        }
+
+        let mut egraph = EGraph::new_compile_only(false);
+        egraph.command_macros_mut().register(Arc::new(ExpandToPush));
+        let error = egraph
+            .resolve_program_compile_only(None, "(relation Edge (i64 i64))\n(ruleset trigger)")
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            Error::UnsupportedStandaloneCommand {
+                reason: StandalonePreflightReason::Push,
+                ..
+            }
+        ));
+        assert!(egraph.type_info.get_func_type("Edge").is_none());
+        assert!(!egraph.rulesets.contains_key("trigger"));
+        assert!(egraph.pushed_egraph.is_none());
+    }
+
+    #[test]
+    fn compile_only_resolution_preserves_source_groups_across_macro_expansion() {
+        struct AppendPrintSize;
+
+        impl CommandMacro for AppendPrintSize {
+            fn transform(
+                &self,
+                command: Command,
+                _symbol_gen: &mut crate::util::SymbolGen,
+                _type_info: &TypeInfo,
+            ) -> Result<Vec<Command>, Error> {
+                Ok(match command {
+                    Command::AddRuleset(span, name) => vec![
+                        Command::AddRuleset(span.clone(), name),
+                        Command::PrintSize(span, None),
+                    ],
+                    command => vec![command],
+                })
+            }
+        }
+
+        let mut egraph = EGraph::new_compile_only(false);
+        egraph
+            .command_macros_mut()
+            .register(Arc::new(AppendPrintSize));
+        let resolved = egraph
+            .resolve_program_compile_only(None, "(ruleset trigger)\n(print-size)")
+            .unwrap();
+
+        assert_eq!(
+            resolved
+                .execution
+                .iter()
+                .map(|command| command.source_command_ordinal)
+                .collect::<Vec<_>>(),
+            vec![0, 0, 1]
+        );
+        assert!(matches!(
+            &resolved.execution[0].command,
+            ResolvedNCommand::AddRuleset(_, name) if name == "trigger"
+        ));
+        assert!(matches!(
+            &resolved.execution[1].command,
+            ResolvedNCommand::PrintSize(_, None)
+        ));
+        assert_eq!(
+            resolved.source_commands,
+            vec!["(ruleset trigger)", "(print-size )"]
+        );
+        assert!(resolved.proof_check.is_empty());
+    }
+
+    #[test]
+    fn compile_only_resolution_rejects_unsupported_source_output_and_container_forms() {
+        let cases = [
+            (
+                "(sort Numbers (Vec i64))",
+                StandalonePreflightReason::Presort,
+            ),
+            ("(extract 1 1)", StandalonePreflightReason::Extract),
+            (
+                "(print-function Missing)",
+                StandalonePreflightReason::PrintFunction,
+            ),
+            (
+                "(print-stats :file \"must-not-exist.json\")",
+                StandalonePreflightReason::FileStatistics,
+            ),
+            (
+                "(output \"must-not-exist.json\" 1)",
+                StandalonePreflightReason::Output,
+            ),
+        ];
+
+        for (source, expected) in cases {
+            let mut egraph = EGraph::new_compile_only(false);
+            let error = egraph
+                .resolve_program_compile_only(None, source)
+                .unwrap_err();
+            assert!(
+                matches!(
+                    error,
+                    Error::UnsupportedStandaloneCommand { reason, .. } if reason == expected
+                ),
+                "unexpected preflight result for {source:?}: {error}"
+            );
+            assert!(egraph.functions.is_empty());
+        }
     }
 
     #[test]
@@ -4350,6 +4802,16 @@ mod tests {
         assert!(!resolved.proof_check.is_empty());
         assert_eq!(resolved.execution, resolved_again.execution);
         assert_eq!(resolved.proof_check, resolved_again.proof_check);
+        assert_eq!(resolved.source_commands, resolved_again.source_commands);
+        assert_eq!(resolved.source_commands.len(), 4);
+        for stream in [&resolved.execution, &resolved.proof_check] {
+            assert!(stream.windows(2).all(|commands| {
+                commands[0].source_command_ordinal <= commands[1].source_command_ordinal
+            }));
+            assert!(stream.iter().all(|command| {
+                command.source_command_ordinal < resolved.source_commands.len() as u64
+            }));
+        }
         assert_eq!(compile_only_state(&egraph), compile_only_state(&again));
 
         let write_only_contexts = |primitive: &typechecking::PrimitiveWithId| {
@@ -4387,7 +4849,7 @@ mod tests {
         let view_name = resolved
             .execution
             .iter()
-            .find_map(|command| match command {
+            .find_map(|command| match &command.command {
                 ResolvedNCommand::Function(decl)
                     if decl.term_constructor.as_deref() == Some("Leaf") =>
                 {
@@ -4478,6 +4940,44 @@ mod tests {
             ordering_min.authority(),
             typechecking::PrimitiveAuthority::Native(NativePrimitive::OrderingMin)
         ));
+
+        egraph.add_pure_primitive(proofs::proof_encoding_helpers::SelectEqProof, None);
+        let select_eq = egraph.type_info.get_prims("select-eq").unwrap();
+        assert_eq!(select_eq.len(), 2);
+        assert!(matches!(
+            select_eq[0].authority(),
+            typechecking::PrimitiveAuthority::Native(NativePrimitive::SelectEqPayload)
+        ));
+        assert!(matches!(
+            select_eq[1].authority(),
+            typechecking::PrimitiveAuthority::Opaque
+        ));
+        assert_ne!(
+            select_eq[0].registration_id(),
+            select_eq[1].registration_id()
+        );
+
+        for (name, expected) in [
+            (">", NativeScalarPrimitive::I64Gt),
+            ("<=", NativeScalarPrimitive::I64Le),
+            ("bool-<", NativeScalarPrimitive::I64BoolLt),
+        ] {
+            let registrations = egraph.type_info.get_prims(name).unwrap();
+            assert!(registrations.iter().any(|primitive| {
+                primitive.authority() == &typechecking::PrimitiveAuthority::NativeScalar(expected)
+            }));
+        }
+        assert!(
+            egraph
+                .type_info
+                .get_prims("bool-<")
+                .unwrap()
+                .iter()
+                .any(|primitive| matches!(
+                    primitive.authority(),
+                    typechecking::PrimitiveAuthority::Opaque
+                ))
+        );
     }
 
     #[test]
@@ -4568,9 +5068,7 @@ mod tests {
                 Context::Write,
             )
             .unwrap();
-        let ordering = egraph
-            .translate_expr_to_mergefn(&ordering, &HashMap::default())
-            .unwrap();
+        let ordering = egraph.translate_expr_to_mergefn(&ordering).unwrap();
         let MergeFn::Primitive {
             name,
             input,
@@ -4601,9 +5099,7 @@ mod tests {
                 Context::Write,
             )
             .unwrap();
-        let orient = egraph
-            .translate_expr_to_mergefn(&orient, &HashMap::default())
-            .unwrap();
+        let orient = egraph.translate_expr_to_mergefn(&orient).unwrap();
         let MergeFn::Primitive {
             name,
             input,
@@ -4628,9 +5124,7 @@ mod tests {
         let get_fresh = egraph
             .typecheck_expr_with_bindings_and_output(&get_fresh, &[], proof_sort, Context::Write)
             .unwrap();
-        let get_fresh = egraph
-            .translate_expr_to_mergefn(&get_fresh, &HashMap::default())
-            .unwrap();
+        let get_fresh = egraph.translate_expr_to_mergefn(&get_fresh).unwrap();
         let MergeFn::Primitive {
             name,
             input,
@@ -4650,6 +5144,51 @@ mod tests {
         assert!(matches!(
             args.as_slice(),
             [MergeFn::Const { ty, .. }] if *ty == string_ty
+        ));
+    }
+
+    #[test]
+    fn merge_lowering_uses_binding_authority_not_variable_spelling() {
+        let mut egraph = EGraph::default();
+        let command = egraph
+            .parser
+            .get_program_from_string(
+                None,
+                "(function choose (i64) (i64 i64) :merge (values new1 old0))",
+            )
+            .unwrap()
+            .pop()
+            .unwrap();
+        let mut resolved = egraph.resolve_command_before_proofs(command).unwrap();
+        let ResolvedNCommand::Function(declaration) = resolved.pop().unwrap() else {
+            panic!("function declaration did not remain a resolved function");
+        };
+        let mut merge = declaration.merge.unwrap();
+        let GenericExpr::Call(_, ResolvedCall::Values(_), columns) = &mut merge.result else {
+            panic!("tuple merge did not retain its values roots");
+        };
+        let (first_column, remaining_columns) = columns.split_at_mut(1);
+        let GenericExpr::Var(_, first) = &mut first_column[0] else {
+            panic!("first tuple merge root is not a variable");
+        };
+        let GenericExpr::Var(_, second) = &mut remaining_columns[0] else {
+            panic!("second tuple merge root is not a variable");
+        };
+        assert_eq!(first.binding, ResolvedVarBinding::MergeNew { column: 1 });
+        assert_eq!(second.binding, ResolvedVarBinding::MergeOld { column: 0 });
+
+        // Swap the diagnostic spellings without changing either resolved
+        // authority. Name-parsing lowering would now produce the opposite
+        // columns; nominal lowering must remain unchanged.
+        first.name = "old0".to_owned();
+        second.name = "new1".to_owned();
+        let lowered = egraph
+            .translate_merge_to_mergefn(&merge, ("choose", egraph.backend.peek_next_function_id()))
+            .unwrap();
+        assert!(matches!(
+            lowered,
+            MergeFn::Columns(ref roots)
+                if matches!(roots.as_slice(), [MergeFn::NewCol(1), MergeFn::OldCol(0)])
         ));
     }
 

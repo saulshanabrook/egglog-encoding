@@ -71,6 +71,18 @@ pub type NCommand = GenericNCommand<String, String>;
 /// [`NCommand`] into a [`ResolvedNCommand`].
 pub(crate) type ResolvedNCommand = GenericNCommand<ResolvedCall, ResolvedVar>;
 
+/// Exact callable authorities selected for an index declaration.
+///
+/// The source-facing index and target names remain on [`GenericNCommand::Index`]
+/// for diagnostics and rendering. This carrier is absent from a desugared
+/// [`NCommand`] and populated only when typechecking produces a
+/// [`ResolvedNCommand`].
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub struct GenericIndexResolution<Head> {
+    pub(crate) index: Head,
+    pub(crate) target: Head,
+}
+
 /// A [`NCommand`] is a desugared [`Command`], where syntactic sugars
 /// like [`Command::Datatype`] and [`Command::Rewrite`]
 /// are eliminated.
@@ -117,6 +129,7 @@ where
         name: String,
         function: String,
         any_of: Vec<usize>,
+        resolution: Option<GenericIndexResolution<Head>>,
     },
     AddRuleset(Span, String),
     UnstableCombinedRuleset(Span, String, Vec<String>),
@@ -220,6 +233,7 @@ where
                 name,
                 function,
                 any_of,
+                resolution: _,
             } => GenericCommand::Index {
                 span: span.clone(),
                 name: name.clone(),
@@ -351,11 +365,13 @@ where
                 name,
                 function,
                 any_of,
+                resolution,
             } => GenericNCommand::Index {
                 span,
                 name,
                 function,
                 any_of,
+                resolution,
             },
             GenericNCommand::AddRuleset(span, name) => GenericNCommand::AddRuleset(span, name),
             GenericNCommand::UnstableCombinedRuleset(span, name, rulesets) => {
@@ -1659,10 +1675,46 @@ pub(crate) type MappedFact<Head, Leaf> = GenericFact<CorrespondingVar<Head, Leaf
 
 pub struct Facts<Head, Leaf>(pub Vec<GenericFact<Head, Leaf>>);
 
+/// Decide whether an expression-position leaf is lexical or global.
+///
+/// Source strings still need the catalog lookup used during initial
+/// typechecking. Resolved leaves carry exact nominal authority and must never
+/// be reclassified from their diagnostic spelling.
+pub(crate) trait AtomLeafAuthority: Clone + PartialEq + Eq + Display + Hash {
+    fn corresponding_atom_term(&self, span: &Span, typeinfo: &TypeInfo) -> GenericAtomTerm<Self>;
+}
+
+impl AtomLeafAuthority for String {
+    fn corresponding_atom_term(&self, span: &Span, typeinfo: &TypeInfo) -> GenericAtomTerm<Self> {
+        if typeinfo.is_global(self) {
+            GenericAtomTerm::Global(span.clone(), self.clone())
+        } else {
+            GenericAtomTerm::Var(span.clone(), self.clone())
+        }
+    }
+}
+
+impl AtomLeafAuthority for ResolvedVar {
+    fn corresponding_atom_term(&self, span: &Span, _typeinfo: &TypeInfo) -> GenericAtomTerm<Self> {
+        match self.binding {
+            ResolvedVarBinding::Global { .. } => {
+                GenericAtomTerm::Global(span.clone(), self.clone())
+            }
+            ResolvedVarBinding::Lexical { .. }
+            | ResolvedVarBinding::MergeOld { .. }
+            | ResolvedVarBinding::MergeNew { .. }
+            | ResolvedVarBinding::MergeLet { .. } => {
+                GenericAtomTerm::Var(span.clone(), self.clone())
+            }
+        }
+    }
+}
+
+#[allow(private_bounds)]
 impl<Head, Leaf> Facts<Head, Leaf>
 where
     Head: Clone + Display + HeadOps,
-    Leaf: Clone + PartialEq + Eq + Display + Hash,
+    Leaf: AtomLeafAuthority,
 {
     /// Flattens a list of facts into a Query.
     /// For typechecking, we need the correspondence between the original ast
@@ -1915,30 +1967,40 @@ impl<Head: Display, Leaf: Display> GenericRewrite<Head, Leaf> {
 pub(crate) trait MappedExprExt<Head, Leaf>
 where
     Head: Clone + Display,
-    Leaf: Clone + PartialEq + Eq + Display + Hash,
+    Leaf: AtomLeafAuthority,
 {
     fn get_corresponding_var_or_lit(&self, typeinfo: &TypeInfo) -> GenericAtomTerm<Leaf>;
+
+    fn get_corresponding_var_or_lit_in_scope(
+        &self,
+        typeinfo: &TypeInfo,
+        binding: &IndexSet<Leaf>,
+    ) -> GenericAtomTerm<Leaf>;
 }
 
 impl<Head, Leaf> MappedExprExt<Head, Leaf> for MappedExpr<Head, Leaf>
 where
     Head: Clone + Display,
-    Leaf: Clone + PartialEq + Eq + Display + Hash,
+    Leaf: AtomLeafAuthority,
 {
     fn get_corresponding_var_or_lit(&self, typeinfo: &TypeInfo) -> GenericAtomTerm<Leaf> {
-        // Note: need typeinfo to resolve whether a symbol is a global or not
-        // This is error-prone and the complexities can be avoided by treating globals
-        // as nullary functions.
         match self {
-            GenericExpr::Var(span, v) => {
-                if typeinfo.is_global(&v.to_string()) {
-                    GenericAtomTerm::Global(span.clone(), v.clone())
-                } else {
-                    GenericAtomTerm::Var(span.clone(), v.clone())
-                }
-            }
+            GenericExpr::Var(span, v) => v.corresponding_atom_term(span, typeinfo),
             GenericExpr::Lit(span, lit) => GenericAtomTerm::Literal(span.clone(), lit.clone()),
             GenericExpr::Call(span, head, _) => GenericAtomTerm::Var(span.clone(), head.to.clone()),
+        }
+    }
+
+    fn get_corresponding_var_or_lit_in_scope(
+        &self,
+        typeinfo: &TypeInfo,
+        binding: &IndexSet<Leaf>,
+    ) -> GenericAtomTerm<Leaf> {
+        match self {
+            GenericExpr::Var(span, v) if binding.contains(v) => {
+                GenericAtomTerm::Var(span.clone(), v.clone())
+            }
+            _ => self.get_corresponding_var_or_lit(typeinfo),
         }
     }
 }

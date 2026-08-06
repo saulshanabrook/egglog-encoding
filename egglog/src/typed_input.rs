@@ -29,8 +29,6 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::str::Utf8Error;
 
-use crate::frontend_snapshot::FunctionId;
-
 /// The declaration form that controls which columns occur in the input file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum InputFunctionSubtype {
@@ -40,10 +38,10 @@ pub enum InputFunctionSubtype {
     Custom,
 }
 
-/// An owned sort name retained exactly as declared by the resolved frontend.
+/// An owned diagnostic sort name retained exactly as declared by the frontend.
 ///
-/// Unsupported names remain representable here so admission can return a
-/// structured [`TypedInputParseError::UnsupportedSort`] instead of panicking.
+/// This name is never semantic authority. Supported scalar identity is carried
+/// separately by [`InputSortAuthority`].
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InputSortName(String);
 
@@ -99,6 +97,54 @@ impl Display for InputScalarKind {
     }
 }
 
+/// Exact frontend authority for one declared sort.
+///
+/// This is deliberately separate from [`InputSortName`]. A diagnostic name
+/// such as `"i64"` does not make a user-defined sort an integer sort, and an
+/// actual integer sort remains an integer even if its diagnostic spelling is
+/// changed before this backend-neutral snapshot is rendered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum InputSortAuthority {
+    Unit,
+    I64,
+    F64,
+    String,
+    /// Any exact sort identity not supported by the TSV loader.
+    Unsupported,
+}
+
+impl Display for InputSortAuthority {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Unit => "Unit",
+            Self::I64 => "i64",
+            Self::F64 => "f64",
+            Self::String => "String",
+            Self::Unsupported => "unsupported",
+        })
+    }
+}
+
+/// One declared sort with exact semantics and independent diagnostic spelling.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DeclaredInputSort {
+    pub diagnostic_name: InputSortName,
+    pub authority: InputSortAuthority,
+}
+
+impl DeclaredInputSort {
+    pub fn new(diagnostic_name: impl Into<InputSortName>, authority: InputSortAuthority) -> Self {
+        Self {
+            diagnostic_name: diagnostic_name.into(),
+            authority,
+        }
+    }
+
+    pub fn unsupported(diagnostic_name: impl Into<InputSortName>) -> Self {
+        Self::new(diagnostic_name, InputSortAuthority::Unsupported)
+    }
+}
+
 /// Whether a declared column is a function input or output.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InputColumnRole {
@@ -118,28 +164,21 @@ impl Display for InputColumnRole {
 /// Graph-neutral declaration metadata captured from the typed frontend.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct DeclaredInputSchema {
-    pub target: FunctionId,
     pub subtype: InputFunctionSubtype,
-    pub inputs: Vec<InputSortName>,
-    pub outputs: Vec<InputSortName>,
+    pub inputs: Vec<DeclaredInputSort>,
+    pub outputs: Vec<DeclaredInputSort>,
 }
 
 impl DeclaredInputSchema {
-    pub fn new<InputSort, OutputSort>(
-        target: FunctionId,
+    pub fn new(
         subtype: InputFunctionSubtype,
-        inputs: impl IntoIterator<Item = InputSort>,
-        outputs: impl IntoIterator<Item = OutputSort>,
-    ) -> Self
-    where
-        InputSort: Into<InputSortName>,
-        OutputSort: Into<InputSortName>,
-    {
+        inputs: impl IntoIterator<Item = DeclaredInputSort>,
+        outputs: impl IntoIterator<Item = DeclaredInputSort>,
+    ) -> Self {
         Self {
-            target,
             subtype,
-            inputs: inputs.into_iter().map(Into::into).collect(),
-            outputs: outputs.into_iter().map(Into::into).collect(),
+            inputs: inputs.into_iter().collect(),
+            outputs: outputs.into_iter().collect(),
         }
     }
 }
@@ -149,12 +188,12 @@ impl DeclaredInputSchema {
 /// For constructors, `effective_outputs` is empty even though
 /// `declared_outputs` retains the constructor result sort. For custom
 /// functions, every declared output is present in `effective_outputs`.
+/// This owned parse DTO is not a certificate of frontend provenance.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TypedInputSchema {
-    pub target: FunctionId,
     pub subtype: InputFunctionSubtype,
-    pub declared_inputs: Vec<InputSortName>,
-    pub declared_outputs: Vec<InputSortName>,
+    pub declared_inputs: Vec<DeclaredInputSort>,
+    pub declared_outputs: Vec<DeclaredInputSort>,
     pub effective_inputs: Vec<InputScalarKind>,
     pub effective_outputs: Vec<InputScalarKind>,
 }
@@ -261,6 +300,12 @@ pub enum TypedInputParseError {
         column_ordinal: usize,
         sort: InputSortName,
     },
+    ResolvedSchemaMismatch {
+        role: InputColumnRole,
+        column_ordinal: usize,
+        expected: Option<InputScalarKind>,
+        actual: Option<InputScalarKind>,
+    },
     MalformedField {
         physical_line: u64,
         field_ordinal: usize,
@@ -305,6 +350,15 @@ impl Display for TypedInputParseError {
                 formatter,
                 "unsupported {role} sort {:?} at zero-based column {column_ordinal}",
                 sort.as_str()
+            ),
+            Self::ResolvedSchemaMismatch {
+                role,
+                column_ordinal,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "resolved {role} schema mismatch at zero-based column {column_ordinal}: expected {expected:?}, got {actual:?}"
             ),
             Self::MalformedField {
                 physical_line,
@@ -442,7 +496,6 @@ pub fn resolve_input_schema(
     };
 
     Ok(TypedInputSchema {
-        target: declared.target,
         subtype: declared.subtype,
         declared_inputs: declared.inputs.clone(),
         declared_outputs: declared.outputs.clone(),
@@ -454,20 +507,20 @@ pub fn resolve_input_schema(
 fn resolve_sort(
     role: InputColumnRole,
     column_ordinal: usize,
-    sort: &InputSortName,
+    sort: &DeclaredInputSort,
 ) -> Result<InputScalarKind, TypedInputParseError> {
-    let kind = match (role, sort.as_str()) {
-        (InputColumnRole::Input, "i64") | (InputColumnRole::Output, "i64") => InputScalarKind::I64,
-        (InputColumnRole::Input, "f64") => InputScalarKind::F64,
-        (InputColumnRole::Input, "String") | (InputColumnRole::Output, "String") => {
-            InputScalarKind::String
-        }
-        (InputColumnRole::Output, "Unit") => InputScalarKind::Unit,
+    let kind = match (role, sort.authority) {
+        (InputColumnRole::Input, InputSortAuthority::I64)
+        | (InputColumnRole::Output, InputSortAuthority::I64) => InputScalarKind::I64,
+        (InputColumnRole::Input, InputSortAuthority::F64) => InputScalarKind::F64,
+        (InputColumnRole::Input, InputSortAuthority::String)
+        | (InputColumnRole::Output, InputSortAuthority::String) => InputScalarKind::String,
+        (InputColumnRole::Output, InputSortAuthority::Unit) => InputScalarKind::Unit,
         _ => {
             return Err(TypedInputParseError::UnsupportedSort {
                 role,
                 column_ordinal,
-                sort: sort.clone(),
+                sort: sort.diagnostic_name.clone(),
             });
         }
     };
@@ -480,13 +533,23 @@ pub fn parse_tsv(
     declared_schema: &DeclaredInputSchema,
 ) -> Result<TypedInput, TypedInputParseError> {
     let schema = resolve_input_schema(declared_schema)?;
-    parse_tsv_with_schema(contents, schema)
+    parse_tsv_with_resolved_schema(contents, &schema)
 }
 
-fn parse_tsv_with_schema(
+/// Parse UTF-8 TSV text using an already-resolved exact schema.
+///
+/// The effective scalar kinds are checked against the declaration's exact sort
+/// authority before parsing. Diagnostic names are retained in the returned
+/// snapshot but never participate in admission or field interpretation.
+///
+/// This checks schema self-consistency, not frontend provenance. The caller
+/// must authenticate the carried authority against its exact function/catalog
+/// identity before treating the resulting rows as a program input.
+pub fn parse_tsv_with_resolved_schema(
     contents: &str,
-    schema: TypedInputSchema,
+    schema: &TypedInputSchema,
 ) -> Result<TypedInput, TypedInputParseError> {
+    validate_resolved_schema(schema)?;
     let mut rows = Vec::with_capacity(contents.lines().count());
     for (zero_based_line, line) in contents.lines().enumerate() {
         let physical_line = u64::try_from(zero_based_line)
@@ -546,7 +609,49 @@ fn parse_tsv_with_schema(
         });
     }
 
-    Ok(TypedInput { schema, rows })
+    Ok(TypedInput {
+        schema: schema.clone(),
+        rows,
+    })
+}
+
+fn validate_resolved_schema(schema: &TypedInputSchema) -> Result<(), TypedInputParseError> {
+    let expected = resolve_input_schema(&DeclaredInputSchema {
+        subtype: schema.subtype,
+        inputs: schema.declared_inputs.clone(),
+        outputs: schema.declared_outputs.clone(),
+    })?;
+    validate_effective_kinds(
+        InputColumnRole::Input,
+        &expected.effective_inputs,
+        &schema.effective_inputs,
+    )?;
+    validate_effective_kinds(
+        InputColumnRole::Output,
+        &expected.effective_outputs,
+        &schema.effective_outputs,
+    )
+}
+
+fn validate_effective_kinds(
+    role: InputColumnRole,
+    expected: &[InputScalarKind],
+    actual: &[InputScalarKind],
+) -> Result<(), TypedInputParseError> {
+    let compared_len = expected.len().max(actual.len());
+    for column_ordinal in 0..compared_len {
+        let expected_kind = expected.get(column_ordinal).copied();
+        let actual_kind = actual.get(column_ordinal).copied();
+        if expected_kind != actual_kind {
+            return Err(TypedInputParseError::ResolvedSchemaMismatch {
+                role,
+                column_ordinal,
+                expected: expected_kind,
+                actual: actual_kind,
+            });
+        }
+    }
+    Ok(())
 }
 
 fn parse_field(
@@ -605,11 +710,12 @@ pub fn read_tsv_file(
             path: path.effective.clone(),
             source,
         })?;
-    let input =
-        parse_tsv_with_schema(contents, schema).map_err(|source| TypedInputReadError::Parse {
+    let input = parse_tsv_with_resolved_schema(contents, &schema).map_err(|source| {
+        TypedInputReadError::Parse {
             path: path.effective.clone(),
             source,
-        })?;
+        }
+    })?;
     Ok(TypedInputFile { path, bytes, input })
 }
 
@@ -623,14 +729,17 @@ mod tests {
 
     fn schema(
         subtype: InputFunctionSubtype,
-        inputs: &[&str],
-        outputs: &[&str],
+        inputs: &[(&str, InputSortAuthority)],
+        outputs: &[(&str, InputSortAuthority)],
     ) -> DeclaredInputSchema {
         DeclaredInputSchema::new(
-            FunctionId::new(17),
             subtype,
-            inputs.iter().copied(),
-            outputs.iter().copied(),
+            inputs
+                .iter()
+                .map(|(name, authority)| DeclaredInputSort::new(*name, *authority)),
+            outputs
+                .iter()
+                .map(|(name, authority)| DeclaredInputSort::new(*name, *authority)),
         )
     }
 
@@ -652,15 +761,17 @@ mod tests {
     fn constructor_shape_reads_only_inputs_and_retains_declared_output() {
         let declared = schema(
             InputFunctionSubtype::Constructor,
-            &["i64", "String"],
-            &["AnEqSort"],
+            &[
+                ("i64", InputSortAuthority::I64),
+                ("String", InputSortAuthority::String),
+            ],
+            &[("AnEqSort", InputSortAuthority::Unsupported)],
         );
         let input = parse_tsv("1\t value \n", &declared).unwrap();
 
-        assert_eq!(input.schema.target, FunctionId::new(17));
         assert_eq!(
             input.schema.declared_outputs,
-            [InputSortName::new("AnEqSort")]
+            [DeclaredInputSort::unsupported("AnEqSort")]
         );
         assert_eq!(
             input.schema.effective_inputs,
@@ -677,8 +788,12 @@ mod tests {
     fn custom_shape_reads_inputs_and_every_output_with_unit_consuming_no_field() {
         let declared = schema(
             InputFunctionSubtype::Custom,
-            &["i64"],
-            &["String", "Unit", "i64"],
+            &[("i64", InputSortAuthority::I64)],
+            &[
+                ("String", InputSortAuthority::String),
+                ("Unit", InputSortAuthority::Unit),
+                ("i64", InputSortAuthority::I64),
+            ],
         );
         let input = parse_tsv("1\t result \t2\n", &declared).unwrap();
 
@@ -706,8 +821,12 @@ mod tests {
     fn trims_each_field_and_preserves_f64_bits_across_crlf() {
         let declared = schema(
             InputFunctionSubtype::Constructor,
-            &["i64", "f64", "String"],
-            &["Ignored"],
+            &[
+                ("i64", InputSortAuthority::I64),
+                ("f64", InputSortAuthority::F64),
+                ("String", InputSortAuthority::String),
+            ],
+            &[("Ignored", InputSortAuthority::Unsupported)],
         );
         let row = one_row(parse_tsv(" 1 \t -0.0 \t hello world \r\n", &declared).unwrap());
 
@@ -729,7 +848,11 @@ mod tests {
 
     #[test]
     fn malformed_numeric_field_is_structured() {
-        let declared = schema(InputFunctionSubtype::Constructor, &["i64"], &["Ignored"]);
+        let declared = schema(
+            InputFunctionSubtype::Constructor,
+            &[("i64", InputSortAuthority::I64)],
+            &[("Ignored", InputSortAuthority::Unsupported)],
+        );
         let error = parse_tsv("not-an-int\n", &declared).unwrap_err();
         assert_eq!(
             error,
@@ -748,8 +871,11 @@ mod tests {
     fn missing_and_extra_fields_are_distinct() {
         let declared = schema(
             InputFunctionSubtype::Constructor,
-            &["i64", "String"],
-            &["Ignored"],
+            &[
+                ("i64", InputSortAuthority::I64),
+                ("String", InputSortAuthority::String),
+            ],
+            &[("Ignored", InputSortAuthority::Unsupported)],
         );
         assert_eq!(
             parse_tsv("1\n", &declared).unwrap_err(),
@@ -762,7 +888,11 @@ mod tests {
             }
         );
 
-        let declared = schema(InputFunctionSubtype::Constructor, &["i64"], &["Ignored"]);
+        let declared = schema(
+            InputFunctionSubtype::Constructor,
+            &[("i64", InputSortAuthority::I64)],
+            &[("Ignored", InputSortAuthority::Unsupported)],
+        );
         assert_eq!(
             parse_tsv("1\textra\n", &declared).unwrap_err(),
             TypedInputParseError::ExtraField {
@@ -775,7 +905,11 @@ mod tests {
 
     #[test]
     fn unsupported_sorts_are_role_specific_structured_errors() {
-        let declared = schema(InputFunctionSubtype::Constructor, &["Unit"], &["Ignored"]);
+        let declared = schema(
+            InputFunctionSubtype::Constructor,
+            &[("Unit", InputSortAuthority::Unit)],
+            &[("Ignored", InputSortAuthority::Unsupported)],
+        );
         assert_eq!(
             parse_tsv("\n", &declared).unwrap_err(),
             TypedInputParseError::UnsupportedSort {
@@ -785,7 +919,11 @@ mod tests {
             }
         );
 
-        let declared = schema(InputFunctionSubtype::Custom, &["i64"], &["f64"]);
+        let declared = schema(
+            InputFunctionSubtype::Custom,
+            &[("i64", InputSortAuthority::I64)],
+            &[("f64", InputSortAuthority::F64)],
+        );
         assert_eq!(
             parse_tsv("1\t2.0\n", &declared).unwrap_err(),
             TypedInputParseError::UnsupportedSort {
@@ -795,7 +933,11 @@ mod tests {
             }
         );
 
-        let declared = schema(InputFunctionSubtype::Custom, &["Map"], &["Unit"]);
+        let declared = schema(
+            InputFunctionSubtype::Custom,
+            &[("Map", InputSortAuthority::Unsupported)],
+            &[("Unit", InputSortAuthority::Unit)],
+        );
         assert!(matches!(
             parse_tsv("anything\n", &declared),
             Err(TypedInputParseError::UnsupportedSort {
@@ -807,15 +949,125 @@ mod tests {
     }
 
     #[test]
+    fn primitive_looking_diagnostic_name_does_not_grant_scalar_authority() {
+        let declared = schema(
+            InputFunctionSubtype::Constructor,
+            &[("i64", InputSortAuthority::Unsupported)],
+            &[("Ignored", InputSortAuthority::Unsupported)],
+        );
+
+        assert_eq!(
+            parse_tsv("7\n", &declared).unwrap_err(),
+            TypedInputParseError::UnsupportedSort {
+                role: InputColumnRole::Input,
+                column_ordinal: 0,
+                sort: InputSortName::new("i64"),
+            }
+        );
+    }
+
+    #[test]
+    fn exact_scalar_authority_ignores_arbitrary_diagnostic_spelling() {
+        let declared = schema(
+            InputFunctionSubtype::Constructor,
+            &[
+                ("not-an-integer-name", InputSortAuthority::I64),
+                ("also-not-a-float-name", InputSortAuthority::F64),
+                ("i64", InputSortAuthority::String),
+            ],
+            &[("i64", InputSortAuthority::Unsupported)],
+        );
+        let input = parse_tsv("7\t-0.0\ttext\n", &declared).unwrap();
+
+        assert_eq!(
+            input.rows[0].values,
+            [
+                InputLiteral::I64(7),
+                InputLiteral::F64Bits((-0.0_f64).to_bits()),
+                InputLiteral::String("text".into()),
+            ]
+        );
+
+        let custom = schema(
+            InputFunctionSubtype::Custom,
+            &[("Unit", InputSortAuthority::String)],
+            &[
+                ("f64", InputSortAuthority::I64),
+                ("not-unit", InputSortAuthority::Unit),
+            ],
+        );
+        let custom = parse_tsv("key\t8\n", &custom).unwrap();
+        assert_eq!(
+            custom.rows[0].values,
+            [
+                InputLiteral::String("key".into()),
+                InputLiteral::I64(8),
+                InputLiteral::Unit,
+            ]
+        );
+    }
+
+    #[test]
+    fn resolved_schema_parser_revalidates_exact_authority_and_effective_kinds() {
+        let declared = schema(
+            InputFunctionSubtype::Constructor,
+            &[("String", InputSortAuthority::I64)],
+            &[("output", InputSortAuthority::Unsupported)],
+        );
+        let schema = resolve_input_schema(&declared).unwrap();
+        let parsed = parse_tsv_with_resolved_schema("9\n", &schema).unwrap();
+        assert_eq!(parsed.rows[0].values, [InputLiteral::I64(9)]);
+
+        let mut forged = schema;
+        forged.effective_inputs[0] = InputScalarKind::String;
+        assert_eq!(
+            parse_tsv_with_resolved_schema("9\n", &forged).unwrap_err(),
+            TypedInputParseError::ResolvedSchemaMismatch {
+                role: InputColumnRole::Input,
+                column_ordinal: 0,
+                expected: Some(InputScalarKind::I64),
+                actual: Some(InputScalarKind::String),
+            }
+        );
+
+        let authority_forged = TypedInputSchema {
+            subtype: InputFunctionSubtype::Constructor,
+            declared_inputs: vec![DeclaredInputSort::unsupported("i64")],
+            declared_outputs: vec![DeclaredInputSort::unsupported("output")],
+            effective_inputs: vec![InputScalarKind::I64],
+            effective_outputs: Vec::new(),
+        };
+        assert_eq!(
+            parse_tsv_with_resolved_schema("9\n", &authority_forged).unwrap_err(),
+            TypedInputParseError::UnsupportedSort {
+                role: InputColumnRole::Input,
+                column_ordinal: 0,
+                sort: InputSortName::new("i64"),
+            }
+        );
+    }
+
+    #[test]
     fn malformed_output_arities_fail_schema_preflight() {
         for declared in [
-            schema(InputFunctionSubtype::Constructor, &["i64"], &[]),
             schema(
                 InputFunctionSubtype::Constructor,
-                &["i64"],
-                &["First", "Second"],
+                &[("i64", InputSortAuthority::I64)],
+                &[],
             ),
-            schema(InputFunctionSubtype::Custom, &["i64"], &[]),
+            schema(
+                InputFunctionSubtype::Constructor,
+                &[("i64", InputSortAuthority::I64)],
+                &[
+                    ("First", InputSortAuthority::Unsupported),
+                    ("Second", InputSortAuthority::Unsupported),
+                ],
+            ),
+            schema(
+                InputFunctionSubtype::Custom,
+                &[("i64", InputSortAuthority::I64)],
+                &[],
+            ),
         ] {
             assert!(matches!(
                 resolve_input_schema(&declared),
@@ -826,7 +1078,11 @@ mod tests {
 
     #[test]
     fn duplicates_blank_string_rows_and_physical_lines_are_retained() {
-        let declared = schema(InputFunctionSubtype::Constructor, &["String"], &["Ignored"]);
+        let declared = schema(
+            InputFunctionSubtype::Constructor,
+            &[("String", InputSortAuthority::String)],
+            &[("Ignored", InputSortAuthority::Unsupported)],
+        );
         let input = parse_tsv("a\n\n a \n", &declared).unwrap();
 
         assert_eq!(
@@ -845,7 +1101,14 @@ mod tests {
 
     #[test]
     fn empty_and_all_unit_files_have_explicit_legacy_behavior() {
-        let all_unit = schema(InputFunctionSubtype::Custom, &[], &["Unit", "Unit"]);
+        let all_unit = schema(
+            InputFunctionSubtype::Custom,
+            &[],
+            &[
+                ("Unit", InputSortAuthority::Unit),
+                ("Unit", InputSortAuthority::Unit),
+            ],
+        );
         assert!(parse_tsv("", &all_unit).unwrap().rows.is_empty());
         assert_eq!(
             parse_tsv("\n", &all_unit).unwrap_err(),
@@ -856,7 +1119,11 @@ mod tests {
             }
         );
 
-        let zero_column = schema(InputFunctionSubtype::Constructor, &[], &["Ignored"]);
+        let zero_column = schema(
+            InputFunctionSubtype::Constructor,
+            &[],
+            &[("Ignored", InputSortAuthority::Unsupported)],
+        );
         assert!(
             parse_tsv("ignored\n\n", &zero_column)
                 .unwrap()
@@ -888,8 +1155,11 @@ mod tests {
         fs::write(directory.join("rows.tsv"), bytes).unwrap();
         let declared = schema(
             InputFunctionSubtype::Constructor,
-            &["i64", "String"],
-            &["Ignored"],
+            &[
+                ("i64", InputSortAuthority::I64),
+                ("String", InputSortAuthority::String),
+            ],
+            &[("Ignored", InputSortAuthority::Unsupported)],
         );
 
         let file = read_tsv_file(Some(&directory), "rows.tsv", &declared).unwrap();
@@ -900,7 +1170,6 @@ mod tests {
             Some(directory.as_path())
         );
         assert_eq!(file.path.effective, directory.join("rows.tsv"));
-        assert_eq!(file.input.schema.target, FunctionId::new(17));
         assert_eq!(
             file.input.rows[0].values,
             [InputLiteral::I64(7), InputLiteral::String("name".into())]
@@ -914,7 +1183,11 @@ mod tests {
         let directory = temp_directory();
         fs::create_dir_all(&directory).unwrap();
         fs::write(directory.join("invalid.tsv"), [0xff]).unwrap();
-        let declared = schema(InputFunctionSubtype::Constructor, &["String"], &["Ignored"]);
+        let declared = schema(
+            InputFunctionSubtype::Constructor,
+            &[("String", InputSortAuthority::String)],
+            &[("Ignored", InputSortAuthority::Unsupported)],
+        );
 
         assert!(matches!(
             read_tsv_file(Some(&directory), "invalid.tsv", &declared),
@@ -931,7 +1204,11 @@ mod tests {
     #[test]
     fn file_wrapper_rejects_unsupported_schema_before_a_missing_path() {
         let directory = temp_directory();
-        let declared = schema(InputFunctionSubtype::Constructor, &["Vec"], &["Ignored"]);
+        let declared = schema(
+            InputFunctionSubtype::Constructor,
+            &[("Vec", InputSortAuthority::Unsupported)],
+            &[("Ignored", InputSortAuthority::Unsupported)],
+        );
 
         assert!(matches!(
             read_tsv_file(Some(&directory), "missing.tsv", &declared),

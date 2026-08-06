@@ -3,7 +3,7 @@
 //! proof for the rule's proof list.
 
 use super::proof_checker::is_container_side_condition;
-use super::proof_encoding::ProofInstrumentor;
+use super::proof_encoding::{ProofInstrumentor, is_exact_global_function};
 use crate::typechecking::FuncType;
 use crate::*;
 
@@ -182,7 +182,7 @@ impl ProofInstrumentor<'_> {
                         // the e-class + proof.
                         assert!(
                             func_type.subtype == FunctionSubtype::Constructor
-                                || self.egraph.type_info.is_global(&func_type.name),
+                                || is_exact_global_function(self.egraph, func_type),
                             "Only constructor (or global) function calls are allowed in fact expressions due to proof normal form. Got {func_type:?}",
                         );
 
@@ -296,5 +296,50 @@ impl ProofInstrumentor<'_> {
         let proof = self.fiat_reflexive_proof(&mut group, value, &to_ast);
         self.defer_lookup(&proof, group);
         proof
+    }
+}
+
+#[cfg(test)]
+mod binding_tests {
+    use super::*;
+
+    #[test]
+    fn global_fact_lookup_uses_exact_identity_after_diagnostic_rename() {
+        let mut source = EGraph::new_compile_only(false);
+        let snapshot = source
+            .resolve_program_compile_only(None, "(let $global 7)")
+            .unwrap();
+        let mut global = snapshot
+            .execution
+            .iter()
+            .find_map(|command| match &command.command {
+                ResolvedNCommand::Function(function) if function.internal_let => {
+                    let ResolvedCall::Func(global) = &function.resolved_schema else {
+                        unreachable!()
+                    };
+                    Some(global.clone())
+                }
+                _ => None,
+            })
+            .expect("lowered global function");
+        global.name = "diagnostic-decoy".to_owned();
+
+        let mut execution = EGraph::default().with_term_encoding_typechecker(source);
+        let mut instrumentor = ProofInstrumentor::new(&mut execution);
+        let mut facts = vec![];
+        let mut action_lookups = vec![];
+        let expression = ResolvedExpr::Call(Span::Panic, ResolvedCall::Func(global), vec![]);
+        let (_, proof) =
+            instrumentor.instrument_fact_expr(&expression, &mut facts, &mut action_lookups);
+        let view = instrumentor.view_name("diagnostic-decoy");
+
+        assert_eq!(proof, "()");
+        assert!(action_lookups.is_empty());
+        assert!(
+            facts
+                .iter()
+                .any(|fact| fact.contains(&format!("({view} )"))),
+            "global fact did not use its renamed exact FD view: {facts:?}"
+        );
     }
 }

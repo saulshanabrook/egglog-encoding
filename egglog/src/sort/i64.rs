@@ -44,12 +44,12 @@ impl BaseSort for I64Sort {
         add_literal_prim!(eg, "abs" = |a: i64| -?> i64 { a.checked_abs() });
 
         add_literal_prim!(eg, "<" = |a: i64, b: i64| -?> () { (a < b).then_some(()) }, NativeScalarPrimitive::I64Lt);
-        add_literal_prim!(eg, ">" = |a: i64, b: i64| -?> () { (a > b).then_some(()) });
-        add_literal_prim!(eg, "<=" = |a: i64, b: i64| -?> () { (a <= b).then_some(()) });
+        add_literal_prim!(eg, ">" = |a: i64, b: i64| -?> () { (a > b).then_some(()) }, NativeScalarPrimitive::I64Gt);
+        add_literal_prim!(eg, "<=" = |a: i64, b: i64| -?> () { (a <= b).then_some(()) }, NativeScalarPrimitive::I64Le);
         add_literal_prim!(eg, ">=" = |a: i64, b: i64| -?> () { (a >= b).then_some(()) }, NativeScalarPrimitive::I64Ge);
 
         add_literal_prim!(eg, "bool-=" = |a: i64, b: i64| -> bool { a == b });
-        add_literal_prim!(eg, "bool-<" = |a: i64, b: i64| -> bool { a < b });
+        add_literal_prim!(eg, "bool-<" = |a: i64, b: i64| -> bool { a < b }, NativeScalarPrimitive::I64BoolLt);
         add_literal_prim!(eg, "bool->" = |a: i64, b: i64| -> bool { a > b });
         add_literal_prim!(eg, "bool-<=" = |a: i64, b: i64| -> bool { a <= b });
         add_literal_prim!(eg, "bool->=" = |a: i64, b: i64| -> bool { a >= b });

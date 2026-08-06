@@ -7,7 +7,7 @@ use crate::{
     EGraph, TypeInfo, Value,
     ast::{
         Command, Expr, Fact, GenericCommand, ResolvedAction, ResolvedCommand, ResolvedExpr,
-        ResolvedExprExt, ResolvedFact, ResolvedNCommand, Schedule, Span,
+        ResolvedExprExt, ResolvedFact, ResolvedNCommand, ResolvedVarBinding, Schedule, Span,
     },
     core::ResolvedCall,
     proofs::proof_encoding::ProofInstrumentor,
@@ -909,24 +909,8 @@ pub enum ProofEncodingUnsupportedReason {
 
 /// Checks whether a desugared program supports proof encoding.
 pub fn program_supports_proofs(commands: &[ResolvedCommand], type_info: &TypeInfo) -> bool {
-    // Globals defined anywhere in the program, including inside `(push)`/`(pop)`
-    // scopes. `type_info.global_sorts` reflects only the final scope (each `pop`
-    // unregisters its globals), so checking against it alone misreads a popped
-    // global's action-side lookup as an unsupported function lookup.
-    let let_globals: HashSet<String> = commands
-        .iter()
-        .filter_map(|c| match c {
-            GenericCommand::Function {
-                name,
-                let_binding: true,
-                ..
-            } => Some(name.clone()),
-            _ => None,
-        })
-        .collect();
     for command in commands {
-        if let Err(reason) = command_supports_proof_encoding_impl(command, type_info, &let_globals)
-        {
+        if let Err(reason) = command_supports_proof_encoding_impl(command, type_info) {
             let cmd = command.to_string();
             log::debug!(
                 "program does not support proofs: {reason}\n  command: {}",
@@ -958,14 +942,10 @@ fn expr_primitives_have_validators(expr: &ResolvedExpr) -> bool {
 }
 
 /// Check if an action contains non-global function lookups in any of its expressions
-fn action_has_function_lookup(
-    action: &ResolvedAction,
-    type_info: &TypeInfo,
-    extra_globals: &HashSet<String>,
-) -> bool {
+fn action_has_function_lookup(action: &ResolvedAction, type_info: &TypeInfo) -> bool {
     let mut has_lookup = false;
     action.clone().visit_exprs(&mut |expr| {
-        if expr_has_non_global_lookup(&expr, type_info, extra_globals) {
+        if expr_has_non_global_lookup(&expr, type_info) {
             has_lookup = true;
         }
         expr
@@ -973,19 +953,14 @@ fn action_has_function_lookup(
     has_lookup
 }
 
-/// Like [`TypeInfo::expr_has_function_lookup`], but also treating names in
-/// `extra_globals` as globals (see [`program_supports_proofs`]).
-fn expr_has_non_global_lookup(
-    expr: &ResolvedExpr,
-    type_info: &TypeInfo,
-    extra_globals: &HashSet<String>,
-) -> bool {
+/// Like [`TypeInfo::expr_has_function_lookup`], retaining the span-only result
+/// needed by proof admission while classifying globals by exact registration.
+fn expr_has_non_global_lookup(expr: &ResolvedExpr, type_info: &TypeInfo) -> bool {
     use crate::ast::GenericExpr;
     expr.find(&mut |e| {
         if let GenericExpr::Call(span, ResolvedCall::Func(func_type), _) = e
             && func_type.subtype == crate::ast::FunctionSubtype::Custom
-            && !type_info.is_global(&func_type.name)
-            && !extra_globals.contains(&func_type.name)
+            && !type_info.is_global_function_identity(func_type.identity)
         {
             return Some(span.clone());
         }
@@ -1014,16 +989,12 @@ pub(crate) fn command_supports_proof_encoding(
     command: &ResolvedCommand,
     type_info: &TypeInfo,
 ) -> Result<(), ProofEncodingUnsupportedReason> {
-    command_supports_proof_encoding_impl(command, type_info, &HashSet::default())
+    command_supports_proof_encoding_impl(command, type_info)
 }
 
-/// [`command_supports_proof_encoding`] with `extra_globals`: let-bound names
-/// treated as globals even when out of scope in `type_info` (see
-/// [`program_supports_proofs`]).
 fn command_supports_proof_encoding_impl(
     command: &ResolvedCommand,
     type_info: &TypeInfo,
-    extra_globals: &HashSet<String>,
 ) -> Result<(), ProofEncodingUnsupportedReason> {
     // `:unsafe-seminaive` rules perform arbitrary reads against the live
     // database; the term/proof encoding can't represent that.
@@ -1112,8 +1083,7 @@ fn command_supports_proof_encoding_impl(
     // (global function calls are allowed - they get desugared to constructors)
     let mut has_function_lookup_in_action = false;
     command.clone().visit_actions(&mut |action| {
-        has_function_lookup_in_action |=
-            action_has_function_lookup(&action, type_info, extra_globals);
+        has_function_lookup_in_action |= action_has_function_lookup(&action, type_info);
         action
     });
 
@@ -1123,7 +1093,7 @@ fn command_supports_proof_encoding_impl(
     if let GenericCommand::Function {
         merge: Some(merge), ..
     } = command
-        && expr_has_non_global_lookup(&merge.result, type_info, extra_globals)
+        && expr_has_non_global_lookup(&merge.result, type_info)
     {
         return Err(ProofEncodingUnsupportedReason::FunctionLookupInAction);
     }
@@ -1132,7 +1102,7 @@ fn command_supports_proof_encoding_impl(
     // carryable proof, so it can't be used in an action. Reject a rule that binds
     // such a container to a variable used in its actions.
     if let GenericCommand::Rule { rule } = command {
-        let mut constructed: Vec<String> = Vec::new();
+        let mut constructed: HashSet<ResolvedVarBinding> = HashSet::default();
         for fact in &rule.body {
             if let ResolvedFact::Eq(_, lhs, rhs) = fact {
                 for (var_side, call_side) in [(lhs, rhs), (rhs, lhs)] {
@@ -1140,7 +1110,7 @@ fn command_supports_proof_encoding_impl(
                         && let ResolvedExpr::Call(_, ResolvedCall::Primitive(prim), _) = call_side
                         && prim.output().is_eq_container_sort()
                     {
-                        constructed.push(v.name.clone());
+                        constructed.insert(v.binding);
                     }
                 }
             }
@@ -1152,7 +1122,7 @@ fn command_supports_proof_encoding_impl(
                     expr.walk(
                         &mut |e| {
                             if let ResolvedExpr::Var(_, v) = e
-                                && constructed.contains(&v.name)
+                                && constructed.contains(&v.binding)
                             {
                                 used_in_action = true;
                             }
@@ -1191,8 +1161,8 @@ fn command_supports_proof_encoding_impl(
         // because instrument_action_expr doesn't support them
         // (global function calls are fine - they get desugared to constructors)
         GenericCommand::Extract(_, expr, variants) => {
-            if expr_has_non_global_lookup(expr, type_info, extra_globals)
-                || expr_has_non_global_lookup(variants, type_info, extra_globals)
+            if expr_has_non_global_lookup(expr, type_info)
+                || expr_has_non_global_lookup(variants, type_info)
             {
                 Err(ProofEncodingUnsupportedReason::FunctionLookupInAction)
             } else {
@@ -1220,13 +1190,151 @@ fn command_supports_proof_encoding_impl(
         }
         // After global desugar it may look like this
         ResolvedCommand::Action(ResolvedAction::Set(_span, head, _children, expr)) => {
-            if !type_info.is_global(head.name()) || expr.output_type().is_eq_sort() {
+            let is_global = match head {
+                ResolvedCall::Func(function) => {
+                    type_info.is_global_function_identity(function.identity)
+                }
+                ResolvedCall::Primitive(_) | ResolvedCall::Values(_) => false,
+            };
+            if !is_global || expr.output_type().is_eq_sort() {
                 Ok(())
             } else {
                 Err(ProofEncodingUnsupportedReason::LetBindingWithNonEqSort)
             }
         }
         _ => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod binding_tests {
+    use super::*;
+    use crate::{
+        ast::{FunctionSubtype, ResolvedBindingId},
+        prelude::BaseSort,
+        sort::I64Sort,
+        typechecking::{CallableIdentity, FuncType},
+    };
+
+    #[test]
+    fn action_lookup_global_admission_uses_callable_identity_not_display_name() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(let $global 1)\n(function ordinary () i64 :merge old)",
+            )
+            .unwrap();
+        let global = egraph
+            .type_info
+            .get_global_function_id("$global")
+            .expect("global registration");
+        let global_with_decoy_name = FuncType {
+            identity: CallableIdentity::Function(global),
+            name: "ordinary".to_owned(),
+            subtype: FunctionSubtype::Custom,
+            input: vec![],
+            outputs: vec![I64Sort.to_arcsort()],
+        };
+        let exact_global = ResolvedExpr::Call(
+            Span::Panic,
+            ResolvedCall::Func(global_with_decoy_name),
+            vec![],
+        );
+        assert!(!expr_has_non_global_lookup(
+            &exact_global,
+            &egraph.type_info
+        ));
+
+        let mut same_named_non_global = egraph
+            .type_info
+            .get_func_type("ordinary")
+            .expect("ordinary function registration")
+            .clone();
+        same_named_non_global.name = "$global".to_owned();
+        let decoy = ResolvedExpr::Call(
+            Span::Panic,
+            ResolvedCall::Func(same_named_non_global),
+            vec![],
+        );
+        assert!(expr_has_non_global_lookup(&decoy, &egraph.type_info));
+    }
+
+    #[test]
+    fn popped_global_admission_uses_preserved_exact_identity_history() {
+        let mut egraph = EGraph::default();
+        let commands = egraph
+            .resolve_program(
+                None,
+                r#"
+                (push)
+                (datatype E (Mk))
+                (let $global (Mk))
+                (relation Sink (E))
+                (Sink $global)
+                (pop)
+                "#,
+            )
+            .unwrap();
+
+        assert!(egraph.type_info.get_global_sort("$global").is_none());
+        assert!(program_supports_proofs(&commands, &egraph.type_info));
+    }
+
+    fn mutate_head_variables(
+        command: &mut ResolvedCommand,
+        mut mutate: impl FnMut(&mut crate::ast::ResolvedVar),
+    ) {
+        let GenericCommand::Rule { rule } = command else {
+            panic!("expected a rule command")
+        };
+        rule.head = rule.head.clone().visit_exprs(&mut |expr| match expr {
+            ResolvedExpr::Var(span, mut variable) => {
+                mutate(&mut variable);
+                ResolvedExpr::Var(span, variable)
+            }
+            other => other,
+        });
+    }
+
+    #[test]
+    fn query_built_container_action_use_tracks_exact_binding_not_name() {
+        let mut egraph = EGraph::default();
+        let commands = egraph
+            .resolve_program(
+                None,
+                r#"
+                (datatype E (Mk))
+                (sort EqContainer (Vec E))
+                (relation SeedElem (E))
+                (relation Out (EqContainer))
+                (rule ((SeedElem e)
+                       (= xs (vec-of e)))
+                      ((Out xs)))
+                "#,
+            )
+            .unwrap();
+        let rule = commands
+            .into_iter()
+            .find(|command| matches!(command, GenericCommand::Rule { .. }))
+            .expect("resolved rule");
+
+        let mut renamed_match = rule.clone();
+        mutate_head_variables(&mut renamed_match, |variable| {
+            variable.name = "diagnostic-decoy".to_owned();
+        });
+        assert!(matches!(
+            command_supports_proof_encoding(&renamed_match, &egraph.type_info),
+            Err(ProofEncodingUnsupportedReason::ContainerCreatedInQueryUsedInAction)
+        ));
+
+        let mut same_named_decoy = rule;
+        mutate_head_variables(&mut same_named_decoy, |variable| {
+            variable.binding = ResolvedVarBinding::Lexical {
+                id: ResolvedBindingId::new(999_999),
+            };
+        });
+        assert!(command_supports_proof_encoding(&same_named_decoy, &egraph.type_info).is_ok());
     }
 }
 

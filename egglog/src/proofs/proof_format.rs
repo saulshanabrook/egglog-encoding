@@ -1,12 +1,14 @@
 use crate::{
     ResolvedCall, Term, TermDag, TermId,
     ast::{
-        FunctionSubtype, GenericNCommand, ResolvedExpr, ResolvedFact, ResolvedNCommand,
-        ResolvedRule,
+        FunctionSubtype, GenericAction, GenericNCommand, ResolvedExpr, ResolvedFact,
+        ResolvedNCommand, ResolvedRule, ResolvedVarBinding,
     },
     proofs::{
         proof_checker::{
-            ProofCheckError, ProofCheckErrorKind, eval_expr_with_subst, gather_globals, run_merge,
+            ProofCheckError, ProofCheckErrorKind, eval_expr_with_subst, exact_global_bindings,
+            gather_globals, merge_new_substitution_key, merge_old_substitution_key, run_merge,
+            translate_rule_substitution,
         },
         proof_encoding_helpers::{EncodingNames, Skeleton},
         proof_head::{Firing, HeadPlan, HeadWalk, ProofAlgebra},
@@ -73,8 +75,8 @@ fn run_merge_subexpr(
     idx: usize,
 ) -> Result<(TermId, HashSet<Proposition>), ProofCheckError> {
     let mut subst = HashMap::default();
-    subst.insert("old".to_string(), old_term);
-    subst.insert("new".to_string(), new_term);
+    subst.insert(merge_old_substitution_key(0), old_term);
+    subst.insert(merge_new_substitution_key(0), new_term);
     for cmd in prog {
         if let GenericNCommand::Function(func_decl) = cmd
             && func_decl.name == func_name
@@ -917,22 +919,23 @@ impl ProofStore {
                 // so the further of the two is the one kept.
                 let firing_key = (name.clone(), converted_premises.clone());
                 let carried = self.head_walks.remove(&firing_key);
-                let substitution = self.compute_rule_substitution(rule, &converted_premises);
+                let recorded = self.compute_rule_substitution(rule, &converted_premises);
                 // A carried walk brings the bindings the earlier row seeded it
                 // with, so only a walk starting from scratch needs them.
                 let bindings = match &carried {
                     Some(_) => HashMap::default(),
                     None => {
-                        let mut bindings = globals.clone();
-                        bindings
-                            .extend(substitution.iter().map(|(var, term)| (var.clone(), *term)));
+                        let mut bindings = exact_global_bindings(prog, globals);
+                        let lexical =
+                            translate_rule_substitution(rule, &recorded).unwrap_or_else(|error| {
+                                panic!("rule {name}'s substitution was not exact: {error}")
+                            });
+                        bindings.extend(lexical);
                         bindings
                     }
                 };
                 // A global's value is in every substitution, so recording it in the
                 // proof would only repeat the program.
-                let mut recorded = substitution;
-                recorded.retain(|var, _term| globals.get(var).is_none());
                 // The bridges are in the order the head builds, which is the
                 // order the walk takes them in, so the supply picks up where the
                 // carried walk stopped.
@@ -1089,14 +1092,33 @@ impl ProofStore {
 
     /// How `rule`'s head lowers. A property of the rule text, so it is computed
     /// once per rule.
-    fn head_plan(&mut self, rule: &ResolvedRule) -> Rc<HeadPlan> {
+    pub(super) fn head_plan(&mut self, rule: &ResolvedRule) -> Rc<HeadPlan> {
         if let Some(plan) = self.head_plans.get(&rule.name) {
             return plan.clone();
         }
         let mut minted = 0usize;
+        let mut bindings = SymbolGen::new("@proof-head-binding-".to_owned());
+        for action in &rule.head.0 {
+            if let GenericAction::Let(_, var, _) = action
+                && let crate::ast::ResolvedVarBinding::Lexical { id } = var.binding
+            {
+                bindings.observe_resolved_binding_id(id);
+            }
+            action.clone().visit_exprs(&mut |expr| {
+                if let ResolvedExpr::Var(_, var) = &expr
+                    && let crate::ast::ResolvedVarBinding::Lexical { id } = var.binding
+                {
+                    bindings.observe_resolved_binding_id(id);
+                }
+                expr
+            });
+        }
         let mut fresh = || {
             minted += 1;
-            format!("@union-operand-{minted}")
+            (
+                format!("@union-operand-{minted}"),
+                bindings.fresh_resolved_binding_id(),
+            )
         };
         let plan = Rc::new(HeadPlan::new(&rule.head.0, &mut fresh));
         self.head_plans.insert(rule.name.clone(), plan.clone());
@@ -1172,7 +1194,9 @@ impl ProofStore {
                     self.unify_expr(arg_expr, *child_term, subst);
                 }
                 let var_child_term = children.last().unwrap();
-                self.add_to_subst(subst, &v.name, *var_child_term);
+                if matches!(v.binding, ResolvedVarBinding::Lexical { .. }) {
+                    self.add_to_subst(subst, &v.name, *var_child_term);
+                }
             }
             ResolvedFact::Eq(_, lhs_expr, rhs_expr) => {
                 self.unify_expr(lhs_expr, proof.lhs(), subst);
@@ -1211,7 +1235,9 @@ impl ProofStore {
         match expr {
             ResolvedExpr::Lit(_, _lit) => (),
             ResolvedExpr::Var(_, var) => {
-                self.add_to_subst(substitution, &var.name, term_id);
+                if matches!(var.binding, ResolvedVarBinding::Lexical { .. }) {
+                    self.add_to_subst(substitution, &var.name, term_id);
+                }
             }
             ResolvedExpr::Call(_, call, args) => {
                 // if the call is a primitive we don't need to do anything

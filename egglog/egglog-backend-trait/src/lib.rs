@@ -160,6 +160,9 @@ pub enum NativePrimitive {
     /// Select the payload paired with the larger raw value, choosing the
     /// right payload on a tie.
     SelectMaxPayload,
+    /// Select the third argument when the first two raw values are equal,
+    /// otherwise select the fourth argument.
+    SelectEqPayload,
 }
 
 /// A typed scalar operation that a native backend may lower directly.
@@ -180,7 +183,10 @@ pub enum NativeScalarPrimitive {
     I64Min,
     I64Max,
     I64Ge,
+    I64Gt,
+    I64Le,
     I64Lt,
+    I64BoolLt,
     F64Gt,
     F64Lt,
 }
@@ -224,6 +230,16 @@ impl NativePrimitive {
                     *left_payload
                 } else {
                     *right_payload
+                })
+            }
+            Self::SelectEqPayload => {
+                let [test, candidate, if_equal, otherwise] = args else {
+                    return None;
+                };
+                Some(if test == candidate {
+                    *if_equal
+                } else {
+                    *otherwise
                 })
             }
         }
@@ -823,6 +839,7 @@ mod tests {
         let max = backend.register_native_primitive(NativePrimitive::OrderingMax);
         let min_payload = backend.register_native_primitive(NativePrimitive::SelectMinPayload);
         let max_payload = backend.register_native_primitive(NativePrimitive::SelectMaxPayload);
+        let eq_payload = backend.register_native_primitive(NativePrimitive::SelectEqPayload);
 
         let low = Value::from_usize(3);
         let high = Value::from_usize(7);
@@ -863,6 +880,14 @@ mod tests {
                 state.call_external_func(max_payload, &[high, left_payload, high, right_payload]),
                 Some(right_payload)
             );
+            assert_eq!(
+                state.call_external_func(eq_payload, &[low, low, left_payload, right_payload]),
+                Some(left_payload)
+            );
+            assert_eq!(
+                state.call_external_func(eq_payload, &[low, high, left_payload, right_payload]),
+                Some(right_payload)
+            );
 
             for (id, args) in [
                 (neq, vec![low]),
@@ -870,6 +895,7 @@ mod tests {
                 (max, vec![low, high, low]),
                 (min_payload, vec![low, left_payload]),
                 (max_payload, vec![low, left_payload, high]),
+                (eq_payload, vec![low, low, left_payload]),
             ] {
                 assert_eq!(state.call_external_func(id, &args), None);
             }

@@ -4269,3 +4269,121 @@ after adding the mapper tests is:
 ```text
 cargo test -p egglog frontend_capture --lib
 ```
+
+### Checkpoint 2 slices D/E accepted: exact bindings, source groups, and reached scalar authority (2026-08-05)
+
+Design B remains the sole production architecture. This accepted intermediate
+slice removes three more post-resolution inference surfaces without claiming a
+complete public capture mapper or standalone SQL compiler.
+
+Resolved variables now carry exact `ResolvedVarBinding` authority:
+
+- lexical occurrences use a monotone `ResolvedBindingId` allocated by the
+  frontend and shared by their declaration and every use;
+- globals carry the exact `FunctionRegistrationId` selected at their source
+  position, including historical registrations whose names have left scope;
+- merge `old`/`new` values and action lets carry exact owner-local column/slot
+  roles rather than being recovered from `old0`/`new0` spellings;
+- equality, hashing, query/action lowering, global removal, proof
+  instrumentation, proof replay, normal-form generation, and head planning
+  consume those authorities while preserving names only for diagnostics and
+  public proof rendering.
+
+The trusted proof-substitution boundary now records only exact lexical body
+bindings. An all-program global with the same later spelling cannot suppress
+or capture an earlier rule local; the full parse/run/check/prove witness passes.
+Synthetic proof binding generators observe the source high-water before
+allocating, so independently generated names cannot alias exact authorities.
+
+The source DTO now owns one lossless UTF-8 `SourceDocument`. Its exact byte
+partition consists of dense physical `SourceGroupId` transaction boundaries,
+group-local `SourceSubcommandId`s, leading trivia, command ranges, and one EOF
+trailer. Direct and generated origins are exact, nested `Fail` commands cannot
+cross a physical group, input comparisons are group-keyed, and every parsed
+subcommand is covered directly. `Run` remains silent; only admitted
+`print-size` and displayed no-file `print-stats` commands consume output
+ordinals. The grouped parser is the sole source of these ranges; text/comment
+reconstruction is forbidden.
+
+Reached corpus scalar authority is now registration-site data for fallible i64
+`>`, fallible i64 `<=`, total `bool-<`, and polymorphic proof `select-eq`.
+The DuckDB scalar lowering authenticates the exact primitive tag and checked
+signature. Same-name/same-schema opaque registrations remain literal decoys.
+`select-eq` lowers `(T,T,P,P)->P` with raw value equality, including the
+frontend's f64 NaN behavior, rather than inferred proof-table meaning.
+
+Accepted hashes after formatting:
+
+```text
+egglog/src/frontend_program.rs                 e1c8573ab8f877194c29e50bc2996d0eb46d805458c9791b25eb562255cc2ca6
+egglog/src/ast/parse.rs                        8bedec512837ffe493fc3ec398d3be89eb47fd79574cf0ed5427e338551f086a
+egglog/src/ast/expr.rs                         24c5073022739df67ecf4dcec8b03f1f80d22a4d9aeb5fe4dffa5202b21c4e40
+egglog/src/typechecking.rs                     ba5bf82a54130fd809091a8ff0397bc1b87ed2d8e30ba7d668ccf598b68247d0
+egglog/src/proofs/proof_checker.rs             481863e2116c638ccd845585e1cd32c12a6f3138ba8d8b4012df87301e30953f
+egglog/src/proofs/proof_format.rs              ff5d836d0edb66c3a6707a0423dc0b7628548caa3d0e832bad14656c42bad8d0
+egglog/src/frontend_snapshot.rs                908c70451a4f0df692836916e28edb0e3804dad7157ff5404bb761aef9f488f3
+egglog/src/typed_input.rs                      fc2801a980cb759bd38803560f348d6132d2a2298cd12b38092a84b0ec8da150
+egglog/egglog-backend-trait/src/lib.rs         f88016e9427de0aec829dcd26cdb0096a20c10fbcebeae4f71292b6cb1738d34
+egglog/src/sort/i64.rs                         0ab09802d0b5091d82ae74dbb85f14bdfe07c99d5093baef3ec73e96c7eae41a
+egglog-experimental/duckdb/src/scalar_expr.rs  a1444f7b52fe5674b4a0de528a925b549b591c15a5a4e429b44b549d659f20a6
+```
+
+Validation on the final formatted bytes:
+
+```text
+cargo test -p egglog --lib                                      208 passed
+cargo test -p egglog-experimental-duckdb scalar_expr_tests:: --lib  10 passed
+cargo check -p egglog-experimental-duckdb --lib                 passed
+cargo clippy -p egglog --lib --tests -- -D warnings             passed
+make proof-tests                                                passed
+cargo fmt --all -- --check                                      passed
+git diff --check                                                passed
+```
+
+Independent reviews passed the lexical/proof authority surface and the exact
+source-document DTO. The remaining review blockers are deliberately outside
+this accepted slice:
+
+1. sorts still lack a stream-local `SortRegistrationId` ledger, so resolved
+   primitive specializations and `Values` still compare sort spellings;
+2. runtime function/index lowering still resolves typechecked `FuncType`s by
+   diagnostic name instead of exact registration ID;
+3. `term_constructor`, targeted proof primitives, and `unstable-fn` still need
+   exact target authority (including catalog-local UF forward reservations);
+4. compile-only processing still flattens source groups before the pending pure
+   mapper, and proof/native input preparation is not yet one shared read.
+
+Accepted no-go facts: raw registration ordinals are view-local and may never be
+compared between execution and proof-check streams; sort/function/primitive
+names, schemas, Rust value types, and declaration order cannot recover semantic
+authority; an exact lookup miss fails closed; generated proof roles may not be
+recognized from table shape or prefix.
+
+Circle roster for the next frontier:
+
+- integration/API owns the grouped compile-only entrypoint and public mapper;
+  write set is `frontend_capture.rs` plus narrow `lib.rs` plumbing; forbidden
+  shortcut is flattened text reconstruction; verify with
+  `cargo test -p egglog frontend_capture --lib`; stop on any backend access;
+- engine semantics owns the already-pinned stock kernel and makes no writes in
+  this slice; forbidden shortcut is host feedback; verify with
+  `make duckdb-kernel-check`; no movement means no new accepted kernel claim;
+- compiler lowering owns exact sort/function/primitive target carriers and the
+  runtime exact registry; forbidden shortcut is a name/schema fallback; verify
+  with diagnostic-mutation and same-name decoy tests; stop on any unresolved
+  nonbuiltin sort arc;
+- semantic oracle owns proof substitution and later-global regressions; write
+  set is proof-only canaries; forbidden shortcut is table-size-only evidence;
+  verify with `make proof-tests`; no movement means no new proof parity witness;
+- artifacts/benchmarks remain read-only until the public snapshot validates;
+  forbidden shortcut is trace harvesting; verification is byte-identical
+  double capture; no movement is expected before mapper admission;
+- independent review is read-only across each finished carrier slice; forbidden
+  shortcut is accepting diagnostic inference as nominal identity; stop on the
+  first concrete counterexample.
+
+Exact next command after committing this accepted substrate:
+
+```text
+cargo test -p egglog sort_registration --lib
+```

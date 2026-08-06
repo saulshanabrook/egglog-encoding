@@ -5,6 +5,7 @@ use crate::*;
 use egglog_ast::generic_ast::*;
 use egglog_ast::span::{EgglogSpan, Span, SrcFile};
 use ordered_float::OrderedFloat;
+use std::ops::Range;
 
 #[macro_export]
 macro_rules! span {
@@ -234,6 +235,55 @@ pub struct Parser {
     pub ensure_no_reserved_symbols: bool,
 }
 
+/// The parsed commands produced by one top-level source s-expression, together with the exact
+/// byte ranges that precede and contain it.
+///
+/// Both ranges index [`ParsedSourceProgram::source`]. The leading-trivia range begins at the end
+/// of the previous group's command range (or byte zero for the first group), so the groups and the
+/// program's EOF trailer partition the source without losing comments or whitespace.
+#[derive(Clone, Debug)]
+pub(crate) struct ParsedSourceGroup {
+    pub(crate) leading_trivia_range: Range<usize>,
+    pub(crate) command_range: Range<usize>,
+    pub(crate) commands: Vec<Command>,
+}
+
+/// A lossless grouping of parsed commands by their top-level source s-expressions.
+#[derive(Clone, Debug)]
+pub(crate) struct ParsedSourceProgram {
+    pub(crate) source: Arc<SrcFile>,
+    pub(crate) groups: Vec<ParsedSourceGroup>,
+    /// The bytes after the final top-level s-expression, or the entire source when there are none.
+    pub(crate) eof_trailer_range: Range<usize>,
+}
+
+impl ParsedSourceProgram {
+    fn debug_assert_valid(&self) {
+        let source_len = self.source.contents.len();
+        let mut previous_command_end = 0;
+        for group in &self.groups {
+            debug_assert_eq!(
+                group.leading_trivia_range,
+                previous_command_end..group.command_range.start
+            );
+            debug_assert!(group.command_range.start < group.command_range.end);
+            debug_assert!(group.command_range.end <= source_len);
+            debug_assert!(
+                self.source
+                    .contents
+                    .is_char_boundary(group.command_range.start)
+            );
+            debug_assert!(
+                self.source
+                    .contents
+                    .is_char_boundary(group.command_range.end)
+            );
+            previous_command_end = group.command_range.end;
+        }
+        debug_assert_eq!(self.eof_trailer_range, previous_command_end..source_len);
+    }
+}
+
 impl Default for Parser {
     fn default() -> Self {
         Self {
@@ -305,9 +355,48 @@ impl Parser {
         filename: Option<String>,
         input: &str,
     ) -> Result<Vec<Command>, ParseError> {
-        let sexps = all_sexps(SexpParser::new(filename, input))?;
-        let nested: Vec<Vec<_>> = map_fallible(&sexps, self, Self::parse_command)?;
-        Ok(nested.into_iter().flatten().collect())
+        Ok(self
+            .get_program_from_string_grouped(filename, input)?
+            .groups
+            .into_iter()
+            .flat_map(|group| group.commands)
+            .collect())
+    }
+
+    /// Parse a program while retaining the source grouping and all trivia between commands.
+    pub(crate) fn get_program_from_string_grouped(
+        &mut self,
+        filename: Option<String>,
+        input: &str,
+    ) -> Result<ParsedSourceProgram, ParseError> {
+        let sexp_parser = SexpParser::new(filename, input);
+        let source = sexp_parser.source.clone();
+        let sexps = all_sexps(sexp_parser)?;
+        let mut groups = Vec::with_capacity(sexps.len());
+        let mut previous_command_end = 0;
+
+        for sexp in sexps {
+            let Span::Egglog(span) = sexp.span() else {
+                unreachable!("source s-expressions always have egglog spans")
+            };
+            debug_assert!(Arc::ptr_eq(&source, &span.file));
+            let command_range = span.i..span.j;
+            let commands = self.parse_command(&sexp)?;
+            groups.push(ParsedSourceGroup {
+                leading_trivia_range: previous_command_end..command_range.start,
+                command_range: command_range.clone(),
+                commands,
+            });
+            previous_command_end = command_range.end;
+        }
+
+        let program = ParsedSourceProgram {
+            eof_trailer_range: previous_command_end..source.contents.len(),
+            source,
+            groups,
+        };
+        program.debug_assert_valid();
+        Ok(program)
     }
 
     // currently only used for testing, but no reason it couldn't be used elsewhere later
@@ -1568,5 +1657,112 @@ mod tests {
         let t = r#"(f (xxxx a 3) 4.0 (H "hello"))"#;
         let e = parser.get_expr_from_string(None, s).unwrap();
         assert_eq!(format!("{e}"), t);
+    }
+
+    #[test]
+    fn grouped_program_preserves_unicode_comments_and_string_punctuation() {
+        let input = " \t; λ lead\n(print-size) ; α between\n(output \"semi; (still string) λ\")\n; Ω trailer";
+        let mut parser = Parser::default();
+        let parsed = parser
+            .get_program_from_string_grouped(Some("unicode.egg".to_owned()), input)
+            .unwrap();
+
+        assert_eq!(parsed.source.name.as_deref(), Some("unicode.egg"));
+        assert_eq!(parsed.source.contents, input);
+        assert_eq!(parsed.groups.len(), 2);
+
+        let first = &parsed.groups[0];
+        assert_eq!(&input[first.leading_trivia_range.clone()], " \t; λ lead\n");
+        assert_eq!(&input[first.command_range.clone()], "(print-size)");
+
+        let second = &parsed.groups[1];
+        assert_eq!(
+            &input[second.leading_trivia_range.clone()],
+            " ; α between\n"
+        );
+        assert_eq!(
+            &input[second.command_range.clone()],
+            "(output \"semi; (still string) λ\")"
+        );
+        assert_eq!(&input[parsed.eof_trailer_range.clone()], "\n; Ω trailer");
+
+        // The Unicode in the leading trivia makes the second command's byte offset differ from
+        // its character offset.
+        assert_ne!(
+            second.command_range.start,
+            input[..second.command_range.start].chars().count()
+        );
+
+        let mut reconstructed = String::new();
+        for group in &parsed.groups {
+            reconstructed.push_str(&input[group.leading_trivia_range.clone()]);
+            reconstructed.push_str(&input[group.command_range.clone()]);
+        }
+        reconstructed.push_str(&input[parsed.eof_trailer_range.clone()]);
+        assert_eq!(reconstructed, input);
+
+        let command_spans = parsed.groups.iter().map(|group| match &group.commands[0] {
+            Command::PrintSize(span, None) | Command::Output { span, .. } => span,
+            command => panic!("unexpected command: {command:?}"),
+        });
+        for span in command_spans {
+            let Span::Egglog(span) = span else {
+                panic!("source command has a non-egglog span")
+            };
+            assert!(Arc::ptr_eq(&parsed.source, &span.file));
+        }
+    }
+
+    #[test]
+    fn grouped_comment_only_program_is_an_eof_trailer() {
+        let input = " \n; only λ ; ( )\n\t; eof";
+        let mut parser = Parser::default();
+        let parsed = parser.get_program_from_string_grouped(None, input).unwrap();
+
+        assert!(parsed.groups.is_empty());
+        assert_eq!(parsed.eof_trailer_range, 0..input.len());
+        assert_eq!(&parsed.source.contents[parsed.eof_trailer_range], input);
+        assert!(
+            parser
+                .get_program_from_string(None, input)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn grouped_command_macro_keeps_one_group_and_flattening_keeps_all_commands() {
+        let mut parser = Parser::default();
+        parser.add_command_macro(Arc::new(SimpleMacro::new(
+            "emit-two",
+            |_tail, span, _parser| {
+                Ok(vec![
+                    Command::PrintSize(span.clone(), None),
+                    Command::PrintSize(span, Some("second".to_owned())),
+                ])
+            },
+        )));
+
+        let input = "; lead\n(emit-two)\n; trailer";
+        let parsed = parser.get_program_from_string_grouped(None, input).unwrap();
+        assert_eq!(parsed.groups.len(), 1);
+        assert_eq!(parsed.groups[0].commands.len(), 2);
+        assert_eq!(
+            &input[parsed.groups[0].leading_trivia_range.clone()],
+            "; lead\n"
+        );
+        assert_eq!(&input[parsed.groups[0].command_range.clone()], "(emit-two)");
+        assert_eq!(&input[parsed.eof_trailer_range], "\n; trailer");
+
+        let flattened = parser.get_program_from_string(None, input).unwrap();
+        match flattened.as_slice() {
+            [
+                Command::PrintSize(_, None),
+                Command::PrintSize(_, Some(name)),
+            ] => {
+                assert_eq!(name, "second");
+            }
+            commands => panic!("unexpected flattened commands: {commands:?}"),
+        }
     }
 }

@@ -1,14 +1,15 @@
 use std::hash::Hasher;
 
 use crate::Context;
+use crate::constraint::ResolvedBindingScope;
 use crate::proofs::proof_container_rebuild::register_container_rebuild_from_spec;
 use crate::{
     core::{CoreActionContext, CoreRule, GenericActionsExt, QueryConstraints, ResolvedCall},
     *,
 };
 use ast::{
-    MappedExprExt, ResolvedAction, ResolvedExpr, ResolvedFact, ResolvedRule, ResolvedVar, Rule,
-    RuleEvalMode,
+    MappedExprExt, ResolvedAction, ResolvedExpr, ResolvedFact, ResolvedRule, ResolvedVar,
+    ResolvedVarBinding, Rule, RuleEvalMode,
 };
 use core_relations::ExternalFunction;
 use egglog_ast::generic_ast::GenericAction;
@@ -111,8 +112,51 @@ impl<T: Clone + Send + Sync + 'static, S: RegistryWrap<T> + 'static> ExternalFun
     }
 }
 
+/// Deterministic frontend identity of one declared function table.
+///
+/// This is deliberately independent of backend function handles. Two
+/// declarations remain distinct even when their names and schemas are equal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct FunctionRegistrationId(u32);
+
+impl FunctionRegistrationId {
+    pub(crate) const fn new(ordinal: u32) -> Self {
+        Self(ordinal)
+    }
+
+    pub const fn ordinal(self) -> u32 {
+        self.0
+    }
+}
+
+/// Deterministic frontend identity of one declared occurrence index.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct IndexRegistrationId(u32);
+
+impl IndexRegistrationId {
+    pub(crate) const fn new(ordinal: u32) -> Self {
+        Self(ordinal)
+    }
+
+    pub const fn ordinal(self) -> u32 {
+        self.0
+    }
+}
+
+/// Exact callable selected by type resolution.
+///
+/// Function and index registrations occupy separate nominal domains so an
+/// index can never be mistaken for a same-shaped function table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum CallableIdentity {
+    Function(FunctionRegistrationId),
+    Index(IndexRegistrationId),
+}
+
 #[derive(Clone, Debug)]
 pub struct FuncType {
+    pub identity: CallableIdentity,
+    /// Diagnostic/display name. Resolution semantics use [`Self::identity`].
     pub name: String,
     pub subtype: FunctionSubtype,
     pub input: Vec<ArcSort>,
@@ -140,27 +184,7 @@ impl FuncType {
 
 impl PartialEq for FuncType {
     fn eq(&self, other: &Self) -> bool {
-        if self.name == other.name
-            && self.subtype == other.subtype
-            && self.num_outputs() == other.num_outputs()
-            && self
-                .outputs
-                .iter()
-                .zip(other.outputs.iter())
-                .all(|(a, b)| a.name() == b.name())
-        {
-            if self.input.len() != other.input.len() {
-                return false;
-            }
-            for (a, b) in self.input.iter().zip(other.input.iter()) {
-                if a.name() != b.name() {
-                    return false;
-                }
-            }
-            true
-        } else {
-            false
-        }
+        self.identity == other.identity
     }
 }
 
@@ -168,16 +192,10 @@ impl Eq for FuncType {}
 
 impl Hash for FuncType {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.name.hash(state);
-        self.subtype.hash(state);
-        for out in &self.outputs {
-            out.name().hash(state);
-        }
-        for inp in &self.input {
-            inp.name().hash(state);
-        }
+        self.identity.hash(state);
     }
 }
+
 /// Validators take a termdag and arguments (as TermIds) and return
 /// a newly computed TermId if the primitive application is valid,
 /// or None if it is invalid.
@@ -203,6 +221,9 @@ pub(crate) enum PrimitiveAuthority {
         /// Zero-based value-column index, excluding key columns.
         value_column: usize,
     },
+    /// The exact polymorphic value-equality registration used when core-rule
+    /// canonicalization replaces duplicate resolved variables.
+    ValueEq,
     /// An ordinary callback whose semantics are unavailable to a standalone
     /// compiler.  Its runtime token and context mask remain fully usable by
     /// normal backends, but standalone preflight must reject it if reached.
@@ -292,8 +313,15 @@ pub struct TypeInfo {
     pub(crate) sorts: HashMap<String, Arc<dyn Sort>>,
     primitives: HashMap<String, Vec<PrimitiveWithId>>,
     next_primitive_registration_id: u32,
+    value_eq_registration_id: Option<PrimitiveRegistrationId>,
     func_types: HashMap<String, FuncType>,
     pub(crate) global_sorts: HashMap<String, ArcSort>,
+    global_function_ids: HashMap<String, FunctionRegistrationId>,
+    /// Every exact global registration produced by this frontend stream,
+    /// including registrations whose diagnostic names have left scope after a
+    /// `pop`. Resolved historical commands keep those identities, so proof
+    /// admission must not fall back to their now-unbound names.
+    global_function_identity_history: HashSet<FunctionRegistrationId>,
     /// Sorts that do not allow union (e.g., from `:no-union` sorts or relations).
     pub(crate) non_unionable_sorts: HashSet<String>,
     /// Declared indexes, by the name their atoms are written with.
@@ -304,10 +332,46 @@ pub struct TypeInfo {
 /// each value appearing in `any_of` followed by the whole row.
 #[derive(Clone, Debug)]
 pub struct IndexInfo {
+    #[allow(dead_code)] // consumed by the pending pure nominal snapshot mapper
+    pub identity: IndexRegistrationId,
+    /// Exact function table read by this index.
+    #[allow(dead_code)] // consumed by the pending pure nominal snapshot mapper
+    pub target: FunctionRegistrationId,
+    /// Diagnostic/display name of [`Self::target`].
     pub function: String,
     /// Column indices of `function`'s row (its inputs then its outputs), read
     /// disjunctively.
     pub any_of: Vec<usize>,
+}
+
+/// Built-in polymorphic value equality.
+///
+/// Keeping this definition here lets its registration site attach
+/// [`PrimitiveAuthority::ValueEq`] directly, instead of asking a later core
+/// pass to guess which overload named `value-eq` was intended.
+#[derive(Clone)]
+struct ValueEqPrimitive;
+
+impl Primitive for ValueEqPrimitive {
+    fn name(&self) -> &str {
+        "value-eq"
+    }
+
+    fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+        AllEqualTypeConstraint::new(self.name(), span.clone())
+            .with_exact_length(3)
+            .with_output_sort(UnitSort.to_arcsort())
+            .into_box()
+    }
+}
+
+impl PurePrim for ValueEqPrimitive {
+    fn apply<'a, 'db>(&self, state: PureState<'a, 'db>, args: &[Value]) -> Option<Value> {
+        let [left, right] = args else {
+            return None;
+        };
+        (left == right).then(|| state.base_values().get(()))
+    }
 }
 
 // These methods need to be on the `EGraph` in order to
@@ -387,6 +451,24 @@ impl EGraph {
             x,
             validator,
             PrimitiveAuthority::Opaque,
+            PureState::valid_contexts(),
+            |backend, x, ctx| {
+                backend.register_external_func(Box::new(PurePrimWrapper { prim: x, ctx }))
+            },
+        );
+    }
+
+    /// Register the one primitive whose authority core canonicalization uses
+    /// for resolved value equality.
+    ///
+    /// The standard frontend calls this at the built-in registration site.
+    /// Ordinary user primitives, including same-name/same-schema decoys, stay
+    /// opaque and cannot replace this authority.
+    pub(crate) fn add_value_eq_primitive(&mut self) {
+        self.register_per_context(
+            ValueEqPrimitive,
+            None,
+            PrimitiveAuthority::ValueEq,
             PureState::valid_contexts(),
             |backend, x, ctx| {
                 backend.register_external_func(Box::new(PurePrimWrapper { prim: x, ctx }))
@@ -580,6 +662,15 @@ impl EGraph {
                 .next_primitive_registration_id
                 .checked_add(1)
                 .expect("primitive registration identity space exhausted");
+            if authority == PrimitiveAuthority::ValueEq {
+                assert!(
+                    eg.type_info
+                        .value_eq_registration_id
+                        .replace(registration_id)
+                        .is_none(),
+                    "value-eq authority registered more than once in one frontend"
+                );
+            }
             eg.type_info
                 .primitives
                 .entry(name)
@@ -619,7 +710,8 @@ impl EGraph {
         name: &str,
         function: &str,
         any_of: &[usize],
-    ) -> Result<(), TypeError> {
+        identity: IndexRegistrationId,
+    ) -> Result<GenericIndexResolution<ResolvedCall>, TypeError> {
         if self.type_info.func_types.contains_key(name) {
             return Err(TypeError::FunctionAlreadyBound(
                 name.to_owned(),
@@ -638,7 +730,15 @@ impl EGraph {
         let ft = self
             .type_info
             .get_func_type(function)
+            .cloned()
             .ok_or_else(|| TypeError::UnboundFunction(function.to_owned(), span.clone()))?;
+        let CallableIdentity::Function(target) = ft.identity else {
+            return Err(TypeError::IndexOfIndex(
+                name.to_owned(),
+                function.to_owned(),
+                span.clone(),
+            ));
+        };
         // The indexable row is the function's inputs followed by its outputs.
         let row: Vec<ArcSort> = ft.input.iter().chain(ft.outputs.iter()).cloned().collect();
         if any_of.is_empty() {
@@ -665,23 +765,29 @@ impl EGraph {
         let mut input = vec![value_sort.expect("any_of is non-empty")];
         input.extend(row);
         let unit = self.type_info.sorts.get("Unit").expect("Unit sort").clone();
-        self.type_info.func_types.insert(
-            name.to_owned(),
-            FuncType {
-                name: name.to_owned(),
-                subtype: FunctionSubtype::Custom,
-                input,
-                outputs: vec![unit],
-            },
-        );
+        let index = FuncType {
+            identity: CallableIdentity::Index(identity),
+            name: name.to_owned(),
+            subtype: FunctionSubtype::Custom,
+            input,
+            outputs: vec![unit],
+        };
+        self.type_info
+            .func_types
+            .insert(name.to_owned(), index.clone());
         self.type_info.indexes.insert(
             name.to_owned(),
             IndexInfo {
+                identity,
+                target,
                 function: function.to_owned(),
                 any_of: any_of.to_vec(),
             },
         );
-        Ok(())
+        Ok(GenericIndexResolution {
+            index: ResolvedCall::Func(index),
+            target: ResolvedCall::Func(ft),
+        })
     }
 
     fn typecheck_command(&mut self, command: &NCommand) -> Result<ResolvedNCommand, TypeError> {
@@ -710,6 +816,36 @@ impl EGraph {
                     self.type_info
                         .global_sorts
                         .insert(fdecl.name.clone(), output_sort.clone());
+                    let ResolvedCall::Func(func) = &resolved.resolved_schema else {
+                        unreachable!("an internal-let declaration must be a function")
+                    };
+                    let CallableIdentity::Function(function) = func.identity else {
+                        unreachable!("an internal-let declaration cannot be an index")
+                    };
+                    // Proof instrumentation prints the removed-global function
+                    // and typechecks that generated declaration again in a new
+                    // catalog stream. Make future global references use this
+                    // stream's exact declaration, not the pre-instrumentation
+                    // raw ID retained in `global_function_ids`.
+                    self.type_info
+                        .global_function_ids
+                        .insert(fdecl.name.clone(), function);
+                    self.type_info
+                        .global_function_identity_history
+                        .insert(function);
+                    // Term/proof encoding represents a source global by an
+                    // internal-let constructor view whose explicit
+                    // `term_constructor` link names the source binding. Record
+                    // that source name against this stream's exact view
+                    // registration; never fall back to the same-named term
+                    // table, whose schema and meaning are different.
+                    if let Some(source_global) = &resolved.term_constructor
+                        && self.type_info.global_sorts.contains_key(source_global)
+                    {
+                        self.type_info
+                            .global_function_ids
+                            .insert(source_global.clone(), function);
+                    }
                 }
                 ResolvedNCommand::Function(resolved)
             }
@@ -788,19 +924,29 @@ impl EGraph {
                 }
             }
             NCommand::CoreAction(action @ Action::Let(span, var, _)) => {
-                let action = self.type_info.typecheck_standalone_action(
+                let mut action = self.type_info.typecheck_standalone_action(
                     symbol_gen,
                     action,
                     &Default::default(),
                     Context::Full,
                 )?;
+                let function = symbol_gen.fresh_function_registration_id();
                 self.ensure_global_name_prefix(span, var)?;
-                let ResolvedAction::Let(_, resolved_var, _) = &action else {
+                let ResolvedAction::Let(_, resolved_var, _) = &mut action else {
                     unreachable!("typechecking an Action::Let should return ResolvedAction::Let")
                 };
+                resolved_var.binding = ResolvedVarBinding::Global { function };
                 self.type_info
                     .global_sorts
-                    .insert(resolved_var.name.clone(), resolved_var.sort.clone());
+                    .entry(resolved_var.name.clone())
+                    .or_insert_with(|| resolved_var.sort.clone());
+                self.type_info
+                    .global_function_ids
+                    .entry(resolved_var.name.clone())
+                    .or_insert(function);
+                self.type_info
+                    .global_function_identity_history
+                    .insert(function);
                 ResolvedNCommand::CoreAction(action)
             }
             NCommand::CoreAction(action) => {
@@ -826,6 +972,7 @@ impl EGraph {
                     &Default::default(),
                     Context::Full,
                 )?;
+                let function = symbol_gen.fresh_function_registration_id();
                 self.ensure_global_name_prefix(span, name)?;
                 // The parser guarantees a trailing expression; its type is the
                 // global's.
@@ -835,10 +982,19 @@ impl EGraph {
                 let sort = value.output_type();
                 self.type_info
                     .global_sorts
-                    .insert(name.clone(), sort.clone());
+                    .entry(name.clone())
+                    .or_insert_with(|| sort.clone());
+                self.type_info
+                    .global_function_ids
+                    .entry(name.clone())
+                    .or_insert(function);
+                self.type_info
+                    .global_function_identity_history
+                    .insert(function);
                 let resolved_var = ResolvedVar {
                     name: name.clone(),
                     sort,
+                    binding: ResolvedVarBinding::Global { function },
                     is_global_ref: false,
                 };
                 ResolvedNCommand::LetBegin(span.clone(), resolved_var, resolved)
@@ -900,13 +1056,20 @@ impl EGraph {
                 name,
                 function,
                 any_of,
+                resolution,
             } => {
-                self.typecheck_index(span, name, function, any_of)?;
+                assert!(
+                    resolution.is_none(),
+                    "an unresolved index command carried forged resolution authority"
+                );
+                let identity = symbol_gen.fresh_index_registration_id();
+                let resolution = self.typecheck_index(span, name, function, any_of, identity)?;
                 ResolvedNCommand::Index {
                     span: span.clone(),
                     name: name.clone(),
                     function: function.clone(),
                     any_of: any_of.clone(),
+                    resolution: Some(resolution),
                 }
             }
             NCommand::AddRuleset(span, ruleset) => {
@@ -1100,7 +1263,11 @@ impl TypeInfo {
         sort.is_eq_sort() && !self.non_unionable_sorts.contains(sort.name())
     }
 
-    fn function_to_functype(&self, func: &FunctionDecl) -> Result<FuncType, TypeError> {
+    fn function_to_functype(
+        &self,
+        symbol_gen: &mut SymbolGen,
+        func: &FunctionDecl,
+    ) -> Result<FuncType, TypeError> {
         let resolve = |name: &String| -> Result<ArcSort, TypeError> {
             self.sorts
                 .get(name)
@@ -1121,6 +1288,7 @@ impl TypeInfo {
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(FuncType {
+            identity: CallableIdentity::Function(symbol_gen.fresh_function_registration_id()),
             name: func.name.clone(),
             subtype: func.subtype,
             input,
@@ -1145,6 +1313,16 @@ impl TypeInfo {
                 fdecl.span.clone(),
             ));
         }
+        // Reject before allocating a nominal identity or mutating the catalog.
+        // The old insert-and-test shape replaced the authoritative descriptor
+        // on an error, so later calls could silently resolve to the rejected
+        // declaration.
+        if self.func_types.contains_key(&fdecl.name) {
+            return Err(TypeError::FunctionAlreadyBound(
+                fdecl.name.clone(),
+                fdecl.span.clone(),
+            ));
+        }
         // View tables (with term_constructor) must have at least one input (the e-class), except the
         // proof-mode functional-dependency tuple view `(children) -> (eclass, proof)`, which keys on
         // children only (a 0-arg constructor's view then has no inputs).
@@ -1157,19 +1335,8 @@ impl TypeInfo {
                 fdecl.span.clone(),
             ));
         }
-        let ftype = self.function_to_functype(fdecl)?;
-        if self.func_types.insert(fdecl.name.clone(), ftype).is_some() {
-            return Err(TypeError::FunctionAlreadyBound(
-                fdecl.name.clone(),
-                fdecl.span.clone(),
-            ));
-        }
-        let outputs: Vec<ArcSort> = fdecl
-            .schema
-            .outputs
-            .iter()
-            .map(|name| self.sorts.get(name).unwrap().clone())
-            .collect();
+        let ftype = self.function_to_functype(symbol_gen, fdecl)?;
+        let outputs = ftype.outputs.clone();
         let is_tuple = fdecl.schema.is_tuple_output();
 
         // Tuple outputs are only meaningful for custom functions (which carry a functional
@@ -1190,10 +1357,18 @@ impl TypeInfo {
             ));
         }
 
+        // Merge expressions may refer to the function being declared, so make
+        // the exact descriptor visible only while validating the declaration.
+        // Any failure removes it before returning; a rejected declaration never
+        // becomes catalog authority or blocks a corrected redeclaration.
+        let previous = self.func_types.insert(fdecl.name.clone(), ftype.clone());
+        debug_assert!(previous.is_none(), "function duplicate precheck drifted");
+
         // For single-output functions the merge expression refers to `old`/`new`. For
         // tuple-output functions it refers to `old0`, `new0`, `old1`, `new1`, ... (one pair per
         // output column), and the whole merge is a `(values ...)` form.
         let mut bound_vars = IndexMap::default();
+        let mut merge_bindings = ResolvedBindingScope::default();
         let tuple_var_names: Vec<(String, String)> = (0..outputs.len())
             .map(|i| (format!("old{i}"), format!("new{i}")))
             .collect();
@@ -1201,67 +1376,111 @@ impl TypeInfo {
             for (i, (old_name, new_name)) in tuple_var_names.iter().enumerate() {
                 bound_vars.insert(old_name.as_str(), (fdecl.span.clone(), outputs[i].clone()));
                 bound_vars.insert(new_name.as_str(), (fdecl.span.clone(), outputs[i].clone()));
+                merge_bindings
+                    .bind_exact(old_name.clone(), ResolvedVarBinding::MergeOld { column: i });
+                merge_bindings
+                    .bind_exact(new_name.clone(), ResolvedVarBinding::MergeNew { column: i });
             }
         } else {
             bound_vars.insert("old", (fdecl.span.clone(), outputs[0].clone()));
             bound_vars.insert("new", (fdecl.span.clone(), outputs[0].clone()));
+            merge_bindings.bind_exact("old", ResolvedVarBinding::MergeOld { column: 0 });
+            merge_bindings.bind_exact("new", ResolvedVarBinding::MergeNew { column: 0 });
         }
 
         // A `:merge` is a value-producing action block: the `actions` run (writes are allowed, but
         // live DB reads would be untracked by seminaive rule execution), then `result` produces the
         // merged value(s). Both are typechecked with `old`/`new` (`old0`/`new0`/... for tuple)
         // bound; the actions go through the same action typechecker as rule bodies.
-        let merge = match &fdecl.merge {
-            Some(merge) => {
-                let actions = self.typecheck_standalone_actions(
-                    symbol_gen,
-                    &merge.actions,
-                    &bound_vars,
-                    Context::Write,
-                )?;
-                // The result is evaluated after the actions, so any `let`-bound variable is in
-                // scope for it. Extend the binding with each `let`'s solved type before checking
-                // the result. `let_bindings` owns the names so `result_scope` can borrow them.
-                let let_bindings: Vec<(String, Span, ArcSort)> = actions
-                    .0
-                    .iter()
-                    .filter_map(|a| match a {
-                        GenericAction::Let(span, var, _) => {
-                            Some((var.name.as_str().to_owned(), span.clone(), var.sort.clone()))
-                        }
-                        _ => None,
-                    })
-                    .collect();
-                let mut result_scope = bound_vars.clone();
-                for (name, span, sort) in &let_bindings {
-                    result_scope.insert(name.as_str(), (span.clone(), sort.clone()));
-                }
-                let result = if is_tuple {
-                    self.typecheck_tuple_merge(
+        let merge_result = (|| -> Result<Option<ResolvedMerge>, TypeError> {
+            Ok(match &fdecl.merge {
+                Some(merge) => {
+                    let mut next_let_slot = 0usize;
+                    let action_bindings = merge
+                        .actions
+                        .iter()
+                        .map(|action| {
+                            matches!(action, GenericAction::Let(..)).then(|| {
+                                let binding = ResolvedVarBinding::MergeLet {
+                                    slot: next_let_slot,
+                                };
+                                next_let_slot += 1;
+                                binding
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    let actions = self.typecheck_standalone_actions_in_scope(
                         symbol_gen,
-                        fdecl,
-                        &merge.result,
-                        &outputs,
-                        &result_scope,
-                    )?
-                } else {
-                    self.typecheck_standalone_expr(
-                        symbol_gen,
-                        &merge.result,
-                        &result_scope,
+                        &merge.actions,
+                        &bound_vars,
+                        &mut merge_bindings,
+                        &action_bindings,
                         Context::Write,
-                    )?
-                };
-                Some(ResolvedMerge { actions, result })
+                    )?;
+                    // The result is evaluated after the actions, so any `let`-bound variable is in
+                    // scope for it. Extend the binding with each `let`'s solved type before checking
+                    // the result. `let_bindings` owns the names so `result_scope` can borrow them.
+                    let let_bindings: Vec<(String, Span, ArcSort)> = actions
+                        .0
+                        .iter()
+                        .filter_map(|a| match a {
+                            GenericAction::Let(span, var, _) => {
+                                Some((var.name.as_str().to_owned(), span.clone(), var.sort.clone()))
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    let mut result_scope = bound_vars.clone();
+                    for (name, span, sort) in &let_bindings {
+                        result_scope.insert(name.as_str(), (span.clone(), sort.clone()));
+                    }
+                    let result = if is_tuple {
+                        self.typecheck_tuple_merge(
+                            symbol_gen,
+                            fdecl,
+                            &merge.result,
+                            &outputs,
+                            &result_scope,
+                            &mut merge_bindings,
+                        )?
+                    } else {
+                        self.typecheck_standalone_expr_in_scope(
+                            symbol_gen,
+                            &merge.result,
+                            &result_scope,
+                            &mut merge_bindings,
+                            Context::Write,
+                        )?
+                    };
+                    if !is_tuple && result.output_type().name() != outputs[0].name() {
+                        return Err(TypeError::Mismatch {
+                            expr: merge.result.clone(),
+                            expected: outputs[0].clone(),
+                            actual: result.output_type(),
+                        });
+                    }
+                    Some(ResolvedMerge { actions, result })
+                }
+                None => None,
+            })
+        })();
+        let merge = match merge_result {
+            Ok(merge) => merge,
+            Err(error) => {
+                let removed = self.func_types.remove(&fdecl.name);
+                debug_assert_eq!(
+                    removed.as_ref().map(|func| func.identity),
+                    Some(ftype.identity)
+                );
+                return Err(error);
             }
-            None => None,
         };
 
         Ok(ResolvedFunctionDecl {
             name: fdecl.name.clone(),
             subtype: fdecl.subtype,
             schema: fdecl.schema.clone(),
-            resolved_schema: ResolvedCall::Func(self.func_types.get(&fdecl.name).unwrap().clone()),
+            resolved_schema: ResolvedCall::Func(ftype),
             merge,
             cost: fdecl.cost,
             unextractable: fdecl.unextractable,
@@ -1284,6 +1503,7 @@ impl TypeInfo {
         merge: &Expr,
         outputs: &[ArcSort],
         bound_vars: &IndexMap<&str, (Span, ArcSort)>,
+        resolved_bindings: &mut ResolvedBindingScope,
     ) -> Result<ResolvedExpr, TypeError> {
         let args = match merge {
             GenericExpr::Call(_, head, args) if head.as_str() == "values" => args,
@@ -1304,8 +1524,13 @@ impl TypeInfo {
         }
         let mut resolved_args = Vec::with_capacity(args.len());
         for (arg, expected) in args.iter().zip(outputs) {
-            let resolved =
-                self.typecheck_standalone_expr(symbol_gen, arg, bound_vars, Context::Write)?;
+            let resolved = self.typecheck_standalone_expr_in_scope(
+                symbol_gen,
+                arg,
+                bound_vars,
+                resolved_bindings,
+                Context::Write,
+            )?;
             let actual = resolved.output_type();
             if actual.name() != expected.name() {
                 return Err(TypeError::Mismatch {
@@ -1421,9 +1646,23 @@ impl TypeInfo {
             .solve(|sort: &ArcSort| sort.name())
             .map_err(|e| e.to_type_error())?;
 
-        let body: Vec<ResolvedFact> = assignment.annotate_facts(&mapped_query, self, query_ctx);
-        let actions: ResolvedActions =
-            assignment.annotate_actions(&mapped_action, self, action_ctx)?;
+        let mut resolved_bindings = ResolvedBindingScope::default();
+        let body: Vec<ResolvedFact> = assignment.annotate_facts(
+            &mapped_query,
+            self,
+            symbol_gen,
+            &mut resolved_bindings,
+            query_ctx,
+        );
+        let action_bindings = vec![None; mapped_action.len()];
+        let actions: ResolvedActions = assignment.annotate_actions(
+            &mapped_action,
+            self,
+            symbol_gen,
+            &mut resolved_bindings,
+            &action_bindings,
+            action_ctx,
+        )?;
 
         // Function lookups in actions need the `Full` action context; the
         // `Write` context (`!read_contexts`) can't express them.
@@ -1495,7 +1734,14 @@ impl TypeInfo {
         let assignment = problem
             .solve(|sort: &ArcSort| sort.name())
             .map_err(|e| e.to_type_error())?;
-        let annotated_facts = assignment.annotate_facts(&mapped_facts, self, Context::Read);
+        let mut resolved_bindings = ResolvedBindingScope::default();
+        let annotated_facts = assignment.annotate_facts(
+            &mapped_facts,
+            self,
+            symbol_gen,
+            &mut resolved_bindings,
+            Context::Read,
+        );
         Ok(annotated_facts)
     }
 
@@ -1507,6 +1753,30 @@ impl TypeInfo {
         symbol_gen: &mut SymbolGen,
         actions: &Actions,
         binding: &IndexMap<&str, (Span, ArcSort)>,
+        context: Context,
+    ) -> Result<ResolvedActions, TypeError> {
+        let mut resolved_bindings = ResolvedBindingScope::default();
+        for var in binding.keys() {
+            resolved_bindings.bind_lexical(*var, symbol_gen);
+        }
+        let action_bindings = vec![None; actions.len()];
+        self.typecheck_standalone_actions_in_scope(
+            symbol_gen,
+            actions,
+            binding,
+            &mut resolved_bindings,
+            &action_bindings,
+            context,
+        )
+    }
+
+    fn typecheck_standalone_actions_in_scope(
+        &self,
+        symbol_gen: &mut SymbolGen,
+        actions: &Actions,
+        binding: &IndexMap<&str, (Span, ArcSort)>,
+        resolved_bindings: &mut ResolvedBindingScope,
+        action_bindings: &[Option<ResolvedVarBinding>],
         context: Context,
     ) -> Result<ResolvedActions, TypeError> {
         let mut binding_set: IndexSet<String> =
@@ -1528,7 +1798,14 @@ impl TypeInfo {
             .solve(|sort: &ArcSort| sort.name())
             .map_err(|e| e.to_type_error())?;
 
-        let annotated_actions = assignment.annotate_actions(&mapped_action, self, context)?;
+        let annotated_actions = assignment.annotate_actions(
+            &mapped_action,
+            self,
+            symbol_gen,
+            resolved_bindings,
+            action_bindings,
+            context,
+        )?;
         Ok(annotated_actions)
     }
 
@@ -1539,9 +1816,37 @@ impl TypeInfo {
         binding: &IndexMap<&str, (Span, ArcSort)>,
         context: Context,
     ) -> Result<ResolvedExpr, TypeError> {
+        let mut resolved_bindings = ResolvedBindingScope::default();
+        for var in binding.keys() {
+            resolved_bindings.bind_lexical(*var, symbol_gen);
+        }
+        self.typecheck_standalone_expr_in_scope(
+            symbol_gen,
+            expr,
+            binding,
+            &mut resolved_bindings,
+            context,
+        )
+    }
+
+    fn typecheck_standalone_expr_in_scope(
+        &self,
+        symbol_gen: &mut SymbolGen,
+        expr: &Expr,
+        binding: &IndexMap<&str, (Span, ArcSort)>,
+        resolved_bindings: &mut ResolvedBindingScope,
+        context: Context,
+    ) -> Result<ResolvedExpr, TypeError> {
         let action = Action::Expr(expr.span(), expr.clone());
-        let typechecked_action =
-            self.typecheck_standalone_action(symbol_gen, &action, binding, context)?;
+        let typechecked_action = self.typecheck_standalone_actions_in_scope(
+            symbol_gen,
+            &Actions::singleton(action),
+            binding,
+            resolved_bindings,
+            &[None],
+            context,
+        )?;
+        let typechecked_action = typechecked_action.0.into_iter().next().unwrap();
         match typechecked_action {
             ResolvedAction::Expr(_, expr) => Ok(expr),
             _ => unreachable!(),
@@ -1572,14 +1877,25 @@ impl TypeInfo {
         let [GenericAction::Expr(_, mapped_expr)] = mapped_action.0.as_slice() else {
             unreachable!("typechecking an expression should produce one expression action")
         };
-        let output_atom = mapped_expr.get_corresponding_var_or_lit(self);
+        let output_atom = mapped_expr.get_corresponding_var_or_lit_in_scope(self, &binding_set);
         problem.add_binding(output_atom, output_sort.clone());
 
         let assignment = problem
             .solve(|sort: &ArcSort| sort.name())
             .map_err(|e| e.to_type_error())?;
 
-        let annotated_actions = assignment.annotate_actions(&mapped_action, self, context)?;
+        let mut resolved_bindings = ResolvedBindingScope::default();
+        for var in binding.keys() {
+            resolved_bindings.bind_lexical(*var, symbol_gen);
+        }
+        let annotated_actions = assignment.annotate_actions(
+            &mapped_action,
+            self,
+            symbol_gen,
+            &mut resolved_bindings,
+            &[None],
+            context,
+        )?;
         match annotated_actions.0.into_iter().next().unwrap() {
             ResolvedAction::Expr(_, resolved_expr) => {
                 let actual = resolved_expr.output_type();
@@ -1648,8 +1964,38 @@ impl TypeInfo {
         self.global_sorts.get(sym)
     }
 
+    pub(crate) fn get_global_function_id(&self, sym: &str) -> Option<FunctionRegistrationId> {
+        self.global_function_ids.get(sym).copied()
+    }
+
+    /// Return the exact registration selected as core value equality.
+    pub(crate) fn value_eq_primitive(&self) -> Option<&PrimitiveWithId> {
+        let identity = self.value_eq_registration_id?;
+        self.primitives
+            .values()
+            .flatten()
+            .find(|primitive| primitive.registration_id() == identity)
+    }
+
     pub fn is_global(&self, sym: &str) -> bool {
         self.global_sorts.contains_key(sym)
+    }
+
+    /// Whether this exact callable registration is owned by a global binding.
+    pub(crate) fn is_global_function_identity(&self, identity: CallableIdentity) -> bool {
+        matches!(
+            identity,
+            CallableIdentity::Function(identity)
+                if self.global_function_identity_history.contains(&identity)
+        )
+    }
+
+    /// Preserve exact global authority for already-resolved commands when an
+    /// e-graph scope is popped. Current name lookup is still restored from the
+    /// outer snapshot; only the monotone identity census crosses the boundary.
+    pub(crate) fn preserve_global_function_identity_history_from(&mut self, newer: &Self) {
+        self.global_function_identity_history
+            .extend(newer.global_function_identity_history.iter().copied());
     }
 
     /// Check if an expression contains non-global function lookups (FunctionSubtype::Custom calls).
@@ -1661,7 +2007,7 @@ impl TypeInfo {
         expr.find(&mut |e| {
             if let GenericExpr::Call(span, ResolvedCall::Func(func_type), _) = e
                 && func_type.subtype == FunctionSubtype::Custom
-                && !self.is_global(&func_type.name)
+                && !self.is_global_function_identity(func_type.identity)
             {
                 return Some(span.clone());
             }
@@ -1774,7 +2120,32 @@ pub enum TypeError {
 
 #[cfg(test)]
 mod test {
-    use crate::{EGraph, Error, typechecking::TypeError};
+    use super::*;
+    use crate::{EGraph, Error};
+
+    fn desugar_program(egraph: &mut EGraph, program: &str) -> Vec<NCommand> {
+        let parsed = egraph.parse_program(None, program).unwrap();
+        let mut desugared = Vec::new();
+        for command in parsed {
+            desugared
+                .extend(ast::desugar::desugar_command(command, &mut egraph.parser, false).unwrap());
+        }
+        desugared
+    }
+
+    fn function_identity(func: &FuncType) -> FunctionRegistrationId {
+        let CallableIdentity::Function(identity) = func.identity else {
+            panic!("expected a function identity, got {:?}", func.identity);
+        };
+        identity
+    }
+
+    fn resolved_func(call: &ResolvedCall) -> &FuncType {
+        let ResolvedCall::Func(func) = call else {
+            panic!("expected a resolved function call, got {call:?}");
+        };
+        func
+    }
 
     #[test]
     fn test_arity_mismatch() {
@@ -1794,5 +2165,847 @@ mod test {
             }
             _ => panic!("Expected arity mismatch, got: {res:?}"),
         }
+    }
+
+    #[test]
+    fn callable_identity_distinguishes_same_schema_functions_and_index() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (function left (i64) i64 :merge old)
+                (function right (i64) i64 :merge old)
+                (index LeftOccurrence left (any 0 1))
+                "#,
+            )
+            .unwrap();
+
+        let left = egraph.type_info.get_func_type("left").unwrap();
+        let right = egraph.type_info.get_func_type("right").unwrap();
+        let index = egraph.type_info.get_func_type("LeftOccurrence").unwrap();
+        let left_identity = function_identity(left);
+        assert_ne!(left.identity, right.identity);
+        assert!(matches!(index.identity, CallableIdentity::Index(_)));
+        assert_ne!(left.identity, index.identity);
+
+        // Display metadata and schema-shaped decoys do not define equality.
+        let mut renamed_left = left.clone();
+        renamed_left.name = "diagnostic-only".to_owned();
+        assert_eq!(left, &renamed_left);
+        let mut same_name_right = right.clone();
+        same_name_right.name = left.name.clone();
+        assert_ne!(left, &same_name_right);
+
+        let index_info = &egraph.type_info.indexes["LeftOccurrence"];
+        assert_eq!(index.identity, CallableIdentity::Index(index_info.identity));
+        assert_eq!(index_info.target, left_identity);
+    }
+
+    #[test]
+    fn desugared_index_has_no_finalized_resolution_authority() {
+        let mut egraph = EGraph::default();
+        let desugared = desugar_program(&mut egraph, "(index Occurrence edge (any 0 1))");
+        let [NCommand::Index { resolution, .. }] = desugared.as_slice() else {
+            panic!("expected one desugared index command, got {desugared:?}");
+        };
+        assert!(resolution.is_none());
+    }
+
+    #[test]
+    fn resolved_indexes_carry_exact_identity_and_target_authority() {
+        let mut egraph = EGraph::default();
+        let desugared = desugar_program(
+            &mut egraph,
+            r#"
+            (function left (i64) i64 :merge old)
+            (function right (i64) i64 :merge old)
+            (index LeftOccurrence left (any 0 1))
+            (index RightOccurrence right (any 0 1))
+            "#,
+        );
+        let source_index_renderings = desugared
+            .iter()
+            .filter(|command| matches!(command, NCommand::Index { .. }))
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        let mut resolved = egraph.typecheck_program(&desugared).unwrap();
+        let left_target = CallableIdentity::Function(function_identity(
+            egraph.type_info.get_func_type("left").unwrap(),
+        ));
+        let right_target = CallableIdentity::Function(function_identity(
+            egraph.type_info.get_func_type("right").unwrap(),
+        ));
+
+        let (left_index, left_carried_target, right_index, right_carried_target) = {
+            let indexes = resolved
+                .iter()
+                .filter_map(|command| match command {
+                    ResolvedNCommand::Index {
+                        name,
+                        function,
+                        resolution: Some(resolution),
+                        ..
+                    } => Some((name, function, resolution)),
+                    ResolvedNCommand::Index {
+                        resolution: None, ..
+                    } => panic!("a resolved index command lacked nominal authority"),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(indexes.len(), 2);
+            assert_eq!(indexes[0].0, "LeftOccurrence");
+            assert_eq!(indexes[0].1, "left");
+            assert_eq!(indexes[1].0, "RightOccurrence");
+            assert_eq!(indexes[1].1, "right");
+
+            let left_index = resolved_func(&indexes[0].2.index);
+            let right_index = resolved_func(&indexes[1].2.index);
+            let left_carried_target = resolved_func(&indexes[0].2.target);
+            let right_carried_target = resolved_func(&indexes[1].2.target);
+            assert_eq!(
+                left_index
+                    .input
+                    .iter()
+                    .map(|sort| sort.name())
+                    .collect::<Vec<_>>(),
+                right_index
+                    .input
+                    .iter()
+                    .map(|sort| sort.name())
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                left_index
+                    .outputs
+                    .iter()
+                    .map(|sort| sort.name())
+                    .collect::<Vec<_>>(),
+                right_index
+                    .outputs
+                    .iter()
+                    .map(|sort| sort.name())
+                    .collect::<Vec<_>>()
+            );
+            (
+                left_index.identity,
+                left_carried_target.identity,
+                right_index.identity,
+                right_carried_target.identity,
+            )
+        };
+
+        assert!(matches!(left_index, CallableIdentity::Index(_)));
+        assert!(matches!(right_index, CallableIdentity::Index(_)));
+        assert_ne!(left_index, right_index);
+        assert_eq!(left_carried_target, left_target);
+        assert_eq!(right_carried_target, right_target);
+        assert_ne!(left_carried_target, right_carried_target);
+        assert_eq!(
+            resolved
+                .iter()
+                .filter(|command| matches!(command, ResolvedNCommand::Index { .. }))
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            source_index_renderings
+        );
+
+        let left_command = resolved
+            .iter_mut()
+            .find(|command| {
+                matches!(
+                    command,
+                    ResolvedNCommand::Index { name, .. } if name == "LeftOccurrence"
+                )
+            })
+            .unwrap();
+        let ResolvedNCommand::Index {
+            name,
+            function,
+            resolution: Some(resolution),
+            ..
+        } = left_command
+        else {
+            unreachable!()
+        };
+        *name = "diagnostic-index-decoy".to_owned();
+        *function = "right".to_owned();
+        let ResolvedCall::Func(index) = &mut resolution.index else {
+            unreachable!()
+        };
+        index.name = "diagnostic-index-head-decoy".to_owned();
+        let ResolvedCall::Func(target) = &mut resolution.target else {
+            unreachable!()
+        };
+        target.name = "diagnostic-target-head-decoy".to_owned();
+
+        assert_eq!(index.identity, left_index);
+        assert_eq!(target.identity, left_target);
+        assert_ne!(target.identity, right_target);
+    }
+
+    #[test]
+    fn rejected_duplicate_preserves_registered_function_identity() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(None, "(function stable (i64) i64 :merge old)")
+            .unwrap();
+        let registered = egraph.type_info.get_func_type("stable").unwrap().clone();
+
+        let error = egraph
+            .parse_and_run_program(None, "(function stable (i64) i64 :merge new)")
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            Error::TypeError(TypeError::FunctionAlreadyBound(name, _)) if name == "stable"
+        ));
+        assert_eq!(
+            egraph.type_info.get_func_type("stable").unwrap().identity,
+            registered.identity
+        );
+    }
+
+    #[test]
+    fn global_lowering_reuses_the_declared_function_identity() {
+        let mut egraph = EGraph::new_compile_only(false);
+        let resolved = egraph
+            .resolve_program_compile_only(None, "(let $global 1)")
+            .unwrap();
+        let mut declaration = None;
+        let mut initialization = None;
+        for command in &resolved.execution {
+            match &command.command {
+                ResolvedNCommand::Function(function) if function.name == "$global" => {
+                    let ResolvedCall::Func(func) = &function.resolved_schema else {
+                        panic!("global declaration did not resolve to a function")
+                    };
+                    declaration = Some(func.identity);
+                }
+                ResolvedNCommand::CoreAction(GenericAction::Set(_, func, args, _))
+                    if func.name() == "$global" && args.is_empty() =>
+                {
+                    let ResolvedCall::Func(func) = func else {
+                        panic!("global initializer did not target a function")
+                    };
+                    initialization = Some(func.identity);
+                }
+                _ => {}
+            }
+        }
+
+        assert_eq!(declaration, initialization);
+        assert!(matches!(declaration, Some(CallableIdentity::Function(_))));
+    }
+
+    #[test]
+    fn proof_retypechecking_updates_global_identity_to_its_new_catalog() {
+        let mut egraph = EGraph::new_compile_only(true);
+        egraph
+            .resolve_program_compile_only(None, "(datatype Expr (Num i64))\n(let $global (Num 1))")
+            .unwrap();
+        let term_table = function_identity(
+            egraph
+                .type_info
+                .get_func_type("$global")
+                .expect("proof-instrumented global term table"),
+        );
+        let registered = egraph
+            .type_info
+            .get_global_function_id("$global")
+            .expect("source global must map to its exact encoded view");
+        assert_ne!(registered, term_table);
+        assert!(
+            egraph
+                .type_info
+                .func_types
+                .values()
+                .any(
+                    |function| function.identity == CallableIdentity::Function(registered)
+                        && function.subtype == FunctionSubtype::Custom
+                )
+        );
+    }
+
+    #[test]
+    fn callable_identity_high_water_survives_pop() {
+        let mut egraph = EGraph::default();
+        egraph.push();
+        egraph
+            .parse_and_run_program(None, "(function scoped (i64) i64 :merge old)")
+            .unwrap();
+        let scoped = function_identity(egraph.type_info.get_func_type("scoped").unwrap());
+        egraph.pop().unwrap();
+        egraph
+            .parse_and_run_program(None, "(function later (i64) i64 :merge old)")
+            .unwrap();
+        let later = function_identity(egraph.type_info.get_func_type("later").unwrap());
+
+        assert_ne!(scoped, later);
+        assert!(later.ordinal() > scoped.ordinal());
+    }
+
+    #[test]
+    fn exact_global_identity_history_survives_pop_without_restoring_its_name() {
+        let mut egraph = EGraph::default();
+        egraph.push();
+        egraph
+            .parse_and_run_program(None, "(let $scoped 1)")
+            .unwrap();
+        let scoped = egraph
+            .type_info
+            .get_global_function_id("$scoped")
+            .expect("scoped global registration");
+        egraph.pop().unwrap();
+
+        assert!(egraph.type_info.get_global_sort("$scoped").is_none());
+        assert!(egraph.type_info.get_global_function_id("$scoped").is_none());
+        assert!(
+            egraph
+                .type_info
+                .is_global_function_identity(CallableIdentity::Function(scoped))
+        );
+    }
+
+    #[test]
+    fn resolved_lexical_identity_ignores_diagnostic_name() {
+        let sort = I64Sort.to_arcsort();
+        let binding = ResolvedVarBinding::Lexical {
+            id: ResolvedBindingId::new(17),
+        };
+        let original = ResolvedVar {
+            name: "source-name".to_owned(),
+            sort: sort.clone(),
+            binding,
+            is_global_ref: false,
+        };
+        let mut renamed = original.clone();
+        renamed.name = "diagnostic-decoy".to_owned();
+        assert_eq!(original, renamed);
+
+        let mut set = crate::util::HashSet::default();
+        set.insert(original);
+        assert!(set.contains(&renamed));
+
+        let same_binding_different_sort = ResolvedVar {
+            name: "also-diagnostic".to_owned(),
+            sort: StringSort.to_arcsort(),
+            binding,
+            is_global_ref: false,
+        };
+        assert_eq!(renamed, same_binding_different_sort);
+
+        let distinct = ResolvedVar {
+            name: renamed.name.clone(),
+            sort,
+            binding: ResolvedVarBinding::Lexical {
+                id: ResolvedBindingId::new(18),
+            },
+            is_global_ref: false,
+        };
+        assert_ne!(renamed, distinct);
+    }
+
+    #[test]
+    #[should_panic(expected = "one resolved binding authority was assigned incompatible sorts")]
+    fn binding_scope_rejects_one_authority_with_different_sorts() {
+        let mut scope = ResolvedBindingScope::default();
+        let binding = ResolvedVarBinding::Lexical {
+            id: ResolvedBindingId::new(23),
+        };
+        scope.observe_sort(binding, &I64Sort.to_arcsort());
+        scope.observe_sort(binding, &StringSort.to_arcsort());
+    }
+
+    #[test]
+    fn resolved_query_lowering_uses_binding_not_diagnostic_name() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(None, "(let $global 1)")
+            .unwrap();
+        let global_function = egraph
+            .type_info
+            .get_global_function_id("$global")
+            .expect("declared global identity");
+
+        let mut lexical = ResolvedVar {
+            name: "ordinary".to_owned(),
+            sort: I64Sort.to_arcsort(),
+            binding: ResolvedVarBinding::Lexical {
+                id: egraph.parser.symbol_gen.fresh_resolved_binding_id(),
+            },
+            // Deliberately stale metadata must not change authority either.
+            is_global_ref: true,
+        };
+        lexical.name = "$global".to_owned();
+        let mut exact_global = ResolvedVar {
+            name: "$global".to_owned(),
+            sort: I64Sort.to_arcsort(),
+            binding: ResolvedVarBinding::Global {
+                function: global_function,
+            },
+            is_global_ref: false,
+        };
+        exact_global.name = "diagnostic-decoy".to_owned();
+
+        let facts = crate::ast::Facts(vec![
+            ResolvedFact::Eq(
+                Span::Panic,
+                ResolvedExpr::Var(Span::Panic, lexical.clone()),
+                ResolvedExpr::Lit(Span::Panic, Literal::Int(1)),
+            ),
+            ResolvedFact::Eq(
+                Span::Panic,
+                ResolvedExpr::Var(Span::Panic, exact_global.clone()),
+                ResolvedExpr::Lit(Span::Panic, Literal::Int(1)),
+            ),
+        ]);
+        let (query, _) = facts.to_query(&egraph.type_info, &mut egraph.parser.symbol_gen);
+
+        assert!(matches!(
+            &query.atoms[0].args[0],
+            crate::core::GenericAtomTerm::Var(_, var) if var.binding == lexical.binding
+        ));
+        assert!(matches!(
+            &query.atoms[1].args[0],
+            crate::core::GenericAtomTerm::Global(_, var) if var.binding == exact_global.binding
+        ));
+    }
+
+    #[test]
+    fn global_removal_uses_binding_not_legacy_ref_flag() {
+        let global_function = FunctionRegistrationId::new(41);
+        let global = ResolvedVar {
+            name: "$global".to_owned(),
+            sort: I64Sort.to_arcsort(),
+            binding: ResolvedVarBinding::Global {
+                function: global_function,
+            },
+            is_global_ref: false,
+        };
+        let lexical = ResolvedVar {
+            name: "$global".to_owned(),
+            sort: I64Sort.to_arcsort(),
+            binding: ResolvedVarBinding::Lexical {
+                id: ResolvedBindingId::new(42),
+            },
+            is_global_ref: true,
+        };
+
+        let removed =
+            crate::ast::remove_globals::remove_globals_expr(ResolvedExpr::Var(Span::Panic, global));
+        let ResolvedExpr::Call(_, ResolvedCall::Func(function), arguments) = removed else {
+            panic!("exact global authority was not eliminated");
+        };
+        assert_eq!(
+            function.identity,
+            CallableIdentity::Function(global_function)
+        );
+        assert!(arguments.is_empty());
+
+        let unchanged = crate::ast::remove_globals::remove_globals_expr(ResolvedExpr::Var(
+            Span::Panic,
+            lexical.clone(),
+        ));
+        assert!(matches!(
+            unchanged,
+            ResolvedExpr::Var(_, var) if var.binding == lexical.binding
+        ));
+    }
+
+    #[test]
+    fn rule_scope_shares_identity_and_distinct_rules_do_not_alias() {
+        fn rule_vars(rule: &ResolvedRule) -> Vec<ResolvedVar> {
+            let mut vars = vec![];
+            for fact in &rule.body {
+                fact.clone().visit_exprs(&mut |expr| {
+                    if let GenericExpr::Var(_, var) = &expr {
+                        vars.push(var.clone());
+                    }
+                    expr
+                });
+            }
+            for action in &rule.head.0 {
+                if let GenericAction::Let(_, var, _) = action {
+                    vars.push(var.clone());
+                }
+                action.clone().visit_exprs(&mut |expr| {
+                    if let GenericExpr::Var(_, var) = &expr {
+                        vars.push(var.clone());
+                    }
+                    expr
+                });
+            }
+            vars
+        }
+
+        let mut egraph = EGraph::default();
+        let desugared = desugar_program(
+            &mut egraph,
+            r#"
+            (relation source (i64))
+            (relation sink (i64))
+            (rule ((source x))
+                  ((let y (+ x 1))
+                   (sink y))
+                  :name "first")
+            (rule ((source x))
+                  ((sink x))
+                  :name "second")
+            "#,
+        );
+        let resolved = egraph.typecheck_program(&desugared).unwrap();
+        let rules = resolved
+            .iter()
+            .filter_map(|command| match command {
+                ResolvedNCommand::NormRule { rule } => Some(rule),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let [first, second] = rules.as_slice() else {
+            panic!("expected two rules, got {rules:?}");
+        };
+
+        let first_vars = rule_vars(first);
+        let first_x = first_vars
+            .iter()
+            .filter(|var| var.name == "x")
+            .collect::<Vec<_>>();
+        assert!(
+            first_x.len() >= 2,
+            "x must occur in body and head: {first_vars:?}"
+        );
+        assert!(first_x.iter().all(|var| var.binding == first_x[0].binding));
+        let first_y = first_vars
+            .iter()
+            .filter(|var| var.name == "y")
+            .collect::<Vec<_>>();
+        assert!(
+            first_y.len() >= 2,
+            "y must occur as binder and use: {first_vars:?}"
+        );
+        assert!(first_y.iter().all(|var| var.binding == first_y[0].binding));
+        assert_ne!(first_x[0].binding, first_y[0].binding);
+
+        let second_vars = rule_vars(second);
+        let second_x = second_vars
+            .iter()
+            .find(|var| var.name == "x")
+            .expect("second rule x");
+        assert_ne!(first_x[0].binding, second_x.binding);
+    }
+
+    #[test]
+    fn generated_symbols_and_binding_ids_are_unique_and_survive_pop() {
+        let mut symbols = SymbolGen::new("@".to_owned());
+        let first = symbols.fresh("f1");
+        let second = symbols.fresh("f");
+        let third = symbols.fresh("f");
+        assert_eq!(
+            crate::util::HashSet::from_iter([first, second, third]).len(),
+            3,
+            "different fresh-name hints must not converge on one diagnostic name"
+        );
+
+        let call = ResolvedCall::Func(FuncType {
+            identity: CallableIdentity::Function(symbols.fresh_function_registration_id()),
+            name: "temp".to_owned(),
+            subtype: FunctionSubtype::Custom,
+            input: vec![],
+            outputs: vec![I64Sort.to_arcsort()],
+        });
+        let left = <SymbolGen as FreshGen<ResolvedCall, ResolvedVar>>::fresh(&mut symbols, &call);
+        let right = <SymbolGen as FreshGen<ResolvedCall, ResolvedVar>>::fresh(&mut symbols, &call);
+        assert_ne!(left.name, right.name);
+        assert_ne!(left.binding, right.binding);
+
+        let mut egraph = EGraph::default();
+        egraph.push();
+        let scoped = egraph.parser.symbol_gen.fresh_resolved_binding_id();
+        egraph.pop().unwrap();
+        let later = egraph.parser.symbol_gen.fresh_resolved_binding_id();
+        assert!(later.ordinal() > scoped.ordinal());
+    }
+
+    #[test]
+    fn tuple_merge_stamps_asymmetric_columns_and_let_slot() {
+        let mut egraph = EGraph::new_compile_only(false);
+        let resolved = egraph
+            .resolve_program_compile_only(
+                None,
+                r#"
+                (function asymmetric (i64) (i64 i64)
+                  :merge ((let chosen (max old0 new0))
+                          (values chosen old1)))
+                "#,
+            )
+            .unwrap();
+        let merge = resolved
+            .execution
+            .iter()
+            .find_map(|command| match &command.command {
+                ResolvedNCommand::Function(function) if function.name == "asymmetric" => {
+                    function.merge.as_ref()
+                }
+                _ => None,
+            })
+            .expect("resolved asymmetric merge");
+
+        let [GenericAction::Let(_, let_var, GenericExpr::Call(_, _, let_args))] =
+            merge.actions.0.as_slice()
+        else {
+            panic!("expected one resolved merge let: {:?}", merge.actions);
+        };
+        assert_eq!(let_var.binding, ResolvedVarBinding::MergeLet { slot: 0 });
+        let [GenericExpr::Var(_, old0), GenericExpr::Var(_, new0)] = let_args.as_slice() else {
+            panic!("expected old0/new0 operands: {let_args:?}");
+        };
+        assert_eq!(old0.binding, ResolvedVarBinding::MergeOld { column: 0 });
+        assert_eq!(new0.binding, ResolvedVarBinding::MergeNew { column: 0 });
+
+        let GenericExpr::Call(_, ResolvedCall::Values(_), result_columns) = &merge.result else {
+            panic!("expected tuple merge result: {:?}", merge.result);
+        };
+        let [GenericExpr::Var(_, chosen), GenericExpr::Var(_, old1)] = result_columns.as_slice()
+        else {
+            panic!("expected asymmetric chosen/old1 result: {result_columns:?}");
+        };
+        assert_eq!(chosen.binding, ResolvedVarBinding::MergeLet { slot: 0 });
+        assert_eq!(old1.binding, ResolvedVarBinding::MergeOld { column: 1 });
+    }
+
+    #[test]
+    fn merge_let_shadowing_a_global_preserves_rhs_global_authority() {
+        let mut egraph = EGraph::new_compile_only(false);
+        let resolved = egraph
+            .resolve_program_compile_only(
+                None,
+                r#"
+                (let $g 7)
+                (function f (i64) i64
+                  :merge ((let $g (+ $g 1)) $g))
+                "#,
+            )
+            .unwrap();
+        let merge = resolved
+            .execution
+            .iter()
+            .find_map(|command| match &command.command {
+                ResolvedNCommand::Function(function) if function.name == "f" => {
+                    function.merge.as_ref()
+                }
+                _ => None,
+            })
+            .expect("resolved merge");
+
+        let [GenericAction::Let(_, binding, rhs)] = merge.actions.0.as_slice() else {
+            panic!("expected one merge let: {:?}", merge.actions);
+        };
+        assert_eq!(binding.binding, ResolvedVarBinding::MergeLet { slot: 0 });
+        let GenericExpr::Call(_, ResolvedCall::Primitive(_), arguments) = rhs else {
+            panic!("expected the resolved addition RHS: {rhs:?}");
+        };
+        let [
+            GenericExpr::Call(_, ResolvedCall::Func(global), global_args),
+            GenericExpr::Lit(..),
+        ] = arguments.as_slice()
+        else {
+            panic!("expected the earlier global to lower to a nullary call: {arguments:?}");
+        };
+        assert_eq!(global.name, "$g");
+        assert!(global_args.is_empty());
+        let GenericExpr::Var(_, result) = &merge.result else {
+            panic!(
+                "expected the merge result to use its local binding: {:?}",
+                merge.result
+            );
+        };
+        assert_eq!(result.binding, ResolvedVarBinding::MergeLet { slot: 0 });
+    }
+
+    #[test]
+    fn merge_let_shadowing_a_different_sort_global_resolves_locally() {
+        let mut egraph = EGraph::new_compile_only(false);
+        let resolved = egraph
+            .resolve_program_compile_only(
+                None,
+                r#"
+                (let $g "global")
+                (function f (i64) i64
+                  :merge ((let $g old) $g))
+                "#,
+            )
+            .unwrap();
+        let merge = resolved
+            .execution
+            .iter()
+            .find_map(|command| match &command.command {
+                ResolvedNCommand::Function(function) if function.name == "f" => {
+                    function.merge.as_ref()
+                }
+                _ => None,
+            })
+            .expect("resolved merge");
+
+        let [GenericAction::Let(_, binder, GenericExpr::Var(_, old))] = merge.actions.0.as_slice()
+        else {
+            panic!("expected one merge let over old: {:?}", merge.actions);
+        };
+        assert_eq!(old.binding, ResolvedVarBinding::MergeOld { column: 0 });
+        assert_eq!(old.sort.name(), "i64");
+        assert_eq!(binder.binding, ResolvedVarBinding::MergeLet { slot: 0 });
+        assert_eq!(binder.sort.name(), "i64");
+        let GenericExpr::Var(_, result) = &merge.result else {
+            panic!("expected merge-local result: {:?}", merge.result);
+        };
+        assert_eq!(result.binding, binder.binding);
+        assert_eq!(result.sort.name(), "i64");
+    }
+
+    #[test]
+    fn nested_merge_expression_specializes_from_local_not_same_named_global() {
+        let mut egraph = EGraph::new_compile_only(false);
+        let resolved = egraph
+            .resolve_program_compile_only(
+                None,
+                r#"
+                (let $g "global")
+                (function f (i64) i64
+                  :merge ((let $g old) (+ $g 1)))
+                "#,
+            )
+            .unwrap();
+        let merge = resolved
+            .execution
+            .iter()
+            .find_map(|command| match &command.command {
+                ResolvedNCommand::Function(function) if function.name == "f" => {
+                    function.merge.as_ref()
+                }
+                _ => None,
+            })
+            .expect("resolved merge");
+        let [GenericAction::Let(_, binder, _)] = merge.actions.0.as_slice() else {
+            panic!("expected one merge let: {:?}", merge.actions);
+        };
+        let GenericExpr::Call(_, ResolvedCall::Primitive(add), arguments) = &merge.result else {
+            panic!("expected resolved local addition: {:?}", merge.result);
+        };
+        let [GenericExpr::Var(_, local), GenericExpr::Lit(..)] = arguments.as_slice() else {
+            panic!("expected merge-local addition arguments: {arguments:?}");
+        };
+        assert_eq!(local.binding, binder.binding);
+        assert_eq!(local.sort.name(), "i64");
+        assert_eq!(
+            add.input()
+                .iter()
+                .map(|sort| sort.name())
+                .collect::<Vec<_>>(),
+            ["i64", "i64"]
+        );
+        assert_eq!(add.output().name(), "i64");
+    }
+
+    #[test]
+    fn rejected_global_shadow_preserves_first_sort_and_function_authority() {
+        let mut egraph = EGraph::default();
+        egraph.parse_and_run_program(None, "(let $g 1)").unwrap();
+        let first_sort = egraph
+            .type_info
+            .get_global_sort("$g")
+            .unwrap()
+            .name()
+            .to_owned();
+        let first_function = egraph.type_info.get_global_function_id("$g").unwrap();
+
+        let error = egraph
+            .parse_and_run_program(None, "(let $g \"rejected\")")
+            .unwrap_err();
+        assert!(matches!(error, Error::Shadowing(..)));
+        assert_eq!(
+            egraph.type_info.get_global_sort("$g").unwrap().name(),
+            first_sort
+        );
+        assert_eq!(
+            egraph.type_info.get_global_function_id("$g"),
+            Some(first_function)
+        );
+        egraph
+            .parse_and_run_program(None, "(check (= $g 1))")
+            .unwrap();
+    }
+
+    #[test]
+    fn rejected_function_declaration_does_not_publish_catalog_authority() {
+        let mut egraph = EGraph::default();
+        let invalid = desugar_program(&mut egraph, "(function retry (i64) (i64 i64) :merge old0)");
+        let error = egraph.typecheck_program(&invalid).unwrap_err();
+        assert!(matches!(error, TypeError::TupleMergeNotValues(name, _) if name == "retry"));
+        assert!(egraph.type_info.get_func_type("retry").is_none());
+
+        let corrected = desugar_program(
+            &mut egraph,
+            "(function retry (i64) (i64 i64) :merge (values old0 new1))",
+        );
+        egraph.typecheck_program(&corrected).unwrap();
+        assert!(egraph.type_info.get_func_type("retry").is_some());
+    }
+
+    #[test]
+    fn value_eq_authority_ignores_same_name_registration_decoy() {
+        use crate::core::ResolvedRuleExt;
+
+        let mut egraph = EGraph::new_compile_only(false);
+        let exact = egraph
+            .type_info
+            .value_eq_primitive()
+            .expect("built-in value-eq authority")
+            .registration_id();
+
+        // Same implementation, spelling, and polymorphic schema; only the
+        // explicit registration authority differs.
+        egraph.add_pure_primitive(ValueEqPrimitive, None);
+        let overloads = egraph.type_info.primitives.get_mut("value-eq").unwrap();
+        let decoy = overloads.pop().expect("newly appended decoy");
+        assert_ne!(decoy.registration_id(), exact);
+        overloads.insert(0, decoy);
+        assert_eq!(
+            egraph
+                .type_info
+                .value_eq_primitive()
+                .expect("authority survives decoy")
+                .registration_id(),
+            exact
+        );
+        assert_ne!(
+            egraph.type_info.get_prims("value-eq").unwrap()[0].registration_id(),
+            exact,
+            "the test must put the decoy in the legacy positional slot"
+        );
+
+        let resolved = egraph
+            .resolve_program_compile_only(None, "(rule ((= 1 2)) ())")
+            .unwrap();
+        let rule = resolved
+            .execution
+            .iter()
+            .find_map(|command| match &command.command {
+                ResolvedNCommand::NormRule { rule } => Some(rule),
+                _ => None,
+            })
+            .expect("resolved literal-equality rule");
+        let mut fresh = egraph.parser.symbol_gen.clone();
+        let core = rule
+            .to_canonicalized_core_rule(&egraph.type_info, &mut fresh, false)
+            .unwrap();
+        let [atom] = core.body.atoms.as_slice() else {
+            panic!(
+                "expected one canonical value-eq atom: {:?}",
+                core.body.atoms
+            );
+        };
+        let ResolvedCall::Primitive(value_eq) = &atom.head else {
+            panic!("expected canonical value-eq primitive: {:?}", atom.head);
+        };
+        assert_eq!(value_eq.registration_id(), exact);
     }
 }

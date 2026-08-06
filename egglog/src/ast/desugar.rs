@@ -177,6 +177,7 @@ pub(crate) fn desugar_command(
             name,
             function,
             any_of,
+            resolution: None,
         }],
         Command::AddRuleset(span, name) => vec![NCommand::AddRuleset(span, name)],
         Command::UnstableCombinedRuleset(span, name, subrulesets) => {

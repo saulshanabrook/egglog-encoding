@@ -33,7 +33,10 @@ enum ScalarOperation {
     I64Min,
     I64Max,
     I64Ge,
+    I64Gt,
+    I64Le,
     I64Lt,
+    I64BoolLt,
     F64Gt,
     F64Lt,
     ValueNeq(ScalarSqlType),
@@ -41,6 +44,7 @@ enum ScalarOperation {
     OrderingMax,
     SelectMinPayload,
     SelectMaxPayload,
+    SelectEqPayload(ScalarSqlType),
 }
 
 /// An authenticated, exactly typed binary scalar operation.
@@ -109,24 +113,34 @@ impl ScalarExpression {
     }
 
     pub(crate) fn render(&self, inputs: &[String]) -> RenderedScalarExpression {
-        if matches!(
-            self.operation,
-            ScalarOperation::SelectMinPayload | ScalarOperation::SelectMaxPayload
-        ) {
-            let [left, left_payload, right, right_payload] = inputs else {
-                unreachable!("authenticated payload selectors have four inputs")
-            };
-            let operator = if self.operation == ScalarOperation::SelectMinPayload {
-                "<"
-            } else {
-                ">"
-            };
-            return RenderedScalarExpression {
-                value: format!(
-                    "CASE WHEN ({left}) {operator} ({right}) THEN ({left_payload}) ELSE ({right_payload}) END"
-                ),
-                defined: "TRUE".to_string(),
-            };
+        match self.operation {
+            ScalarOperation::SelectMinPayload | ScalarOperation::SelectMaxPayload => {
+                let [left, left_payload, right, right_payload] = inputs else {
+                    unreachable!("authenticated payload selectors have four inputs")
+                };
+                let operator = if self.operation == ScalarOperation::SelectMinPayload {
+                    "<"
+                } else {
+                    ">"
+                };
+                return RenderedScalarExpression {
+                    value: format!(
+                        "CASE WHEN ({left}) {operator} ({right}) THEN ({left_payload}) ELSE ({right_payload}) END"
+                    ),
+                    defined: "TRUE".to_string(),
+                };
+            }
+            ScalarOperation::SelectEqPayload(comparison_type) => {
+                let [test, candidate, if_equal, otherwise] = inputs else {
+                    unreachable!("authenticated equality selector has four inputs")
+                };
+                let equal = raw_equal(comparison_type, test, candidate);
+                return RenderedScalarExpression {
+                    value: format!("CASE WHEN {equal} THEN ({if_equal}) ELSE ({otherwise}) END"),
+                    defined: "TRUE".to_string(),
+                };
+            }
+            _ => {}
         }
         let [left, right] = inputs else {
             unreachable!("authenticated scalar expressions are binary")
@@ -146,7 +160,13 @@ impl ScalarExpression {
             ScalarOperation::I64Min => total_choice(&left, "<", &right),
             ScalarOperation::I64Max => total_choice(&left, ">", &right),
             ScalarOperation::I64Ge => unit_predicate(format!("({left} >= {right})")),
+            ScalarOperation::I64Gt => unit_predicate(format!("({left} > {right})")),
+            ScalarOperation::I64Le => unit_predicate(format!("({left} <= {right})")),
             ScalarOperation::I64Lt => unit_predicate(format!("({left} < {right})")),
+            ScalarOperation::I64BoolLt => RenderedScalarExpression {
+                value: format!("({left} < {right})"),
+                defined: "TRUE".to_string(),
+            },
             ScalarOperation::F64Gt => unit_predicate(format!(
                 "((isnan({left}) AND NOT isnan({right})) OR (NOT isnan({left}) AND NOT isnan({right}) AND {left} > {right}))"
             )),
@@ -167,7 +187,9 @@ impl ScalarExpression {
             }
             ScalarOperation::OrderingMin => total_choice(&left, "<", &right),
             ScalarOperation::OrderingMax => total_choice(&left, ">", &right),
-            ScalarOperation::SelectMinPayload | ScalarOperation::SelectMaxPayload => unreachable!(),
+            ScalarOperation::SelectMinPayload
+            | ScalarOperation::SelectMaxPayload
+            | ScalarOperation::SelectEqPayload(_) => unreachable!(),
         }
     }
 }
@@ -231,10 +253,25 @@ fn authenticate_typed(
             ScalarSqlType::Unit,
             ScalarOperation::I64Ge,
         ),
+        NativeScalarPrimitive::I64Gt => (
+            ScalarSqlType::I64,
+            ScalarSqlType::Unit,
+            ScalarOperation::I64Gt,
+        ),
+        NativeScalarPrimitive::I64Le => (
+            ScalarSqlType::I64,
+            ScalarSqlType::Unit,
+            ScalarOperation::I64Le,
+        ),
         NativeScalarPrimitive::I64Lt => (
             ScalarSqlType::I64,
             ScalarSqlType::Unit,
             ScalarOperation::I64Lt,
+        ),
+        NativeScalarPrimitive::I64BoolLt => (
+            ScalarSqlType::I64,
+            ScalarSqlType::Bool,
+            ScalarOperation::I64BoolLt,
         ),
         NativeScalarPrimitive::F64Gt => (
             ScalarSqlType::F64,
@@ -261,6 +298,18 @@ fn authenticate_raw(
     inputs: &[ColumnTy],
     output: ColumnTy,
 ) -> Result<ScalarOperation> {
+    if primitive == NativePrimitive::SelectEqPayload {
+        let [test, candidate, if_equal, otherwise] = inputs else {
+            bail!("DuckDB raw scalar {primitive:?} requires exactly four inputs")
+        };
+        ensure!(
+            test == candidate && if_equal == otherwise && *if_equal == output,
+            "DuckDB raw {primitive:?} requires (T, T, P, P) -> P"
+        );
+        let comparison_type = ScalarSqlType::from_column(base_values, *test)?;
+        ScalarSqlType::from_column(base_values, *if_equal)?;
+        return Ok(ScalarOperation::SelectEqPayload(comparison_type));
+    }
     if matches!(
         primitive,
         NativePrimitive::SelectMinPayload | NativePrimitive::SelectMaxPayload
@@ -316,8 +365,20 @@ fn authenticate_raw(
                 ScalarOperation::OrderingMax
             })
         }
-        NativePrimitive::SelectMinPayload | NativePrimitive::SelectMaxPayload => unreachable!(),
+        NativePrimitive::SelectMinPayload
+        | NativePrimitive::SelectMaxPayload
+        | NativePrimitive::SelectEqPayload => unreachable!(),
         _ => bail!("DuckDB raw primitive {primitive:?} is not a public scalar expression"),
+    }
+}
+
+fn raw_equal(ty: ScalarSqlType, left: &str, right: &str) -> String {
+    match ty {
+        ScalarSqlType::F64 => format!(
+            "((isnan({left}) AND isnan({right})) OR (NOT isnan({left}) AND NOT isnan({right}) AND ({left}) = ({right})))"
+        ),
+        ScalarSqlType::Unit => "TRUE".to_string(),
+        _ => format!("(({left}) = ({right}))"),
     }
 }
 

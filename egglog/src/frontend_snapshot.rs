@@ -137,11 +137,18 @@ pub struct TypedLiteral {
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NativeRawPrimitive {
+    /// Succeeds exactly when both values are equal and returns `Unit`.
+    ///
+    /// This is a distinct registration-site authority from an opaque
+    /// same-name primitive; canonical core lowering selects it by the
+    /// frontend's exact `ValueEq` authority.
+    ValueEq,
     ValueNeq,
     OrderingMin,
     OrderingMax,
     SelectMinPayload,
     SelectMaxPayload,
+    SelectEqPayload,
 }
 
 /// Backend-neutral descriptors for reached scalar primitives.
@@ -157,7 +164,10 @@ pub enum NativeScalarPrimitive {
     I64Min,
     I64Max,
     I64Ge,
+    I64Gt,
+    I64Le,
     I64Lt,
+    I64BoolLt,
     F64Gt,
     F64Lt,
 }
@@ -362,7 +372,9 @@ pub struct FunctionConfig {
     pub can_subsume: bool,
     pub internal_hidden: bool,
     pub internal_let: bool,
-    pub term_constructor: Option<String>,
+    /// Exact source/term relation whose user-facing constructor view this
+    /// table implements. The target's name is display metadata only.
+    pub term_constructor: Option<FunctionId>,
     pub internal_term_node: bool,
     pub display: FunctionDisplay,
 }
@@ -791,10 +803,13 @@ impl<'a> Catalog<'a> {
                 ));
             }
 
-            let expected_display = function
-                .term_constructor
-                .as_deref()
-                .unwrap_or(function.name.as_str());
+            let expected_display = match function.term_constructor {
+                Some(term_constructor) => self
+                    .function(term_constructor, &format!("{path}.term_constructor"))?
+                    .name
+                    .as_str(),
+                None => function.name.as_str(),
+            };
             if function.display.print_size_name != expected_display {
                 return Err(invalid(
                     format!("{path}.display.print_size_name"),
@@ -1012,7 +1027,7 @@ impl<'a> Catalog<'a> {
         let unit_output =
             self.sort_is(primitive.output, |sort| matches!(sort, SortSemantics::Unit));
         let valid = match operation {
-            NativeRawPrimitive::ValueNeq => {
+            NativeRawPrimitive::ValueEq | NativeRawPrimitive::ValueNeq => {
                 primitive.input.len() == 2
                     && primitive.input[0] == primitive.input[1]
                     && unit_output
@@ -1027,6 +1042,12 @@ impl<'a> Catalog<'a> {
                     && primitive.input[0] == primitive.input[2]
                     && primitive.input[1] == primitive.input[3]
                     && primitive.output == primitive.input[1]
+            }
+            NativeRawPrimitive::SelectEqPayload => {
+                primitive.input.len() == 4
+                    && primitive.input[0] == primitive.input[1]
+                    && primitive.input[2] == primitive.input[3]
+                    && primitive.output == primitive.input[2]
             }
         };
         if valid {
@@ -1070,8 +1091,15 @@ impl<'a> Catalog<'a> {
             | NativeScalarPrimitive::I64Max => {
                 binary_i64() && primitive.output == primitive.input[0]
             }
-            NativeScalarPrimitive::I64Ge | NativeScalarPrimitive::I64Lt => {
-                binary_i64() && output_unit
+            NativeScalarPrimitive::I64Ge
+            | NativeScalarPrimitive::I64Gt
+            | NativeScalarPrimitive::I64Le
+            | NativeScalarPrimitive::I64Lt => binary_i64() && output_unit,
+            NativeScalarPrimitive::I64BoolLt => {
+                binary_i64()
+                    && self.sort_is(primitive.output, |semantics| {
+                        matches!(semantics, SortSemantics::Bool)
+                    })
             }
             NativeScalarPrimitive::F64Gt | NativeScalarPrimitive::F64Lt => {
                 binary_f64() && output_unit
@@ -2293,6 +2321,110 @@ mod tests {
         };
         assert_eq!(any_of, &[0, 0]);
         assert_eq!(*read, ReadMode::All);
+    }
+
+    #[test]
+    fn value_equality_is_explicit_authority_with_a_checked_signature() {
+        let mut snapshot = fixture();
+        snapshot.primitives.push(PrimitiveDecl {
+            id: PrimitiveId::new(2),
+            name: "diagnostic-value-eq".into(),
+            input: vec![I64, I64],
+            output: UNIT,
+            semantics: PrimitiveSemantics::NativeRaw(NativeRawPrimitive::ValueEq),
+        });
+
+        snapshot.validate().unwrap();
+        snapshot.primitives[2].output = I64;
+        assert!(
+            snapshot
+                .validate()
+                .unwrap_err()
+                .message
+                .contains("invalid signature for native raw primitive")
+        );
+    }
+
+    #[test]
+    fn eggcc_i64_comparisons_are_exact_authorities_with_checked_signatures() {
+        let mut snapshot = fixture();
+        for (ordinal, operation, output) in [
+            (2, NativeScalarPrimitive::I64Gt, UNIT),
+            (3, NativeScalarPrimitive::I64Le, UNIT),
+            (4, NativeScalarPrimitive::I64BoolLt, BOOL),
+        ] {
+            snapshot.primitives.push(PrimitiveDecl {
+                id: PrimitiveId::new(ordinal),
+                // Deliberately identical and misleading: only the stamped
+                // registration-site authority selects semantics.
+                name: "same-diagnostic-comparison".into(),
+                input: vec![I64, I64],
+                output,
+                semantics: PrimitiveSemantics::NativeScalar(operation),
+            });
+        }
+
+        snapshot.validate().unwrap();
+        snapshot.primitives[4].output = UNIT;
+        assert!(
+            snapshot
+                .validate()
+                .unwrap_err()
+                .message
+                .contains("invalid signature for native scalar primitive")
+        );
+    }
+
+    #[test]
+    fn proof_select_eq_is_exact_authority_with_polymorphic_checked_signature() {
+        let mut snapshot = fixture();
+        snapshot.primitives.push(PrimitiveDecl {
+            id: PrimitiveId::new(2),
+            name: "misleading-payload-selector".into(),
+            input: vec![I64, I64, BOOL, BOOL],
+            output: BOOL,
+            semantics: PrimitiveSemantics::NativeRaw(NativeRawPrimitive::SelectEqPayload),
+        });
+        snapshot.primitives.push(PrimitiveDecl {
+            id: PrimitiveId::new(3),
+            name: "misleading-payload-selector".into(),
+            input: vec![I64, I64, BOOL, BOOL],
+            output: BOOL,
+            semantics: PrimitiveSemantics::Opaque {
+                authority: "same-name-same-schema-decoy".into(),
+            },
+        });
+
+        snapshot.validate().unwrap();
+        snapshot.primitives[2].input[1] = BOOL;
+        assert!(
+            snapshot
+                .validate()
+                .unwrap_err()
+                .message
+                .contains("invalid signature for native raw primitive")
+        );
+    }
+
+    #[test]
+    fn constructor_view_display_uses_the_exact_target_identity() {
+        let mut snapshot = fixture();
+        let decoy_name = snapshot.function(DECOY).unwrap().name.clone();
+        let owner_config = owner(&mut snapshot);
+        owner_config.term_constructor = Some(DECOY);
+        owner_config.display.print_size_name = decoy_name;
+        snapshot.validate().unwrap();
+
+        // DECOY and SINK have the same typed schema. Changing only the exact
+        // target must not silently preserve constructor-view semantics.
+        owner(&mut snapshot).term_constructor = Some(SINK);
+        assert!(
+            snapshot
+                .validate()
+                .unwrap_err()
+                .message
+                .contains("expected exact display name")
+        );
     }
 
     #[test]

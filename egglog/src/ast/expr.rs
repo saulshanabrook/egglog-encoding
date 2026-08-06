@@ -5,12 +5,54 @@ use std::hash::Hasher;
 
 use crate::ast::CorrespondingVar;
 use crate::core::ResolvedCall;
+use crate::typechecking::FunctionRegistrationId;
 use crate::{ArcSort, sort};
+
+/// Deterministic identity of one resolved lexical binding.
+///
+/// The ordinal is allocated from the owning frontend's [`SymbolGen`](crate::util::SymbolGen)
+/// high-water mark. It is semantic authority within that resolved command
+/// stream; the variable's spelling remains diagnostic only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ResolvedBindingId(u32);
+
+impl ResolvedBindingId {
+    pub(crate) const fn new(ordinal: u32) -> Self {
+        Self(ordinal)
+    }
+
+    /// The deterministic allocation ordinal within the owning frontend stream.
+    pub const fn ordinal(self) -> u32 {
+        self.0
+    }
+}
+
+/// The exact binding authority carried by a resolved variable.
+///
+/// Display names remain useful for diagnostics and for the ordinary lexical
+/// environment, but merge consumers must use the structured variants below.
+/// In particular, no downstream pass should recover an old/new column or a
+/// merge-local slot from a spelling such as `old`, `new1`, or a `let` name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ResolvedVarBinding {
+    /// An ordinary lexical variable in a rule, action block, or generated IR.
+    Lexical { id: ResolvedBindingId },
+    /// A global binding/reference that will lower to this exact nullary
+    /// function during global removal.
+    Global { function: FunctionRegistrationId },
+    /// The owning merge row's existing value column.
+    MergeOld { column: usize },
+    /// The candidate merge row's value column.
+    MergeNew { column: usize },
+    /// A merge action block's exact source-order `let` slot.
+    MergeLet { slot: usize },
+}
 
 #[derive(Debug, Clone)]
 pub struct ResolvedVar {
     pub name: String,
     pub sort: ArcSort,
+    pub binding: ResolvedVarBinding,
     /// Is this a reference to a global variable?
     /// After the `remove_globals` pass, this should be `false`.
     ///
@@ -23,7 +65,7 @@ pub struct ResolvedVar {
 
 impl PartialEq for ResolvedVar {
     fn eq(&self, other: &Self) -> bool {
-        self.name == other.name && self.sort.name() == other.sort.name()
+        self.binding == other.binding
     }
 }
 
@@ -31,8 +73,7 @@ impl Eq for ResolvedVar {}
 
 impl Hash for ResolvedVar {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.name.hash(state);
-        self.sort.name().hash(state);
+        self.binding.hash(state);
     }
 }
 
@@ -69,7 +110,12 @@ impl ResolvedExprExt for ResolvedExpr {
 
     fn get_global_var(&self) -> Option<ResolvedVar> {
         match self {
-            ResolvedExpr::Var(_, v) if v.is_global_ref => Some(v.clone()),
+            // Exact nominal authority decides semantics. `is_global_ref` is
+            // retained only as legacy diagnostic metadata and may not turn a
+            // lexical binding into a global (or hide an exact global).
+            ResolvedExpr::Var(_, v) if matches!(v.binding, ResolvedVarBinding::Global { .. }) => {
+                Some(v.clone())
+            }
             _ => None,
         }
     }

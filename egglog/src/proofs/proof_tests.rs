@@ -2,10 +2,13 @@
 mod tests {
     use crate::ast::{
         GenericAction, GenericNCommand, Literal, ResolvedAction, ResolvedCommand, ResolvedExpr,
-        ResolvedFact, RuleEvalMode, remove_globals::remove_globals, sanitize_internal_names,
+        ResolvedFact, ResolvedVar, ResolvedVarBinding, RuleEvalMode,
+        remove_globals::remove_globals, sanitize_internal_names,
     };
     use crate::core::ResolvedCall;
-    use crate::proofs::proof_checker::eval_expr_with_subst;
+    use crate::proofs::proof_checker::{
+        ProofBindings, eval_expr_with_subst, translate_rule_substitution,
+    };
     use crate::proofs::proof_extraction::ProveExistsError;
     use crate::proofs::proof_format::{ProofId, ProofStore, Proposition};
     use crate::proofs::proof_head::{Firing, HeadPlan, HeadProof, ProofAlgebra};
@@ -29,24 +32,27 @@ mod tests {
 
     /// Stand a distinct constant in for every variable a rule head reads but
     /// does not itself bind, so the head can be processed without a match.
-    fn head_input_bindings(
-        actions: &[ResolvedAction],
-        term_dag: &mut TermDag,
-    ) -> HashMap<String, TermId> {
-        fn read(expr: &ResolvedExpr, bound: &HashSet<String>, inputs: &mut Vec<String>) {
+    fn head_input_bindings(actions: &[ResolvedAction], term_dag: &mut TermDag) -> ProofBindings {
+        fn read(
+            expr: &ResolvedExpr,
+            bound: &HashSet<ResolvedVarBinding>,
+            inputs: &mut Vec<ResolvedVar>,
+        ) {
             expr.visit_vars(&mut |_, var| {
-                if !bound.contains(&var.name) && !inputs.contains(&var.name) {
-                    inputs.push(var.name.clone());
+                if !bound.contains(&var.binding)
+                    && !inputs.iter().any(|input| input.binding == var.binding)
+                {
+                    inputs.push(var.clone());
                 }
             });
         }
-        let mut bound: HashSet<String> = HashSet::default();
+        let mut bound: HashSet<ResolvedVarBinding> = HashSet::default();
         let mut inputs = vec![];
         for action in actions {
             match action {
                 GenericAction::Let(_, var, expr) => {
                     read(expr, &bound, &mut inputs);
-                    bound.insert(var.name.clone());
+                    bound.insert(var.binding);
                 }
                 GenericAction::Expr(_, expr) => read(expr, &bound, &mut inputs),
                 GenericAction::Union(_, lhs, rhs) => {
@@ -64,11 +70,206 @@ mod tests {
         }
         inputs
             .into_iter()
-            .map(|name| {
-                let term = term_dag.app(name.clone(), vec![]);
-                (name, term)
+            .map(|var| {
+                let term = term_dag.app(var.name.clone(), vec![]);
+                (var.binding, term)
             })
             .collect()
+    }
+
+    fn seed_head_binding_ids(actions: &[ResolvedAction], symbols: &mut SymbolGen) {
+        for action in actions {
+            if let GenericAction::Let(_, var, _) = action
+                && let ResolvedVarBinding::Lexical { id } = var.binding
+            {
+                symbols.observe_resolved_binding_id(id);
+            }
+            action.clone().visit_exprs(&mut |expr| {
+                if let ResolvedExpr::Var(_, var) = &expr
+                    && let ResolvedVarBinding::Lexical { id } = var.binding
+                {
+                    symbols.observe_resolved_binding_id(id);
+                }
+                expr
+            });
+        }
+    }
+
+    #[test]
+    fn proof_substitution_boundary_translates_only_exact_lexical_bindings() {
+        let mut egraph = EGraph::new_with_proofs();
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (relation Pair (i64 i64))
+                (rule ((Pair x y)) ((Pair x y)) :name "pair")
+                "#,
+            )
+            .unwrap();
+        let rule = egraph
+            .proof_check_program
+            .iter()
+            .find_map(|command| match command {
+                GenericNCommand::NormRule { rule } if rule.name == "pair" => Some(rule.clone()),
+                _ => None,
+            })
+            .expect("proof-check rule");
+        let mut vars = vec![];
+        for fact in &rule.body {
+            fact.clone().visit_exprs(&mut |expr| {
+                if let ResolvedExpr::Var(_, var) = &expr
+                    && !vars
+                        .iter()
+                        .any(|seen: &ResolvedVar| seen.binding == var.binding)
+                {
+                    vars.push(var.clone());
+                }
+                expr
+            });
+        }
+        let x = vars.iter().find(|var| var.name == "x").unwrap().clone();
+
+        let mut dag = TermDag::default();
+        let value = dag.lit(Literal::Int(11));
+        let exact =
+            translate_rule_substitution(&rule, &IndexMap::from_iter([("x".to_owned(), value)]))
+                .unwrap();
+        assert_eq!(exact.get(&x.binding), Some(&value));
+
+        let mut renamed = x.clone();
+        renamed.name = "$global".to_owned();
+        let evaluated = eval_expr_with_subst(
+            "pair",
+            &ResolvedExpr::Var(crate::ast::Span::Panic, renamed),
+            &mut dag,
+            &exact,
+        )
+        .unwrap()
+        .0;
+        assert_eq!(
+            evaluated, value,
+            "internal replay must ignore display names"
+        );
+
+        for invalid in ["mismatched", "$global"] {
+            let error = translate_rule_substitution(
+                &rule,
+                &IndexMap::from_iter([(invalid.to_owned(), value)]),
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(
+                error.contains("invalid substitution key"),
+                "unexpected boundary error for {invalid}: {error}"
+            );
+        }
+
+        let ambiguous = rule.clone().visit_exprs(&mut |expr| match expr {
+            ResolvedExpr::Var(span, mut var) if var.name == "y" => {
+                var.name = "x".to_owned();
+                ResolvedExpr::Var(span, var)
+            }
+            expr => expr,
+        });
+        let error = translate_rule_substitution(
+            &ambiguous,
+            &IndexMap::from_iter([("x".to_owned(), value)]),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("ambiguous"),
+            "unexpected ambiguity error: {error}"
+        );
+    }
+
+    #[test]
+    fn later_same_named_global_does_not_capture_earlier_rule_local() {
+        let mut egraph = EGraph::new_with_proofs();
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (datatype E (A) (B))
+                (relation Seed (E))
+                (relation Seen (E))
+
+                (Seed (A))
+                (rule ((Seed collision))
+                      ((Seen collision))
+                      :name "local-before-global")
+
+                ;; Non-strict mode accepts this later global without `$`.
+                ;; Its display name must not retroactively capture the rule's
+                ;; already-resolved lexical `collision` authority.
+                (let collision (B))
+
+                (run 1)
+                (check (Seen (A)))
+                (prove (Seen (A)))
+                "#,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn local_proof_head_generator_advances_past_rule_bindings() {
+        let mut egraph = EGraph::new_with_proofs();
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (datatype Math (Num i64) (Neg Math))
+                (relation Seen (Math))
+                (rule ((Seen x)) ((union x (Neg x))) :name "collision-canary")
+                "#,
+            )
+            .unwrap();
+        let rule = egraph
+            .proof_check_program
+            .iter()
+            .find_map(|command| match command {
+                GenericNCommand::NormRule { rule } if rule.name == "collision-canary" => Some(rule),
+                _ => None,
+            })
+            .expect("proof-check rule");
+        let actions = &rule.head.0;
+
+        let mut source_ids = HashSet::default();
+        for action in actions {
+            if let GenericAction::Let(_, var, _) = action
+                && let ResolvedVarBinding::Lexical { id } = var.binding
+            {
+                source_ids.insert(id);
+            }
+            action.clone().visit_exprs(&mut |expr| {
+                if let ResolvedExpr::Var(_, var) = &expr
+                    && let ResolvedVarBinding::Lexical { id } = var.binding
+                {
+                    source_ids.insert(id);
+                }
+                expr
+            });
+        }
+        let highest = source_ids.iter().map(|id| id.ordinal()).max().unwrap();
+        let mut store = ProofStore::new(TermDag::default(), HashMap::default(), HashSet::default());
+        let plan = store.head_plan(rule);
+        let generated = plan
+            .actions
+            .iter()
+            .find_map(|action| match action {
+                GenericAction::Let(_, var, _) if var.name.starts_with("@union-operand-") => {
+                    Some(var)
+                }
+                _ => None,
+            })
+            .expect("constructor union operand must be lifted");
+        let ResolvedVarBinding::Lexical { id } = generated.binding else {
+            panic!("synthetic head binding was not lexical");
+        };
+        assert!(id.ordinal() > highest);
+        assert!(!source_ids.contains(&id));
     }
 
     /// A rule head's proofs are the flat array the encoder names positions of and
@@ -134,9 +335,14 @@ mod tests {
             let inputs = head_input_bindings(actions, &mut term_dag);
 
             let mut minted = 0usize;
+            let mut bindings = SymbolGen::new("@proof-test-binding-".to_owned());
+            seed_head_binding_ids(actions, &mut bindings);
             let mut fresh = || {
                 minted += 1;
-                format!("@union-operand-{minted}")
+                (
+                    format!("@union-operand-{minted}"),
+                    bindings.fresh_resolved_binding_id(),
+                )
             };
             let plan = HeadPlan::new(actions, &mut fresh);
             let mut store = ProofStore::new(term_dag, HashMap::default(), HashSet::default());
@@ -283,9 +489,14 @@ mod tests {
             let mut term_dag = TermDag::default();
             let inputs = head_input_bindings(actions, &mut term_dag);
             let mut minted = 0usize;
+            let mut bindings = SymbolGen::new("@proof-test-binding-".to_owned());
+            seed_head_binding_ids(actions, &mut bindings);
             let mut fresh = || {
                 minted += 1;
-                format!("@union-operand-{minted}")
+                (
+                    format!("@union-operand-{minted}"),
+                    bindings.fresh_resolved_binding_id(),
+                )
             };
             let plan = HeadPlan::new(actions, &mut fresh);
             let layout = &plan.layout;
@@ -377,13 +588,13 @@ mod tests {
     fn head_conclusions(
         rule_name: &str,
         actions: &[ResolvedAction],
-        mut bindings: HashMap<String, TermId>,
+        mut bindings: ProofBindings,
         store: &mut ProofStore,
     ) -> Vec<(String, Proposition)> {
         fn eval(
             rule_name: &str,
             expr: &ResolvedExpr,
-            bindings: &HashMap<String, TermId>,
+            bindings: &ProofBindings,
             store: &mut ProofStore,
         ) -> TermId {
             eval_expr_with_subst(rule_name, expr, &mut store.term_dag, bindings)
@@ -393,7 +604,7 @@ mod tests {
         fn exists(
             rule_name: &str,
             expr: &ResolvedExpr,
-            bindings: &HashMap<String, TermId>,
+            bindings: &ProofBindings,
             store: &mut ProofStore,
             out: &mut Vec<(String, Proposition)>,
         ) {
@@ -413,7 +624,7 @@ mod tests {
                 GenericAction::Let(_, var, expr) => {
                     exists(rule_name, expr, &bindings, store, &mut out);
                     let term = eval(rule_name, expr, &bindings, store);
-                    bindings.insert(var.name.clone(), term);
+                    bindings.insert(var.binding, term);
                 }
                 GenericAction::Expr(_, expr) => exists(rule_name, expr, &bindings, store, &mut out),
                 GenericAction::Union(_, lhs, rhs) => {

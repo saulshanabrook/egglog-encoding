@@ -13,6 +13,80 @@ use egglog_ast::span::Span;
 use im_rc::HashMap;
 use std::{fmt::Debug, iter::once, mem::swap};
 
+/// Exact variable-binding authority for one semantic typechecking scope.
+///
+/// Source names are used only while the frontend resolves references into this
+/// table. Every emitted [`ResolvedVar`] carries the selected nominal authority,
+/// so later core/proof/compiler passes never need to recover identity from a
+/// spelling.
+#[derive(Debug, Default)]
+pub(crate) struct ResolvedBindingScope {
+    bindings: crate::util::IndexMap<String, ResolvedVarBinding>,
+    observed_sorts: crate::util::HashMap<ResolvedVarBinding, String>,
+}
+
+impl ResolvedBindingScope {
+    pub(crate) fn bind_exact(
+        &mut self,
+        name: impl Into<String>,
+        binding: ResolvedVarBinding,
+    ) -> Option<ResolvedVarBinding> {
+        self.bindings.insert(name.into(), binding)
+    }
+
+    pub(crate) fn bind_lexical(
+        &mut self,
+        name: impl Into<String>,
+        symbol_gen: &mut SymbolGen,
+    ) -> ResolvedVarBinding {
+        let binding = ResolvedVarBinding::Lexical {
+            id: symbol_gen.fresh_resolved_binding_id(),
+        };
+        self.bind_exact(name, binding);
+        binding
+    }
+
+    /// Record the sort carried by one exact binding authority.
+    ///
+    /// [`ResolvedVar`] equality is intentionally binding-only. Consequently a
+    /// repeated authority with a different sort must be rejected here, at the
+    /// capture/typecheck boundary, instead of being allowed to masquerade as a
+    /// second map key downstream.
+    pub(crate) fn observe_sort(&mut self, binding: ResolvedVarBinding, sort: &ArcSort) {
+        let sort_name = sort.name().to_owned();
+        if let Some(previous) = self.observed_sorts.insert(binding, sort_name.clone()) {
+            assert_eq!(
+                previous, sort_name,
+                "one resolved binding authority was assigned incompatible sorts"
+            );
+        }
+    }
+
+    fn resolve_reference(
+        &mut self,
+        name: &str,
+        typeinfo: &TypeInfo,
+        symbol_gen: &mut SymbolGen,
+    ) -> ResolvedVarBinding {
+        if let Some(binding) = self.bindings.get(name) {
+            return *binding;
+        }
+        let binding = if typeinfo.get_global_sort(name).is_some() {
+            ResolvedVarBinding::Global {
+                function: typeinfo.get_global_function_id(name).unwrap_or_else(|| {
+                    panic!("global {name:?} has a sort but no nominal function identity")
+                }),
+            }
+        } else {
+            ResolvedVarBinding::Lexical {
+                id: symbol_gen.fresh_resolved_binding_id(),
+            }
+        };
+        self.bindings.insert(name.to_owned(), binding);
+        binding
+    }
+}
+
 /// Represents constraints that are logically impossible to satisfy.
 /// These are used to signal type errors during constraint solving.
 #[derive(Clone, Debug)]
@@ -510,22 +584,32 @@ impl Assignment<AtomTerm, ArcSort> {
         &self,
         expr: &GenericExpr<CorrespondingVar<String, String>, String>,
         typeinfo: &TypeInfo,
+        symbol_gen: &mut SymbolGen,
+        bindings: &mut ResolvedBindingScope,
         ctx: crate::Context,
     ) -> ResolvedExpr {
         match &expr {
             GenericExpr::Lit(span, literal) => ResolvedExpr::Lit(span.clone(), literal.clone()),
             GenericExpr::Var(span, var) => {
-                let global_sort = typeinfo.get_global_sort(var);
-                let ty = global_sort
-                    // Span is ignored when looking up atom_terms
-                    .or_else(|| self.get(&AtomTerm::Var(Span::Panic, var.clone())))
-                    .expect("All variables should be assigned before annotation");
+                let binding = bindings.resolve_reference(var, typeinfo, symbol_gen);
+                let is_global_ref = matches!(binding, ResolvedVarBinding::Global { .. });
+                let ty = if is_global_ref {
+                    typeinfo
+                        .get_global_sort(var)
+                        .expect("a global authority must retain its declared sort")
+                } else {
+                    // Span is ignored when looking up atom_terms.
+                    self.get(&AtomTerm::Var(Span::Panic, var.clone()))
+                        .expect("All variables should be assigned before annotation")
+                };
+                bindings.observe_sort(binding, ty);
                 ResolvedExpr::Var(
                     span.clone(),
                     ResolvedVar {
                         name: var.clone(),
                         sort: ty.clone(),
-                        is_global_ref: global_sort.is_some(),
+                        binding,
+                        is_global_ref,
                     },
                 )
             }
@@ -540,7 +624,7 @@ impl Assignment<AtomTerm, ArcSort> {
                 // get the resolved call using resolve_rule
                 let args: Vec<_> = args
                     .iter()
-                    .map(|arg| self.annotate_expr(arg, typeinfo, ctx))
+                    .map(|arg| self.annotate_expr(arg, typeinfo, symbol_gen, bindings, ctx))
                     .collect();
                 // The `values` tuple constructor resolves to `ResolvedCall::Values` carrying its
                 // element sorts. A tuple-output function call carries only its input columns here
@@ -576,15 +660,19 @@ impl Assignment<AtomTerm, ArcSort> {
         &self,
         facts: &GenericFact<CorrespondingVar<String, String>, String>,
         typeinfo: &TypeInfo,
+        symbol_gen: &mut SymbolGen,
+        bindings: &mut ResolvedBindingScope,
         ctx: crate::Context,
     ) -> ResolvedFact {
         match facts {
             GenericFact::Eq(span, e1, e2) => ResolvedFact::Eq(
                 span.clone(),
-                self.annotate_expr(e1, typeinfo, ctx),
-                self.annotate_expr(e2, typeinfo, ctx),
+                self.annotate_expr(e1, typeinfo, symbol_gen, bindings, ctx),
+                self.annotate_expr(e2, typeinfo, symbol_gen, bindings, ctx),
             ),
-            GenericFact::Fact(expr) => ResolvedFact::Fact(self.annotate_expr(expr, typeinfo, ctx)),
+            GenericFact::Fact(expr) => {
+                ResolvedFact::Fact(self.annotate_expr(expr, typeinfo, symbol_gen, bindings, ctx))
+            }
         }
     }
 
@@ -592,11 +680,13 @@ impl Assignment<AtomTerm, ArcSort> {
         &self,
         mapped_facts: &[GenericFact<CorrespondingVar<String, String>, String>],
         typeinfo: &TypeInfo,
+        symbol_gen: &mut SymbolGen,
+        bindings: &mut ResolvedBindingScope,
         ctx: crate::Context,
     ) -> Vec<ResolvedFact> {
         mapped_facts
             .iter()
-            .map(|fact| self.annotate_fact(fact, typeinfo, ctx))
+            .map(|fact| self.annotate_fact(fact, typeinfo, symbol_gen, bindings, ctx))
             .collect()
     }
 
@@ -604,6 +694,9 @@ impl Assignment<AtomTerm, ArcSort> {
         &self,
         action: &MappedAction,
         typeinfo: &TypeInfo,
+        symbol_gen: &mut SymbolGen,
+        bindings: &mut ResolvedBindingScope,
+        let_binding: Option<ResolvedVarBinding>,
         ctx: crate::Context,
     ) -> Result<ResolvedAction, TypeError> {
         match action {
@@ -611,14 +704,22 @@ impl Assignment<AtomTerm, ArcSort> {
                 let ty = self
                     .get(&AtomTerm::Var(span.clone(), var.clone()))
                     .expect("All variables should be assigned before annotation");
+                let expr = self.annotate_expr(expr, typeinfo, symbol_gen, bindings, ctx);
+                let binding =
+                    let_binding.unwrap_or_else(|| bindings.bind_lexical(var.clone(), symbol_gen));
+                if let_binding.is_some() {
+                    bindings.bind_exact(var.clone(), binding);
+                }
+                bindings.observe_sort(binding, ty);
                 Ok(ResolvedAction::Let(
                     span.clone(),
                     ResolvedVar {
                         name: var.clone(),
                         sort: ty.clone(),
+                        binding,
                         is_global_ref: false,
                     },
-                    self.annotate_expr(expr, typeinfo, ctx),
+                    expr,
                 ))
             }
             // Note mapped_var for set is a dummy variable that does not mean anything
@@ -633,9 +734,9 @@ impl Assignment<AtomTerm, ArcSort> {
             ) => {
                 let children: Vec<_> = children
                     .iter()
-                    .map(|child| self.annotate_expr(child, typeinfo, ctx))
+                    .map(|child| self.annotate_expr(child, typeinfo, symbol_gen, bindings, ctx))
                     .collect();
-                let rhs = self.annotate_expr(rhs, typeinfo, ctx);
+                let rhs = self.annotate_expr(rhs, typeinfo, symbol_gen, bindings, ctx);
                 // For a tuple-output function the `rhs` is a `(values ...)` form, so the function
                 // is resolved from its input columns alone.
                 let resolved_call = if let Some(ty) =
@@ -675,7 +776,7 @@ impl Assignment<AtomTerm, ArcSort> {
             ) => {
                 let children: Vec<_> = children
                     .iter()
-                    .map(|child| self.annotate_expr(child, typeinfo, ctx))
+                    .map(|child| self.annotate_expr(child, typeinfo, symbol_gen, bindings, ctx))
                     .collect();
                 let types: Vec<_> = children.iter().map(|child| child.output_type()).collect();
                 let resolved_call =
@@ -689,8 +790,8 @@ impl Assignment<AtomTerm, ArcSort> {
                 ))
             }
             GenericAction::Union(span, lhs, rhs) => {
-                let lhs = self.annotate_expr(lhs, typeinfo, ctx);
-                let rhs = self.annotate_expr(rhs, typeinfo, ctx);
+                let lhs = self.annotate_expr(lhs, typeinfo, symbol_gen, bindings, ctx);
+                let rhs = self.annotate_expr(rhs, typeinfo, symbol_gen, bindings, ctx);
 
                 let sort = lhs.output_type();
                 assert_eq!(sort.name(), rhs.output_type().name());
@@ -706,7 +807,7 @@ impl Assignment<AtomTerm, ArcSort> {
             GenericAction::Panic(span, msg) => Ok(ResolvedAction::Panic(span.clone(), msg.clone())),
             GenericAction::Expr(span, expr) => Ok(ResolvedAction::Expr(
                 span.clone(),
-                self.annotate_expr(expr, typeinfo, ctx),
+                self.annotate_expr(expr, typeinfo, symbol_gen, bindings, ctx),
             )),
         }
     }
@@ -715,11 +816,22 @@ impl Assignment<AtomTerm, ArcSort> {
         &self,
         mapped_actions: &GenericActions<CorrespondingVar<String, String>, String>,
         typeinfo: &TypeInfo,
+        symbol_gen: &mut SymbolGen,
+        bindings: &mut ResolvedBindingScope,
+        let_bindings: &[Option<ResolvedVarBinding>],
         ctx: crate::Context,
     ) -> Result<ResolvedActions, TypeError> {
+        assert_eq!(
+            mapped_actions.len(),
+            let_bindings.len(),
+            "every resolved action must have an explicit binder-authority slot"
+        );
         let actions = mapped_actions
             .iter()
-            .map(|action| self.annotate_action(action, typeinfo, ctx))
+            .zip(let_bindings)
+            .map(|(action, let_binding)| {
+                self.annotate_action(action, typeinfo, symbol_gen, bindings, *let_binding, ctx)
+            })
             .collect::<Result<_, _>>()?;
 
         Ok(ResolvedActions::new(actions))

@@ -24,15 +24,17 @@ type Action = GenericCoreAction<RuleActionCall, RuleVar, RuleValue>;
 #[derive(Clone, Copy)]
 struct Types {
     unit: BaseValueId,
+    bool: BaseValueId,
     i64: BaseValueId,
     f64: BaseValueId,
     string: BaseValueId,
 }
 
 fn register_types(backend: &mut dyn Backend) -> Types {
-    backend.base_values_mut().register_type::<bool>();
+    let bool = backend.base_values_mut().register_type::<bool>();
     Types {
         unit: backend.base_values_mut().register_type::<()>(),
+        bool,
         i64: backend.base_values_mut().register_type::<i64>(),
         f64: backend
             .base_values_mut()
@@ -189,6 +191,7 @@ impl Input {
 #[derive(Debug, Eq, PartialEq)]
 enum Observed {
     Id(u32),
+    Bool(bool),
     I64(i64),
     Unit,
 }
@@ -204,9 +207,12 @@ fn typed_output(primitive: NativeScalarPrimitive, types: Types) -> ColumnTy {
         | NativeScalarPrimitive::I64Min
         | NativeScalarPrimitive::I64Max => ColumnTy::Base(types.i64),
         NativeScalarPrimitive::I64Ge
+        | NativeScalarPrimitive::I64Gt
+        | NativeScalarPrimitive::I64Le
         | NativeScalarPrimitive::I64Lt
         | NativeScalarPrimitive::F64Gt
         | NativeScalarPrimitive::F64Lt => ColumnTy::Base(types.unit),
+        NativeScalarPrimitive::I64BoolLt => ColumnTy::Base(types.bool),
         _ => panic!("test helper does not support native scalar descriptor {primitive:?}"),
     }
 }
@@ -227,6 +233,9 @@ fn scalar_fallback(primitive: NativeScalarPrimitive) -> Box<dyn ExternalFunction
                 | NativeScalarPrimitive::I64Min
                 | NativeScalarPrimitive::I64Max
                 | NativeScalarPrimitive::I64Ge
+                | NativeScalarPrimitive::I64Gt
+                | NativeScalarPrimitive::I64Le
+                | NativeScalarPrimitive::I64BoolLt
                 | NativeScalarPrimitive::I64Lt => {
                     let left = state.base_values().unwrap::<i64>(*left);
                     let right = state.base_values().unwrap::<i64>(*right);
@@ -258,8 +267,17 @@ fn scalar_fallback(primitive: NativeScalarPrimitive) -> Box<dyn ExternalFunction
                         NativeScalarPrimitive::I64Ge => {
                             (left >= right).then(|| state.base_values().get::<()>(()))
                         }
+                        NativeScalarPrimitive::I64Gt => {
+                            (left > right).then(|| state.base_values().get::<()>(()))
+                        }
+                        NativeScalarPrimitive::I64Le => {
+                            (left <= right).then(|| state.base_values().get::<()>(()))
+                        }
                         NativeScalarPrimitive::I64Lt => {
                             (left < right).then(|| state.base_values().get::<()>(()))
+                        }
+                        NativeScalarPrimitive::I64BoolLt => {
+                            Some(state.base_values().get(left < right))
                         }
                         NativeScalarPrimitive::F64Gt | NativeScalarPrimitive::F64Lt => {
                             unreachable!()
@@ -299,6 +317,7 @@ fn observe_reference(
     value.map(
         |value| match ScalarSqlType::from_column(backend.base_values(), output).unwrap() {
             ScalarSqlType::Id => Observed::Id(value.rep()),
+            ScalarSqlType::Bool => Observed::Bool(backend.base_values().unwrap::<bool>(value)),
             ScalarSqlType::I64 => Observed::I64(backend.base_values().unwrap::<i64>(value)),
             ScalarSqlType::Unit => {
                 backend.base_values().unwrap::<()>(value);
@@ -322,6 +341,7 @@ fn observe_sql(
             let defined = row.get::<_, bool>(1)?;
             let value = match output {
                 ScalarSqlType::Id => Observed::Id(row.get::<_, u32>(0)?),
+                ScalarSqlType::Bool => Observed::Bool(row.get::<_, bool>(0)?),
                 ScalarSqlType::I64 => Observed::I64(row.get::<_, i64>(0)?),
                 ScalarSqlType::Unit => {
                     assert!(row.get::<_, bool>(0)?);
@@ -418,6 +438,9 @@ fn compare_typed(primitive: NativeScalarPrimitive, cases: &[(Input, Input)]) -> 
             | NativeScalarPrimitive::I64Min
             | NativeScalarPrimitive::I64Max
             | NativeScalarPrimitive::I64Ge
+            | NativeScalarPrimitive::I64Gt
+            | NativeScalarPrimitive::I64Le
+            | NativeScalarPrimitive::I64BoolLt
             | NativeScalarPrimitive::I64Lt => {}
             _ => panic!("test helper does not support native scalar descriptor {primitive:?}"),
         }
@@ -569,7 +592,10 @@ fn every_reached_scalar_matches_reference_at_semantic_edges() -> Result<()> {
     compare_typed(I64Min, &[(I64(-5), I64(3)), (I64(7), I64(7))])?;
     compare_typed(I64Max, &[(I64(-5), I64(3)), (I64(7), I64(7))])?;
     compare_typed(I64Ge, &[(I64(3), I64(3)), (I64(-2), I64(1))])?;
+    compare_typed(I64Gt, &[(I64(3), I64(3)), (I64(2), I64(1))])?;
+    compare_typed(I64Le, &[(I64(3), I64(3)), (I64(2), I64(1))])?;
     compare_typed(I64Lt, &[(I64(-2), I64(1)), (I64(3), I64(3))])?;
+    compare_typed(I64BoolLt, &[(I64(-2), I64(1)), (I64(3), I64(3))])?;
 
     let nan = f64::NAN;
     let other_nan = f64::from_bits(0x7ff8_0000_0000_0042);
@@ -1552,6 +1578,7 @@ fn scalar_admission_rejects_spoofs_and_malformed_signatures_without_rule_ids() -
 #[test]
 fn payload_selectors_authenticate_and_render_four_inputs() -> Result<()> {
     let mut backend = EGraph::new()?;
+    let types = register_types(&mut backend);
     let token = backend.register_native_primitive(NativePrimitive::SelectMinPayload);
     let expression = ScalarExpression::authenticate(
         backend.base_values(),
@@ -1572,6 +1599,69 @@ fn payload_selectors_authenticate_and_render_four_inputs() -> Result<()> {
         rendered.value,
         "CASE WHEN (left) < (right) THEN (left_payload) ELSE (right_payload) END"
     );
+
+    let equal_token = backend.register_native_primitive(NativePrimitive::SelectEqPayload);
+    let equal = ScalarExpression::authenticate(
+        backend.base_values(),
+        &backend.native_primitives,
+        &backend.native_scalar_primitives,
+        equal_token,
+        &[ColumnTy::Id, ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
+        ColumnTy::Id,
+    )?;
+    let rendered = equal.render(&[
+        "test".into(),
+        "candidate".into(),
+        "if_equal".into(),
+        "otherwise".into(),
+    ]);
+    assert_eq!(rendered.defined, "TRUE");
+    assert_eq!(
+        rendered.value,
+        "CASE WHEN ((test) = (candidate)) THEN (if_equal) ELSE (otherwise) END"
+    );
+
+    let float_equal = ScalarExpression::authenticate(
+        backend.base_values(),
+        &backend.native_primitives,
+        &backend.native_scalar_primitives,
+        equal_token,
+        &[
+            ColumnTy::Base(types.f64),
+            ColumnTy::Base(types.f64),
+            ColumnTy::Base(types.i64),
+            ColumnTy::Base(types.i64),
+        ],
+        ColumnTy::Base(types.i64),
+    )?;
+    for (candidate, expected) in [(f64::NAN, 7), (1.0, 9)] {
+        let values = [
+            Input::F64(f64::NAN),
+            Input::F64(candidate),
+            Input::I64(7),
+            Input::I64(9),
+        ];
+        let sql = values
+            .into_iter()
+            .map(|input| {
+                let ty = input.ty(types);
+                ScalarSqlType::from_column(backend.base_values(), ty).and_then(|scalar| {
+                    scalar.sql_literal(backend.base_values(), input.value(&backend))
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let rendered = float_equal.render(&sql);
+        assert!(rendered.value.contains("isnan"));
+        assert_eq!(
+            observe_sql(
+                &backend,
+                ColumnTy::Base(types.i64),
+                &rendered.value,
+                &rendered.defined,
+            )?,
+            Some(Observed::I64(expected))
+        );
+    }
     Ok(())
 }
 

@@ -3,6 +3,58 @@ use crate::*;
 use crate::{core::ResolvedCall, typechecking::FuncType};
 use egglog_ast::generic_ast::GenericExpr;
 
+fn observe_binding(fresh: &mut SymbolGen, var: &ResolvedVar) {
+    if let ResolvedVarBinding::Lexical { id } = var.binding {
+        fresh.observe_resolved_binding_id(id);
+    }
+}
+
+fn observe_action_binders(fresh: &mut SymbolGen, actions: &ResolvedActions) {
+    for action in &actions.0 {
+        if let ResolvedAction::Let(_, var, _) = action {
+            observe_binding(fresh, var);
+        }
+    }
+}
+
+fn observe_command_binders(fresh: &mut SymbolGen, command: &ResolvedNCommand) {
+    match command {
+        ResolvedNCommand::Function(function) => {
+            if let Some(merge) = &function.merge {
+                observe_action_binders(fresh, &merge.actions);
+            }
+        }
+        ResolvedNCommand::NormRule { rule } => observe_action_binders(fresh, &rule.head),
+        ResolvedNCommand::CoreAction(ResolvedAction::Let(_, var, _)) => {
+            observe_binding(fresh, var);
+        }
+        ResolvedNCommand::CoreAction(_) => {}
+        ResolvedNCommand::CoreActions(actions) => observe_action_binders(fresh, actions),
+        ResolvedNCommand::LetBegin(_, var, actions) => {
+            observe_binding(fresh, var);
+            observe_action_binders(fresh, actions);
+        }
+        ResolvedNCommand::Fail(_, commands) => {
+            for command in commands {
+                observe_command_binders(fresh, command);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn advance_binding_high_water(prog: &[ResolvedNCommand], fresh: &mut SymbolGen) {
+    for command in prog {
+        command.clone().visit_exprs(&mut |expr| {
+            if let ResolvedExpr::Var(_, var) = &expr {
+                observe_binding(fresh, var);
+            }
+            expr
+        });
+        observe_command_binders(fresh, command);
+    }
+}
+
 /// Transforms queries into "proof normal form" by lifting subexpressions to the
 /// top level, so that every primitive is applied only to variables, literals, or
 /// other primitives. This is what lets the proof checker re-evaluate a primitive
@@ -25,6 +77,7 @@ pub(crate) fn proof_form(
     prog: Vec<ResolvedNCommand>,
     fresh: &mut SymbolGen,
 ) -> Vec<ResolvedNCommand> {
+    advance_binding_high_water(&prog, fresh);
     prog.into_iter()
         .map(|cmd| proof_form_cmd(cmd, fresh))
         .collect()
@@ -105,6 +158,9 @@ fn proof_form_expr(
                 ResolvedVar {
                     name: fresh.fresh("n"),
                     sort: outputs[0].clone(),
+                    binding: ResolvedVarBinding::Lexical {
+                        id: fresh.fresh_resolved_binding_id(),
+                    },
                     is_global_ref: false,
                 },
             );
@@ -150,6 +206,9 @@ fn proof_form_expr(
                             ResolvedVar {
                                 name: fresh.fresh("v"),
                                 sort: outputs[0].clone(),
+                                binding: ResolvedVarBinding::Lexical {
+                                    id: fresh.fresh_resolved_binding_id(),
+                                },
                                 is_global_ref: false,
                             },
                         );
@@ -204,6 +263,9 @@ fn proof_form_expr(
                         ResolvedVar {
                             name: fresh.fresh("v"),
                             sort,
+                            binding: ResolvedVarBinding::Lexical {
+                                id: fresh.fresh_resolved_binding_id(),
+                            },
                             is_global_ref: false,
                         },
                     );
@@ -216,5 +278,64 @@ fn proof_form_expr(
             ResolvedExpr::Call(span, head, new_args)
         }
         ResolvedExpr::Lit(..) | ResolvedExpr::Var(..) => fact,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        ast::ResolvedBindingId,
+        sort::I64Sort,
+        typechecking::{CallableIdentity, FunctionRegistrationId},
+    };
+
+    #[test]
+    fn proof_form_advances_past_foreign_binding_stream() {
+        let sort = I64Sort.to_arcsort();
+        let source_binding = ResolvedVarBinding::Lexical {
+            id: ResolvedBindingId::new(7),
+        };
+        let source = ResolvedExpr::Var(
+            Span::Panic,
+            ResolvedVar {
+                name: "source".to_owned(),
+                sort: sort.clone(),
+                binding: source_binding,
+                is_global_ref: false,
+            },
+        );
+        let call = ResolvedCall::Func(FuncType {
+            identity: CallableIdentity::Function(FunctionRegistrationId::new(0)),
+            name: "foreign".to_owned(),
+            subtype: FunctionSubtype::Custom,
+            input: vec![sort.clone()],
+            outputs: vec![sort],
+        });
+        let program = vec![ResolvedNCommand::Check(
+            Span::Panic,
+            vec![ResolvedFact::Fact(ResolvedExpr::Call(
+                Span::Panic,
+                call,
+                vec![source],
+            ))],
+        )];
+        let mut symbols = SymbolGen::new("@proof-normal-".to_owned());
+        let transformed = proof_form(program, &mut symbols);
+        let mut generated = vec![];
+        for command in transformed {
+            command.visit_exprs(&mut |expr| {
+                if let ResolvedExpr::Var(_, var) = &expr
+                    && var.name.starts_with("@proof-normal-")
+                    && let ResolvedVarBinding::Lexical { id } = var.binding
+                    && !generated.contains(&id)
+                {
+                    generated.push(id);
+                }
+                expr
+            });
+        }
+        assert_eq!(generated.len(), 1);
+        assert!(generated[0].ordinal() > 7);
     }
 }

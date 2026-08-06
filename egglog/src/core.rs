@@ -280,9 +280,9 @@ pub trait IsFunc {
 }
 
 impl IsFunc for ResolvedCall {
-    fn is_constructor(&self, type_info: &TypeInfo) -> bool {
+    fn is_constructor(&self, _type_info: &TypeInfo) -> bool {
         match self {
-            ResolvedCall::Func(func) => type_info.is_constructor(&func.name),
+            ResolvedCall::Func(func) => func.subtype == FunctionSubtype::Constructor,
             ResolvedCall::Primitive(_) => false,
             ResolvedCall::Values(_) => false,
         }
@@ -406,14 +406,14 @@ pub(crate) trait GenericActionsExt<Head, Leaf> {
     ) -> Result<(GenericCoreActions<Head, Leaf>, MappedActions<Head, Leaf>), TypeError>
     where
         Head: Clone + Display + IsFunc + HeadOps,
-        Leaf: Clone + PartialEq + Eq + Display + Hash,
+        Leaf: AtomLeafAuthority,
         FG: FreshGen<Head, Leaf>;
 }
 
 impl<Head, Leaf> GenericActionsExt<Head, Leaf> for GenericActions<Head, Leaf>
 where
     Head: Clone + Display + IsFunc + HeadOps,
-    Leaf: Clone + PartialEq + Eq + Display + Hash,
+    Leaf: AtomLeafAuthority,
 {
     #[allow(clippy::type_complexity)]
     fn to_core_actions<FG>(
@@ -422,7 +422,7 @@ where
     ) -> Result<(GenericCoreActions<Head, Leaf>, MappedActions<Head, Leaf>), TypeError>
     where
         Head: Clone + Display + IsFunc + HeadOps,
-        Leaf: Clone + PartialEq + Eq + Display + Hash,
+        Leaf: AtomLeafAuthority,
         FG: FreshGen<Head, Leaf>,
     {
         let mut norm_actions = vec![];
@@ -443,7 +443,7 @@ where
                     norm_actions.push(GenericCoreAction::LetAtomTerm(
                         span.clone(),
                         var.clone(),
-                        mapped_expr.get_corresponding_var_or_lit(typeinfo),
+                        mapped_expr.get_corresponding_var_or_lit_in_scope(typeinfo, ctx.binding),
                     ));
                     mapped_actions.0.push(GenericAction::Let(
                         span.clone(),
@@ -466,7 +466,9 @@ where
                             let mut terms = vec![];
                             for v in vargs {
                                 let m = v.to_core_actions(ctx, &mut norm_actions)?;
-                                terms.push(m.get_corresponding_var_or_lit(typeinfo));
+                                terms.push(
+                                    m.get_corresponding_var_or_lit_in_scope(typeinfo, ctx.binding),
+                                );
                                 mapped.push(m);
                             }
                             let dummy = ctx.fresh_gen.fresh(vhead);
@@ -479,7 +481,8 @@ where
                         }
                         _ => {
                             let m = expr.to_core_actions(ctx, &mut norm_actions)?;
-                            let term = m.get_corresponding_var_or_lit(typeinfo);
+                            let term =
+                                m.get_corresponding_var_or_lit_in_scope(typeinfo, ctx.binding);
                             (m, vec![term])
                         }
                     };
@@ -488,7 +491,7 @@ where
                         head.clone(),
                         mapped_args
                             .iter()
-                            .map(|e| e.get_corresponding_var_or_lit(typeinfo))
+                            .map(|e| e.get_corresponding_var_or_lit_in_scope(typeinfo, ctx.binding))
                             .collect(),
                         value_terms,
                     ));
@@ -512,7 +515,7 @@ where
                         head.clone(),
                         mapped_args
                             .iter()
-                            .map(|e| e.get_corresponding_var_or_lit(typeinfo))
+                            .map(|e| e.get_corresponding_var_or_lit_in_scope(typeinfo, ctx.binding))
                             .collect(),
                     ));
                     let v = ctx.fresh_gen.fresh(head);
@@ -547,10 +550,20 @@ where
                                 head.clone(),
                                 mapped_args
                                     .iter()
-                                    .map(|e| e.get_corresponding_var_or_lit(typeinfo))
+                                    .map(|e| {
+                                        e.get_corresponding_var_or_lit_in_scope(
+                                            typeinfo,
+                                            ctx.binding,
+                                        )
+                                    })
                                     .collect(),
                                 // Constructors are single-output, so a single value column.
-                                vec![mapped_expr.get_corresponding_var_or_lit(typeinfo)],
+                                vec![
+                                    mapped_expr.get_corresponding_var_or_lit_in_scope(
+                                        typeinfo,
+                                        ctx.binding,
+                                    ),
+                                ],
                             ));
                             let v = ctx.fresh_gen.fresh(head);
                             mapped_actions.0.push(GenericAction::Set(
@@ -565,8 +578,10 @@ where
                             let mapped_e2 = e2.to_core_actions(ctx, &mut norm_actions)?;
                             norm_actions.push(GenericCoreAction::Union(
                                 span.clone(),
-                                mapped_e1.get_corresponding_var_or_lit(typeinfo),
-                                mapped_e2.get_corresponding_var_or_lit(typeinfo),
+                                mapped_e1
+                                    .get_corresponding_var_or_lit_in_scope(typeinfo, ctx.binding),
+                                mapped_e2
+                                    .get_corresponding_var_or_lit_in_scope(typeinfo, ctx.binding),
                             ));
                             mapped_actions.0.push(GenericAction::Union(
                                 span.clone(),
@@ -597,7 +612,7 @@ where
 pub(crate) trait GenericExprExt<Head, Leaf>
 where
     Head: Clone + Display,
-    Leaf: Clone + PartialEq + Eq + Display + Hash,
+    Leaf: AtomLeafAuthority,
 {
     fn to_query(
         &self,
@@ -618,7 +633,7 @@ where
 impl<Head, Leaf> GenericExprExt<Head, Leaf> for GenericExpr<Head, Leaf>
 where
     Head: Clone + Display,
-    Leaf: Clone + PartialEq + Eq + Display + Hash,
+    Leaf: AtomLeafAuthority,
 {
     fn to_query(
         &self,
@@ -630,7 +645,7 @@ where
     )
     where
         Head: Clone + Display,
-        Leaf: Clone + PartialEq + Eq + Display + Hash,
+        Leaf: AtomLeafAuthority,
     {
         match self {
             GenericExpr::Lit(span, lit) => (vec![], GenericExpr::Lit(span.clone(), lit.clone())),
@@ -689,7 +704,9 @@ where
                 let mut mapped_args = vec![];
                 for arg in args {
                     let mapped_arg = arg.to_core_actions(ctx, out_actions)?;
-                    norm_args.push(mapped_arg.get_corresponding_var_or_lit(typeinfo));
+                    norm_args.push(
+                        mapped_arg.get_corresponding_var_or_lit_in_scope(typeinfo, ctx.binding),
+                    );
                     mapped_args.push(mapped_arg);
                 }
                 let var = ctx.fresh_gen.fresh(f);
@@ -916,13 +933,13 @@ pub(crate) trait GenericRuleExt<Head, Leaf> {
     ) -> Result<GenericCoreRule<HeadOrEq<Head>, Head, Leaf>, TypeError>
     where
         Head: Clone + Display + IsFunc + HeadOps,
-        Leaf: Clone + PartialEq + Eq + Display + Hash + Debug;
+        Leaf: AtomLeafAuthority + Debug;
 }
 
 impl<Head, Leaf> GenericRuleExt<Head, Leaf> for GenericRule<Head, Leaf>
 where
     Head: Clone + Display + IsFunc + HeadOps,
-    Leaf: Clone + PartialEq + Eq + Display + Hash + Debug,
+    Leaf: AtomLeafAuthority + Debug,
 {
     fn to_core_rule(
         &self,
@@ -932,7 +949,7 @@ where
     ) -> Result<GenericCoreRule<HeadOrEq<Head>, Head, Leaf>, TypeError>
     where
         Head: Clone + Display + IsFunc + HeadOps,
-        Leaf: Clone + PartialEq + Eq + Display + Hash + Debug,
+        Leaf: AtomLeafAuthority + Debug,
     {
         let (body, _correspondence) = Facts(self.body.clone()).to_query(typeinfo, fresh_gen);
         let mut binding = body.vars().collect::<IndexSet<_>>();
@@ -963,7 +980,9 @@ impl ResolvedRuleExt for ResolvedRule {
         fresh_gen: &mut SymbolGen,
         union_to_set_optimization: bool,
     ) -> Result<ResolvedCoreRule, TypeError> {
-        let value_eq = &typeinfo.get_prims("value-eq").unwrap()[0];
+        let value_eq = typeinfo.value_eq_primitive().unwrap_or_else(|| {
+            panic!("frontend did not register exact value-eq primitive authority")
+        });
         let value_eq = |at1: &ResolvedAtomTerm, at2: &ResolvedAtomTerm| {
             ResolvedCall::Primitive(SpecializedPrimitive {
                 prim_with_id: value_eq.clone(),

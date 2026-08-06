@@ -11,7 +11,7 @@ use crate::{
     Term, TermDag, TermId,
     ast::{
         FunctionSubtype, GenericAction, GenericNCommand, ResolvedExpr, ResolvedFact,
-        ResolvedNCommand,
+        ResolvedNCommand, ResolvedVarBinding,
     },
     core::ResolvedCall,
     proofs::proof_format::{Justification, ProofId, ProofStore, Proposition},
@@ -19,6 +19,20 @@ use crate::{
     util::{HashMap, HashSet, IndexMap, SymbolGen},
 };
 use thiserror::Error;
+
+pub(crate) type ProofBindings = HashMap<ResolvedVarBinding, TermId>;
+
+pub(crate) fn merge_old_substitution_key(column: usize) -> ResolvedVarBinding {
+    ResolvedVarBinding::MergeOld { column }
+}
+
+pub(crate) fn merge_new_substitution_key(column: usize) -> ResolvedVarBinding {
+    ResolvedVarBinding::MergeNew { column }
+}
+
+fn resolved_var_substitution_key(var: &crate::ast::ResolvedVar) -> ResolvedVarBinding {
+    var.binding
+}
 
 /// A side condition is a rule-body fact that is just a container-producing
 /// primitive applied to bound variables — `(= v (vec-of e))`, `(= (set-of a)
@@ -44,7 +58,7 @@ pub(super) fn is_container_side_condition(fact: &ResolvedFact) -> bool {
 #[derive(Debug, Clone)]
 pub(crate) struct ActionContext {
     /// Terms bound to variables (from Let actions)
-    pub var_bindings: HashMap<String, TermId>,
+    pub var_bindings: ProofBindings,
     /// Propositions (equalities) implied by the actions
     pub propositions: HashSet<Proposition>,
 }
@@ -72,8 +86,8 @@ pub(crate) fn run_merge(
     new_term: TermId,
 ) -> Result<(TermId, HashSet<Proposition>), ProofCheckError> {
     let mut subst = HashMap::default();
-    subst.insert("old".to_string(), old_term);
-    subst.insert("new".to_string(), new_term);
+    subst.insert(merge_old_substitution_key(0), old_term);
+    subst.insert(merge_new_substitution_key(0), new_term);
     for cmd in prog {
         if let GenericNCommand::Function(func_decl) = cmd
             && func_decl.name == func_name
@@ -102,7 +116,7 @@ pub(crate) fn run_merge(
 ///    - Reflexive equalities from set statements
 pub(crate) fn process_actions(
     rule_name: &str,
-    mut bindings: HashMap<String, TermId>,
+    mut bindings: ProofBindings,
     actions: &[&GenericAction<ResolvedCall, crate::ast::ResolvedVar>],
     term_dag: &mut TermDag,
 ) -> Result<ActionContext, ProofCheckError> {
@@ -115,7 +129,7 @@ pub(crate) fn process_actions(
                 // Evaluate the expression and collect propositions
                 let (term_id, new_props) =
                     eval_expr_with_subst(rule_name, expr, term_dag, &bindings)?;
-                bindings.insert(var.name.clone(), term_id);
+                bindings.insert(resolved_var_substitution_key(var), term_id);
                 propositions.extend(new_props);
             }
             GenericAction::Union(_, lhs_expr, rhs_expr) => {
@@ -169,19 +183,22 @@ pub(crate) fn eval_expr_with_subst(
     rule_name: &str,
     expr: &ResolvedExpr,
     dag: &mut TermDag,
-    subst: &HashMap<String, TermId>,
+    subst: &ProofBindings,
 ) -> Result<(TermId, HashSet<Proposition>), ProofCheckError> {
     let mut propositions = HashSet::default();
 
     let term_id = match expr {
         ResolvedExpr::Lit(_, lit) => dag.lit(lit.clone()),
-        ResolvedExpr::Var(_, var) => subst.get(&var.name).copied().ok_or_else(|| {
-            ProofCheckError::from(ProofCheckErrorKind::UnboundVariable {
-                rule_name: rule_name.to_string(),
-                variable: var.name.clone(),
-                available: subst.keys().cloned().collect::<Vec<_>>().join(", "),
-            })
-        })?,
+        ResolvedExpr::Var(_, var) => subst
+            .get(&resolved_var_substitution_key(var))
+            .copied()
+            .ok_or_else(|| {
+                ProofCheckError::from(ProofCheckErrorKind::UnboundVariable {
+                    rule_name: rule_name.to_string(),
+                    variable: var.name.clone(),
+                    available: format_binding_keys(subst),
+                })
+            })?,
         ResolvedExpr::Call(_, head, args) => match head {
             ResolvedCall::Func(_func_type) => {
                 let mut arg_terms = Vec::new();
@@ -267,7 +284,31 @@ pub(crate) fn gather_globals(
 ) -> Result<HashMap<String, TermId>, ProofCheckError> {
     let actions: Vec<_> = gather_global_actions(prog).collect();
     let ctx = process_actions("global_action", HashMap::default(), &actions, term_dag)?;
-    Ok(ctx.var_bindings)
+    let mut globals = HashMap::default();
+    for action in actions {
+        if let GenericAction::Let(_, var, _) = action
+            && let Some(term) = ctx.var_bindings.get(&var.binding)
+        {
+            globals.insert(var.name.clone(), *term);
+        }
+    }
+    Ok(globals)
+}
+
+/// Re-key already evaluated public globals by their exact resolved authority.
+pub(crate) fn exact_global_bindings(
+    prog: &[ResolvedNCommand],
+    globals: &HashMap<String, TermId>,
+) -> ProofBindings {
+    let mut exact = ProofBindings::default();
+    for action in gather_global_actions(prog) {
+        if let GenericAction::Let(_, var, _) = action
+            && let Some(term) = globals.get(&var.name)
+        {
+            exact.insert(var.binding, *term);
+        }
+    }
+    exact
 }
 
 /// Errors that can occur during proof checking.
@@ -364,6 +405,14 @@ pub enum ProofCheckErrorKind {
         rule_name: String,
         variable: String,
         available: String,
+    },
+    /// A public rule-proof substitution key could not be translated to one
+    /// exact lexical binding in that rule's body.
+    #[error("Rule '{rule_name}': invalid substitution key '{variable}': {reason}")]
+    InvalidRuleSubstitution {
+        rule_name: String,
+        variable: String,
+        reason: String,
     },
     /// Function fact doesn't match the expected reflexive equality proposition
     #[error(
@@ -520,8 +569,8 @@ pub(crate) struct ProofCheckContext {
     /// Each entry is a pair (lhs, rhs) that was unified
     /// This includes reflexive equalities (term, term) for all globals
     global_equalities: HashSet<Proposition>,
-    /// Map of global variable names to their TermIds
-    global_bindings: HashMap<String, TermId>,
+    /// Map of exact global authorities to their TermIds.
+    global_bindings: ProofBindings,
     /// Cache of already-checked proofs
     checked_proofs: HashMap<ProofId, Proposition>,
 }
@@ -574,6 +623,134 @@ fn format_substitution<'a>(
         .map(|(k, v)| format!("{} -> {}", k, format_term(term_dag, *v)))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn format_exact_substitution(term_dag: &TermDag, substitution: &ProofBindings) -> String {
+    let mut entries = substitution
+        .iter()
+        .map(|(binding, value)| format!("{binding:?} -> {}", format_term(term_dag, *value)))
+        .collect::<Vec<_>>();
+    entries.sort();
+    entries.join(", ")
+}
+
+fn format_binding_keys(bindings: &ProofBindings) -> String {
+    let mut keys = bindings
+        .keys()
+        .map(|binding| format!("{binding:?}"))
+        .collect::<Vec<_>>();
+    keys.sort();
+    keys.join(", ")
+}
+
+#[derive(Clone, Copy)]
+enum PublicBindingCatalogEntry {
+    Lexical(ResolvedVarBinding),
+    ProtectedGlobal,
+    NonLexical,
+    Ambiguous,
+}
+
+/// Translate the serialized proof format's diagnostic variable names once, at
+/// the boundary, into the exact authorities used by all internal replay.
+pub(crate) fn translate_rule_substitution(
+    rule: &crate::ast::GenericRule<ResolvedCall, crate::ast::ResolvedVar>,
+    public: &IndexMap<String, TermId>,
+) -> Result<ProofBindings, ProofCheckError> {
+    fn observe_expr(expr: &ResolvedExpr, catalog: &mut HashMap<String, PublicBindingCatalogEntry>) {
+        match expr {
+            ResolvedExpr::Lit(..) => {}
+            ResolvedExpr::Call(_, _, args) => {
+                for arg in args {
+                    observe_expr(arg, catalog);
+                }
+            }
+            ResolvedExpr::Var(_, var) => {
+                let next = if matches!(var.binding, ResolvedVarBinding::Global { .. }) {
+                    PublicBindingCatalogEntry::ProtectedGlobal
+                } else if matches!(var.binding, ResolvedVarBinding::Lexical { .. }) {
+                    PublicBindingCatalogEntry::Lexical(var.binding)
+                } else {
+                    PublicBindingCatalogEntry::NonLexical
+                };
+                match catalog.entry(var.name.clone()) {
+                    crate::util::HEntry::Vacant(entry) => {
+                        entry.insert(next);
+                    }
+                    crate::util::HEntry::Occupied(mut entry) => {
+                        let same_lexical = matches!(
+                            (*entry.get(), next),
+                            (
+                                PublicBindingCatalogEntry::Lexical(left),
+                                PublicBindingCatalogEntry::Lexical(right)
+                            ) if left == right
+                        );
+                        if !same_lexical {
+                            entry.insert(match (*entry.get(), next) {
+                                (PublicBindingCatalogEntry::ProtectedGlobal, _)
+                                | (_, PublicBindingCatalogEntry::ProtectedGlobal) => {
+                                    PublicBindingCatalogEntry::ProtectedGlobal
+                                }
+                                _ => PublicBindingCatalogEntry::Ambiguous,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut catalog = HashMap::default();
+    for fact in &rule.body {
+        match fact {
+            ResolvedFact::Eq(_, left, right) => {
+                observe_expr(left, &mut catalog);
+                observe_expr(right, &mut catalog);
+            }
+            ResolvedFact::Fact(expr) => observe_expr(expr, &mut catalog),
+        }
+    }
+
+    let mut exact = ProofBindings::default();
+    for (name, term) in public {
+        let binding = match catalog.get(name).copied() {
+            Some(PublicBindingCatalogEntry::Lexical(binding)) => binding,
+            Some(PublicBindingCatalogEntry::ProtectedGlobal) => {
+                return Err(ProofCheckErrorKind::InvalidRuleSubstitution {
+                    rule_name: rule.name.clone(),
+                    variable: name.clone(),
+                    reason: "global bindings are protected from public substitutions".to_owned(),
+                }
+                .into());
+            }
+            Some(PublicBindingCatalogEntry::NonLexical) => {
+                return Err(ProofCheckErrorKind::InvalidRuleSubstitution {
+                    rule_name: rule.name.clone(),
+                    variable: name.clone(),
+                    reason: "the name does not denote a lexical body binding".to_owned(),
+                }
+                .into());
+            }
+            Some(PublicBindingCatalogEntry::Ambiguous) => {
+                return Err(ProofCheckErrorKind::InvalidRuleSubstitution {
+                    rule_name: rule.name.clone(),
+                    variable: name.clone(),
+                    reason: "the diagnostic name is ambiguous in the rule body".to_owned(),
+                }
+                .into());
+            }
+            None => {
+                return Err(ProofCheckErrorKind::InvalidRuleSubstitution {
+                    rule_name: rule.name.clone(),
+                    variable: name.clone(),
+                    reason: "no body variable has that diagnostic name".to_owned(),
+                }
+                .into());
+            }
+        };
+        exact.insert(binding, *term);
+    }
+    Ok(exact)
 }
 
 impl ProofStore {
@@ -672,12 +849,9 @@ impl ProofStore {
                     .into());
                 }
 
-                let mut working_subst = ctx
-                    .global_bindings
-                    .iter()
-                    .map(|(k, v)| (k.clone(), *v))
-                    .chain(substitution.iter().map(|(k, v)| (k.clone(), *v)))
-                    .collect::<HashMap<_, _>>();
+                let translated = translate_rule_substitution(rule, substitution)?;
+                let mut working_subst = ctx.global_bindings.clone();
+                working_subst.extend(translated);
 
                 // Verify each premise in order. A container side condition carries
                 // only an `Eval` marker, so re-evaluate it here with the rule's
@@ -988,7 +1162,7 @@ impl ProofStore {
     fn check_side_condition(
         &mut self,
         fact: &ResolvedFact,
-        subst: &mut HashMap<String, TermId>,
+        subst: &mut ProofBindings,
         rule_name: &str,
     ) -> Result<(), ProofCheckError> {
         let (lhs, rhs) = match fact {
@@ -1006,7 +1180,7 @@ impl ProofStore {
             // One side is an unbound variable: it is the side condition's output.
             (ResolvedExpr::Var(_, v), None, _, Some(val))
             | (_, Some(val), ResolvedExpr::Var(_, v), None) => {
-                subst.insert(v.name.clone(), val);
+                subst.insert(resolved_var_substitution_key(v), val);
                 Ok(())
             }
             // Both sides determined: they must be the same container.
@@ -1036,11 +1210,11 @@ impl ProofStore {
     fn eval_side(
         &mut self,
         expr: &ResolvedExpr,
-        subst: &HashMap<String, TermId>,
+        subst: &ProofBindings,
         rule_name: &str,
     ) -> Result<Option<TermId>, ProofCheckError> {
         match expr {
-            ResolvedExpr::Var(_, v) => Ok(subst.get(&v.name).copied()),
+            ResolvedExpr::Var(_, v) => Ok(subst.get(&v.binding).copied()),
             _ => {
                 let (term, _) = eval_expr_with_subst(rule_name, expr, &mut self.term_dag, subst)?;
                 Ok(Some(term))
@@ -1105,7 +1279,7 @@ impl ProofStore {
         &mut self,
         fact: &ResolvedFact,
         prop: &Proposition,
-        subst_with_globals: &HashMap<String, TermId>,
+        subst_with_globals: &ProofBindings,
         rule_name: &str,
     ) -> Result<(), ProofCheckError> {
         let (lhs, rhs) = (prop.lhs, prop.rhs);
@@ -1126,15 +1300,11 @@ impl ProofStore {
                 ResolvedExpr::Var(_, v),
             ) => {
                 // Get the output variable's term
-                let var_term = subst_with_globals.get(&v.name).copied().ok_or_else(|| {
+                let var_term = subst_with_globals.get(&v.binding).copied().ok_or_else(|| {
                     ProofCheckErrorKind::UnboundVariable {
                         rule_name: rule_name.to_string(),
                         variable: v.name.clone(),
-                        available: subst_with_globals
-                            .keys()
-                            .cloned()
-                            .collect::<Vec<_>>()
-                            .join(", "),
+                        available: format_binding_keys(subst_with_globals),
                     }
                 })?;
 
@@ -1192,7 +1362,7 @@ impl ProofStore {
                     return Err(ProofCheckErrorKind::FactMismatch {
                         rule_name: rule_name.to_string(),
                         fact: format!("{fact}"),
-                        substitution: format_substitution(&self.term_dag, subst_with_globals),
+                        substitution: format_exact_substitution(&self.term_dag, subst_with_globals),
                         actual: format_term(&self.term_dag, rhs),
                         expected: format_term(&self.term_dag, fact_term),
                     }
@@ -1209,17 +1379,20 @@ impl ProofStore {
         &mut self,
         rule_name: &str,
         expr: &ResolvedExpr,
-        substitution: &HashMap<String, TermId>,
+        substitution: &ProofBindings,
     ) -> Result<TermId, ProofCheckError> {
         match expr {
             ResolvedExpr::Lit(_, lit) => Ok(self.term_dag.lit(lit.clone())),
-            ResolvedExpr::Var(_, var) => substitution.get(&var.name).copied().ok_or_else(|| {
-                ProofCheckError::from(ProofCheckErrorKind::UnboundVariable {
-                    rule_name: rule_name.to_string(),
-                    variable: var.name.clone(),
-                    available: substitution.keys().cloned().collect::<Vec<_>>().join(", "),
-                })
-            }),
+            ResolvedExpr::Var(_, var) => substitution
+                .get(&resolved_var_substitution_key(var))
+                .copied()
+                .ok_or_else(|| {
+                    ProofCheckError::from(ProofCheckErrorKind::UnboundVariable {
+                        rule_name: rule_name.to_string(),
+                        variable: var.name.clone(),
+                        available: format_binding_keys(substitution),
+                    })
+                }),
             ResolvedExpr::Call(_, head, args) => {
                 // Evaluate all arguments first
                 let mut arg_terms = Vec::new();
@@ -1273,7 +1446,7 @@ impl ProofStore {
         &mut self,
         rule: &crate::ast::GenericRule<ResolvedCall, crate::ast::ResolvedVar>,
         substitution: &IndexMap<String, TermId>,
-        subst_with_globals: &HashMap<String, TermId>,
+        subst_with_globals: &ProofBindings,
         claimed: &Proposition,
         rule_name: &str,
     ) -> Result<(), ProofCheckError> {

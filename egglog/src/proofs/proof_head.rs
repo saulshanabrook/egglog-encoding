@@ -18,12 +18,12 @@
 use crate::{
     TermId,
     ast::{
-        FunctionSubtype, GenericAction, GenericExpr, ResolvedAction, ResolvedExpr, ResolvedExprExt,
-        ResolvedVar, Span,
+        FunctionSubtype, GenericAction, GenericExpr, ResolvedAction, ResolvedBindingId,
+        ResolvedExpr, ResolvedExprExt, ResolvedVar, ResolvedVarBinding, Span,
     },
     core::ResolvedCall,
     proofs::{
-        proof_checker::eval_expr_with_subst,
+        proof_checker::{ProofBindings, eval_expr_with_subst},
         proof_encoding::ProofInstrumentor,
         proof_format::{Justification, Proof, ProofId, ProofStore, Proposition, SynthKey},
     },
@@ -122,7 +122,7 @@ impl HeadLayout {
     /// Lay the columns of a planned head out by walking it once.
     fn new(
         actions: &[ResolvedAction],
-        construct_into: &HashMap<String, String>,
+        construct_into: &HashMap<ResolvedVarBinding, ResolvedVar>,
         dropped: &HashSet<usize>,
     ) -> HeadLayout {
         let mut layout = HeadLayout { runs: vec![] };
@@ -131,7 +131,7 @@ impl HeadLayout {
                 continue;
             }
             match action {
-                GenericAction::Let(_, var, expr) if construct_into.contains_key(&var.name) => {
+                GenericAction::Let(_, var, expr) if construct_into.contains_key(&var.binding) => {
                     let (_, args) = constructor_operand(expr)
                         .expect("a construct-into guest is a constructor application");
                     layout.args(args);
@@ -318,7 +318,7 @@ pub(crate) struct HeadPlan {
     pub actions: Vec<ResolvedAction>,
     /// Guest variable -> the variable holding the e-class its constructor is
     /// built into, instead of a fresh one.
-    pub construct_into: HashMap<String, String>,
+    pub construct_into: HashMap<ResolvedVarBinding, ResolvedVar>,
     /// Indices into [`Self::actions`] of the `union`s the plan makes redundant.
     pub dropped: HashSet<usize>,
     /// Where this head's columns go.
@@ -329,7 +329,10 @@ impl HeadPlan {
     /// Plan `actions`. `fresh` names the lifted `let`s; only their uniqueness
     /// matters, so a consumer that wants the shape rather than the code can
     /// supply a local counter.
-    pub(crate) fn new(actions: &[ResolvedAction], fresh: &mut dyn FnMut() -> String) -> Self {
+    pub(crate) fn new(
+        actions: &[ResolvedAction],
+        fresh: &mut dyn FnMut() -> (String, ResolvedBindingId),
+    ) -> Self {
         let actions = normalize_union_operands(actions, fresh);
         let (construct_into, dropped) = plan_construct_into(&actions);
         let layout = HeadLayout::new(&actions, &construct_into, &dropped);
@@ -371,14 +374,26 @@ fn set_row_expr(
 /// that every `union` operand [`plan_construct_into`] sees is a variable.
 fn normalize_union_operands(
     actions: &[ResolvedAction],
-    fresh: &mut dyn FnMut() -> String,
+    fresh: &mut dyn FnMut() -> (String, ResolvedBindingId),
 ) -> Vec<ResolvedAction> {
+    let mut authorities = HashSet::default();
+    for action in actions {
+        if let ResolvedAction::Let(_, var, _) = action {
+            authorities.insert(var.binding);
+        }
+        action.clone().visit_exprs(&mut |expr| {
+            if let ResolvedExpr::Var(_, var) = &expr {
+                authorities.insert(var.binding);
+            }
+            expr
+        });
+    }
     let mut out = vec![];
     for action in actions {
         match action {
             ResolvedAction::Union(span, lhs, rhs) => {
-                let lhs = lift_union_operand(lhs.clone(), &mut out, fresh);
-                let rhs = lift_union_operand(rhs.clone(), &mut out, fresh);
+                let lhs = lift_union_operand(lhs.clone(), &mut out, fresh, &mut authorities);
+                let rhs = lift_union_operand(rhs.clone(), &mut out, fresh, &mut authorities);
                 out.push(ResolvedAction::Union(span.clone(), lhs, rhs));
             }
             other => out.push(other.clone()),
@@ -393,15 +408,23 @@ fn normalize_union_operands(
 fn lift_union_operand(
     operand: ResolvedExpr,
     out: &mut Vec<ResolvedAction>,
-    fresh: &mut dyn FnMut() -> String,
+    fresh: &mut dyn FnMut() -> (String, ResolvedBindingId),
+    authorities: &mut HashSet<ResolvedVarBinding>,
 ) -> ResolvedExpr {
     if constructor_operand(&operand).is_none() {
         return operand;
     }
     let span = operand.span();
+    let (name, id) = fresh();
+    let binding = ResolvedVarBinding::Lexical { id };
+    assert!(
+        authorities.insert(binding),
+        "a synthetic proof-head binding collided with an existing exact authority"
+    );
     let var = ResolvedVar {
-        name: fresh(),
+        name,
         sort: operand.output_type(),
+        binding,
         is_global_ref: false,
     };
     out.push(ResolvedAction::Let(span.clone(), var.clone(), operand));
@@ -418,21 +441,23 @@ fn lift_union_operand(
 /// later-defined constructor operand (so the target's e-class is already bound
 /// where the guest is built); a matched (un-`let`) variable is always an eligible
 /// target.
-fn plan_construct_into(actions: &[ResolvedAction]) -> (HashMap<String, String>, HashSet<usize>) {
-    let mut all_def: HashMap<String, usize> = HashMap::default();
-    let mut ctor_def: HashMap<String, usize> = HashMap::default();
+fn plan_construct_into(
+    actions: &[ResolvedAction],
+) -> (HashMap<ResolvedVarBinding, ResolvedVar>, HashSet<usize>) {
+    let mut all_def: HashMap<ResolvedVarBinding, usize> = HashMap::default();
+    let mut ctor_def: HashMap<ResolvedVarBinding, usize> = HashMap::default();
     for (i, action) in actions.iter().enumerate() {
         if let ResolvedAction::Let(_, v, expr) = action {
-            all_def.insert(v.name.clone(), i);
+            all_def.insert(v.binding, i);
             if constructor_operand(expr).is_some() {
-                ctor_def.insert(v.name.clone(), i);
+                ctor_def.insert(v.binding, i);
             }
         }
     }
 
-    let mut construct_into: HashMap<String, String> = HashMap::default();
+    let mut construct_into: HashMap<ResolvedVarBinding, ResolvedVar> = HashMap::default();
     let mut dropped: HashSet<usize> = HashSet::default();
-    let mut used: HashSet<String> = HashSet::default();
+    let mut used: HashSet<ResolvedVarBinding> = HashSet::default();
     for (i, action) in actions.iter().enumerate() {
         let ResolvedAction::Union(_, lhs, rhs) = action else {
             continue;
@@ -440,7 +465,7 @@ fn plan_construct_into(actions: &[ResolvedAction]) -> (HashMap<String, String>, 
         let (GenericExpr::Var(_, va), GenericExpr::Var(_, vb)) = (lhs, rhs) else {
             continue;
         };
-        let (a, b) = (va.name.clone(), vb.name.clone());
+        let (a, b) = (va.binding, vb.binding);
         if a == b {
             // Union of a variable with itself is a no-op.
             dropped.insert(i);
@@ -453,26 +478,26 @@ fn plan_construct_into(actions: &[ResolvedAction]) -> (HashMap<String, String>, 
         let (guest, target) = match (ctor_def.get(&a), ctor_def.get(&b)) {
             (Some(&ia), Some(&ib)) => {
                 if ia >= ib {
-                    (a.clone(), b)
+                    (va, vb)
                 } else {
-                    (b, a.clone())
+                    (vb, va)
                 }
             }
-            (Some(_), None) => (a.clone(), b),
-            (None, Some(_)) => (b, a.clone()),
+            (Some(_), None) => (va, vb),
+            (None, Some(_)) => (vb, va),
             (None, None) => continue,
         };
         // The target's e-class must be bound where the guest is built: a matched
         // variable always is; a `let` must precede the guest's.
-        let guest_idx = ctor_def[&guest];
-        if let Some(&target_idx) = all_def.get(&target)
+        let guest_idx = ctor_def[&guest.binding];
+        if let Some(&target_idx) = all_def.get(&target.binding)
             && target_idx >= guest_idx
         {
             continue;
         }
-        used.insert(guest.clone());
-        used.insert(target.clone());
-        construct_into.insert(guest, target);
+        used.insert(guest.binding);
+        used.insert(target.binding);
+        construct_into.insert(guest.binding, target.clone());
         dropped.insert(i);
     }
     (construct_into, dropped)
@@ -496,9 +521,9 @@ pub(crate) struct HeadWalk {
     proofs: Vec<Option<ProofId>>,
     /// What the head's variables stand for, as the walk binds them. Empty until
     /// the first walk, which seeds it with the globals and the substitution.
-    bindings: HashMap<String, TermId>,
+    bindings: ProofBindings,
     /// A variable holding a term the head built -> that term's connector.
-    connectors: HashMap<String, ProofId>,
+    connectors: HashMap<ResolvedVarBinding, ProofId>,
 }
 
 impl HeadWalk {
@@ -575,7 +600,7 @@ impl<'a> Firing<'a> {
     pub(crate) fn new(
         rule_name: &'a str,
         plan: &'a HeadPlan,
-        bindings: HashMap<String, TermId>,
+        bindings: ProofBindings,
         body_premises: Vec<ProofId>,
         substitution: IndexMap<String, TermId>,
         bridges: Box<dyn FnMut(&mut ProofStore, ProofId) -> Option<ProofId> + 'a>,
@@ -648,14 +673,14 @@ impl<'a> Firing<'a> {
             }
             match &plan.actions[at] {
                 GenericAction::Let(_, var, expr) => {
-                    let connector = match self.plan.construct_into.get(&var.name) {
+                    let connector = match self.plan.construct_into.get(&var.binding) {
                         Some(target) => self.guest(store, expr, target),
                         None => self.expr(store, expr),
                     };
                     let term = self.eval(store, expr);
-                    self.walk.bindings.insert(var.name.clone(), term);
+                    self.walk.bindings.insert(var.binding, term);
                     if let Some(connector) = connector {
-                        self.walk.connectors.insert(var.name.clone(), connector);
+                        self.walk.connectors.insert(var.binding, connector);
                     }
                 }
                 GenericAction::Expr(_, expr) => {
@@ -713,7 +738,7 @@ impl<'a> Firing<'a> {
             // A variable's value comes from wherever it was bound; a literal
             // holds no built term.
             return match expr {
-                ResolvedExpr::Var(_, var) => self.walk.connectors.get(&var.name).copied(),
+                ResolvedExpr::Var(_, var) => self.walk.connectors.get(&var.binding).copied(),
                 _ => None,
             };
         };
@@ -751,7 +776,7 @@ impl<'a> Firing<'a> {
         &mut self,
         store: &mut ProofStore,
         expr: &ResolvedExpr,
-        target: &str,
+        target: &ResolvedVar,
     ) -> Option<ProofId> {
         let (_, args) =
             constructor_operand(expr).expect("a construct-into guest is a constructor application");
@@ -760,10 +785,10 @@ impl<'a> Firing<'a> {
         self.claim(HeadPosition::Guest, |this| {
             let own = this.own(store, HeadProof::Own, Proposition::new(term, term));
             let to_canonical = store.canonicalize(own, steps);
-            let target_term = *this.walk.bindings.get(target).unwrap_or_else(|| {
+            let target_term = *this.walk.bindings.get(&target.binding).unwrap_or_else(|| {
                 panic!(
-                    "rule {}'s construct-into target {target} is unbound",
-                    this.rule_name
+                    "rule {}'s construct-into target {} is unbound",
+                    this.rule_name, target.name
                 )
             });
             let edge = this.own(
@@ -771,7 +796,7 @@ impl<'a> Firing<'a> {
                 HeadProof::DroppedEdge,
                 Proposition::new(target_term, term),
             );
-            let target_connector = this.walk.connectors.get(target).copied();
+            let target_connector = this.walk.connectors.get(&target.binding).copied();
             let view = store.guest_view(edge, to_canonical, target_connector);
             this.push(HeadProof::GuestView, Some(view));
             let connector = store.connect(to_canonical, view);

@@ -8,6 +8,19 @@ use crate::proofs::proof_head::{
 use crate::typechecking::FuncType;
 use crate::*;
 
+pub(crate) fn is_exact_global_function(egraph: &EGraph, function: &FuncType) -> bool {
+    // The term encoder consumes IR resolved by the preserved source typechecker,
+    // whose registration stream is distinct from the execution e-graph that will
+    // typecheck the generated encoding. Fall back to the current catalog for
+    // direct/non-encoding callers and focused tests.
+    egraph
+        .proof_state
+        .original_typechecking
+        .as_ref()
+        .map_or(&egraph.type_info, |source| &source.type_info)
+        .is_global_function_identity(function.identity)
+}
+
 /// A value an instrumented action names: the id later statements read it by
 /// and, for a term the encoding built here, the term as written plus the proof
 /// connecting the two.
@@ -79,31 +92,31 @@ fn head_column(run: Option<HeadRun>, proof: HeadProof) -> HeadColumn {
 }
 
 /// The variables an action block has bound to a term the encoding built. Every
-/// other name reads back as itself, so only these are recorded.
+/// other authority reads back through its diagnostic spelling, so only these
+/// exact bindings are recorded.
 #[derive(Default)]
-struct Scope(HashMap<String, Operand>);
+struct Scope(HashMap<ResolvedVarBinding, Operand>);
 
 impl Scope {
-    /// What `name` stands for.
-    fn read(&self, name: &str) -> Operand {
+    /// What `var` stands for.
+    fn read(&self, var: &ResolvedVar) -> Operand {
         self.0
-            .get(name)
+            .get(&var.binding)
             .cloned()
-            .unwrap_or_else(|| Operand::plain(name.to_string()))
+            .unwrap_or_else(|| Operand::plain(var.name.clone()))
     }
 
-    /// Record that `(let name <operand>)` was emitted, so a later reference to
-    /// `name` reads the same term.
-    fn bind(&mut self, name: &str, operand: &Operand) {
-        if operand.connector.is_some() {
-            self.0.insert(
-                name.to_string(),
-                Operand {
-                    value: name.to_string(),
-                    ..operand.clone()
-                },
-            );
-        }
+    /// Record that `(let name <operand>)` was emitted, so a later reference with
+    /// the same exact authority reads that binder even if its diagnostic spelling
+    /// has changed.
+    fn bind(&mut self, var: &ResolvedVar, operand: &Operand) {
+        self.0.insert(
+            var.binding,
+            Operand {
+                value: var.name.clone(),
+                ..operand.clone()
+            },
+        );
     }
 }
 
@@ -924,7 +937,7 @@ impl<'a> ProofInstrumentor<'a> {
             ResolvedAction::Let(_span, v, generic_expr) => {
                 let bound = self.instrument_action_expr(generic_expr, emit, scope);
                 emit.stmts.push(format!("(let {} {})", v.name, bound.value));
-                scope.bind(&v.name, &bound);
+                scope.bind(v, &bound);
             }
             ResolvedAction::Set(_span, h, generic_exprs, generic_expr) => {
                 let ResolvedCall::Func(func_type) = h else {
@@ -952,7 +965,7 @@ impl<'a> ProofInstrumentor<'a> {
                 // (x's e-class *is* e's) — no term mint, which would use the wrong
                 // arity for x's term relation (its output is the eclass, so it has
                 // no separate output column).
-                if generic_exprs.is_empty() && self.egraph.type_info.is_global(&func_type.name) {
+                if generic_exprs.is_empty() && is_exact_global_function(self.egraph, func_type) {
                     let e_value = exprs.pop().expect("a set has a value");
                     let proof = if self.proofs_enabled() {
                         self.global_value_proof(emit, func_type, &e_value)
@@ -1680,13 +1693,13 @@ impl<'a> ProofInstrumentor<'a> {
         *idx += 1;
         match expr {
             ResolvedExpr::Lit(_, lit) => Operand::plain(format!("{lit}")),
-            ResolvedExpr::Var(_, resolved_var) => {
-                Operand::plain(match resolved_var.name.as_str() {
-                    "old" => "old0".to_string(),
-                    "new" => "new0".to_string(),
-                    other => other.to_string(),
-                })
-            }
+            ResolvedExpr::Var(_, resolved_var) => Operand::plain(match resolved_var.binding {
+                ResolvedVarBinding::MergeOld { column } => format!("old{column}"),
+                ResolvedVarBinding::MergeNew { column } => format!("new{column}"),
+                ResolvedVarBinding::Lexical { .. }
+                | ResolvedVarBinding::Global { .. }
+                | ResolvedVarBinding::MergeLet { .. } => resolved_var.name.clone(),
+            }),
             ResolvedExpr::Call(_, ResolvedCall::Func(func_type), args) => {
                 let arg_vars = args
                     .iter()
@@ -1735,7 +1748,7 @@ impl<'a> ProofInstrumentor<'a> {
     ) -> Operand {
         match expr {
             ResolvedExpr::Lit(_, lit) => Operand::plain(format!("{lit}")),
-            ResolvedExpr::Var(_, resolved_var) => scope.read(&resolved_var.name),
+            ResolvedExpr::Var(_, resolved_var) => scope.read(resolved_var),
             ResolvedExpr::Call(_, resolved_call, args) => {
                 let args = args
                     .iter()
@@ -1756,7 +1769,7 @@ impl<'a> ProofInstrumentor<'a> {
                             // `:internal-let` function whose value is read from its
                             // FD view (see `lookup_global`). This is the only custom
                             // lookup allowed here.
-                            if self.egraph.type_info.is_global(&func_type.name) {
+                            if is_exact_global_function(self.egraph, func_type) {
                                 Operand::plain(self.lookup_global(&func_type.name, emit.stmts))
                             } else {
                                 panic!(
@@ -1828,7 +1841,12 @@ impl<'a> ProofInstrumentor<'a> {
         // freshly-constructed union operand directly into the other operand's
         // e-class (see proof_encoding.md, "Union in a rule").
         let symbol_gen = &mut self.egraph.parser.symbol_gen;
-        let mut fresh = || symbol_gen.fresh("union_operand");
+        let mut fresh = || {
+            (
+                symbol_gen.fresh("union_operand"),
+                symbol_gen.fresh_resolved_binding_id(),
+            )
+        };
         let plan = HeadPlan::new(actions, &mut fresh);
         // A rule head is a format proof conversion can replay, so its proofs are
         // named by column; everywhere else the encoder composes them itself.
@@ -1848,11 +1866,11 @@ impl<'a> ProofInstrumentor<'a> {
                 continue;
             }
             match action {
-                ResolvedAction::Let(_, v, expr) if plan.construct_into.contains_key(&v.name) => {
-                    let target = scope.read(&plan.construct_into[&v.name]);
+                ResolvedAction::Let(_, v, expr) if plan.construct_into.contains_key(&v.binding) => {
+                    let target = scope.read(&plan.construct_into[&v.binding]);
                     let guest = self.instrument_construct_into(&mut emit, expr, &target, &scope);
                     emit.stmts.push(format!("(let {} {})", v.name, guest.value));
-                    scope.bind(&v.name, &guest);
+                    scope.bind(v, &guest);
                 }
                 _ => self.instrument_action(action, &mut emit, &mut scope),
             }
@@ -2289,5 +2307,107 @@ fn command_skips_rebuild(command: &ResolvedNCommand) -> bool {
         ResolvedNCommand::CoreAction(action) => action_skips_rebuild(action),
         ResolvedNCommand::CoreActions(actions) => actions.0.iter().all(action_skips_rebuild),
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod binding_tests {
+    use super::*;
+    use crate::{ast::ResolvedBindingId, sort::I64Sort};
+
+    #[test]
+    fn scope_reads_plain_let_by_exact_authority_after_diagnostic_rename() {
+        let binder = ResolvedVar {
+            name: "emitted-binder".to_owned(),
+            sort: I64Sort.to_arcsort(),
+            binding: ResolvedVarBinding::Lexical {
+                id: ResolvedBindingId::new(91),
+            },
+            is_global_ref: false,
+        };
+        let mut reference = binder.clone();
+        reference.name = "diagnostic-decoy".to_owned();
+        let mut scope = Scope::default();
+        scope.bind(&binder, &Operand::plain("rhs-value".to_owned()));
+
+        let read = scope.read(&reference);
+        assert_eq!(read.value, binder.name);
+        assert_eq!(read.natural, "rhs-value");
+        assert!(read.connector.is_none());
+    }
+
+    #[test]
+    fn global_set_and_lookup_instrument_by_identity_after_name_mutation() {
+        let mut source = EGraph::new_compile_only(false);
+        let snapshot = source
+            .resolve_program_compile_only(None, "(let $global 7)")
+            .unwrap();
+        let mut declaration = snapshot
+            .execution
+            .iter()
+            .find_map(|command| match &command.command {
+                ResolvedNCommand::Function(function) if function.internal_let => {
+                    Some(function.clone())
+                }
+                _ => None,
+            })
+            .expect("lowered global declaration");
+        let mut set = snapshot
+            .execution
+            .iter()
+            .find_map(|command| match &command.command {
+                ResolvedNCommand::CoreAction(action @ ResolvedAction::Set(..)) => {
+                    Some(action.clone())
+                }
+                _ => None,
+            })
+            .expect("lowered global initialization");
+        let ResolvedCall::Func(declared_function) = &mut declaration.resolved_schema else {
+            panic!("global declaration must resolve to a function");
+        };
+        declaration.name = "diagnostic-decoy".to_owned();
+        declared_function.name = declaration.name.clone();
+        let mutated_function = declared_function.clone();
+        let ResolvedAction::Set(_, ResolvedCall::Func(set_function), _, _) = &mut set else {
+            unreachable!()
+        };
+        set_function.name = declaration.name.clone();
+        assert_eq!(set_function.identity, mutated_function.identity);
+
+        let mut execution = EGraph::default().with_term_encoding_typechecker(source);
+        let mut instrumentor = ProofInstrumentor::new(&mut execution);
+        instrumentor.term_and_view(&declaration);
+        assert!(is_exact_global_function(
+            instrumentor.egraph,
+            &mutated_function
+        ));
+
+        let encoded_set = instrumentor.instrument_actions(&[set], &Justification::Fiat);
+        assert!(
+            encoded_set
+                .iter()
+                .any(|statement| statement.starts_with("(set (diagnostic-decoy 7) ()")),
+            "global set did not take the one-key encoded-global path: {encoded_set:?}"
+        );
+        assert!(
+            encoded_set
+                .iter()
+                .all(|statement| !statement.contains("get-fresh")),
+            "global set fell through to ordinary term minting: {encoded_set:?}"
+        );
+
+        let lookup = ResolvedAction::Expr(
+            Span::Panic,
+            ResolvedExpr::Call(Span::Panic, ResolvedCall::Func(mutated_function), vec![]),
+        );
+        let encoded_lookup = instrumentor.instrument_actions(&[lookup], &Justification::Fiat);
+        let view = instrumentor.view_name("diagnostic-decoy");
+        let lookup_primitive = crate::proofs::proof_fresh::set_if_empty_prim_name(&view);
+        assert!(
+            encoded_lookup
+                .iter()
+                .any(|statement| statement.contains(&format!("({lookup_primitive} "))),
+            "global lookup did not read its FD view: {encoded_lookup:?}"
+        );
     }
 }

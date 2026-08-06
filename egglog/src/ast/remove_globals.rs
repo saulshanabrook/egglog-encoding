@@ -6,7 +6,10 @@
 //! we add a new variable to the query bound to the primitive value.
 
 use crate::*;
-use crate::{core::ResolvedCall, typechecking::FuncType};
+use crate::{
+    core::ResolvedCall,
+    typechecking::{CallableIdentity, FuncType},
+};
 use egglog_ast::generic_ast::{GenericAction, GenericExpr, GenericFact, GenericRule};
 
 struct GlobalRemover<'a> {
@@ -53,11 +56,11 @@ pub(crate) fn remove_globals(
 }
 
 fn resolved_var_to_call(var: &ResolvedVar) -> ResolvedCall {
-    assert!(
-        var.is_global_ref,
-        "resolved_var_to_call called on non-global var"
-    );
+    let ResolvedVarBinding::Global { function } = var.binding else {
+        panic!("global variable has no nominal function authority: {var:?}");
+    };
     ResolvedCall::Func(FuncType {
+        identity: CallableIdentity::Function(function),
         name: var.name.clone(),
         subtype: FunctionSubtype::Custom,
         input: vec![],
@@ -93,7 +96,12 @@ impl GlobalRemover<'_> {
                 GenericAction::Let(span, name, expr) => {
                     let ty = expr.output_type();
 
+                    let ResolvedVarBinding::Global { function } = name.binding else {
+                        panic!("global let has no nominal function authority: {name:?}");
+                    };
+
                     let resolved_call = ResolvedCall::Func(FuncType {
+                        identity: CallableIdentity::Function(function),
                         name: name.name.clone(),
                         subtype: FunctionSubtype::Custom,
                         input: vec![],
@@ -144,7 +152,11 @@ impl GlobalRemover<'_> {
                     _ => panic!("`(let _ (begin ...))` must end with an expression"),
                 };
                 let ty = value.output_type();
+                let ResolvedVarBinding::Global { function } = name.binding else {
+                    panic!("global begin-let has no nominal function authority: {name:?}");
+                };
                 let resolved_call = ResolvedCall::Func(FuncType {
+                    identity: CallableIdentity::Function(function),
                     name: name.name.clone(),
                     subtype: FunctionSubtype::Custom,
                     input: vec![],
@@ -183,9 +195,11 @@ impl GlobalRemover<'_> {
             GenericNCommand::NormRule { rule } => {
                 // A map from the global variables in actions to their new names
                 // in the query.
-                let mut globals = HashMap::default();
+                let mut globals = IndexMap::default();
                 rule.head.clone().visit_exprs(&mut |expr| {
-                    if let Some(resolved_var) = expr.get_global_var() {
+                    if let Some(resolved_var) = expr.get_global_var()
+                        && !globals.contains_key(&resolved_var)
+                    {
                         let new_name = self.fresh.fresh(&resolved_var.name);
                         globals.insert(
                             resolved_var.clone(),
@@ -194,6 +208,9 @@ impl GlobalRemover<'_> {
                                 ResolvedVar {
                                     name: new_name,
                                     sort: resolved_var.sort.clone(),
+                                    binding: ResolvedVarBinding::Lexical {
+                                        id: self.fresh.fresh_resolved_binding_id(),
+                                    },
                                     is_global_ref: false,
                                 },
                             ),
