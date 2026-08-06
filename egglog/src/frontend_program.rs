@@ -5516,6 +5516,41 @@ mod tests {
     }
 
     #[test]
+    fn nested_fail_commands_cannot_switch_subcommands_within_one_group() {
+        let mut view = base_view();
+        let mut nested = fail_command(
+            0,
+            ProgramCommand::PrintSize(PrintSizeTarget::Named {
+                requested_name: "left".to_owned(),
+                target: ResolvedOrMissing::Resolved(LEFT),
+            }),
+        );
+        nested.origin = CommandOrigin::Source(source_ref(0, 1));
+        view.commands.insert(
+            4,
+            command(
+                4,
+                ProgramCommand::Fail(FailBlock {
+                    error_policy: FailErrorPolicy::FirstError,
+                    output_policy: FailOutputPolicy::SuppressAll,
+                    commands: vec![nested],
+                }),
+            ),
+        );
+        for (ordinal, command) in view.commands.iter_mut().enumerate() {
+            command.ordinal = CommandOrdinal::new(u32::try_from(ordinal).unwrap());
+        }
+        let error = FrontendProgram {
+            source: source_document_with(&[("", "(two-command-macro)", 2)], ""),
+            inputs: Vec::new(),
+            streams: ProgramStreams::ExecutionOnly { execution: view },
+        }
+        .validate()
+        .unwrap_err();
+        assert!(error.message.contains("enclosing source trigger"));
+    }
+
+    #[test]
     fn shared_input_content_uses_view_local_targets() {
         let payload = InputPayload {
             id: InputPayloadId::new(0),

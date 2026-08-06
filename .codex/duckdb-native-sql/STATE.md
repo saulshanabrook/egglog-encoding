@@ -4655,3 +4655,135 @@ Exact next verification command:
 ```text
 /opt/homebrew/bin/timeout 110 cargo test -p egglog command_origin --lib
 ```
+
+### Checkpoint 2 slice I accepted: producer-stamped desugar origins (2026-08-06)
+
+Design B is now the exclusive frontend architecture. Every built-in desugar
+producer emits an explicit local `Inherit` or
+`Generated(FrontendDesugaring)` disposition at the moment it creates each
+output command. The late mapper is forbidden from classifying commands by
+names, schemas, spans, rendered text, storage shape, or output position.
+
+`ExactCommandOrigins` is a total recursive preorder sidecar over every
+`NCommand` node, including every `Fail` wrapper and descendant. Construction
+rejects empty, duplicate, missing, out-of-range, non-`Fail`-descending, and
+non-preorder paths. `Inherit` copies the complete incoming origin, including an
+existing generated role; a generated sibling retains only the exact incoming
+source trigger and receives the producing pass's closed role. `Other` roles,
+wrong source-less associations, and a nested `Fail` child whose effective
+trigger differs from its enclosing command reject before mapping.
+
+The desugar producer matrix is explicit and independently audited:
+
+```text
+one-to-one command                 [Inherit]
+relation                          [Generated sort, Inherit function]
+datatype                          [Inherit sort, Generated constructors...]
+datatype*                         first source entry's output Inherit;
+                                  every peer/constructor Generated
+birewrite                         [Inherit forward, Generated reverse]
+prove / proof-testing check       [G, G, G, G, G, Inherit]
+fail                              Inherit wrapper; recursively rebased children
+```
+
+For mixed `datatype*`, the inherited source entry is captured before the
+stable variants/new-sort output partition, so `NewSort A, Variants B(MkB)`
+authentically yields `[Generated, Inherit, Generated]`. An empty desugar
+producer is retained as an explicit taint and origin-aware composition fails
+closed with `UnanchoredEmptyProducer`; ordinary detached desugaring preserves
+its prior behavior. A compatibility canary proves the origin-aware and legacy
+paths produce identical commands and consume fresh symbols in the same order.
+
+Recursive `Fail` rebasing adds each flattened child's cumulative sibling
+offset and then prefixes the retained wrapper. Each child producer is validated
+before assembly. The wrapper and all descendants must share one effective
+source trigger, but inherited descendants may preserve distinct generated
+roles. A separate public-validator canary now proves that switching to another
+subcommand in the same physical source group is invalid; group equality never
+substitutes for exact `SourceSubcommandRef` equality.
+
+Authenticated implementation bytes before this state append:
+
+```text
+base HEAD                                         0d61a0cfe9d52e568bd922cc5d50c0cb088bf0b9
+tracked accepted diff                            9b6622a8f222b24eb68db05da6620953ff334566c7cbfd172338a023fa23fa18
+egglog/src/command_origin.rs                     c6b021dceee5d53f9271fc4575c8c1b551c3b265649622eb9b51ed9365d26c35
+egglog/src/ast/desugar.rs                        17518f5214406278d1b6b838cac9479ecb03760c2516d7383ec266c6bcec0731
+egglog/src/frontend_program.rs                   748741ee51fadcf7d74b94754f64eb1f780c415d17316a88a309c8d4ed68a2d2
+egglog/src/lib.rs                                fcf3860d138c28e37047bfa4ceb3e59888ba8d8f5644d8feeb043fdab5205c4a
+```
+
+Validation on the final authenticated bytes:
+
+```text
+cargo test -p egglog command_origin --lib                  11 passed
+cargo test -p egglog ast::desugar --lib                     7 passed
+cargo test -p egglog --lib                                258 passed
+cargo clippy -p egglog --all-targets -- -D warnings         passed
+make proof-tests                                             passed (216 cases)
+cargo fmt --all -- --check                                  passed
+git diff --check                                             passed
+independent recursive-origin semantic review                 PASS
+independent desugar arm/matrix review                        PASS
+```
+
+Accepted boundary and no-go facts:
+
+1. This slice authenticates production through desugaring but does not yet
+   expose the origin-aware API to compile-only resolution. Its dead-code marker
+   is temporary and no final mapper may run until the mandatory carrier is
+   wired through every later producer.
+2. `Option<ExactCommandOrigins>` inside shared `FinalizedProgram` is rejected.
+   Compile-only uses mandatory type-state wrappers; ordinary `Run` and
+   `ResolvePublic` remain detached and cannot fabricate origins.
+3. Global removal must transform each recursive child's own full origin, not
+   recompose the whole `Fail` from the wrapper origin. Its only fanouts are
+   `Let -> [Generated(GlobalElimination) Function, inherited Set]` and
+   `LetBegin -> [Generated(GlobalElimination) Function, inherited Actions]`.
+4. Source-less `FrontendPrelude` and `ProofHeader` commands may pass through a
+   one-to-one producer, but any source-less fanout requiring a generated sibling
+   fails before fresh allocation. No producer invents a trigger.
+5. Command provenance does not authenticate maintenance inserted inside a
+   structured schedule. Proof instrumentation must add a separate
+   producer-stamped schedule-node sidecar; schedule shape is forbidden evidence.
+6. The untracked runtime-function registry is outside this checkpoint and was
+   neither reviewed nor staged.
+
+Scoreboard: grouped capture, per-view direct anchors, exact typed identities,
+and producer-stamped desugaring are accepted. The checkpoint-2 frontier is the
+mandatory originated type-state carrier through shape-preserving typechecking,
+producer-stamped global removal, proof/input/schedule production, exact runtime
+registries, and the pure two-view public mapper. SQL emission remains blocked.
+
+Circle roster for the next slice:
+
+- integration/API artifact: `OriginatedProgram<C>` and
+  `OriginatedFinalizedProgram`; write set `command_origin.rs` and narrow
+  typechecking constructors; forbidden shortcut optional/lossy origins;
+  verification focused carrier tests plus full `egglog` lib; stop on any
+  detached/originated implicit conversion; no movement means no originated
+  value reaches resolved commands;
+- compiler-lowering artifact: exact resolved-command carrier only; write set is
+  read-only until global stamping passes; forbidden shortcut repeated trigger
+  vectors or positional zips; verification is a mutation canary; stop on any
+  mapper classification; no movement means only DTO sketches changed;
+- semantic-oracle artifact: global `Let`/`LetBegin` and nested-`Fail` matrix;
+  write set tests plus `remove_globals.rs`; forbidden shortcut helper-shape
+  recognition; verification includes fresh rollback and sort-authority shifts;
+  stop on role loss; no movement means no new fanout canary passes;
+- engine-semantics artifact: none for this frontend slice; write set empty;
+  forbidden shortcut host/runtime feedback; verification remains the pinned
+  stock kernel; stop on frontend code opening DuckDB; no movement is expected;
+- artifacts/benchmarks artifact: none; write set empty; forbidden shortcut SQL
+  publication before whole-program admission; verification deferred; stop on
+  any emitted bundle; no movement is expected;
+- independent-review artifact: authenticated carrier/global diff; write set
+  empty; forbidden shortcut trusting names/order; verification is exact hash
+  plus source-less/nested corruption review; stop on first inferred origin; no
+  movement means no independently authenticated PASS.
+
+Exact next verification command:
+
+```text
+/opt/homebrew/bin/timeout 110 cargo test -p egglog command_origin --lib
+```

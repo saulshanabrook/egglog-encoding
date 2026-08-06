@@ -4,6 +4,7 @@ pub mod ast;
 #[cfg(feature = "bin")]
 mod cli;
 mod command_macro;
+mod command_origin;
 pub mod constraint;
 mod core;
 mod exec_state;
