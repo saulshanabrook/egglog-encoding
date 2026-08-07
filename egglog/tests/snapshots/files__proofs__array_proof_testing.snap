@@ -159,26 +159,26 @@ expression: proof_snapshot
 (let t9 (@rewrite_var__3 t3))
 (let t10 (substitution t9 (x t1) (y (Num -3)) (z (Num 1))))
 (let t11 (add (Var "r1") (Num 1)))
-(let t12 (add t0 (Num 1)))
+(let t12 (y t0))
 (let prf0
   (Rule
-                      (= t1 t12)
-                      (name "(rewrite (add x y) (add y x))")
-                      (premises (Fiat (= t1 t1)))
-                      (substitution (@rewrite_var__2 t1) (x (Num 1)) (y t0))))
-(let t13
-  (premises
-                  (Congr
-                    (= t1 (add t11 (Num 1)))
-                    prf0
-                    (Rule
                       (= t0 t11)
                       (name "(rewrite (add x y) (add y x))")
                       (premises (Fiat (= t0 t0)))
                       (substitution
                         (@rewrite_var__2 t0)
                         (x (Num 1))
-                        (y (Var "r1"))))
+                        (y (Var "r1")))))
+(let t13
+  (premises
+                  (Congr
+                    (= t1 (add t11 (Num 1)))
+                    (Rule
+                      (= t1 (add t0 (Num 1)))
+                      (name "(rewrite (add x y) (add y x))")
+                      (premises (Fiat (= t1 t1)))
+                      (substitution (@rewrite_var__2 t1) (x (Num 1)) t12))
+                    prf0
                     0)))
 (let t14
   (substitution
@@ -203,6 +203,7 @@ expression: proof_snapshot
               0)))
 (let t16 (substitution t9 (x (Var "r1")) (y t4) (z t5)))
 (let t17 (add (Num 1) (Num -3)))
+(let t18 (add t0 (Num -3)))
 (let prf1
   (Rule
                       (= t17 (Num -2))
@@ -213,13 +214,22 @@ expression: proof_snapshot
                           (name "(rewrite (add (add x y) z) (add x (add y z)))")
                           (premises
                             (Congr
-                              (= t2 (add t12 (Num -3)))
-                              (Fiat (= t2 t2))
+                              (= t18 (add t11 (Num -3)))
+                              (Rule
+                                (= t18 t18)
+                                (name
+                                  "(rewrite (add (add x y) z) (add x (add y z)))")
+                                (premises (Fiat (= t2 t2)))
+                                (substitution
+                                  (@rewrite_var__3 t2)
+                                  (x (Num 1))
+                                  t12
+                                  (z (Num -3))))
                               prf0
                               0))
                           (substitution
-                            (@rewrite_var__3 t2)
-                            (x t0)
+                            (@rewrite_var__3 t18)
+                            (x (Var "r1"))
                             (y (Num 1))
                             (z (Num -3)))))
                       (substitution (@rewrite_var__4 t17) (x 1) (y -3))))

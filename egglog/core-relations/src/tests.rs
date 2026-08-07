@@ -29,11 +29,12 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// Run a test closure both single-threaded and with 4 threads.
 fn run_serial_and_parallel(f: impl Fn() + Send + Sync) {
     for num_threads in [1, 32] {
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(num_threads)
-            .build()
-            .unwrap();
-        pool.install(&f);
+        if num_threads == 1 {
+            f();
+        } else {
+            let pool = egglog_concurrency::ThreadPool::new(num_threads);
+            pool.install(&f);
+        }
     }
 }
 
@@ -217,50 +218,46 @@ fn phase_timing_is_available_for_an_empty_ruleset() {
 
 #[test]
 fn parallel_execution_keeps_split_phase_timing_unavailable() {
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(4)
-        .build()
-        .unwrap()
-        .install(|| {
-            let mut db = Database::default();
-            let new_relation = || {
-                SortedWritesTable::new(
-                    1,
-                    1,
-                    None,
-                    vec![],
-                    Box::new(|_, left, right, _| {
-                        assert_eq!(left, right, "merge not supported");
-                        false
-                    }),
-                )
-            };
-            let input = db.add_table(new_relation(), iter::empty(), iter::empty());
-            let output = db.add_table(new_relation(), iter::empty(), iter::empty());
-            {
-                let mut input_buffer = db.new_buffer(input);
-                for value in 0..10_001 {
-                    input_buffer.stage_insert(&[Value::new(value)]);
-                }
+    egglog_concurrency::ThreadPool::new(4).install(|| {
+        let mut db = Database::default();
+        let new_relation = || {
+            SortedWritesTable::new(
+                1,
+                1,
+                None,
+                vec![],
+                Box::new(|_, left, right, _| {
+                    assert_eq!(left, right, "merge not supported");
+                    false
+                }),
+            )
+        };
+        let input = db.add_table(new_relation(), iter::empty(), iter::empty());
+        let output = db.add_table(new_relation(), iter::empty(), iter::empty());
+        {
+            let mut input_buffer = db.new_buffer(input);
+            for value in 0..10_001 {
+                input_buffer.stage_insert(&[Value::new(value)]);
             }
-            db.merge_all();
+        }
+        db.merge_all();
 
-            let mut rules = RuleSetBuilder::new(&mut db);
-            let mut query = rules.new_rule();
-            let value = query.new_var_named("value");
-            query.add_atom(input, &[value.into()], &[]).unwrap();
-            let mut action = query.build();
-            action.insert(output, &[value.into()]).unwrap();
-            action.build_with_description("copy");
-            let rule_set = rules.build();
+        let mut rules = RuleSetBuilder::new(&mut db);
+        let mut query = rules.new_rule();
+        let value = query.new_var_named("value");
+        query.add_atom(input, &[value.into()], &[]).unwrap();
+        let mut action = query.build();
+        action.insert(output, &[value.into()]).unwrap();
+        action.build_with_description("copy");
+        let rule_set = rules.build();
 
-            let report = db.run_rule_set(&rule_set, ReportLevel::TimeOnly);
+        let report = db.run_rule_set(&rule_set, ReportLevel::TimeOnly);
 
-            let PreMergeTiming::Combined { elapsed } = report.pre_merge else {
-                panic!("parallel execution must report combined timing");
-            };
-            assert!(elapsed > std::time::Duration::ZERO);
-        });
+        let PreMergeTiming::Combined { elapsed } = report.pre_merge else {
+            panic!("parallel execution must report combined timing");
+        };
+        assert!(elapsed > std::time::Duration::ZERO);
+    });
 }
 
 #[test]

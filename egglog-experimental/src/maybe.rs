@@ -1,4 +1,4 @@
-use egglog::ast::{Expr, Literal};
+use egglog::ast::{Expr, Literal, Span};
 use egglog::prelude::ContainerSort;
 use egglog::sort::{ContainerValues, F, Presort, ValueRebuilder};
 use egglog::{
@@ -64,6 +64,7 @@ impl Presort for MaybeSort {
         typeinfo: &mut TypeInfo,
         name: String,
         args: &[Expr],
+        span: Span,
     ) -> Result<ArcSort, TypeError> {
         if let [Expr::Var(span, element)] = args {
             let element = typeinfo
@@ -76,7 +77,10 @@ impl Presort for MaybeSort {
             }
             .to_arcsort())
         } else {
-            panic!("Maybe sort requires exactly one argument")
+            Err(TypeError::BadPresortArguments(
+                Self::presort_name().to_owned(),
+                span,
+            ))
         }
     }
 }

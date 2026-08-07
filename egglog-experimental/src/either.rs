@@ -1,4 +1,4 @@
-use egglog::ast::Expr;
+use egglog::ast::{Expr, Span};
 use egglog::prelude::ContainerSort;
 use egglog::sort::{ContainerValues, Presort, ValueRebuilder};
 use egglog::{
@@ -81,6 +81,7 @@ impl Presort for EitherSort {
         typeinfo: &mut TypeInfo,
         name: String,
         args: &[Expr],
+        span: Span,
     ) -> Result<ArcSort, TypeError> {
         if let [Expr::Var(left_span, left), Expr::Var(right_span, right)] = args {
             let left = typeinfo
@@ -97,7 +98,10 @@ impl Presort for EitherSort {
             }
             .to_arcsort())
         } else {
-            panic!("Either sort requires exactly two arguments")
+            Err(TypeError::BadPresortArguments(
+                Self::presort_name().to_owned(),
+                span,
+            ))
         }
     }
 }

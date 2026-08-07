@@ -373,6 +373,19 @@ pub trait Backend: Send + Sync {
     /// [`Backend::run_rules`] return the provided message as an error.
     fn new_panic(&mut self, message: String) -> ExternalFunctionId;
 
+    // -- parallelism --------------------------------------------------------
+
+    /// Set the number of worker threads this backend may use.
+    ///
+    /// `1` keeps execution serial; `0` means "use available parallelism". A
+    /// backend that is always serial may ignore this.
+    fn set_num_threads(&mut self, _threads: usize) {}
+
+    /// The number of worker threads this backend is configured to use.
+    fn num_threads(&self) -> usize {
+        1
+    }
+
     // -- term-encoding mint/canonicalize ops --------------------------------
     //
     // The term encoder represents terms as relation rows minted with fresh ids

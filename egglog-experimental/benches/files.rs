@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use egglog_experimental::{EGraph, new_experimental_egraph_with_proofs};
+use egglog_experimental::new_experimental_egraph_with_proofs;
 
 const CODSPEED_FILES: &[&str] = &[
     "egglog/tests/web-demo/rw-analysis.egg",
@@ -53,6 +53,8 @@ fn benchmark_cases() -> Vec<BenchCase> {
 #[divan::bench(args = benchmark_cases())]
 fn files(case: &BenchCase) {
     let mut egraph = new_experimental_egraph_with_proofs();
+    // Benchmark the serial path, independent of the host's core count.
+    egraph.set_num_threads(1);
     egraph
         .parse_and_run_program(Some(case.filename.clone()), &case.program)
         .unwrap_or_else(|err| panic!("{} failed: {err}", case.path.display()));
@@ -60,6 +62,5 @@ fn files(case: &BenchCase) {
 }
 
 fn main() {
-    EGraph::set_num_threads(1);
     divan::main();
 }

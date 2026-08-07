@@ -475,7 +475,9 @@ impl ProofInstrumentor<'_> {
         let res = self.egraph.parser.get_program_from_string(None, input);
         self.egraph.parser.ensure_no_reserved_symbols = true;
 
-        res.unwrap()
+        // This program is generated internally by term encoding, so a parse
+        // failure is an egglog bug rather than a user error.
+        res.expect("internally generated term-encoding program must parse")
     }
 
     /// Like [`Self::parse_program`], but groups each maximal run of consecutive
@@ -602,7 +604,7 @@ impl ProofInstrumentor<'_> {
         self.egraph.parser.ensure_no_reserved_symbols = false;
         let res = self.egraph.parser.get_schedule_from_string(None, &input);
         self.egraph.parser.ensure_no_reserved_symbols = true;
-        res.unwrap()
+        res.expect("internally generated term-encoding schedule must parse")
     }
 
     /// Internal parse helper for term encoding- parse and crash on failure.
@@ -610,7 +612,12 @@ impl ProofInstrumentor<'_> {
         self.egraph.parser.ensure_no_reserved_symbols = false;
         let res = input
             .iter()
-            .map(|f| self.egraph.parser.get_fact_from_string(None, f).unwrap())
+            .map(|f| {
+                self.egraph
+                    .parser
+                    .get_fact_from_string(None, f)
+                    .expect("internally generated term-encoding fact must parse")
+            })
             .collect();
         self.egraph.parser.ensure_no_reserved_symbols = true;
         res
@@ -621,7 +628,7 @@ impl ProofInstrumentor<'_> {
         self.egraph.parser.ensure_no_reserved_symbols = false;
         let res = self.egraph.parser.get_expr_from_string(None, input);
         self.egraph.parser.ensure_no_reserved_symbols = true;
-        res.unwrap()
+        res.expect("internally generated term-encoding expression must parse")
     }
 
     // Each function/constructor gets a view table, the canonicalized e-nodes to accelerate e-matching.

@@ -3,18 +3,17 @@ use std::{
     cmp,
     hash::{Hash, Hasher},
     mem,
-    sync::{Arc, Mutex},
+    sync::Mutex,
 };
 
 use crate::{
     common::IndexMap,
     numeric_id::{IdVec, NumericId, define_id},
 };
-use egglog_concurrency::{Notification, ReadOptimizedLock};
+use egglog_concurrency::{ReadOptimizedLock, ThreadPool};
 use hashbrown::HashTable;
 use indexmap::map::Entry;
 use once_cell::sync::Lazy;
-use rayon::iter::ParallelIterator;
 use rustc_hash::FxHasher;
 use smallvec::SmallVec;
 
@@ -22,6 +21,7 @@ use crate::{
     OffsetRange, Subset,
     common::{ShardData, ShardId, Value},
     offsets::{RowId, SortedOffsetSlice, SubsetRef},
+    parallel,
     parallel_heuristics::parallelize_index_construction,
     pool::{Pooled, with_pool_set},
     row_buffer::{RowBuffer, TaggedRowBuffer},
@@ -30,6 +30,9 @@ use crate::{
 
 #[cfg(test)]
 mod tests;
+
+#[doc(hidden)]
+pub mod bench_support;
 
 #[derive(Clone)]
 pub(crate) struct TableEntry<T> {
@@ -80,6 +83,19 @@ impl<TI: IndexBase> Index<TI> {
         } else {
             table.updates_since(self.updated_to.minor)
         };
+        // Three ways to fold `subset` into the index; all produce the same result (each value's
+        // rows sorted ascending and de-duplicated) but trade fixed overhead against throughput:
+        //
+        // * `merge_parallel` shards the rows across worker threads. It handles both full and
+        //   incremental refreshes (it appends to whatever is already indexed), but the thread
+        //   coordination only pays off once `subset` clears the size cutoff.
+        // * `rebuild_full` is the serial bulk path for a full rebuild: it sorts all (value, row)
+        //   pairs and sizes each key's subset in a single allocation, avoiding the repeated
+        //   regrowth of the row-at-a-time path. It assumes an empty index, so it is only valid
+        //   right after the major-version `clear()` above.
+        // * `refresh_serial` scans in batches and inserts one row at a time into the existing
+        //   index. Lowest fixed cost, and the only path suited to merging a small incremental
+        //   delta into the index's prior contents.
         if parallelize_index_construction(subset.size()) {
             self.table.merge_parallel(&self.key, table, subset.as_ref());
         } else if is_full {
@@ -190,6 +206,8 @@ pub(crate) trait IndexBase {
 }
 
 struct ColumnIndexShard {
+    /// It's important that table is implemented using IndexMap instead of the more efficient
+    /// HashMap because we want stable enumeration order.
     table: Pooled<IndexMap<Value, BufferedSubset>>,
     subsets: SubsetBuffer,
 }
@@ -231,15 +249,13 @@ impl IndexBase for ColumnIndex {
         shard.table.get(key).map(|x| x.as_ref(&shard.subsets))
     }
     fn add_row(&mut self, vals: &[Value], row: RowId) {
-        // SAFETY: everything in `table` comes from `subsets`.
         for (i, key) in vals.iter().enumerate() {
-            // An index over several columns posts a row under each value it
-            // holds; a value sitting in more than one of those columns must
-            // still post the row once.
+            // A value repeated across this row's covered columns maps the row in only once.
             if vals[..i].contains(key) {
                 continue;
             }
             let shard = self.shard_data.get_shard_mut(key, &mut self.shards);
+            // SAFETY: everything in `table` comes from `subsets`.
             unsafe {
                 shard
                     .table
@@ -283,8 +299,8 @@ impl IndexBase for ColumnIndex {
             split.resize_with(shard_data.n_shards(), || TaggedRowBuffer::new(1));
             for (row_id, keys) in buf.iter() {
                 for (i, key) in keys.iter().enumerate() {
-                    // As in `add_row`: a value in more than one of the indexed
-                    // columns still posts its row once.
+                    // Match `add_row`: a value repeated across this row's covered columns is
+                    // recorded once, so a value's subset never holds a duplicate row id.
                     if keys[..i].contains(key) {
                         continue;
                     }
@@ -302,8 +318,8 @@ impl IndexBase for ColumnIndex {
             }
         };
 
-        run_in_thread_pool_and_block(&THREAD_POOL, || {
-            rayon::in_place_scope(|inner| {
+        run_in_index_thread_pool(|| {
+            egglog_concurrency::scope(|inner| {
                 let mut cur = Offset::new(0);
                 loop {
                     let mut buf = TaggedRowBuffer::new(cols.len());
@@ -319,7 +335,7 @@ impl IndexBase for ColumnIndex {
                 }
             });
 
-            self.shards.par_iter_mut().for_each(|(shard_id, shard)| {
+            parallel::for_each_id_vec_mut(&mut self.shards, |shard_id, shard| {
                 // Sort the vector by start row id to ensure we populate subsets in sorted order.
                 let mut vec = queues[shard_id].lock().unwrap();
                 vec.sort_by_key(|(start, _)| *start);
@@ -358,9 +374,7 @@ impl IndexBase for ColumnIndex {
         let mut bounds: SmallVec<[usize; 8]> = SmallVec::new();
         bounds.push(0);
         for &col in cols {
-            table.for_each_col(subset, col, &mut |row_id, val| {
-                pairs.push((val, row_id));
-            });
+            table.collect_col_pairs(subset, col, &mut pairs);
             bounds.push(pairs.len());
         }
 
@@ -390,43 +404,6 @@ impl IndexBase for ColumnIndex {
     }
 }
 
-/// This function is an alternative for [`rayon::ThreadPool::install`] that doesn't steal work from
-/// the callee's current thread pool while waiting for `f` to finish.
-///
-/// We do this to avoid deadlocks. The whole purpose of using a separate threadpool in this module
-/// is to allow for sufficient parallelism while holding a lock on the main threadpool. That means
-/// we are not worried about an outer lock tying up a thread in the main pool.
-///
-/// On the other hand, it _is_ a bad idea to steal work on a rayon thread pool with some locks
-/// held. In particular, if another task on the thread pool _itself_ attempts to aquire the same
-/// lock, this can cause a deadlock. We saw this in the tests for this crate. The relevant lock
-/// are those around individual indexes stored in the database-level index cache.
-fn run_in_thread_pool_and_block<'a>(pool: &rayon::ThreadPool, f: impl FnMut() + Send + 'a) {
-    // NB: We don't need the heap allocations here. But we are only calling this function if
-    // we are about to do a bunch of work, so clarify is probably going to be better than (even
-    // more) unsafe code.
-
-    // Alright, here we go: pretend `f` has `'static` lifetime because we are passing it to
-    // `spawn`.
-    trait LifetimeWork<'a>: FnMut() + Send + 'a {}
-
-    impl<'a, F: FnMut() + Send + 'a> LifetimeWork<'a> for F {}
-    let as_lifetime: Box<dyn LifetimeWork<'a>> = Box::new(f);
-    let mut casted_away = unsafe {
-        // SAFETY: `casted_away` will be dropped at the end of this method. The notification used
-        // below will ensure it does not escape.
-        mem::transmute::<Box<dyn LifetimeWork<'a>>, Box<dyn LifetimeWork<'static>>>(as_lifetime)
-    };
-    let n = Arc::new(Notification::new());
-    let inner = n.clone();
-    pool.spawn(move || {
-        casted_away();
-        mem::drop(casted_away);
-        inner.notify();
-    });
-    n.wait()
-}
-
 /// Number of 8-bit radix passes needed to cover values up to `max`.
 fn radix_passes_for(max: u32) -> u32 {
     if max < 256 {
@@ -446,14 +423,31 @@ fn radix_passes_for(max: u32) -> u32 {
 /// sort is stable and `data` arrives in RowId-ascending order, the result is ordered by
 /// (Value, RowId). The multi-column rebuild path sorts each column's block this way before
 /// merging, so no explicit RowId sort is ever needed.
-fn radix_sort_slice_by_value(data: &mut [(Value, RowId)], scratch: &mut [(Value, RowId)]) {
+pub(crate) fn radix_sort_slice_by_value(
+    data: &mut [(Value, RowId)],
+    scratch: &mut [(Value, RowId)],
+) {
     let n = data.len();
     if n < 64 {
         data.sort_unstable();
         return;
     }
 
-    let max_val = data.iter().map(|&(v, _)| v.rep()).max().unwrap_or(0);
+    // One scan computes the pass count and detects already-sorted input (common
+    // when a column correlates with row order); a sorted block needs no work,
+    // since stability makes the result identical.
+    let mut max_val = 0u32;
+    let mut sorted = true;
+    let mut prev = 0u32;
+    for &(v, _) in data.iter() {
+        let rep = v.rep();
+        max_val = max_val.max(rep);
+        sorted &= prev <= rep;
+        prev = rep;
+    }
+    if sorted {
+        return;
+    }
     let n_passes = radix_passes_for(max_val);
 
     let mut src: &mut [(Value, RowId)] = data;
@@ -792,8 +786,8 @@ impl IndexBase for TupleIndex {
                 queues[shard_id].lock().unwrap().push((first, buf));
             }
         };
-        run_in_thread_pool_and_block(&THREAD_POOL, || {
-            rayon::scope(|scope| {
+        run_in_index_thread_pool(|| {
+            egglog_concurrency::scope(|scope| {
                 let mut cur = Offset::new(0);
                 loop {
                     let mut buf = TaggedRowBuffer::new(cols.len());
@@ -808,7 +802,7 @@ impl IndexBase for TupleIndex {
                     }
                 }
             });
-            self.shards.par_iter_mut().for_each(|(shard_id, shard)| {
+            parallel::for_each_id_vec_mut(&mut self.shards, |shard_id, shard| {
                 use hashbrown::hash_table::Entry;
                 // Sort the vector by start row id to ensure we populate subsets in sorted order.
                 let mut vec = queues[shard_id].lock().unwrap();
@@ -863,7 +857,8 @@ fn hash_key(key: &[Value]) -> u64 {
 /// Implemented as an read-optimized key-value arrays, which should be faster
 /// than concurrent hashmaps as long as # indices is smaller than say 64.
 ///
-/// For simplicity we assume the index can be cloned cheaply, e.g., it's behind an [`Arc`].
+/// For simplicity we assume the index can be cloned cheaply, e.g., it's behind an
+/// [`Arc`](std::sync::Arc).
 #[derive(Default)]
 pub struct IndexCatalog<K: Clone + std::hash::Hash + Eq, I: Clone> {
     data: ReadOptimizedLock<Vec<(K, I)>>,
@@ -1096,23 +1091,21 @@ impl BufferedSubset {
 }
 
 fn num_shards() -> usize {
-    let n_threads = rayon::current_num_threads();
+    let n_threads = parallel::current_num_threads();
     if n_threads == 1 { 1 } else { n_threads * 2 }
 }
 
 /// A thread pool specifically for parallel hash index construction.
 ///
-/// We use a separate thread pool here because callers can construct an index under a lock,
-/// and we do not want to take a long-running lock in the global thread pool without another
-/// way to get parallelism.
-///
-/// Earlier solutions using rayon::yield_now() were unreliable.
-static THREAD_POOL: Lazy<rayon::ThreadPool> = Lazy::new(|| {
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(rayon::current_num_threads())
-        .build()
-        .unwrap()
-});
+/// Callers can construct indexes while holding database-level index locks. The
+/// separate pool preserves parallelism without tying up the caller's installed
+/// pool behind those locks.
+static INDEX_THREAD_POOL: Lazy<ThreadPool> =
+    Lazy::new(|| ThreadPool::new(parallel::current_num_threads().max(1)));
+
+fn run_in_index_thread_pool<R>(f: impl FnOnce() -> R) -> R {
+    INDEX_THREAD_POOL.install(f)
+}
 
 /// A simple free list used to reuse slots in a [`SubsetBuffer`].
 ///

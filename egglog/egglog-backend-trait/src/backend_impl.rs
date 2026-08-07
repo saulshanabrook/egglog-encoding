@@ -249,6 +249,14 @@ impl Backend for EGraph {
         EGraph::new_panic(self, message)
     }
 
+    fn set_num_threads(&mut self, threads: usize) {
+        EGraph::set_num_threads(self, threads)
+    }
+
+    fn num_threads(&self) -> usize {
+        EGraph::num_threads(self)
+    }
+
     fn register_set_if_empty(
         &mut self,
         view_name: String,

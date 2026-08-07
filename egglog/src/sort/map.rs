@@ -203,6 +203,7 @@ impl Presort for MapSort {
         typeinfo: &mut TypeInfo,
         name: String,
         args: &[Expr],
+        span: Span,
     ) -> Result<ArcSort, TypeError> {
         if let [Expr::Var(k_span, k), Expr::Var(v_span, v)] = args {
             let k = typeinfo
@@ -219,7 +220,10 @@ impl Presort for MapSort {
             };
             Ok(out.to_arcsort())
         } else {
-            panic!()
+            Err(TypeError::BadPresortArguments(
+                Self::presort_name().to_owned(),
+                span,
+            ))
         }
     }
 }
