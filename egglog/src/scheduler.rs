@@ -1,20 +1,44 @@
-use std::sync::Arc;
 use std::sync::Mutex;
 
 use core_relations::{ExecutionState, ExternalFunction, ExternalFunctionId, Value};
 use egglog_backend_trait::{BackendExt, ReadMode, RuleSetRun, RuleValue};
 use egglog_bridge::{
-    ColumnTy, DefaultVal, FunctionConfig, FunctionId, MergeFn, RuleId, TableAction,
+    ColumnTy, DefaultVal, FunctionConfig, FunctionId, MergeFn, RuleCursorAdvance, RuleId,
+    TableAction,
 };
 use egglog_reports::RunReport;
 use numeric_id::define_id;
 
 use crate::{ast::ResolvedVar, core::GenericAtomTerm, core::ResolvedCoreRule, util::IndexMap, *};
 
-/// A scheduler decides which matches to be applied for a rule.
-///
-/// The matches that are not chosen in this iteration will be delayed
-/// to the next iteration.
+/// Whether a scheduler wants a fresh seminaive query for a rule.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SearchPlan {
+    /// Do not query this rule in the current scheduler step.
+    Skip,
+    /// Query the rule, optionally stopping after this many complete matches.
+    Search { max_matches: Option<usize> },
+}
+
+/// The result of a scheduler-requested query.
+#[derive(Clone, Copy, Debug)]
+pub enum SearchResult<'a> {
+    /// The complete query result.
+    Complete(&'a Matches),
+    /// The query exceeded its requested bound and was stopped early.
+    LimitExceeded { at_least: usize },
+}
+
+/// A scheduler's decision for one freshly queried batch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BatchDecision {
+    /// Apply every match and commit the rule's seminaive cursor.
+    ApplyAll,
+    /// Discard every match and leave the seminaive cursor unchanged.
+    Reject,
+}
+
+/// A scheduler decides whether to query and accept whole seminaive batches.
 pub trait Scheduler: dyn_clone::DynClone + Send + Sync {
     /// Whether or not the rules can be considered as saturated once no database
     /// changes were made in the current iteration.
@@ -26,22 +50,26 @@ pub trait Scheduler: dyn_clone::DynClone + Send + Sync {
         true
     }
 
-    /// Filter the matches for a rule.
-    ///
-    /// Return `true` if the scheduler's next run of the rule should feed
-    /// `filter_matches` with a new iteration of matches.
-    fn filter_matches(&mut self, rule: &str, ruleset: &str, matches: &mut Matches) -> bool;
+    /// Decide whether to query a rule before executing its body.
+    fn plan_search(&mut self, rule: &str, ruleset: &str) -> SearchPlan;
+
+    /// Accept or reject the complete result of a requested query.
+    fn finish_search(
+        &mut self,
+        rule: &str,
+        ruleset: &str,
+        result: SearchResult<'_>,
+    ) -> BatchDecision;
 }
 
 dyn_clone::clone_trait_object!(Scheduler);
 
-/// A collection of matches produced by a rule.
-/// The user can choose which matches to be fired.
+/// A complete collection of matches produced by one rule query.
+#[derive(Debug)]
 pub struct Matches {
     matches: Vec<Value>,
-    chosen: Vec<usize>,
     vars: Vec<ResolvedVar>,
-    all_chosen: bool,
+    row_count: usize,
 }
 
 /// A match is a tuple of values corresponding to the variables in a rule.
@@ -60,21 +88,18 @@ impl Match<'_> {
 }
 
 impl Matches {
-    fn new(matches: Vec<Value>, vars: Vec<ResolvedVar>) -> Self {
-        let total_len = matches.len();
-        let tuple_len = vars.len();
-        assert!(total_len.is_multiple_of(tuple_len));
+    fn new(matches: Vec<Value>, vars: Vec<ResolvedVar>, row_count: usize) -> Self {
+        assert_eq!(matches.len(), row_count * vars.len());
         Self {
             matches,
             vars,
-            chosen: Vec::new(),
-            all_chosen: false,
+            row_count,
         }
     }
 
     /// The number of matches in total.
     pub fn match_size(&self) -> usize {
-        self.matches.len() / self.vars.len()
+        self.row_count
     }
 
     /// The length of a tuple.
@@ -84,63 +109,27 @@ impl Matches {
 
     /// Get `idx`-th match.
     pub fn get_match(&self, idx: usize) -> Match<'_> {
+        assert!(idx < self.row_count);
         Match {
             values: &self.matches[idx * self.tuple_len()..(idx + 1) * self.tuple_len()],
             vars: &self.vars,
         }
     }
 
-    /// Pick the match at `idx` to be fired.
-    pub fn choose(&mut self, idx: usize) {
-        self.chosen.push(idx);
-    }
-
-    /// Pick all matches to be fired.
-    ///
-    /// This is more efficient than calling `choose` for each match.
-    pub fn choose_all(&mut self) {
-        self.all_chosen = true;
-    }
-
-    /// Apply the chosen matches and return the residual matches.
-    fn instantiate(
-        mut self,
-        state: &mut ExecutionState<'_>,
-        table_action: &TableAction,
-    ) -> Vec<Value> {
+    /// Stage every match into the scheduler's decided table.
+    fn instantiate(self, state: &mut ExecutionState<'_>, table_action: &TableAction) {
         let tuple_len = self.tuple_len();
         let unit = state.base_values().get(());
 
-        if self.all_chosen {
-            for row in self.matches.chunks(tuple_len) {
-                table_action.insert(state, row.iter().cloned().chain(std::iter::once(unit)));
+        if tuple_len == 0 {
+            for _ in 0..self.row_count {
+                table_action.insert(state, std::iter::once(unit));
             }
-            vec![]
-        } else {
-            for idx in self.chosen.iter() {
-                let row = &self.matches[idx * tuple_len..(idx + 1) * tuple_len];
-                table_action.insert(state, row.iter().cloned().chain(std::iter::once(unit)));
-            }
+            return;
+        }
 
-            // swap remove the chosen matches
-            self.chosen.sort_unstable();
-            self.chosen.dedup();
-            let mut p = self.match_size();
-            for c in self.chosen.into_iter().rev() {
-                // It's important to decrement `p` first, because otherwise it might underflow when
-                // matches are exhausted.
-                p -= 1;
-                if c != p {
-                    let idx_c = c * tuple_len;
-                    let idx_p = p * tuple_len;
-                    for i in 0..tuple_len {
-                        self.matches.swap(idx_c + i, idx_p + i);
-                    }
-                }
-            }
-            self.matches.truncate(p * tuple_len);
-
-            self.matches
+        for row in self.matches.chunks(tuple_len) {
+            table_action.insert(state, row.iter().copied().chain(std::iter::once(unit)));
         }
     }
 }
@@ -159,8 +148,31 @@ impl EGraph {
         })
     }
 
+    /// Register a scheduler under a program-visible name.
+    ///
+    /// Returns `None` when the name is already bound.
+    pub fn add_named_scheduler(
+        &mut self,
+        name: String,
+        scheduler: Box<dyn Scheduler>,
+    ) -> Option<SchedulerId> {
+        if self.named_schedulers.contains_key(&name) {
+            return None;
+        }
+        let id = self.add_scheduler(scheduler);
+        self.named_schedulers.insert(name, id);
+        Some(id)
+    }
+
+    /// Look up a program-visible scheduler name.
+    pub fn named_scheduler(&self, name: &str) -> Option<SchedulerId> {
+        self.named_schedulers.get(name).copied()
+    }
+
     /// Removes a scheduler
     pub fn remove_scheduler(&mut self, scheduler_id: SchedulerId) -> Option<Box<dyn Scheduler>> {
+        self.named_schedulers
+            .retain(|_, named_id| *named_id != scheduler_id);
         self.schedulers.take(scheduler_id).map(|r| r.scheduler)
     }
 
@@ -209,75 +221,110 @@ impl EGraph {
                 }
             }
 
-            // Step 2: run all the queries for one iteration
-            let query_rules = rules
-                .iter()
-                .filter_map(|(rule_id, _rule)| {
-                    let rule_info = record.rule_info.get(rule_id).unwrap();
+            // Step 2: plan and run each bounded query against the same pre-action state.
+            let mut query_report = RunReport::default();
+            let mut accepted = Vec::new();
+            for (rule_id, _rule) in &rules {
+                let SearchPlan::Search { max_matches } =
+                    record.scheduler.plan_search(rule_id, ruleset)
+                else {
+                    continue;
+                };
 
-                    if rule_info.should_seek {
-                        Some(rule_info.query_rule)
-                    } else {
-                        None
+                let rule_info = record.rule_info.get_mut(rule_id).unwrap();
+                scheduler_collector(self, rule_info.collect_matches).begin(max_matches);
+                let (iteration, advance) = self
+                    .backend
+                    .as_any_mut()
+                    .downcast_mut::<egglog_bridge::EGraph>()
+                    .expect("reference backend checked above")
+                    .probe_rule(rule_info.query_rule)
+                    .map_err(|error| Error::BackendError(error.to_string()))?;
+                query_report.union(RunReport::singleton(ruleset, iteration));
+
+                let collected = scheduler_collector(self, rule_info.collect_matches).take();
+                if collected.limit_exceeded {
+                    if record.scheduler.finish_search(
+                        rule_id,
+                        ruleset,
+                        SearchResult::LimitExceeded {
+                            at_least: collected.row_count,
+                        },
+                    ) == BatchDecision::ApplyAll
+                    {
+                        return Err(Error::BackendError(format!(
+                            "scheduler accepted incomplete bounded result for rule `{rule_id}`"
+                        )));
                     }
-                })
-                .collect::<Vec<_>>();
+                    continue;
+                }
 
-            let query_iter_report = self
-                .backend
-                .run_rules(RuleSetRun {
-                    name: Some(ruleset),
-                    rules: &query_rules,
-                })
-                .map_err(|e| Error::BackendError(e.to_string()))?;
+                let matches = Matches::new(
+                    collected.values,
+                    rule_info.free_vars.clone(),
+                    collected.row_count,
+                );
+                if record.scheduler.finish_search(
+                    rule_id,
+                    ruleset,
+                    SearchResult::Complete(&matches),
+                ) == BatchDecision::ApplyAll
+                {
+                    accepted.push(AcceptedBatch {
+                        matches,
+                        decided: rule_info.decided,
+                        action_rule: rule_info.action_rule,
+                        advance,
+                    });
+                }
+            }
 
-            // Step 3: let the scheduler decide which matches need to be kept
+            // Step 3: expose only accepted batches to the action rules.
             let bridge = self
                 .backend
                 .as_any()
                 .downcast_ref::<egglog_bridge::EGraph>()
-                .ok_or_else(|| {
-                    Error::BackendError(
-                        "scheduler match instantiation requires the reference bridge backend"
-                            .into(),
-                    )
-                })?;
+                .expect("reference backend checked above");
+            let has_decided_rows = accepted.iter().any(|batch| batch.matches.match_size() > 0);
+            let mut action_rules = Vec::new();
+            let mut cursor_advances = Vec::new();
             self.backend.with_execution_state(|state| {
-                for (rule_id, _rule) in &rules {
-                    let rule_info = record.rule_info.get_mut(rule_id).unwrap();
-
-                    let matches: Vec<Value> =
-                        std::mem::take(rule_info.matches.lock().unwrap().as_mut());
-                    let mut matches = Matches::new(matches, rule_info.free_vars.clone());
-                    rule_info.should_seek =
-                        record
-                            .scheduler
-                            .filter_matches(rule_id, ruleset, &mut matches);
-                    let table_action = TableAction::new(bridge, rule_info.decided);
-                    *rule_info.matches.lock().unwrap() = matches.instantiate(state, &table_action);
+                for batch in accepted {
+                    if batch.matches.match_size() > 0 {
+                        action_rules.push(batch.action_rule);
+                    }
+                    let table_action = TableAction::new(bridge, batch.decided);
+                    batch.matches.instantiate(state, &table_action);
+                    cursor_advances.push(batch.advance);
                 }
             });
-            self.backend.flush_updates();
+            if has_decided_rows {
+                self.backend.flush_updates();
+            }
 
-            // Step 4: run the action rules
-            let action_rules = rules
-                .iter()
-                .map(|(rule_id, _rule)| {
-                    let rule_info = record.rule_info.get(rule_id).unwrap();
-                    rule_info.action_rule
-                })
-                .collect::<Vec<_>>();
-            let action_iter_report = self
+            // Step 4: apply accepted batches, then commit their query cursors.
+            let mut action_report = if action_rules.is_empty() {
+                RunReport::default()
+            } else {
+                let action_iteration = self
+                    .backend
+                    .run_rules(RuleSetRun {
+                        name: Some(ruleset),
+                        rules: &action_rules,
+                    })
+                    .map_err(|error| Error::BackendError(error.to_string()))?;
+                RunReport::singleton(ruleset, action_iteration)
+            };
+            let bridge = self
                 .backend
-                .run_rules(RuleSetRun {
-                    name: Some(ruleset),
-                    rules: &action_rules,
-                })
-                .map_err(|e| Error::BackendError(e.to_string()))?;
+                .as_any_mut()
+                .downcast_mut::<egglog_bridge::EGraph>()
+                .expect("reference backend checked above");
+            for advance in cursor_advances {
+                bridge.commit_rule_cursor(advance);
+            }
 
-            // Step 5: combine the reports
-            let mut query_report = RunReport::singleton(ruleset, query_iter_report);
-            let mut action_report = RunReport::singleton(ruleset, action_iter_report);
+            // Step 5: combine the reports.
 
             // query matches don't count
             query_report.updated = false;
@@ -306,18 +353,24 @@ pub(crate) struct SchedulerRecord {
     rule_info: HashMap<String, SchedulerRuleInfo>,
 }
 
-/// To enable scheduling without modifying the backend,
-/// we split a rule (rule query action) into a worklist relation
-/// two rules (rule query (worklist vars false)) and
-/// (rule (worklist vars false) (action ... (delete (worklist vars false))))
+/// To enable scheduling without modifying the backend, split each rule into a
+/// query that collects candidate rows and an action rule over a private decided
+/// relation. The action rule removes each decided row after staging the source
+/// actions so the same logical match can be scheduled again after reinsertion.
 #[derive(Clone)]
 struct SchedulerRuleInfo {
-    matches: Arc<Mutex<Vec<Value>>>,
-    should_seek: bool,
+    collect_matches: ExternalFunctionId,
     decided: FunctionId,
     query_rule: RuleId,
     action_rule: RuleId,
     free_vars: Vec<ResolvedVar>,
+}
+
+struct AcceptedBatch {
+    matches: Matches,
+    decided: FunctionId,
+    action_rule: RuleId,
+    advance: RuleCursorAdvance,
 }
 
 struct SchedulerRuleBuild {
@@ -326,27 +379,81 @@ struct SchedulerRuleBuild {
     decided: Option<FunctionId>,
 }
 
+#[derive(Clone, Debug, Default)]
+struct CollectedMatches {
+    values: Vec<Value>,
+    row_count: usize,
+    max_matches: Option<usize>,
+    limit_exceeded: bool,
+}
+
+impl CollectedMatches {
+    fn begin(&mut self, max_matches: Option<usize>) {
+        self.values.clear();
+        self.row_count = 0;
+        self.max_matches = max_matches;
+        self.limit_exceeded = false;
+    }
+}
+
 struct CollectMatches {
-    matches: Arc<Mutex<Vec<Value>>>,
+    matches: Mutex<CollectedMatches>,
 }
 
 impl Clone for CollectMatches {
     fn clone(&self) -> Self {
         Self {
-            matches: Arc::new(Mutex::new(self.matches.lock().unwrap().clone())),
+            matches: Mutex::new(self.matches.lock().unwrap().clone()),
         }
     }
 }
 
 impl CollectMatches {
-    fn new(matches: Arc<Mutex<Vec<Value>>>) -> Self {
-        Self { matches }
+    fn new() -> Self {
+        Self {
+            matches: Mutex::new(CollectedMatches::default()),
+        }
     }
+
+    fn begin(&self, max_matches: Option<usize>) {
+        self.matches.lock().unwrap().begin(max_matches);
+    }
+
+    fn take(&self) -> CollectedMatches {
+        std::mem::take(&mut *self.matches.lock().unwrap())
+    }
+}
+
+fn scheduler_collector(egraph: &EGraph, id: ExternalFunctionId) -> &CollectMatches {
+    egraph
+        .backend
+        .as_any()
+        .downcast_ref::<egglog_bridge::EGraph>()
+        .expect("scheduler collector requires the reference bridge backend")
+        .external_function(id)
+        .as_any()
+        .downcast_ref::<CollectMatches>()
+        .expect("scheduler collector id must refer to CollectMatches")
 }
 
 impl ExternalFunction for CollectMatches {
     fn invoke(&self, state: &mut core_relations::ExecutionState, args: &[Value]) -> Option<Value> {
-        self.matches.lock().unwrap().extend(args.iter().copied());
+        let mut matches = self.matches.lock().unwrap();
+        if matches.limit_exceeded {
+            state.trigger_early_stop();
+            return Some(state.base_values().get(()));
+        }
+
+        matches.row_count += 1;
+        if matches
+            .max_matches
+            .is_some_and(|max_matches| matches.row_count > max_matches)
+        {
+            matches.limit_exceeded = true;
+            state.trigger_early_stop();
+        } else {
+            matches.values.extend(args.iter().copied());
+        }
         Some(state.base_values().get(()))
     }
 }
@@ -398,10 +505,9 @@ impl SchedulerRuleInfo {
             },
         );
 
-        let matches = Arc::new(Mutex::new(Vec::new()));
         let collect_matches = egraph
             .backend
-            .register_external_func(Box::new(CollectMatches::new(matches.clone())));
+            .register_external_func(Box::new(CollectMatches::new()));
         let mut build = SchedulerRuleBuild {
             collect_matches,
             query_rule: None,
@@ -482,7 +588,7 @@ impl SchedulerRuleInfo {
             drop(arule_builder);
             return Err(build.rollback(egraph, error));
         }
-        // Remove the entry as it's now done
+        // Remove the entry after its source actions have been staged.
         entries.pop();
         arule_builder.remove(rule.span.clone(), decided, "backend", entries);
         let arule_id = match arule_builder.try_build(name, false, false, rule.span.clone()) {
@@ -491,12 +597,11 @@ impl SchedulerRuleInfo {
         };
 
         Ok(SchedulerRuleInfo {
+            collect_matches,
             free_vars,
             query_rule: qrule_id,
             action_rule: arule_id,
-            matches,
             decided,
-            should_seek: true,
         })
     }
 }
@@ -505,6 +610,7 @@ impl SchedulerRuleInfo {
 mod test {
     use super::*;
     use egglog_backend_trait::RuleSpec;
+    use std::sync::Arc;
 
     fn scheduler_rule_fixture() -> (EGraph, ResolvedCoreRule) {
         let mut egraph = EGraph::default();
@@ -617,28 +723,27 @@ mod test {
     }
 
     #[derive(Clone)]
-    struct FirstNScheduler {
-        n: usize,
-    }
+    struct AcceptAllScheduler;
 
-    impl Scheduler for FirstNScheduler {
-        fn filter_matches(&mut self, _rule: &str, _ruleset: &str, matches: &mut Matches) -> bool {
-            if matches.match_size() <= self.n {
-                matches.choose_all();
-            } else {
-                for i in 0..self.n {
-                    matches.choose(i);
-                }
-            }
-            matches.match_size() < self.n * 2
+    impl Scheduler for AcceptAllScheduler {
+        fn plan_search(&mut self, _rule: &str, _ruleset: &str) -> SearchPlan {
+            SearchPlan::Search { max_matches: None }
+        }
+
+        fn finish_search(
+            &mut self,
+            _rule: &str,
+            _ruleset: &str,
+            _result: SearchResult<'_>,
+        ) -> BatchDecision {
+            BatchDecision::ApplyAll
         }
     }
 
     #[test]
-    fn test_first_n_scheduler() {
+    fn test_whole_batch_scheduler() {
         let mut egraph = EGraph::default();
-        let scheduler = FirstNScheduler { n: 10 };
-        let scheduler_id = egraph.add_scheduler(Box::new(scheduler));
+        let scheduler_id = egraph.add_scheduler(Box::new(AcceptAllScheduler));
         let input = r#"
         (relation R (i64))
         (R 0)
@@ -651,45 +756,218 @@ mod test {
         "#;
         egraph.parse_and_run_program(None, input).unwrap();
         assert_eq!(egraph.get_size("R"), 101);
-        let mut iter = 0;
-        loop {
-            let report = egraph
-                .step_rules_with_scheduler(scheduler_id, "test")
-                .unwrap();
-            let table_size = egraph.get_size("S");
-            iter += 1;
-            assert_eq!(table_size, std::cmp::min(iter * 10, 101));
+        let report = egraph
+            .step_rules_with_scheduler(scheduler_id, "test")
+            .unwrap();
+        assert_eq!(egraph.get_size("S"), 101);
+        assert_eq!(
+            report.num_matches_per_rule.iter().collect::<Vec<_>>(),
+            [(&"test-rule".into(), &101)]
+        );
 
-            let expected_matches = if iter <= 10 { 10 } else { 12 - iter };
-            assert_eq!(
-                report.num_matches_per_rule.iter().collect::<Vec<_>>(),
-                [(&"test-rule".into(), &expected_matches)]
-            );
+        let report = egraph
+            .step_rules_with_scheduler(scheduler_id, "test")
+            .unwrap();
+        assert!(!report.updated);
+        assert!(report.can_stop);
+    }
 
-            // Because of semi-naive, the exact rules that are run are more than just `test-rule`
-            assert!(
-                report
-                    .search_and_apply_time_per_rule
-                    .keys()
-                    .all(|k| k.starts_with("test-rule"))
-            );
-            assert_eq!(
-                report.ruleset_timings.keys().collect::<Vec<_>>(),
-                [&"test".into()]
-            );
+    #[test]
+    fn scheduler_collectors_are_isolated_across_egraph_clones() {
+        let mut original = EGraph::default();
+        let scheduler_id = original.add_scheduler(Box::new(AcceptAllScheduler));
+        original
+            .parse_and_run_program(
+                None,
+                r#"
+                (ruleset test)
+                (relation R (i64))
+                (relation S (i64))
+                (R 0)
+                (rule ((R x)) ((S x)) :ruleset test :name "copy")
+                "#,
+            )
+            .unwrap();
+        original
+            .step_rules_with_scheduler(scheduler_id, "test")
+            .unwrap();
 
-            if report.can_stop {
-                break;
+        let cloned = original.clone();
+        let original_id = original.schedulers[scheduler_id].rule_info["copy"].collect_matches;
+        let cloned_id = cloned.schedulers[scheduler_id].rule_info["copy"].collect_matches;
+        assert_eq!(original_id, cloned_id);
+
+        let original_collector = scheduler_collector(&original, original_id);
+        let cloned_collector = scheduler_collector(&cloned, cloned_id);
+        original_collector.begin(Some(17));
+        cloned_collector.begin(Some(23));
+
+        assert_eq!(
+            original_collector.matches.lock().unwrap().max_matches,
+            Some(17)
+        );
+        assert_eq!(
+            cloned_collector.matches.lock().unwrap().max_matches,
+            Some(23)
+        );
+    }
+
+    #[test]
+    fn initialized_schedulers_run_independently_across_concurrent_clones() {
+        struct CloneAwareScheduler {
+            clone_id: usize,
+            next_clone_id: Arc<std::sync::atomic::AtomicUsize>,
+            observations: Arc<Mutex<Vec<(usize, usize)>>>,
+        }
+
+        impl Clone for CloneAwareScheduler {
+            fn clone(&self) -> Self {
+                Self {
+                    clone_id: self
+                        .next_clone_id
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                    next_clone_id: self.next_clone_id.clone(),
+                    observations: self.observations.clone(),
+                }
             }
         }
 
-        assert_eq!(iter, 12);
+        impl Scheduler for CloneAwareScheduler {
+            fn plan_search(&mut self, _rule: &str, _ruleset: &str) -> SearchPlan {
+                SearchPlan::Search { max_matches: None }
+            }
+
+            fn finish_search(
+                &mut self,
+                _rule: &str,
+                _ruleset: &str,
+                result: SearchResult<'_>,
+            ) -> BatchDecision {
+                let SearchResult::Complete(matches) = result else {
+                    panic!("unbounded query must complete")
+                };
+                self.observations
+                    .lock()
+                    .unwrap()
+                    .push((self.clone_id, matches.match_size()));
+                BatchDecision::ApplyAll
+            }
+        }
+
+        let mut left = EGraph::default();
+        let observations = Arc::new(Mutex::new(Vec::new()));
+        let scheduler_id = left.add_scheduler(Box::new(CloneAwareScheduler {
+            clone_id: 0,
+            next_clone_id: Arc::new(std::sync::atomic::AtomicUsize::new(1)),
+            observations: observations.clone(),
+        }));
+        left.parse_and_run_program(
+            None,
+            r#"
+            (ruleset test)
+            (relation R (i64))
+            (relation S (i64))
+            (rule ((R x)) ((S x)) :ruleset test :name "copy")
+            "#,
+        )
+        .unwrap();
+        left.step_rules_with_scheduler(scheduler_id, "test")
+            .unwrap();
+        observations.lock().unwrap().clear();
+
+        let mut right = left.clone();
+        let left_rows = (0..5_000).map(|i| format!("(R {i})")).collect::<String>();
+        let right_rows = (5_000..10_000)
+            .map(|i| format!("(R {i})"))
+            .collect::<String>();
+        left.parse_and_run_program(None, &left_rows).unwrap();
+        right.parse_and_run_program(None, &right_rows).unwrap();
+
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let (left, right) = std::thread::scope(|scope| {
+            let left_barrier = barrier.clone();
+            let left = scope.spawn(move || {
+                left_barrier.wait();
+                left.step_rules_with_scheduler(scheduler_id, "test")
+                    .unwrap();
+                left
+            });
+            let right = scope.spawn(move || {
+                barrier.wait();
+                right
+                    .step_rules_with_scheduler(scheduler_id, "test")
+                    .unwrap();
+                right
+            });
+            (left.join().unwrap(), right.join().unwrap())
+        });
+        let mut observations = observations.lock().unwrap().clone();
+        observations.sort_unstable();
+        assert_eq!(observations, [(0, 5_000), (1, 5_000)]);
+        assert_eq!(left.get_size("S"), 5_000);
+        assert_eq!(right.get_size("S"), 5_000);
+    }
+
+    #[derive(Clone)]
+    struct BoundedRejectScheduler {
+        observed: Arc<Mutex<Option<usize>>>,
+    }
+
+    impl Scheduler for BoundedRejectScheduler {
+        fn plan_search(&mut self, _rule: &str, _ruleset: &str) -> SearchPlan {
+            SearchPlan::Search {
+                max_matches: Some(10),
+            }
+        }
+
+        fn finish_search(
+            &mut self,
+            _rule: &str,
+            _ruleset: &str,
+            result: SearchResult<'_>,
+        ) -> BatchDecision {
+            let SearchResult::LimitExceeded { at_least } = result else {
+                panic!("bounded query unexpectedly completed")
+            };
+            *self.observed.lock().unwrap() = Some(at_least);
+            BatchDecision::Reject
+        }
+    }
+
+    #[test]
+    fn test_scheduler_bounds_collected_matches() {
+        let mut egraph = EGraph::default();
+        let observed = Arc::new(Mutex::new(None));
+        let scheduler_id = egraph.add_scheduler(Box::new(BoundedRejectScheduler {
+            observed: observed.clone(),
+        }));
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (relation R (i64))
+                (R 0)
+                (rule ((R x) (< x 100)) ((R (+ x 1))))
+                (run-schedule (saturate (run)))
+                (ruleset test)
+                (relation S (i64))
+                (rule ((R x)) ((S x)) :ruleset test :name "bounded")
+                "#,
+            )
+            .unwrap();
+
+        let report = egraph
+            .step_rules_with_scheduler(scheduler_id, "test")
+            .unwrap();
+        assert_eq!(*observed.lock().unwrap(), Some(11));
+        assert_eq!(egraph.get_size("S"), 0);
+        assert!(!report.updated);
     }
 
     #[test]
     fn test_scheduler_does_not_apply_fresh_subsumed_matches() {
         let mut egraph = EGraph::default();
-        let scheduler_id = egraph.add_scheduler(Box::new(FirstNScheduler { n: 10 }));
+        let scheduler_id = egraph.add_scheduler(Box::new(AcceptAllScheduler));
         let input = r#"
         (ruleset analysis)
         (ruleset test)
@@ -728,8 +1006,17 @@ mod test {
             self.can_stop_calls > 1
         }
 
-        fn filter_matches(&mut self, _rule: &str, _ruleset: &str, _matches: &mut Matches) -> bool {
-            false
+        fn plan_search(&mut self, _rule: &str, _ruleset: &str) -> SearchPlan {
+            SearchPlan::Search { max_matches: None }
+        }
+
+        fn finish_search(
+            &mut self,
+            _rule: &str,
+            _ruleset: &str,
+            _result: SearchResult<'_>,
+        ) -> BatchDecision {
+            BatchDecision::Reject
         }
     }
 

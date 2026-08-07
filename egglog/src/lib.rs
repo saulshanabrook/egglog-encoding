@@ -331,6 +331,7 @@ pub struct EGraph {
     /// The run report unioned over all runs so far.
     overall_run_report: RunReport,
     schedulers: DenseIdMap<SchedulerId, SchedulerRecord>,
+    named_schedulers: IndexMap<String, SchedulerId>,
     commands: IndexMap<String, Arc<dyn UserDefinedCommand>>,
     extension_state: HashMap<TypeId, Box<dyn ExtensionStateValue>>,
     strict_mode: bool,
@@ -348,6 +349,14 @@ pub struct EGraph {
 /// Compared to an external function, a user-defined command is more powerful because
 /// it has an exclusive access to the e-graph.
 pub trait UserDefinedCommand: Send + Sync {
+    /// Whether this command may pass through term/proof encoding unchanged.
+    ///
+    /// Returning `true` is only sound for commands that change execution policy
+    /// without reading or writing proof-visible e-graph state.
+    fn is_proof_transparent(&self) -> bool {
+        false
+    }
+
     /// Run the command with the given arguments.
     fn update(&self, egraph: &mut EGraph, args: &[Expr]) -> Result<Vec<CommandOutput>, Error>;
 }
@@ -457,6 +466,7 @@ impl EGraph {
             overall_run_report: Default::default(),
             type_info: Default::default(),
             schedulers: Default::default(),
+            named_schedulers: Default::default(),
             commands: Default::default(),
             extension_state: Default::default(),
             strict_mode: false,
@@ -1292,13 +1302,13 @@ impl EGraph {
                         Self::schedule_for_log(sched)
                     );
                     let rec = self.run_schedule(sched)?;
-                    let updated = rec.updated;
+                    let can_stop = rec.can_stop;
                     log::debug!(
                         "Saturate iteration {i} end: {}",
                         Self::run_report_debug_summary(&rec)
                     );
                     report.union(rec);
-                    if !updated {
+                    if can_stop {
                         log::debug!("Saturate reached fixpoint after {i} iteration(s)");
                         break;
                     }
@@ -1319,7 +1329,11 @@ impl EGraph {
         log::debug!("Running ruleset: {}", config.ruleset);
         let mut report: RunReport = Default::default();
 
-        let GenericRunConfig { ruleset, until } = config;
+        let GenericRunConfig {
+            scheduler,
+            ruleset,
+            until,
+        } = config;
 
         if !self.rulesets.contains_key(ruleset) {
             return Err(Error::NoSuchRuleset(ruleset.clone(), span.clone()));
@@ -1335,7 +1349,18 @@ impl EGraph {
             return Ok(report);
         }
 
-        let subreport = self.step_rules(ruleset)?;
+        let subreport = match scheduler {
+            Some(name) => {
+                let scheduler = self.named_scheduler(name).ok_or_else(|| {
+                    Error::ParseError(ParseError(
+                        span.clone(),
+                        format!("Unknown scheduler: {name}"),
+                    ))
+                })?;
+                self.step_rules_with_scheduler(scheduler, ruleset)?
+            }
+            None => self.step_rules(ruleset)?,
+        };
         report.union(subreport);
 
         if log_enabled!(Level::Debug) {
@@ -2572,10 +2597,19 @@ impl EGraph {
             let typechecked = original_typechecking.typecheck_program(&desugared)?;
 
             for command in &typechecked {
-                if let Err(reason) = command_supports_proof_encoding(
-                    &command.to_command(),
-                    &original_typechecking.type_info,
-                ) {
+                let is_proof_transparent = match command {
+                    ResolvedNCommand::UserDefined(_, name, _) => original_typechecking
+                        .commands
+                        .get(name)
+                        .is_some_and(|command| command.is_proof_transparent()),
+                    _ => false,
+                };
+                if !is_proof_transparent
+                    && let Err(reason) = command_supports_proof_encoding(
+                        &command.to_command(),
+                        &original_typechecking.type_info,
+                    )
+                {
                     let command_text = format!("{}", command.to_command());
                     return Err(Error::UnsupportedProofCommand {
                         command: command_text,

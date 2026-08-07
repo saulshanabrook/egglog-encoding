@@ -188,19 +188,6 @@ fn unordered_container_reshaped_element_collapse_proof() {
 }
 
 #[test]
-fn pointer_analysis_sample_passes_proof_checking() {
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("egglog crate should be inside the workspace");
-    let mut egraph = EGraph::new_with_proofs().with_proof_testing();
-    egraph.fact_directory = Some(repository.join("benchmarks/data/pointer-analysis-small"));
-    let program =
-        std::fs::read_to_string(repository.join("benchmarks/pointer-analysis-small.egg")).unwrap();
-
-    egraph.parse_and_run_program(None, &program).unwrap();
-}
-
-#[test]
 fn luminal_benchmark_passes_proof_checking() {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

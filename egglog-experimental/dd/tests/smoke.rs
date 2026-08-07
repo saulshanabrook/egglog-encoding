@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use egglog::ast::Span;
 use egglog::constraint::{SimpleTypeConstraint, TypeConstraint};
-use egglog::scheduler::{Matches, Scheduler};
+use egglog::scheduler::{BatchDecision, Scheduler, SearchPlan, SearchResult};
 use egglog::sort::I64Sort;
 use egglog::{prelude::*, EGraph, Primitive, PrimitiveValidator, Value, WritePrim, WriteState};
 
@@ -11,9 +11,17 @@ use egglog::{prelude::*, EGraph, Primitive, PrimitiveValidator, Value, WritePrim
 struct ChooseAllScheduler;
 
 impl Scheduler for ChooseAllScheduler {
-    fn filter_matches(&mut self, _rule: &str, _ruleset: &str, matches: &mut Matches) -> bool {
-        matches.choose_all();
-        true
+    fn plan_search(&mut self, _rule: &str, _ruleset: &str) -> SearchPlan {
+        SearchPlan::Search { max_matches: None }
+    }
+
+    fn finish_search(
+        &mut self,
+        _rule: &str,
+        _ruleset: &str,
+        _result: SearchResult<'_>,
+    ) -> BatchDecision {
+        BatchDecision::ApplyAll
     }
 }
 

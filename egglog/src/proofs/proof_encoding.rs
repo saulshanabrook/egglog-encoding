@@ -2159,6 +2159,7 @@ impl<'a> ProofInstrumentor<'a> {
                         Schedule::Run(
                             span.clone(),
                             RunConfig {
+                                scheduler: config.scheduler.clone(),
                                 ruleset: config.ruleset.clone(),
                                 until: Some(instrumented_facts),
                             },
@@ -2167,6 +2168,7 @@ impl<'a> ProofInstrumentor<'a> {
                     None => Schedule::Run(
                         span.clone(),
                         RunConfig {
+                            scheduler: config.scheduler.clone(),
                             ruleset: config.ruleset.clone(),
                             until: None,
                         },
@@ -2413,8 +2415,17 @@ impl<'a> ProofInstrumentor<'a> {
             | ResolvedNCommand::ProveExists(..) => {
                 res.push(command.to_command().make_unresolved());
             }
-            ResolvedNCommand::UserDefined(..) => {
-                panic!("User defined commands unsupported in term encoding");
+            ResolvedNCommand::UserDefined(_, name, _) => {
+                let command_impl = self
+                    .egraph
+                    .commands
+                    .get(name)
+                    .expect("resolved user-defined command must remain registered");
+                assert!(
+                    command_impl.is_proof_transparent(),
+                    "non-transparent user-defined command passed the proof-encoding gate"
+                );
+                res.push(command.to_command().make_unresolved());
             }
         }
         Ok(())
