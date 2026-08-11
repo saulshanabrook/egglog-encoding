@@ -232,6 +232,8 @@ pub struct Parser {
     user_defined: HashSet<String>,
     pub symbol_gen: SymbolGen,
     pub ensure_no_reserved_symbols: bool,
+    /// Accumulated text-to-AST time, reported as the `parse` phase.
+    pub(crate) parse_time: std::time::Duration,
 }
 
 impl Default for Parser {
@@ -243,6 +245,7 @@ impl Default for Parser {
             user_defined: Default::default(),
             symbol_gen: SymbolGen::new(INTERNAL_SYMBOL_PREFIX.to_string()),
             ensure_no_reserved_symbols: true,
+            parse_time: std::time::Duration::ZERO,
         }
     }
 }
@@ -305,9 +308,14 @@ impl Parser {
         filename: Option<String>,
         input: &str,
     ) -> Result<Vec<Command>, ParseError> {
-        let sexps = all_sexps(SexpParser::new(filename, input))?;
-        let nested: Vec<Vec<_>> = map_fallible(&sexps, self, Self::parse_command)?;
-        Ok(nested.into_iter().flatten().collect())
+        let start = std::time::Instant::now();
+        let parsed = (|| {
+            let sexps = all_sexps(SexpParser::new(filename, input))?;
+            let nested: Vec<Vec<_>> = map_fallible(&sexps, self, Self::parse_command)?;
+            Ok(nested.into_iter().flatten().collect())
+        })();
+        self.parse_time += start.elapsed();
+        parsed
     }
 
     // currently only used for testing, but no reason it couldn't be used elsewhere later

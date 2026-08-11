@@ -484,10 +484,11 @@ def test_run_process_passes_backend_flag_only_for_dd(
         summary_path.write_text(
             json.dumps(
                 {
-                    "schema_version": 2,
+                    "schema_version": 3,
                     "rulesets": [
                         {
                             "name": "rules",
+                            "assembly_ns": 2,
                             "search_ns": 4,
                             "apply_ns": 6,
                             "unattributed_ns": 10,
@@ -495,6 +496,16 @@ def test_run_process_passes_backend_flag_only_for_dd(
                             "rebuild_ns": 30,
                         }
                     ],
+                    "outside_rulesets": {
+                        "parse_ns": 0,
+                        "typecheck_ns": 0,
+                        "desugar_ns": 0,
+                        "encode_ns": 0,
+                        "install_ns": 0,
+                        "actions_ns": 0,
+                        "schedule_ns": 0,
+                        "proof_extraction_ns": 0,
+                    },
                 }
             ),
             encoding="utf-8",

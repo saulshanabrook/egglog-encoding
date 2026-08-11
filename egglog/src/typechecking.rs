@@ -239,6 +239,8 @@ pub struct TypeInfo {
     primitives: HashMap<String, Vec<PrimitiveWithId>>,
     func_types: HashMap<String, FuncType>,
     pub(crate) global_sorts: HashMap<String, ArcSort>,
+    /// Names of the shared per-sort tables holding globals.
+    pub(crate) global_tables: HashSet<String>,
     /// Sorts that do not allow union (e.g., from `:no-union` sorts or relations).
     pub(crate) non_unionable_sorts: HashSet<String>,
     /// Declared indexes, by the name their atoms are written with.
@@ -554,6 +556,16 @@ impl EGraph {
     }
 
     fn typecheck_command(&mut self, command: &NCommand) -> Result<ResolvedNCommand, TypeError> {
+        let start = std::time::Instant::now();
+        let resolved = self.typecheck_command_inner(command);
+        self.phase_timings.typecheck += start.elapsed();
+        resolved
+    }
+
+    fn typecheck_command_inner(
+        &mut self,
+        command: &NCommand,
+    ) -> Result<ResolvedNCommand, TypeError> {
         let symbol_gen = &mut self.parser.symbol_gen;
 
         let command: ResolvedNCommand = match command {
@@ -593,9 +605,20 @@ impl EGraph {
                         (resolved.name.clone(), id_sort.clone(), arg_sorts.to_vec());
                     crate::proofs::proof_fresh::register_mint(self, &name, arg_sorts, id_sort);
                 }
+                // `remove_globals` runs after typechecking and registers what it
+                // declares, so this and the `global_sorts` arm below only matter
+                // for a decl reaching typechecking some other way.
+                if resolved.internal_global_table {
+                    self.type_info.global_tables.insert(fdecl.name.clone());
+                }
                 // If this is a let binding, add it to global_sorts
-                // This preserves behavior for lets after desugaring
-                if resolved.internal_let {
+                // This preserves behavior for lets after desugaring. A term
+                // relation carries the flag only to mark what its rows name; it
+                // is a relation, never a global binding.
+                if resolved.internal_let
+                    && !resolved.internal_global_table
+                    && !resolved.internal_term_node
+                {
                     let output_sort = self.type_info.sorts.get(fdecl.schema.output()).unwrap();
                     self.type_info
                         .global_sorts
@@ -1160,6 +1183,7 @@ impl TypeInfo {
             term_constructor: fdecl.term_constructor.clone(),
             identity_vals: fdecl.identity_vals,
             internal_term_node: fdecl.internal_term_node,
+            internal_global_table: fdecl.internal_global_table,
         })
     }
 
@@ -1539,6 +1563,12 @@ impl TypeInfo {
 
     pub fn is_global(&self, sym: &str) -> bool {
         self.global_sorts.contains_key(sym)
+    }
+
+    /// Whether `sym` is a shared per-sort table holding globals, whose rows are
+    /// written like a global's rather than minted as terms.
+    pub(crate) fn is_global_table(&self, sym: &str) -> bool {
+        self.global_tables.contains(sym)
     }
 
     /// Check if an expression contains non-global function lookups (FunctionSubtype::Custom calls).

@@ -68,10 +68,13 @@ pub(crate) fn run_merge(
     term_dag: &mut TermDag,
     func_name: &str,
     prog: &[ResolvedNCommand],
+    globals: &HashMap<String, TermId>,
     old_term: TermId,
     new_term: TermId,
 ) -> Result<(TermId, HashSet<Proposition>), ProofCheckError> {
-    let mut subst = HashMap::default();
+    // A merge body may read a global as well as `old`/`new`. The bindings come
+    // from the program's own top-level actions, not from the database.
+    let mut subst = globals.clone();
     subst.insert("old".to_string(), old_term);
     subst.insert("new".to_string(), new_term);
     for cmd in prog {
@@ -816,8 +819,14 @@ impl ProofStore {
                     };
 
                 // Run the merge function to get the expected result
-                let (merged_term_child, mut merged_props) =
-                    run_merge(&mut self.term_dag, function, program, old_term, new_term)?;
+                let (merged_term_child, mut merged_props) = run_merge(
+                    &mut self.term_dag,
+                    function,
+                    program,
+                    &ctx.global_bindings,
+                    old_term,
+                    new_term,
+                )?;
                 // Add f(inputs..., merged_term) to merged_props
                 let mut merged_view_args = input_args.clone();
                 merged_view_args.push(merged_term_child);

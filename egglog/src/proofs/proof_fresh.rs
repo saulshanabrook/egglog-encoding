@@ -93,6 +93,11 @@ impl Primitive for MintRow {
     }
 }
 
+/// Deterministic name of an FD view's value-column read primitive.
+pub(crate) fn view_value_prim_name(view_name: &str) -> String {
+    format!("view-value-{view_name}")
+}
+
 /// Register an FD view's `set-if-empty` primitive and (in proof mode) its
 /// proof-column reader, so the encoding can canonicalize a freshly-built term
 /// to the view's canonical e-class at insertion time. `out_sorts` is the view's
@@ -119,6 +124,20 @@ pub(crate) fn register_set_if_empty(
         WriteState::valid_contexts(),
         move |backend, _| backend.register_set_if_empty(name.clone(), n_keys, out_arity),
     );
+
+    if !out_sorts[0].is_eq_sort() {
+        let view_value = ViewValue {
+            name: view_value_prim_name(view_name),
+            key_sorts: key_sorts.clone(),
+            value_sort: out_sorts[0].clone(),
+        };
+        let name = view_name.to_string();
+        eg.add_backend_op_primitive(
+            view_value,
+            WriteState::valid_contexts(),
+            move |backend, _| backend.register_view_column_lookup(name.clone(), n_keys, 0),
+        );
+    }
 
     // The proof column reader is only meaningful in proof mode (2-output view).
     if out_sorts.len() >= 2 {
@@ -161,6 +180,30 @@ impl Primitive for SetIfEmpty {
         let mut sig = self.key_sorts.clone();
         sig.extend(self.out_sorts.iter().cloned());
         sig.push(self.eclass_sort.clone());
+        SimpleTypeConstraint::new(&self.name, sig, span.clone()).into_box()
+    }
+}
+
+/// Reads an FD view's value column (column 0) by its key, for a view whose value
+/// is not an e-class.
+///
+/// Signature `(keys…) -> value`. Unlike [`ViewProof`] it takes no fallback: the
+/// row is written before it is read, and a base sort has no value to default to,
+/// so an absent key fails the action.
+#[derive(Clone)]
+struct ViewValue {
+    name: String,
+    key_sorts: Vec<ArcSort>,
+    value_sort: ArcSort,
+}
+
+impl Primitive for ViewValue {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+        let mut sig = self.key_sorts.clone();
+        sig.push(self.value_sort.clone());
         SimpleTypeConstraint::new(&self.name, sig, span.clone()).into_box()
     }
 }

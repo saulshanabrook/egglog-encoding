@@ -878,9 +878,9 @@ pub enum ProofEncodingUnsupportedReason {
     #[error("`fail` wrapping an `input` command is not supported by proof encoding.")]
     FailInputCommand,
     #[error(
-        "let binding with a primitive in the body. For silly internal reasons, we don't support primitive bindings for proofs at the moment, sorry."
+        "let binding a container. The encoding has no rebuild for a global's own row, so a container holding e-classes would go stale; every container global is rejected rather than only those. Bind it inside a rule, or run on the native backend."
     )]
-    LetBindingWithNonEqSort,
+    LetBindingWithContainer,
     #[error(
         "rule uses `:unsafe-seminaive`. Arbitrary RHS database reads are not representable by the term/proof encoding."
     )]
@@ -911,17 +911,24 @@ pub fn program_supports_proofs(commands: &[ResolvedCommand], type_info: &TypeInf
     // scopes. `type_info.global_sorts` reflects only the final scope (each `pop`
     // unregisters its globals), so checking against it alone misreads a popped
     // global's action-side lookup as an unsupported function lookup.
-    let let_globals: HashSet<String> = commands
-        .iter()
-        .filter_map(|c| match c {
-            GenericCommand::Function {
-                name,
-                let_binding: true,
-                ..
-            } => Some(name.clone()),
-            _ => None,
-        })
-        .collect();
+    fn collect_let_globals(commands: &[ResolvedCommand], out: &mut HashSet<String>) {
+        for command in commands {
+            match command {
+                GenericCommand::Function {
+                    name,
+                    let_binding: true,
+                    ..
+                } => {
+                    out.insert(name.clone());
+                }
+                // A `fail` can wrap the command that declares one.
+                GenericCommand::Fail(_, wrapped) => collect_let_globals(wrapped, out),
+                _ => {}
+            }
+        }
+    }
+    let mut let_globals: HashSet<String> = HashSet::default();
+    collect_let_globals(commands, &mut let_globals);
     for command in commands {
         if let Err(reason) = command_supports_proof_encoding_impl(command, type_info, &let_globals)
         {
@@ -1559,18 +1566,22 @@ fn command_supports_proof_encoding_impl(
         ResolvedCommand::Action(ResolvedAction::Let(_, _, expr)) => {
             // let binding with non-eq sort not supported by proof_global_desugar
             // we detect as setting something that is no-merge to a primitive not supported (global primitive binding)
-            if expr.output_type().is_eq_sort() {
-                Ok(())
+            if expr.output_type().is_container_sort() {
+                Err(ProofEncodingUnsupportedReason::LetBindingWithContainer)
             } else {
-                Err(ProofEncodingUnsupportedReason::LetBindingWithNonEqSort)
+                Ok(())
             }
         }
         // After global desugar it may look like this
         ResolvedCommand::Action(ResolvedAction::Set(_span, head, _children, expr)) => {
-            if !type_info.is_global(head.name()) || expr.output_type().is_eq_sort() {
-                Ok(())
+            // A global writes either its own function or a row of its sort's
+            // shared table.
+            let binds_global =
+                type_info.is_global(head.name()) || type_info.is_global_table(head.name());
+            if binds_global && expr.output_type().is_container_sort() {
+                Err(ProofEncodingUnsupportedReason::LetBindingWithContainer)
             } else {
-                Err(ProofEncodingUnsupportedReason::LetBindingWithNonEqSort)
+                Ok(())
             }
         }
         _ => Ok(()),

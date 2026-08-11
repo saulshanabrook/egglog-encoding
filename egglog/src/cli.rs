@@ -4,7 +4,7 @@ use std::io::{self, BufRead, BufReader, IsTerminal, Read, Write};
 use std::str::FromStr;
 
 use clap::Parser;
-use egglog_reports::TimingSummaryV2;
+use egglog_reports::{OutsidePhasesV3, TimingSummaryV3};
 use env_logger::Env;
 use std::path::PathBuf;
 
@@ -248,7 +248,18 @@ where
     }
 
     if let Some(summary_path) = args.timing_summary {
-        let summary = TimingSummaryV2::from_run_report(egraph.get_overall_run_report())
+        let phases = egraph.phase_timings();
+        let outside = OutsidePhasesV3 {
+            parse_ns: duration_ns(phases.parse),
+            typecheck_ns: duration_ns(phases.typecheck),
+            desugar_ns: duration_ns(phases.desugar),
+            encode_ns: duration_ns(phases.encode),
+            install_ns: duration_ns(phases.install),
+            actions_ns: duration_ns(phases.actions),
+            schedule_ns: duration_ns(phases.schedule),
+            proof_extraction_ns: duration_ns(phases.proof_extraction),
+        };
+        let summary = TimingSummaryV3::new(egraph.get_overall_run_report(), outside)
             .unwrap_or_else(|error| {
                 log::error!("failed to create timing summary: {error}");
                 std::process::exit(1);
@@ -402,6 +413,11 @@ impl FromStr for RunMode {
             _ => Err(format!("Unknown run mode: {s}")),
         }
     }
+}
+
+/// Nanoseconds, saturating, matching the timing summary's transport.
+fn duration_ns(d: std::time::Duration) -> u64 {
+    u64::try_from(d.as_nanos()).unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]

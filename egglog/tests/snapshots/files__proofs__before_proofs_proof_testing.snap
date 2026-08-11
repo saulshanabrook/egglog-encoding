@@ -1,0 +1,28 @@
+---
+source: egglog/tests/files.rs
+expression: proof_snapshot
+---
+(Rule
+  (= (@ExistsConstructor) (@ExistsConstructor))
+  (name "@prove_exists_rule")
+  (premises
+    (Fiat (= (Var "x") (Var "x")))
+    (Fiat (= (Const 2) (Const 2)))
+    (Fiat (= () ())))
+  (substitution (@v (Var "x")) (@v1 (Const 2))))
+(let t0 (Add (Var "x") (Const 2)))
+(Rule
+  (= t0 (Add (Const 2) (Var "x")))
+  (name "(rewrite (Add a b) (Add b a))")
+  (premises (Fiat (= t0 t0)))
+  (substitution (@rewrite_var__1 t0) (a (Var "x")) (b (Const 2))))
+(let t0 (Add (Var "x") (Const 2)))
+(let prop0 (= t0 t0))
+(let t1 (Add t0 (Const 0)))
+(let prf0
+  (Rule
+      (= t0 t1)
+      (name "(rewrite (Add a b) (Add (Add a b) (Const 0)))")
+      (premises (Fiat prop0))
+      (substitution (@rewrite_var__ t0) (a (Var "x")) (b (Const 2)))))
+(Trans prop0 prf0 (Sym (= t1 t0) prf0))

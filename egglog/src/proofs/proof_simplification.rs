@@ -1,6 +1,7 @@
 use crate::{
-    Term, TermId,
+    Literal, Term, TermId,
     ast::ResolvedNCommand,
+    ast::remove_globals::GlobalSlots,
     proofs::{
         proof_checker::{ProofCheckError, gather_globals},
         proof_format::{Justification, Proof, ProofId, ProofStore, Proposition},
@@ -13,18 +14,34 @@ impl ProofStore {
     /// with their computed values.
     /// This constructs a map of global names to their terms (without globals),
     /// then replaces all occurrences of those globals in the proof's term dag.
-    pub fn remove_globals(&mut self, prog: &[ResolvedNCommand]) -> Result<(), ProofCheckError> {
+    pub(crate) fn remove_globals(
+        &mut self,
+        prog: &[ResolvedNCommand],
+        slots: &GlobalSlots,
+    ) -> Result<(), ProofCheckError> {
         // Gather all globals and their values as terms
         let globals = gather_globals(prog, &mut self.term_dag)?;
 
-        // Replace all global function calls (nullary functions) in the term dag
-        // with their computed values
-        self.replace_global_terms(&globals);
+        // Replace all global reads in the term dag with their computed values
+        self.replace_global_terms(&globals, slots);
         Ok(())
     }
 
+    /// The global a term reads, if it is a global read: either a nullary
+    /// `:internal-let` call or one keyed row of a shared global table.
+    fn global_read(&self, head: &str, args: &[TermId], slots: &GlobalSlots) -> Option<String> {
+        match args {
+            [] => Some(head.to_owned()),
+            [key] => match self.term_dag.get(*key) {
+                Term::Lit(Literal::Int(id)) => slots.global_at(head, *id).map(ToOwned::to_owned),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// Replace all global function applications in the term dag with their values.
-    fn replace_global_terms(&mut self, globals: &HashMap<String, TermId>) {
+    fn replace_global_terms(&mut self, globals: &HashMap<String, TermId>, slots: &GlobalSlots) {
         // We need to rebuild the term dag, replacing global calls as we go
         // Build a map from old term IDs to new term IDs
         let mut term_mapping: HashMap<TermId, TermId> = HashMap::default();
@@ -35,10 +52,12 @@ impl ProofStore {
             let new_term_id = match term {
                 Term::Lit(_) | Term::Var(_) => term_id, // Literals and vars don't change
                 Term::App(ref head, ref args) => {
-                    // Check if this is a nullary global function call
-                    if args.is_empty() && globals.contains_key(head) {
+                    // Check if this term reads a global
+                    let read = self
+                        .global_read(head, args, slots)
+                        .and_then(|name| globals.get(&name).copied());
+                    if let Some(global_term_id) = read {
                         // Replace with the global's value, applying the term mapping
-                        let global_term_id = globals[head];
                         *term_mapping.get(&global_term_id).unwrap_or(&global_term_id)
                     } else {
                         // Map the children and reconstruct the term if any changed

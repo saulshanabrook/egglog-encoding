@@ -1,0 +1,5 @@
+---
+source: egglog/tests/files.rs
+expression: proof_snapshot
+---
+(Fiat (= (Num 3) (Num 3)))

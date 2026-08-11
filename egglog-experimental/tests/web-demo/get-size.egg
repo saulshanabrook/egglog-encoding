@@ -21,3 +21,9 @@
 (check (= (get-size! "MkBar") 1))
 (check (= (get-size! "MkFoo") 2))
 (check (= (get-size! "MkFoo" "MkBar") 3))
+
+; A `let` binds a name to a node that already exists rather than adding one, so
+; it does not count — in the total or by the name of the table it lives in.
+(let $one (MkFoo 1))
+(check (= (get-size!) 3))
+(check (= (get-size! "@Globals_Foo") 0))
