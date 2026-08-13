@@ -704,6 +704,7 @@ mod tests {
         new_experimental_egraph_for_proofs_with_disequality_encoding,
         new_experimental_egraph_with_disequality_encoding,
     };
+    use egglog::ast::sanitize_internal_names;
     use std::path::Path;
 
     const ENCODINGS: [DisequalityEncoding; 4] = [
@@ -1068,6 +1069,42 @@ mod tests {
                         panic!("{encoding:?} {mode} failed reconstructed-term check: {error}")
                     });
             }
+        }
+    }
+
+    #[test]
+    fn parameter_analysis_desugared_snapshots_match_and_replay() {
+        let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let program_path = crate_dir.join("benchmarks/disequality/parameter-analysis.egg");
+        let program = std::fs::read_to_string(&program_path).unwrap();
+        let fact_directory = crate_dir.join("tests/disequality/parameter-analysis-facts");
+
+        for encoding in ENCODINGS {
+            let mut compiler = new_experimental_egraph_with_disequality_encoding(encoding);
+            let resolved = compiler
+                .resolve_program(Some(program_path.display().to_string()), &program)
+                .unwrap_or_else(|error| panic!("{encoding:?} failed to desugar: {error}"));
+            let rendered = sanitize_internal_names(&resolved)
+                .into_iter()
+                .map(|command| command.to_string() + "\n")
+                .collect::<String>();
+            let snapshot_path = crate_dir.join(format!(
+                "benchmarks/disequality/desugared/{}.egg",
+                encoding.cli_name()
+            ));
+            let snapshot = std::fs::read_to_string(&snapshot_path).unwrap();
+            assert_eq!(rendered, snapshot, "stale {} snapshot", encoding.cli_name());
+
+            let mut replay = new_experimental_egraph();
+            replay.fact_directory = Some(fact_directory.clone());
+            replay
+                .parse_and_run_program(Some(snapshot_path.display().to_string()), &snapshot)
+                .unwrap_or_else(|error| panic!("{encoding:?} snapshot failed to replay: {error}"));
+            replay
+                .parse_and_run_program(None, "(check (TermAt 3 (f (N1))))")
+                .unwrap_or_else(|error| {
+                    panic!("{encoding:?} snapshot lost reconstructed terms: {error}")
+                });
         }
     }
 

@@ -1,0 +1,32 @@
+{
+  "binary_version": "egglog 2.0.0_2026-08-13_bde933f",
+  "command": "egglog-experimental --disequality-encoding ENCODING --mode desugar parameter-analysis.egg",
+  "compiler_revision": "bde933f23e1f4d0af45d867472719b1d4360a728",
+  "schema_version": 1,
+  "snapshots": {
+    "de": {
+      "bytes": 5283,
+      "file": "de.egg",
+      "sha256": "0af1b46bee161d71a0066a85fab64dad28276e9315486c294549eff01932d611"
+    },
+    "ee": {
+      "bytes": 8727,
+      "file": "ee.egg",
+      "sha256": "3299c3b12b593f3654b946b7208b98e7c23a9e43b178ad0ba5f60b5c729b5f96"
+    },
+    "nee": {
+      "bytes": 4972,
+      "file": "nee.egg",
+      "sha256": "81b998146e7d757d1ff7e815b577efa6b7a59ec088122b2a993bf2ca363be28a"
+    },
+    "oee": {
+      "bytes": 7140,
+      "file": "oee.egg",
+      "sha256": "f58b111c78af00f32d7c80f5d4ac0aab5ff29753c8e8164811e6ea8e24929b14"
+    }
+  },
+  "source": {
+    "name": "parameter-analysis.egg",
+    "sha256": "9ed42923df36da84fb3b0eda8c4ec0b967dd28bb1fc3a2bf9950dd7d535f2d4d"
+  }
+}
