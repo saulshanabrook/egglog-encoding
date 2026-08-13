@@ -1,6 +1,6 @@
 # Disequality encoding validation and benchmark
 
-Run date: 2026-08-12 (America/New_York)
+Run dates: 2026-08-12 through 2026-08-13 (America/New_York)
 
 Implementation base: `46f69b70d0819b03da110e6e785f91c080d58556`
 (`origin/main` before this change)
@@ -62,6 +62,15 @@ artifact input language, maps its numeral symbols to nullary constructors, and
 reproduces the supplied native programs' split of expression pairs into
 disequalities and equalities.
 
+The driver has two loading modes. `source` emits ordinary egglog commands and
+therefore measures the language frontend as well as the generated database
+implementation. `batched-api` builds the same terms and writes the exact
+representation emitted by the disequality compiler through
+`CompiledDisequalityWriter` inside one `EGraph::update`. The latter is the
+matched bulk-loading path for the native Rust API benchmarks. The source setup
+first installs the generated tables and rules, so the writer does not duplicate
+or replace the compiler implementation.
+
 The full EUF solver and Propel application are not egglog ports. They contain
 SAT/theorem-prover front ends and integration behavior outside the disequality
 extension. The fixtures port their documented e-graph states and contradiction
@@ -97,21 +106,45 @@ cargo build --release -p egglog-experimental \
   --example disequality_parameter_analysis
 ```
 
-Run one encoding with:
+Run the source-command path with:
 
 ```sh
 target/release/examples/disequality_parameter_analysis \
-  /path/to/parameter-analysis/exprs.in 0.5 nee
+  /path/to/parameter-analysis/exprs.in 0.5 nee source
+```
+
+Run the matched bulk-loading path with:
+
+```sh
+target/release/examples/disequality_parameter_analysis \
+  /path/to/parameter-analysis/exprs.in 0.5 nee batched-api
 ```
 
 The six numeral disequalities and declarations run before timing, matching the
-native programs. `parse_ms` measures egglog source parsing. `execute_ms` includes
-macro expansion, typechecking, database loading, and saturation. `total_ms` is
-their sum. The native artifact's `full_time` starts after input-file loading and
-includes expression parsing, insertion, rebuild/saturation, and consistency
-checking. The four egglog encodings were run in five interleaved rounds at ratio
-0.5, rotating their order to limit temporal bias. Native EE and DE were each run
-five times. No sample from either summarized block was discarded.
+native programs. `artifact_parse_ms` measures conversion of the artifact's
+expression syntax into the driver's typed tree. `source_render_ms` and
+`source_parse_ms` apply only to source mode. `load_ms` covers either normal
+command compilation/execution or one batched database update, and `schedule_ms`
+covers the generated consistency rules. The bulk total includes artifact
+parsing, loading, and saturation.
+
+The native artifact's `full_time` also starts after file loading and includes
+expression parsing, insertion, rebuild/saturation, and consistency checking.
+Thus the optimized totals have matched timer boundaries. Process startup and
+the six base constraints are excluded from both internal totals; `wall_ms` in
+the raw CSV records the wider process boundary separately.
+
+The checked-in runner executes all four egglog encodings plus native EE and DE
+in five interleaved rounds, rotating the endpoint order on every round:
+
+```sh
+python egglog-experimental/benchmarks/disequality/run_parameter_analysis.py \
+  --egglog-driver target/release/examples/disequality_parameter_analysis \
+  --native-ee /path/to/parameter_analysis_ee \
+  --native-de /path/to/parameter_analysis_de \
+  --input /path/to/parameter-analysis/exprs.in \
+  --output egglog-experimental/benchmarks/disequality/optimized-ratio-0.5.csv
+```
 
 An earlier encoding-blocked egglog run overlapped with another worktree's
 `math_benchmark_proofs` process at 100% CPU; host load reached 15.36 and timings
@@ -124,14 +157,18 @@ The native binaries print Rust debug durations with adaptive precision. The CSV
 normalizes displayed values such as `2.00s` to milliseconds but cannot recover
 precision that the executable did not print.
 
-An exploratory pre-optimization batch of 1,000 top-level actions made EE slower
-(`13.07s` execution versus `10.89s` for the matching unbatched implementation).
-Top-level batch support in the proof encoding is therefore not required by this
-workload and was not added.
+Source-level `(begin ...)` batches of 2, 5, and 10 actions improved the
+ratio-zero path by only about 10%; a batch of 100 regressed, and an earlier
+batch of 1,000 was slower than the matching unbatched run. The existing proof
+transformation already handles action blocks, so no new proof-only batch syntax
+was needed. The faster Rust bulk writer intentionally uses `EGraph::update`,
+which rejects proof-enabled e-graphs rather than bypassing proof recording.
 
 ## Results
 
-Median of five ratio-0.5 trials:
+### Source-command baseline
+
+Median of the original five ratio-0.5 source trials:
 
 | Engine | Encoding | Parse | Execute/full | Total | Relative total to same-engine EE | Representation rows/nodes |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
@@ -156,13 +193,91 @@ rows. In the one-trial ratio sweep, NEE and DE were lower than EE at the two hig
 disequality fractions, but this sweep has no uncertainty estimate and is retained
 only as structural corroboration in [`ratio-sweep.csv`](ratio-sweep.csv).
 
-The native artifact reproduces the paper's stronger result for native DE: its
-median is 40% below native EE. Absolute egglog times are 8.8x (EE) to 14x (DE)
-the native programs here. Most egglog time is shared command loading and
-typechecking rather than disequality saturation; the ratio-zero sweep still
-takes about 7.7 seconds. This benchmark therefore supports expressibility and
-low *incremental representation* overhead, but it does not support an absolute
-performance-parity claim with the specialized Rust API.
+These source totals use the original timer schema, which excludes the driver's
+artifact parser and source renderer. They remain useful as measurements of the
+large per-command frontend cost but should not be compared directly with the
+matched bulk totals below.
+
+### Compiled bulk loading
+
+Median of five final-code, interleaved ratio-0.5 trials:
+
+| Engine | Encoding | Artifact parse | Load/full | Schedule | Total | Observed range |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| egglog | EE | 38.8 ms | 435.5 ms | 18.1 ms | **492.2 ms** | 490.2-515.8 ms |
+| egglog | OEE | 38.9 ms | 440.5 ms | 1.4 ms | **480.1 ms** | 477.5-492.5 ms |
+| egglog | NEE | 39.0 ms | 436.2 ms | 0.2 ms | **475.6 ms** | 469.6-486.5 ms |
+| egglog | relational DE | 38.9 ms | 429.1 ms | 2.8 ms | **470.5 ms** | 467.7-497.3 ms |
+| native egg 0.9.5 | EE | included in full | 800.7 ms | included in full | **800.7 ms** | 796.3-805.8 ms |
+| native patched egg | DE | included in full | 512.7 ms | included in full | **512.7 ms** | 507.6-540.2 ms |
+
+The observations are in
+[`optimized-ratio-0.5.csv`](optimized-ratio-0.5.csv). Egglog EE is 38.5% below
+the contemporaneous native EE median. Compiled relational DE is 8.2% below the
+native DE median. Every egglog EE sample is below every native EE sample, and
+every egglog DE sample is below every native DE sample in these five rounds.
+Five rounds are still too few for a broad statistical claim, but the result is
+not driven by one outlier.
+
+The optimized source and bulk modes produce identical representation-row and
+total-tuple counts for each encoding. At ratio 0.5 those pairs are EE
+59,663/544,534, OEE 15,006/499,876, NEE 15,006/499,875, and DE
+30,012/514,881. This is a structural check that the fast path did not omit the
+compiled representation or its saturation rules.
+
+### Why the original path was slow
+
+The ratio-zero control isolates shared loading overhead: it contains 30,000
+ordinary equalities and only the six setup disequalities. On the final binary,
+the source path took 7,541 ms, the compiled bulk path took 457 ms including
+artifact parsing, and native EE took 502 ms. All three produced the matching
+484,887 egglog tuples or 484,877 native nodes (the ten-row difference is the
+fixed egglog extension support). Therefore the multi-second gap exists even
+when the selected disequality encoding has no workload assertions.
+
+A 1 kHz `samply` profile of the full ratio-zero source path collected 8,490
+main-thread samples. The important inclusive frames were:
+
+| Frame | Inclusive samples | Share of all samples | Relationship |
+| --- | ---: | ---: | --- |
+| `EGraph::resolve_command` | 3,761 | 44.3% | command-resolution branch |
+| `typecheck_standalone_action(s)` | 3,380 | 39.8% | nested under resolution |
+| `EGraph::run_command` | 3,420 | 40.3% | command-execution branch |
+| `EGraph::eval_actions` | 2,999 | 35.3% | nested under execution |
+| backend `run_rules` | 1,041 | 12.3% | nested under `eval_actions` |
+| `EGraph::parse_program` | 598 | 7.0% | source parser |
+
+Nested rows are not additive. Resolution and execution are the two disjoint
+large branches. About 90% of resolution samples are under standalone action
+typechecking, while `eval_actions` accounts for about 88% of execution samples.
+Each top-level action is macro-expanded and typechecked, lowered to core
+actions, compiled into a temporary backend rule, run, and freed. Expression
+lowering and type constraints also allocate and clone heavily. The generated
+database rule execution itself accounts for a much smaller share.
+
+This establishes the causal boundary:
+
+* The disequality encodings are not responsible for the original 8-14x gap.
+  Source timings differ by only about 6% across EE/OEE/NEE/DE, and ratio zero is
+  still slow.
+* Egglog's database implementation is not intrinsically slower on this
+  workload. Once the compiler output is bulk-loaded, both like-for-like EE and
+  relational DE beat the corresponding native artifact programs.
+* The bottleneck is compiling and dispatching 30,000 independent source
+  commands through a general typed language interface. Small `(begin ...)`
+  blocks reduce temporary-rule overhead but do not remove repeated expression
+  lowering and typechecking; large blocks make the joint constraint problem
+  more expensive.
+* EE's remaining 18 ms saturation cost is larger than OEE/NEE/DE because EE
+  materializes 59,663 representation rows. Even so, bulk term/database loading
+  at roughly 430-441 ms dominates every optimized encoding.
+
+The bulk result is the appropriate evidence for the paper's claim about the
+performance of extensions compiled to egglog's database. The source result is
+separate evidence that egglog still needs a typed, proof-aware bulk input path
+if large generated datasets must be expressed as top-level commands. The
+current `CompiledDisequalityWriter` is useful to Rust data loaders but is not
+that proof-aware language feature.
 
 ## Reproduction checks
 

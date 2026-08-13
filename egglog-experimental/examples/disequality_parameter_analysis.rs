@@ -1,5 +1,81 @@
-use egglog_experimental::{DisequalityEncoding, new_experimental_egraph_with_disequality_encoding};
-use std::{error::Error, fmt::Write, path::PathBuf, str::FromStr, time::Instant};
+use egglog::{Error as EgglogError, FullState, RawValues, Value, Write as EgglogWrite};
+use egglog_experimental::{
+    CompiledDisequalityWriter, DisequalityEncoding,
+    new_experimental_egraph_with_disequality_encoding,
+};
+use std::{
+    error::Error,
+    fmt::{self, Write as FmtWrite},
+    path::PathBuf,
+    str::FromStr,
+    time::{Duration, Instant},
+};
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum LoadMode {
+    #[default]
+    Source,
+    BatchedApi,
+}
+
+impl fmt::Display for LoadMode {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Source => formatter.write_str("source"),
+            Self::BatchedApi => formatter.write_str("batched-api"),
+        }
+    }
+}
+
+impl FromStr for LoadMode {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "source" => Ok(Self::Source),
+            "batched-api" => Ok(Self::BatchedApi),
+            _ => Err(format!(
+                "unknown load mode {value:?}; expected source or batched-api"
+            )),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ArtifactExpr {
+    Numeral(u8),
+    Apply(char, Vec<Self>),
+}
+
+impl ArtifactExpr {
+    fn add_to(&self, state: &mut FullState<'_, '_>) -> Result<Value, EgglogError> {
+        match self {
+            Self::Numeral(numeral) => state.add(&format!("N{numeral}"), RawValues(Vec::new())),
+            Self::Apply(function, children) => {
+                let children = children
+                    .iter()
+                    .map(|child| child.add_to(state))
+                    .collect::<Result<Vec<_>, _>>()?;
+                state.add(&function.to_string(), RawValues(children))
+            }
+        }
+    }
+}
+
+impl fmt::Display for ArtifactExpr {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Numeral(numeral) => write!(formatter, "(N{numeral})"),
+            Self::Apply(function, children) => {
+                write!(formatter, "({function}")?;
+                for child in children {
+                    write!(formatter, " {child}")?;
+                }
+                formatter.write_char(')')
+            }
+        }
+    }
+}
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut args = std::env::args_os();
@@ -7,13 +83,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         .next()
         .and_then(|value| value.into_string().ok())
         .unwrap_or_else(|| "disequality_parameter_analysis".to_owned());
-    let input = args
-        .next()
-        .map(PathBuf::from)
-        .ok_or_else(|| format!("usage: {program} <artifact-exprs.in> <ratio> [ee|oee|nee|de]"))?;
+    let input = args.next().map(PathBuf::from).ok_or_else(|| {
+        format!("usage: {program} <artifact-exprs.in> <ratio> [ee|oee|nee|de] [source|batched-api] [source-batch-size]")
+    })?;
     let ratio = args
         .next()
-        .ok_or_else(|| format!("usage: {program} <artifact-exprs.in> <ratio> [ee|oee|nee|de]"))?
+        .ok_or_else(|| {
+            format!(
+                "usage: {program} <artifact-exprs.in> <ratio> [ee|oee|nee|de] [source|batched-api] [source-batch-size]"
+            )
+        })?
         .into_string()
         .map_err(|_| "ratio must be valid UTF-8")?
         .parse::<f32>()?;
@@ -30,11 +109,40 @@ fn main() -> Result<(), Box<dyn Error>> {
         })
         .transpose()?
         .unwrap_or_default();
+    let load_mode = args
+        .next()
+        .map(|value| {
+            value
+                .into_string()
+                .map_err(|_| "load mode must be valid UTF-8".to_owned())
+                .and_then(|value| LoadMode::from_str(&value))
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let source_batch_size = args
+        .next()
+        .map(|value| {
+            value
+                .into_string()
+                .map_err(|_| "source batch size must be valid UTF-8".to_owned())?
+                .parse::<usize>()
+                .map_err(|error| format!("invalid source batch size: {error}"))
+        })
+        .transpose()?;
     if args.next().is_some() {
-        return Err(format!("usage: {program} <artifact-exprs.in> <ratio> [ee|oee|nee|de]").into());
+        return Err(format!(
+            "usage: {program} <artifact-exprs.in> <ratio> [ee|oee|nee|de] [source|batched-api] [source-batch-size]"
+        )
+        .into());
     }
-
+    if source_batch_size == Some(0) {
+        return Err("source batch size must be positive".into());
+    }
+    if load_mode == LoadMode::BatchedApi && source_batch_size.is_some() {
+        return Err("source batch size applies only to source mode".into());
+    }
     let input = std::fs::read_to_string(&input)?;
+    let artifact_parse_start = Instant::now();
     let artifact_line_slots = input.split('\n').count();
     let expressions = input
         .lines()
@@ -48,6 +156,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // input. Preserve that detail, then cap at the number of parsed expressions.
     let disequality_expressions =
         (((ratio * artifact_line_slots as f32 / 2.0) as usize) * 2).min(expressions.len());
+    let artifact_parse_elapsed = artifact_parse_start.elapsed();
 
     let mut setup = String::from(
         r#"(datatype Expr
@@ -72,35 +181,95 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    let mut workload = String::new();
-    for (index, pair) in expressions.chunks_exact(2).enumerate() {
-        if index * 2 < disequality_expressions {
-            writeln!(workload, "(disequal {} {})", pair[0], pair[1])?;
-        } else {
-            writeln!(workload, "(union {} {})", pair[0], pair[1])?;
+    let source_render_start = Instant::now();
+    let workload = if load_mode == LoadMode::Source {
+        let mut workload = String::new();
+        let pair_count = expressions.len() / 2;
+        for (index, pair) in expressions.chunks_exact(2).enumerate() {
+            if source_batch_size.is_some_and(|batch_size| index % batch_size == 0) {
+                workload.push_str("(begin\n");
+            }
+            if index * 2 < disequality_expressions {
+                writeln!(workload, "(disequal {} {})", pair[0], pair[1])?;
+            } else {
+                writeln!(workload, "(union {} {})", pair[0], pair[1])?;
+            }
+            if source_batch_size
+                .is_some_and(|batch_size| (index + 1) % batch_size == 0 || index + 1 == pair_count)
+            {
+                workload.push_str(")\n");
+            }
         }
-    }
-    workload.push_str("(run-schedule (saturate (run)))\n");
+        workload
+    } else {
+        String::new()
+    };
+    let source_render_elapsed = source_render_start.elapsed();
 
     let mut egraph = new_experimental_egraph_with_disequality_encoding(encoding);
     egraph.set_num_threads(1);
     egraph.parse_and_run_program(None, &setup)?;
-    let parse_start = Instant::now();
-    let parsed = egraph.parse_program(None, &workload)?;
-    let parse_elapsed = parse_start.elapsed();
-    let execute_start = Instant::now();
-    let result = egraph.run_program(parsed);
-    let execute_elapsed = execute_start.elapsed();
-    let contradiction = match result {
-        Ok(_) => false,
-        Err(error)
-            if error
-                .to_string()
-                .contains("disequality constraint contradicted") =>
-        {
-            true
+    let schedule = egraph.parse_program(None, "(run-schedule (saturate (run)))")?;
+    let mut contradiction = false;
+    let (parse_elapsed, load_elapsed) = match load_mode {
+        LoadMode::Source => {
+            let parse_start = Instant::now();
+            let parsed = egraph.parse_program(None, &workload)?;
+            let parse_elapsed = parse_start.elapsed();
+            let load_start = Instant::now();
+            let result = egraph.run_program(parsed);
+            let load_elapsed = load_start.elapsed();
+            match result {
+                Ok(_) => {}
+                Err(error)
+                    if error
+                        .to_string()
+                        .contains("disequality constraint contradicted") =>
+                {
+                    contradiction = true;
+                }
+                Err(error) => return Err(error.into()),
+            }
+            (parse_elapsed, load_elapsed)
         }
-        Err(error) => return Err(error.into()),
+        LoadMode::BatchedApi => {
+            let load_start = Instant::now();
+            egraph.update(|mut state| {
+                let writer = CompiledDisequalityWriter::from_installed_support(
+                    &mut state, encoding, "Expr",
+                )?;
+                for (index, pair) in expressions.chunks_exact(2).enumerate() {
+                    let left = pair[0].add_to(&mut state)?;
+                    let right = pair[1].add_to(&mut state)?;
+                    if index * 2 < disequality_expressions {
+                        writer.add(&mut state, left, right)?;
+                    } else {
+                        state.union(left, right)?;
+                    }
+                }
+                Ok(())
+            })?;
+            (Duration::ZERO, load_start.elapsed())
+        }
+    };
+    let schedule_elapsed = if contradiction {
+        Duration::ZERO
+    } else {
+        let schedule_start = Instant::now();
+        let result = egraph.run_program(schedule);
+        let elapsed = schedule_start.elapsed();
+        match result {
+            Ok(_) => {}
+            Err(error)
+                if error
+                    .to_string()
+                    .contains("disequality constraint contradicted") =>
+            {
+                contradiction = true;
+            }
+            Err(error) => return Err(error.into()),
+        }
+        elapsed
     };
     let encoding_prefix = match encoding {
         DisequalityEncoding::EqualityEmbedding
@@ -116,35 +285,48 @@ fn main() -> Result<(), Box<dyn Error>> {
         .sum::<usize>();
 
     println!(
-        "engine,encoding,ratio,expressions,base_disequalities,disequalities,equalities,contradiction,parse_ms,execute_ms,total_ms,encoding_rows,tuples"
+        "engine,encoding,load_mode,source_batch_size,ratio,expressions,base_disequalities,disequalities,equalities,contradiction,artifact_parse_ms,source_render_ms,source_parse_ms,load_ms,schedule_ms,total_ms,encoding_rows,tuples"
     );
     println!(
-        "egglog,{encoding},{ratio},{},{base_disequalities},{},{},{contradiction},{:.3},{:.3},{:.3},{encoding_rows},{}",
+        "egglog,{encoding},{load_mode},{},{ratio},{},{base_disequalities},{},{},{contradiction},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{encoding_rows},{}",
+        match load_mode {
+            LoadMode::Source => source_batch_size.unwrap_or(1),
+            LoadMode::BatchedApi => 0,
+        },
         expressions.len(),
         disequality_expressions / 2 + base_disequalities,
         (expressions.len() - disequality_expressions) / 2,
+        artifact_parse_elapsed.as_secs_f64() * 1_000.0,
+        source_render_elapsed.as_secs_f64() * 1_000.0,
         parse_elapsed.as_secs_f64() * 1_000.0,
-        execute_elapsed.as_secs_f64() * 1_000.0,
-        (parse_elapsed + execute_elapsed).as_secs_f64() * 1_000.0,
+        load_elapsed.as_secs_f64() * 1_000.0,
+        schedule_elapsed.as_secs_f64() * 1_000.0,
+        (artifact_parse_elapsed
+            + source_render_elapsed
+            + parse_elapsed
+            + load_elapsed
+            + schedule_elapsed)
+            .as_secs_f64()
+            * 1_000.0,
         egraph.num_tuples(),
     );
     Ok(())
 }
 
-fn translate_artifact_expr(input: &str) -> Result<String, String> {
+fn translate_artifact_expr(input: &str) -> Result<ArtifactExpr, String> {
     fn skip_whitespace(input: &[u8], cursor: &mut usize) {
         while input.get(*cursor).is_some_and(u8::is_ascii_whitespace) {
             *cursor += 1;
         }
     }
 
-    fn parse(input: &[u8], cursor: &mut usize) -> Result<String, String> {
+    fn parse(input: &[u8], cursor: &mut usize) -> Result<ArtifactExpr, String> {
         skip_whitespace(input, cursor);
         match input.get(*cursor).copied() {
             Some(b'1'..=b'5') => {
                 let numeral = input[*cursor] as char;
                 *cursor += 1;
-                Ok(format!("(N{numeral})"))
+                Ok(ArtifactExpr::Numeral(numeral as u8 - b'0'))
             }
             Some(b'(') => {
                 *cursor += 1;
@@ -160,18 +342,16 @@ fn translate_artifact_expr(input: &str) -> Result<String, String> {
                     'h' => 3,
                     _ => unreachable!(),
                 };
-                let mut translated = format!("({function}");
+                let mut children = Vec::with_capacity(arity);
                 for _ in 0..arity {
-                    translated.push(' ');
-                    translated.push_str(&parse(input, cursor)?);
+                    children.push(parse(input, cursor)?);
                 }
                 skip_whitespace(input, cursor);
                 if input.get(*cursor) != Some(&b')') {
                     return Err(format!("expected ')' at byte {cursor}"));
                 }
                 *cursor += 1;
-                translated.push(')');
-                Ok(translated)
+                Ok(ArtifactExpr::Apply(function, children))
             }
             _ => Err(format!("expected an expression at byte {cursor}")),
         }
@@ -192,9 +372,11 @@ mod tests {
 
     #[test]
     fn translates_and_validates_artifact_expressions() {
-        assert_eq!(translate_artifact_expr("1").unwrap(), "(N1)");
+        assert_eq!(translate_artifact_expr("1").unwrap().to_string(), "(N1)");
         assert_eq!(
-            translate_artifact_expr("(f (g 2 (h 3 4 5)))").unwrap(),
+            translate_artifact_expr("(f (g 2 (h 3 4 5)))")
+                .unwrap()
+                .to_string(),
             "(f (g (N2) (h (N3) (N4) (N5))))"
         );
         assert!(translate_artifact_expr("(g 1)").is_err());
