@@ -1,0 +1,27 @@
+; Generic host language used by the disequality case studies.
+(sort BenchmarkTerm)
+(sort BenchmarkTerms (Vec BenchmarkTerm))
+(constructor BenchmarkNode (String BenchmarkTerms) BenchmarkTerm)
+(function BenchmarkTermAt (i64) BenchmarkTerm :no-merge)
+
+(begin
+  (let term0 (BenchmarkNode "x" (vec-of)))
+  (set (BenchmarkTermAt 0) term0)
+  (let term1 (BenchmarkNode "n" (vec-of)))
+  (set (BenchmarkTermAt 1) term1)
+  (let term2 (BenchmarkNode "@apply" (vec-of term0 term1)))
+  (set (BenchmarkTermAt 2) term2)
+  (let term3 (BenchmarkNode "⊥" (vec-of)))
+  (set (BenchmarkTermAt 3) term3)
+  (union term2 term3)
+)
+
+(begin
+  (let term4 (BenchmarkNode "⊤" (vec-of)))
+  (set (BenchmarkTermAt 4) term4)
+  (disequal term4 (BenchmarkTermAt 3))
+  (disequal (BenchmarkTermAt 2) term4)
+)
+
+; The command below records the expected graph consistency.
+(check-disequalities)

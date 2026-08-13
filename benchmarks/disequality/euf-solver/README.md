@@ -1,5 +1,11 @@
 # EUF Solver
 
+This copy also supports `egglog-ee`, `egglog-oee`, `egglog-nee`, and
+`egglog-de` through `--backend`, with optional executable source snapshots via
+`--emit-source-dir`. See [`../EGGLOG_INTEGRATION.md`](../EGGLOG_INTEGRATION.md)
+for architecture, validation scope, and reproduction commands. The remainder
+of this file is the artifact's original solver documentation.
+
 This document documents in greater detail the EUF solver.  First we document the
 building step, then the CLI arguments.  We present example uses that reviewers
 can execute that allows them to check their own files.  Next we describe on a

@@ -1,4 +1,11 @@
 /target/
+/benchmarks/disequality/euf-solver/target/
+/benchmarks/disequality/inductive-prover/propel/.js/
+/benchmarks/disequality/inductive-prover/propel/.jvm/
+/benchmarks/disequality/inductive-prover/propel/.native/
+/benchmarks/disequality/inductive-prover/propel/project/project/
+/benchmarks/disequality/inductive-prover/propel/project/target/
+/benchmarks/disequality/inductive-prover/propel/target/
 /nightly/
 /.reports*.jsonl
 /.reports*.html

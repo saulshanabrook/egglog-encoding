@@ -35,16 +35,32 @@ object Equality:
 end Equality
 
 object EGraphEqualities:
-  var ops: EGraphOps[EGraph.EGraph] = EGraph.DisequalityEdges.EGraphsOps
-  given EGraphOps[EGraph.EGraph] = EGraphEqualities.ops
+  var backend: EqualityGraphBackend = EqualityGraphBackend.DisequalityEdges
+  var emitSourceDirectory: Option[String] = None
 
   object EGraphStats:
     var Global: Seq[EGraphStats] = Seq()
+    private var snapshotIndex: Long = 0
     case class EGraphStats(eclasses: Double, enodes: Double)
 
     def fromEqualities(eq: Equalities): EGraphStats =
       val rebuilded = eq.rebuild
-      EGraphStats(rebuilded.eclasses, rebuilded.enodes)
+      emitSourceDirectory.foreach(directory =>
+        val path = java.nio.file.Paths.get(directory)
+        java.nio.file.Files.createDirectories(path)
+        val stem = f"${backend.name}-graph-$snapshotIndex%06d"
+        rebuilded.underlying.egraph.writeSnapshot(
+          path.nn.resolve(s"$stem.egg").toString,
+          path.nn.resolve(s"$stem.desugared.egg").toString,
+        )
+        snapshotIndex += 1
+      )
+      val stats = rebuilded.underlying.egraph.stats
+      EGraphStats(stats.classes, stats.nodes)
+
+    def reset(): Unit =
+      Global = Seq()
+      snapshotIndex = 0
 
     def sum(stats: Iterable[EGraphStats]): EGraphStats =
       stats.foldLeft(EGraphStats(0, 0)) {
@@ -61,16 +77,14 @@ object EGraphEqualities:
     case expr @ Var(_) => expr.ident == ident
     case Cases(scrutinee, cases) => contains(scrutinee, ident) || (cases exists { (_, expr) => contains(expr, ident) })
 
-import EGraphEqualities.given
-
 // TODO map operations executed on propel's Equalities into an e-graph
 //      DONE
 case class EGraphEqualities(
-  egraph: EGraph.EGraph = EGraph.empty,
+  egraph: EqualityGraph = EGraphEqualities.backend.empty,
   terms: scala.collection.mutable.Map[Term, EClass] = scala.collection.mutable.Map()
 ):
   override def clone(): EGraphEqualities =
-    EGraphEqualities(egraph = EGraph.clone(this.egraph), terms = terms.clone())
+    EGraphEqualities(egraph = this.egraph.copyGraph(), terms = terms.clone())
 
   def withEqualities(pos: Map[Term, Term]): EGraphEqualities =
     this.withEqualitiesAndUnequalities(pos, Set())
@@ -84,7 +98,7 @@ case class EGraphEqualities(
       equalities.egraph.union(equalities.getOrAddTerm(lhs), equalities.getOrAddTerm(rhs))
     )
     neg.collect { case neg if neg.size == 1 => neg.head }.foreach((lhs, rhs) =>
-      equalities.egraph.disunion(equalities.getOrAddTerm(lhs), equalities.getOrAddTerm(rhs))
+      equalities.egraph.disequal(equalities.getOrAddTerm(lhs), equalities.getOrAddTerm(rhs))
     )
     equalities
 
@@ -92,9 +106,10 @@ case class EGraphEqualities(
     val xc = this.getOrAddTerm(x)
     val yc = this.getOrAddTerm(y)
     this.egraph.rebuild()
-    if this.egraph.equal(xc, yc) then Equality.Equal
-    else if this.egraph.unequal(xc, yc) then Equality.Unequal
-    else Equality.Indeterminate
+    this.egraph.compare(xc, yc) match
+      case GraphComparison.Equal => Equality.Equal
+      case GraphComparison.Unequal => Equality.Unequal
+      case GraphComparison.Indeterminate => Equality.Indeterminate
 
   lazy val language: Language.PropelLanguage = new Language.PropelLanguage:
     override def parseClass(term: Term)(using generator: EClassGenerator): EClass =
@@ -113,22 +128,22 @@ case class EGraphEqualities(
       case (TypeApp(f1, tpe1), TypeApp(f2, tpe2)) =>
         if !Equalities.debugDisableInequalities then
           if equivalent(tpe1, tpe2) && this.equal(f1, f2) == Equality.Equal
-          then this.egraph.disunion(t1Class, t2Class)
+          then this.egraph.disequal(t1Class, t2Class)
       case (Data(c1, args1), Data(c2, args2)) =>
         if !Equalities.debugDisableInequalities then
           if c1 != c2 || args1.sizeCompare(args2) != 0 || args1.zip(args2).map(this.equal).contains(Equality.Unequal)
-          then this.egraph.disunion(t1Class, t2Class)
+          then this.egraph.disequal(t1Class, t2Class)
       case (Var(id1), t2@Data(c2, args2)) if !Equalities.debugDisableInequalities && EGraphEqualities.contains(t2, id1) =>
-        this.egraph.disunion(t1Class, t2Class)
+        this.egraph.disequal(t1Class, t2Class)
       case (t1@Data(c1, args1), Var(id2)) if !Equalities.debugDisableInequalities && EGraphEqualities.contains(t1, id2) =>
-        this.egraph.disunion(t1Class, t2Class)
+        this.egraph.disequal(t1Class, t2Class)
       case _ =>
     )
 
 case class Equalities private(underlying: EGraphEqualities, pos: Map[Term, Term], neg: Set[Map[Term, Term]]):
   override val hashCode = scala.util.hashing.MurmurHash3.productHash((pos, neg))
-  def eclasses: Int = this.underlying.egraph.eclasses.size
-  def enodes: Int = this.underlying.egraph.eclasses.foldLeft(0)(_ + _._2.size)
+  def eclasses: Int = this.underlying.egraph.stats.classes
+  def enodes: Int = this.underlying.egraph.stats.nodes
   def rebuild: Equalities = { this.underlying.egraph.rebuild(); this }
 
   override def equals(other: Any) = other match

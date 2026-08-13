@@ -4,7 +4,6 @@ import scala.io.Source
 import scala.util.{Success, Using, Failure}
 import java.io.IOException
 import scala.scalajs.js.annotation._
-import evaluator.egraph.mutable.*
 
 object defaults:
   import ast.Property.*
@@ -30,7 +29,8 @@ object defaults:
   val propertiesOrder = List(
     Reflexive, Irreflexive, Antisymmetric, Symmetric, Connected, Transitive,
     Commutative, Selection, Idempotent, Associative)
-  val egraphVariant: EGraphOps[EGraph.EGraph] = EGraph.DisequalityEdges.EGraphsOps
+  val egraphVariant: evaluator.EqualityGraphBackend = evaluator.EqualityGraphBackend.DisequalityEdges
+  val emitSourceDirectory = Option.empty[String]
 
 @main def check(arguments: String*) =
   def parsedArguments =
@@ -53,6 +53,7 @@ object defaults:
     var keepRewritesBits = defaults.keepRewritesBits
     var propertiesOrder = defaults.propertiesOrder
     var egraphVariant = defaults.egraphVariant
+    var emitSourceDirectory = defaults.emitSourceDirectory
 
     if arguments.size > 0 && arguments.head != "-h" && arguments.head != "--help" then
       val args = arguments.iterator
@@ -142,32 +143,40 @@ object defaults:
               catch case exception: NumberFormatException => error = Some(exception.getMessage.nn)
             else
             error = Some("No number given")
-          // TODO change so that you can specify the egraph variant as a command line argument
-          //      DONE
           case "--variant" =>
             if args.hasNext then
               args.next() match
-                case "de" => egraphVariant = EGraph.DisequalityEdges.EGraphsOps
-                case "ee" => egraphVariant = EGraph.EqualityEmbedding.EGraphsOps
-                case "nee" => egraphVariant = EGraph.DisequalityEmbedding.EGraphsOps
-                case _ => error = Some("Specify an egraph variant in {de; ee; nee}.")
+                case "de" => egraphVariant = evaluator.EqualityGraphBackend.DisequalityEdges
+                case "ee" => egraphVariant = evaluator.EqualityGraphBackend.EqualityEmbedding
+                case "nee" => egraphVariant = evaluator.EqualityGraphBackend.DisequalityEmbedding
+                case "egglog-ee" => egraphVariant = evaluator.EqualityGraphBackend.EgglogEqualityEmbedding
+                case "egglog-oee" => egraphVariant = evaluator.EqualityGraphBackend.EgglogOptimizedEqualityEmbedding
+                case "egglog-nee" => egraphVariant = evaluator.EqualityGraphBackend.EgglogNegatedEqualityEmbedding
+                case "egglog-de" => egraphVariant = evaluator.EqualityGraphBackend.EgglogDisequalityEdges
+                case _ => error = Some("Specify an egraph variant in {de; ee; nee; egglog-ee; egglog-oee; egglog-nee; egglog-de}.")
             else
               error = Some("No egraph variant given.")
+          case "--emit-source-dir" =>
+            if args.hasNext then emitSourceDirectory = Some(args.next())
+            else error = Some("No source output directory given.")
           case arg =>
             error = Some(s"Unknown option: $arg")
+
+      if error.isEmpty && emitSourceDirectory.nonEmpty && !egraphVariant.isEgglog then
+        error = Some("--emit-source-dir requires an egglog variant")
 
     (error, content, deduction, reduction, discoverAlgebraicProperties,
      disableEqualities, disableInequalities,
      ignorePosContradiction, ignoreNegContradiction,
      ignorePosNegContradiction, ignoreCyclicContradiction, runMain,
      keepRewritesBits, propertiesOrder, maxNumberOfLemmas, maxNumberOfFacts,
-     egraphVariant)
+     egraphVariant, emitSourceDirectory)
 
   parsedArguments match
-    case (Some(error), _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
+    case (Some(error), _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
       println(s"Error: $error")
 
-    case (_, None, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
+    case (_, None, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
       println("Usage: propel [ARGUMENT]...")
       println("Verifies the algebraic and relational properties of functions specified in Propel's input format.")
       println()
@@ -192,21 +201,22 @@ object defaults:
       println("      --max-facts NUMBER           generate a limited number of facts")
       println("      --keep-rewrites NUMBER       number of top-scored rewrites to keep")
       println("      --prop-order PROPERTIES      comma-separated list of properties")
-      println("      --variant VARIANT            e-graph variant: either de, ee or nee. Defaults to de.")
+      println("      --variant VARIANT            e-graph variant: de, ee, nee, egglog-ee, egglog-oee, egglog-nee, or egglog-de")
+      println("      --emit-source-dir DIRECTORY  emit egglog and desugared snapshots for inspected e-graphs")
 
     case (_, Some(content), deduction, reduction, discoverAlgebraicProperties,
           disableEqualities, disableInequalities,
           ignorePosContradiction, ignoreNegContradiction,
           ignorePosNegContradiction, ignoreCyclicContradiction, runMain,
           keepRewritesBits, propertiesOrder, maxNumberOfLemmas, maxNumberOfFacts,
-          egraphVariant) =>
+          egraphVariant, emitSourceDirectory) =>
       parseAndCheckSourceCode(
         content, deduction, reduction, discoverAlgebraicProperties,
         disableEqualities, disableInequalities,
         ignorePosContradiction, ignoreNegContradiction,
         ignorePosNegContradiction, ignoreCyclicContradiction, runMain,
         keepRewritesBits, propertiesOrder, maxNumberOfLemmas, maxNumberOfFacts,
-        egraphVariant)
+        egraphVariant, emitSourceDirectory)
 
 
 @JSExportTopLevel("parseAndCheckSourceCode")
@@ -226,7 +236,8 @@ def parseAndCheckSourceCode(
     propertiesOrder: List[ast.Property] = defaults.propertiesOrder,
     maxNumberOfLemmas: Int = defaults.maxNumberOfLemmas,
     maxNumberOfFacts: Int = defaults.maxNumberOfFacts,
-    egraphVariant: EGraphOps[EGraph.EGraph] = defaults.egraphVariant) =
+    egraphVariant: evaluator.EqualityGraphBackend = defaults.egraphVariant,
+    emitSourceDirectory: Option[String] = defaults.emitSourceDirectory) =
   val exprToEval = if runMain
                    then ast.Var(Symbol("main"))
                    else ast.Data(ast.Constructor(Symbol("Unit")), List.empty)
@@ -243,7 +254,9 @@ def parseAndCheckSourceCode(
         println(s"Error: ${exception.getMessage}"),
 
       expr =>
-        evaluator.EGraphEqualities.ops = egraphVariant
+        evaluator.EGraphEqualities.backend = egraphVariant
+        evaluator.EGraphEqualities.emitSourceDirectory = emitSourceDirectory
+        evaluator.EGraphEqualities.EGraphStats.reset()
         evaluator.Equalities.debugDisableEqualities = disableEqualities
         evaluator.Equalities.debugDisableInequalities = disableInequalities
         evaluator.Equalities.debugIgnorePosContradiction = ignorePosContradiction

@@ -1,0 +1,23 @@
+; Generic host language used by the disequality case studies.
+(sort BenchmarkTerm)
+(sort BenchmarkTerms (Vec BenchmarkTerm))
+(constructor BenchmarkNode (String BenchmarkTerms) BenchmarkTerm)
+(function BenchmarkTermAt (i64) BenchmarkTerm :no-merge)
+
+(begin
+  (let term0 (BenchmarkNode "x" (vec-of)))
+  (set (BenchmarkTermAt 0) term0)
+  (let term1 (BenchmarkNode "y" (vec-of)))
+  (set (BenchmarkTermAt 1) term1)
+  (let term2 (BenchmarkNode "true" (vec-of)))
+  (set (BenchmarkTermAt 2) term2)
+  (let term3 (BenchmarkNode "false" (vec-of)))
+  (set (BenchmarkTermAt 3) term3)
+)
+
+(begin
+  (disequal (BenchmarkTermAt 0) (BenchmarkTermAt 1))
+)
+
+; The command below records the expected model result.
+(check-disequalities)

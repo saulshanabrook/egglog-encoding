@@ -1,0 +1,5 @@
+(declare-sort T 0)
+(declare-fun x () T)
+(declare-fun y () T)
+(assert (distinct x y))
+(check-sat)

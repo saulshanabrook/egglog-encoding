@@ -60,7 +60,9 @@ pub use either::*;
 mod container_primitives;
 pub use container_primitives::*;
 mod disequality;
-pub use disequality::DisequalityEncoding;
+pub use disequality::{
+    DisequalityComparison, DisequalityEncoding, compare_disequality, disequalities_are_consistent,
+};
 
 // Sugar modules using parse-time macros
 mod sugar;

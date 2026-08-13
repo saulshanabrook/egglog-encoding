@@ -1,5 +1,11 @@
 # Inductive Prover
 
+This copy also supports the `egglog-ee`, `egglog-oee`, `egglog-nee`, and
+`egglog-de` variants and can emit executable source snapshots. See
+[`../EGGLOG_INTEGRATION.md`](../EGGLOG_INTEGRATION.md) for architecture,
+validation scope, and reproduction commands. The remainder of this file is the
+artifact's original Propel documentation.
+
 This folder contains all the artifacts produced for the evaluation of e-graphs
 in the context of inductive theorem proving. The evaluation compares two
 variants of e-graphs for encoding disequalities, namely disequality edges (`de`)

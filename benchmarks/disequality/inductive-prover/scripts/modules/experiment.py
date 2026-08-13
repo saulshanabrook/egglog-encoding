@@ -30,7 +30,8 @@ class Args:
             "-v", "--variant",
             type=str,
             default="de",
-            help="the egraph variant to use in propel: either de, ee, or nee. [default: de]"
+            choices=("de", "ee", "nee", "egglog-ee", "egglog-oee", "egglog-nee", "egglog-de"),
+            help="the e-graph variant to use in Propel [default: de]"
         )
         self.parser.add_argument(
             "-d", "--disable-disequalities",

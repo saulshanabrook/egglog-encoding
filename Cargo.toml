@@ -13,6 +13,11 @@ members = [
   "egglog/wasm-example",
   "egg-math-benchmark",
   "egglog-experimental",
+  "benchmarks/disequality/egglog-backend",
+]
+exclude = [
+  "benchmarks/disequality/disegg",
+  "benchmarks/disequality/euf-solver",
 ]
 
 [workspace.package]

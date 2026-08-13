@@ -1,0 +1,32 @@
+{
+  "encodings": [
+    "ee",
+    "oee",
+    "nee",
+    "de"
+  ],
+  "euf": {
+    "input": "euf-solver/tests/sat.smt2",
+    "input_sha256": "0cb9095e8af032efd96f21fb83b6b5c5b30f77901beb21e5aa87f51e31e9d0ec",
+    "model_count": 1
+  },
+  "files": {
+    "euf/sat.de.desugared.egg": "1c43abed13aa71a4bcd7a1aeeeb3233c67ca7a5e6fecea3463857516e3feb4d1",
+    "euf/sat.ee.desugared.egg": "6539a15d87a62d1ab344f8356012eac1825cbab215166cfa9a34c3872c8e4d73",
+    "euf/sat.egg": "7e8be10507fb2ad2c978a4aac0c67ea6406198e2ac427fe735bcb93f1eaa3f3b",
+    "euf/sat.nee.desugared.egg": "6008d6978feed86abc78cb1c45be77d9fa8e93bef23282439fc92f6d006c2966",
+    "euf/sat.oee.desugared.egg": "37c80c0337d3bfe0050250be4e2ad2cf43c289ad7f390eebadd3c0fb7bb5d834",
+    "propel/gset_comm.de.desugared.egg": "743d573b8300a81585141c6a903b5a3cc8dfd8e8863890024394e315cf9a708a",
+    "propel/gset_comm.ee.desugared.egg": "7f3981b8c9cb1bd0f1d8c8a971956fea943c9d42703d73434214e506a952f3dc",
+    "propel/gset_comm.egg": "cdb083fc6196928139eeee4000f99f5b2c1aeac54be1c39dde1dadc841146453",
+    "propel/gset_comm.nee.desugared.egg": "a0d9ddbee4bdc315d610018d0197ec3799c975cbc6a66d1e898b3f787832b45d",
+    "propel/gset_comm.oee.desugared.egg": "512216b7a1ad81d4fb187d646d9a1bb03b7b097e501a7b4e8a932718170a7b00"
+  },
+  "propel": {
+    "graph_count": 52,
+    "input": "inductive-prover/benchmarks/propel/gset_comm.propel",
+    "input_sha256": "e032fdc6c85c82c48993e06336deab5cd0cd2f2fa94aa2cbaf68373c64d8045e",
+    "selected_graph_index": 51
+  },
+  "schema_version": 1
+}
