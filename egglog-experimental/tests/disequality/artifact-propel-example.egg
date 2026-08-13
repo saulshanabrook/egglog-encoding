@@ -1,0 +1,21 @@
+;; Port of testEGraph in Propel's mutable/EGraph.scala artifact source.
+(datatype Term
+  (A)
+  (B)
+  (C)
+  (D)
+  (E)
+  (F)
+  (G)
+  (H)
+  (I)
+  (Fn Term))
+
+(let $fa (Fn (A)))
+(let $fb (Fn (B)))
+(union (A) (B))
+(union (C) (D))
+(union (E) (F))
+(union (C) (B))
+(disequal $fa $fb)
+(fail (run 10))

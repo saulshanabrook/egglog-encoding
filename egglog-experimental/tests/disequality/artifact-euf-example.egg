@@ -1,0 +1,12 @@
+;; Port of the worked SMT example in the artifact's euf-solver/README.md.
+;; Each branch of the original disjunction is inconsistent once x = y.
+(datatype T
+  (X)
+  (Y))
+(datatype S
+  (F T T))
+
+(disequal (F (X) (Y)) (F (Y) (X)))
+(disequal (F (Y) (Y)) (F (X) (X)))
+(union (X) (Y))
+(fail (run 10))

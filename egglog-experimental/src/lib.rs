@@ -59,6 +59,8 @@ mod either;
 pub use either::*;
 mod container_primitives;
 pub use container_primitives::*;
+mod disequality;
+pub use disequality::DisequalityEncoding;
 
 // Sugar modules using parse-time macros
 mod sugar;
@@ -68,16 +70,29 @@ mod keep_best;
 pub use keep_best::KeepBestCommand;
 
 pub fn new_experimental_egraph() -> EGraph {
-    new_experimental_egraph_with_options(true)
+    new_experimental_egraph_with_disequality_encoding(DisequalityEncoding::default())
+}
+
+pub fn new_experimental_egraph_with_disequality_encoding(encoding: DisequalityEncoding) -> EGraph {
+    new_experimental_egraph_with_options(true, encoding)
 }
 
 pub fn new_experimental_egraph_for_proofs() -> EGraph {
-    new_experimental_egraph_with_options(false)
+    new_experimental_egraph_for_proofs_with_disequality_encoding(DisequalityEncoding::default())
 }
 
-fn new_experimental_egraph_with_options(extended_run_schedule: bool) -> EGraph {
+pub fn new_experimental_egraph_for_proofs_with_disequality_encoding(
+    encoding: DisequalityEncoding,
+) -> EGraph {
+    new_experimental_egraph_with_options(false, encoding)
+}
+
+fn new_experimental_egraph_with_options(
+    extended_run_schedule: bool,
+    disequality_encoding: DisequalityEncoding,
+) -> EGraph {
     let mut egraph = EGraph::default();
-    add_experimental_extensions(&mut egraph, extended_run_schedule);
+    add_experimental_extensions(&mut egraph, extended_run_schedule, disequality_encoding);
     egraph
 }
 
@@ -93,7 +108,11 @@ pub fn new_experimental_egraph_with_proof_testing() -> EGraph {
     new_experimental_egraph_with_proofs().with_proof_testing()
 }
 
-fn add_experimental_extensions(egraph: &mut EGraph, extended_run_schedule: bool) {
+fn add_experimental_extensions(
+    egraph: &mut EGraph,
+    extended_run_schedule: bool,
+    disequality_encoding: DisequalityEncoding,
+) {
     // Set up the parser with experimental parse-time macros
     egraph.parser = experimental_parser();
 
@@ -112,6 +131,7 @@ fn add_experimental_extensions(egraph: &mut EGraph, extended_run_schedule: bool)
         .add_presort::<EitherSort>(span!())
         .unwrap();
     add_container_primitives(egraph);
+    disequality::add_disequality_support(egraph, disequality_encoding);
 
     // unstable-fresh! macro
     egraph

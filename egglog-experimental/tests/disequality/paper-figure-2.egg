@@ -1,0 +1,11 @@
+;; Figure 2 of "Dis/Equality Graphs" (POPL 2025).
+;; Equating a and b makes f(a) and f(b) congruent, contradicting the
+;; asserted disequality.
+(datatype Term
+  (A)
+  (B)
+  (F Term))
+
+(disequal (F (A)) (F (B)))
+(union (A) (B))
+(fail (run 10))
