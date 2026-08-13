@@ -2,8 +2,13 @@
 source: egglog/tests/files.rs
 expression: snapshot_content_across_treatments
 ---
-((Green 1)
+((Dist 1)
+ (Green 1)
+ (Idx 1)
+ (L 1)
+ (Log 1)
  (Red 1)
+ (T 1)
  (discarded 1)
  (f 1)
  (pick 1))

@@ -190,9 +190,12 @@ pub struct FunctionConfig {
     pub n_vals: usize,
     /// Opt-in identity-column guard. `Some(k)` marks the first `k` value columns (`k` in
     /// `1..=n_vals`) as *identity*: when a key collision leaves those columns unchanged the merge is
-    /// skipped and the existing row is kept (a subsume-flag change still applies). `None` (the
-    /// default) runs the merge on every collision, preserving arbitrary/non-idempotent merge
-    /// semantics. Only opt in for merges that are idempotent on equal inputs (`merge(x, x) == x`).
+    /// skipped and the existing row is kept (a subsume-flag change still applies). Only opt in for
+    /// merges that are idempotent on equal inputs (`merge(x, x) == x`).
+    ///
+    /// `None` (the default) treats every value column as identity for a merge with an action
+    /// block, so re-setting a row to the value it already holds runs no actions, and runs a plain
+    /// value merge on every collision, preserving arbitrary/non-idempotent merge semantics.
     pub n_identity_vals: Option<usize>,
     /// The behavior of the function when lookups are made on keys not currently present.
     pub default: DefaultVal,
@@ -1466,19 +1469,23 @@ impl MergeFn {
             "merge for {function_name} must have one entry per value column"
         );
 
+        // How many leading value columns a collision must leave unchanged to count as no conflict
+        // at all: the declared identity columns, or — for a merge with an action block — every
+        // value column. A plain value merge has no width and so always runs, since it may be
+        // deliberately non-idempotent (`:merge (+ old new)` doubles a re-set value).
+        let unchanged_width = schema_math
+            .n_identity_vals
+            .or_else(|| (!actions.is_empty()).then(|| schema_math.n_vals()));
+
         Box::new(move |state, cur, new, out| {
-            // Identity/payload columns: when a collision leaves every identity value column
-            // unchanged it is not a real value conflict, so keep the existing value columns (and
-            // skip the actions) instead of running the merge — which would, e.g., stage a spurious
-            // union. A subsume-flag change is still applied below, so this stays correct for
-            // subsumable functions. Inert unless the function declares payload columns.
-            let identity_unchanged = match schema_math.n_identity_vals {
-                Some(k) => {
-                    let id_lo = schema_math.n_keys;
-                    cur[id_lo..id_lo + k] == new[id_lo..id_lo + k]
-                }
-                None => false,
-            };
+            // With nothing to resolve, the merge keeps the stored values and its action block does
+            // not run: re-setting a row to the value it already holds must not write anything. A
+            // subsume-flag change is still applied below, so this stays correct for subsumable
+            // functions.
+            let no_conflict = unchanged_width.is_some_and(|k| {
+                let id_lo = schema_math.n_keys;
+                cur[id_lo..id_lo + k] == new[id_lo..id_lo + k]
+            });
 
             let timestamp = new[schema_math.ts_col()];
 
@@ -1488,7 +1495,7 @@ impl MergeFn {
             let mut env = SmallVec::<[Value; 4]>::new();
 
             // Run the block's side effects once, before computing the merged values.
-            if !identity_unchanged {
+            if !no_conflict {
                 for action in &actions {
                     action.run(state, cur, new, schema_math.n_keys, timestamp, &mut env);
                 }
@@ -1500,10 +1507,10 @@ impl MergeFn {
             // column's merge may reference any output column via `OldCol`/`NewCol`.
             let mut merged_vals = SmallVec::<[Value; 4]>::new();
             for (i, col_merge) in resolved.iter().enumerate() {
-                let out_val = if identity_unchanged {
+                let out_val = if no_conflict {
                     cur[schema_math.val_col(i)]
                 } else {
-                    col_merge.run(state, cur, new, schema_math.n_keys, i, timestamp, &env)
+                    col_merge.run_result(state, cur, new, schema_math.n_keys, i, timestamp, &env)
                 };
                 changed |= cur[schema_math.val_col(i)] != out_val;
                 merged_vals.push(out_val);
@@ -1764,6 +1771,35 @@ impl ResolvedMergeAction {
 }
 
 impl ResolvedMergeFn {
+    /// Compute value column `self_col`'s merged value, with `self` in the column's *result*
+    /// position (rather than nested inside a larger merge expression). Arguments are as for
+    /// [`ResolvedMergeFn::run`].
+    ///
+    /// A `Function` result whose column already agrees between `cur` and `new` has no conflict to
+    /// resolve, so it yields that value instead of looking up — and, for a constructor, minting —
+    /// a row that would be rebuilt away again on the next iteration (egraphs-good/egglog#287).
+    /// The shortcut is only meaningful here, where the column's own old and new values are what
+    /// the expression computes; [`ResolvedMergeFn::run`] must not apply it to a nested call, whose
+    /// sort is unrelated to the column's.
+    #[allow(clippy::too_many_arguments)]
+    fn run_result(
+        &self,
+        state: &mut ExecutionState,
+        cur: &[Value],
+        new: &[Value],
+        n_keys: usize,
+        self_col: usize,
+        ts: Value,
+        env: &[Value],
+    ) -> Value {
+        if matches!(self, ResolvedMergeFn::Function { .. })
+            && cur[n_keys + self_col] == new[n_keys + self_col]
+        {
+            return cur[n_keys + self_col];
+        }
+        self.run(state, cur, new, n_keys, self_col, ts, env)
+    }
+
     /// Compute the merged value for value column `self_col`.
     ///
     /// `cur` and `new` are the full conflicting rows. `n_keys` is the number of key columns, so
@@ -1827,11 +1863,6 @@ impl ResolvedMergeFn {
                 }
             }
             ResolvedMergeFn::Function { func, args, panic } => {
-                // see github.com/egraphs-good/egglog/pull/287
-                if cur[n_keys + self_col] == new[n_keys + self_col] {
-                    return cur[n_keys + self_col];
-                }
-
                 let args = args
                     .iter()
                     .map(|arg| arg.run(state, cur, new, n_keys, self_col, ts, env))

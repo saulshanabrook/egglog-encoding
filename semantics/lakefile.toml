@@ -1,0 +1,24 @@
+name = "EgglogSemantics"
+version = "0.1.0"
+keywords = ["math"]
+defaultTargets = ["EgglogSemantics"]
+
+[leanOptions]
+pp.unicode.fun = true # pretty-prints `fun a ↦ b`
+relaxedAutoImplicit = false
+weak.linter.mathlibStandardSet = true
+weak.linter.style.header = false # Mathlib's copyright header is not ours to claim
+maxSynthPendingDepth = 3
+
+[[require]]
+name = "mathlib"
+scope = "leanprover-community"
+rev = "v4.32.2"
+
+[[lean_lib]]
+name = "EgglogSemantics"
+
+# Writes the differential-test cases; see scripts/difftest.sh.
+[[lean_exe]]
+name = "difftest"
+root = "DiffTest"

@@ -1,6 +1,7 @@
 .PHONY: \
 	check nits test python-check python-nits rust-check rust-nits \
 	proof-tests benchmark-smoke nightly nightly-local nightly-uv nightly-rustup \
+	lean-check lean-difftest \
 	update-snapshots format \
 	python-lock python-format-check python-lint python-typecheck python-test \
 	rust-format-check rust-clippy rust-doc-links rust-test
@@ -17,6 +18,9 @@ NIGHTLY_UV = $(shell command -v uv || echo $(UV_BOOTSTRAP_DIR)/uv)
 # Ubuntu's cargo predates rust-toolchain.toml's pin, so the nightly needs
 # rustup's shims; scripts/nightly_bench.py puts them first on PATH.
 CARGO_HOME_DIR ?= $(HOME)/.cargo
+
+# elan installs here by default and is not on PATH in a non-login shell.
+LEAN_BIN_DIR ?= $(HOME)/.elan/bin
 
 # Full validation is hygiene followed by tests.
 check: nits test
@@ -99,6 +103,21 @@ nightly-rustup:
 # git-ignored, so this writes it just as the host does.
 nightly-local: nightly-uv nightly-rustup
 	CARGO_HOME="$(CARGO_HOME_DIR)" $(NIGHTLY_UV) run --locked python scripts/nightly_bench.py --rounds 1
+
+# The Lean formalization in semantics/. Kept out of `check` so the Rust and Python
+# suites do not depend on a Lean toolchain; `elan` and a Mathlib cache are needed,
+# see semantics/README.md. `lake build` only warns on a `sorry`, so the sources are
+# grepped for one as well. The second grep drops backtick-quoted prose: two module
+# docstrings discuss `sorry`, and without it the target can never pass.
+lean-check:
+	cd semantics && PATH="$(LEAN_BIN_DIR):$$PATH" lake build
+	! grep -rnw --include='*.lean' sorry semantics/EgglogSemantics | grep -v '`sorry`'
+
+# Differentially test the Lean semantics against egglog: for each generated program, the
+# Lean interpreter's per-constructor row counts against egglog's `(print-size)`. Needs a
+# release egglog binary (`cargo build --release -p egglog`) or EGGLOG_BIN.
+lean-difftest:
+	./scripts/difftest.sh
 
 update-snapshots:
 	uv run --locked pytest -q --snapshot-update --snapshot-details
