@@ -1,0 +1,14 @@
+(type nat {Z (S nat)})
+(type maybe {Nothing (Just nat)})
+
+(def return (lambda (x nat) (Just x)))
+
+(def >>= (fun maybe (fun nat maybe) maybe)
+  (lambda (x maybe) (f (fun nat maybe))
+    (cases x
+      [Nothing Nothing]
+      [(Just x) (f x)])))
+
+(prop-for >>=
+  (forall (x nat) (f (fun nat maybe))
+    (== (>>= (return x) f) (f x))))

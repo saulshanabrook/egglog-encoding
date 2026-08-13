@@ -1,0 +1,10 @@
+(type nat {Z (S nat)})
+(type pair {(Pair nat nat)})
+
+(def fmap (fun (fun nat nat) pair pair)
+  (lambda (f (fun nat nat)) (x pair)
+    (let (Pair a b) x (Pair a (f b)))))
+
+(prop-for fmap
+  (forall (x pair) (f (fun nat nat)) (g (fun nat nat))
+    (== (fmap (lambda (y nat) (f (g y))) x) (fmap f (fmap g x)))))

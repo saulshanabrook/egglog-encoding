@@ -1,0 +1,27 @@
+(def tip_nat_plus (fun (rec X {(S X) Z}) (rec X {(S X) Z}) (rec X {(S X) Z}))
+  (lambda (x (rec X {(S X) Z})) (y (rec X {(S X) Z})) (cases x
+    [Z y]
+    [(S z) (S (tip_nat_plus z y))])))
+
+(def tip_sub (fun (rec X {(S X) Z}) (rec X {(S X) Z}) {(P (rec X {(S X) Z})) (N (rec X {(S X) Z}))})
+  (lambda (x (rec X {(S X) Z})) (y (rec X {(S X) Z}))
+    (let fail
+      (cases y
+        [Z (P x)]
+        [(S z) (cases x
+          [Z (N z)]
+          [(S x2) (tip_sub x2 z)])])
+      (cases x
+        [Z (cases y
+          [Z (P Z)]
+          [(S x3) fail])]
+        [(S x4) fail]))))
+
+(def tip_int_plus
+  (lambda [assoc] (x {(P (rec X {(S X) Z})) (N (rec X {(S X) Z}))}) (y {(P (rec X {(S X) Z})) (N (rec X {(S X) Z}))}) (cases x
+    [(P m) (cases y
+      [(P n) (P (tip_nat_plus m n))]
+      [(N o) (tip_sub m (tip_nat_plus (S Z) o))])]
+    [(N m2) (cases y
+      [(P n2) (tip_sub n2 (tip_nat_plus (S Z) m2))]
+      [(N n3) (N (tip_nat_plus (tip_nat_plus (S Z) m2) n3))])])))

@@ -1,0 +1,11 @@
+(type nat {Z (S nat)})
+(type pair {(Pair nat nat)})
+
+(def nat_add (fun nat nat nat)
+  (lambda (x nat) (y nat) (cases x
+    [Z y]
+    [(S x) (S (nat_add x y))])))
+
+(def <> (fun pair pair pair)
+  (lambda [assoc] (x pair) (y pair)
+    (let (Pair (Pair xa xb) (Pair ya yb)) (Pair x y) (Pair (nat_add xa ya) (nat_add xb yb)))))

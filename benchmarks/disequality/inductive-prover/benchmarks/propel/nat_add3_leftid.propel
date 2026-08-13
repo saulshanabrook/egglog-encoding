@@ -1,0 +1,7 @@
+(def nat_add3 (fun (rec X {(S X) Z}) (rec X {(S X) Z}) (rec X {(S X) Z}))
+  (lambda (x (rec X {(S X) Z})) (y (rec X {(S X) Z})) (cases (Tuple x y)
+    [(Tuple Z y) y]
+    [(Tuple x Z) x]
+    [(Tuple (S x) (S y)) (S (S (nat_add3 x y)))])))
+
+(prop-for nat_add3 (forall (x (rec X {(S X) Z})) (== (nat_add3 Z x) x)))
