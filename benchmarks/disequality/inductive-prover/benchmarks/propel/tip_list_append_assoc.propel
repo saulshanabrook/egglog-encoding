@@ -1,0 +1,4 @@
+(def tip_list_append (forall T (fun (rec X {(Cons T X) Nil}) (rec X {(Cons T X) Nil}) (rec X {(Cons T X) Nil})))
+  (lambda T (lambda [assoc] (x (rec X {(Cons T X) Nil})) (y (rec X {(Cons T X) Nil})) (cases x
+    [Nil y]
+    [(Cons z xs) (Cons z ((tip_list_append [T]) xs y))]))))

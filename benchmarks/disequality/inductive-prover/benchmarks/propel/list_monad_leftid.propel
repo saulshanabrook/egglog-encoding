@@ -1,0 +1,20 @@
+(type nat {Z (S nat)})
+(type list {Nil (Cons nat list)})
+
+(def return (lambda (x nat) (Cons x Nil)))
+
+(def <> (fun list list list)
+  (lambda (x list) (y list)
+    (cases x
+      [Nil y]
+      [(Cons x xs) (Cons x (<> xs y))])))
+
+(def >>= (fun list (fun nat list) list)
+  (lambda (x list) (f (fun nat list))
+    (cases x
+      [Nil Nil]
+      [(Cons x xs) (<> (f x) (>>= xs f))])))
+
+(prop-for >>=
+  (forall (x nat) (f (fun nat list))
+    (== (>>= (return x) f) (f x))))

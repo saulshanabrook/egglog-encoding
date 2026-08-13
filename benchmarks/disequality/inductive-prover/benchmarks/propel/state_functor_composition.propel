@@ -1,0 +1,11 @@
+(type nat {Z (S nat)})
+(type state (fun nat {(Return nat nat)}))
+
+(def fmap (fun (fun nat nat) state state)
+  (lambda (f (fun nat nat)) (m state)
+    (lambda (r nat)
+      (let (Return x s) (m r) (Return (f x) s)))))
+
+(prop-for fmap
+  (forall (x state) (f (fun nat nat)) (g (fun nat nat))
+    (== (fmap (lambda (y nat) (f (g y))) x) (fmap f (fmap g x)))))

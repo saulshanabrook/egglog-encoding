@@ -1,0 +1,14 @@
+(type nat {Z (S nat)})
+(type state (fun nat {(Return nat nat)}))
+
+(def return (lambda (x nat)
+  (lambda (s nat) (Return x s))))
+
+(def >>= (fun state (fun nat state) state)
+  (lambda (m state) (f (fun nat state))
+    (lambda (r nat)
+      (let (Return x s) (m r) ((f x) s)))))
+
+(prop-for >>=
+  (forall (m state) (f (fun nat state)) (g (fun nat state))
+    (== (>>= (>>= m f) g) (>>= m (lambda (x nat) (>>= (f x) g))))))

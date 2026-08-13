@@ -1,0 +1,18 @@
+(def tip_nat_plus (fun (rec X {(S X) Z}) (rec X {(S X) Z}) (rec X {(S X) Z}))
+  (lambda (x (rec X {(S X) Z})) (y (rec X {(S X) Z})) (cases x
+    [Z y]
+    [(S z) (S (tip_nat_plus z y))])))
+
+(def tip_add3acc (fun (rec X {(S X) Z}) (rec X {(S X) Z}) (rec X {(S X) Z}) (rec X {(S X) Z}))
+  (lambda (x (rec X {(S X) Z})) (y (rec X {(S X) Z})) (z (rec X {(S X) Z})) (cases x
+    [Z (cases y
+      [Z z]
+      [(S x2) (tip_add3acc Z x2 (S z))])]
+    [(S x3) (tip_add3acc x3 (S y) z)])))
+
+(def nat_times_weird (fun (rec X {(S X) Z}) (rec X {(S X) Z}) (rec X {(S X) Z}))
+  (lambda [comm] (x (rec X {(S X) Z})) (y (rec X {(S X) Z})) (cases x
+    [Z Z]
+    [(S z) (cases y
+      [Z Z]
+      [(S x2) (tip_nat_plus (S Z) (tip_add3acc z x2 (nat_times_weird z x2)))])])))

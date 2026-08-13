@@ -1,0 +1,6 @@
+(def tip_nat_leq (fun (rec X {(S X) Z}) (rec X {(S X) Z}) {True False})
+  (lambda [refl] (x (rec X {(S X) Z})) (y (rec X {(S X) Z})) (cases x
+    [Z True]
+    [(S z) (cases y
+      [Z False]
+      [(S x2) (tip_nat_leq z x2)])])))

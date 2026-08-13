@@ -1,0 +1,14 @@
+(def nat_max (fun (rec X {(S X) Z}) (rec X {(S X) Z}) (rec X {(S X) Z}))
+  (lambda (x (rec X {(S X) Z})) (y (rec X {(S X) Z})) (cases (Tuple x y)
+    [(Tuple Z y) y]
+    [(Tuple x Z) x]
+    [(Tuple (S x) (S y)) (S (nat_max x y))])))
+
+(def nat_lwwreg (fun {(LWWReg (rec X {(S X) Z}) (rec X {(S X) Z}))} {(LWWReg (rec X {(S X) Z}) (rec X {(S X) Z}))} {(LWWReg (rec X {(S X) Z}) (rec X {(S X) Z}))})
+  (lambda [comm] (x {(LWWReg (rec X {(S X) Z}) (rec X {(S X) Z}))}) (y {(LWWReg (rec X {(S X) Z}) (rec X {(S X) Z}))}) (cases (Tuple x y)
+    [(Tuple (LWWReg xd Z) (LWWReg yd Z)) (LWWReg (nat_max xd yd) Z)]
+    [(Tuple (LWWReg xd Z) (LWWReg yd yt)) (LWWReg yd yt)]
+    [(Tuple (LWWReg xd xt) (LWWReg yd Z)) (LWWReg xd xt)]
+    [(Tuple (LWWReg xd (S xt)) (LWWReg yd (S yt)))
+      (let (LWWReg d t) (nat_lwwreg (LWWReg xd xt) (LWWReg yd yt))
+        (LWWReg d (S t)))])))
