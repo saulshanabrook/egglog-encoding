@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import zipfile
 from pathlib import Path
@@ -106,33 +105,3 @@ def test_generated_directory_check_is_byte_exact(tmp_path: Path) -> None:
     (output / "config.tsv").write_text("1\n", encoding="utf-8")
     with pytest.raises(ValueError, match="config.tsv"):
         prepare.compare_files(output, files)
-
-
-def test_committed_full_corpus_matches_manifest() -> None:
-    facts = ROOT / "egglog-experimental/benchmarks/disequality/parameter-analysis-facts"
-    manifest = json.loads((facts / "manifest.json").read_text(encoding="utf-8"))
-
-    assert manifest["artifact"]["source_sha256"] == prepare.SOURCE_SHA256
-    assert manifest["generation"] == {
-        "disequality_pairs": 15_000,
-        "equality_pairs": 15_000,
-        "expressions": 60_000,
-        "node_ids": "unique per AST occurrence, allocated postorder",
-        "nodes": 3_728_927,
-        "pairs": 30_000,
-        "ratio_f32": 0.5,
-        "ratio_text": "0.5",
-        "source_line_slots": 60_001,
-    }
-
-    for name, expected in manifest["files"].items():
-        path = facts / name
-        digest = hashlib.sha256()
-        rows = 0
-        with path.open("rb") as source:
-            for line in source:
-                digest.update(line)
-                rows += 1
-        assert path.stat().st_size == expected["bytes"]
-        assert rows == expected["rows"]
-        assert digest.hexdigest() == expected["sha256"]

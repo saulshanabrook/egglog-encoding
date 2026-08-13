@@ -706,6 +706,7 @@ mod tests {
     };
     use egglog::ast::sanitize_internal_names;
     use std::path::Path;
+    use tempfile::TempDir;
 
     const ENCODINGS: [DisequalityEncoding; 4] = [
         DisequalityEncoding::EqualityEmbedding,
@@ -713,6 +714,24 @@ mod tests {
         DisequalityEncoding::NegatedEqualityEmbedding,
         DisequalityEncoding::DisequalityEdges,
     ];
+
+    fn parameter_analysis_facts() -> TempDir {
+        let directory = tempfile::tempdir().unwrap();
+        for (name, contents) in [
+            ("config.tsv", "2\n"),
+            ("f.tsv", "3\t2\n5\t4\n"),
+            ("g.tsv", "8\t6\t7\n11\t9\t10\n"),
+            ("h.tsv", "15\t12\t13\t14\n19\t16\t17\t18\n"),
+            (
+                "numerals.tsv",
+                "0\t1\n1\t2\n2\t1\n4\t2\n6\t1\n7\t2\n9\t2\n10\t1\n12\t1\n13\t2\n14\t3\n16\t1\n17\t2\n18\t3\n",
+            ),
+            ("pairs.tsv", "0\t0\t1\n1\t3\t5\n2\t8\t11\n3\t15\t19\n"),
+        ] {
+            std::fs::write(directory.path().join(name), contents).unwrap();
+        }
+        directory
+    }
 
     #[test]
     fn equality_embedding_accepts_consistent_disequality() {
@@ -1042,7 +1061,7 @@ mod tests {
         let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
         let program_path = crate_dir.join("benchmarks/disequality/parameter-analysis.egg");
         let program = std::fs::read_to_string(&program_path).unwrap();
-        let fact_directory = crate_dir.join("tests/disequality/parameter-analysis-facts");
+        let facts = parameter_analysis_facts();
 
         for encoding in ENCODINGS {
             let ordinary = new_experimental_egraph_with_disequality_encoding(encoding);
@@ -1057,7 +1076,7 @@ mod tests {
                 ("term", term),
                 ("proof-testing", proof_testing),
             ] {
-                egraph.fact_directory = Some(fact_directory.clone());
+                egraph.fact_directory = Some(facts.path().to_owned());
                 egraph
                     .parse_and_run_program(Some(program_path.display().to_string()), &program)
                     .unwrap_or_else(|error| {
@@ -1077,7 +1096,7 @@ mod tests {
         let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
         let program_path = crate_dir.join("benchmarks/disequality/parameter-analysis.egg");
         let program = std::fs::read_to_string(&program_path).unwrap();
-        let fact_directory = crate_dir.join("tests/disequality/parameter-analysis-facts");
+        let facts = parameter_analysis_facts();
 
         for encoding in ENCODINGS {
             let mut compiler = new_experimental_egraph_with_disequality_encoding(encoding);
@@ -1096,7 +1115,7 @@ mod tests {
             assert_eq!(rendered, snapshot, "stale {} snapshot", encoding.cli_name());
 
             let mut replay = new_experimental_egraph();
-            replay.fact_directory = Some(fact_directory.clone());
+            replay.fact_directory = Some(facts.path().to_owned());
             replay
                 .parse_and_run_program(Some(snapshot_path.display().to_string()), &snapshot)
                 .unwrap_or_else(|error| panic!("{encoding:?} snapshot failed to replay: {error}"));

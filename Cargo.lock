@@ -666,6 +666,7 @@ dependencies = [
  "log",
  "num",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

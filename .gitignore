@@ -11,3 +11,6 @@
 /.ruff_cache/
 __pycache__/
 *.py[cod]
+
+# Generated from the pinned Dis/Equality Graphs artifact.
+/egglog-experimental/benchmarks/disequality/parameter-analysis-facts/
