@@ -18,4 +18,4 @@
 (union (E) (F))
 (union (C) (B))
 (disequal $fa $fb)
-(fail (run 10))
+(fail (check-disequalities))

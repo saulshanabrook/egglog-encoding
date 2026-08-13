@@ -3,3 +3,7 @@ tests/__snapshots__/*.ambr -whitespace
 
 # Imported PLDI artifact facts are data inputs, not hand-reviewed source.
 benchmarks/data/pointer-analysis-initdb/*.csv linguist-generated=true
+
+# Generated from the pinned Dis/Equality Graphs artifact.
+egglog-experimental/benchmarks/disequality/parameter-analysis-facts/*.tsv linguist-generated=true
+egglog-experimental/benchmarks/disequality/desugared/*.egg linguist-generated=true

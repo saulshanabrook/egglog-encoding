@@ -13,4 +13,4 @@
 
 ;; This equality also makes the two multiplication terms congruent.
 (union (Num 1) (Num 2))
-(fail (run 10))
+(fail (check-disequalities))

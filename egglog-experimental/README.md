@@ -35,15 +35,15 @@ We plan to do a release on crates.io with the release of egglog 2.0.
 (datatype Math (A) (B) (F Math))
 (disequal (F (A)) (F (B)))
 (union (A) (B))
-(fail (run 10))
+(fail (check-disequalities))
 ```
 
 Both operands must have the same unionable e-sort. A disequality is a persistent
-constraint: after equality or congruence makes its operands equal, the next
-run of the default ruleset, `(run)`, reports `disequality constraint
-contradicted`. A schedule that runs only named rulesets must include a default
-`(run)` to check the constraints. `disequal` can be used at the top level, in
-`begin` blocks, and in rule actions.
+constraint: after equality or congruence makes its operands equal,
+`(check-disequalities)` reports `disequality constraint contradicted`. The
+generated propagation rules live in a private ruleset and are not run by an
+ordinary `(run)`. `disequal` can be used at the top level, in `begin` blocks,
+and in rule actions.
 
 Four encodings from [Dis/Equality Graphs](https://doi.org/10.1145/3704913) are
 available:

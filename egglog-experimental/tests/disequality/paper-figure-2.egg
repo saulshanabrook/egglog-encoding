@@ -8,4 +8,4 @@
 
 (disequal (F (A)) (F (B)))
 (union (A) (B))
-(fail (run 10))
+(fail (check-disequalities))

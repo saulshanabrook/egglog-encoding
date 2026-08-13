@@ -1,0 +1,54 @@
+{
+  "artifact": {
+    "archive_md5": "fc6661447dcbc1c01a8330db664df094",
+    "archive_sha256": "3e9080ca461457af0a10cfc433a5150952f82f752b4c316df1e03236d93599c4",
+    "archive_url": "https://zenodo.org/api/records/13938878/files/die-graph.zip/content",
+    "source_member_suffix": "parameter-analysis/exprs.in",
+    "source_sha256": "829b712812d7e1c8563e2f9c9dbd5a8b520c967086d05bc407d8f7b733f70638",
+    "zenodo_record": "13938878"
+  },
+  "files": {
+    "config.tsv": {
+      "bytes": 6,
+      "rows": 1,
+      "sha256": "af8d06e02ca04dfdbe4a0863ee77df7cbee9308e15a617ae58ab6bfaa8eb0ec6"
+    },
+    "f.tsv": {
+      "bytes": 9449431,
+      "rows": 613378,
+      "sha256": "7506925a6541a22757fa8430e028f5f91fe1fa4e2b052df76f277dac70d5cbb3"
+    },
+    "g.tsv": {
+      "bytes": 14114874,
+      "rows": 610898,
+      "sha256": "fbb49b6b503644b4b90a7178436e496875f17b2117e38d5c0c159ebd3a599d23"
+    },
+    "h.tsv": {
+      "bytes": 18831444,
+      "rows": 611251,
+      "sha256": "3ea9b61a2dc4660652cc36de80e070fb885a95970f5392ff666167b68849e7f4"
+    },
+    "numerals.tsv": {
+      "bytes": 18369564,
+      "rows": 1893400,
+      "sha256": "77e06fa9ec8c093adf1db4894089fe38c9bd9ac73c7c66a25524fe8356795522"
+    },
+    "pairs.tsv": {
+      "bytes": 630989,
+      "rows": 30000,
+      "sha256": "40e1e469db58420de1d23f7140df68d408ffc9052d2b2ffc85d10fc91d9d3167"
+    }
+  },
+  "generation": {
+    "disequality_pairs": 15000,
+    "equality_pairs": 15000,
+    "expressions": 60000,
+    "node_ids": "unique per AST occurrence, allocated postorder",
+    "nodes": 3728927,
+    "pairs": 30000,
+    "ratio_f32": 0.5,
+    "ratio_text": "0.5",
+    "source_line_slots": 60001
+  },
+  "schema_version": 1
+}

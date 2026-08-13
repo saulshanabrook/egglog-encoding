@@ -9,4 +9,4 @@
 (disequal (F (X) (Y)) (F (Y) (X)))
 (disequal (F (Y) (Y)) (F (X) (X)))
 (union (X) (Y))
-(fail (run 10))
+(fail (check-disequalities))
