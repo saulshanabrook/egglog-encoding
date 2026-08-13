@@ -206,8 +206,7 @@ def parse_source(source: str) -> tuple[Tables, int, int]:
     parser = ExpressionParser(tables)
     roots = [parser.parse_line(line, index) for index, line in enumerate(lines, start=1)]
     tables.pairs.extend(
-        (pair_id, roots[offset], roots[offset + 1])
-        for pair_id, offset in enumerate(range(0, len(roots), 2))
+        (pair_id, roots[offset], roots[offset + 1]) for pair_id, offset in enumerate(range(0, len(roots), 2))
     )
     return tables, parser.next_id, len(source.split("\n"))
 
