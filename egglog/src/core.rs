@@ -452,60 +452,45 @@ impl ResolvedCall {
         ctx: crate::Context,
         span: &Span,
     ) -> Result<ResolvedCall, TypeError> {
-        resolve_call(head, types, typeinfo, ctx, span)
-    }
-}
-
-/// Resolve an already-concrete call signature in one execution universe.
-///
-/// This is the single function/primitive precedence and overload-ambiguity
-/// boundary. Callers that carry an expected call kind should match the returned
-/// [`ResolvedCall`] rather than searching the primitive registry themselves.
-fn resolve_call(
-    head: &str,
-    types: &[ArcSort],
-    typeinfo: &TypeInfo,
-    ctx: crate::Context,
-    span: &Span,
-) -> Result<ResolvedCall, TypeError> {
-    if let Some(ty) = typeinfo.get_func_type(head) {
-        let expected = ty.input.iter().chain(ty.outputs.iter()).map(|s| s.name());
-        let actual = types.iter().map(|s| s.name());
-        if expected.eq(actual) {
-            return Ok(ResolvedCall::Func(ty.clone()));
+        if let Some(ty) = typeinfo.get_func_type(head) {
+            let expected = ty.input.iter().chain(ty.outputs.iter()).map(|s| s.name());
+            let actual = types.iter().map(|s| s.name());
+            if expected.eq(actual) {
+                return Ok(ResolvedCall::Func(ty.clone()));
+            }
         }
-    }
 
-    let mut primitives = typeinfo
-        .get_prims(head)
-        .into_iter()
-        .flatten()
-        .filter(|p| p.context_ids[ctx].is_some() && p.accept(types, typeinfo));
-    if let Some(picked) = primitives.next() {
-        // Type inference has already assigned concrete types, so a valid
-        // overload (`+`, `map-empty`, container primitives) leaves exactly
-        // one matching registration. A second match means two registrations
-        // are indistinguishable for this signature and context.
-        if primitives.next().is_some() {
-            return Err(TypeError::AmbiguousPrimitive {
-                name: head.to_owned(),
-                ctx,
-                span: span.clone(),
-            });
+        let mut primitives = typeinfo
+            .get_prims(head)
+            .into_iter()
+            .flatten()
+            .filter(|p| p.context_ids[ctx].is_some() && p.accept(types, typeinfo));
+        if let Some(picked) = primitives.next() {
+            // Type inference has already assigned concrete types, so a valid
+            // overload (`+`, `map-empty`, container primitives) leaves exactly
+            // one matching registration. A second match means two registrations
+            // are indistinguishable for this signature and context.
+            if primitives.next().is_some() {
+                return Err(TypeError::AmbiguousPrimitive {
+                    name: head.to_owned(),
+                    ctx,
+                    span: span.clone(),
+                });
+            }
+            let (out, inp) = types.split_last().unwrap();
+            return Ok(ResolvedCall::Primitive(SpecializedPrimitive {
+                prim_with_id: picked.clone(),
+                input: inp.to_vec(),
+                output: out.clone(),
+            }));
         }
-        let (out, inp) = types.split_last().unwrap();
-        return Ok(ResolvedCall::Primitive(SpecializedPrimitive {
-            prim_with_id: picked.clone(),
-            input: inp.to_vec(),
-            output: out.clone(),
-        }));
-    }
 
-    Err(TypeError::UnresolvedPrimitive {
-        name: head.to_owned(),
-        ctx,
-        span: span.clone(),
-    })
+        Err(TypeError::UnresolvedPrimitive {
+            name: head.to_owned(),
+            ctx,
+            span: span.clone(),
+        })
+    }
 }
 
 impl Display for ResolvedCall {
