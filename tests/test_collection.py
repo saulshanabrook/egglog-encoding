@@ -583,15 +583,24 @@ def test_run_process_passes_treatment_flags(
         summary_path.write_text(
             json.dumps(
                 {
-                    "schema_version": 2,
+                    "schema_version": 4,
+                    "typecheck_ns": 1,
+                    "frontend_parse_ns": 2,
+                    "frontend_other_ns": 3,
+                    "frontend_install_ns": 4,
+                    "commands_actions_ns": 5,
+                    "commands_check_ns": 6,
+                    "commands_other_ns": 7,
+                    "native_rebuild_ns": 8,
                     "rulesets": [
                         {
                             "name": "rules",
+                            "role": "program",
+                            "assembly_ns": 3,
                             "search_ns": 4,
                             "apply_ns": 6,
-                            "unattributed_ns": 10,
+                            "execution_ns": 10,
                             "merge_ns": 20,
-                            "rebuild_ns": 30,
                         }
                     ],
                 }
@@ -608,10 +617,18 @@ def test_run_process_passes_treatment_flags(
     assert "--proofs" not in commands[0]
     assert "--proofs" in commands[1]
     assert off.timing_summary is not None
-    assert off.timing_summary["rulesets"][0]["search_ns"] == 4
-    assert off.timing_summary["rulesets"][0]["apply_ns"] == 6
-    assert off.timing_summary["rulesets"][0]["unattributed_ns"] == 10
-    assert off.timing_summary["rulesets"][0]["merge_ns"] == 20
+    assert off.timing_summary["rulesets"] == [
+        {
+            "name": "rules",
+            "role": "program",
+            "assembly_ns": 3,
+            "search_ns": 4,
+            "apply_ns": 6,
+            "execution_ns": 10,
+            "merge_ns": 20,
+        }
+    ]
+    assert off.timing_summary["native_rebuild_ns"] == 8
     assert proofs.timing_summary is not None
 
 

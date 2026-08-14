@@ -917,7 +917,7 @@ fn test_print_stats() {
     let outputs = EGraph::default().parse_and_run_program(None, s).unwrap();
     assert_eq!(
         outputs[1].to_string(),
-        "Overall statistics:\nRuleset : search 0.000s, apply 0.000s, unattributed 0.000s, merge 0.000s, rebuild 0.000s\n"
+        "Overall statistics:\nRuleset : assembly 0.000s, search 0.000s, apply 0.000s, unattributed 0.000s, merge 0.000s\nNative rebuild: 0.000s\n"
     );
 }
 

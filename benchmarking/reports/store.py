@@ -23,28 +23,40 @@ from ..models import (
     Treatment,
 )
 
-type ReportSchemaVersion = Literal[2]
-REPORT_SCHEMA_VERSION: Final[ReportSchemaVersion] = 2
+type ReportSchemaVersion = Literal[4]
+REPORT_SCHEMA_VERSION: Final[ReportSchemaVersion] = 4
 
-type TimingSummarySchemaVersion = Literal[2]
-TIMING_SUMMARY_SCHEMA_VERSION: Final[TimingSummarySchemaVersion] = 2
+type TimingSummarySchemaVersion = Literal[4]
+TIMING_SUMMARY_SCHEMA_VERSION: Final[TimingSummarySchemaVersion] = 4
+
+
+type RulesetTimingRole = Literal["program", "equality"]
 
 
 class RulesetTimingRecord(TypedDict):
-    """Persisted engine time for one ruleset."""
+    """Exclusive own-work timing for one named ruleset."""
 
     name: str
+    role: RulesetTimingRole
+    assembly_ns: int
     search_ns: int
     apply_ns: int
-    unattributed_ns: int
+    execution_ns: int
     merge_ns: int
-    rebuild_ns: int
 
 
 class TimingSummaryRecord(TypedDict):
     """Versioned engine timing summary embedded in one successful row."""
 
     schema_version: TimingSummarySchemaVersion
+    typecheck_ns: int
+    frontend_parse_ns: int
+    frontend_other_ns: int
+    frontend_install_ns: int
+    commands_actions_ns: int
+    commands_check_ns: int
+    commands_other_ns: int
+    native_rebuild_ns: int
     rulesets: list[RulesetTimingRecord]
 
 

@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, ensure};
 use clap::{Parser, ValueEnum};
 use egg::{RecExpr, Runner, SimpleScheduler, StopReason};
-use egglog_reports::{RulesetTimingV2, TimingSummaryV2};
+use egglog_reports::{RulesetTimingRecord, RulesetTimingRole, TimingSummary};
 use std::{
     fs::File,
     io::BufWriter,
@@ -44,7 +44,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn run_math(proof_mode: ProofMode) -> Result<(TimingSummaryV2, usize)> {
+fn run_math(proof_mode: ProofMode) -> Result<(TimingSummary, usize)> {
     let left: RecExpr<Math> = CHECK_LEFT.parse().expect("fixed left check must parse");
     let right: RecExpr<Math> = CHECK_RIGHT.parse().expect("fixed right check must parse");
     let rules = math::rules();
@@ -89,36 +89,44 @@ fn run_math(proof_mode: ProofMode) -> Result<(TimingSummaryV2, usize)> {
     );
 
     let proof_postprocessing_started = Instant::now();
-    let proof_postprocessing_ns = if matches!(proof_mode, ProofMode::Extract | ProofMode::Check) {
+    let proof_postprocessing = if matches!(proof_mode, ProofMode::Extract | ProofMode::Check) {
         let mut explanation = runner.explain_equivalence(&left, &right);
         explanation.make_flat_explanation();
         if proof_mode == ProofMode::Check {
             explanation.check_proof(&rules);
         }
-        duration_to_ns(proof_postprocessing_started.elapsed())
+        proof_postprocessing_started.elapsed()
     } else {
-        0
+        Duration::ZERO
     };
 
-    let timing = TimingSummaryV2 {
-        schema_version: 2,
-        rulesets: vec![RulesetTimingV2 {
+    let timing = TimingSummary {
+        schema_version: TimingSummary::SCHEMA_VERSION,
+        typecheck_ns: 0,
+        frontend_parse_ns: 0,
+        frontend_other_ns: 0,
+        frontend_install_ns: 0,
+        commands_actions_ns: 0,
+        commands_check_ns: 0,
+        commands_other_ns: proof_postprocessing.as_nanos().min(u64::MAX as u128) as u64,
+        native_rebuild_ns: seconds_to_ns(report.rebuild_time),
+        rulesets: vec![RulesetTimingRecord {
             name: String::new(),
+            role: RulesetTimingRole::Program,
+            assembly_ns: 0,
             search_ns: seconds_to_ns(report.search_time),
             apply_ns: seconds_to_ns(report.apply_time),
-            unattributed_ns: seconds_to_ns(
+            execution_ns: seconds_to_ns(
                 (report.total_time - report.search_time - report.apply_time - report.rebuild_time)
                     .max(0.0),
-            )
-            .saturating_add(proof_postprocessing_ns),
+            ),
             merge_ns: 0,
-            rebuild_ns: seconds_to_ns(report.rebuild_time),
         }],
     };
     Ok((timing, report.egraph_nodes))
 }
 
-fn write_timing_summary(path: &Path, timing: &TimingSummaryV2) -> Result<()> {
+fn write_timing_summary(path: &Path, timing: &TimingSummary) -> Result<()> {
     let file = File::create(path)
         .with_context(|| format!("failed to create timing summary {}", path.display()))?;
     serde_json::to_writer(BufWriter::new(file), timing)
@@ -130,10 +138,6 @@ fn seconds_to_ns(seconds: f64) -> u64 {
         return 0;
     }
     (seconds * 1_000_000_000.0).min(u64::MAX as f64) as u64
-}
-
-fn duration_to_ns(duration: Duration) -> u64 {
-    duration.as_nanos().min(u128::from(u64::MAX)) as u64
 }
 
 #[cfg(test)]

@@ -853,13 +853,14 @@ impl EGraph {
         let ts = self.next_ts();
 
         let uf_size_before = self.db.get_table(self.uf_table).len();
-        let rule_set_report =
+        let (assembly_time, rule_set_report) =
             run_rules_impl(&mut self.db, &mut self.rules, rules, ts, self.report_level)?;
         if let Some(message) = self.panic_message.lock().unwrap().take() {
             return Err(PanicError(message).into());
         }
 
         let mut iteration_report = IterationReport {
+            assembly_time,
             rule_set_report,
             rebuild_time: Duration::ZERO,
         };
@@ -978,6 +979,7 @@ impl EGraph {
                                 ts,
                                 ReportLevel::TimeOnly,
                             )?
+                            .1
                             .changed;
                         }
                         // Reset the rule we did not run. These two should be equivalent.
@@ -993,6 +995,7 @@ impl EGraph {
                             ts,
                             ReportLevel::TimeOnly,
                         )?
+                        .1
                         .changed;
                         for rule in &info.incremental_rebuild_rules {
                             self.rules[*rule].last_run_at = ts;
@@ -1066,6 +1069,7 @@ impl EGraph {
                 ts,
                 ReportLevel::TimeOnly,
             )?
+            .1
             .changed;
             scratch.clear();
             let ts = self.next_ts();
@@ -1082,6 +1086,7 @@ impl EGraph {
                     ts,
                     ReportLevel::TimeOnly,
                 )?
+                .1
                 .changed;
                 scratch.clear();
             }
@@ -2191,7 +2196,8 @@ fn run_rules_impl(
     rules: &[RuleId],
     next_ts: Timestamp,
     report_level: ReportLevel,
-) -> Result<RuleSetReport> {
+) -> Result<(Duration, RuleSetReport)> {
+    let assembly_timer = Instant::now();
     for rule in rules {
         let info = &mut rule_info[*rule];
         if info.cached_plan.is_none() {
@@ -2207,7 +2213,8 @@ fn run_rules_impl(
         info.last_run_at = next_ts;
     }
     let ruleset = rsb.build();
-    Ok(db.run_rule_set(&ruleset, report_level))
+    let assembly_time = assembly_timer.elapsed();
+    Ok((assembly_time, db.run_rule_set(&ruleset, report_level)))
 }
 
 // These markers are just used to make it easy to distinguish time spent in

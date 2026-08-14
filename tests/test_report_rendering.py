@@ -6,19 +6,22 @@ from pathlib import Path
 from typing import cast
 
 from pytest import MonkeyPatch
+from rich import box
 from rich.cells import cell_len
 from rich.console import Console
 from rich.rule import Rule
 from syrupy.assertion import SnapshotAssertion
 
 from benchmarking import models
+from benchmarking.reports.analysis import PhaseValues
 from benchmarking.reports.catalog import ReportCatalog, ReportMessage, ReportTable, report_id
 from benchmarking.reports.presentation import (
+    _important_phase_changes,
     build_report_catalog,
     format_duration,
     report_file_labels,
 )
-from benchmarking.reports.render import render_markdown_report_document, render_rich_report_document
+from benchmarking.reports.render import render_markdown_report_document, render_rich_report_document, render_rich_table
 from benchmarking.reports.store import ReportRecord, ReportStore
 
 from .report_fixtures import (
@@ -29,6 +32,10 @@ from .report_fixtures import (
     make_timing_summary,
     write_report,
 )
+
+
+def _header_positions(lines: list[str], labels: tuple[str, ...]) -> list[tuple[int, ...]]:
+    return [tuple(line.index(label) for label in labels) for line in lines if all(label in line for label in labels)]
 
 
 def test_report_ids_encode_parts_unambiguously() -> None:
@@ -133,6 +140,7 @@ def test_shared_formatters_keep_compact_units_and_unambiguous_paths() -> None:
 def test_rich_report_is_readable_at_realistic_widths(tmp_path: Path) -> None:
     report_path, comparison = _six_file_pair_case(tmp_path)
     catalog = build_report_catalog(ReportStore(report_path), comparison, "rulesets")
+    ellipsis_count: int | None = None
 
     for width in (80, 119, 120, 160, 200):
         console = Console(record=True, width=width, color_system=None)
@@ -142,16 +150,25 @@ def test_rich_report_is_readable_at_realistic_widths(tmp_path: Path) -> None:
         assert rendered.count("Warning: detailed Rich report") == (1 if width < 120 else 0)
         assert max(cell_len(line) for line in rendered.splitlines()) <= width
         rule_lines = tuple(line for line in rendered.splitlines() if "─" in line)
-        assert len(rule_lines) == 5
         assert all(
             any(title in line for line in rule_lines)
-            for title in ("Ruleset comparison", "Phase comparison", "Per-file results", "Comparison", "Summary —")
+            for title in (
+                "Ruleset drivers",
+                "Slowdown decomposition",
+                "Per-file results",
+                "Comparison",
+                "Summary —",
+            )
         )
-        assert rendered.index("Ruleset comparison") < rendered.index("Phase comparison")
-        assert rendered.index("Phase comparison") < rendered.index("Per-file results")
+        assert rendered.index("Ruleset drivers") < rendered.index("Slowdown decomposition")
+        assert rendered.index("Slowdown decomposition") < rendered.index("Per-file results")
         assert rendered.index("Per-file results") < rendered.index("Comparison")
         assert rendered.index("Comparison") < rendered.rindex("Summary —")
-        assert "…" not in rendered
+        if ellipsis_count is None:
+            ellipsis_count = rendered.count("…")
+            assert ellipsis_count > 0
+        else:
+            assert rendered.count("…") == ellipsis_count
         assert "Per-file wall time" not in rendered
         assert "Benchmark summary" not in rendered
         assert "math.egg" in rendered
@@ -178,10 +195,30 @@ def test_realistic_six_file_rich_120_snapshot(
     rendered = console.export_text()
 
     assert rendered == snapshot
-    assert rendered.count("Ruleset comparison —") == 6
-    assert rendered.count("Phase comparison —") == 6
+    assert rendered.count("Ruleset drivers —") == 6
+    assert rendered.count("Slowdown decomposition") >= 1
     assert "Warning: detailed Rich report" not in rendered
-    assert "…" not in rendered
+    assert "Other (7 more source rulesets)" in rendered
+
+
+def test_repeated_rich_table_schemas_share_column_positions(tmp_path: Path) -> None:
+    report_path, comparison = _six_file_pair_case(tmp_path)
+    catalog = build_report_catalog(ReportStore(report_path), comparison, "rulesets")
+
+    for width in (120, 160, 200):
+        console = Console(record=True, width=width, color_system=None)
+        console.print(render_rich_report_document(catalog, width))
+        lines = console.export_text().splitlines()
+
+        ruleset_positions = _header_positions(lines, ("Driver", "Δ", "Wall share", "Important phase changes"))
+        assert len(ruleset_positions) == len(comparison.files)
+        assert len(set(ruleset_positions)) == 1
+
+        result_positions = _header_positions(
+            lines, ("File", "Baseline (95% CI)", "Candidate (95% CI)", "Ratio (95% CI)", "Result")
+        )
+        assert len(result_positions) == 2
+        assert len(set(result_positions)) == 1
 
 
 def test_detail_level_is_cumulative(tmp_path: Path) -> None:
@@ -202,20 +239,163 @@ def test_detail_level_is_cumulative(tmp_path: Path) -> None:
         assert tuple(section.id for section in catalog.sections) == section_ids
 
 
-def test_phase_detail_has_one_six_row_table_per_file_and_one_guide(tmp_path: Path) -> None:
+def test_all_rich_tables_use_one_compact_style(tmp_path: Path) -> None:
+    report_path, comparison = _pair_case(tmp_path)
+    catalog = build_report_catalog(ReportStore(report_path), comparison, "rulesets")
+    tables = [
+        render_rich_table(block)
+        for section in catalog.sections
+        for block in section.blocks
+        if isinstance(block, ReportTable)
+    ]
+
+    assert tables
+    assert all(table.box is box.SIMPLE_HEAVY and not table.show_lines for table in tables)
+
+
+def test_phase_detail_is_one_additive_decomposition_table(tmp_path: Path) -> None:
     report_path, comparison = _pair_case(tmp_path)
     catalog = build_report_catalog(ReportStore(report_path), comparison, "phases")
 
     section = next(section for section in catalog.sections if section.id == "phases")
-    assert isinstance(section.blocks[0], ReportMessage)
     tables = tuple(block for block in section.blocks if isinstance(block, ReportTable))
-    assert len(tables) == len(comparison.files)
-    expected_columns = ("phase", "baseline", "candidate", "delta", "wall_delta")
-    assert all(tuple(column.id for column in table.columns) == expected_columns for table in tables)
-    assert all(len(table.rows) == 6 for table in tables)
+    assert len(tables) == 1
+    (table,) = tables
+    assert tuple(column.id for column in table.columns) == (
+        "file",
+        "wall_delta",
+        "typecheck",
+        "frontend",
+        "program",
+        "equality",
+        "commands",
+        "residual",
+    )
+    assert len(table.rows) == len(comparison.files) + 1
+    assert table.rows[0].cells[0].display == "Suite total (2 files)"
+    assert [row.cells[0].display for row in table.rows[1:]] == ["math.egg", "rewrite.egg"]
+    assert table.columns[3].label == "Frontend"
+    assert table.columns[4].label == "Program"
+    assert table.columns[5].label == "Equality"
+    assert table.caption is not None and "candidate − baseline" in table.caption
+    assert all("%" in cell.display.partition("  ")[0] for cell in table.rows[0].cells[2:])
+    assert all(sum("◆" in cell.display for cell in row.cells[2:]) == 1 for row in table.rows)
+    assert table.rows[0].cells[2].tone == "muted"
+    assert table.rows[0].cells[4].tone == "emphasis"
+    assert table.rows[1].cells[1].tone == "positive"
+    assert table.rows[1].cells[4].tone == "emphasis"
+    assert table.rows[1].cells[7].tone == "positive"
 
 
-def test_negative_outside_residual_keeps_an_explicit_warning(tmp_path: Path) -> None:
+def test_ruleset_detail_unfolds_program_and_equality_with_explicit_children(tmp_path: Path) -> None:
+    report_path, comparison = _pair_case(tmp_path)
+    catalog = build_report_catalog(ReportStore(report_path), comparison, "rulesets")
+
+    section = next(section for section in catalog.sections if section.id == "rulesets")
+    guide = section.blocks[0]
+    assert isinstance(guide, ReportMessage)
+    assert "Parent rows exactly match" in guide.text
+    assert "one global Native rebuild replaced row" in guide.text
+    assert "top 5 plus an exact per-group Other" in guide.text
+    assert "↳ marks children" in guide.text
+    assert "max(1 ms, 10% of |row Δ|)" in guide.text
+
+    math = next(
+        block for block in section.blocks if isinstance(block, ReportTable) and block.title.endswith("math.egg")
+    )
+    rewrite = next(
+        block for block in section.blocks if isinstance(block, ReportTable) and block.title.endswith("rewrite.egg")
+    )
+    assert tuple(column.id for column in math.columns) == ("driver", "delta", "share", "important_phases")
+    assert math.columns[2].label == "Wall share"
+    assert [row.cells[0].display for row in math.rows] == [
+        "Program rules — own work",
+        "↳ simplify",
+        "↳ finish",
+        "Equality/rebuild — net",
+    ]
+    assert math.rows[0].cells[0].tone == "emphasis"
+    assert math.rows[0].cells[1].tone == "positive"
+    assert math.rows[0].cells[3].display == "◆ Search -80.0 ms; Apply -36.0 ms"
+    assert math.rows[0].cells[2].display == "+58.0%"
+    assert math.rows[1].cells[2].display == ""
+    assert math.rows[3].cells[0].tone == "emphasis"
+    assert math.rows[3].cells[3].display == "0 ns"
+    assert math.caption is not None and "Program + Equality account for +58.0%" in math.caption
+    assert rewrite.rows[0].cells[1].tone == "default"
+
+
+def test_ruleset_edges_label_empty_names_and_break_equal_deltas_by_name(tmp_path: Path) -> None:
+    report_path = tmp_path / "ruleset-ties.jsonl"
+    file = models.FileSpec("file.egg", tmp_path / "file.egg", "sha256:file")
+    baseline = make_endpoint(binary_sha256="sha256:baseline", treatment="off")
+    candidate = make_endpoint(binary_sha256="sha256:candidate", treatment="proofs")
+    unchanged = make_ruleset_timing("unchanged", search_ns=0, apply_ns=0, merge_ns=0)
+    tied_names = ("zeta", "beta", "eta", "delta", "gamma", "alpha", "epsilon")
+    write_report(
+        report_path,
+        make_record(
+            0,
+            started_at="2026-07-17T12:00:00Z",
+            binary_sha256=baseline.target.binary_sha256,
+            timing_summary=make_timing_summary(unchanged, native_rebuild_ns=0),
+        ),
+        make_record(
+            1,
+            started_at="2026-07-17T12:00:01Z",
+            binary_sha256=candidate.target.binary_sha256,
+            treatment="proofs",
+            wall_sec=1.2,
+            timing_summary=make_timing_summary(
+                *(make_ruleset_timing(name, search_ns=10_000_000, apply_ns=0, merge_ns=0) for name in tied_names),
+                make_ruleset_timing("", role="equality", search_ns=1_000_000, apply_ns=0, merge_ns=0),
+                unchanged,
+                native_rebuild_ns=0,
+            ),
+        ),
+    )
+    comparison = models.ComparisonSpec(baseline, candidate, (file,), 1, 120)
+
+    catalog = build_report_catalog(ReportStore(report_path), comparison, "rulesets")
+    section = next(section for section in catalog.sections if section.id == "rulesets")
+    table = next(block for block in section.blocks if isinstance(block, ReportTable))
+    default_ruleset = next(row for row in table.rows if row.cells[0].display == "↳ <default ruleset>")
+
+    assert default_ruleset.cells[0].raw == ""
+    assert [row.cells[0].display for row in table.rows[:8]] == [
+        "Program rules — own work",
+        "↳ alpha",
+        "↳ beta",
+        "↳ delta",
+        "↳ epsilon",
+        "↳ eta",
+        "↳ Other (2 more source rulesets)",
+        "Equality/rebuild — net",
+    ]
+    assert table.rows[6].cells[1].display == "+20.0 ms"
+
+
+def test_ratio_tones_use_green_for_improvements_and_dim_unclear_results(tmp_path: Path) -> None:
+    report_path, comparison = _pair_case(tmp_path)
+    catalog = build_report_catalog(ReportStore(report_path), comparison)
+    summary = next(section for section in catalog.sections if section.id == "summary")
+    table = next(block for block in summary.blocks if isinstance(block, ReportTable))
+    expected = {
+        "higher": "default",
+        "invalid": "error",
+        "lower": "positive",
+        "point_only": "muted",
+        "unclear": "muted",
+    }
+
+    for row in table.rows:
+        result = row.cells[4].raw
+        assert isinstance(result, str)
+        assert row.cells[3].tone == expected[result]
+        assert row.cells[4].tone == expected[result]
+
+
+def test_negative_residual_keeps_an_explicit_warning(tmp_path: Path) -> None:
     report_path = tmp_path / "negative-residual.jsonl"
     file = models.FileSpec("file.egg", tmp_path / "file.egg", "sha256:file")
     baseline = make_endpoint(binary_sha256="sha256:baseline", treatment="off")
@@ -233,8 +413,8 @@ def test_negative_outside_residual_keeps_an_explicit_warning(tmp_path: Path) -> 
                     search_ns=1_200_000_000,
                     apply_ns=0,
                     merge_ns=0,
-                    rebuild_ns=0,
-                )
+                ),
+                native_rebuild_ns=0,
             ),
         ),
         make_record(
@@ -248,8 +428,8 @@ def test_negative_outside_residual_keeps_an_explicit_warning(tmp_path: Path) -> 
                     search_ns=1_100_000_000,
                     apply_ns=0,
                     merge_ns=0,
-                    rebuild_ns=0,
-                )
+                ),
+                native_rebuild_ns=0,
             ),
         ),
     )
@@ -257,44 +437,16 @@ def test_negative_outside_residual_keeps_an_explicit_warning(tmp_path: Path) -> 
 
     markdown = render_markdown_report_document(build_report_catalog(ReportStore(report_path), comparison, "phases"))
 
-    assert "!-200 ms · -20.0%" in markdown
-    assert "! marks a negative residual" in markdown
+    assert "!◆ +150%  +300 ms" in markdown
+    assert "! means an endpoint's mean residual is negative" in markdown
 
 
-def test_ruleset_display_distinguishes_absent_from_measured_zero(tmp_path: Path) -> None:
-    report_path = tmp_path / "ruleset-presence.jsonl"
-    file = models.FileSpec("file.egg", tmp_path / "file.egg", "sha256:file")
-    baseline = make_endpoint(binary_sha256="sha256:baseline", treatment="off")
-    candidate = make_endpoint(binary_sha256="sha256:candidate", treatment="proofs")
-    write_report(
-        report_path,
-        make_record(
-            0,
-            started_at="2026-07-17T12:00:00Z",
-            binary_sha256=baseline.target.binary_sha256,
-            treatment=baseline.treatment,
-            timing_summary=make_timing_summary(
-                make_ruleset_timing("measured-zero", search_ns=0, apply_ns=0, merge_ns=0, rebuild_ns=0),
-                make_ruleset_timing("removed", search_ns=10, apply_ns=0, merge_ns=0, rebuild_ns=0),
-            ),
-        ),
-        make_record(
-            1,
-            started_at="2026-07-17T12:00:01Z",
-            binary_sha256=candidate.target.binary_sha256,
-            treatment=candidate.treatment,
-            timing_summary=make_timing_summary(
-                make_ruleset_timing("measured-zero", search_ns=5, apply_ns=0, merge_ns=0, rebuild_ns=0),
-                make_ruleset_timing("added", search_ns=20, apply_ns=0, merge_ns=0, rebuild_ns=0),
-            ),
-        ),
+def test_important_phase_changes_use_the_documented_deterministic_threshold() -> None:
+    phases = PhaseValues(500_000, 10_000_000, 3_000_000, 2_000_000, 4_000_000, 500_000)
+
+    assert _important_phase_changes(phases) == (
+        "◆ Search +10.0 ms; Apply +3.00 ms; Execution +2.00 ms; Merge +4.00 ms; …"
     )
-    comparison = models.ComparisonSpec(baseline, candidate, (file,), 1, 120)
-
-    markdown = render_markdown_report_document(build_report_catalog(ReportStore(report_path), comparison, "rulesets"))
-
-    assert "| measured-zero | 0 ns | 5.00 ns | +5.00 ns |" in markdown
-    assert "| added | — | 20.0 ns | +20.0 ns |" in markdown
 
 
 def test_one_file_summary_removes_redundant_wall_and_rss_tails(tmp_path: Path) -> None:
@@ -383,11 +535,20 @@ def test_timed_out_file_has_missing_phase_cells_and_ruleset_status(tmp_path: Pat
     catalog = build_report_catalog(ReportStore(report_path), comparison, "rulesets")
     phase_section = next(section for section in catalog.sections if section.id == "phases")
     phase_table = next(block for block in phase_section.blocks if isinstance(block, ReportTable))
-    candidate_column = next(index for index, column in enumerate(phase_table.columns) if column.id == "candidate")
-    assert all(row.cells[candidate_column].display == "—" for row in phase_table.rows)
+    assert len(phase_table.rows) == 2
+    assert all(cell.display == "—" for row in phase_table.rows for cell in row.cells[1:])
     ruleset_section = next(section for section in catalog.sections if section.id == "rulesets")
-    assert isinstance(ruleset_section.blocks[0], ReportMessage)
-    assert ruleset_section.blocks[0].text == "Status: timeout row selected"
+    status = next(
+        block
+        for block in ruleset_section.blocks
+        if isinstance(block, ReportMessage) and block.title == "Ruleset drivers — file.egg"
+    )
+    assert status.text == "Status: timeout row selected"
+    summary_section = next(section for section in catalog.sections if section.id == "summary")
+    summary_table = next(block for block in summary_section.blocks if isinstance(block, ReportTable))
+    invalid = next(row for row in summary_table.rows if row.cells[4].raw == "invalid")
+    assert invalid.cells[3].tone == "error"
+    assert invalid.cells[4].tone == "error"
 
 
 def _pair_case(tmp_path: Path) -> tuple[Path, models.ComparisonSpec]:
@@ -431,15 +592,14 @@ def _pair_case(tmp_path: Path) -> tuple[Path, models.ComparisonSpec]:
                                 search_ns=int(wall * 300_000_000),
                                 apply_ns=int(wall * 120_000_000),
                                 merge_ns=80_000_000,
-                                rebuild_ns=30_000_000,
                             ),
                             make_ruleset_timing(
                                 "finish",
                                 search_ns=int(wall * 100_000_000),
                                 apply_ns=int(wall * 60_000_000),
                                 merge_ns=20_000_000,
-                                rebuild_ns=10_000_000,
                             ),
+                            native_rebuild_ns=40_000_000,
                         ),
                     )
                 )
@@ -475,9 +635,8 @@ def _six_file_pair_case(tmp_path: Path) -> tuple[Path, models.ComparisonSpec]:
                         f"ruleset-{ruleset_order:02d}",
                         search_ns=int((ruleset_order + 1) * (file_order + 1) * 2_000_000 * timing_factor),
                         apply_ns=int((ruleset_order + 1) * (file_order + 1) * 1_000_000 * timing_factor),
-                        unattributed_ns=int((ruleset_order + 1) * 200_000 * timing_factor),
+                        execution_ns=int((ruleset_order + 1) * 200_000 * timing_factor),
                         merge_ns=int((ruleset_order + 1) * 500_000 * timing_factor),
-                        rebuild_ns=int((ruleset_order + 1) * 250_000 * timing_factor),
                     )
                     for ruleset_order in range(12)
                 )
@@ -491,7 +650,12 @@ def _six_file_pair_case(tmp_path: Path) -> tuple[Path, models.ComparisonSpec]:
                         target_label=endpoint.target.row.label,
                         wall_sec=baseline_wall * wall_factor + round_index * 0.01,
                         max_rss_bytes=(100 + file_order * 20 + endpoint_order * 10 + round_index) * 1_000_000,
-                        timing_summary=make_timing_summary(*rulesets),
+                        timing_summary=make_timing_summary(
+                            *rulesets,
+                            native_rebuild_ns=sum(
+                                int((ruleset_order + 1) * 250_000 * timing_factor) for ruleset_order in range(12)
+                            ),
+                        ),
                     )
                 )
     write_report(report_path, *records)

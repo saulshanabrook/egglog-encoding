@@ -454,6 +454,10 @@ impl Database {
                 ..RuleSetReport::default()
             };
         }
+        // This outer interval includes all per-run execution setup. Search and
+        // apply are measured inside it, and the serial remainder is reported as
+        // execution overhead.
+        let pre_merge_timer = Instant::now();
         let match_counter = Arc::new(MatchCounter::new(rule_set.actions.n_ids()));
         // Trie roots are shared across all plans in this run. Tables are frozen
         // for the duration, so a given root key always denotes the same subset;
@@ -478,7 +482,6 @@ impl Database {
             (!shared.is_empty()).then(|| Arc::new(TrieCache::with_shared(shared)))
         };
 
-        let pre_merge_timer = Instant::now();
         // let mut rule_reports: HashMap<String, Vec<RuleReport>>;
         let mut rule_reports: HashMap<Arc<str>, Vec<RuleReport>>;
         let run_in_parallel = parallelize_db_level_op(self.total_size_estimate);

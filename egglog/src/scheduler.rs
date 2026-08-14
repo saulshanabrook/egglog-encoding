@@ -188,6 +188,9 @@ impl EGraph {
     ///
     /// The iteration is recorded in the overall run report, as in
     /// [`EGraph::step_rules`].
+    /// Lazy rule compilation and the intermediate update flush surround the
+    /// recorded query/action invocations; an enclosing command therefore
+    /// attributes that work to command timing rather than ruleset timing.
     pub fn step_rules_with_scheduler(
         &mut self,
         scheduler_id: SchedulerId,
@@ -201,13 +204,13 @@ impl EGraph {
             let Some(r) = rulesets.get(ruleset) else {
                 return Err(Error::BackendError(format!("no such ruleset: {ruleset}")));
             };
-            match r {
-                Ruleset::Rules(rules) => {
+            match &r.kind {
+                RulesetKind::Rules(rules) => {
                     for (rule_name, (core_rule, _)) in rules.iter() {
                         ids.push((rule_name.clone(), core_rule));
                     }
                 }
-                Ruleset::Combined(sub_rulesets) => {
+                RulesetKind::Combined(sub_rulesets) => {
                     for sub_ruleset in sub_rulesets {
                         collect_rules(sub_ruleset, rulesets, ids)?;
                     }
@@ -225,6 +228,7 @@ impl EGraph {
             self.rulesets = rulesets;
             return Err(e);
         }
+        let timing_role = rulesets[ruleset].timing_role;
         let mut schedulers = std::mem::take(&mut self.schedulers);
         let result = (|| -> Result<RunReport, Error> {
             // Step 1: build all the query/action rules and worklist if have not already
@@ -288,8 +292,8 @@ impl EGraph {
                 .map_err(|e| Error::BackendError(e.to_string()))?;
 
             // Step 5: combine the reports
-            let mut query_report = RunReport::singleton(ruleset, query_iter_report);
-            let mut action_report = RunReport::singleton(ruleset, action_iter_report);
+            let mut query_report = RunReport::singleton(ruleset, timing_role, query_iter_report);
+            let mut action_report = RunReport::singleton(ruleset, timing_role, action_iter_report);
 
             // query matches don't count
             query_report.updated = false;
@@ -309,7 +313,7 @@ impl EGraph {
         self.schedulers = schedulers;
 
         if let Ok(report) = &result {
-            self.overall_run_report.union(report.clone());
+            self.overall_report.run.union(report.clone());
         }
         result
     }
@@ -509,13 +513,16 @@ mod test {
             // Because of semi-naive, the exact rules that are run are more than just `test-rule`
             assert!(
                 report
-                    .search_and_apply_time_per_rule
+                    .search_and_apply_time_per_rule()
                     .keys()
                     .all(|k| k.starts_with("test-rule"))
             );
-            assert_eq!(
-                report.ruleset_timings.keys().collect::<Vec<_>>(),
-                [&"test".into()]
+            assert!(!report.iterations.is_empty());
+            assert!(
+                report
+                    .iterations
+                    .iter()
+                    .all(|iteration| iteration.name.as_ref() == "test")
             );
 
             if report.can_stop {

@@ -14,7 +14,7 @@ from typing import Literal
 
 type ReportScalar = str | int | float | bool | None
 TableAlignment = Literal["left", "right"]
-CellTone = Literal["default", "positive", "negative", "warning", "error", "muted"]
+CellTone = Literal["default", "positive", "emphasis", "warning", "error", "muted"]
 
 
 @dataclass(frozen=True)

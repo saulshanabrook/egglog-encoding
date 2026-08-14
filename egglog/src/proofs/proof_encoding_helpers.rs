@@ -472,7 +472,7 @@ impl ProofInstrumentor<'_> {
 
     pub(crate) fn parse_program(&mut self, input: &str) -> Vec<Command> {
         self.egraph.parser.ensure_no_reserved_symbols = false;
-        let res = self.egraph.parser.get_program_from_string(None, input);
+        let res = self.egraph.parse_program_timed(None, input);
         self.egraph.parser.ensure_no_reserved_symbols = true;
 
         // This program is generated internally by term encoding, so a parse

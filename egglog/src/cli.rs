@@ -3,7 +3,6 @@ use std::io::{self, BufRead, BufReader, IsTerminal, Read, Write};
 use std::str::FromStr;
 
 use clap::Parser;
-use egglog_reports::TimingSummaryV2;
 use env_logger::Env;
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -248,11 +247,10 @@ where
     }
 
     if let Some(summary_path) = args.timing_summary {
-        let summary = TimingSummaryV2::from_run_report(egraph.get_overall_run_report())
-            .unwrap_or_else(|error| {
-                log::error!("failed to create timing summary: {error}");
-                std::process::exit(1);
-            });
+        let summary = egraph.timing_summary().unwrap_or_else(|error| {
+            log::error!("failed to create timing summary: {error}");
+            std::process::exit(1);
+        });
         let mut file = std::fs::File::create(&summary_path)
             .unwrap_or_else(|_| panic!("Failed to create timing summary file at {summary_path:?}"));
         serde_json::to_writer(&mut file, &summary).expect("Failed to serialize timing summary");

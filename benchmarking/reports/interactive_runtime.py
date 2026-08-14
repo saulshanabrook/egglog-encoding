@@ -429,8 +429,8 @@ def _primitive_display(value: JsonScalar) -> str:
 def _tone_style(tone: CellTone) -> dict[str, JsonValue]:
     if tone == "positive":
         return {"color": "green"}
-    if tone == "negative":
-        return {"color": "red"}
+    if tone == "emphasis":
+        return {"bold": True}
     if tone == "warning":
         return {"color": "yellow"}
     if tone == "error":

@@ -10,6 +10,7 @@ from benchmarking.reports.store import (
     ReportRecord,
     ReportStore,
     RulesetTimingRecord,
+    RulesetTimingRole,
     TimingSummaryRecord,
 )
 
@@ -62,29 +63,49 @@ def make_record(
 def make_ruleset_timing(
     name: str = "rules",
     *,
+    assembly_ns: int = 0,
     search_ns: int = 400_000_000,
     apply_ns: int = 200_000_000,
-    unattributed_ns: int = 0,
+    execution_ns: int = 0,
     merge_ns: int = 200_000_000,
-    rebuild_ns: int = 100_000_000,
+    role: RulesetTimingRole = "program",
 ) -> RulesetTimingRecord:
     """Construct one valid ruleset timing fixture."""
 
     return {
         "name": name,
+        "role": role,
+        "assembly_ns": assembly_ns,
         "search_ns": search_ns,
         "apply_ns": apply_ns,
-        "unattributed_ns": unattributed_ns,
+        "execution_ns": execution_ns,
         "merge_ns": merge_ns,
-        "rebuild_ns": rebuild_ns,
     }
 
 
-def make_timing_summary(*rulesets: RulesetTimingRecord) -> TimingSummaryRecord:
-    """Construct a valid v2 timing-summary fixture."""
+def make_timing_summary(
+    *rulesets: RulesetTimingRecord,
+    typecheck_ns: int = 0,
+    frontend_parse_ns: int = 0,
+    frontend_other_ns: int = 0,
+    frontend_install_ns: int = 0,
+    commands_actions_ns: int = 0,
+    commands_check_ns: int = 0,
+    commands_other_ns: int = 0,
+    native_rebuild_ns: int = 100_000_000,
+) -> TimingSummaryRecord:
+    """Construct a valid dense timing-summary fixture."""
 
     return {
-        "schema_version": 2,
+        "schema_version": 4,
+        "typecheck_ns": typecheck_ns,
+        "frontend_parse_ns": frontend_parse_ns,
+        "frontend_other_ns": frontend_other_ns,
+        "frontend_install_ns": frontend_install_ns,
+        "commands_actions_ns": commands_actions_ns,
+        "commands_check_ns": commands_check_ns,
+        "commands_other_ns": commands_other_ns,
+        "native_rebuild_ns": native_rebuild_ns,
         "rulesets": list(rulesets or (make_ruleset_timing(),)),
     }
 

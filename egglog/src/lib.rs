@@ -42,7 +42,9 @@ use egglog_ast::util::ListDisplay;
 use egglog_bridge::{ColumnTy, QueryEntry};
 use egglog_core_relations as core_relations;
 use egglog_numeric_id as numeric_id;
-use egglog_reports::{ReportLevel, RunReport};
+use egglog_reports::{
+    OverallReport, ReportLevel, RulesetTimingRole, RunReport, TimingSummary, TimingSummaryError,
+};
 pub use exec_state::{
     Context, Core, Enode, FullState, FunctionEntry, PureState, Read, ReadState, Write, WriteState,
 };
@@ -71,6 +73,7 @@ use std::iter::once;
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 pub use termdag::{OrdTerm, Term, TermDag, TermId};
 use thiserror::Error;
 use typechecking::FuncType;
@@ -322,8 +325,8 @@ pub struct EGraph {
     pub seminaive: bool,
     pub no_decomp: bool,
     type_info: TypeInfo,
-    /// The run report unioned over all runs so far.
-    overall_run_report: RunReport,
+    /// Cumulative run and process reporting state.
+    overall_report: OverallReport,
     schedulers: DenseIdMap<SchedulerId, SchedulerRecord>,
     commands: IndexMap<String, Arc<dyn UserDefinedCommand>>,
     extension_state: HashMap<TypeId, Box<dyn ExtensionStateValue>>,
@@ -442,7 +445,7 @@ impl EGraph {
             fact_directory: None,
             seminaive: true,
             no_decomp: false,
-            overall_run_report: Default::default(),
+            overall_report: Default::default(),
             type_info: Default::default(),
             schedulers: Default::default(),
             commands: Default::default(),
@@ -562,8 +565,13 @@ impl EGraph {
             None,
         );
 
-        eg.rulesets
-            .insert("".into(), Ruleset::Rules(Default::default()));
+        eg.rulesets.insert(
+            "".into(),
+            Ruleset {
+                kind: RulesetKind::Rules(Default::default()),
+                timing_role: RulesetTimingRole::Program,
+            },
+        );
 
         // The generic `get-fresh!` mint primitive is registered on every e-graph.
         // Doing it here — rather than per-eq-sort — means it is present whenever
@@ -839,8 +847,8 @@ impl EGraph {
     pub fn pop(&mut self) -> Result<(), Error> {
         match self.pushed_egraph.take() {
             Some(mut e) => {
-                // Preserve the overall report from the popped egraph
-                std::mem::swap(&mut self.overall_run_report, &mut e.overall_run_report);
+                // Work performed in the popped scope still belongs to this run.
+                std::mem::swap(&mut self.overall_report, &mut e.overall_report);
                 // Preserve the symbol generator so that fresh symbols
                 // generated after pop don't collide with ones generated before pop.
                 std::mem::swap(&mut self.parser.symbol_gen, &mut e.parser.symbol_gen);
@@ -1367,13 +1375,13 @@ impl EGraph {
             rulesets: &IndexMap<String, Ruleset>,
             ids: &mut Vec<egglog_bridge::RuleId>,
         ) {
-            match &rulesets[ruleset] {
-                Ruleset::Rules(rules) => {
+            match &rulesets[ruleset].kind {
+                RulesetKind::Rules(rules) => {
                     for (_, id) in rules.values() {
                         ids.push(*id);
                     }
                 }
-                Ruleset::Combined(sub_rulesets) => {
+                RulesetKind::Combined(sub_rulesets) => {
                     for sub_ruleset in sub_rulesets {
                         collect_rule_ids(sub_ruleset, rulesets, ids);
                     }
@@ -1389,8 +1397,12 @@ impl EGraph {
             .run_rules(&rule_ids)
             .map_err(|e| Error::BackendError(e.to_string()))?;
 
-        let report = RunReport::singleton(ruleset, iteration_report);
-        self.overall_run_report.union(report.clone());
+        let report = RunReport::singleton(
+            ruleset,
+            self.rulesets[ruleset].timing_role,
+            iteration_report,
+        );
+        self.overall_report.run.union(report.clone());
         Ok(report)
     }
 
@@ -1414,9 +1426,13 @@ impl EGraph {
         // it expects only `union` on constructors (not set).
         let union_to_set = self.proof_state.original_typechecking.is_none();
 
-        match self.rulesets.get(&rule.ruleset) {
-            Some(Ruleset::Rules(_)) => {}
-            Some(Ruleset::Combined(_)) => {
+        match self
+            .rulesets
+            .get(&rule.ruleset)
+            .map(|ruleset| &ruleset.kind)
+        {
+            Some(RulesetKind::Rules(_)) => {}
+            Some(RulesetKind::Combined(_)) => {
                 return Err(Error::CombinedRulesetError(
                     rule.ruleset.clone(),
                     rule.span.clone(),
@@ -1449,7 +1465,11 @@ impl EGraph {
             translator.build(no_decomp)
         };
 
-        let Some(Ruleset::Rules(rules)) = self.rulesets.get_mut(&rule.ruleset) else {
+        let Some(Ruleset {
+            kind: RulesetKind::Rules(rules),
+            ..
+        }) = self.rulesets.get_mut(&rule.ruleset)
+        else {
             unreachable!("ruleset was validated before compiling the rule")
         };
         match rules.entry(rule.name.clone()) {
@@ -1872,17 +1892,55 @@ impl EGraph {
         Ok(result)
     }
 
-    fn add_combined_ruleset(&mut self, name: String, rulesets: Vec<String>) {
+    fn add_combined_ruleset(
+        &mut self,
+        span: &Span,
+        name: String,
+        rulesets: Vec<String>,
+    ) -> Result<(), Error> {
+        let mut timing_role = None;
+        for ruleset in &rulesets {
+            let role = self
+                .rulesets
+                .get(ruleset)
+                .map(|ruleset| ruleset.timing_role)
+                .ok_or_else(|| Error::NoSuchRuleset(ruleset.clone(), span.clone()))?;
+            if timing_role.is_some_and(|expected| expected != role) {
+                return Err(Error::MixedRulesetResponsibilities(name, span.clone()));
+            }
+            timing_role = Some(role);
+        }
         match self.rulesets.entry(name.clone()) {
             Entry::Occupied(_) => panic!("Ruleset '{name}' was already present"),
-            Entry::Vacant(e) => e.insert(Ruleset::Combined(rulesets)),
+            Entry::Vacant(e) => e.insert(Ruleset {
+                kind: RulesetKind::Combined(rulesets),
+                timing_role: timing_role.unwrap_or(RulesetTimingRole::Program),
+            }),
         };
+        Ok(())
     }
 
     fn add_ruleset(&mut self, name: String) {
+        let proof_names = &self.proof_state.proof_names;
+        let timing_role = if [
+            &proof_names.path_compress_ruleset_name,
+            &proof_names.rebuilding_ruleset_name,
+            &proof_names.rebuilding_cleanup_ruleset_name,
+            &proof_names.subsume_ruleset_name,
+        ]
+        .iter()
+        .any(|generated| generated.as_str() == name)
+        {
+            RulesetTimingRole::Equality
+        } else {
+            RulesetTimingRole::Program
+        };
         match self.rulesets.entry(name.clone()) {
             Entry::Occupied(_) => panic!("Ruleset '{name}' was already present"),
-            Entry::Vacant(e) => e.insert(Ruleset::Rules(Default::default())),
+            Entry::Vacant(e) => e.insert(Ruleset {
+                kind: RulesetKind::Rules(Default::default()),
+                timing_role,
+            }),
         };
     }
 
@@ -1933,7 +1991,8 @@ impl EGraph {
         let run_result = self.backend.run_rules(&[id]);
         self.backend.free_rule(id);
         self.backend.free_external_func(ext_id);
-        run_result.map_err(|e| Error::BackendError(e.to_string()))?;
+        let iteration_report = run_result.map_err(|e| Error::BackendError(e.to_string()))?;
+        self.overall_report.commands_check += iteration_report.total_time();
 
         let ext_sc_val = ext_sc.lock().unwrap().take();
         let matched = matches!(ext_sc_val, Some(()));
@@ -1949,6 +2008,54 @@ impl EGraph {
     }
 
     fn run_command(&mut self, command: ResolvedNCommand) -> Result<Vec<CommandOutput>, Error> {
+        enum CommandPhase {
+            Install,
+            Actions,
+            Check,
+            Other,
+        }
+
+        let phase = match &command {
+            ResolvedNCommand::Sort { .. }
+            | ResolvedNCommand::Function(_)
+            | ResolvedNCommand::Index { .. }
+            | ResolvedNCommand::AddRuleset(..)
+            | ResolvedNCommand::UnstableCombinedRuleset(..)
+            | ResolvedNCommand::NormRule { .. } => CommandPhase::Install,
+            ResolvedNCommand::CoreAction(_)
+            | ResolvedNCommand::CoreActions(_)
+            | ResolvedNCommand::Input { .. } => CommandPhase::Actions,
+            ResolvedNCommand::Check(..) => CommandPhase::Check,
+            _ => CommandPhase::Other,
+        };
+        let command_timer = Instant::now();
+        let process_before = self.overall_report.process_time();
+        let iteration_before = self.overall_report.run.iterations.len();
+        let result = self.run_command_inner(command);
+        let nested_process = self
+            .overall_report
+            .process_time()
+            .saturating_sub(process_before);
+        let nested_rulesets = self.overall_report.run.iterations[iteration_before..]
+            .iter()
+            .map(|iteration| iteration.report.total_time())
+            .sum();
+        let own_time = command_timer
+            .elapsed()
+            .saturating_sub(nested_process + nested_rulesets);
+        match phase {
+            CommandPhase::Install => self.overall_report.frontend_install += own_time,
+            CommandPhase::Actions => self.overall_report.commands_actions += own_time,
+            CommandPhase::Check => self.overall_report.commands_check += own_time,
+            CommandPhase::Other => self.overall_report.commands_other += own_time,
+        }
+        result
+    }
+
+    fn run_command_inner(
+        &mut self,
+        command: ResolvedNCommand,
+    ) -> Result<Vec<CommandOutput>, Error> {
         match command {
             // Sorts are already declared during typechecking
             ResolvedNCommand::Sort {
@@ -1995,8 +2102,8 @@ impl EGraph {
                 self.add_ruleset(name.clone());
                 log::info!("Declared ruleset {name}.");
             }
-            ResolvedNCommand::UnstableCombinedRuleset(_span, name, others) => {
-                self.add_combined_ruleset(name.clone(), others);
+            ResolvedNCommand::UnstableCombinedRuleset(span, name, others) => {
+                self.add_combined_ruleset(&span, name.clone(), others)?;
                 log::info!("Declared ruleset {name}.");
             }
             ResolvedNCommand::NormRule { rule } => {
@@ -2015,7 +2122,7 @@ impl EGraph {
                 None => {
                     log::info!("Printed overall statistics");
                     return Ok(vec![CommandOutput::OverallStatistics(
-                        self.overall_run_report.clone(),
+                        self.overall_report.run.clone(),
                     )]);
                 }
                 Some(path) => {
@@ -2023,7 +2130,7 @@ impl EGraph {
                         .map_err(|e| Error::IoError(path.clone().into(), e, span.clone()))?;
                     log::info!("Printed overall statistics to json file {path}");
 
-                    serde_json::to_writer(&mut file, &self.overall_run_report).map_err(|e| {
+                    serde_json::to_writer(&mut file, &self.overall_report.run).map_err(|e| {
                         Error::BackendError(format!("failed writing statistics: {e}"))
                     })?;
                 }
@@ -2518,7 +2625,9 @@ impl EGraph {
         if let Some(original_typechecking) = self.proof_state.original_typechecking.as_mut() {
             // Typecheck using the original egraph
             // TODO this is ugly- we don't need an entire e-graph just for type information.
+            let typecheck_timer = Instant::now();
             let typechecked = original_typechecking.typecheck_program(&desugared)?;
+            self.overall_report.typecheck += typecheck_timer.elapsed();
 
             for command in &typechecked {
                 if let Err(reason) = command_supports_proof_encoding(
@@ -2535,7 +2644,9 @@ impl EGraph {
 
             Ok(proof_form(typechecked, &mut self.parser.symbol_gen))
         } else {
+            let typecheck_timer = Instant::now();
             let mut typechecked = self.typecheck_program(&desugared)?;
+            self.overall_report.typecheck += typecheck_timer.elapsed();
 
             typechecked = remove_globals::remove_globals(typechecked, &mut self.parser.symbol_gen);
             for command in &typechecked {
@@ -2549,6 +2660,18 @@ impl EGraph {
     /// Leverages previous type information in the [`EGraph`] to do so, adding new type information.
     /// When will_run is true, adds to `desugared_commands_run_so_far`, which is used for proof checking.
     fn resolve_command(&mut self, command: Command) -> Result<ResolvedNCommands, Error> {
+        let lowering_timer = Instant::now();
+        let nested_before = self.overall_report.process_time();
+        let resolved = self.resolve_command_inner(command);
+        let nested = self
+            .overall_report
+            .process_time()
+            .saturating_sub(nested_before);
+        self.overall_report.frontend_other += lowering_timer.elapsed().saturating_sub(nested);
+        resolved
+    }
+
+    fn resolve_command_inner(&mut self, command: Command) -> Result<ResolvedNCommands, Error> {
         let resolved_before_proofs = self.resolve_command_before_proofs(command)?;
 
         // Add term encoding when it is enabled
@@ -2596,7 +2719,9 @@ impl EGraph {
                 }
 
                 // Now typecheck using self, adding term type information.
+                let typecheck_timer = Instant::now();
                 let desugared_typechecked = self.typecheck_program(&desugared)?;
+                self.overall_report.typecheck += typecheck_timer.elapsed();
                 // Remove the globals the term encoding itself introduced (its minted
                 // `let`s), the same way source-level globals were removed above.
                 let desugared_typechecked = remove_globals::remove_globals(
@@ -2633,20 +2758,24 @@ impl EGraph {
                 .as_ref()
                 .map(|egraph| &egraph.type_info)
                 .unwrap_or(&self.type_info);
+            let macro_timer = Instant::now();
             let macro_expanded = self.command_macros.apply(
                 before_expanded_command,
                 &mut self.parser.symbol_gen,
                 macro_type_info,
-            )?;
+            );
+            self.overall_report.frontend_other += macro_timer.elapsed();
+            let macro_expanded = macro_expanded?;
 
             for command in macro_expanded {
                 // handle include specially- we keep them as-is for desugaring
                 if let Command::Include(span, file) = &command {
+                    let include_timer = Instant::now();
                     let s = std::fs::read_to_string(file)
-                        .map_err(|e| Error::IoError(file.clone().into(), e, span.clone()))?;
-                    let included_program = self
-                        .parser
-                        .get_program_from_string(Some(file.clone()), &s)?;
+                        .map_err(|e| Error::IoError(file.clone().into(), e, span.clone()));
+                    self.overall_report.frontend_other += include_timer.elapsed();
+                    let s = s?;
+                    let included_program = self.parse_program_timed(Some(file.clone()), &s)?;
                     // run program internal on these include commands
                     let resolved = self.process_program_internal(included_program, run_commands)?;
                     outputs.extend(resolved.outputs);
@@ -2700,7 +2829,7 @@ impl EGraph {
         filename: Option<String>,
         input: &str,
     ) -> Result<Vec<ResolvedCommand>, Error> {
-        let parsed = self.parser.get_program_from_string(filename, input)?;
+        let parsed = self.parse_program_timed(filename, input)?;
         let res = self.process_program_internal(parsed, false)?;
         Ok(res.resolved.into_iter().map(|c| c.to_command()).collect())
     }
@@ -2711,8 +2840,7 @@ impl EGraph {
         filename: Option<String>,
         input: &str,
     ) -> Result<Vec<Command>, Error> {
-        let parsed = self.parser.get_program_from_string(filename, input)?;
-        Ok(parsed)
+        self.parse_program_timed(filename, input)
     }
 
     /// Takes a source program `input`, parses it, runs it, and returns a list of messages.
@@ -2725,8 +2853,21 @@ impl EGraph {
         filename: Option<String>,
         input: &str,
     ) -> Result<Vec<CommandOutput>, Error> {
-        let parsed = self.parser.get_program_from_string(filename, input)?;
+        let parsed = self.parse_program_timed(filename, input)?;
         self.run_program(parsed)
+    }
+
+    /// Parse through the single accounting boundary shared by source, include,
+    /// and generated term-encoding text.
+    pub(crate) fn parse_program_timed(
+        &mut self,
+        filename: Option<String>,
+        input: &str,
+    ) -> Result<Vec<Command>, Error> {
+        let parse_timer = Instant::now();
+        let parsed = self.parser.get_program_from_string(filename, input);
+        self.overall_report.frontend_parse += parse_timer.elapsed();
+        Ok(parsed?)
     }
 
     /// Get the number of tuples in the database.
@@ -2780,7 +2921,11 @@ impl EGraph {
 
     /// Gets the overall run report and returns it.
     pub fn get_overall_run_report(&self) -> &RunReport {
-        &self.overall_run_report
+        &self.overall_report.run
+    }
+
+    pub(crate) fn timing_summary(&self) -> Result<TimingSummary, TimingSummaryError> {
+        TimingSummary::from_report(&self.overall_report)
     }
 
     /// Convert from an egglog value to a Rust type.
@@ -2979,13 +3124,25 @@ impl EGraph {
                 results.push(map);
                 Some(())
             })?;
-            prelude::run_ruleset(self, &ruleset)?;
+            let rule_ids = match &self.rulesets[&ruleset].kind {
+                RulesetKind::Rules(rules) => rules.values().map(|(_, id)| *id).collect::<Vec<_>>(),
+                RulesetKind::Combined(_) => unreachable!("the query ruleset was created directly"),
+            };
+            let iteration_report = self
+                .backend
+                .run_rules(&rule_ids)
+                .map_err(|e| Error::BackendError(e.to_string()))?;
+            self.overall_report.commands_check += iteration_report.total_time();
             Ok(())
         })();
 
         // Tear the temporary rule + ruleset down whether the body
         // succeeded or not.
-        if let Some(Ruleset::Rules(rules)) = self.rulesets.swap_remove(&ruleset) {
+        if let Some(Ruleset {
+            kind: RulesetKind::Rules(rules),
+            ..
+        }) = self.rulesets.swap_remove(&ruleset)
+        {
             for (_, rule) in rules {
                 self.backend.free_rule(rule.1);
             }
@@ -3562,6 +3719,8 @@ pub enum Error {
     CheckError(Vec<Fact>, Span),
     #[error("{1}\nNo such ruleset: {0}")]
     NoSuchRuleset(String, Span),
+    #[error("{1}\nCombined ruleset {0} mixes program and equality-maintenance rulesets")]
+    MixedRulesetResponsibilities(String, Span),
     #[error(
         "{1}\nAttempted to add a rule to combined ruleset {0}. Combined rulesets may only depend on other rulesets."
     )]
@@ -3623,6 +3782,56 @@ mod tests {
     use crate::*;
 
     use crate::PureState;
+
+    #[test]
+    fn encoded_source_typecheck_is_charged_to_the_outer_egraph() {
+        let mut egraph = EGraph::new_with_term_encoding();
+
+        egraph
+            .parse_and_run_program(None, "(datatype Math (Num i64)) (let value (Num 1))")
+            .unwrap();
+
+        assert!(egraph.overall_report.frontend_parse > std::time::Duration::ZERO);
+        assert!(egraph.overall_report.typecheck > std::time::Duration::ZERO);
+        assert!(egraph.overall_report.frontend_other > std::time::Duration::ZERO);
+        let source_checker = egraph.proof_state.original_typechecking.as_ref().unwrap();
+        assert_eq!(
+            source_checker.overall_report.typecheck,
+            std::time::Duration::ZERO,
+            "the child checker must not retain time omitted from the outer summary"
+        );
+    }
+
+    #[test]
+    fn query_is_recorded_as_command_work_without_persistent_ruleset_rows() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(None, "(relation R (i64)) (R 1) (R 2)")
+            .unwrap();
+        let iterations_before = egraph.overall_report.run.iterations.len();
+        let check_time_before = egraph.overall_report.commands_check;
+
+        for _ in 0..2 {
+            let matches = egraph
+                .query(crate::vars![x: i64], crate::facts![(R x)])
+                .unwrap();
+            assert_eq!(matches.len(), 2);
+        }
+
+        assert_eq!(
+            egraph.overall_report.run.iterations.len(),
+            iterations_before
+        );
+        assert!(egraph.overall_report.commands_check > check_time_before);
+        assert!(
+            egraph
+                .timing_summary()
+                .unwrap()
+                .rulesets
+                .iter()
+                .all(|ruleset| !ruleset.name.contains("query_ruleset"))
+        );
+    }
 
     #[derive(Clone)]
     struct InnerProduct {
@@ -4121,6 +4330,36 @@ mod tests {
             .parse_and_run_program(None, "(ruleset test)\n(run test2 1)")
             .unwrap_err();
         assert!(matches!(err, Error::NoSuchRuleset(name, _) if name == "test2"));
+    }
+
+    #[test]
+    fn test_combined_ruleset_with_undefined_member_errors() {
+        let err = EGraph::default()
+            .parse_and_run_program(None, "(unstable-combined-ruleset combined missing)")
+            .unwrap_err();
+        assert!(matches!(err, Error::NoSuchRuleset(name, _) if name == "missing"));
+    }
+
+    #[test]
+    fn test_combined_ruleset_with_mixed_responsibilities_errors() {
+        let mut egraph = EGraph::default();
+        let maintenance = egraph
+            .proof_state
+            .proof_names
+            .rebuilding_ruleset_name
+            .clone();
+        egraph.add_ruleset("program".into());
+        egraph.add_ruleset(maintenance.clone());
+
+        let err = egraph
+            .add_combined_ruleset(
+                &span!(),
+                "mixed".into(),
+                vec!["program".into(), maintenance],
+            )
+            .unwrap_err();
+
+        assert!(matches!(err, Error::MixedRulesetResponsibilities(name, _) if name == "mixed"));
     }
 
     #[test]

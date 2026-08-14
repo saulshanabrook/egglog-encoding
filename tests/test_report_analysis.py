@@ -68,10 +68,10 @@ def test_analysis_computes_only_the_requested_detail_rows(tmp_path: Path) -> Non
     rulesets = analyze_pair(store, comparison, "rulesets")
 
     assert len(summary.summary) == 5
-    assert not summary.files and not summary.phases and not summary.rulesets
-    assert files.files and not files.phases and not files.rulesets
-    assert phases.files and phases.phases and not phases.rulesets
-    assert rulesets.files and rulesets.phases and rulesets.rulesets
+    assert not summary.files and not summary.timing
+    assert files.files and not files.timing
+    assert phases.files and phases.timing
+    assert rulesets.files and rulesets.timing
 
 
 def test_pair_statistics_and_fieller_intervals(tmp_path: Path) -> None:
@@ -255,26 +255,26 @@ def test_valid_tail_does_not_inherit_an_unrelated_invalid_file_issue(tmp_path: P
     assert all(row.ratio.issue is None for row in tails)
 
 
-def test_phase_rows_are_exhaustive_and_outside_is_wall_residual(tmp_path: Path) -> None:
+def test_mechanism_buckets_are_additive_and_residual_closes_to_wall(tmp_path: Path) -> None:
     report = tmp_path / "report.jsonl"
     comparison = _comparison(tmp_path)
     baseline_timing = make_timing_summary(
         make_ruleset_timing(
             search_ns=100,
             apply_ns=200,
-            unattributed_ns=17,
+            execution_ns=17,
             merge_ns=300,
-            rebuild_ns=400,
-        )
+        ),
+        native_rebuild_ns=400,
     )
     candidate_timing = make_timing_summary(
         make_ruleset_timing(
             search_ns=200,
             apply_ns=100,
-            unattributed_ns=23,
+            execution_ns=23,
             merge_ns=600,
-            rebuild_ns=200,
-        )
+        ),
+        native_rebuild_ns=200,
     )
     write_report(
         report,
@@ -294,32 +294,77 @@ def test_phase_rows_are_exhaustive_and_outside_is_wall_residual(tmp_path: Path) 
         ),
     )
 
-    phases = analyze_pair(ReportStore(report), comparison, "phases").phases
+    suite, file_row = analyze_pair(ReportStore(report), comparison, "phases").timing
 
-    assert [row.phase for row in phases] == [
-        "search",
-        "apply",
-        "unattributed",
-        "merge",
-        "rebuild",
-        "outside",
-    ]
-    assert [(row.baseline.timing.point, row.candidate.timing.point) for row in phases] == [
-        (100.0, 200.0),
-        (200.0, 100.0),
-        (17.0, 23.0),
-        (300.0, 600.0),
-        (400.0, 200.0),
-        (483.0, 877.0),
-    ]
-    assert [row.delta_ns for row in phases] == [100.0, -100.0, 6.0, 300.0, -200.0, 394.0]
-    assert [row.wall_delta_contribution for row in phases] == pytest.approx([0.2, -0.2, 0.012, 0.6, -0.4, 0.788])
-    assert sum(row.wall_delta_contribution or 0.0 for row in phases) == pytest.approx(1.0)
-    assert phases[0].baseline.wall_share == pytest.approx(100.0 / 1_500.0)
-    assert phases[-1].candidate.wall_share == pytest.approx(877.0 / 2_000.0)
+    assert suite.file_order is None
+    assert file_row.file_order == 0
+    assert file_row.wall_delta_ns == pytest.approx(500.0)
+    assert file_row.mechanism_deltas == pytest.approx([0.0, 0.0, 306.0, -200.0, 0.0, 394.0])
+    assert sum(delta or 0.0 for delta in file_row.mechanism_deltas) == pytest.approx(file_row.wall_delta_ns)
+    assert suite.wall_delta_ns == file_row.wall_delta_ns
+    assert suite.mechanism_deltas == file_row.mechanism_deltas
 
 
-def test_phase_endpoints_have_student_t_intervals_and_wall_context(tmp_path: Path) -> None:
+def test_process_rulesets_and_global_rebuild_are_each_subtracted_from_residual(tmp_path: Path) -> None:
+    report = tmp_path / "report.jsonl"
+    comparison = _comparison(tmp_path)
+    timing = make_timing_summary(
+        make_ruleset_timing(
+            assembly_ns=31,
+            search_ns=37,
+            apply_ns=41,
+            execution_ns=43,
+            merge_ns=47,
+        ),
+        frontend_parse_ns=11,
+        typecheck_ns=13,
+        frontend_other_ns=17,
+        frontend_install_ns=19,
+        commands_actions_ns=23,
+        commands_check_ns=7,
+        commands_other_ns=29,
+        native_rebuild_ns=53,
+    )
+    zero_timing = make_timing_summary(
+        make_ruleset_timing(
+            assembly_ns=0,
+            search_ns=0,
+            apply_ns=0,
+            execution_ns=0,
+            merge_ns=0,
+        ),
+        native_rebuild_ns=0,
+    )
+    write_report(
+        report,
+        make_record(
+            0,
+            started_at="2026-07-15T12:00:00Z",
+            binary_sha256="sha256:baseline",
+            wall_sec=0.000001,
+            timing_summary=zero_timing,
+        ),
+        make_record(
+            1,
+            started_at="2026-07-15T12:00:01Z",
+            binary_sha256="sha256:candidate",
+            wall_sec=0.0000015,
+            timing_summary=timing,
+        ),
+    )
+
+    views = analyze_pair(ReportStore(report), comparison, "rulesets")
+    file_row = views.timing[1]
+
+    assert file_row.wall_delta_ns == pytest.approx(500.0)
+    assert file_row.mechanism_deltas == pytest.approx([13.0, 47.0, 199.0, 53.0, 59.0, 129.0])
+    assert sum(delta or 0.0 for delta in file_row.mechanism_deltas) == pytest.approx(500.0)
+    assert file_row.program.phases == pytest.approx((31, 37, 41, 43, 47, 0))
+    assert file_row.equality.phases == pytest.approx((0, 0, 0, 0, 0, 53))
+    assert file_row.equality.native_rebuild_delta_ns == 53
+
+
+def test_mechanism_decomposition_uses_endpoint_means_and_wall_context(tmp_path: Path) -> None:
     report = tmp_path / "report.jsonl"
     comparison = _comparison(tmp_path, rounds=2)
     records: list[ReportRecord] = []
@@ -335,35 +380,29 @@ def test_phase_endpoints_have_student_t_intervals_and_wall_context(tmp_path: Pat
                     binary_sha256=binary_sha256,
                     wall_sec=wall_ns / 1_000_000_000.0,
                     timing_summary=make_timing_summary(
-                        make_ruleset_timing(search_ns=search_ns, apply_ns=0, merge_ns=0, rebuild_ns=0)
+                        make_ruleset_timing(search_ns=search_ns, apply_ns=0, merge_ns=0),
+                        native_rebuild_ns=0,
                     ),
                 )
             )
     write_report(report, *records)
 
-    search = analyze_pair(ReportStore(report), comparison, "phases").phases[0]
-    half_width = 12.706204736432095 * 100.0
+    file_row = analyze_pair(ReportStore(report), comparison, "phases").timing[1]
 
-    assert search.baseline.timing.point == 200
-    assert search.baseline.timing.ci_low == pytest.approx(200 - half_width)
-    assert search.baseline.timing.ci_high == pytest.approx(200 + half_width)
-    assert search.baseline.wall_share == pytest.approx(200 / 1_100)
-    assert search.candidate.timing.point == 300
-    assert search.candidate.wall_share == pytest.approx(300 / 1_600)
-    assert search.delta_ns == 100
-    assert search.wall_delta_contribution == pytest.approx(0.2)
+    assert file_row.wall_delta_ns == pytest.approx(500.0)
+    assert file_row.program.phases.total == 100
+    assert file_row.residual_delta_ns == 400
 
 
-def test_ruleset_union_distinguishes_absence_from_zero_and_aggregates_iterations(tmp_path: Path) -> None:
+def test_ruleset_union_aligns_absence_with_zero_and_aggregates_iterations(tmp_path: Path) -> None:
     report = tmp_path / "report.jsonl"
     comparison = _comparison(tmp_path, rounds=2)
     zero = make_ruleset_timing(
         "recorded-zero",
         search_ns=0,
         apply_ns=0,
-        unattributed_ns=0,
+        execution_ns=0,
         merge_ns=0,
-        rebuild_ns=0,
     )
     write_report(
         report,
@@ -372,9 +411,10 @@ def test_ruleset_union_distinguishes_absence_from_zero_and_aggregates_iterations
             started_at="2026-07-15T12:00:00Z",
             binary_sha256="sha256:baseline",
             timing_summary=make_timing_summary(
-                make_ruleset_timing("baseline-only", search_ns=10, apply_ns=0, merge_ns=0, rebuild_ns=0),
-                make_ruleset_timing("sporadic", search_ns=8, apply_ns=0, merge_ns=0, rebuild_ns=0),
+                make_ruleset_timing("baseline-only", search_ns=10, apply_ns=0, merge_ns=0),
+                make_ruleset_timing("sporadic", search_ns=8, apply_ns=0, merge_ns=0),
                 zero,
+                native_rebuild_ns=0,
             ),
         ),
         make_record(
@@ -382,8 +422,9 @@ def test_ruleset_union_distinguishes_absence_from_zero_and_aggregates_iterations
             started_at="2026-07-15T12:00:01Z",
             binary_sha256="sha256:baseline",
             timing_summary=make_timing_summary(
-                make_ruleset_timing("baseline-only", search_ns=10, apply_ns=0, merge_ns=0, rebuild_ns=0),
+                make_ruleset_timing("baseline-only", search_ns=10, apply_ns=0, merge_ns=0),
                 zero,
+                native_rebuild_ns=0,
             ),
         ),
         make_record(
@@ -391,8 +432,16 @@ def test_ruleset_union_distinguishes_absence_from_zero_and_aggregates_iterations
             started_at="2026-07-15T12:00:02Z",
             binary_sha256="sha256:candidate",
             timing_summary=make_timing_summary(
-                make_ruleset_timing("candidate-only", search_ns=20, apply_ns=0, merge_ns=0, rebuild_ns=0),
+                make_ruleset_timing("candidate-only", search_ns=20, apply_ns=0, merge_ns=0),
+                make_ruleset_timing(
+                    "assembly-only",
+                    assembly_ns=5,
+                    search_ns=0,
+                    apply_ns=0,
+                    merge_ns=0,
+                ),
                 zero,
+                native_rebuild_ns=0,
             ),
         ),
         make_record(
@@ -400,34 +449,44 @@ def test_ruleset_union_distinguishes_absence_from_zero_and_aggregates_iterations
             started_at="2026-07-15T12:00:03Z",
             binary_sha256="sha256:candidate",
             timing_summary=make_timing_summary(
-                make_ruleset_timing("candidate-only", search_ns=20, apply_ns=0, merge_ns=0, rebuild_ns=0),
+                make_ruleset_timing("candidate-only", search_ns=20, apply_ns=0, merge_ns=0),
+                make_ruleset_timing(
+                    "assembly-only",
+                    assembly_ns=5,
+                    search_ns=0,
+                    apply_ns=0,
+                    merge_ns=0,
+                ),
                 zero,
+                native_rebuild_ns=0,
             ),
         ),
     )
 
-    rows = {row.name: row for row in analyze_pair(ReportStore(report), comparison, "rulesets").rulesets}
+    views = analyze_pair(ReportStore(report), comparison, "rulesets")
+    file_row = views.timing[1]
+    rows = {row.name: row for row in file_row.program.rulesets}
 
-    assert rows["baseline-only"].baseline == (10, 10, 10)
-    assert rows["baseline-only"].candidate is None
-    assert rows["candidate-only"].baseline is None
-    assert rows["candidate-only"].candidate == (20, 20, 20)
-    assert rows["sporadic"].baseline is not None
-    assert rows["sporadic"].baseline.point == 4
-    assert rows["baseline-only"].delta.phases.search == -10
-    assert rows["candidate-only"].delta.phases.search == 20
+    assert rows["baseline-only"].phases.search == -10
+    assert rows["candidate-only"].phases.search == 20
+    assert rows["sporadic"].phases.search == -4
+    assert rows["assembly-only"].phases.assembly == 5
+    assert rows["assembly-only"].phases.total == 5
     assert "recorded-zero" not in rows
+    assert len(file_row.program.rulesets) == 4
+    assert file_row.program.phases.total == 11
 
 
-def test_ruleset_presentation_is_fixed_top_ten_by_absolute_delta_then_name(tmp_path: Path) -> None:
+def test_role_changes_are_separate_ruleset_changes_and_rebuild_is_global(tmp_path: Path) -> None:
     report = tmp_path / "report.jsonl"
     comparison = _comparison(tmp_path)
-    names = tuple(reversed(tuple(f"rules-{index:02d}" for index in range(12))))
-    baseline_rules = tuple(
-        make_ruleset_timing(name, search_ns=100, apply_ns=0, merge_ns=0, rebuild_ns=0) for name in names
+    baseline = make_timing_summary(
+        make_ruleset_timing("rules/λ", search_ns=10, apply_ns=0, merge_ns=0),
+        native_rebuild_ns=7,
     )
-    candidate_rules = tuple(
-        make_ruleset_timing(name, search_ns=101, apply_ns=0, merge_ns=0, rebuild_ns=0) for name in names
+    candidate = make_timing_summary(
+        make_ruleset_timing("rules/λ", role="equality", search_ns=12, apply_ns=0, merge_ns=0),
+        native_rebuild_ns=3,
     )
     write_report(
         report,
@@ -435,21 +494,165 @@ def test_ruleset_presentation_is_fixed_top_ten_by_absolute_delta_then_name(tmp_p
             0,
             started_at="2026-07-15T12:00:00Z",
             binary_sha256="sha256:baseline",
-            timing_summary=make_timing_summary(*baseline_rules),
+            timing_summary=baseline,
         ),
         make_record(
             1,
             started_at="2026-07-15T12:00:01Z",
             binary_sha256="sha256:candidate",
-            timing_summary=make_timing_summary(*candidate_rules),
+            timing_summary=candidate,
         ),
     )
 
-    rulesets = analyze_pair(ReportStore(report), comparison, "rulesets").rulesets
+    file_row = analyze_pair(ReportStore(report), comparison, "rulesets").timing[1]
+    assert file_row.program.rulesets[0].phases.search == -10
+    assert file_row.equality.rulesets[0].phases.search == 12
+    assert file_row.equality.native_rebuild_delta_ns == -4
+    assert file_row.program.rulesets[0].phases.rebuild == 0
+    assert file_row.equality.rulesets[0].phases.rebuild == 0
 
-    assert len(rulesets) == 10
-    assert [row.name for row in rulesets] == [f"rules-{index:02d}" for index in range(10)]
-    assert {row.ruleset_count for row in rulesets} == {12}
+
+def test_ruleset_parent_groups_equal_program_and_equality_mechanisms(tmp_path: Path) -> None:
+    report = tmp_path / "report.jsonl"
+    comparison = _comparison(tmp_path)
+    candidate = make_timing_summary(
+        make_ruleset_timing(
+            "source",
+            assembly_ns=2,
+            search_ns=3,
+            apply_ns=5,
+            execution_ns=7,
+            merge_ns=11,
+        ),
+        make_ruleset_timing(
+            "maintenance",
+            assembly_ns=17,
+            search_ns=19,
+            apply_ns=23,
+            execution_ns=29,
+            merge_ns=31,
+            role="equality",
+        ),
+        native_rebuild_ns=50,
+    )
+    write_report(
+        report,
+        make_record(
+            0,
+            started_at="2026-07-15T12:00:00Z",
+            binary_sha256="sha256:baseline",
+            timing_summary=make_timing_summary(
+                make_ruleset_timing(search_ns=0, apply_ns=0, merge_ns=0),
+                native_rebuild_ns=0,
+            ),
+        ),
+        make_record(
+            1,
+            started_at="2026-07-15T12:00:01Z",
+            binary_sha256="sha256:candidate",
+            timing_summary=candidate,
+        ),
+    )
+
+    views = analyze_pair(ReportStore(report), comparison, "rulesets")
+    file_row = views.timing[1]
+    maintenance = file_row.equality.rulesets[0]
+    assert file_row.program.phases.total == file_row.mechanism_deltas[2] == 28
+    assert maintenance.phases.total == 119
+    assert file_row.equality.native_rebuild_delta_ns == 50
+    assert file_row.equality.phases.total == file_row.mechanism_deltas[3] == 169
+    assert maintenance.phases.total + file_row.equality.native_rebuild_delta_ns == file_row.equality.phases.total
+
+
+def test_all_maintenance_children_are_shown_and_zero_native_rebuild_is_hidden(tmp_path: Path) -> None:
+    report = tmp_path / "report.jsonl"
+    comparison = _comparison(tmp_path)
+    names = tuple(f"maintenance-{index}" for index in range(7))
+    source = make_ruleset_timing(
+        "source",
+        assembly_ns=0,
+        search_ns=0,
+        apply_ns=0,
+        execution_ns=0,
+        merge_ns=0,
+    )
+    baseline_maintenance = tuple(
+        make_ruleset_timing(
+            name,
+            assembly_ns=0,
+            search_ns=0,
+            apply_ns=0,
+            execution_ns=0,
+            merge_ns=0,
+            role="equality",
+        )
+        for name in names
+    )
+    candidate_maintenance = tuple(
+        make_ruleset_timing(
+            name,
+            assembly_ns=0,
+            search_ns=index + 1,
+            apply_ns=0,
+            execution_ns=0,
+            merge_ns=0,
+            role="equality",
+        )
+        for index, name in enumerate(names)
+    )
+    write_report(
+        report,
+        make_record(
+            0,
+            started_at="2026-07-15T12:00:00Z",
+            binary_sha256="sha256:baseline",
+            timing_summary=make_timing_summary(source, *baseline_maintenance),
+            wall_sec=0.000001,
+        ),
+        make_record(
+            1,
+            started_at="2026-07-15T12:00:01Z",
+            binary_sha256="sha256:candidate",
+            timing_summary=make_timing_summary(source, *candidate_maintenance),
+            wall_sec=0.000001,
+        ),
+    )
+
+    file_row = analyze_pair(ReportStore(report), comparison, "rulesets").timing[1]
+    assert len(file_row.equality.rulesets) == 7
+    assert [row.name for row in file_row.equality.rulesets] == list(names)
+    assert file_row.equality.phases.total == sum(range(1, 8))
+    assert file_row.equality.native_rebuild_delta_ns == 0
+
+
+def test_negative_residual_is_preserved_as_an_attribution_warning(tmp_path: Path) -> None:
+    report = tmp_path / "report.jsonl"
+    comparison = _comparison(tmp_path)
+    timing = make_timing_summary(
+        make_ruleset_timing(search_ns=10, apply_ns=0, merge_ns=0),
+        native_rebuild_ns=0,
+    )
+    write_report(
+        report,
+        make_record(
+            0,
+            started_at="2026-07-15T12:00:00Z",
+            binary_sha256="sha256:baseline",
+            wall_sec=5 / 1_000_000_000,
+            timing_summary=timing,
+        ),
+        make_record(
+            1,
+            started_at="2026-07-15T12:00:01Z",
+            binary_sha256="sha256:candidate",
+            wall_sec=6 / 1_000_000_000,
+            timing_summary=timing,
+        ),
+    )
+
+    file_row = analyze_pair(ReportStore(report), comparison, "phases").timing[1]
+    assert file_row.residual_warning
+    assert file_row.residual_delta_ns == pytest.approx(1)
 
 
 def _fieller_bounds(

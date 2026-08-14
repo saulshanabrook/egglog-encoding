@@ -271,8 +271,8 @@ path.
 | --- | --- |
 | `summary` | comparison selection and headline summary |
 | `files` | per-file wall time and peak RSS estimates |
-| `phases` | per-file phase confidence intervals, wall shares, and change contributions |
-| `rulesets` | the top 10 changed rulesets per file, including phase deltas |
+| `phases` | additive suite and per-file slowdown decomposition |
+| `rulesets` | Program/Equality driver groups and changed rulesets per file |
 
 The default is `summary`. For example:
 
@@ -325,46 +325,17 @@ Every successful benchmark observation records timing from the same measured
 process. Timing collection is always enabled; requesting a detailed report does
 not rerun a diagnostic process or change the cache key.
 
-The engine records these components per ruleset and the JSONL stores their raw
-nanosecond totals:
+The versioned timing summary stores seven fixed process counters, one typed row
+per named ruleset with its Program or Equality role and five exclusive own-work
+phases, and one global native-Rebuild counter. Parent mechanisms, shares, and
+Residual are derived rather than stored; the same canonical per-file breakdown
+feeds both the decomposition and ruleset-driver views, so their parent totals
+match by construction.
 
-- Search: matching and join execution.
-- Apply: executing rule-head instructions and staging updates.
-- Unattributed: measured pre-merge work that cannot be accurately classified
-  as Search or Apply.
-- Merge: resolving and installing staged updates.
-- Rebuild: rebuilding indexes and e-graph state.
-
-The engine measures one contiguous pre-merge interval and records the remainder
-after Search and Apply as Unattributed.
-
-The phase report aggregates all rulesets and keeps two kinds of otherwise
-hidden time distinct:
-
-- Execution overhead is the stored Unattributed component: measured work
-  inside ruleset execution that cannot be split accurately into Search or
-  Apply.
-- Outside recorded rulesets is derived as process wall time minus Search,
-  Apply, Execution overhead, Merge, and Rebuild. It includes process setup,
-  reporting, teardown, and other work outside timed ruleset execution.
-
-Each file gets its own phase table. For both endpoints, it displays the phase
-mean's 95% confidence interval and the phase's share of that endpoint's wall
-time. It also displays the signed mean change and that phase's contribution to
-the file's total wall-time change. Contributions may be negative or exceed
-100% when phases offset each other. A negative Outside recorded rulesets value
-is prefixed with `!`; it means recorded phase totals exceed wall time and should
-be treated as an attribution warning.
-
-The ruleset report totals all five stored components for each ruleset, aligns
-the union of names across the two endpoints, and ranks by the absolute
-candidate-minus-baseline total difference. It omits exact-zero changes and
-displays at most 10 rulesets per file. Each row includes the baseline and
-candidate total confidence intervals, total change, and descriptive Search,
-Apply, Execution overhead, Merge, and Rebuild changes. Timings are aggregated
-across the selected observations; iterations are not separate report rows. A
-ruleset absent from one endpoint is displayed as `—`, while a measured zero
-remains `0 ns`.
+Checks are charged to the command counters in both modes. One known boundary is
+that a rebuild triggered by a top-level action such as `(union ...)` remains in
+Commands/Actions. The captions printed next to `--detail phases` and
+`--detail rulesets` are the source of truth for grouping and display rules.
 
 Benchmarks run single-threaded. This keeps Search and Apply attribution
 additive for egglog's interleaved executor.
@@ -500,9 +471,14 @@ Each observation contains target and workload
 provenance, exact cache coordinates, status, wall time, peak RSS, and failure
 details. A top-level report schema version covers both the persisted shape and
 measurement semantics, so methodology changes cannot silently reuse stale
-measurements. Successful observations also contain the version-2 per-ruleset
-timing summary: name plus Search, Apply, Unattributed, Merge, and Rebuild
-nanoseconds.
+measurements. Successful observations also contain the version-4 timing
+summary: fixed process counters, a typed list of named ruleset timings, and one
+global native-Rebuild counter. Changes to timing coverage or meaning require a
+schema-version change so stale measurements cannot be reused silently.
+The experimental custom-scheduler API times its backend query and action
+invocations as ruleset work; lazy rule compilation and its intermediate update
+flush remain surrounding work and are charged to an enclosing command when one
+exists.
 
 Timed-out rows have null wall time, peak RSS, and timing summary. Failed rows
 have no timing summary and retain whatever process measurements the operating
@@ -513,16 +489,17 @@ This tool is the only supported reader and writer. The codec rejects old report
 and timing-summary schema versions and requires successful rows to contain
 timing data. It trusts the tool's typed writer rather than repeating the
 `TypedDict` as runtime field-by-field validation. A schema change intentionally
-invalidates existing caches: move or remove an incompatible report and recompute
-it.
+invalidates existing caches: move or remove an incompatible report and
+recompute it.
 
 ### Report-analysis ownership
 
 `ComparisonSpec` owns the exact endpoints, files, rounds, and timeout;
 `store.py` owns physical row order and cache selection. `analysis.py` computes
-immutable summary, file, phase, and ruleset rows, while `presentation.py` maps
-them to the renderer-neutral catalog. Rich, Markdown, and the interactive page
-serialize that catalog without recomputing report facts.
+immutable summary and file comparisons plus one canonical timing breakdown per
+file. `presentation.py` projects that breakdown into mechanism and ruleset
+tables; Rich, Markdown, and the interactive page serialize the catalog without
+recomputing report facts.
 
 ## Statistics
 
@@ -557,9 +534,9 @@ shown. No median or geometric mean is mixed into this minimal headline.
 
 A timed-out, failed, or otherwise incomplete selected result invalidates the
 suite result that depends on it. Valid per-file tail comparisons remain useful
-when an unrelated file is incomplete. Phase endpoint means and ruleset totals
-receive confidence intervals; phase contributions and individual ruleset
-component deltas are descriptive diagnostics.
+when an unrelated file is incomplete. Mechanism contributions and ruleset
+totals or component deltas are descriptive diagnostics; only endpoint
+estimates and ratios receive confidence intervals.
 
 The `<2x` proof goal is established only when the upper bound of the suite wall
 ratio's 95% confidence interval is below `2x` for a proofs-versus-off

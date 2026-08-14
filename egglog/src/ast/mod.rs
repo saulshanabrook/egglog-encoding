@@ -61,7 +61,13 @@ pub struct ProofConstructorNames {
 
 #[derive(Clone, Debug)]
 /// The egglog internal representation of already compiled rules
-pub(crate) enum Ruleset {
+pub(crate) struct Ruleset {
+    pub kind: RulesetKind,
+    pub timing_role: egglog_reports::RulesetTimingRole,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum RulesetKind {
     /// Represents a ruleset with a set of rules.
     Rules(IndexMap<String, (ResolvedCoreRule, egglog_bridge::RuleId)>),
     /// A combined ruleset may contain other rulesets.

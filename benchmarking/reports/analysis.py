@@ -1,8 +1,8 @@
 """Compute renderer-neutral statistics for one benchmark endpoint pair.
 
 This module selects observations, estimates means and confidence intervals,
-computes Fieller ratios, exhaustively attributes wall time, and ranks changed
-rulesets. Persistence lives in :mod:`benchmarking.reports.store`; all labels,
+computes Fieller ratios, exhaustively attributes wall time, and partitions
+ruleset work. Persistence lives in :mod:`benchmarking.reports.store`; all labels,
 units, and presentation policy live in :mod:`benchmarking.reports.presentation`.
 """
 
@@ -11,8 +11,7 @@ from __future__ import annotations
 import math
 import statistics
 from collections.abc import Iterable
-from dataclasses import dataclass
-from typing import Literal, NamedTuple
+from typing import Literal, NamedTuple, cast
 
 from scipy import stats
 
@@ -22,15 +21,20 @@ from .store import CacheKey, IndexedRecord, ReportStore
 MetricName = Literal["wall_sec", "max_rss_bytes"]
 ResultClass = Literal["higher", "invalid", "lower", "point_only", "unclear"]
 SummaryKind = Literal["suite", "lowest_file", "highest_file"]
-PhaseName = Literal["search", "apply", "unattributed", "merge", "rebuild", "outside"]
-RulesetPhaseName = Literal["search", "apply", "unattributed", "merge", "rebuild"]
-
+RulesetPhaseName = Literal["assembly", "search", "apply", "execution", "merge", "rebuild"]
+RulesetMechanism = Literal["program", "equality"]
 type _MetricKey = tuple[int, int, MetricName]
 type _ObservationKey = tuple[int, int]
 
 _METRICS: tuple[MetricName, ...] = ("wall_sec", "max_rss_bytes")
-_RULESET_PHASES: tuple[RulesetPhaseName, ...] = ("search", "apply", "unattributed", "merge", "rebuild")
-_PHASES: tuple[PhaseName, ...] = (*_RULESET_PHASES, "outside")
+RULESET_PHASES: tuple[RulesetPhaseName, ...] = (
+    "assembly",
+    "search",
+    "apply",
+    "execution",
+    "merge",
+    "rebuild",
+)
 
 
 class Estimate(NamedTuple):
@@ -49,43 +53,19 @@ class RatioEstimate(NamedTuple):
     issue: str | None
 
 
-class PhaseEstimate(NamedTuple):
-    """One phase estimate and its share of endpoint wall time."""
-
-    timing: Estimate
-    wall_share: float | None
-
-
 class PhaseValues(NamedTuple):
-    """Five recorded timing components aggregated for one observation/ruleset."""
+    """Six recorded timing components aggregated for one observation/ruleset."""
 
+    assembly: float
     search: float
     apply: float
-    unattributed: float
+    execution: float
     merge: float
     rebuild: float
 
     @property
     def total(self) -> float:
-        return sum(self)
-
-    def phase(self, name: RulesetPhaseName) -> float:
-        if name == "search":
-            return self.search
-        if name == "apply":
-            return self.apply
-        if name == "unattributed":
-            return self.unattributed
-        if name == "merge":
-            return self.merge
-        return self.rebuild
-
-
-class RulesetDelta(NamedTuple):
-    """One exact total delta and its five timing-component deltas."""
-
-    total: float
-    phases: PhaseValues
+        return math.fsum(self)
 
 
 class SummaryView(NamedTuple):
@@ -107,26 +87,52 @@ class FileComparisonView(NamedTuple):
     ratio: RatioEstimate
 
 
-class PhaseComparisonView(NamedTuple):
-    """One exhaustive per-file wall-time phase comparison."""
+class RulesetChange(NamedTuple):
+    """One named ruleset's own-work phase changes."""
 
-    file_order: int
-    phase: PhaseName
-    baseline: PhaseEstimate
-    candidate: PhaseEstimate
-    delta_ns: float | None
-    wall_delta_contribution: float | None
-
-
-class RulesetComparisonView(NamedTuple):
-    """One top absolute-total-delta ruleset with component deltas."""
-
-    file_order: int
-    ruleset_count: int
     name: str
-    baseline: Estimate | None
-    candidate: Estimate | None
-    delta: RulesetDelta
+    phases: PhaseValues
+
+
+class RulesetGroup(NamedTuple):
+    """One mechanism's named rulesets and optional global rebuild change."""
+
+    rulesets: tuple[RulesetChange, ...]
+    native_rebuild_delta_ns: float = 0.0
+
+    @property
+    def phases(self) -> PhaseValues:
+        values = [math.fsum(ruleset.phases[index] for ruleset in self.rulesets) for index in range(len(RULESET_PHASES))]
+        values[-1] += self.native_rebuild_delta_ns
+        return PhaseValues(*values)
+
+
+class FileTimingBreakdown(NamedTuple):
+    """One canonical additive timing partition consumed by both timing views."""
+
+    file_order: int | None
+    wall_delta_ns: float | None
+    typecheck_delta_ns: float
+    frontend_delta_ns: float
+    program: RulesetGroup
+    equality: RulesetGroup
+    commands_delta_ns: float
+    residual_delta_ns: float
+    residual_warning: bool
+    issue: str | None
+
+    @property
+    def mechanism_deltas(self) -> tuple[float | None, ...]:
+        if self.issue is not None:
+            return (None,) * 6
+        return (
+            self.typecheck_delta_ns,
+            self.frontend_delta_ns,
+            self.program.phases.total,
+            self.equality.phases.total,
+            self.commands_delta_ns,
+            self.residual_delta_ns,
+        )
 
 
 class PairReportViewData(NamedTuple):
@@ -134,8 +140,7 @@ class PairReportViewData(NamedTuple):
 
     summary: tuple[SummaryView, ...]
     files: tuple[FileComparisonView, ...]
-    phases: tuple[PhaseComparisonView, ...]
-    rulesets: tuple[RulesetComparisonView, ...]
+    timing: tuple[FileTimingBreakdown, ...]
 
 
 class _MetricEstimate(NamedTuple):
@@ -145,30 +150,15 @@ class _MetricEstimate(NamedTuple):
     issue: str | None
 
 
-@dataclass
-class _RulesetSamples:
-    """Sparse per-observation samples; omitted observations contribute zero."""
+class _TimingMean(NamedTuple):
+    """One endpoint/file's direct means from the typed timing record."""
 
-    total: list[float]
-    phases: dict[RulesetPhaseName, list[float]]
-
-
-@dataclass
-class _TimingAggregate:
-    """One-pass phase and ruleset samples for an endpoint/file selection."""
-
-    observation_count: int
-    phases: dict[PhaseName, list[float]]
-    rulesets: dict[str, _RulesetSamples]
-
-
-class _RankedRuleset(NamedTuple):
-    """One changed ruleset before the per-file top-ten cutoff."""
-
-    name: str
-    baseline: _MetricEstimate | None
-    candidate: _MetricEstimate | None
-    delta: RulesetDelta
+    typecheck_ns: float
+    frontend_ns: float
+    commands_ns: float
+    rulesets: dict[tuple[RulesetMechanism, str], PhaseValues]
+    native_rebuild_ns: float
+    residual_ns: float | None
 
 
 def analyze_pair(
@@ -186,16 +176,12 @@ def analyze_pair(
     summary = _summary_rows(comparison, estimates, file_rows, t_critical)
 
     if detail == "summary":
-        return PairReportViewData(summary, (), (), ())
+        return PairReportViewData(summary, (), ())
     if detail == "files":
-        return PairReportViewData(summary, file_rows, (), ())
+        return PairReportViewData(summary, file_rows, ())
 
-    timing = _timing_aggregates(observations)
-    phases = _phase_comparisons(comparison, timing, issues, estimates, t_critical)
-    if detail == "phases":
-        return PairReportViewData(summary, file_rows, phases, ())
-    rulesets = _ruleset_comparisons(comparison, timing, issues, t_critical)
-    return PairReportViewData(summary, file_rows, phases, rulesets)
+    timing = _timing_breakdowns(comparison, observations, issues, estimates)
+    return PairReportViewData(summary, file_rows, timing)
 
 
 def _selected_observations(
@@ -267,20 +253,18 @@ def _ratio_estimate(
     baseline_mean = baseline.estimate.point
     candidate_mean = candidate.estimate.point
     issue = baseline.issue or candidate.issue
-    if issue is None and (baseline_mean is None or candidate_mean is None):
-        issue = "estimate unavailable"
-    if issue is None and baseline_mean is not None and baseline_mean <= 0:
-        issue = "baseline mean is not positive"
     if issue is not None:
         return RatioEstimate(Estimate(None, None, None), "invalid", issue)
+    if baseline_mean is None or candidate_mean is None:
+        return RatioEstimate(Estimate(None, None, None), "invalid", "estimate unavailable")
+    if baseline_mean <= 0:
+        return RatioEstimate(Estimate(None, None, None), "invalid", "baseline mean is not positive")
 
-    assert baseline_mean is not None and candidate_mean is not None
     point = candidate_mean / baseline_mean
     if min(baseline.sample_count, candidate.sample_count) < 2:
         return RatioEstimate(Estimate(point, None, None), "point_only", "CI undefined for n < 2")
-    assert baseline.var_mean is not None
-    assert candidate.var_mean is not None
-    assert t_critical is not None
+    if baseline.var_mean is None or candidate.var_mean is None or t_critical is None:
+        raise ValueError("multi-sample ratio is missing variance or its t critical value")
     critical_squared = t_critical * t_critical
     fieller_a = baseline_mean * baseline_mean - critical_squared * baseline.var_mean
     fieller_d = candidate_mean * candidate_mean - critical_squared * candidate.var_mean
@@ -370,189 +354,154 @@ def _summary_rows(
     return tuple(rows)
 
 
-def _phase_comparisons(
+def _timing_breakdowns(
     comparison: ComparisonSpec,
-    timing: dict[_ObservationKey, _TimingAggregate],
+    observations: dict[_ObservationKey, tuple[IndexedRecord, ...]],
     issues: dict[_ObservationKey, str | None],
     metric_estimates: dict[_MetricKey, _MetricEstimate],
-    t_critical: float | None,
-) -> tuple[PhaseComparisonView, ...]:
-    estimates: dict[tuple[int, int, PhaseName], _MetricEstimate] = {}
-    for (endpoint_order, file_order), aggregate in timing.items():
-        for phase in _PHASES:
-            issue = issues[(endpoint_order, file_order)]
-            if phase == "outside" and issue is None:
-                issue = metric_estimates[(endpoint_order, file_order, "wall_sec")].issue
-            estimates[(endpoint_order, file_order, phase)] = _sample_estimate(
-                aggregate.phases[phase],
-                issue,
-                t_critical,
-            )
-
-    result: list[PhaseComparisonView] = []
+) -> tuple[FileTimingBreakdown, ...]:
+    means = _timing_means(observations, metric_estimates)
+    files: list[FileTimingBreakdown] = []
     for file_order in range(len(comparison.files)):
-        baseline_wall = metric_estimates[(0, file_order, "wall_sec")].estimate.point
-        candidate_wall = metric_estimates[(1, file_order, "wall_sec")].estimate.point
+        baseline = means[(0, file_order)]
+        candidate = means[(1, file_order)]
+        baseline_wall = metric_estimates[(0, file_order, "wall_sec")]
+        candidate_wall = metric_estimates[(1, file_order, "wall_sec")]
+        issue = issues[(0, file_order)] or issues[(1, file_order)] or baseline_wall.issue or candidate_wall.issue
         wall_delta_ns = (
             None
-            if baseline_wall is None or candidate_wall is None
-            else (candidate_wall - baseline_wall) * 1_000_000_000.0
+            if issue is not None or baseline_wall.estimate.point is None or candidate_wall.estimate.point is None
+            else (candidate_wall.estimate.point - baseline_wall.estimate.point) * 1_000_000_000.0
         )
-        for phase in _PHASES:
-            baseline = estimates[(0, file_order, phase)]
-            candidate = estimates[(1, file_order, phase)]
-            baseline_point = baseline.estimate.point
-            candidate_point = candidate.estimate.point
-            delta = None if baseline_point is None or candidate_point is None else candidate_point - baseline_point
-            result.append(
-                PhaseComparisonView(
-                    file_order,
-                    phase,
-                    PhaseEstimate(
-                        baseline.estimate,
-                        _share(baseline_point, baseline_wall, scale=1_000_000_000.0),
-                    ),
-                    PhaseEstimate(
-                        candidate.estimate,
-                        _share(candidate_point, candidate_wall, scale=1_000_000_000.0),
-                    ),
-                    delta,
-                    _share(delta, wall_delta_ns),
-                )
+        residual_delta_ns = (
+            0.0
+            if baseline.residual_ns is None or candidate.residual_ns is None
+            else candidate.residual_ns - baseline.residual_ns
+        )
+        files.append(
+            FileTimingBreakdown(
+                file_order,
+                wall_delta_ns,
+                candidate.typecheck_ns - baseline.typecheck_ns,
+                candidate.frontend_ns - baseline.frontend_ns,
+                _ruleset_group_delta(baseline, candidate, "program"),
+                _ruleset_group_delta(baseline, candidate, "equality"),
+                candidate.commands_ns - baseline.commands_ns,
+                residual_delta_ns,
+                (baseline.residual_ns is not None and baseline.residual_ns < 0)
+                or (candidate.residual_ns is not None and candidate.residual_ns < 0),
+                issue,
             )
-    return tuple(result)
-
-
-def _timing_aggregates(
-    observations: dict[_ObservationKey, tuple[IndexedRecord, ...]],
-) -> dict[_ObservationKey, _TimingAggregate]:
-    result: dict[_ObservationKey, _TimingAggregate] = {}
-    for key, rows in observations.items():
-        aggregate = _TimingAggregate(
-            len(rows),
-            {phase: [] for phase in _PHASES},
-            {},
         )
+
+    suite_issue = next((row.issue for row in files if row.issue is not None), None)
+    suite = FileTimingBreakdown(
+        None,
+        None if suite_issue is not None else math.fsum(cast(float, row.wall_delta_ns) for row in files),
+        math.fsum(row.typecheck_delta_ns for row in files),
+        math.fsum(row.frontend_delta_ns for row in files),
+        _sum_ruleset_groups(row.program for row in files),
+        _sum_ruleset_groups(row.equality for row in files),
+        math.fsum(row.commands_delta_ns for row in files),
+        math.fsum(row.residual_delta_ns for row in files),
+        any(row.residual_warning for row in files),
+        suite_issue,
+    )
+    return (suite, *files)
+
+
+def _timing_means(
+    observations: dict[_ObservationKey, tuple[IndexedRecord, ...]],
+    metric_estimates: dict[_MetricKey, _MetricEstimate],
+) -> dict[_ObservationKey, _TimingMean]:
+    result: dict[_ObservationKey, _TimingMean] = {}
+    for key, rows in observations.items():
+        typecheck = 0.0
+        frontend = 0.0
+        commands = 0.0
+        native_rebuild = 0.0
+        rulesets: dict[tuple[RulesetMechanism, str], list[float]] = {}
         for row in rows:
             record = row.record
             if record["status"] != "success":
                 continue
             summary = record["timing_summary"]
-            assert summary is not None
-            per_ruleset: dict[str, PhaseValues] = {}
-            for ruleset in summary["rulesets"]:
-                totals = PhaseValues(
-                    float(ruleset["search_ns"]),
-                    float(ruleset["apply_ns"]),
-                    float(ruleset["unattributed_ns"]),
-                    float(ruleset["merge_ns"]),
-                    float(ruleset["rebuild_ns"]),
-                )
-                per_ruleset[ruleset["name"]] = _add_totals(per_ruleset.get(ruleset["name"], _ZERO_PHASE_TOTALS), totals)
-            recorded = _sum_totals(per_ruleset.values())
-            for phase in _RULESET_PHASES:
-                aggregate.phases[phase].append(recorded.phase(phase))
-            wall_sec = record["wall_sec"]
-            if wall_sec is not None:
-                aggregate.phases["outside"].append(wall_sec * 1_000_000_000.0 - recorded.total)
-            for name, totals in per_ruleset.items():
-                samples = aggregate.rulesets.setdefault(
-                    name,
-                    _RulesetSamples([], {phase: [] for phase in _RULESET_PHASES}),
-                )
-                samples.total.append(totals.total)
-                for phase in _RULESET_PHASES:
-                    samples.phases[phase].append(totals.phase(phase))
-        result[key] = aggregate
+            if summary is None:
+                raise ValueError("successful benchmark record is missing its timing summary")
+            typecheck += summary["typecheck_ns"]
+            frontend += summary["frontend_parse_ns"] + summary["frontend_other_ns"] + summary["frontend_install_ns"]
+            commands += summary["commands_actions_ns"] + summary["commands_check_ns"] + summary["commands_other_ns"]
+            native_rebuild += summary["native_rebuild_ns"]
+            for timing in summary["rulesets"]:
+                phase_sums = rulesets.setdefault((timing["role"], timing["name"]), [0.0] * 6)
+                phase_sums[0] += timing["assembly_ns"]
+                phase_sums[1] += timing["search_ns"]
+                phase_sums[2] += timing["apply_ns"]
+                phase_sums[3] += timing["execution_ns"]
+                phase_sums[4] += timing["merge_ns"]
+
+        denominator = len(rows) or 1
+        ruleset_means = {
+            key: PhaseValues(*(value / denominator for value in values)) for key, values in rulesets.items()
+        }
+        typecheck /= denominator
+        frontend /= denominator
+        commands /= denominator
+        native_rebuild /= denominator
+        recorded = (
+            typecheck
+            + frontend
+            + commands
+            + native_rebuild
+            + math.fsum(phases.total for phases in ruleset_means.values())
+        )
+        wall = metric_estimates[(key[0], key[1], "wall_sec")].estimate.point
+        result[key] = _TimingMean(
+            typecheck,
+            frontend,
+            commands,
+            ruleset_means,
+            native_rebuild,
+            None if wall is None else wall * 1_000_000_000.0 - recorded,
+        )
     return result
 
 
-_ZERO_PHASE_TOTALS = PhaseValues(0.0, 0.0, 0.0, 0.0, 0.0)
+def _ruleset_group_delta(
+    baseline: _TimingMean,
+    candidate: _TimingMean,
+    mechanism: RulesetMechanism,
+) -> RulesetGroup:
+    names = sorted({name for role, name in baseline.rulesets.keys() | candidate.rulesets.keys() if role == mechanism})
+    zero = PhaseValues(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    rulesets = []
+    for name in names:
+        baseline_phases = baseline.rulesets.get((mechanism, name), zero)
+        candidate_phases = candidate.rulesets.get((mechanism, name), zero)
+        phases = PhaseValues(
+            *(candidate_phases[index] - baseline_phases[index] for index in range(len(RULESET_PHASES)))
+        )
+        if any(phases):
+            rulesets.append(RulesetChange(name, phases))
+    rebuild = candidate.native_rebuild_ns - baseline.native_rebuild_ns if mechanism == "equality" else 0.0
+    return RulesetGroup(tuple(rulesets), rebuild)
 
 
-def _add_totals(left: PhaseValues, right: PhaseValues) -> PhaseValues:
-    return PhaseValues(
-        left.search + right.search,
-        left.apply + right.apply,
-        left.unattributed + right.unattributed,
-        left.merge + right.merge,
-        left.rebuild + right.rebuild,
+def _sum_ruleset_groups(groups: Iterable[RulesetGroup]) -> RulesetGroup:
+    """Combine file-level ruleset groups while preserving named phase totals."""
+
+    phase_sums: dict[str, list[float]] = {}
+    native_rebuild = 0.0
+    for group in groups:
+        native_rebuild += group.native_rebuild_delta_ns
+        for ruleset in group.rulesets:
+            values = phase_sums.setdefault(ruleset.name, [0.0] * len(RULESET_PHASES))
+            for index, value in enumerate(ruleset.phases):
+                values[index] += value
+    rulesets = tuple(
+        RulesetChange(name, PhaseValues(*values)) for name, values in sorted(phase_sums.items()) if any(values)
     )
-
-
-def _sum_totals(values: Iterable[PhaseValues]) -> PhaseValues:
-    result = _ZERO_PHASE_TOTALS
-    for value in values:
-        result = _add_totals(result, value)
-    return result
-
-
-def _ruleset_comparisons(
-    comparison: ComparisonSpec,
-    timing: dict[_ObservationKey, _TimingAggregate],
-    issues: dict[_ObservationKey, str | None],
-    t_critical: float | None,
-) -> tuple[RulesetComparisonView, ...]:
-    result: list[RulesetComparisonView] = []
-    for file_order in range(len(comparison.files)):
-        if issues[(0, file_order)] is not None or issues[(1, file_order)] is not None:
-            continue
-        names = sorted({name for endpoint_order in (0, 1) for name in timing[(endpoint_order, file_order)].rulesets})
-        comparisons: list[_RankedRuleset] = []
-        for name in names:
-            baseline = _ruleset_estimate(timing[(0, file_order)], name, None, t_critical)
-            candidate = _ruleset_estimate(timing[(1, file_order)], name, None, t_critical)
-            total_delta = _estimate_point(candidate) - _estimate_point(baseline)
-            if total_delta == 0.0:
-                continue
-            delta = RulesetDelta(total_delta, _ruleset_phase_deltas(timing, file_order, name, t_critical))
-            comparisons.append(_RankedRuleset(name, baseline, candidate, delta))
-        comparisons.sort(key=lambda row: (-abs(row.delta.total), row.name))
-        count = len(comparisons)
-        for row in comparisons[:10]:
-            result.append(
-                RulesetComparisonView(
-                    file_order,
-                    count,
-                    row.name,
-                    None if row.baseline is None else row.baseline.estimate,
-                    None if row.candidate is None else row.candidate.estimate,
-                    row.delta,
-                )
-            )
-    return tuple(result)
-
-
-def _ruleset_estimate(
-    aggregate: _TimingAggregate,
-    name: str,
-    phase: RulesetPhaseName | None,
-    t_critical: float | None,
-) -> _MetricEstimate | None:
-    samples = aggregate.rulesets.get(name)
-    if samples is None:
-        return None
-    observed = samples.total if phase is None else samples.phases[phase]
-    values = [*observed, *(0.0 for _ in range(aggregate.observation_count - len(observed)))]
-    return _sample_estimate(values, None, t_critical)
-
-
-def _estimate_point(estimate: _MetricEstimate | None) -> float:
-    return 0.0 if estimate is None or estimate.estimate.point is None else estimate.estimate.point
-
-
-def _ruleset_phase_deltas(
-    timing: dict[_ObservationKey, _TimingAggregate],
-    file_order: int,
-    name: str,
-    t_critical: float | None,
-) -> PhaseValues:
-    def delta(phase: RulesetPhaseName) -> float:
-        candidate = _ruleset_estimate(timing[(1, file_order)], name, phase, t_critical)
-        baseline = _ruleset_estimate(timing[(0, file_order)], name, phase, t_critical)
-        return _estimate_point(candidate) - _estimate_point(baseline)
-
-    return PhaseValues(delta("search"), delta("apply"), delta("unattributed"), delta("merge"), delta("rebuild"))
+    return RulesetGroup(rulesets, native_rebuild)
 
 
 def _sample_estimate(
@@ -566,14 +515,9 @@ def _sample_estimate(
     ci_high: float | None = None
     if mean is not None and len(values) >= 2:
         var_mean = statistics.variance(values) / len(values)
-        assert t_critical is not None
+        if t_critical is None:
+            raise ValueError("multi-sample estimate is missing its t critical value")
         half_width = t_critical * math.sqrt(var_mean)
         ci_low = mean - half_width
         ci_high = mean + half_width
     return _MetricEstimate(len(values), Estimate(mean, ci_low, ci_high), var_mean, issue)
-
-
-def _share(numerator: float | None, denominator: float | None, *, scale: float = 1.0) -> float | None:
-    if numerator is None or denominator is None or denominator == 0:
-        return None
-    return numerator / (denominator * scale)
