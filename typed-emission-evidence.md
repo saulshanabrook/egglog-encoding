@@ -122,10 +122,10 @@ rather than silently moving missed milliseconds to later families.
 
 | ID | Hypothesis | Probe | Acceptance boundary | Status |
 | --- | --- | --- | --- | --- |
-| H1 | Exact-key sequential binding is much cheaper than generated inference. | Bind a declaration plus dependent action and one rule in both seminaive context pairs; measure warmed and cold key resolution. | Extrapolated suite residual at most 150 ms after registration-receipt optimization. | Open |
-| H2 | Portable keys prevent checker/execution-universe leakage. | Bind equivalent batches against independently seeded checker and execution EGraphs; compare stable projections and reject copied handles. | Output and state projection identical to legacy; wrong-universe canary rejected. | Open |
-| H3 | Per-name generations preserve overload ambiguity without cache thrashing. | Warm a unique primitive call, register a new same-signature overload, resolve again. | Second resolution reports the same ambiguity as uncached resolution; unrelated-head cache entries remain hits. | Open |
-| H4 | Atomic declaration registration can be shared without source-mode drift. | Invalid duplicate sort/function/index and invalid merge tests before/after refactor. | Successful behavior unchanged; failed declaration leaves no replacement/partial state. | Open |
+| H1 | Exact-key sequential binding is much cheaper than generated inference. | Bind a declaration plus dependent action and one rule in both seminaive context pairs; measure warmed and cold key resolution. | Extrapolated suite residual at most 150 ms after registration-receipt optimization. | Open; resolver-only release probe is not a binder residual |
+| H2 | Portable keys prevent checker/execution-universe leakage. | Bind equivalent batches against independently seeded checker and execution EGraphs; compare stable projections and reject copied handles. | Output and state projection identical to legacy; wrong-universe canary rejected. | Partial; portable boundary and two plain EGraphs pass, actual proof-mode checker chain remains |
+| H3 | Per-name generations preserve overload ambiguity without cache thrashing. | Warm a unique primitive call, register a new same-signature overload, resolve again. | Second resolution reports the same ambiguity as uncached resolution; unrelated-head cache entries remain hits. | Focused probe passed |
+| H4 | Atomic declaration registration can be shared without source-mode drift. | Invalid duplicate sort/function/index and invalid merge tests before/after refactor. | Successful behavior unchanged; failed declaration leaves no replacement/partial state. | Partial; Function is atomic, Sort and Index remain |
 | H5 | Generated output is a `remove_globals` fixed point except explicit extraction lowering. | Corpus-wide oracle projection and direct fixed-point test. | No generated top-level Let/LetBegin/global refs; cloned remove_globals is structurally identical. | Open |
 
 The smallest honest family probe tags each emitted command at its origin and
@@ -176,6 +176,14 @@ estimate; the JSONL observations are independent rather than paired.
 | --- | --- | --- | --- |
 | 2026-08-14 | `ffb8ae435bd6` | Investigation baseline and clean MISAAL/Luminal profiles frozen above. | Begin retained binder spike; do not start macro or encoder-wide conversion first. |
 | 2026-08-14 | `a2f6339` | V4 audit proved that family attribution is unavailable and five helper parser edges are charged to other-frontend. | Treat family budgets as low-confidence priors; add tagged migration attribution and use gross minus measured bind. |
+| 2026-08-14 | `92af00a` | Shared call resolver and name-local generations pass overload invalidation; Function registration now rolls back its provisional type and SymbolGen on failure. Release resolver-only probe: cold median 3424 ns/max 12908; warm median 270 ns/max 585. | Retain prerequisite, explicitly treating failed-declaration state cleanup as a source behavior fix. Do not claim Spike GO: the probe excludes batch/verification/registration, full H2 is absent, and Sort/Index atomicity remains. |
+
+The first generated-binder draft passed focused flat-batch parity but was rejected
+as the architectural checkpoint: it hard-coded single-output expressions,
+omitted `values`, merges, sequential local lets, most declarations, schedules,
+control/IO, `Fail`, and origin metadata.  It remains uncommitted scratch until
+the complete census-derived envelope can extend without replacing its central
+value, action-block, or command APIs.
 
 The intermediate differential harness and dual-path commits will remain in local
 branch history even though the final tree deletes them.  When the all-family
