@@ -34,6 +34,9 @@ precommitted 150 ms boundary.  Commit `57c1d53` preserves the complete
 differential probe in branch history; `5cd61ca` removes the binder, dual path,
 family sidecar, and migration oracle from the final tree.  No generated emitter
 family was converted and the legacy encoder remains the sole production path.
+The reduced production diff retains only failed function-registration rollback,
+the journaled `SymbolGen` transaction it needs, and duplicate-sort rejection
+before backend mutation.
 
 ## Frozen starting point
 
@@ -164,7 +167,7 @@ and the 275.172 ms user-outcome budget.
 | H1 | Exact-key sequential binding is much cheaper than generated inference. | Bind a declaration plus dependent action and one rule in both seminaive context pairs; measure warmed and cold key resolution. | Extrapolated suite residual at most 150 ms after registration-receipt optimization. | **Failed:** 231.257 ms optimistic production-like floor after 10,873 receipt hits |
 | H2 | Portable keys prevent checker/execution-universe leakage. | Bind equivalent batches against independently seeded checker and execution EGraphs; compare stable projections and reject copied handles. | Output and state projection identical to legacy; wrong-universe canary rejected. | Command parity passed for 4,507 real proof-mode batches / 16,967 commands plus focused wrong-universe tests; independent state oracle was not reached |
 | H3 | Per-name generations preserve overload ambiguity without cache thrashing. | Warm a unique primitive call, register a new same-signature overload, resolve again. | Second resolution reports the same ambiguity as uncached resolution; unrelated-head cache entries remain hits. | Focused probe passed |
-| H4 | Atomic declaration registration can be shared without source-mode drift. | Invalid duplicate sort/function/index and invalid merge tests before/after refactor. | Successful behavior unchanged; failed declaration leaves no replacement/partial state. | Focused source registration tests passed; retained shared registration code remains subject to final full-suite validation |
+| H4 | Atomic declaration registration can be shared without source-mode drift. | Invalid duplicate sort/function/index and invalid merge tests before/after refactor. | Successful behavior unchanged; failed declaration leaves no replacement/partial state. | Focused source registration tests passed; binder-facing registrar abstractions were removed and the fixes were folded back into the original source flow |
 | H5 | Generated output is a `remove_globals` fixed point except explicit extraction lowering. | Corpus-wide oracle projection and direct fixed-point test. | No generated top-level Let/LetBegin/global refs; cloned remove_globals is structurally identical. | Open |
 
 The smallest honest family probe tags each emitted command at its origin and
@@ -219,11 +222,12 @@ campaign run.
 | --- | --- | --- | --- |
 | 2026-08-14 | `ffb8ae435bd6` | Investigation baseline and clean MISAAL/Luminal profiles frozen above. | Begin retained binder spike; do not start macro or encoder-wide conversion first. |
 | 2026-08-14 | `a2f6339` | V4 audit proved that family attribution is unavailable and five helper parser edges are charged to other-frontend. | Treat family budgets as low-confidence priors; add tagged migration attribution and use gross minus measured bind. |
-| 2026-08-14 | `92af00a` | Shared call resolver and the temporary name-local generations passed overload invalidation; Function registration now rolls back its provisional type and SymbolGen on failure. Release resolver-only probe: cold median 3424 ns/max 12908; warm median 270 ns/max 585. | Retain the resolver and failed-declaration cleanup. The generation map served only the rejected binder and is removed in `e88c353`. |
-| 2026-08-14 | `69521b6` | Replaced per-function full `SymbolGen` snapshots with owner-checked journaled checkpoints. A clean canary restored Luminal generated typecheck to 1.00093x of the frozen baseline; 10,000 no-merge declarations improved from about 1.28 s to 147.8 ms. | Retain the independently useful fix; the temporary binder work had exposed a quadratic full-map clone. |
+| 2026-08-14 | `92af00a` | Shared call resolver and the temporary name-local generations passed overload invalidation; Function registration now rolls back its provisional type and SymbolGen on failure. Release resolver-only probe: cold median 3424 ns/max 12908; warm median 270 ns/max 585. | Retain the failed-declaration cleanup. The resolver extraction and generation map served only the rejected binder and are removed by `e88c353` and `0b93868`. |
+| 2026-08-14 | `69521b6` | Replaced per-function full `SymbolGen` snapshots with owner-checked journaled checkpoints. A clean canary restored Luminal generated typecheck to 1.00093x of the frozen baseline; 10,000 no-merge declarations improved from about 1.28 s to 147.8 ms. | Retain the independently useful fix; it makes the failed-merge rollback introduced in `92af00a` cheap instead of cloning the growing symbol map. |
 | 2026-08-14 | `57c1d53` | Exact differential probe covered 4,507 batches and 16,967 commands. Detailed residual was 249.621 ms; fast mode retained validation but removed diagnostic timing/counters and measured 231.257 ms. Receipts hit 10,873 times and reduced shared-resolver calls from 16,731 to 5,858. Artifact: `/tmp/egglog-generated-binder-receipt-paired.TIUfxB`; diff/source/binary SHA-256 prefixes `5eca9481` / `069dce73` / `b7c30203`. | **Spike NO-GO:** the optimistic floor still exceeded 150 ms by 81.257 ms. Do not begin the encoder-wide replacement. |
 | 2026-08-14 | `5cd61ca` | Deleted the generated binder, shadow driver, family instrumentation, and temporary oracle from the working tree while preserving their commits in history. | Keep one production encoder path and retain only shared engine fixes plus this ledger. |
 | 2026-08-14 | `e88c353` | Removed the now-unused call-generation map and narrowed binder-extracted registration APIs back to private source-typechecker helpers. | Do not carry probe-only state or public surface in the reduced production diff. |
+| 2026-08-14 | `0b93868` | Restored the original call resolver, index registration, sort-command flow, and function metadata flow; kept a pre-backend duplicate-sort guard and local failed-merge rollback. `make check` passed the full Python, Rust, documentation, and proof fixture matrix; `make benchmark-smoke` completed 20/20 fresh runs. | Final production code contains no binder-facing registration layer or one-caller forwarding helpers. |
 
 The first generated-binder draft passed focused flat-batch parity but was
 rejected because it omitted tuples, merges, sequential local lets, most
