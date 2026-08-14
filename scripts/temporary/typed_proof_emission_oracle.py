@@ -925,6 +925,57 @@ def atomic_write_json(path: Path, value: object) -> None:
     temporary.replace(path)
 
 
+def filesystem_build_like_untracked(repo_root: Path, tracked: set[str]) -> list[str]:
+    """Find ignored or ordinary untracked files that could affect a Cargo build."""
+    ignored_trees = {".git", "target", ".venv", "__pycache__", "node_modules"}
+    source_suffixes = {
+        ".c",
+        ".cc",
+        ".cpp",
+        ".h",
+        ".hpp",
+        ".lalrpop",
+        ".lock",
+        ".proto",
+        ".rs",
+        ".s",
+        ".toml",
+    }
+
+    def build_like(relative: Path) -> bool:
+        folded_parts = tuple(part.casefold() for part in relative.parts)
+        name = folded_parts[-1]
+        suffix = Path(name).suffix.casefold()
+        return (
+            "src" in folded_parts
+            or ".cargo" in folded_parts
+            or name in {"build.rs", "rust-toolchain"}
+            or suffix in source_suffixes
+        )
+
+    found: list[str] = []
+    for current, directories, files in os.walk(repo_root, followlinks=False):
+        current_path = Path(current)
+        retained_directories: list[str] = []
+        for directory in directories:
+            if directory.casefold() in ignored_trees:
+                continue
+            path = current_path / directory
+            relative = path.relative_to(repo_root)
+            if path.is_symlink():
+                if relative.as_posix().casefold() not in tracked and build_like(relative):
+                    found.append(relative.as_posix())
+            else:
+                retained_directories.append(directory)
+        directories[:] = retained_directories
+        for filename in files:
+            path = current_path / filename
+            relative = path.relative_to(repo_root)
+            if relative.as_posix().casefold() not in tracked and build_like(relative):
+                found.append(relative.as_posix())
+    return sorted(set(found), key=str.casefold)
+
+
 def git_metadata(repo_root: Path) -> dict[str, object]:
     """Record the source checkout used for discovery and optional proof tests."""
     head = subprocess.run(
@@ -962,12 +1013,20 @@ def git_metadata(repo_root: Path) -> dict[str, object]:
         stdout=subprocess.PIPE,
     ).stdout
     untracked_files = sorted(item.decode() for item in untracked_output.split(b"\0") if item)
+    tracked_output = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=repo_root,
+        check=True,
+        stdout=subprocess.PIPE,
+    ).stdout
+    tracked_casefold = {item.decode().casefold() for item in tracked_output.split(b"\0") if item}
     return {
         "head": head,
         "short_head": short_head,
         "dirty": bool(status),
         "tracked_dirty": bool(tracked_status),
         "untracked_files": untracked_files,
+        "untracked_build_inputs": filesystem_build_like_untracked(repo_root, tracked_casefold),
     }
 
 
@@ -1012,11 +1071,12 @@ def validate_untracked_nonbuild_files(
             raise OracleConfigurationError(f"allowed untracked file resolves outside the repository: {relative_text}")
         if not path.is_file():
             raise OracleConfigurationError(f"allowed untracked path is not a regular file: {relative_text}")
+        folded_parts = tuple(part.casefold() for part in relative.parts)
         if (
-            path.suffix in {".rs", ".toml", ".lock"}
-            or path.name == "build.rs"
-            or "src" in relative.parts
-            or ".cargo" in relative.parts
+            Path(folded_parts[-1]).suffix in {".rs", ".toml", ".lock"}
+            or folded_parts[-1] == "build.rs"
+            or "src" in folded_parts
+            or ".cargo" in folded_parts
         ):
             raise OracleConfigurationError(
                 f"refusing to certify likely build input as an allowed untracked file: {relative_text}"
@@ -1121,6 +1181,12 @@ def self_test() -> None:
     assert INPUT_RE.findall(commented) == ["semi;colon.csv"]
     with tempfile.TemporaryDirectory(prefix="egglog-typed-emission-oracle-self-test-") as temporary:
         test_root = Path(temporary)
+        (test_root / "Build.RS").write_text("fn main() {}\n", encoding="utf-8")
+        (test_root / ".Cargo").mkdir()
+        (test_root / ".Cargo" / "config").write_text("[build]\n", encoding="utf-8")
+        (test_root / "notes.md").write_text("not a build input\n", encoding="utf-8")
+        detected = filesystem_build_like_untracked(test_root, set())
+        assert detected == [".Cargo/config", "Build.RS"]
         expected = test_root / "expected"
         actual = test_root / "actual"
         expected.write_bytes(b"same\nexpected value\ntail\n")
@@ -1345,6 +1411,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "candidate certification requires a tracked-clean source worktree; "
                     "commit the typed-emission checkpoint before building the candidate"
                 )
+            if source_metadata["untracked_build_inputs"]:
+                raise OracleConfigurationError(
+                    "candidate certification found ignored or ordinary untracked build inputs: "
+                    f"{source_metadata['untracked_build_inputs']}"
+                )
             allowed_untracked_files = validate_untracked_nonbuild_files(
                 repo_root,
                 cast(Sequence[str], source_metadata["untracked_files"]),
@@ -1537,14 +1608,24 @@ def main(argv: Sequence[str] | None = None) -> int:
             atomic_write_json(report_path, report)
             raise OracleConfigurationError("a repository test input changed during the run; results are invalid")
         if not identical_binaries:
-            post_allowed_untracked_files = validate_untracked_nonbuild_files(
-                repo_root,
-                cast(Sequence[str], post_source_metadata["untracked_files"]),
-                args.allow_untracked_nonbuild_file,
-            )
+            try:
+                post_allowed_untracked_files = validate_untracked_nonbuild_files(
+                    repo_root,
+                    cast(Sequence[str], post_source_metadata["untracked_files"]),
+                    args.allow_untracked_nonbuild_file,
+                )
+            except OracleConfigurationError as error:
+                report["status"] = "candidate-source-drift"
+                report["post_run_allowed_untracked_nonbuild_files_error"] = bounded_error(error)
+                atomic_write_json(report_path, report)
+                raise OracleConfigurationError(
+                    f"the candidate source checkout changed during the run: {error}"
+                ) from error
+            report["post_run_allowed_untracked_nonbuild_files"] = post_allowed_untracked_files
             if (
                 post_source_metadata["head"] != source_metadata["head"]
                 or post_source_metadata["tracked_dirty"]
+                or post_source_metadata["untracked_build_inputs"]
                 or post_allowed_untracked_files != allowed_untracked_files
             ):
                 report["status"] = "candidate-source-drift"
@@ -1577,7 +1658,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     except OracleConfigurationError as error:
         error_message = bounded_error(error)
         if report is not None and report_path is not None:
-            report["status"] = "configuration-error"
+            if report.get("status") == "running":
+                report["status"] = "configuration-error"
             report["error"] = error_message
             with contextlib.suppress(OSError):
                 atomic_write_json(report_path, report)
