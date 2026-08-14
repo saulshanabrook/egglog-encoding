@@ -2,22 +2,23 @@
 (sort BenchmarkTerm)
 (sort BenchmarkTerms (Vec BenchmarkTerm))
 (constructor BenchmarkNode (String BenchmarkTerms) BenchmarkTerm)
-(function BenchmarkTermAt (i64) BenchmarkTerm :no-merge)
+(constructor BenchmarkWitness (i64) BenchmarkTerm)
 
 (begin
   (let term0 (BenchmarkNode "x" (vec-of)))
-  (set (BenchmarkTermAt 0) term0)
   (let term1 (BenchmarkNode "y" (vec-of)))
-  (set (BenchmarkTermAt 1) term1)
-  (let term2 (BenchmarkNode "true" (vec-of)))
-  (set (BenchmarkTermAt 2) term2)
-  (let term3 (BenchmarkNode "false" (vec-of)))
-  (set (BenchmarkTermAt 3) term3)
+  (let term2 (BenchmarkNode "z" (vec-of)))
+  (let term3 (BenchmarkNode "true" (vec-of)))
+  (let term4 (BenchmarkNode "false" (vec-of)))
+  (disequal term3 term4)
+  (union term0 term1)
+  (disequal term1 term2)
+  (union term0 (BenchmarkWitness 0))
+  (union term1 (BenchmarkWitness 1))
 )
 
-(begin
-  (disequal (BenchmarkTermAt 0) (BenchmarkTermAt 1))
-)
+; Recheck one explicit host union as an equality proof witness.
+(check (= (BenchmarkWitness 0) (BenchmarkWitness 1)))
 
 ; The command below records the expected model result.
 (check-disequalities)

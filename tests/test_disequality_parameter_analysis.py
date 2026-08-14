@@ -2,15 +2,26 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from scripts.paper_benchmarks import prepare_parameter_analysis as prepare
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def load_parameter_runner() -> Any:
+    path = ROOT / "egglog-experimental/benchmarks/disequality/run_parameter_analysis.py"
+    spec = importlib.util.spec_from_file_location("run_parameter_analysis", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def decoded_rows(files: dict[str, bytes], name: str) -> list[tuple[int, ...]]:
@@ -105,3 +116,24 @@ def test_generated_directory_check_is_byte_exact(tmp_path: Path) -> None:
     (output / "config.tsv").write_text("1\n", encoding="utf-8")
     with pytest.raises(ValueError, match="config.tsv"):
         prepare.compare_files(output, files)
+
+
+@pytest.mark.parametrize(
+    ("schema_version", "fields"),
+    (
+        (2, ("search_ns", "apply_ns", "unattributed_ns", "merge_ns", "rebuild_ns")),
+        (4, ("assembly_ns", "search_ns", "apply_ns", "execution_ns", "merge_ns")),
+    ),
+)
+def test_parameter_runner_accepts_supported_timing_summaries(schema_version: int, fields: tuple[str, ...]) -> None:
+    runner = load_parameter_runner()
+    row = {field: index * 1_000_000 for index, field in enumerate(fields, start=1)}
+    summary = {"schema_version": schema_version, "rulesets": [{"name": "work", **row}]}
+
+    assert runner.ruleset_ms(summary) == {"work": 15.0}
+
+
+def test_parameter_runner_rejects_unknown_timing_summary() -> None:
+    runner = load_parameter_runner()
+    with pytest.raises(ValueError, match="schema: 3"):
+        runner.ruleset_ms({"schema_version": 3, "rulesets": []})

@@ -2,26 +2,23 @@
 (sort BenchmarkTerm)
 (sort BenchmarkTerms (Vec BenchmarkTerm))
 (constructor BenchmarkNode (String BenchmarkTerms) BenchmarkTerm)
-(function BenchmarkTermAt (i64) BenchmarkTerm :no-merge)
+(constructor BenchmarkWitness (i64) BenchmarkTerm)
 
 (begin
   (let term0 (BenchmarkNode "x" (vec-of)))
-  (set (BenchmarkTermAt 0) term0)
   (let term1 (BenchmarkNode "n" (vec-of)))
-  (set (BenchmarkTermAt 1) term1)
   (let term2 (BenchmarkNode "@apply" (vec-of term0 term1)))
-  (set (BenchmarkTermAt 2) term2)
   (let term3 (BenchmarkNode "⊥" (vec-of)))
-  (set (BenchmarkTermAt 3) term3)
   (union term2 term3)
+  (let term4 (BenchmarkNode "⊤" (vec-of)))
+  (disequal term4 term3)
+  (disequal term2 term4)
+  (union term2 (BenchmarkWitness 0))
+  (union term3 (BenchmarkWitness 1))
 )
 
-(begin
-  (let term4 (BenchmarkNode "⊤" (vec-of)))
-  (set (BenchmarkTermAt 4) term4)
-  (disequal term4 (BenchmarkTermAt 3))
-  (disequal (BenchmarkTermAt 2) term4)
-)
+; Recheck one explicit host union as an equality proof witness.
+(check (= (BenchmarkWitness 0) (BenchmarkWitness 1)))
 
 ; The command below records the expected graph consistency.
 (check-disequalities)

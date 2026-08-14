@@ -57,17 +57,19 @@ def native_row(stdout: str) -> dict[str, str]:
 
 
 def ruleset_ms(summary: dict[str, Any]) -> dict[str, float]:
-    """Collapse timing-summary-v2 phases to milliseconds by ruleset."""
+    """Collapse supported timing-summary phases to milliseconds by ruleset."""
 
-    if summary.get("schema_version") != 2:
-        raise ValueError(f"unexpected timing summary schema: {summary.get('schema_version')!r}")
+    schema_version = summary.get("schema_version")
+    if schema_version == 2:
+        fields = ("search_ns", "apply_ns", "unattributed_ns", "merge_ns", "rebuild_ns")
+    elif schema_version == 4:
+        fields = ("assembly_ns", "search_ns", "apply_ns", "execution_ns", "merge_ns")
+    else:
+        raise ValueError(f"unexpected timing summary schema: {schema_version!r}")
     result: dict[str, float] = {}
     for row in summary.get("rulesets", []):
         name = str(row["name"])
-        nanoseconds = sum(
-            int(row[field])
-            for field in ("search_ns", "apply_ns", "unattributed_ns", "merge_ns", "rebuild_ns")
-        )
+        nanoseconds = sum(int(row[field]) for field in fields)
         result[name] = nanoseconds / 1_000_000.0
     return result
 

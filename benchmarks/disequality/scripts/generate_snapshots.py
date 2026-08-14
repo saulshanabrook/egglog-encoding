@@ -11,9 +11,16 @@ import tempfile
 from pathlib import Path
 
 ENCODINGS = ("ee", "oee", "nee", "de")
+TREATMENTS = {
+    "ordinary": (),
+    "term": ("--term-encoding",),
+    "proofs": ("--proofs",),
+    "proof-testing": ("--proof-testing",),
+    "proof-extraction": ("--proof-extraction",),
+}
 
 
-def run_checked(command: list[str], description: str) -> None:
+def run_checked(command: list[str], description: str, success_suffix: str) -> None:
     process = subprocess.run(
         command,
         check=False,
@@ -23,31 +30,47 @@ def run_checked(command: list[str], description: str) -> None:
     )
     if process.returncode != 0:
         raise RuntimeError(f"{description} failed:\n{process.stdout}")
-    if "sat" not in process.stdout.lower() and "Check successful." not in process.stdout:
+    if not any(line.strip().endswith(success_suffix) for line in process.stdout.splitlines()):
         raise RuntimeError(f"{description} produced no success marker:\n{process.stdout}")
 
 
-def replay(binary: Path, encoding: str | None, path: Path) -> None:
-    command = [str(binary)]
-    if encoding is not None:
-        command.extend(("--disequality-encoding", encoding))
-    command.append(str(path))
-    process = subprocess.run(
-        command,
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    if process.returncode != 0:
-        raise RuntimeError(f"replaying {path} failed:\n{process.stdout}")
+def replay_all_treatments(binary: Path, encoding: str | None, path: Path) -> None:
+    for treatment, treatment_args in TREATMENTS.items():
+        command = [str(binary), *treatment_args]
+        if encoding is not None:
+            command.extend(("--disequality-encoding", encoding))
+        command.append(str(path))
+        process = subprocess.run(
+            command,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        if process.returncode != 0:
+            encoding_label = encoding or "desugared"
+            raise RuntimeError(f"replaying {path} with {encoding_label}/{treatment} failed:\n{process.stdout}")
+
+
+def replay_snapshots(binary: Path, output: Path) -> int:
+    replay_count = 0
+    for path in sorted(output.rglob("*.egg")):
+        if path.name.endswith(".desugared.egg"):
+            replay_all_treatments(binary, None, path)
+            replay_count += len(TREATMENTS)
+        else:
+            for encoding in ENCODINGS:
+                replay_all_treatments(binary, encoding, path)
+                replay_count += len(TREATMENTS)
+    return replay_count
 
 
 def generate(args: argparse.Namespace) -> dict[Path, bytes]:
     output: dict[Path, bytes] = {}
     manifest: dict[str, object] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "encodings": list(ENCODINGS),
+        "replay_treatments": list(TREATMENTS),
         "euf": {},
         "propel": {},
     }
@@ -69,6 +92,7 @@ def generate(args: argparse.Namespace) -> dict[Path, bytes]:
                     str(euf_input),
                 ],
                 f"EUF {encoding}",
+                ": sat",
             )
             raw = sorted(directory.glob("*.egg"))
             raw = [path for path in raw if not path.name.endswith(".desugared.egg")]
@@ -104,6 +128,7 @@ def generate(args: argparse.Namespace) -> dict[Path, bytes]:
                     str(directory),
                 ],
                 f"Propel {encoding}",
+                "Check successful.",
             )
             raw = sorted(directory.glob("*.egg"))
             raw = [path for path in raw if not path.name.endswith(".desugared.egg")]
@@ -152,7 +177,11 @@ def main() -> int:
         type=Path,
         default=case_study / "euf-solver" / "tests" / "sat.smt2",
     )
-    parser.add_argument("--propel-binary", type=Path, required=True)
+    parser.add_argument(
+        "--propel-binary",
+        type=Path,
+        default=case_study / "inductive-prover" / "propel" / ".native" / "target" / "scala-3.4.2" / "propel",
+    )
     parser.add_argument(
         "--egglog-binary",
         type=Path,
@@ -172,27 +201,29 @@ def main() -> int:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--check", action="store_true")
     mode.add_argument("--force", action="store_true")
+    mode.add_argument("--replay", action="store_true")
     args = parser.parse_args()
-    for binary in (args.euf_binary, args.propel_binary, args.egglog_binary):
+    required_binaries = (
+        (args.egglog_binary,)
+        if args.replay
+        else (
+            args.euf_binary,
+            args.propel_binary,
+            args.egglog_binary,
+        )
+    )
+    for binary in required_binaries:
         if not binary.is_file():
             parser.error(f"binary does not exist: {binary}")
 
+    if args.replay:
+        if not args.output.is_dir():
+            parser.error(f"snapshot directory does not exist: {args.output}")
+        replay_count = replay_snapshots(args.egglog_binary.resolve(), args.output)
+        print(f"replayed {replay_count} treatments from {args.output}")
+        return 0
+
     generated = generate(args)
-    with tempfile.TemporaryDirectory(prefix="egglog-disequality-replay-") as temporary:
-        temporary_path = Path(temporary)
-        for path, contents in generated.items():
-            if path.suffix != ".egg":
-                continue
-            destination = temporary_path / path
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(contents)
-            encoding = None
-            if not path.name.endswith(".desugared.egg"):
-                encoding = next(
-                    (candidate for candidate in ENCODINGS if f".{candidate}." in path.name),
-                    "ee",
-                )
-            replay(args.egglog_binary.resolve(), encoding, destination)
     existing = (
         {path.relative_to(args.output): path.read_bytes() for path in args.output.rglob("*") if path.is_file()}
         if args.output.is_dir()
@@ -206,7 +237,8 @@ def main() -> int:
                 str(path) for path in generated.keys() & existing.keys() if generated[path] != existing[path]
             )
             raise SystemExit(f"snapshot mismatch: missing={missing}, extra={extra}, changed={changed}")
-        print(f"verified {len(generated)} files in {args.output}")
+        replay_count = replay_snapshots(args.egglog_binary.resolve(), args.output)
+        print(f"verified {len(generated)} files and replayed {replay_count} treatments in {args.output}")
         return 0
 
     args.output.mkdir(parents=True, exist_ok=True)
@@ -216,7 +248,8 @@ def main() -> int:
         destination = args.output / path
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(contents)
-    print(f"wrote {len(generated)} files to {args.output}")
+    replay_count = replay_snapshots(args.egglog_binary.resolve(), args.output)
+    print(f"wrote {len(generated)} files and replayed {replay_count} treatments in {args.output}")
     return 0
 
 

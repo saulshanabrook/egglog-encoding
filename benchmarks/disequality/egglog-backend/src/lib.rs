@@ -12,15 +12,18 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     path::Path,
     ptr, slice,
+    sync::Arc,
 };
 use thiserror::Error;
 
-const PRELUDE: &str = r#"; Generic host language used by the disequality case studies.
+const LANGUAGE_PRELUDE: &str = r#"; Generic host language used by the disequality case studies.
 (sort BenchmarkTerm)
 (sort BenchmarkTerms (Vec BenchmarkTerm))
 (constructor BenchmarkNode (String BenchmarkTerms) BenchmarkTerm)
-(function BenchmarkTermAt (i64) BenchmarkTerm :no-merge)
+(constructor BenchmarkWitness (i64) BenchmarkTerm)
 "#;
+
+const TERM_LOOKUP_DECLARATION: &str = "(function BenchmarkTermAt (i64) BenchmarkTerm :merge old)\n";
 
 pub type TermId = u64;
 
@@ -38,8 +41,6 @@ pub enum BackendError {
     Egglog(#[from] EgglogError),
     #[error("term handle {0} does not exist")]
     UnknownTerm(TermId),
-    #[error("operator name contains a NUL byte")]
-    OperatorContainsNul,
     #[error("invalid UTF-8 in {0}")]
     InvalidUtf8(&'static str),
     #[error("null {0} pointer")]
@@ -61,25 +62,36 @@ enum Operation {
     Disequal(TermId, TermId),
 }
 
+#[derive(Clone, Copy)]
+enum RenderMode {
+    Runtime {
+        first_pending_id: Option<TermId>,
+    },
+    Replay {
+        equality_witness: Option<(TermId, TermId)>,
+    },
+}
+
 #[derive(Clone)]
 pub struct DisequalityGraph {
     encoding: DisequalityEncoding,
     egraph: EGraph,
     next_term: TermId,
     pending: Vec<Operation>,
-    batches: Vec<String>,
+    committed: Vec<Arc<[Operation]>>,
 }
 
 impl DisequalityGraph {
     pub fn new(encoding: DisequalityEncoding) -> Result<Self, BackendError> {
         let mut egraph = new_experimental_egraph_with_disequality_encoding(encoding);
-        egraph.parse_and_run_program(Some("benchmark-prelude.egg".to_owned()), PRELUDE)?;
+        let runtime_prelude = format!("{LANGUAGE_PRELUDE}{TERM_LOOKUP_DECLARATION}");
+        egraph.parse_and_run_program(Some("benchmark-prelude.egg".to_owned()), &runtime_prelude)?;
         Ok(Self {
             encoding,
             egraph,
             next_term: 0,
             pending: Vec::new(),
-            batches: Vec::new(),
+            committed: Vec::new(),
         })
     }
 
@@ -167,10 +179,28 @@ impl DisequalityGraph {
 
     pub fn source(&mut self) -> Result<String, BackendError> {
         self.flush()?;
-        let mut source = String::from(PRELUDE);
-        for batch in &self.batches {
+        let mut source = String::from(LANGUAGE_PRELUDE);
+        let operations = self
+            .committed
+            .iter()
+            .flat_map(|batch| batch.iter())
+            .collect::<Vec<_>>();
+        if !operations.is_empty() {
             source.push('\n');
-            source.push_str(batch);
+            let equality_witness = operations.iter().find_map(|operation| match operation {
+                Operation::Union(lhs, rhs) => Some((*lhs, *rhs)),
+                Operation::Add { .. } | Operation::Disequal(_, _) => None,
+            });
+            source.push_str(&render_operations(
+                operations.iter().copied(),
+                RenderMode::Replay { equality_witness },
+            )?);
+            if equality_witness.is_some() {
+                source.push_str(
+                    "\n; Recheck one explicit host union as an equality proof witness.\n\
+                     (check (= (BenchmarkWitness 0) (BenchmarkWitness 1)))\n",
+                );
+            }
         }
         Ok(source)
     }
@@ -238,55 +268,14 @@ impl DisequalityGraph {
             Operation::Add { id, .. } => Some(*id),
             Operation::Union(_, _) | Operation::Disequal(_, _) => None,
         });
-        let mut batch = String::from("(begin\n");
-        for operation in &self.pending {
-            match operation {
-                Operation::Add {
-                    id,
-                    operator,
-                    children,
-                } => {
-                    let operator = serde_json::to_string(operator)
-                        .map_err(|error| BackendError::Other(error.to_string()))?;
-                    let children = children
-                        .iter()
-                        .map(|&child| term_reference(child, first_pending_id))
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    writeln!(
-                        batch,
-                        "  (let term{id} (BenchmarkNode {operator} (vec-of{separator}{children})))",
-                        separator = if children.is_empty() { "" } else { " " },
-                    )
-                    .expect("writing to a String cannot fail");
-                    writeln!(batch, "  (set (BenchmarkTermAt {id}) term{id})")
-                        .expect("writing to a String cannot fail");
-                }
-                Operation::Union(lhs, rhs) => {
-                    writeln!(
-                        batch,
-                        "  (union {} {})",
-                        term_reference(*lhs, first_pending_id),
-                        term_reference(*rhs, first_pending_id)
-                    )
-                    .expect("writing to a String cannot fail");
-                }
-                Operation::Disequal(lhs, rhs) => {
-                    writeln!(
-                        batch,
-                        "  (disequal {} {})",
-                        term_reference(*lhs, first_pending_id),
-                        term_reference(*rhs, first_pending_id)
-                    )
-                    .expect("writing to a String cannot fail");
-                }
-            }
-        }
-        batch.push_str(")\n");
+        let batch = render_operations(
+            self.pending.iter(),
+            RenderMode::Runtime { first_pending_id },
+        )?;
         self.egraph
             .parse_and_run_program(Some("benchmark-batch.egg".to_owned()), &batch)?;
-        self.pending.clear();
-        self.batches.push(batch);
+        self.committed
+            .push(std::mem::take(&mut self.pending).into());
         Ok(())
     }
 }
@@ -300,12 +289,75 @@ pub fn desugar_source(encoding: DisequalityEncoding, source: &str) -> Result<Str
         .collect())
 }
 
-fn term_reference(id: TermId, first_pending_id: Option<TermId>) -> String {
-    if first_pending_id.is_some_and(|first| id >= first) {
-        format!("term{id}")
-    } else {
-        format!("(BenchmarkTermAt {id})")
+fn render_operations<'a>(
+    operations: impl IntoIterator<Item = &'a Operation>,
+    mode: RenderMode,
+) -> Result<String, BackendError> {
+    let term_reference = |id: TermId| match mode {
+        RenderMode::Runtime { first_pending_id }
+            if first_pending_id.is_none_or(|first| id < first) =>
+        {
+            format!("(BenchmarkTermAt {id})")
+        }
+        RenderMode::Runtime { .. } | RenderMode::Replay { .. } => format!("term{id}"),
+    };
+    let mut batch = String::from("(begin\n");
+    for operation in operations {
+        match operation {
+            Operation::Add {
+                id,
+                operator,
+                children,
+            } => {
+                let operator = serde_json::to_string(operator)
+                    .map_err(|error| BackendError::Other(error.to_string()))?;
+                let children = children
+                    .iter()
+                    .map(|&child| term_reference(child))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                writeln!(
+                    batch,
+                    "  (let term{id} (BenchmarkNode {operator} (vec-of{separator}{children})))",
+                    separator = if children.is_empty() { "" } else { " " },
+                )
+                .expect("writing to a String cannot fail");
+                if matches!(mode, RenderMode::Runtime { .. }) {
+                    writeln!(batch, "  (set (BenchmarkTermAt {id}) term{id})")
+                        .expect("writing to a String cannot fail");
+                }
+            }
+            Operation::Union(lhs, rhs) => {
+                writeln!(
+                    batch,
+                    "  (union {} {})",
+                    term_reference(*lhs),
+                    term_reference(*rhs)
+                )
+                .expect("writing to a String cannot fail");
+            }
+            Operation::Disequal(lhs, rhs) => {
+                writeln!(
+                    batch,
+                    "  (disequal {} {})",
+                    term_reference(*lhs),
+                    term_reference(*rhs)
+                )
+                .expect("writing to a String cannot fail");
+            }
+        }
     }
+    if let RenderMode::Replay {
+        equality_witness: Some((lhs, rhs)),
+    } = mode
+    {
+        writeln!(batch, "  (union term{lhs} (BenchmarkWitness 0))")
+            .expect("writing to a String cannot fail");
+        writeln!(batch, "  (union term{rhs} (BenchmarkWitness 1))")
+            .expect("writing to a String cannot fail");
+    }
+    batch.push_str(")\n");
+    Ok(batch)
 }
 
 #[repr(C)]
@@ -708,8 +760,15 @@ mod tests {
             assert!(graph.is_consistent().unwrap());
             assert_eq!(graph.stats().unwrap().nodes, 4);
 
+            let c = graph.add("c", &[]).unwrap();
+            let d = graph.add("d", &[]).unwrap();
             graph.union(a, b).unwrap();
             assert!(!graph.is_consistent().unwrap());
+            assert_eq!(
+                graph.compare(c, d).unwrap(),
+                DisequalityComparison::Indeterminate,
+                "pair queries must remain independent of an unrelated contradiction"
+            );
         }
     }
 
@@ -719,8 +778,10 @@ mod tests {
         let a = original.add("a", &[]).unwrap();
         let b = original.add("b", &[]).unwrap();
         original.disequal(a, b).unwrap();
+        original.rebuild().unwrap();
 
         let mut clone = original.clone();
+        assert!(Arc::ptr_eq(&original.committed[0], &clone.committed[0]));
         clone.union(a, b).unwrap();
         assert!(!clone.is_consistent().unwrap());
         assert!(original.is_consistent().unwrap());
@@ -732,9 +793,13 @@ mod tests {
             let mut graph = DisequalityGraph::new(encoding).unwrap();
             let a = graph.add("quoted \"name\"", &[]).unwrap();
             let b = graph.add("b", &[]).unwrap();
+            let c = graph.add("c", &[]).unwrap();
+            graph.union(a, c).unwrap();
             graph.disequal(a, b).unwrap();
 
             let source = graph.source().unwrap();
+            assert!(source.contains("Recheck one explicit host union"));
+            assert!(source.contains("(check (="));
             let mut replay = new_experimental_egraph_with_disequality_encoding(encoding);
             replay.parse_and_run_program(None, &source).unwrap();
 

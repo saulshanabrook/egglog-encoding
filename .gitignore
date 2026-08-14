@@ -21,3 +21,4 @@ __pycache__/
 
 # Generated from the pinned Dis/Equality Graphs artifact.
 /egglog-experimental/benchmarks/disequality/parameter-analysis-facts/
+/benchmarks/disequality/euf-solver/benchmarks/

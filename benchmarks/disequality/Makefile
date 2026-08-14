@@ -1,6 +1,6 @@
 .PHONY: \
 	check rust-test euf-test propel-jvm propel-native propel-smoke \
-	snapshots update-snapshots propel-parity import-check
+	snapshots update-snapshots replay-snapshots propel-parity import-check
 
 ROOT := $(abspath ../..)
 PROPEL_DIR := $(ROOT)/benchmarks/disequality/inductive-prover/propel
@@ -26,10 +26,13 @@ propel-native:
 	cd "$(PROPEL_DIR)" && $(SBT) 'propelNative/Compile/nativeLink'
 
 propel-smoke: propel-native
-	@set -e; for variant in de ee nee egglog-ee egglog-oee egglog-nee egglog-de; do \
-		"$(PROPEL_BINARY)" \
+	@for variant in de ee nee egglog-ee egglog-oee egglog-nee egglog-de; do \
+		output="$$("$(PROPEL_BINARY)" \
 			-f "$(PROPEL_INPUT)/gset_comm.propel" \
-			--variant "$$variant" | grep -q 'Check successful'; \
+			--variant "$$variant" 2>&1)"; status=$$?; \
+		printf '%s\n' "$$output"; \
+		test $$status -eq 0 || exit $$status; \
+		printf '%s\n' "$$output" | grep -Eq 'Check successful\.$$' || exit 1; \
 	done
 
 snapshots: propel-native
@@ -47,6 +50,12 @@ update-snapshots: propel-native
 		benchmarks/disequality/scripts/generate_snapshots.py \
 		--propel-binary "$(PROPEL_BINARY)" \
 		--force
+
+replay-snapshots:
+	cd "$(ROOT)" && cargo build -p egglog-experimental
+	cd "$(ROOT)" && uv run --locked python \
+		benchmarks/disequality/scripts/generate_snapshots.py \
+		--replay
 
 propel-parity: propel-native
 	cd "$(ROOT)" && uv run --locked python \

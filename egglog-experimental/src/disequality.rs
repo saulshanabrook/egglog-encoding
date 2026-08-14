@@ -6,7 +6,11 @@ use egglog::{
     },
     util::SymbolGen,
 };
-use std::{collections::BTreeMap, fmt::Write, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashSet},
+    fmt::Write,
+    sync::Arc,
+};
 use std::{fmt, str::FromStr};
 
 const PLACEHOLDER: &str = "@disequal";
@@ -330,6 +334,15 @@ impl CommandMacro for DisequalityMacro {
                 Ok(commands)
             }
             Command::LetBegin(span, name, actions) if contains_disequality(&actions) => {
+                if let Some(Action::Expr(action_span, Expr::Call(_, head, _))) = actions.0.last()
+                    && head == PLACEHOLDER
+                {
+                    return Err(Error::DesugarError(
+                        action_span.clone(),
+                        "a let-begin block must end with a value expression, not `disequal`"
+                            .to_owned(),
+                    ));
+                }
                 let (actions, required_sorts) = lower_actions(
                     actions,
                     Vec::new(),
@@ -341,6 +354,41 @@ impl CommandMacro for DisequalityMacro {
                 let mut commands = support_commands(type_info, required_sorts, self.encoding);
                 commands.push(Command::LetBegin(span, name, actions));
                 Ok(commands)
+            }
+            Command::Fail(span, commands) => {
+                let mut support = Vec::new();
+                let mut support_keys = HashSet::new();
+                let mut semantic = Vec::new();
+                for command in commands {
+                    for lowered in self.transform(command, symbol_gen, type_info)? {
+                        let support_key = match &lowered {
+                            Command::Sort { name, .. } if name.starts_with("@disequality") => {
+                                Some(("sort", name.clone()))
+                            }
+                            Command::AddRuleset(_, name) if name.starts_with("@disequality") => {
+                                Some(("ruleset", name.clone()))
+                            }
+                            Command::Constructor { name, .. } | Command::Relation { name, .. }
+                                if name.starts_with("@disequality") =>
+                            {
+                                Some(("function", name.clone()))
+                            }
+                            Command::Rule { rule } if rule.name.starts_with("@disequality") => {
+                                Some(("rule", rule.name.clone()))
+                            }
+                            _ => None,
+                        };
+                        if let Some(key) = support_key {
+                            if support_keys.insert(key) {
+                                support.push(lowered);
+                            }
+                        } else {
+                            semantic.push(lowered);
+                        }
+                    }
+                }
+                support.push(Command::Fail(span, semantic));
+                Ok(support)
             }
             command => Ok(vec![command]),
         }
@@ -914,6 +962,31 @@ mod tests {
         DisequalityEncoding::DisequalityEdges,
     ];
 
+    fn egraphs_for_all_modes(encoding: DisequalityEncoding) -> [(&'static str, egglog::EGraph); 4] {
+        [
+            (
+                "ordinary",
+                new_experimental_egraph_with_disequality_encoding(encoding),
+            ),
+            (
+                "term",
+                new_experimental_egraph_for_proofs_with_disequality_encoding(encoding)
+                    .with_term_encoding_enabled(),
+            ),
+            (
+                "proofs",
+                new_experimental_egraph_for_proofs_with_disequality_encoding(encoding)
+                    .with_proofs_enabled(),
+            ),
+            (
+                "proof-testing",
+                new_experimental_egraph_for_proofs_with_disequality_encoding(encoding)
+                    .with_proofs_enabled()
+                    .with_proof_testing(),
+            ),
+        ]
+    }
+
     fn parameter_analysis_facts() -> TempDir {
         let directory = tempfile::tempdir().unwrap();
         for (name, contents) in [
@@ -1053,6 +1126,116 @@ mod tests {
                 matches!(unknown, egglog::Error::ExpectFail(_)),
                 "unexpected {encoding:?} unknown-query error: {unknown}"
             );
+        }
+    }
+
+    #[test]
+    fn all_encodings_lower_pair_queries_inside_fail() {
+        let program = r#"
+            (datatype Math (A) (B) (C))
+            (fail (check-disequal (A) (C)))
+            (disequal (A) (B))
+            (check-disequal (A) (B))
+        "#;
+
+        for encoding in ENCODINGS {
+            let mut egraph = new_experimental_egraph_with_disequality_encoding(encoding);
+            egraph
+                .parse_and_run_program(None, program)
+                .unwrap_or_else(|error| panic!("{encoding:?} failed nested pair query: {error}"));
+
+            let mut first_use = new_experimental_egraph_with_disequality_encoding(encoding);
+            first_use
+                .parse_and_run_program(
+                    None,
+                    r#"
+                    (datatype Math (A) (B))
+                    (fail
+                      (fail
+                        (disequal (A) (B))
+                        (check-disequal (A) (B))))
+                    "#,
+                )
+                .unwrap_or_else(|error| {
+                    panic!("{encoding:?} duplicated first-use support inside fail: {error}")
+                });
+        }
+    }
+
+    #[test]
+    fn all_encodings_support_pair_queries_under_proof_testing() {
+        let program = r#"
+            (datatype Math (A) (B) (C))
+            (disequal (A) (B))
+            (check-disequal (A) (B))
+            (fail (check-disequal (A) (C)))
+        "#;
+
+        for encoding in ENCODINGS {
+            let mut egraph = new_experimental_egraph_for_proofs_with_disequality_encoding(encoding)
+                .with_proofs_enabled()
+                .with_proof_testing();
+            egraph
+                .parse_and_run_program(None, program)
+                .unwrap_or_else(|error| {
+                    panic!("{encoding:?} failed proof-tested pair queries: {error}")
+                });
+
+            let mut first_use =
+                new_experimental_egraph_for_proofs_with_disequality_encoding(encoding)
+                    .with_proofs_enabled()
+                    .with_proof_testing();
+            first_use
+                .parse_and_run_program(
+                    None,
+                    r#"
+                    (datatype Math (A) (B))
+                    (fail
+                      (fail
+                        (disequal (A) (B))
+                        (check-disequal (A) (B))))
+                    "#,
+                )
+                .unwrap_or_else(|error| {
+                    panic!("{encoding:?} failed proof-tested nested first use: {error}")
+                });
+        }
+    }
+
+    #[test]
+    fn let_begin_rejects_trailing_disequal_and_accepts_a_following_value() {
+        for encoding in ENCODINGS {
+            let mut invalid = new_experimental_egraph_with_disequality_encoding(encoding);
+            let error = invalid
+                .parse_and_run_program(
+                    None,
+                    r#"
+                    (datatype Math (A) (B))
+                    (let $result (begin (disequal (A) (B))))
+                    "#,
+                )
+                .expect_err("a disequality action cannot supply a let-begin value");
+            assert!(
+                error
+                    .to_string()
+                    .contains("must end with a value expression, not `disequal`"),
+                "unexpected {encoding:?} error: {error}"
+            );
+
+            let mut valid = new_experimental_egraph_with_disequality_encoding(encoding);
+            valid
+                .parse_and_run_program(
+                    None,
+                    r#"
+                    (datatype Math (A) (B))
+                    (let $result (begin (disequal (A) (B)) (A)))
+                    (check (= $result (A)))
+                    (check-disequalities)
+                    "#,
+                )
+                .unwrap_or_else(|error| {
+                    panic!("{encoding:?} rejected a valid let-begin block: {error}")
+                });
         }
     }
 
@@ -1378,18 +1561,7 @@ mod tests {
         let facts = parameter_analysis_facts();
 
         for encoding in ENCODINGS {
-            let ordinary = new_experimental_egraph_with_disequality_encoding(encoding);
-            let term = new_experimental_egraph_for_proofs_with_disequality_encoding(encoding)
-                .with_term_encoding_enabled();
-            let proof_testing =
-                new_experimental_egraph_for_proofs_with_disequality_encoding(encoding)
-                    .with_proofs_enabled()
-                    .with_proof_testing();
-            for (mode, mut egraph) in [
-                ("ordinary", ordinary),
-                ("term", term),
-                ("proof-testing", proof_testing),
-            ] {
+            for (mode, mut egraph) in egraphs_for_all_modes(encoding) {
                 egraph.fact_directory = Some(facts.path().to_owned());
                 egraph
                     .parse_and_run_program(Some(program_path.display().to_string()), &program)
@@ -1401,6 +1573,28 @@ mod tests {
                     .unwrap_or_else(|error| {
                         panic!("{encoding:?} {mode} failed reconstructed-term check: {error}")
                     });
+            }
+        }
+    }
+
+    #[test]
+    fn captured_artifact_sources_compose_with_all_proof_modes() {
+        let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let repository_root = crate_dir.parent().unwrap();
+        for relative_path in [
+            "benchmarks/disequality/snapshots/euf/sat.egg",
+            "benchmarks/disequality/snapshots/propel/gset_comm.egg",
+        ] {
+            let program_path = repository_root.join(relative_path);
+            let program = std::fs::read_to_string(&program_path).unwrap();
+            for encoding in ENCODINGS {
+                for (mode, mut egraph) in egraphs_for_all_modes(encoding) {
+                    egraph
+                        .parse_and_run_program(Some(program_path.display().to_string()), &program)
+                        .unwrap_or_else(|error| {
+                            panic!("{encoding:?} {mode} failed {relative_path}: {error}")
+                        });
+                }
             }
         }
     }

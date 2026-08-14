@@ -1,0 +1,13 @@
+---
+source: egglog/tests/files.rs
+expression: proof_snapshot
+---
+(let t0 (Add (Num 1) (Num 1)))
+(let t1 (keep t0))
+(Rule
+  (= (@ExistsConstructor) (@ExistsConstructor))
+  (name "@prove_exists_rule")
+  (premises (Fiat (= t1 t1)) (Fiat (= t0 t0)))
+  (substitution (@n t0)))
+(let t0 (Add (Num 2) (Num 2)))
+(Fiat (= t0 t0))

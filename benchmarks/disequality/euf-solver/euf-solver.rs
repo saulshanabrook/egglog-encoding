@@ -1010,6 +1010,13 @@ enum EUFSolver {} impl EUFSolver {
       egraph.union(id1, id2);
     }
 
+    // Boolean atoms are represented by unions with these constants below.
+    // The published DE artifact omitted this edge, allowing one model to assign
+    // congruent Boolean terms both truth values without a contradiction.
+    let true_id = egraph.add_expr(&"true".parse().unwrap());
+    let false_id = egraph.add_expr(&"false".parse().unwrap());
+    egraph.disunion(true_id, false_id);
+
     let mut result = EUFSolverResult {
       sat: false,
       egraph_stats_per_solution: vec![],
@@ -1150,6 +1157,7 @@ enum EUFSolver {} impl EUFSolver {
     }
     let true_id = EUFSolver::get_or_add_egglog_term(&mut egraph, &mut terms, "true")?;
     let false_id = EUFSolver::get_or_add_egglog_term(&mut egraph, &mut terms, "false")?;
+    egraph.disequal(true_id, false_id)?;
     egraph.rebuild()?;
 
     let mut result = EUFSolverResult {
@@ -1330,7 +1338,11 @@ mod tests {
 
   #[test]
   fn all_backends_agree_on_sat_and_unsat_fixtures() {
-    for (fixture_name, expected_sat) in [("sat", true), ("unsat", false)] {
+    for (fixture_name, expected_sat) in [
+      ("sat", true),
+      ("unsat", false),
+      ("boolean-congruence-unsat", false),
+    ] {
       let term = fixture(fixture_name);
       for backend in BACKENDS {
         let result = EUFSolver::check_sat(&EUFSolverConfig {
