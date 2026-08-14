@@ -3,7 +3,7 @@
 //! that executes a requested subsumption. (`@UF` path compression stays in
 //! [`super::proof_encoding`].)
 
-use super::proof_encoding::{ProofInstrumentor, ViewIndex};
+use super::proof_encoding::{GeneratedFamily, ProofInstrumentor, ViewIndex};
 use super::proof_encoding_helpers::{DROP_REFLEXIVE_STEP, Skeleton};
 use crate::*;
 
@@ -32,7 +32,11 @@ impl ProofInstrumentor<'_> {
     ///
     /// The marker is what makes subsumption survive rebuilding: re-keying a view
     /// row inserts it afresh, and the new row carries no subsumed bit of its own.
-    pub(super) fn subsume_scaffolding(&mut self, name: &str, input: &[ArcSort]) -> String {
+    pub(super) fn subsume_scaffolding(
+        &mut self,
+        name: &str,
+        input: &[ArcSort],
+    ) -> (String, String) {
         let child = |i: usize| format!("c{i}_");
         let children_vec: Vec<String> = (0..input.len()).map(child).collect();
         let children = children_vec.join(" ");
@@ -49,9 +53,10 @@ impl ProofInstrumentor<'_> {
         // from matching.
         let e = self.fresh_var();
         let pf = self.fresh_var();
-        let mut decls = format!(
-            "(function {subsumed_name} ({in_sorts}) Unit :no-merge :internal-hidden)
-             (rule (({subsumed_name} {children})
+        let declaration =
+            format!("(function {subsumed_name} ({in_sorts}) Unit :no-merge :internal-hidden)\n");
+        let mut rules = format!(
+            "(rule (({subsumed_name} {children})
                     (= (values {e} {pf}) ({view_name} {children})))
                    ((subsume ({view_name} {children})))
                     :ruleset {subsume_ruleset}
@@ -77,7 +82,7 @@ impl ProofInstrumentor<'_> {
                 .parser
                 .symbol_gen
                 .fresh("rebuild_to_subsume_rule");
-            decls.push_str(&format!(
+            rules.push_str(&format!(
                 "(rule (({subsumed_name} {children})
                         (= (values {leader} {proof_var}) ({uf_name} {ci}))
                         (!= {ci} {leader}))
@@ -88,7 +93,7 @@ impl ProofInstrumentor<'_> {
                       :ruleset {rebuilding_ruleset} :name \"{fresh_name}\" :internal-include-subsumed)\n"
             ));
         }
-        decls
+        (declaration, rules)
     }
 
     /// Wrap one maintenance-rebuild rule (`facts` -> `actions`) with the rebuilding
@@ -190,7 +195,7 @@ impl ProofInstrumentor<'_> {
                 rules.push_str(&self.fd_container_value_rebuild_rule(fdecl, &key_vars, n - 1));
             }
         }
-        self.parse_program(&rules)
+        self.parse_program(GeneratedFamily::RulesRebuildSubsumption, &rules)
     }
 
     /// The rebuild rule for one child eq-sort, driven by an `@UF_<S>` edge joined

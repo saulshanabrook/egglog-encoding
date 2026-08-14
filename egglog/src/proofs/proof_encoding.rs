@@ -7,6 +7,293 @@ use crate::proofs::proof_head::{
 };
 use crate::typechecking::FuncType;
 use crate::*;
+use std::time::{Duration, Instant};
+
+/// Semantic origin of one command emitted by the term/proof encoder.
+///
+/// This is temporary measurement metadata for the generated-frontend migration
+/// probe. It deliberately stays outside the persisted benchmark timing schema.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum GeneratedFamily {
+    ActionsGlobalsExtraction,
+    RulesRebuildSubsumption,
+    DeclarationsIndexes,
+    MiscChecksSchedulesWrappers,
+}
+
+impl GeneratedFamily {
+    #[cfg(any(feature = "bin", test))]
+    const ALL: [Self; 4] = [
+        Self::ActionsGlobalsExtraction,
+        Self::RulesRebuildSubsumption,
+        Self::DeclarationsIndexes,
+        Self::MiscChecksSchedulesWrappers,
+    ];
+
+    fn index(self) -> usize {
+        match self {
+            Self::ActionsGlobalsExtraction => 0,
+            Self::RulesRebuildSubsumption => 1,
+            Self::DeclarationsIndexes => 2,
+            Self::MiscChecksSchedulesWrappers => 3,
+        }
+    }
+
+    #[cfg(any(feature = "bin", test))]
+    fn json_name(self) -> &'static str {
+        match self {
+            Self::ActionsGlobalsExtraction => "actions_globals_extraction",
+            Self::RulesRebuildSubsumption => "rules_rebuild_subsumption",
+            Self::DeclarationsIndexes => "declarations_indexes",
+            Self::MiscChecksSchedulesWrappers => "misc_checks_schedules_wrappers",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum GeneratedCommandOrigin {
+    Family(GeneratedFamily),
+    /// `fail` preserves nested commands structurally, so its recursive
+    /// desugar/typecheck/global-removal time cannot be divided into family leaves
+    /// without instrumenting those recursive stages. Retain the emitter census
+    /// and charge the inseparable stage time to an explicit unallocated bucket.
+    NestedFail {
+        nested_commands: [u64; 4],
+    },
+}
+
+impl GeneratedCommandOrigin {
+    pub(crate) fn stage_family(self) -> Option<GeneratedFamily> {
+        match self {
+            Self::Family(family) => Some(family),
+            Self::NestedFail { .. } => None,
+        }
+    }
+}
+
+/// One generated command together with the emitter-owned origin attribution
+/// that must survive through desugaring and typechecking.
+pub(crate) struct TaggedGeneratedCommand {
+    pub(crate) origin: GeneratedCommandOrigin,
+    pub(crate) command: Command,
+}
+
+#[derive(Clone, Default, PartialEq, Eq)]
+struct GeneratedFamilyAttribution {
+    parse: Duration,
+    desugar: Duration,
+    typecheck: Duration,
+    global_removal: Duration,
+    batches_with_commands: u64,
+    pre_desugar_commands: u64,
+    post_desugar_commands: u64,
+}
+
+impl GeneratedFamilyAttribution {
+    #[cfg(any(feature = "bin", test))]
+    fn add_assign(&mut self, other: &Self) {
+        self.parse += other.parse;
+        self.desugar += other.desugar;
+        self.typecheck += other.typecheck;
+        self.global_removal += other.global_removal;
+        self.batches_with_commands += other.batches_with_commands;
+        self.pre_desugar_commands += other.pre_desugar_commands;
+        self.post_desugar_commands += other.post_desugar_commands;
+    }
+
+    #[cfg(any(feature = "bin", test))]
+    fn json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "parse_ns": self.parse.as_nanos().min(u64::MAX as u128) as u64,
+            "desugar_ns": self.desugar.as_nanos().min(u64::MAX as u128) as u64,
+            "typecheck_ns": self.typecheck.as_nanos().min(u64::MAX as u128) as u64,
+            "global_removal_ns": self.global_removal.as_nanos().min(u64::MAX as u128) as u64,
+            "batches_with_commands": self.batches_with_commands,
+            "pre_desugar_commands": self.pre_desugar_commands,
+            "post_desugar_commands": self.post_desugar_commands,
+        })
+    }
+}
+
+/// Opt-in generated-frontend accounting used only by the temporary JSON
+/// sidecar. Every stage total is recorded independently from the family leaves
+/// so the emitted closure booleans catch missed attribution paths.
+#[derive(Clone, Default)]
+pub(crate) struct GeneratedFrontendAttribution {
+    families: [GeneratedFamilyAttribution; 4],
+    totals: GeneratedFamilyAttribution,
+    batches: u64,
+    encoder_elapsed: Duration,
+    encoder_nested_parse: Duration,
+    encoder_other: Duration,
+    nested_fail: UnattributedNestedFail,
+}
+
+#[derive(Clone, Default)]
+struct UnattributedNestedFail {
+    wrappers: u64,
+    nested_commands: [u64; 4],
+    desugar: Duration,
+    typecheck: Duration,
+    global_removal: Duration,
+    post_desugar_commands: u64,
+}
+
+impl GeneratedFrontendAttribution {
+    pub(crate) fn record_parse(&mut self, family: GeneratedFamily, elapsed: Duration) {
+        self.totals.parse += elapsed;
+        self.families[family.index()].parse += elapsed;
+    }
+
+    pub(crate) fn record_encoder(&mut self, elapsed: Duration, nested_parse: Duration) {
+        debug_assert!(nested_parse <= elapsed);
+        self.encoder_elapsed += elapsed;
+        self.encoder_nested_parse += nested_parse;
+        self.encoder_other += elapsed.saturating_sub(nested_parse);
+    }
+
+    pub(crate) fn record_batch(&mut self, commands: &[TaggedGeneratedCommand]) {
+        self.batches += 1;
+        self.totals.batches_with_commands += u64::from(!commands.is_empty());
+        let count = u64::try_from(commands.len()).unwrap_or(u64::MAX);
+        self.totals.pre_desugar_commands += count;
+        let mut present = [false; 4];
+        for command in commands {
+            let index = match command.origin {
+                GeneratedCommandOrigin::Family(family) => family.index(),
+                GeneratedCommandOrigin::NestedFail { nested_commands } => {
+                    self.nested_fail.wrappers += 1;
+                    for (total, count) in self
+                        .nested_fail
+                        .nested_commands
+                        .iter_mut()
+                        .zip(nested_commands)
+                    {
+                        *total += count;
+                    }
+                    GeneratedFamily::MiscChecksSchedulesWrappers.index()
+                }
+            };
+            self.families[index].pre_desugar_commands += 1;
+            present[index] = true;
+        }
+        for (metrics, present) in self.families.iter_mut().zip(present) {
+            metrics.batches_with_commands += u64::from(present);
+        }
+    }
+
+    pub(crate) fn record_desugar(
+        &mut self,
+        family: Option<GeneratedFamily>,
+        elapsed: Duration,
+        post_desugar_commands: usize,
+    ) {
+        let count = u64::try_from(post_desugar_commands).unwrap_or(u64::MAX);
+        self.totals.desugar += elapsed;
+        self.totals.post_desugar_commands += count;
+        if let Some(family) = family {
+            let metrics = &mut self.families[family.index()];
+            metrics.desugar += elapsed;
+            metrics.post_desugar_commands += count;
+        } else {
+            self.nested_fail.desugar += elapsed;
+            self.nested_fail.post_desugar_commands += count;
+        }
+    }
+
+    pub(crate) fn record_typecheck(&mut self, family: Option<GeneratedFamily>, elapsed: Duration) {
+        self.totals.typecheck += elapsed;
+        if let Some(family) = family {
+            self.families[family.index()].typecheck += elapsed;
+        } else {
+            self.nested_fail.typecheck += elapsed;
+        }
+    }
+
+    pub(crate) fn record_global_removal(
+        &mut self,
+        family: Option<GeneratedFamily>,
+        elapsed: Duration,
+    ) {
+        self.totals.global_removal += elapsed;
+        if let Some(family) = family {
+            self.families[family.index()].global_removal += elapsed;
+        } else {
+            self.nested_fail.global_removal += elapsed;
+        }
+    }
+
+    #[cfg(any(feature = "bin", test))]
+    pub(crate) fn json(&self) -> serde_json::Value {
+        let mut families = serde_json::Map::new();
+        let mut family_sum = GeneratedFamilyAttribution::default();
+        for family in GeneratedFamily::ALL {
+            let metrics = &self.families[family.index()];
+            family_sum.add_assign(metrics);
+            families.insert(family.json_name().to_owned(), metrics.json());
+        }
+        let mut nested_commands = serde_json::Map::new();
+        for family in GeneratedFamily::ALL {
+            nested_commands.insert(
+                family.json_name().to_owned(),
+                self.nested_fail.nested_commands[family.index()].into(),
+            );
+        }
+        let encoder_closes =
+            self.encoder_elapsed == self.encoder_nested_parse.saturating_add(self.encoder_other);
+        let nested_fail_stage_time = self
+            .nested_fail
+            .desugar
+            .saturating_add(self.nested_fail.typecheck)
+            .saturating_add(self.nested_fail.global_removal);
+        serde_json::json!({
+            "schema_version": 1,
+            "units": "nanoseconds",
+            "batches": self.batches,
+            "encoder": {
+                "family_attribution": "unallocated_remainder",
+                "elapsed_ns": self.encoder_elapsed.as_nanos().min(u64::MAX as u128) as u64,
+                "nested_parse_ns": self.encoder_nested_parse.as_nanos().min(u64::MAX as u128) as u64,
+                "other_ns": self.encoder_other.as_nanos().min(u64::MAX as u128) as u64,
+            },
+            "families": families,
+            "unattributed_nested_fail": {
+                "wrappers": self.nested_fail.wrappers,
+                "nested_pre_desugar_commands_by_family": nested_commands,
+                "desugar_ns": self.nested_fail.desugar.as_nanos().min(u64::MAX as u128) as u64,
+                "typecheck_ns": self.nested_fail.typecheck.as_nanos().min(u64::MAX as u128) as u64,
+                "global_removal_ns": self.nested_fail.global_removal.as_nanos().min(u64::MAX as u128) as u64,
+                "post_desugar_commands": self.nested_fail.post_desugar_commands,
+            },
+            "totals": self.totals.json(),
+            "closure": {
+                "stage_timings_accounted": family_sum.parse == self.totals.parse
+                    && family_sum.desugar.saturating_add(self.nested_fail.desugar)
+                        == self.totals.desugar
+                    && family_sum.typecheck.saturating_add(self.nested_fail.typecheck)
+                        == self.totals.typecheck
+                    && family_sum
+                        .global_removal
+                        .saturating_add(self.nested_fail.global_removal)
+                        == self.totals.global_removal,
+                "family_stage_attribution_complete": self.nested_fail.wrappers == 0
+                    && nested_fail_stage_time.is_zero(),
+                "family_attribution_complete": self.nested_fail.wrappers == 0
+                    && nested_fail_stage_time.is_zero()
+                    && self.encoder_other.is_zero(),
+                "pre_desugar_commands_match": family_sum.pre_desugar_commands
+                    == self.totals.pre_desugar_commands,
+                "post_desugar_commands_accounted": family_sum
+                    .post_desugar_commands
+                    .saturating_add(self.nested_fail.post_desugar_commands)
+                    == self.totals.post_desugar_commands,
+                "encoder_nested_parse_matches_family_parse": self.encoder_nested_parse
+                    == self.totals.parse,
+                "encoder_elapsed_matches_nested_parse_plus_other": encoder_closes,
+            },
+        })
+    }
+}
 
 /// A value an instrumented action names: the id later statements read it by
 /// and, for a term the encoding built here, the term as written plus the proof
@@ -206,6 +493,9 @@ pub(crate) struct EncodingState {
     /// whole-database baseline) instead of `:unsafe-seminaive`, so tests can
     /// assert the two produce the same database.
     pub force_proof_naive: bool,
+    /// Temporary opt-in accounting for the generated-frontend migration probe.
+    /// `None` is the production/default path.
+    pub generated_frontend_attribution: Option<GeneratedFrontendAttribution>,
 }
 
 impl EncodingState {
@@ -222,6 +512,7 @@ impl EncodingState {
             proof_testing: false,
             verify_proofs: true,
             force_proof_naive: false,
+            generated_frontend_attribution: None,
         }
     }
 }
@@ -242,7 +533,7 @@ pub(crate) struct ProofInstrumentor<'a> {
     /// Declarations the statements written so far need — packed proof
     /// constructors and subsumption scaffolding — to be emitted ahead of the
     /// command using them.
-    pending_decls: Vec<String>,
+    pending_decls: Vec<(GeneratedFamily, String)>,
     /// The body anchors of the query being instrumented (see [`BodyAnchors`]).
     anchors: BodyAnchors,
     /// Anchor requests no body atom could reach, as proof variable and the
@@ -390,6 +681,41 @@ fn read_vars(args_joined: &str) -> impl Iterator<Item = &str> {
         .map(|arg| arg.trim_matches(|c| c == '(' || c == ')'))
 }
 
+/// Emit one generated batch and, when the temporary probe is enabled, record
+/// encoder time exclusive of the parse helpers it invokes.
+pub(crate) fn add_term_encoding(
+    egraph: &mut EGraph,
+    program: Vec<ResolvedNCommand>,
+) -> Result<Vec<TaggedGeneratedCommand>, Error> {
+    let attribution_enabled = egraph.proof_state.generated_frontend_attribution.is_some();
+    let parse_before = egraph
+        .proof_state
+        .generated_frontend_attribution
+        .as_ref()
+        .map(|attribution| attribution.totals.parse)
+        .unwrap_or_default();
+    let encoder_timer = attribution_enabled.then(Instant::now);
+    let generated = ProofInstrumentor::new(egraph).add_term_encoding_helper(program)?;
+    if let Some(encoder_timer) = encoder_timer {
+        let elapsed = encoder_timer.elapsed();
+        let parse_after = egraph
+            .proof_state
+            .generated_frontend_attribution
+            .as_ref()
+            .expect("enabled generated attribution must remain present")
+            .totals
+            .parse;
+        let attribution = egraph
+            .proof_state
+            .generated_frontend_attribution
+            .as_mut()
+            .expect("enabled generated attribution must remain present");
+        attribution.record_encoder(elapsed, parse_after.saturating_sub(parse_before));
+        attribution.record_batch(&generated);
+    }
+    Ok(generated)
+}
+
 impl<'a> ProofInstrumentor<'a> {
     pub(crate) fn new(egraph: &'a mut EGraph) -> Self {
         Self {
@@ -401,14 +727,6 @@ impl<'a> ProofInstrumentor<'a> {
             anchors: BodyAnchors::default(),
             unanchored: HashMap::default(),
         }
-    }
-
-    /// Make a term state and use it to instrument the code.
-    pub(crate) fn add_term_encoding(
-        egraph: &'a mut EGraph,
-        program: Vec<ResolvedNCommand>,
-    ) -> Result<Vec<Command>, Error> {
-        Self::new(egraph).add_term_encoding_helper(program)
     }
 
     pub(crate) fn lower_inputs(
@@ -699,7 +1017,7 @@ impl<'a> ProofInstrumentor<'a> {
     /// When one term has two parents, those parents are unioned in the merge action.
     /// Also, we have a rule that maintains the invariant that each term points to its
     /// canonical representative.
-    fn declare_sort(&mut self, sort_name: &str, is_container: bool) -> Vec<Command> {
+    fn declare_sort(&mut self, sort_name: &str, is_container: bool) -> Vec<TaggedGeneratedCommand> {
         // Containers are canonicalized structurally, not unioned directly. In
         // proof mode a container still needs its projection relation, which the
         // rebuild primitive mints for a nested container without going through
@@ -709,7 +1027,16 @@ impl<'a> ProofInstrumentor<'a> {
                 // Emitted after the sort's own declaration rather than ahead of
                 // it, since the relation's column is of that sort.
                 let (_, decl) = self.proj_all_decl(sort_name);
-                return self.parse_program(&decl);
+                return self
+                    .parse_program(GeneratedFamily::DeclarationsIndexes, &decl)
+                    .into_iter()
+                    .map(|command| TaggedGeneratedCommand {
+                        origin: GeneratedCommandOrigin::Family(
+                            GeneratedFamily::DeclarationsIndexes,
+                        ),
+                        command,
+                    })
+                    .collect();
             }
             return vec![];
         }
@@ -756,7 +1083,7 @@ impl<'a> ProofInstrumentor<'a> {
     /// term to its parent plus a proof `key = parent` (`()` in term mode). Its
     /// `:merge` resolves conflicting parents (see `proof_encoding.md`). Also emits
     /// the `path_compress` rule.
-    fn declare_sort_eq(&mut self, sort_name: &str) -> Vec<Command> {
+    fn declare_sort_eq(&mut self, sort_name: &str) -> Vec<TaggedGeneratedCommand> {
         let proofs = self.proofs_enabled();
         let uf_name = self.uf_name(sort_name);
         let proof_type = self.proof_type_str().to_string();
@@ -783,20 +1110,40 @@ impl<'a> ProofInstrumentor<'a> {
             (String::new(), "()".to_string())
         };
 
-        let code = format!(
+        let declarations = format!(
             "{packed_decl}
-             (function {uf_name} ({sort_name}) ({sort_name} {proof_type}) :merge {uf_merge} :unextractable :internal-hidden :internal-identity-vals 1)
-             (rule ((= (values {b} {pb}) ({uf_name} {a}))
+             (function {uf_name} ({sort_name}) ({sort_name} {proof_type}) :merge {uf_merge} :unextractable :internal-hidden :internal-identity-vals 1)"
+        );
+        let path_compress_rule = format!(
+            "(rule ((= (values {b} {pb}) ({uf_name} {a}))
                     (= (values {c} {pc}) ({uf_name} {b}))
                     (!= {b} {c}))
                   ({compressed_proof_lets}
                    (set ({uf_name} {a}) (values {c} {compressed_proof})))
                    :ruleset {path_compress_ruleset_name}
-                   :name \"{fresh_name}\")
-                   "
+                   :name \"{fresh_name}\")"
         );
 
-        self.parse_program(&code)
+        let mut commands = self
+            .parse_program(GeneratedFamily::DeclarationsIndexes, &declarations)
+            .into_iter()
+            .map(|command| TaggedGeneratedCommand {
+                origin: GeneratedCommandOrigin::Family(GeneratedFamily::DeclarationsIndexes),
+                command,
+            })
+            .collect::<Vec<_>>();
+        commands.extend(
+            self.parse_program(
+                GeneratedFamily::RulesRebuildSubsumption,
+                &path_compress_rule,
+            )
+            .into_iter()
+            .map(|command| TaggedGeneratedCommand {
+                origin: GeneratedCommandOrigin::Family(GeneratedFamily::RulesRebuildSubsumption),
+                command,
+            }),
+        );
+        commands
     }
 
     /// A global is a `:internal-let` function; in the encoding it is treated like a
@@ -873,7 +1220,11 @@ impl<'a> ProofInstrumentor<'a> {
     /// The view table stores child terms and their eclass.
     /// The view table is mutated using delete, but we never delete from term tables.
     /// We re-use the original name of the function for the term table.
-    fn term_and_view(&mut self, fdecl: &ResolvedFunctionDecl) -> Vec<Command> {
+    fn term_and_view(
+        &mut self,
+        family: GeneratedFamily,
+        fdecl: &ResolvedFunctionDecl,
+    ) -> Vec<TaggedGeneratedCommand> {
         let schema = &fdecl.schema;
         let out_type = schema.output().clone();
 
@@ -972,13 +1323,40 @@ impl<'a> ProofInstrumentor<'a> {
         };
         // The term relation is a term node (`:internal-term-node`): its rows are
         // reconstructed by proof extraction, with the minted id as the last input.
-        self.parse_program(&format!(
-            "
-            {fresh_sort_decl}
-            (function {name} ({term_sorts} {view_sort}) Unit :no-merge :internal-hidden :internal-term-node)
-            {packed_decl}{view_decl}
-            {index_decls}",
-        ))
+        let term_decl = format!(
+            "{fresh_sort_decl}
+             (function {name} ({term_sorts} {view_sort}) Unit :no-merge :internal-hidden :internal-term-node)"
+        );
+        let view_and_indexes = format!("{view_decl}\n{index_decls}");
+        let mut commands = self
+            .parse_program(family, &term_decl)
+            .into_iter()
+            .map(|command| TaggedGeneratedCommand {
+                origin: GeneratedCommandOrigin::Family(family),
+                command,
+            })
+            .collect::<Vec<_>>();
+        if !packed_decl.is_empty() {
+            commands.extend(
+                self.parse_program(GeneratedFamily::DeclarationsIndexes, &packed_decl)
+                    .into_iter()
+                    .map(|command| TaggedGeneratedCommand {
+                        origin: GeneratedCommandOrigin::Family(
+                            GeneratedFamily::DeclarationsIndexes,
+                        ),
+                        command,
+                    }),
+            );
+        }
+        commands.extend(
+            self.parse_program(family, &view_and_indexes)
+                .into_iter()
+                .map(|command| TaggedGeneratedCommand {
+                    origin: GeneratedCommandOrigin::Family(family),
+                    command,
+                }),
+        );
+        commands
     }
 
     // Actions need to be instrumented to add to the view
@@ -1430,7 +1808,8 @@ impl<'a> ProofInstrumentor<'a> {
         let (name, args) = self.single_step(&composition).unwrap_or_else(|| {
             let (name, decl) = self.packed_proof_constructor(columns.len());
             if !decl.is_empty() {
-                self.pending_decls.push(decl);
+                self.pending_decls
+                    .push((GeneratedFamily::DeclarationsIndexes, decl));
             }
             let spelling = skeleton.spelling();
             (name, format!("\"{spelling}\" {}", columns.join(" ")))
@@ -1441,12 +1820,23 @@ impl<'a> ProofInstrumentor<'a> {
 
     /// The declarations the statements written since the last call need, as
     /// commands to run ahead of the ones using them.
-    fn take_pending_decls(&mut self) -> Vec<Command> {
+    fn take_pending_decls(&mut self) -> Vec<TaggedGeneratedCommand> {
         if self.pending_decls.is_empty() {
             return vec![];
         }
-        let decls = std::mem::take(&mut self.pending_decls).join("");
-        self.parse_program(&decls)
+        let pending = std::mem::take(&mut self.pending_decls);
+        let mut commands = vec![];
+        for (family, source) in pending {
+            commands.extend(
+                self.parse_program(family, &source)
+                    .into_iter()
+                    .map(|command| TaggedGeneratedCommand {
+                        origin: GeneratedCommandOrigin::Family(family),
+                        command,
+                    }),
+            );
+        }
+        commands
     }
 
     /// The name of `sort`'s fiat justification, declaring the relation ahead of
@@ -1461,8 +1851,11 @@ impl<'a> ProofInstrumentor<'a> {
             .insert(sort.to_string())
         {
             let proof = self.proof_sort();
-            self.pending_decls.push(format!(
-                "(function {name} ({sort} {sort} {proof}) Unit :no-merge :internal-hidden :internal-term-node)\n"
+            self.pending_decls.push((
+                GeneratedFamily::DeclarationsIndexes,
+                format!(
+                    "(function {name} ({sort} {sort} {proof}) Unit :no-merge :internal-hidden :internal-term-node)\n"
+                ),
             ));
         }
         name
@@ -1493,7 +1886,8 @@ impl<'a> ProofInstrumentor<'a> {
     pub(crate) fn proj_all_constructor(&mut self, sort: &str) -> String {
         let (name, decl) = self.proj_all_decl(sort);
         if !decl.is_empty() {
-            self.pending_decls.push(decl);
+            self.pending_decls
+                .push((GeneratedFamily::DeclarationsIndexes, decl));
         }
         name
     }
@@ -1508,8 +1902,11 @@ impl<'a> ProofInstrumentor<'a> {
             .subsume_declared
             .insert(func.to_string())
         {
-            let decls = self.subsume_scaffolding(func, input);
-            self.pending_decls.push(decls);
+            let (declaration, rules) = self.subsume_scaffolding(func, input);
+            self.pending_decls
+                .push((GeneratedFamily::DeclarationsIndexes, declaration));
+            self.pending_decls
+                .push((GeneratedFamily::RulesRebuildSubsumption, rules));
         }
         self.subsumed_name(func)
     }
@@ -2127,7 +2524,7 @@ impl<'a> ProofInstrumentor<'a> {
             ListDisplay(facts, " "),
             ListDisplay(actions, " "),
         );
-        self.parse_program(&instrumented)
+        self.parse_program(GeneratedFamily::RulesRebuildSubsumption, &instrumented)
     }
 
     /// Any schedule should be sound as long as we saturate.
@@ -2138,14 +2535,17 @@ impl<'a> ProofInstrumentor<'a> {
         let subsume_ruleset = self.proof_names().subsume_ruleset_name.clone();
         // The `@UF` `:merge` resolves conflicting parents itself, so only
         // `path_compress` (flattening chains) remains as UF maintenance.
-        self.parse_schedule(format!(
-            "(seq
+        self.parse_schedule(
+            GeneratedFamily::MiscChecksSchedulesWrappers,
+            format!(
+                "(seq
               (saturate
                   {rebuilding_cleanup_ruleset}
                   (saturate {path_compress_ruleset})
                   {rebuilding_ruleset})
               {subsume_ruleset})"
-        ))
+            ),
+        )
     }
 
     fn instrument_schedule(&mut self, schedule: &ResolvedSchedule) -> Schedule {
@@ -2155,7 +2555,10 @@ impl<'a> ProofInstrumentor<'a> {
                     Some(ref facts) => {
                         let (instrumented, _lookups, _premises) = self.instrument_facts(facts);
                         self.drop_pending_lookups();
-                        let instrumented_facts = self.parse_facts(&instrumented);
+                        let instrumented_facts = self.parse_facts(
+                            GeneratedFamily::MiscChecksSchedulesWrappers,
+                            &instrumented,
+                        );
                         Schedule::Run(
                             span.clone(),
                             RunConfig {
@@ -2243,7 +2646,7 @@ impl<'a> ProofInstrumentor<'a> {
     fn term_encode_command(
         &mut self,
         command: &ResolvedNCommand,
-        res: &mut Vec<Command>,
+        res: &mut Vec<TaggedGeneratedCommand>,
     ) -> Result<(), Error> {
         log::trace!("Term encoding for {command}");
         match &command {
@@ -2284,25 +2687,47 @@ impl<'a> ProofInstrumentor<'a> {
                 } else {
                     None
                 };
-                res.push(Command::Sort {
-                    span: span.clone(),
-                    name: name.clone(),
-                    presort_and_args: presort_and_args.clone(),
-                    uf: uf_name,
-                    unionable: *unionable,
-                    container_rebuild,
-                    // The Proof sort (which carries :internal-proof-names) is
-                    // emitted as source by the proof header, not here.
-                    proof_constructors: None,
+                res.push(TaggedGeneratedCommand {
+                    origin: GeneratedCommandOrigin::Family(GeneratedFamily::DeclarationsIndexes),
+                    command: Command::Sort {
+                        span: span.clone(),
+                        name: name.clone(),
+                        presort_and_args: presort_and_args.clone(),
+                        uf: uf_name,
+                        unionable: *unionable,
+                        container_rebuild,
+                        // The Proof sort (which carries :internal-proof-names) is
+                        // emitted as source by the proof header, not here.
+                        proof_constructors: None,
+                    },
                 });
                 res.extend(self.declare_sort(name, is_container));
             }
             ResolvedNCommand::Function(fdecl) => {
-                res.extend(self.term_and_view(fdecl));
-                res.extend(self.rebuilding_rules(fdecl));
+                let declaration_family = if self.is_encoded_global(fdecl) {
+                    GeneratedFamily::ActionsGlobalsExtraction
+                } else {
+                    GeneratedFamily::DeclarationsIndexes
+                };
+                res.extend(self.term_and_view(declaration_family, fdecl));
+                res.extend(self.rebuilding_rules(fdecl).into_iter().map(|command| {
+                    TaggedGeneratedCommand {
+                        origin: GeneratedCommandOrigin::Family(
+                            GeneratedFamily::RulesRebuildSubsumption,
+                        ),
+                        command,
+                    }
+                }));
             }
             ResolvedNCommand::NormRule { rule } => {
-                res.extend(self.instrument_rule(rule));
+                res.extend(self.instrument_rule(rule).into_iter().map(|command| {
+                    TaggedGeneratedCommand {
+                        origin: GeneratedCommandOrigin::Family(
+                            GeneratedFamily::RulesRebuildSubsumption,
+                        ),
+                        command,
+                    }
+                }));
             }
             // A top-level action, or a block of them. The instrumented result
             // runs as one local-scope block so the minted temporaries stay
@@ -2319,7 +2744,19 @@ impl<'a> ProofInstrumentor<'a> {
                 // A term built here records a connector nothing may go on to
                 // compose with; whatever is still deferred reached no statement.
                 self.drop_pending_lookups();
-                res.extend(self.parse_program_as_local_actions(&instrumented));
+                res.extend(
+                    self.parse_program_as_local_actions(
+                        GeneratedFamily::ActionsGlobalsExtraction,
+                        &instrumented,
+                    )
+                    .into_iter()
+                    .map(|command| TaggedGeneratedCommand {
+                        origin: GeneratedCommandOrigin::Family(
+                            GeneratedFamily::ActionsGlobalsExtraction,
+                        ),
+                        command,
+                    }),
+                );
             }
             ResolvedNCommand::LetBegin(..) => {
                 unreachable!("LetBegin is removed by remove_globals")
@@ -2327,13 +2764,26 @@ impl<'a> ProofInstrumentor<'a> {
             ResolvedNCommand::Check(span, facts) => {
                 let (instrumented, _lookups, _premises) = self.instrument_facts(facts);
                 self.drop_pending_lookups();
-                res.push(Command::Check(
-                    span.clone(),
-                    self.parse_facts(&instrumented),
-                ));
+                res.push(TaggedGeneratedCommand {
+                    origin: GeneratedCommandOrigin::Family(
+                        GeneratedFamily::MiscChecksSchedulesWrappers,
+                    ),
+                    command: Command::Check(
+                        span.clone(),
+                        self.parse_facts(
+                            GeneratedFamily::MiscChecksSchedulesWrappers,
+                            &instrumented,
+                        ),
+                    ),
+                });
             }
             ResolvedNCommand::RunSchedule(schedule) => {
-                res.push(Command::RunSchedule(self.instrument_schedule(schedule)));
+                res.push(TaggedGeneratedCommand {
+                    origin: GeneratedCommandOrigin::Family(
+                        GeneratedFamily::MiscChecksSchedulesWrappers,
+                    ),
+                    command: Command::RunSchedule(self.instrument_schedule(schedule)),
+                });
             }
             ResolvedNCommand::Fail(span, cmds) => {
                 // Encode every wrapped command and keep the whole flattened result
@@ -2342,7 +2792,33 @@ impl<'a> ProofInstrumentor<'a> {
                 for cmd in cmds {
                     self.term_encode_command(cmd, &mut encoded)?;
                 }
-                res.push(Command::Fail(span.clone(), encoded));
+                let mut nested_commands = [0; 4];
+                for generated in &encoded {
+                    match generated.origin {
+                        GeneratedCommandOrigin::Family(family) => {
+                            nested_commands[family.index()] += 1;
+                        }
+                        GeneratedCommandOrigin::NestedFail {
+                            nested_commands: inner,
+                        } => {
+                            nested_commands
+                                [GeneratedFamily::MiscChecksSchedulesWrappers.index()] += 1;
+                            for (total, count) in nested_commands.iter_mut().zip(inner) {
+                                *total += count;
+                            }
+                        }
+                    }
+                }
+                res.push(TaggedGeneratedCommand {
+                    origin: GeneratedCommandOrigin::NestedFail { nested_commands },
+                    command: Command::Fail(
+                        span.clone(),
+                        encoded
+                            .into_iter()
+                            .map(|generated: TaggedGeneratedCommand| generated.command)
+                            .collect(),
+                    ),
+                });
             }
             ResolvedNCommand::Input { name, .. } => {
                 // Loaded natively at run time (see `EGraph::native_input`), inserting
@@ -2354,7 +2830,12 @@ impl<'a> ProofInstrumentor<'a> {
                     let sort = self.term_sort(name);
                     self.fiat_constructor(&sort);
                 }
-                res.push(command.to_command().make_unresolved());
+                res.push(TaggedGeneratedCommand {
+                    origin: GeneratedCommandOrigin::Family(
+                        GeneratedFamily::ActionsGlobalsExtraction,
+                    ),
+                    command: command.to_command().make_unresolved(),
+                });
             }
             ResolvedNCommand::Extract(span, expr, variants) => {
                 // Instrument the expressions to use view tables (like actions, not facts)
@@ -2376,15 +2857,40 @@ impl<'a> ProofInstrumentor<'a> {
 
                 // Add any action statements needed to set up the expressions
                 for stmt in action_stmts {
-                    res.extend(self.parse_program(&stmt));
+                    res.extend(
+                        self.parse_program(GeneratedFamily::ActionsGlobalsExtraction, &stmt)
+                            .into_iter()
+                            .map(|command| TaggedGeneratedCommand {
+                                origin: GeneratedCommandOrigin::Family(
+                                    GeneratedFamily::ActionsGlobalsExtraction,
+                                ),
+                                command,
+                            }),
+                    );
                 }
                 // Rebuild before extract; we may have added new view rows that need canonicalization
-                res.push(Command::RunSchedule(self.rebuild()));
-                res.push(Command::Extract(
-                    span.clone(),
-                    self.parse_expr(&instrumented_expr),
-                    self.parse_expr(&instrumented_variants),
-                ));
+                res.push(TaggedGeneratedCommand {
+                    origin: GeneratedCommandOrigin::Family(
+                        GeneratedFamily::MiscChecksSchedulesWrappers,
+                    ),
+                    command: Command::RunSchedule(self.rebuild()),
+                });
+                res.push(TaggedGeneratedCommand {
+                    origin: GeneratedCommandOrigin::Family(
+                        GeneratedFamily::ActionsGlobalsExtraction,
+                    ),
+                    command: Command::Extract(
+                        span.clone(),
+                        self.parse_expr(
+                            GeneratedFamily::ActionsGlobalsExtraction,
+                            &instrumented_expr,
+                        ),
+                        self.parse_expr(
+                            GeneratedFamily::ActionsGlobalsExtraction,
+                            &instrumented_variants,
+                        ),
+                    ),
+                });
             }
             ResolvedNCommand::PrintSize(span, name) => {
                 // In proof mode, print the size of the view table for constructors
@@ -2400,18 +2906,33 @@ impl<'a> ProofInstrumentor<'a> {
                         n.clone()
                     }
                 });
-                res.push(Command::PrintSize(span.clone(), new_name));
+                res.push(TaggedGeneratedCommand {
+                    origin: GeneratedCommandOrigin::Family(
+                        GeneratedFamily::MiscChecksSchedulesWrappers,
+                    ),
+                    command: Command::PrintSize(span.clone(), new_name),
+                });
             }
             ResolvedNCommand::Pop(..)
             | ResolvedNCommand::Push(..)
-            | ResolvedNCommand::Index { .. }
-            | ResolvedNCommand::AddRuleset(..)
             | ResolvedNCommand::Output { .. }
-            | ResolvedNCommand::UnstableCombinedRuleset(..)
             | ResolvedNCommand::PrintOverallStatistics(..)
             | ResolvedNCommand::PrintFunction(..)
             | ResolvedNCommand::ProveExists(..) => {
-                res.push(command.to_command().make_unresolved());
+                res.push(TaggedGeneratedCommand {
+                    origin: GeneratedCommandOrigin::Family(
+                        GeneratedFamily::MiscChecksSchedulesWrappers,
+                    ),
+                    command: command.to_command().make_unresolved(),
+                });
+            }
+            ResolvedNCommand::Index { .. }
+            | ResolvedNCommand::AddRuleset(..)
+            | ResolvedNCommand::UnstableCombinedRuleset(..) => {
+                res.push(TaggedGeneratedCommand {
+                    origin: GeneratedCommandOrigin::Family(GeneratedFamily::DeclarationsIndexes),
+                    command: command.to_command().make_unresolved(),
+                });
             }
             ResolvedNCommand::UserDefined(..) => {
                 panic!("User defined commands unsupported in term encoding");
@@ -2423,20 +2944,41 @@ impl<'a> ProofInstrumentor<'a> {
     pub(crate) fn add_term_encoding_helper(
         &mut self,
         program: Vec<ResolvedNCommand>,
-    ) -> Result<Vec<Command>, Error> {
+    ) -> Result<Vec<TaggedGeneratedCommand>, Error> {
         let mut res = vec![];
 
         if !self.egraph.proof_state.term_header_added {
-            res.extend(self.term_header());
+            res.extend(
+                self.term_header()
+                    .into_iter()
+                    .map(|command| TaggedGeneratedCommand {
+                        origin: GeneratedCommandOrigin::Family(
+                            GeneratedFamily::DeclarationsIndexes,
+                        ),
+                        command,
+                    }),
+            );
             if self.egraph.proof_state.proofs_enabled {
                 let proof_header = self.proof_header();
-                res.extend(self.parse_program(&proof_header));
+                res.extend(
+                    self.parse_program(GeneratedFamily::DeclarationsIndexes, &proof_header)
+                        .into_iter()
+                        .map(|command| TaggedGeneratedCommand {
+                            origin: GeneratedCommandOrigin::Family(
+                                GeneratedFamily::DeclarationsIndexes,
+                            ),
+                            command,
+                        }),
+                );
             }
             self.egraph.proof_state.term_header_added = true;
         }
         if self.egraph.proof_state.proofs_enabled {
             let arities = self.rule_arity_header(&program);
-            res.extend(arities);
+            res.extend(arities.into_iter().map(|command| TaggedGeneratedCommand {
+                origin: GeneratedCommandOrigin::Family(GeneratedFamily::DeclarationsIndexes),
+                command,
+            }));
         }
 
         for command in program {
@@ -2448,7 +2990,12 @@ impl<'a> ProofInstrumentor<'a> {
             res.splice(at..at, self.take_pending_decls());
 
             if !command_skips_rebuild(&command) {
-                res.push(Command::RunSchedule(self.rebuild()));
+                res.push(TaggedGeneratedCommand {
+                    origin: GeneratedCommandOrigin::Family(
+                        GeneratedFamily::MiscChecksSchedulesWrappers,
+                    ),
+                    command: Command::RunSchedule(self.rebuild()),
+                });
             }
         }
 
