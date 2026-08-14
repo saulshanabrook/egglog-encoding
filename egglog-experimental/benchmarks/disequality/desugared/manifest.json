@@ -1,7 +1,7 @@
 {
-  "binary_version": "egglog 2.0.0_2026-08-13_bde933f",
+  "binary_version": "egglog 2.0.0_2026-08-14_88c40cf",
   "command": "egglog-experimental --disequality-encoding ENCODING --mode desugar parameter-analysis.egg",
-  "compiler_revision": "bde933f23e1f4d0af45d867472719b1d4360a728",
+  "compiler_revision": "88c40cf6a298a8c503a741b8e736d5cc7498f348",
   "schema_version": 1,
   "snapshots": {
     "de": {

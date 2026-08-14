@@ -35,18 +35,33 @@ impl CommandMacro for CountCommandMacroCalls {
 }
 
 #[test]
-fn fail_body_is_not_passed_through_command_macros_twice() {
+fn fail_children_are_macro_expanded_once_in_source_order() {
     let calls = Arc::new(Mutex::new(0));
+    let seen = Arc::new(Mutex::new(vec![]));
     let mut egraph = EGraph::default();
     egraph
         .command_macros_mut()
         .register(Arc::new(CountCommandMacroCalls(calls.clone())));
+    egraph
+        .command_macros_mut()
+        .register(Arc::new(RecordFunctionInputArity {
+            name: "score".to_string(),
+            seen: seen.clone(),
+        }));
 
     egraph
-        .parse_and_run_program(None, "(fail (check (= 1 2)))")
+        .parse_and_run_program(
+            None,
+            r#"
+            (fail
+              (function score (i64) i64 :merge old)
+              (check (= 1 2)))
+            "#,
+        )
         .unwrap();
 
-    assert_eq!(*calls.lock().unwrap(), 1);
+    assert_eq!(*calls.lock().unwrap(), 2);
+    assert_eq!(*seen.lock().unwrap(), vec![1]);
 }
 
 impl CommandMacro for RecordFunctionInputArity {

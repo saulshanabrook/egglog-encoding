@@ -1,6 +1,6 @@
 # Dis/Equality Graphs egglog integration
 
-Run date: 2026-08-13 (America/New_York)
+Run date: 2026-08-14 (America/New_York)
 
 This directory evaluates the four compiled disequality encodings in all three
 case studies from *Dis/Equality Graphs*:
@@ -67,9 +67,18 @@ small host interface:
 Operations accumulated by a host are submitted as one egglog `(begin ...)`
 batch. Stable numeric handles refer to a generic `BenchmarkNode(String, Vec)`
 language, so neither host has to generate a new egglog datatype for its source
-language. Pairwise comparison and global consistency are deliberately separate:
-Propel can continue asking pairwise questions after a branch has become
-contradictory, matching its native graph interface.
+language. Committed capture batches are stored behind immutable shared slices,
+so cloning a host graph shares its operation history rather than copying every
+operator string and child vector. Pairwise comparison and global consistency
+are deliberately separate: Propel can continue asking pairwise questions after
+a branch has become contradictory, matching its native graph interface. A
+regression covers an indeterminate pair query after an unrelated contradiction.
+
+For inspection, the backend also retains the typed host operations and emits a
+normalized standalone replay. The replay constructs every term and applies
+every union/disequality in one local `(begin ...)` block, without exposing the
+runtime handle-lookup function. This makes the committed captures concise and
+allows the exact source programs to run under term and proof encodings.
 
 The Rust API is used directly by the EUF solver. A panic-contained C ABI in
 [`include/egglog_disequality.h`](egglog-backend/include/egglog_disequality.h)
@@ -106,8 +115,15 @@ false equality literals to `disequal`, and asks whether the resulting graph is
 consistent. This is the same live SAT-model/theory-check boundary used by the
 artifact; it is not an offline trace replay.
 
-The tests run one SAT and one congruence-driven UNSAT fixture through all six
-backends. They also emit and replay an egglog model in both source forms.
+Both direct-disequality backends also install `true != false` before enumerating
+models. The imported native-DE artifact omitted that edge, which accepts the
+inconsistent assignment `a = b`, `p(a)`, and `not p(b)`. The correction is an
+explicit semantic divergence from the published implementation, covered by a
+Boolean-congruence fixture.
+
+The tests run one SAT, one congruence-driven UNSAT, and one Boolean-congruence
+UNSAT fixture through all six backends. They also emit and replay an egglog
+model in both source forms.
 
 ```sh
 cargo test --manifest-path benchmarks/disequality/euf-solver/Cargo.toml
@@ -161,8 +177,8 @@ only generic host nodes and exposes extension rows separately.
 [`validate_propel.py`](scripts/validate_propel.py) compares each completed
 variant's proof success/failure with native DE and preserves timeouts and
 execution errors separately. The checked-in
-[`propel-parity.json`](reports/propel-parity.json) records binary and corpus
-hashes plus every individual result.
+[`propel-parity.json`](reports/propel-parity.json) records the source commit and
+dirty state, binary and corpus hashes, and every individual result.
 
 The bounded 10-second run over all 128 imported programs made 380 direct,
 comparable egglog-versus-native observations; all 380 matched. All five variants
@@ -194,9 +210,20 @@ Use `--glob 'tip_*.propel'` to select the 39 TIP programs used by the paper.
 - the final graph out of 52 produced by Propel's `gset_comm.propel` run.
 
 Each example has one encoding-independent source program and four actual
-desugared programs, one for EE, OEE, NEE, and DE. The manifest records input
-hashes, graph/model selection, and output hashes. Generation also replays every
-raw and desugared file through the egglog CLI.
+desugared programs, one for EE, OEE, NEE, and DE. The replay attaches two
+`BenchmarkWitness` terms to the first explicit host union and checks that the
+witnesses are equal, so proof testing validates an equality derived from the
+captured union without rebuilding query-time `Vec` values. The manifest records
+input hashes, graph/model selection, output hashes, and the replay treatments.
+Generation replays every raw and desugared file through the egglog CLI under
+ordinary execution, term encoding, proof generation, proof testing, and proof
+extraction. Each raw capture is replayed under all four disequality encodings.
+
+The Rust regression suite additionally runs both raw captures with all four
+encodings in ordinary, term, proofs, and proof-testing modes. Top-level `begin`
+blocks are lowered to ordered actions for proof checking while execution retains
+the original local block scope. The emitted source uses the anonymous form and
+its equality witness forces proof testing to validate the captured union.
 
 ```sh
 uv run --locked python benchmarks/disequality/scripts/generate_snapshots.py \
@@ -204,8 +231,15 @@ uv run --locked python benchmarks/disequality/scripts/generate_snapshots.py \
   --check
 ```
 
-Use `--force` instead of `--check` to update the checked-in files. A Propel run
-can emit every inspected graph, rather than only the compact selected snapshot:
+Use `--force` instead of `--check` to update the checked-in files. Replay the
+committed captures without rebuilding either host integration with:
+
+```sh
+make -C benchmarks/disequality replay-snapshots
+```
+
+A Propel run can emit every inspected graph, rather than only the compact
+selected snapshot:
 
 ```sh
 propel -f input.propel --variant egglog-de --emit-source-dir /tmp/propel-source
@@ -214,19 +248,29 @@ propel -f input.propel --variant egglog-de --emit-source-dir /tmp/propel-source
 The EUF solver exposes the equivalent `--emit-source-dir` option and emits one
 pair per enumerated SAT model.
 
+## Performance
+
+[`PERFORMANCE_ANALYSIS.md`](PERFORMANCE_ANALYSIS.md) records current
+end-to-end measurements, diagnostic profiles, comparison with the artifact's
+precomputed timings, and prioritized optimization ideas. Relational term
+reconstruction, parsing/typechecking, graph lifecycle churn, full stats scans,
+and ordinary database execution are measured first-order costs; retained
+snapshots for atomic action batches and expected-failure rollback are an
+additional unisolated candidate. The private disequality schedules are small.
+
 ## Validation boundary
 
 The focused tests establish executable behavior, source replay, clone
-isolation, backend agreement on two EUF fixtures, and agreement on the completed
-Propel corpus rows. They are not a formal proof that these encodings implement
-the paper's semantics. In particular:
+isolation, backend agreement on three EUF fixtures, and agreement on the
+completed Propel corpus rows. They are not a formal proof that these encodings
+implement the paper's semantics. In particular:
 
 - the full 7,591-file EUF corpus remains untested here;
 - timed-out Propel rows remain unknown;
 - generated DE relies on egglog's canonicalization of relation columns rather
   than native adjacency stored in union-find; and
-- proof-mode composition tests cover the egglog encoding and parameter-analysis
-  driver, not proof certificates emitted by EUF or Propel.
+- proof testing covers the captured egglog programs and parameter-analysis
+  driver, but neither host emits a separate EUF or Propel proof certificate.
 
 Run the focused integration gate from the repository root:
 

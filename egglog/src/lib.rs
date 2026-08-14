@@ -351,6 +351,13 @@ struct CommandSnapshot {
     action_registry: egglog_bridge::ActionRegistry,
 }
 
+/// One source command after command-macro expansion. A macro may emit several
+/// plain commands, while a nested `fail` retains its own source-command groups.
+enum PreparedCommand {
+    Plain(Box<Command>),
+    Fail(Span, Vec<Vec<PreparedCommand>>),
+}
+
 /// A user-defined command allows users to inject custom command that can be called
 /// in an egglog program.
 ///
@@ -847,7 +854,8 @@ impl EGraph {
 
     /// Enable proof testing while skipping validation of the extracted proofs.
     #[cfg(any(feature = "bin", test))]
-    pub(crate) fn with_proof_extraction(mut self) -> Self {
+    #[doc(hidden)]
+    pub fn with_proof_extraction(mut self) -> Self {
         self = self.with_proofs_enabled().with_proof_testing();
         self.proof_state.verify_proofs = false;
         self
@@ -3046,32 +3054,144 @@ impl EGraph {
         }
     }
 
-    /// Execute an expected-failure body at source-command boundaries. A
-    /// successful prefix remains committed, while the command that raises the
-    /// expected error rolls back its database and compiler changes together.
-    fn process_expected_failure(
+    fn apply_command_macros(&mut self, command: Command) -> Result<Vec<Command>, Error> {
+        let macro_type_info = self
+            .proof_state
+            .original_typechecking
+            .as_ref()
+            .map(|egraph| &egraph.type_info)
+            .unwrap_or(&self.type_info);
+        let macro_timer = Instant::now();
+        let expanded =
+            self.command_macros
+                .apply(command, &mut self.parser.symbol_gen, macro_type_info);
+        self.overall_report.frontend_other += macro_timer.elapsed();
+        expanded
+    }
+
+    fn parse_include_program(&mut self, span: &Span, file: &str) -> Result<Vec<Command>, Error> {
+        let include_timer = Instant::now();
+        let source = std::fs::read_to_string(file)
+            .map_err(|error| Error::IoError(file.into(), error, span.clone()));
+        self.overall_report.frontend_other += include_timer.elapsed();
+        self.parse_program_timed(Some(file.to_owned()), &source?)
+    }
+
+    /// Expand and typecheck an expected-failure body without executing it. The
+    /// resulting tree preserves the rollback boundary of every source child,
+    /// while expansion sees declarations and globals from preceding children.
+    fn prepare_expected_failure_body(
+        &mut self,
+        commands: Vec<Command>,
+        apply_command_macros: bool,
+    ) -> Result<Vec<Vec<PreparedCommand>>, Error> {
+        commands
+            .into_iter()
+            .map(|command| self.prepare_source_command(command, apply_command_macros))
+            .collect()
+    }
+
+    fn validate_expected_failure_context(
+        &self,
+        span: &Span,
+        commands: &[Command],
+    ) -> Result<(), Error> {
+        if self.are_proofs_enabled()
+            && commands
+                .iter()
+                .any(|command| matches!(command, Command::Input { .. }))
+        {
+            return Err(Error::UnsupportedProofCommand {
+                command: format!("{}", Command::Fail(span.clone(), commands.to_vec())),
+                reason: ProofEncodingUnsupportedReason::FailInputCommand,
+            });
+        }
+        Ok(())
+    }
+
+    fn prepare_source_command(
+        &mut self,
+        command: Command,
+        apply_command_macros: bool,
+    ) -> Result<Vec<PreparedCommand>, Error> {
+        if apply_command_macros && let Command::Fail(span, commands) = command {
+            self.validate_expected_failure_context(&span, &commands)?;
+            let prepared = self.prepare_expected_failure_body(commands, true)?;
+            return Ok(vec![PreparedCommand::Fail(span, prepared)]);
+        }
+
+        let expanded = if apply_command_macros {
+            self.apply_command_macros(command)?
+        } else {
+            vec![command]
+        };
+        let mut prepared = Vec::new();
+        for command in expanded {
+            match command {
+                Command::Fail(span, commands) => {
+                    self.validate_expected_failure_context(&span, &commands)?;
+                    prepared.push(PreparedCommand::Fail(
+                        span,
+                        self.prepare_expected_failure_body(commands, false)?,
+                    ));
+                }
+                Command::Include(span, file) => {
+                    for included in self.parse_include_program(&span, &file)? {
+                        prepared.extend(self.prepare_source_command(included, true)?);
+                    }
+                }
+                command => {
+                    self.resolve_command(command.clone())?;
+                    prepared.push(PreparedCommand::Plain(Box::new(command)));
+                }
+            }
+        }
+        Ok(prepared)
+    }
+
+    fn process_prepared_source_command(
+        &mut self,
+        commands: Vec<PreparedCommand>,
+    ) -> Result<ResolvedNCommandsWithOutput, Error> {
+        let mut desugared_before_proofs = Vec::new();
+        let mut desugared = Vec::new();
+        let mut outputs = Vec::new();
+
+        for command in commands {
+            let resolved = match command {
+                PreparedCommand::Plain(command) => {
+                    self.process_program_internal(vec![*command], true, false, false)?
+                }
+                PreparedCommand::Fail(span, commands) => {
+                    self.process_prepared_expected_failure(span, commands)?
+                }
+            };
+            outputs.extend(resolved.outputs);
+            desugared_before_proofs.extend(resolved.resolved_before_proofs);
+            desugared.extend(resolved.resolved);
+        }
+
+        Ok(ResolvedNCommandsWithOutput {
+            outputs,
+            resolved: desugared,
+            resolved_before_proofs: desugared_before_proofs,
+        })
+    }
+
+    /// Execute a previously validated expected-failure body at source-command
+    /// boundaries. A successful prefix remains committed, while the source
+    /// child that raises the expected error is rolled back as a unit.
+    fn process_prepared_expected_failure(
         &mut self,
         span: Span,
-        commands: Vec<Command>,
+        commands: Vec<Vec<PreparedCommand>>,
     ) -> Result<ResolvedNCommandsWithOutput, Error> {
-        // Preserve whole-body typechecking and support checks (for example,
-        // proof mode intentionally rejects `input` inside `fail`) without
-        // retaining declarations for commands execution never reaches.
-        let symbol_gen = self.parser.symbol_gen.clone();
-        let validation_snapshot = self.command_snapshot();
-        let validation = self.resolve_command(Command::Fail(span.clone(), commands.clone()));
-        self.restore_command_snapshot(validation_snapshot);
-        // Validation is an implementation detail, not an executed command, so
-        // it must not consume fresh names.
-        self.parser.symbol_gen = symbol_gen;
-        validation?;
-
         let mut desugared_before_proofs = Vec::new();
         let mut desugared = Vec::new();
 
         for command in commands {
             let snapshot = self.command_snapshot();
-            match self.process_program_internal(vec![command], true, false, false) {
+            match self.process_prepared_source_command(command) {
                 Ok(resolved) => {
                     desugared_before_proofs.extend(resolved.resolved_before_proofs);
                     desugared.extend(resolved.resolved);
@@ -3093,6 +3213,27 @@ impl EGraph {
         }
 
         Err(Error::ExpectFail(span))
+    }
+
+    /// Validate one live `fail` body once, then execute the cached expansion.
+    /// Validation runs on a clone so compiler changes from unreachable commands
+    /// do not leak, but command macros are not invoked again during execution.
+    fn process_expected_failure(
+        &mut self,
+        span: Span,
+        commands: Vec<Command>,
+        apply_command_macros: bool,
+    ) -> Result<ResolvedNCommandsWithOutput, Error> {
+        self.validate_expected_failure_context(&span, &commands)?;
+        let CommandSnapshot {
+            mut egraph,
+            action_registry,
+        } = self.command_snapshot();
+        let prepared = egraph.prepare_expected_failure_body(commands, apply_command_macros);
+        *self.backend.action_registry().write().unwrap() = action_registry;
+        std::mem::swap(&mut self.overall_report, &mut egraph.overall_report);
+        self.parser.symbol_gen = egraph.parser.symbol_gen;
+        self.process_prepared_expected_failure(span, prepared?)
     }
 
     /// Whether resolving a command may change compiler state in a way whose
@@ -3134,32 +3275,33 @@ impl EGraph {
         let mut desugared = Vec::new();
 
         for before_expanded_command in program {
+            if run_commands && let Command::Fail(span, commands) = before_expanded_command {
+                let resolved = self.process_expected_failure(span, commands, true)?;
+                desugared.extend(resolved.resolved);
+                desugared_before_proofs.extend(resolved.resolved_before_proofs);
+                continue;
+            }
+
+            if !run_commands
+                && let Command::Fail(span, commands) = &before_expanded_command
+                && commands.iter().any(Self::command_may_change_static_state)
+            {
+                return Err(Error::DesugarError(
+                    span.clone(),
+                    "cannot statically desugar a `fail` body that may change compiler state: which changes survive depends on which command fails at runtime"
+                        .to_owned(),
+                ));
+            }
+
             let macro_expanded = if apply_command_macros {
-                // User-provided macro expansion may rely on type information
-                // from previous commands. A `fail` body is already part of the
-                // expanded outer command and must not pass through this registry
-                // a second time when it executes command by command.
-                let macro_type_info = self
-                    .proof_state
-                    .original_typechecking
-                    .as_ref()
-                    .map(|egraph| &egraph.type_info)
-                    .unwrap_or(&self.type_info);
-                let macro_timer = Instant::now();
-                let expanded = self.command_macros.apply(
-                    before_expanded_command,
-                    &mut self.parser.symbol_gen,
-                    macro_type_info,
-                );
-                self.overall_report.frontend_other += macro_timer.elapsed();
-                expanded?
+                self.apply_command_macros(before_expanded_command)?
             } else {
                 vec![before_expanded_command]
             };
 
             for command in macro_expanded {
                 if run_commands && let Command::Fail(span, commands) = command {
-                    let resolved = self.process_expected_failure(span, commands)?;
+                    let resolved = self.process_expected_failure(span, commands, false)?;
                     desugared.extend(resolved.resolved);
                     desugared_before_proofs.extend(resolved.resolved_before_proofs);
                     continue;

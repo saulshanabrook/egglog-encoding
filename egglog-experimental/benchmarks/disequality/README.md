@@ -1,10 +1,11 @@
 # Disequality encoding validation and benchmark
 
-Run dates: 2026-08-12 through 2026-08-13 (America/New_York)
+Run dates: 2026-08-12 through 2026-08-14 (America/New_York)
 
-Implementation base: `46f69b70d0819b03da110e6e785f91c080d58556`
-(`origin/main` before this change). The compiler revision used to produce the
-checked-in expansions is recorded in
+Initial implementation base: `46f69b70d0819b03da110e6e785f91c080d58556`.
+The branch was subsequently merged with `origin/main` at
+`ffb8ae435bd6421077b1c15826f32a6aeecf5b1b`. The compiler revision used to
+produce the checked-in expansions is recorded in
 [`desugared/manifest.json`](desugared/manifest.json).
 
 Machine: Apple M4, arm64 macOS 26.6; `rustc 1.91.0`; one egglog worker thread.
@@ -144,7 +145,7 @@ target/release/egglog-experimental \
   egglog-experimental/benchmarks/disequality/parameter-analysis.egg
 ```
 
-Run five interleaved rounds against the artifact's native EE and DE binaries:
+Run three interleaved rounds against the artifact's native EE and DE binaries:
 
 ```sh
 uv run python egglog-experimental/benchmarks/disequality/run_parameter_analysis.py \
@@ -154,12 +155,15 @@ uv run python egglog-experimental/benchmarks/disequality/run_parameter_analysis.
   --native-ee /path/to/parameter_analysis_ee \
   --native-de /path/to/parameter_analysis_de \
   --native-input /path/to/parameter-analysis/exprs.in \
-  --output egglog-experimental/benchmarks/disequality/relational-ratio-0.5.csv
+  --output egglog-experimental/benchmarks/disequality/relational-ratio-0.5.csv \
+  --trials 3
 ```
 
 The runner rotates endpoint order, requires successful native results with no
-contradiction, and emits timing-summary-v2 rule costs separately from process
-wall time.
+contradiction, and emits supported timing-summary rule costs separately from
+process wall time. With the current timing-summary-v4 schema, each ruleset cost
+includes assembly, search, apply, execution, and merge. Global native rebuild
+and command/frontend phases remain in `non_ruleset_wall_ms`.
 
 Regenerate the four actual compiler expansions after building the recorded
 compiler revision:
@@ -197,29 +201,29 @@ wall time is presented as an end-to-end comparison.
 
 ## Relational results
 
-Median of five final-code, interleaved ratio-0.5 trials. Ranges are wall-time
-ranges, not confidence intervals.
+Median of three final-code, interleaved ratio-0.5 trials on 2026-08-14 after
+merging `origin/main`. Ranges are wall-time ranges, not confidence intervals.
 
 | Engine | Encoding | Wall | Term rules | Pair rules | Disequality rules | Non-ruleset wall | Wall range |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| egglog | EE | 5,047.6 ms | 2,875.1 ms | 194.6 ms | 18.347 ms | 1,952.0 ms | 4,752.6-5,095.7 ms |
-| egglog | OEE | 5,059.0 ms | 2,883.3 ms | 192.2 ms | 0.063 ms | 1,977.5 ms | 4,742.1-5,308.9 ms |
-| egglog | NEE | 5,059.4 ms | 3,008.8 ms | 191.1 ms | 0.034 ms | 1,847.2 ms | 4,756.7-5,717.3 ms |
-| egglog | relational DE | 5,053.1 ms | 2,995.8 ms | 194.6 ms | 2.223 ms | 1,856.3 ms | 4,767.5-5,138.9 ms |
-| native egg 0.9.5 | EE | 974.3 ms | n/a | n/a | n/a | n/a | 907.3-1,004.7 ms |
-| native patched egg | DE | 657.8 ms | n/a | n/a | n/a | n/a | 618.6-696.5 ms |
+| egglog | EE | 4,936.6 ms | 2,525.4 ms | 608.2 ms | 11.815 ms | 1,739.8 ms | 4,851.7-5,331.3 ms |
+| egglog | OEE | 4,822.2 ms | 2,510.9 ms | 607.5 ms | 1.238 ms | 1,712.8 ms | 4,793.5-4,905.3 ms |
+| egglog | NEE | 4,789.4 ms | 2,499.9 ms | 556.4 ms | 0.192 ms | 1,734.6 ms | 4,754.1-4,828.5 ms |
+| egglog | relational DE | 4,770.7 ms | 2,485.7 ms | 566.6 ms | 2.492 ms | 1,722.7 ms | 4,767.2-4,850.2 ms |
+| native egg 0.9.5 | EE | 932.8 ms | n/a | n/a | n/a | n/a | 924.1-940.6 ms |
+| native patched egg | DE | 639.0 ms | n/a | n/a | n/a | n/a | 630.4-722.8 ms |
 
 Raw observations are in
-[`relational-ratio-0.5.csv`](relational-ratio-0.5.csv). The five rounds are too
-few for a statistical significance claim, and one NEE observation reached
-5.72 seconds. No observations were discarded.
+[`relational-ratio-0.5.csv`](relational-ratio-0.5.csv). Three rounds are too few
+for a statistical significance claim, and the first EE observation reached
+5.33 seconds. No observations were discarded.
 
-The end-to-end relational replay is about 5.2x the native EE wall median and
-7.7x the native DE median. That result should not be attributed to the
-disequality representation: all four egglog wall medians are within 12 ms,
-while term reconstruction alone costs about 2.9-3.0 seconds and non-ruleset
-work costs another 1.85-1.98 seconds. The private extension phase costs 18.3 ms
-for EE, 2.2 ms for DE, and less than 0.1 ms for OEE and NEE on this input.
+The end-to-end relational replay is about 5.3x the native EE wall median and
+7.5x the native DE median. That result should not be attributed to the
+disequality representation: all four egglog wall medians are within 166 ms,
+while term reconstruction costs about 2.5 seconds, pair traversal about 0.6
+seconds, and non-ruleset work about 1.7 seconds. The private extension phase
+costs 11.8 ms for EE, 2.5 ms for DE, 1.2 ms for OEE, and 0.2 ms for NEE.
 
 EE's larger extension cost follows from its additional equality terms and
 propagation rules. DE materializes symmetric edges. OEE and NEE need only a
@@ -259,8 +263,9 @@ uv run ruff check .
 uv run mypy .
 ```
 
-The Python test hashes every committed full-corpus table and verifies its row
-and byte counts. The Rust tests execute the same relational source with the
-small fixture under every encoding and proof treatment. The desugared snapshot
-test resolves the source with the compiler and compares all four generated
-programs byte-for-byte.
+The Python test verifies deterministic fixture conversion, row counts, timing
+summary parsing, and command construction. The full-corpus TSV directory is
+ignored and regenerated on demand. The Rust tests execute the same relational
+source with the small fixture under every encoding and proof treatment. The
+desugared snapshot test resolves the source with the compiler and compares all
+four generated programs byte-for-byte.

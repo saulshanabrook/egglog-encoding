@@ -92,6 +92,24 @@ def run_benchmark(
         )
 
 
+def git_provenance(repository: Path) -> tuple[str, list[str]]:
+    revision = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repository,
+        check=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    ).stdout.strip()
+    status = subprocess.run(
+        ["git", "status", "--short", "--untracked-files=all"],
+        cwd=repository,
+        check=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    ).stdout.splitlines()
+    return revision, status
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
@@ -108,6 +126,12 @@ def main() -> int:
     )
     parser.add_argument("--output", type=Path)
     parser.add_argument("--allow-timeouts", action="store_true")
+    parser.add_argument(
+        "--repository",
+        type=Path,
+        default=Path(__file__).resolve().parents[3],
+        help="Git checkout whose source produced the binary",
+    )
     args = parser.parse_args()
 
     binary = args.binary.resolve()
@@ -118,6 +142,10 @@ def main() -> int:
     if not benchmarks:
         parser.error(f"no files matching {args.glob!r} found in {input_directory}")
     variants = tuple(dict.fromkeys((args.reference, *args.variants)))
+    repository = args.repository.resolve()
+    if not (repository / ".git").exists():
+        parser.error(f"repository is not a Git checkout: {repository}")
+    code_revision, code_status = git_provenance(repository)
 
     jobs = [(binary, benchmark, variant, args.timeout) for benchmark in benchmarks for variant in variants]
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as executor:
@@ -168,10 +196,13 @@ def main() -> int:
         corpus_hash.update(benchmark.read_bytes())
         corpus_hash.update(b"\0")
     report = {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at": datetime.now(UTC).isoformat(),
         "platform": platform.platform(),
         "python_version": platform.python_version(),
+        "code_revision": code_revision,
+        "code_dirty": bool(code_status),
+        "code_status": code_status,
         "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
         "corpus_sha256": corpus_hash.hexdigest(),
         "benchmark_count": len(benchmarks),

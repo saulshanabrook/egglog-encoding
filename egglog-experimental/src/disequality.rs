@@ -962,7 +962,7 @@ mod tests {
         DisequalityEncoding::DisequalityEdges,
     ];
 
-    fn egraphs_for_all_modes(encoding: DisequalityEncoding) -> [(&'static str, egglog::EGraph); 4] {
+    fn egraphs_for_all_modes(encoding: DisequalityEncoding) -> [(&'static str, egglog::EGraph); 5] {
         [
             (
                 "ordinary",
@@ -983,6 +983,11 @@ mod tests {
                 new_experimental_egraph_for_proofs_with_disequality_encoding(encoding)
                     .with_proofs_enabled()
                     .with_proof_testing(),
+            ),
+            (
+                "proof-extraction",
+                new_experimental_egraph_for_proofs_with_disequality_encoding(encoding)
+                    .with_proof_extraction(),
             ),
         ]
     }
@@ -1159,6 +1164,42 @@ mod tests {
                 .unwrap_or_else(|error| {
                     panic!("{encoding:?} duplicated first-use support inside fail: {error}")
                 });
+        }
+    }
+
+    #[test]
+    fn all_encodings_expand_fail_children_against_source_order_type_info() {
+        let programs = [
+            r#"
+            (datatype Math (A) (B))
+            (fail
+              (let $x (A))
+              (disequal $x (B))
+              (check (= (A) (B))))
+            (check (= $x (A)))
+            (check-disequal $x (B))
+            "#,
+            r#"
+            (fail
+              (datatype Math (A) (B))
+              (disequal (A) (B))
+              (check (= (A) (B))))
+            (check-disequal (A) (B))
+            "#,
+        ];
+
+        for encoding in ENCODINGS {
+            for program in programs {
+                for (mode, mut egraph) in egraphs_for_all_modes(encoding) {
+                    egraph
+                        .parse_and_run_program(None, program)
+                        .unwrap_or_else(|error| {
+                            panic!(
+                                "{encoding:?} {mode} failed source-order fail expansion: {error}"
+                            )
+                        });
+                }
+            }
         }
     }
 
