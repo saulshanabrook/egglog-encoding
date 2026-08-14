@@ -708,17 +708,17 @@ fn proof_mode_recovers_after_a_command_error() {
 }
 
 #[test]
-fn duplicate_constructor_global_does_not_corrupt_proof_mode() {
-    for mut egraph in [
-        EGraph::new_with_proofs(),
-        EGraph::new_with_proofs().with_proof_testing(),
-    ] {
+fn duplicate_constructor_global_does_not_corrupt_type_state() {
+    for mut egraph in egraphs_for_all_modes() {
         egraph
-            .parse_and_run_program(None, "(datatype Math (A)) (let $x (A))")
+            .parse_and_run_program(
+                None,
+                "(datatype Left (A)) (datatype Right (B)) (let $x (A))",
+            )
             .unwrap();
-        assert!(egraph.parse_and_run_program(None, "(let $x (A))").is_err());
+        assert!(egraph.parse_and_run_program(None, "(let $x (B))").is_err());
         egraph
-            .parse_and_run_program(None, "(let $y (A)) (check (= $x $y))")
+            .parse_and_run_program(None, "(check (= $x (A)))")
             .unwrap();
     }
 }

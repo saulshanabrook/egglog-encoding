@@ -3208,8 +3208,9 @@ impl EGraph {
     /// Constructor trees cannot invoke partial primitives or custom function
     /// lookups. Once typechecking succeeds, their proof encoding has no
     /// expected runtime error path, so cloning the entire e-graph solely for
-    /// command-error recovery would be wasted work. Relations are constructors
-    /// of private non-unionable sorts, so relation facts take this path too.
+    /// command-error recovery would be wasted work. Global bindings retain the
+    /// snapshot because typechecking registers their sorts before execution can
+    /// reject shadowing.
     fn proof_action_needs_full_rollback(&self, action: &Action) -> bool {
         fn is_constructor_tree(type_info: &TypeInfo, expr: &Expr) -> bool {
             match expr {
@@ -3229,7 +3230,7 @@ impl EGraph {
             .as_ref()
             .map_or(&self.type_info, |egraph| &egraph.type_info);
         match action {
-            Action::Let(_, _, value) => !is_constructor_tree(type_info, value),
+            Action::Let(..) => true,
             Action::Union(_, lhs, rhs) => {
                 !is_constructor_tree(type_info, lhs) || !is_constructor_tree(type_info, rhs)
             }
