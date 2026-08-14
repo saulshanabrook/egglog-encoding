@@ -2714,6 +2714,15 @@ impl EGraph {
 
             let attribution_enabled = self.proof_state.generated_frontend_attribution.is_some();
             let term_encoding_added = add_term_encoding(self, typechecked_no_globals)?;
+            if crate::proofs::generated_binder::shadow_probe_enabled() {
+                return Ok(ResolvedNCommands {
+                    desugared: crate::proofs::generated_binder::resolve_with_shadow_probe(
+                        self,
+                        term_encoding_added,
+                    )?,
+                    desugared_before_proofs: per_row_before_proofs,
+                });
+            }
             let mut new_typechecked = vec![];
             for generated in term_encoding_added {
                 let family = generated.origin.stage_family();
