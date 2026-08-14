@@ -3208,9 +3208,9 @@ impl EGraph {
     /// Constructor trees cannot invoke partial primitives or custom function
     /// lookups. Once typechecking succeeds, their proof encoding has no
     /// expected runtime error path, so cloning the entire e-graph solely for
-    /// command-error recovery would be wasted work. Global bindings retain the
-    /// snapshot because typechecking registers their sorts before execution can
-    /// reject shadowing.
+    /// command-error recovery would be wasted work. Constructor-valued global
+    /// bindings use a smaller transaction over their eagerly registered sort;
+    /// shadowing can still reject them after typechecking.
     fn proof_action_needs_full_rollback(&self, action: &Action) -> bool {
         fn is_constructor_tree(type_info: &TypeInfo, expr: &Expr) -> bool {
             match expr {
@@ -3230,7 +3230,7 @@ impl EGraph {
             .as_ref()
             .map_or(&self.type_info, |egraph| &egraph.type_info);
         match action {
-            Action::Let(..) => true,
+            Action::Let(_, _, value) => !is_constructor_tree(type_info, value),
             Action::Union(_, lhs, rhs) => {
                 !is_constructor_tree(type_info, lhs) || !is_constructor_tree(type_info, rhs)
             }
@@ -3315,7 +3315,7 @@ impl EGraph {
                     desugared.extend(resolved.resolved);
                     desugared_before_proofs.extend(resolved.resolved_before_proofs);
                 } else {
-                    let snapshot = (rollback_commands_on_error
+                    let needs_snapshot = rollback_commands_on_error
                         && run_commands
                         && (matches!(
                             &command,
@@ -3327,8 +3327,28 @@ impl EGraph {
                                     &command,
                                     Command::Action(action)
                                         if self.proof_action_needs_full_rollback(action)
-                                ))))
-                    .then(|| self.command_snapshot());
+                                )));
+                    // A later shadowing check can reject a constructor-valued
+                    // global after eagerly registering its sort. Retain just
+                    // the source and encoded entries rather than cloning the
+                    // complete e-graph.
+                    let global_sort_snapshot =
+                        if rollback_commands_on_error
+                            && run_commands
+                            && !needs_snapshot
+                            && let Command::Action(Action::Let(_, name, _)) = &command
+                        {
+                            Some((
+                                name.clone(),
+                                self.proof_state.original_typechecking.as_ref().and_then(
+                                    |egraph| egraph.type_info.global_sorts.get(name).cloned(),
+                                ),
+                                self.type_info.global_sorts.get(name).cloned(),
+                            ))
+                        } else {
+                            None
+                        };
+                    let snapshot = needs_snapshot.then(|| self.command_snapshot());
                     let execution = (|| -> Result<_, Error> {
                         let resolved = self.resolve_command(command)?;
                         if run_commands && self.are_proofs_enabled() {
@@ -3355,6 +3375,32 @@ impl EGraph {
                         Err(error) => {
                             if let Some(snapshot) = snapshot {
                                 self.restore_command_snapshot(snapshot);
+                            } else if let Some((name, source_sort, encoded_sort)) =
+                                global_sort_snapshot
+                            {
+                                if let Some(typechecking) =
+                                    self.proof_state.original_typechecking.as_mut()
+                                {
+                                    match source_sort {
+                                        Some(sort) => {
+                                            typechecking
+                                                .type_info
+                                                .global_sorts
+                                                .insert(name.clone(), sort);
+                                        }
+                                        None => {
+                                            typechecking.type_info.global_sorts.remove(&name);
+                                        }
+                                    }
+                                }
+                                match encoded_sort {
+                                    Some(sort) => {
+                                        self.type_info.global_sorts.insert(name, sort);
+                                    }
+                                    None => {
+                                        self.type_info.global_sorts.remove(&name);
+                                    }
+                                }
                             }
                             return Err(error);
                         }
