@@ -1,0 +1,144 @@
+# Typed proof-encoding emission evidence
+
+This file is the durable decision and measurement ledger for replacing generated
+egglog source text with a portable typed generated IR.  Measurements are facts
+only when the command, revision, and artifact are recorded here; estimates are
+labelled as hypotheses.
+
+## Mission and ownership
+
+- **Aim:** remove the proof encoder's second parse, desugar, type-inference, and
+  global-removal pipeline while preserving generated command order, proof output,
+  database state, and error behavior.
+- **Domain:** `egglog/src/proofs`, the generated-command driver in
+  `egglog/src/lib.rs`, the shared call resolver and declaration-registration
+  effects, focused tests, and benchmark evidence.
+- **Authority:** implementation and local checkpoint commits on
+  `codex/frontend-overhead-minimization`; no push, PR publication, or upstream
+  mutation without a separate user request.
+- **Coordinator:** root agent owns integration, acceptance decisions, history,
+  and final gates.
+- **Implementation worker:** binder-spike circle owns the portable key model,
+  shared resolver extraction, sequential outer-EGraph binder, and focused tests.
+- **Research circles:** accounting owns read-only timing attribution; conversion
+  census owns the exhaustive generated-form map.  Neither may edit production
+  code.
+- **Stop rule:** stop the campaign before encoder-wide conversion if the retained
+  spike cannot establish semantic/state parity or if its suite-wide binder
+  residual extrapolates above 150 ms after trying registration receipts.  Keep
+  only independently useful resolver/atomic-registration work if that happens.
+
+## Frozen starting point
+
+- Repository: `/Users/saul/p/wt/egglog-encoding/frontend-overhead-minimization`
+- Branch: `codex/frontend-overhead-minimization`
+- Revision: `ffb8ae435bd6421077b1c15826f32a6aeecf5b1b`
+- Existing user file, excluded from this campaign's diff:
+  `frontend-overhead-investigation.md`
+- Default benchmark shape: `./bench.py --detail rulesets`, ten default files,
+  six fresh rounds per endpoint, proofs versus off.
+- Prior artifact command:
+  `./bench.py --detail rulesets --report /tmp/egglog-frontend-overhead-ffb8ae4.jsonl --force-run`
+- Prior aggregate wall time: off 3088.209 ms; proofs 6913.800 ms; delta
+  3825.591 ms; proofs/off 2.23877x.
+- Prior proof-specific frontend deltas: typecheck 782.395 ms; parse 181.341 ms;
+  other frontend 335.905 ms; install 173.282 ms.  Typecheck plus frontend delta
+  was 1472.922 ms.
+- Clean MISAAL V4 profile: proof wall 145.719 ms; typecheck 64.488 ms; parse
+  12.348 ms; other frontend 26.734 ms; install 23.015 ms.  Inclusive samples:
+  `typecheck_program` 44.65%, `typecheck_rule` 37.38%, `Problem::solve` 15.66%,
+  generated/source parsing 8.86% (92.3% under the proof encoder),
+  `remove_globals` 5.41%, and generated desugaring 2.45%.
+- Clean Luminal typecheck attribution: generated proofs spent about 401.3 ms in
+  standalone action blocks and 203.4 ms in rules out of 637.6 ms total
+  typechecking per iteration.  This is workload-local, not a suite total.
+
+The prior numbers are retained evidence from the investigation at the frozen
+revision.  The implementation branch will record a new balanced baseline before
+claiming a before/after result.
+
+## Pre-registered savings budget
+
+These are hypotheses registered before implementation, not measured results.
+They allocate an approximately 900 ms gross suite-wide removable frontend pool
+using the V4 action/rule split, the 17 generated parser edges, and generated-form
+counts.  They intentionally do not book install or rule-planning savings.
+
+| Generated family | Gross removable budget | Expected net after binding | Evidence basis | Half-budget checkpoint |
+| --- | ---: | ---: | --- | ---: |
+| Ground actions, source globals, and extraction setup | 400 ms | 350 ms | Luminal standalone actions were 401.3/637.6 ms of typecheck; these forms also reparse and remove globals | 175 ms |
+| Instrumented source rules, rebuild, and subsumption rules | 300 ms | 260 ms | Luminal rules were 203.4/637.6 ms plus their generated parse/desugar share | 130 ms |
+| Headers, sorts, functions/views, proof declarations, and indexes | 160 ms | 130 ms | Declaration-heavy generated census and residual V4 frontend samples | 65 ms |
+| Checks, schedules, extraction command, and passthrough wrappers | 40 ms | 30 ms | Remaining parser edges and low-volume forms | 15 ms |
+| **Total** | **900 ms** | **770 ms** | Target is about 20% of the prior 3825.591 ms proofs-over-off delta | **385 ms** |
+
+The first converted family is selected by fresh attribution, not by this table's
+ordering.  After that family is oracle-green, stop and reassess if the measured
+suite saving is below half of its registered net budget.  Reattribute rather
+than silently moving missed milliseconds to later families.
+
+## Architectural invariants
+
+1. Generated IR is portable: it contains stable sort/function/primitive keys,
+   local variable IDs, literals, and origin metadata, never checker-universe
+   `ArcSort`, `FuncType`, `ResolvedVar`, `ResolvedCall`, primitive IDs, or backend
+   IDs.
+2. One generated batch corresponds to one top-level source command.  The binder
+   walks it lexically against the outer execution EGraph, commits declarations
+   before dependent siblings bind, binds the whole batch before execution, and
+   returns a one-shot `BoundBatch<ResolvedNCommand>`.
+3. The batch is prefix-committing, not transactional.  Each declaration is
+   prepare/commit atomic.  Existing runtime ordering, `Fail`, and push/pop
+   behavior remain unchanged.
+4. Primitive matching has one implementation.  The generated binder and
+   `ResolvedCall::from_resolution` delegate to the same extracted resolver.
+5. A binder resolution cache is keyed by call kind, head, full signature,
+   context, and that head's generation.  Registrations invalidate only affected
+   names; the cache never outlives its execution-universe scope.
+6. Extraction setup is emitted directly as its post-`remove_globals` internal-let
+   function plus set form.  No handwritten general globals normalizer is added.
+7. The migration oracle may live in intermediate commits only.  Final production
+   code has one typed emitter, its verifier/pretty-printer, and no generated
+   source parser, desugar, inference, or global-removal fallback.
+8. PR #947 and proc-macro/quasiquote infrastructure are outside this campaign.
+
+## Hypotheses and decisive probes
+
+| ID | Hypothesis | Probe | Acceptance boundary | Status |
+| --- | --- | --- | --- | --- |
+| H1 | Exact-key sequential binding is much cheaper than generated inference. | Bind a declaration plus dependent action and one rule in both seminaive context pairs; measure warmed and cold key resolution. | Extrapolated suite residual at most 150 ms after registration-receipt optimization. | Open |
+| H2 | Portable keys prevent checker/execution-universe leakage. | Bind equivalent batches against independently seeded checker and execution EGraphs; compare stable projections and reject copied handles. | Output and state projection identical to legacy; wrong-universe canary rejected. | Open |
+| H3 | Per-name generations preserve overload ambiguity without cache thrashing. | Warm a unique primitive call, register a new same-signature overload, resolve again. | Second resolution reports the same ambiguity as uncached resolution; unrelated-head cache entries remain hits. | Open |
+| H4 | Atomic declaration registration can be shared without source-mode drift. | Invalid duplicate sort/function/index and invalid merge tests before/after refactor. | Successful behavior unchanged; failed declaration leaves no replacement/partial state. | Open |
+| H5 | Generated output is a `remove_globals` fixed point except explicit extraction lowering. | Corpus-wide oracle projection and direct fixed-point test. | No generated top-level Let/LetBegin/global refs; cloned remove_globals is structurally identical. | Open |
+
+## Checkpoints
+
+- **Spike GO:** H1-H4 pass, key count and cache behavior recorded, binder residual
+  at most 150 ms, and the legacy/typed state projection is green.
+- **First-family reassessment:** the highest-attributed family is fully converted
+  and oracle-green.  Descope/abort if it delivers less than half its registered
+  net budget unless fresh attribution proves the budget belonged elsewhere.
+- **Completeness:** every generated command and nested form has a typed path;
+  generated frontend counters are zero; the legacy emitter and five generated
+  parse helpers are deleted from the final tree.
+- **Performance:** balanced/reversed endpoint order, aggregate default suite
+  improves in both orders, at least one file has a significant improvement, and
+  term/off have no meaningful regression.  Overall 20% is a target, not a
+  correctness condition.
+- **Deadline:** if every family is not oracle-green by 2026-10-19, stop treating
+  the 2026-11-16 milestone as achievable and re-scope explicitly.
+- **Final validation:** focused binder/verifier tests, `make proof-tests`,
+  `make check`, `make benchmark-smoke`, and balanced 12-round
+  `./bench.py --detail rulesets` evidence.
+
+## Evidence log
+
+| Date | Revision | Evidence | Decision |
+| --- | --- | --- | --- |
+| 2026-08-14 | `ffb8ae435bd6` | Investigation baseline and clean MISAAL/Luminal profiles frozen above. | Begin retained binder spike; do not start macro or encoder-wide conversion first. |
+
+The intermediate differential harness and dual-path commits will remain in local
+branch history even though the final tree deletes them.  When the all-family
+oracle is green, create the annotated local tag
+`typed-emission-oracle-green-ffb8ae4` and record its object SHA here.
