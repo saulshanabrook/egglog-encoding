@@ -65,6 +65,7 @@ use scheduler::{SchedulerId, SchedulerRecord};
 pub use serialize::{SerializeConfig, SerializeOutput, SerializedNode};
 use sort::*;
 use std::any::{Any, TypeId};
+use std::collections::VecDeque;
 use std::fmt::{Debug, Display, Formatter};
 use std::fs::File;
 use std::hash::Hash;
@@ -340,9 +341,8 @@ pub struct EGraph {
     /// Static pre-instrumentation commands addressed by generated execution
     /// markers. This remains separate because a `fail` may execute only a prefix
     /// of its body while preserving that prefix's side effects.
-    proof_check_source_program: Vec<ResolvedNCommand>,
-    proof_check_source_cursor: usize,
-    proof_check_pending_top: Option<(usize, usize)>,
+    proof_check_source_program: VecDeque<ResolvedNCommand>,
+    proof_check_pending_top: Option<usize>,
     proof_check_active_top: Option<usize>,
 }
 
@@ -373,26 +373,18 @@ pub(crate) const RECORD_PROOF_COMMAND: &str = "@record-proof-command";
 struct RecordProofCommand;
 
 impl RecordProofCommand {
-    fn source_batch(egraph: &EGraph, count: &str) -> Result<(usize, Vec<ResolvedNCommand>), Error> {
+    fn source_batch_len(egraph: &EGraph, count: &str) -> Result<usize, Error> {
         let count = count.parse::<usize>().map_err(|_| {
             Error::ProofCommandMarker(format!(
                 "invalid internal proof command batch size {count:?}"
             ))
         })?;
-        let start = egraph.proof_check_source_cursor;
-        let end = start.checked_add(count).ok_or_else(|| {
-            Error::ProofCommandMarker("internal proof command batch size overflow".to_owned())
-        })?;
-        let commands = egraph
-            .proof_check_source_program
-            .get(start..end)
-            .ok_or_else(|| {
-                Error::ProofCommandMarker(format!(
-                    "internal proof command batch {start}..{end} is outside the source program"
-                ))
-            })?
-            .to_vec();
-        Ok((start, commands))
+        if count > egraph.proof_check_source_program.len() {
+            return Err(Error::ProofCommandMarker(format!(
+                "internal proof command batch 0..{count} is outside the source program"
+            )));
+        }
+        Ok(count)
     }
 }
 
@@ -410,15 +402,17 @@ impl UserDefinedCommand for RecordProofCommand {
                     "entered a proof command batch before committing the previous batch".to_owned(),
                 ));
             }
-            let (start, commands) = Self::source_batch(egraph, count)?;
-            egraph.proof_check_pending_top = Some((start, commands.len()));
+            let count = Self::source_batch_len(egraph, count)?;
+            egraph.proof_check_pending_top = Some(count);
             egraph.proof_check_active_top = None;
-            for (offset, command) in commands.iter().enumerate() {
+            for (offset, command) in egraph
+                .proof_check_source_program
+                .iter()
+                .take(count)
+                .enumerate()
+            {
                 if matches!(command, ResolvedNCommand::Fail(..))
-                    && egraph
-                        .proof_check_active_top
-                        .replace(start + offset)
-                        .is_some()
+                    && egraph.proof_check_active_top.replace(offset).is_some()
                 {
                     return Err(Error::ProofCommandMarker(
                         "one proof command batch contains multiple fail scopes".to_owned(),
@@ -429,24 +423,22 @@ impl UserDefinedCommand for RecordProofCommand {
         }
 
         if let Some(count) = location.strip_prefix("top-commit:") {
-            let (start, commands) = Self::source_batch(egraph, count)?;
+            let count = Self::source_batch_len(egraph, count)?;
             let pending = egraph.proof_check_pending_top.take().ok_or_else(|| {
                 Error::ProofCommandMarker(
                     "committed a proof command batch without entering it".to_owned(),
                 )
             })?;
-            if pending != (start, commands.len()) {
+            if pending != count {
                 return Err(Error::ProofCommandMarker(format!(
-                    "proof command batch changed between enter and commit: {pending:?} != {:?}",
-                    (start, commands.len())
+                    "proof command batch changed between enter and commit: {pending} != {count}"
                 )));
             }
-            for command in commands {
+            for command in egraph.proof_check_source_program.drain(..count) {
                 if !matches!(command, ResolvedNCommand::Fail(..)) {
                     egraph.proof_check_program.push(command);
                 }
             }
-            egraph.proof_check_source_cursor = start + pending.1;
             egraph.proof_check_active_top = None;
             return Ok(vec![]);
         }
@@ -632,8 +624,7 @@ impl EGraph {
             command_macros: Default::default(),
             proof_state,
             proof_check_program: vec![],
-            proof_check_source_program: vec![],
-            proof_check_source_cursor: 0,
+            proof_check_source_program: VecDeque::new(),
             proof_check_pending_top: None,
             proof_check_active_top: None,
         };
@@ -1034,17 +1025,13 @@ impl EGraph {
     pub fn pop(&mut self) -> Result<(), Error> {
         match self.pushed_egraph.take() {
             Some(mut e) => {
-                // Source markers address the immutable program position reached
-                // during execution, which does not roll back with e-graph state.
+                // Source markers address the remaining execution stream, which
+                // does not roll back with e-graph state.
                 // The executed proof-check program does roll back to the pushed
                 // snapshot and is then advanced by the marker after this pop.
                 std::mem::swap(
                     &mut self.proof_check_source_program,
                     &mut e.proof_check_source_program,
-                );
-                std::mem::swap(
-                    &mut self.proof_check_source_cursor,
-                    &mut e.proof_check_source_cursor,
                 );
                 std::mem::swap(
                     &mut self.proof_check_pending_top,
@@ -1093,13 +1080,12 @@ impl EGraph {
         *self = snapshot.egraph;
     }
 
-    /// Cancel the pending proof-history batch after an API error. Source
-    /// commands beyond the committed cursor belong to the failed command and
-    /// must not affect the next API call.
+    /// Cancel the pending proof-history batch after an API error. Live proof
+    /// execution drains every committed source batch, so anything remaining
+    /// belongs to the failed command and must not affect the next API call.
     fn abort_proof_command(&mut self) {
         if self.are_proofs_enabled() {
-            self.proof_check_source_program
-                .truncate(self.proof_check_source_cursor);
+            self.proof_check_source_program.clear();
             self.proof_check_pending_top = None;
             self.proof_check_active_top = None;
         }
@@ -1432,9 +1418,8 @@ impl EGraph {
         }
         let resolved = proof_check_eg.process_program_internal(prog, false, true, false)?;
 
-        self.proof_check_source_program = resolved.resolved_before_proofs;
+        self.proof_check_source_program = resolved.resolved_before_proofs.into();
         self.proof_check_program.clear();
-        self.proof_check_source_cursor = 0;
         self.proof_check_pending_top = None;
         self.proof_check_active_top = None;
         Ok(())
@@ -3220,6 +3205,39 @@ impl EGraph {
         }
     }
 
+    /// Constructor trees cannot invoke partial primitives or custom function
+    /// lookups. Once typechecking succeeds, their proof encoding has no
+    /// expected runtime error path, so cloning the entire e-graph solely for
+    /// command-error recovery would be wasted work. Relations are constructors
+    /// of private non-unionable sorts, so relation facts take this path too.
+    fn proof_action_needs_full_rollback(&self, action: &Action) -> bool {
+        fn is_constructor_tree(type_info: &TypeInfo, expr: &Expr) -> bool {
+            match expr {
+                GenericExpr::Var(..) | GenericExpr::Lit(..) => true,
+                GenericExpr::Call(_, head, children) => {
+                    type_info.is_constructor(head)
+                        && children
+                            .iter()
+                            .all(|child| is_constructor_tree(type_info, child))
+                }
+            }
+        }
+
+        let type_info = self
+            .proof_state
+            .original_typechecking
+            .as_ref()
+            .map_or(&self.type_info, |egraph| &egraph.type_info);
+        match action {
+            Action::Let(_, _, value) => !is_constructor_tree(type_info, value),
+            Action::Union(_, lhs, rhs) => {
+                !is_constructor_tree(type_info, lhs) || !is_constructor_tree(type_info, rhs)
+            }
+            Action::Expr(_, expr) => !is_constructor_tree(type_info, expr),
+            Action::Set(..) | Action::Change(..) | Action::Panic(..) => true,
+        }
+    }
+
     /// Run a program, returning the desugared outputs as well as the CommandOutputs.
     /// Can optionally not run the commands, just adding type information.
     fn process_program_internal(
@@ -3301,10 +3319,14 @@ impl EGraph {
                         && (matches!(
                             &command,
                             Command::Action(Action::Let(..))
-                                | Command::Actions(_)
-                                | Command::LetBegin(..)
-                        ) || (self.proof_state.original_typechecking.is_some()
-                            && matches!(&command, Command::Action(_)))))
+                                if self.proof_state.original_typechecking.is_none()
+                        ) || matches!(&command, Command::Actions(_) | Command::LetBegin(..))
+                            || (self.proof_state.original_typechecking.is_some()
+                                && matches!(
+                                    &command,
+                                    Command::Action(action)
+                                        if self.proof_action_needs_full_rollback(action)
+                                ))))
                     .then(|| self.command_snapshot());
                     let execution = (|| -> Result<_, Error> {
                         let resolved = self.resolve_command(command)?;

@@ -708,6 +708,22 @@ fn proof_mode_recovers_after_a_command_error() {
 }
 
 #[test]
+fn duplicate_constructor_global_does_not_corrupt_proof_mode() {
+    for mut egraph in [
+        EGraph::new_with_proofs(),
+        EGraph::new_with_proofs().with_proof_testing(),
+    ] {
+        egraph
+            .parse_and_run_program(None, "(datatype Math (A)) (let $x (A))")
+            .unwrap();
+        assert!(egraph.parse_and_run_program(None, "(let $x (A))").is_err());
+        egraph
+            .parse_and_run_program(None, "(let $y (A)) (check (= $x $y))")
+            .unwrap();
+    }
+}
+
+#[test]
 fn proof_mode_eval_expr_recovers_after_an_error() {
     let mut parser = egglog::ast::Parser::default();
     let failing_primitive = parser.get_expr_from_string(None, "(log 0.0)").unwrap();
