@@ -180,9 +180,9 @@ execution errors separately. The checked-in
 [`propel-parity.json`](reports/propel-parity.json) records the source commit and
 dirty state, binary and corpus hashes, and every individual result.
 
-The bounded 10-second run over all 128 imported programs made 380 direct,
-comparable egglog-versus-native observations; all 380 matched. All five variants
-completed on 86 programs. The remaining 148 individual runs timed out, so no
+The bounded 10-second run over all 128 imported programs made 277 direct,
+comparable egglog-versus-native observations; all 277 matched. All five variants
+completed on 68 programs. The remaining 256 individual runs timed out, so no
 semantic claim is made for those rows. No run ended in an execution error after
 the final pairwise-query fix.
 

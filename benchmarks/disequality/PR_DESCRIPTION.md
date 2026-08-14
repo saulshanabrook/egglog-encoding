@@ -83,10 +83,10 @@ is not committed or claimed as fully validated.
 
 All original native variants remain selectable. Four `egglog-*` variants route
 the original graph operations through the shared backend. A bounded 10-second
-audit produced 380 directly comparable egglog/native observations across the
-128 imported programs; all completed pairs agreed. The remaining 148
-individual runs timed out and remain unknown rather than being counted as
-matches.
+audit produced 277 directly comparable egglog/native observations across the
+128 imported programs; all completed pairs agreed. All five variants completed
+on 68 programs. The remaining 256 individual runs timed out and remain unknown
+rather than being counted as matches.
 
 ## Inspectable generated programs
 
@@ -103,9 +103,9 @@ encoding, proof generation, proof testing, and proof extraction. Raw source is
 tested under all four encodings. Each replay attaches two simple witness
 constructors to the first explicit host union and checks their equality. A Rust
 regression also runs both raw captures with all four encodings in ordinary,
-term, proofs, and proof-testing modes, so proof testing validates that union
-without constructing container values in the query. These are executable
-examples for manual inspection, not pseudocode.
+term, proofs, proof-testing, and proof-extraction modes, so proof testing
+validates that union without constructing container values in the query. These
+are executable examples for manual inspection, not pseudocode.
 
 ## Performance
 
@@ -130,9 +130,9 @@ propagation is not the end-to-end bottleneck.
 
 | Program | Native DE | Egglog DE | Ratio |
 | --- | ---: | ---: | ---: |
-| `tip_list_append_assoc` | 51.9 ms | 136.3 ms | 2.63x |
-| `tip_bin_plus_assoc` | 577.5 ms | 7.344 s | 12.72x |
-| `tip_nat_times_alt_assoc` | 4.227 s | 14.106 s | 3.34x |
+| `tip_list_append_assoc` | 51.6 ms | 140.4 ms | 2.72x |
+| `tip_bin_plus_assoc` | 618.9 ms | 7.240 s | 11.70x |
+| `tip_nat_times_alt_assoc` | 4.386 s | 12.571 s | 2.87x |
 
 Instrumentation on the medium case found 10,357 fresh graphs, 13,591 flushes,
 17,159 pair comparisons, and 620 full stats scans. Resolution/typechecking was
@@ -150,10 +150,10 @@ independently.
 
 | Input | Native DE, no stats | Egglog DE, no stats | Ratio |
 | --- | ---: | ---: | ---: |
-| `uf.815405` (245 current models) | 42.1 ms | 518.3 ms | 12.31x |
-| `uf.614981` (627 models) | 383.0 ms | 4.780 s | 12.48x |
+| `uf.815405` (245 current models) | 44.2 ms | 541.7 ms | 12.27x |
+| `uf.614981` (627 models) | 410.9 ms | 5.203 s | 12.66x |
 
-On the 627-model input, one clean `--stats` run took 14.798 seconds because each
+On the 627-model input, one clean `--stats` run took 15.404 seconds because each
 model triggers a full host-term/class scan, about two million term lookups in
 the diagnostic run. Without stats, retained rollback snapshots are a
 first-order candidate alongside repeated generated-command frontend work and

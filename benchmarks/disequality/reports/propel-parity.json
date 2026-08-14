@@ -1,10 +1,113 @@
 {
   "benchmark_count": 128,
-  "binary_sha256": "73ee3c05e2ebd188e19a0a9e26080d79afd83f55f039069715e539a8e12c989c",
+  "binary_sha256": "121b45e2b43e361f575e751c843426f0ee955a9142af2b8fda49e80ed6dee12e",
+  "code_dirty": false,
+  "code_revision": "e7b796940dbc148c3a97cc4a421a6669fa441f0e",
+  "code_status": [],
   "corpus_sha256": "b0661dfbb41c6490dada4b395c300bdd3fd2f3aeeaf24aa5817f4be09c6ae274",
-  "generated_at": "2026-08-13T19:37:44.451552+00:00",
+  "generated_at": "2026-08-14T19:32:36.910710+00:00",
   "incomplete": [
     {
+      "benchmark": "bv_add_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-ee"
+    },
+    {
+      "benchmark": "bv_add_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "bv_add_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "bv_add_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
+    },
+    {
+      "benchmark": "bv_add_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-ee"
+    },
+    {
+      "benchmark": "bv_add_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "bv_add_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "bv_add_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
+    },
+    {
+      "benchmark": "bv_add_leftid.propel",
+      "result": "timeout",
+      "variant": "egglog-ee"
+    },
+    {
+      "benchmark": "bv_add_leftid.propel",
+      "result": "timeout",
+      "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "bv_add_leftid.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "bv_add_leftid.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
+    },
+    {
+      "benchmark": "bv_add_rightid.propel",
+      "result": "timeout",
+      "variant": "egglog-ee"
+    },
+    {
+      "benchmark": "bv_add_rightid.propel",
+      "result": "timeout",
+      "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "bv_add_rightid.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "bv_add_rightid.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
+    },
+    {
+      "benchmark": "bv_addmod_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-ee"
+    },
+    {
+      "benchmark": "bv_addmod_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "bv_addmod_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-ee"
+    },
+    {
+      "benchmark": "bv_addmod_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-oee"
+    },
+    {
       "benchmark": "bv_lwwreg_assoc.propel",
       "result": "timeout",
       "variant": "de"
@@ -288,6 +391,16 @@
       "benchmark": "bv_mult_assoc.propel",
       "result": "timeout",
       "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "bv_mult_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "bv_mult_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
     },
     {
       "benchmark": "bv_mult_comm.propel",
@@ -295,6 +408,21 @@
       "variant": "egglog-ee"
     },
     {
+      "benchmark": "bv_mult_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "bv_mult_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "bv_mult_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
+    },
+    {
       "benchmark": "bv_mult_leftid.propel",
       "result": "timeout",
       "variant": "egglog-ee"
@@ -305,6 +433,16 @@
       "variant": "egglog-oee"
     },
     {
+      "benchmark": "bv_mult_leftid.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "bv_mult_leftid.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
+    },
+    {
       "benchmark": "bv_mult_rightid.propel",
       "result": "timeout",
       "variant": "egglog-ee"
@@ -313,6 +451,36 @@
       "benchmark": "bv_mult_rightid.propel",
       "result": "timeout",
       "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "bv_mult_rightid.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "bv_mult_rightid.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
+    },
+    {
+      "benchmark": "bv_multmod_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-ee"
+    },
+    {
+      "benchmark": "bv_multmod_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "bv_multmod_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "bv_multmod_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
     },
     {
       "benchmark": "bv_multmod_comm.propel",
@@ -320,6 +488,21 @@
       "variant": "egglog-ee"
     },
     {
+      "benchmark": "bv_multmod_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "bv_multmod_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "bv_multmod_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
+    },
+    {
       "benchmark": "bvlist_gcounter_assoc.propel",
       "result": "timeout",
       "variant": "de"
@@ -397,6 +580,11 @@
     {
       "benchmark": "nat_lwwreg_assoc.propel",
       "result": "timeout",
+      "variant": "de"
+    },
+    {
+      "benchmark": "nat_lwwreg_assoc.propel",
+      "result": "timeout",
       "variant": "egglog-ee"
     },
     {
@@ -417,6 +605,11 @@
     {
       "benchmark": "nat_lwwreg_comm.propel",
       "result": "timeout",
+      "variant": "de"
+    },
+    {
+      "benchmark": "nat_lwwreg_comm.propel",
+      "result": "timeout",
       "variant": "egglog-ee"
     },
     {
@@ -433,6 +626,11 @@
       "benchmark": "nat_lwwreg_comm.propel",
       "result": "timeout",
       "variant": "egglog-de"
+    },
+    {
+      "benchmark": "nat_lwwreg_idem.propel",
+      "result": "timeout",
+      "variant": "de"
     },
     {
       "benchmark": "nat_lwwreg_idem.propel",
@@ -460,6 +658,21 @@
       "variant": "egglog-ee"
     },
     {
+      "benchmark": "nat_max_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "nat_max_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "nat_max_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
+    },
+    {
       "benchmark": "nat_max_comm.propel",
       "result": "timeout",
       "variant": "egglog-ee"
@@ -468,6 +681,16 @@
       "benchmark": "nat_max_comm.propel",
       "result": "timeout",
       "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "nat_max_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "nat_max_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
     },
     {
       "benchmark": "nat_max_idem.propel",
@@ -480,6 +703,16 @@
       "variant": "egglog-oee"
     },
     {
+      "benchmark": "nat_max_idem.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "nat_max_idem.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
+    },
+    {
       "benchmark": "nat_max_leftid.propel",
       "result": "timeout",
       "variant": "egglog-ee"
@@ -488,6 +721,16 @@
       "benchmark": "nat_max_leftid.propel",
       "result": "timeout",
       "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "nat_max_leftid.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "nat_max_leftid.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
     },
     {
       "benchmark": "nat_max_rightid.propel",
@@ -495,11 +738,81 @@
       "variant": "egglog-ee"
     },
     {
+      "benchmark": "nat_max_rightid.propel",
+      "result": "timeout",
+      "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "nat_max_rightid.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "nat_max_rightid.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
+    },
+    {
+      "benchmark": "nat_min_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-ee"
+    },
+    {
+      "benchmark": "nat_min_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "nat_min_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "nat_min_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
+    },
+    {
       "benchmark": "nat_min_comm.propel",
       "result": "timeout",
       "variant": "egglog-ee"
     },
     {
+      "benchmark": "nat_min_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "nat_min_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "nat_min_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
+    },
+    {
+      "benchmark": "nat_min_idem.propel",
+      "result": "timeout",
+      "variant": "egglog-ee"
+    },
+    {
+      "benchmark": "nat_min_idem.propel",
+      "result": "timeout",
+      "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "nat_min_idem.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "nat_min_idem.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
+    },
+    {
       "benchmark": "natlist_gcounter_assoc.propel",
       "result": "timeout",
       "variant": "egglog-ee"
@@ -556,6 +869,46 @@
     },
     {
       "benchmark": "natlist_gcounter_idem.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
+    },
+    {
+      "benchmark": "tip_bin_plus_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-ee"
+    },
+    {
+      "benchmark": "tip_bin_plus_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "tip_bin_plus_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "tip_bin_plus_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
+    },
+    {
+      "benchmark": "tip_bin_plus_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-ee"
+    },
+    {
+      "benchmark": "tip_bin_plus_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "tip_bin_plus_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "tip_bin_plus_comm.propel",
       "result": "timeout",
       "variant": "egglog-de"
     },
@@ -565,11 +918,41 @@
       "variant": "egglog-ee"
     },
     {
+      "benchmark": "tip_bin_times_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "tip_bin_times_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "tip_bin_times_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
+    },
+    {
       "benchmark": "tip_bin_times_comm.propel",
       "result": "timeout",
       "variant": "egglog-ee"
     },
     {
+      "benchmark": "tip_bin_times_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "tip_bin_times_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "tip_bin_times_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
+    },
+    {
       "benchmark": "tip_int_plus_assoc.propel",
       "result": "timeout",
       "variant": "de"
@@ -620,6 +1003,46 @@
       "variant": "egglog-de"
     },
     {
+      "benchmark": "tip_int_times_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-ee"
+    },
+    {
+      "benchmark": "tip_int_times_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "tip_int_times_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "tip_int_times_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
+    },
+    {
+      "benchmark": "tip_int_times_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-ee"
+    },
+    {
+      "benchmark": "tip_int_times_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "tip_int_times_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "tip_int_times_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
+    },
+    {
       "benchmark": "tip_nat_max_assoc.propel",
       "result": "timeout",
       "variant": "egglog-ee"
@@ -736,13 +1159,133 @@
     },
     {
       "benchmark": "tip_nat_min_idem.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
+    },
+    {
+      "benchmark": "tip_nat_times_acc_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-ee"
+    },
+    {
+      "benchmark": "tip_nat_times_acc_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "tip_nat_times_acc_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "tip_nat_times_acc_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
+    },
+    {
+      "benchmark": "tip_nat_times_acc_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-ee"
+    },
+    {
+      "benchmark": "tip_nat_times_acc_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "tip_nat_times_acc_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "tip_nat_times_acc_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
+    },
+    {
+      "benchmark": "tip_nat_times_alt_assoc.propel",
+      "result": "timeout",
+      "variant": "de"
+    },
+    {
+      "benchmark": "tip_nat_times_alt_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-ee"
+    },
+    {
+      "benchmark": "tip_nat_times_alt_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "tip_nat_times_alt_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "tip_nat_times_alt_assoc.propel",
       "result": "timeout",
       "variant": "egglog-de"
     },
     {
       "benchmark": "tip_nat_times_alt_comm.propel",
       "result": "timeout",
+      "variant": "de"
+    },
+    {
+      "benchmark": "tip_nat_times_alt_comm.propel",
+      "result": "timeout",
       "variant": "egglog-ee"
+    },
+    {
+      "benchmark": "tip_nat_times_alt_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "tip_nat_times_alt_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "tip_nat_times_alt_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
+    },
+    {
+      "benchmark": "tip_nat_times_weird_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-ee"
+    },
+    {
+      "benchmark": "tip_nat_times_weird_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "tip_nat_times_weird_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
+    },
+    {
+      "benchmark": "tip_nat_times_weird_assoc.propel",
+      "result": "timeout",
+      "variant": "egglog-de"
+    },
+    {
+      "benchmark": "tip_nat_times_weird_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-ee"
+    },
+    {
+      "benchmark": "tip_nat_times_weird_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-oee"
+    },
+    {
+      "benchmark": "tip_nat_times_weird_comm.propel",
+      "result": "timeout",
+      "variant": "egglog-nee"
     }
   ],
   "mismatches": [],
@@ -762,37 +1305,37 @@
     {
       "benchmark": "bv_add_assoc.propel",
       "detail": null,
-      "eclasses": 18924.0,
-      "egraphs": 174.0,
-      "enodes": 19307.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-ee"
     },
     {
       "benchmark": "bv_add_assoc.propel",
       "detail": null,
-      "eclasses": 18924.0,
-      "egraphs": 174.0,
-      "enodes": 19307.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-oee"
     },
     {
       "benchmark": "bv_add_assoc.propel",
       "detail": null,
-      "eclasses": 18924.0,
-      "egraphs": 174.0,
-      "enodes": 19307.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "bv_add_assoc.propel",
       "detail": null,
-      "eclasses": 18924.0,
-      "egraphs": 174.0,
-      "enodes": 19307.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
@@ -807,37 +1350,37 @@
     {
       "benchmark": "bv_add_comm.propel",
       "detail": null,
-      "eclasses": 18924.0,
-      "egraphs": 174.0,
-      "enodes": 19307.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-ee"
     },
     {
       "benchmark": "bv_add_comm.propel",
       "detail": null,
-      "eclasses": 18924.0,
-      "egraphs": 174.0,
-      "enodes": 19307.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-oee"
     },
     {
       "benchmark": "bv_add_comm.propel",
       "detail": null,
-      "eclasses": 18924.0,
-      "egraphs": 174.0,
-      "enodes": 19307.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "bv_add_comm.propel",
       "detail": null,
-      "eclasses": 18924.0,
-      "egraphs": 174.0,
-      "enodes": 19307.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
@@ -852,37 +1395,37 @@
     {
       "benchmark": "bv_add_leftid.propel",
       "detail": null,
-      "eclasses": 19153.0,
-      "egraphs": 177.0,
-      "enodes": 19539.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-ee"
     },
     {
       "benchmark": "bv_add_leftid.propel",
       "detail": null,
-      "eclasses": 19153.0,
-      "egraphs": 177.0,
-      "enodes": 19539.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-oee"
     },
     {
       "benchmark": "bv_add_leftid.propel",
       "detail": null,
-      "eclasses": 19153.0,
-      "egraphs": 177.0,
-      "enodes": 19539.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "bv_add_leftid.propel",
       "detail": null,
-      "eclasses": 19153.0,
-      "egraphs": 177.0,
-      "enodes": 19539.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
@@ -897,37 +1440,37 @@
     {
       "benchmark": "bv_add_rightid.propel",
       "detail": null,
-      "eclasses": 19153.0,
-      "egraphs": 177.0,
-      "enodes": 19539.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-ee"
     },
     {
       "benchmark": "bv_add_rightid.propel",
       "detail": null,
-      "eclasses": 19153.0,
-      "egraphs": 177.0,
-      "enodes": 19539.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-oee"
     },
     {
       "benchmark": "bv_add_rightid.propel",
       "detail": null,
-      "eclasses": 19153.0,
-      "egraphs": 177.0,
-      "enodes": 19539.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "bv_add_rightid.propel",
       "detail": null,
-      "eclasses": 19153.0,
-      "egraphs": 177.0,
-      "enodes": 19539.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
@@ -942,19 +1485,19 @@
     {
       "benchmark": "bv_addmod_assoc.propel",
       "detail": null,
-      "eclasses": 13017.0,
-      "egraphs": 176.0,
-      "enodes": 13354.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-ee"
     },
     {
       "benchmark": "bv_addmod_assoc.propel",
       "detail": null,
-      "eclasses": 13017.0,
-      "egraphs": 176.0,
-      "enodes": 13354.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-oee"
     },
     {
@@ -987,19 +1530,19 @@
     {
       "benchmark": "bv_addmod_comm.propel",
       "detail": null,
-      "eclasses": 13017.0,
-      "egraphs": 176.0,
-      "enodes": 13354.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-ee"
     },
     {
       "benchmark": "bv_addmod_comm.propel",
       "detail": null,
-      "eclasses": 13017.0,
-      "egraphs": 176.0,
-      "enodes": 13354.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-oee"
     },
     {
@@ -1545,19 +2088,19 @@
     {
       "benchmark": "bv_mult_assoc.propel",
       "detail": null,
-      "eclasses": 46057.0,
-      "egraphs": 549.0,
-      "enodes": 47136.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "bv_mult_assoc.propel",
       "detail": null,
-      "eclasses": 46057.0,
-      "egraphs": 549.0,
-      "enodes": 47136.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
@@ -1581,28 +2124,28 @@
     {
       "benchmark": "bv_mult_comm.propel",
       "detail": null,
-      "eclasses": 42696.0,
-      "egraphs": 509.0,
-      "enodes": 43659.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-oee"
     },
     {
       "benchmark": "bv_mult_comm.propel",
       "detail": null,
-      "eclasses": 42696.0,
-      "egraphs": 509.0,
-      "enodes": 43659.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "bv_mult_comm.propel",
       "detail": null,
-      "eclasses": 42696.0,
-      "egraphs": 509.0,
-      "enodes": 43659.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
@@ -1635,19 +2178,19 @@
     {
       "benchmark": "bv_mult_leftid.propel",
       "detail": null,
-      "eclasses": 46167.0,
-      "egraphs": 552.0,
-      "enodes": 47247.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "bv_mult_leftid.propel",
       "detail": null,
-      "eclasses": 46167.0,
-      "egraphs": 552.0,
-      "enodes": 47247.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
@@ -1680,19 +2223,19 @@
     {
       "benchmark": "bv_mult_rightid.propel",
       "detail": null,
-      "eclasses": 46262.0,
-      "egraphs": 558.0,
-      "enodes": 47352.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "bv_mult_rightid.propel",
       "detail": null,
-      "eclasses": 46262.0,
-      "egraphs": 558.0,
-      "enodes": 47352.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
@@ -1707,37 +2250,37 @@
     {
       "benchmark": "bv_multmod_assoc.propel",
       "detail": null,
-      "eclasses": 40606.0,
-      "egraphs": 542.0,
-      "enodes": 41622.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-ee"
     },
     {
       "benchmark": "bv_multmod_assoc.propel",
       "detail": null,
-      "eclasses": 40606.0,
-      "egraphs": 542.0,
-      "enodes": 41622.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-oee"
     },
     {
       "benchmark": "bv_multmod_assoc.propel",
       "detail": null,
-      "eclasses": 40606.0,
-      "egraphs": 542.0,
-      "enodes": 41622.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "bv_multmod_assoc.propel",
       "detail": null,
-      "eclasses": 40606.0,
-      "egraphs": 542.0,
-      "enodes": 41622.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
@@ -1761,28 +2304,28 @@
     {
       "benchmark": "bv_multmod_comm.propel",
       "detail": null,
-      "eclasses": 40627.0,
-      "egraphs": 546.0,
-      "enodes": 41649.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-oee"
     },
     {
       "benchmark": "bv_multmod_comm.propel",
       "detail": null,
-      "eclasses": 40627.0,
-      "egraphs": 546.0,
-      "enodes": 41649.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "bv_multmod_comm.propel",
       "detail": null,
-      "eclasses": 40627.0,
-      "egraphs": 546.0,
-      "enodes": 41649.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
@@ -3408,10 +3951,10 @@
     {
       "benchmark": "nat_lwwreg_assoc.propel",
       "detail": null,
-      "eclasses": 62627.0,
-      "egraphs": 480.0,
-      "enodes": 65550.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "de"
     },
     {
@@ -3453,10 +3996,10 @@
     {
       "benchmark": "nat_lwwreg_comm.propel",
       "detail": null,
-      "eclasses": 62627.0,
-      "egraphs": 480.0,
-      "enodes": 65550.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "de"
     },
     {
@@ -3498,10 +4041,10 @@
     {
       "benchmark": "nat_lwwreg_idem.propel",
       "detail": null,
-      "eclasses": 62627.0,
-      "egraphs": 480.0,
-      "enodes": 65550.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "de"
     },
     {
@@ -3561,28 +4104,28 @@
     {
       "benchmark": "nat_max_assoc.propel",
       "detail": null,
-      "eclasses": 5321.0,
-      "egraphs": 104.0,
-      "enodes": 5682.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-oee"
     },
     {
       "benchmark": "nat_max_assoc.propel",
       "detail": null,
-      "eclasses": 5321.0,
-      "egraphs": 104.0,
-      "enodes": 5682.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "nat_max_assoc.propel",
       "detail": null,
-      "eclasses": 5321.0,
-      "egraphs": 104.0,
-      "enodes": 5682.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
@@ -3615,19 +4158,19 @@
     {
       "benchmark": "nat_max_comm.propel",
       "detail": null,
-      "eclasses": 5321.0,
-      "egraphs": 104.0,
-      "enodes": 5682.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "nat_max_comm.propel",
       "detail": null,
-      "eclasses": 5321.0,
-      "egraphs": 104.0,
-      "enodes": 5682.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
@@ -3660,19 +4203,19 @@
     {
       "benchmark": "nat_max_idem.propel",
       "detail": null,
-      "eclasses": 5321.0,
-      "egraphs": 104.0,
-      "enodes": 5682.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "nat_max_idem.propel",
       "detail": null,
-      "eclasses": 5321.0,
-      "egraphs": 104.0,
-      "enodes": 5682.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
@@ -3705,19 +4248,19 @@
     {
       "benchmark": "nat_max_leftid.propel",
       "detail": null,
-      "eclasses": 5321.0,
-      "egraphs": 104.0,
-      "enodes": 5682.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "nat_max_leftid.propel",
       "detail": null,
-      "eclasses": 5321.0,
-      "egraphs": 104.0,
-      "enodes": 5682.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
@@ -3741,28 +4284,28 @@
     {
       "benchmark": "nat_max_rightid.propel",
       "detail": null,
-      "eclasses": 5369.0,
-      "egraphs": 106.0,
-      "enodes": 5732.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-oee"
     },
     {
       "benchmark": "nat_max_rightid.propel",
       "detail": null,
-      "eclasses": 5369.0,
-      "egraphs": 106.0,
-      "enodes": 5732.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "nat_max_rightid.propel",
       "detail": null,
-      "eclasses": 5369.0,
-      "egraphs": 106.0,
-      "enodes": 5732.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
@@ -3777,37 +4320,37 @@
     {
       "benchmark": "nat_min_assoc.propel",
       "detail": null,
-      "eclasses": 3571.0,
-      "egraphs": 89.0,
-      "enodes": 3863.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-ee"
     },
     {
       "benchmark": "nat_min_assoc.propel",
       "detail": null,
-      "eclasses": 3571.0,
-      "egraphs": 89.0,
-      "enodes": 3863.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-oee"
     },
     {
       "benchmark": "nat_min_assoc.propel",
       "detail": null,
-      "eclasses": 3571.0,
-      "egraphs": 89.0,
-      "enodes": 3863.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "nat_min_assoc.propel",
       "detail": null,
-      "eclasses": 3571.0,
-      "egraphs": 89.0,
-      "enodes": 3863.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
@@ -3831,28 +4374,28 @@
     {
       "benchmark": "nat_min_comm.propel",
       "detail": null,
-      "eclasses": 3571.0,
-      "egraphs": 89.0,
-      "enodes": 3863.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-oee"
     },
     {
       "benchmark": "nat_min_comm.propel",
       "detail": null,
-      "eclasses": 3571.0,
-      "egraphs": 89.0,
-      "enodes": 3863.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "nat_min_comm.propel",
       "detail": null,
-      "eclasses": 3571.0,
-      "egraphs": 89.0,
-      "enodes": 3863.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
@@ -3867,37 +4410,37 @@
     {
       "benchmark": "nat_min_idem.propel",
       "detail": null,
-      "eclasses": 3571.0,
-      "egraphs": 89.0,
-      "enodes": 3863.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-ee"
     },
     {
       "benchmark": "nat_min_idem.propel",
       "detail": null,
-      "eclasses": 3571.0,
-      "egraphs": 89.0,
-      "enodes": 3863.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-oee"
     },
     {
       "benchmark": "nat_min_idem.propel",
       "detail": null,
-      "eclasses": 3571.0,
-      "egraphs": 89.0,
-      "enodes": 3863.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "nat_min_idem.propel",
       "detail": null,
-      "eclasses": 3571.0,
-      "egraphs": 89.0,
-      "enodes": 3863.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
@@ -4767,37 +5310,37 @@
     {
       "benchmark": "tip_bin_plus_assoc.propel",
       "detail": null,
-      "eclasses": 32731.0,
-      "egraphs": 310.0,
-      "enodes": 33428.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-ee"
     },
     {
       "benchmark": "tip_bin_plus_assoc.propel",
       "detail": null,
-      "eclasses": 32731.0,
-      "egraphs": 310.0,
-      "enodes": 33428.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-oee"
     },
     {
       "benchmark": "tip_bin_plus_assoc.propel",
       "detail": null,
-      "eclasses": 32731.0,
-      "egraphs": 310.0,
-      "enodes": 33428.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "tip_bin_plus_assoc.propel",
       "detail": null,
-      "eclasses": 32731.0,
-      "egraphs": 310.0,
-      "enodes": 33428.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
@@ -4812,37 +5355,37 @@
     {
       "benchmark": "tip_bin_plus_comm.propel",
       "detail": null,
-      "eclasses": 32589.0,
-      "egraphs": 310.0,
-      "enodes": 33286.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-ee"
     },
     {
       "benchmark": "tip_bin_plus_comm.propel",
       "detail": null,
-      "eclasses": 32589.0,
-      "egraphs": 310.0,
-      "enodes": 33286.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-oee"
     },
     {
       "benchmark": "tip_bin_plus_comm.propel",
       "detail": null,
-      "eclasses": 32589.0,
-      "egraphs": 310.0,
-      "enodes": 33286.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "tip_bin_plus_comm.propel",
       "detail": null,
-      "eclasses": 32589.0,
-      "egraphs": 310.0,
-      "enodes": 33286.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
@@ -4866,28 +5409,28 @@
     {
       "benchmark": "tip_bin_times_assoc.propel",
       "detail": null,
-      "eclasses": 41139.0,
-      "egraphs": 484.0,
-      "enodes": 42137.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-oee"
     },
     {
       "benchmark": "tip_bin_times_assoc.propel",
       "detail": null,
-      "eclasses": 41139.0,
-      "egraphs": 484.0,
-      "enodes": 42137.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "tip_bin_times_assoc.propel",
       "detail": null,
-      "eclasses": 41139.0,
-      "egraphs": 484.0,
-      "enodes": 42137.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
@@ -4911,28 +5454,28 @@
     {
       "benchmark": "tip_bin_times_comm.propel",
       "detail": null,
-      "eclasses": 41156.0,
-      "egraphs": 487.0,
-      "enodes": 42159.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-oee"
     },
     {
       "benchmark": "tip_bin_times_comm.propel",
       "detail": null,
-      "eclasses": 41156.0,
-      "egraphs": 487.0,
-      "enodes": 42159.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "tip_bin_times_comm.propel",
       "detail": null,
-      "eclasses": 41156.0,
-      "egraphs": 487.0,
-      "enodes": 42159.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
@@ -5037,37 +5580,37 @@
     {
       "benchmark": "tip_int_times_assoc.propel",
       "detail": null,
-      "eclasses": 4398.0,
-      "egraphs": 270.0,
-      "enodes": 4968.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-ee"
     },
     {
       "benchmark": "tip_int_times_assoc.propel",
       "detail": null,
-      "eclasses": 4398.0,
-      "egraphs": 270.0,
-      "enodes": 4968.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-oee"
     },
     {
       "benchmark": "tip_int_times_assoc.propel",
       "detail": null,
-      "eclasses": 4398.0,
-      "egraphs": 270.0,
-      "enodes": 4968.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "tip_int_times_assoc.propel",
       "detail": null,
-      "eclasses": 4398.0,
-      "egraphs": 270.0,
-      "enodes": 4968.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
@@ -5082,37 +5625,37 @@
     {
       "benchmark": "tip_int_times_comm.propel",
       "detail": null,
-      "eclasses": 4398.0,
-      "egraphs": 271.0,
-      "enodes": 4968.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-ee"
     },
     {
       "benchmark": "tip_int_times_comm.propel",
       "detail": null,
-      "eclasses": 4398.0,
-      "egraphs": 271.0,
-      "enodes": 4968.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-oee"
     },
     {
       "benchmark": "tip_int_times_comm.propel",
       "detail": null,
-      "eclasses": 4398.0,
-      "egraphs": 271.0,
-      "enodes": 4968.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "tip_int_times_comm.propel",
       "detail": null,
-      "eclasses": 4398.0,
-      "egraphs": 271.0,
-      "enodes": 4968.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
@@ -6162,37 +6705,37 @@
     {
       "benchmark": "tip_nat_times_acc_assoc.propel",
       "detail": null,
-      "eclasses": 5087.0,
-      "egraphs": 169.0,
-      "enodes": 5426.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-ee"
     },
     {
       "benchmark": "tip_nat_times_acc_assoc.propel",
       "detail": null,
-      "eclasses": 5087.0,
-      "egraphs": 169.0,
-      "enodes": 5426.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-oee"
     },
     {
       "benchmark": "tip_nat_times_acc_assoc.propel",
       "detail": null,
-      "eclasses": 5087.0,
-      "egraphs": 169.0,
-      "enodes": 5426.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "tip_nat_times_acc_assoc.propel",
       "detail": null,
-      "eclasses": 5087.0,
-      "egraphs": 169.0,
-      "enodes": 5426.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
@@ -6207,91 +6750,91 @@
     {
       "benchmark": "tip_nat_times_acc_comm.propel",
       "detail": null,
-      "eclasses": 5100.0,
-      "egraphs": 172.0,
-      "enodes": 5445.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-ee"
     },
     {
       "benchmark": "tip_nat_times_acc_comm.propel",
       "detail": null,
-      "eclasses": 5100.0,
-      "egraphs": 172.0,
-      "enodes": 5445.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-oee"
     },
     {
       "benchmark": "tip_nat_times_acc_comm.propel",
       "detail": null,
-      "eclasses": 5100.0,
-      "egraphs": 172.0,
-      "enodes": 5445.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "tip_nat_times_acc_comm.propel",
       "detail": null,
-      "eclasses": 5100.0,
-      "egraphs": 172.0,
-      "enodes": 5445.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
       "benchmark": "tip_nat_times_alt_assoc.propel",
       "detail": null,
-      "eclasses": 6578.0,
-      "egraphs": 176.0,
-      "enodes": 6957.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "de"
     },
     {
       "benchmark": "tip_nat_times_alt_assoc.propel",
       "detail": null,
-      "eclasses": 6578.0,
-      "egraphs": 176.0,
-      "enodes": 6951.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-ee"
     },
     {
       "benchmark": "tip_nat_times_alt_assoc.propel",
       "detail": null,
-      "eclasses": 6578.0,
-      "egraphs": 176.0,
-      "enodes": 6951.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-oee"
     },
     {
       "benchmark": "tip_nat_times_alt_assoc.propel",
       "detail": null,
-      "eclasses": 6578.0,
-      "egraphs": 176.0,
-      "enodes": 6951.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "tip_nat_times_alt_assoc.propel",
       "detail": null,
-      "eclasses": 6578.0,
-      "egraphs": 176.0,
-      "enodes": 6951.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
       "benchmark": "tip_nat_times_alt_comm.propel",
       "detail": null,
-      "eclasses": 6875.0,
-      "egraphs": 181.0,
-      "enodes": 7266.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "de"
     },
     {
@@ -6306,28 +6849,28 @@
     {
       "benchmark": "tip_nat_times_alt_comm.propel",
       "detail": null,
-      "eclasses": 6875.0,
-      "egraphs": 181.0,
-      "enodes": 7260.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-oee"
     },
     {
       "benchmark": "tip_nat_times_alt_comm.propel",
       "detail": null,
-      "eclasses": 6875.0,
-      "egraphs": 181.0,
-      "enodes": 7260.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "tip_nat_times_alt_comm.propel",
       "detail": null,
-      "eclasses": 6875.0,
-      "egraphs": 181.0,
-      "enodes": 7260.0,
-      "result": "success",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
@@ -6432,37 +6975,37 @@
     {
       "benchmark": "tip_nat_times_weird_assoc.propel",
       "detail": null,
-      "eclasses": 10447.0,
-      "egraphs": 324.0,
-      "enodes": 11143.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-ee"
     },
     {
       "benchmark": "tip_nat_times_weird_assoc.propel",
       "detail": null,
-      "eclasses": 10447.0,
-      "egraphs": 324.0,
-      "enodes": 11143.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-oee"
     },
     {
       "benchmark": "tip_nat_times_weird_assoc.propel",
       "detail": null,
-      "eclasses": 10447.0,
-      "egraphs": 324.0,
-      "enodes": 11143.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
       "benchmark": "tip_nat_times_weird_assoc.propel",
       "detail": null,
-      "eclasses": 10447.0,
-      "egraphs": 324.0,
-      "enodes": 11143.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-de"
     },
     {
@@ -6477,28 +7020,28 @@
     {
       "benchmark": "tip_nat_times_weird_comm.propel",
       "detail": null,
-      "eclasses": 9893.0,
-      "egraphs": 308.0,
-      "enodes": 10535.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-ee"
     },
     {
       "benchmark": "tip_nat_times_weird_comm.propel",
       "detail": null,
-      "eclasses": 9893.0,
-      "egraphs": 308.0,
-      "enodes": 10535.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-oee"
     },
     {
       "benchmark": "tip_nat_times_weird_comm.propel",
       "detail": null,
-      "eclasses": 9893.0,
-      "egraphs": 308.0,
-      "enodes": 10535.0,
-      "result": "failure",
+      "eclasses": null,
+      "egraphs": null,
+      "enodes": null,
+      "result": "timeout",
       "variant": "egglog-nee"
     },
     {
@@ -6511,43 +7054,43 @@
       "variant": "egglog-de"
     }
   ],
-  "schema_version": 1,
+  "schema_version": 2,
   "summary": {
-    "comparable_count": 380,
-    "fully_complete_benchmark_count": 86,
-    "incomplete_count": 148,
-    "matched_count": 380,
+    "comparable_count": 277,
+    "fully_complete_benchmark_count": 68,
+    "incomplete_count": 256,
+    "matched_count": 277,
     "mismatch_count": 0,
     "result_counts_by_variant": {
       "de": {
         "error": 0,
-        "failure": 15,
-        "success": 97,
-        "timeout": 16
+        "failure": 14,
+        "success": 93,
+        "timeout": 21
       },
       "egglog-de": {
         "error": 0,
-        "failure": 15,
-        "success": 85,
-        "timeout": 28
+        "failure": 6,
+        "success": 65,
+        "timeout": 57
       },
       "egglog-ee": {
         "error": 0,
-        "failure": 11,
-        "success": 75,
-        "timeout": 42
+        "failure": 5,
+        "success": 63,
+        "timeout": 60
       },
       "egglog-nee": {
         "error": 0,
-        "failure": 15,
-        "success": 85,
-        "timeout": 28
+        "failure": 5,
+        "success": 65,
+        "timeout": 58
       },
       "egglog-oee": {
         "error": 0,
-        "failure": 13,
-        "success": 81,
-        "timeout": 34
+        "failure": 5,
+        "success": 63,
+        "timeout": 60
       }
     },
     "run_count": 640

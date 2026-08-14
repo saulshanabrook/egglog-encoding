@@ -201,8 +201,12 @@ wall time is presented as an end-to-end comparison.
 
 ## Relational results
 
-Median of three final-code, interleaved ratio-0.5 trials on 2026-08-14 after
-merging `origin/main`. Ranges are wall-time ranges, not confidence intervals.
+Median of three accepted, interleaved ratio-0.5 trials at `88c40cf` on
+2026-08-14 after merging `origin/main`. The later `e7b7969` change only affects
+live `fail`; this consistent workload invokes the private schedule directly.
+Ranges are wall-time ranges, not confidence intervals. Rejected final-revision
+reruns and their host-contention evidence are documented in
+[`../../../benchmarks/disequality/PERFORMANCE_ANALYSIS.md`](../../../benchmarks/disequality/PERFORMANCE_ANALYSIS.md).
 
 | Engine | Encoding | Wall | Term rules | Pair rules | Disequality rules | Non-ruleset wall | Wall range |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |

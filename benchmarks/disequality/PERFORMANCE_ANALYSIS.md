@@ -12,9 +12,12 @@ attributing generic host/API overhead to the compiled disequality rules.
 - Apple M4, 16 GiB RAM, arm64 macOS (Darwin 25.6.0)
 - Rust 1.91.0, Cargo 1.91.0, uv 0.12.3
 - merged base `origin/main` at `ffb8ae435bd6421077b1c15826f32a6aeecf5b1b`
-- measured code commit `88c40cf6a298a8c503a741b8e736d5cc7498f348`,
-  after merging `origin/main` at
+- final Propel and EUF measurements at code commit
+  `e7b796940dbc148c3a97cc4a421a6669fa441f0e`, after merging `origin/main` at
   `ffb8ae435bd6421077b1c15826f32a6aeecf5b1b`
+- parameter-analysis measurements at
+  `88c40cf6a298a8c503a741b8e736d5cc7498f348`; the later commit changes live
+  `fail` handling, which the consistent parameter workload does not execute
 - release builds for timed Rust and Scala Native executables
 - six accepted samples per Propel and EUF endpoint: two three-run Hyperfine
   invocations with endpoint order reversed, after one Propel warmup and two EUF
@@ -25,11 +28,9 @@ The commands below regenerate the results; generated parameter TSV files and
 the large EUF corpus are intentionally not committed. Six samples are enough to
 identify the large cost centers here, but not for a publication-quality
 statistical claim. Ranges are descriptive. Complete timing attempts that
-overlapped Rust builds, the independent reviewer's validation, or a concurrent
-852-test process observed at 775% CPU were rejected before analysis. No sample
-inside an accepted invocation was discarded; the reported ranges therefore
-retain isolated first-run observations as high as 6.67 seconds native and 18.40
-seconds egglog on the large Propel case.
+overlapped Rust builds, the independent reviewer's validation, or another
+worktree's concurrent benchmark and compiler processes were rejected before
+analysis. No sample inside an accepted invocation was discarded.
 
 ## Summary
 
@@ -37,12 +38,12 @@ seconds egglog on the large Propel case.
 | --- | --- | ---: | --- |
 | Parameter analysis | egglog EE / native EE | 5.29x wall | 3.7M occurrence rows, term reconstruction, and non-ruleset work |
 | Parameter analysis | egglog DE / native DE | 7.47x wall | same; DE propagation itself is 2.5 ms |
-| Propel, small | egglog DE / native DE | 2.63x wall | fixed graph lifecycle, host calls, and atomic action batches |
-| Propel, medium | egglog DE / native DE | 12.72x wall | repeated creation, measured frontend/database/query/stats work; rollback snapshots are an unisolated candidate |
-| Propel, large | egglog DE / native DE | 3.34x wall | native Propel work; rollback snapshots are an unisolated candidate |
-| EUF, 245 models | egglog DE / native DE | 12.31x wall | one cloned graph and atomic generated-command batch per SAT model |
-| EUF, 627 models | egglog DE / native DE | 12.48x wall | 403K operations across 628 atomic flushes, frontend work, and database execution |
-| EUF, 627 models with stats | egglog DE / native DE | about 37.2x wall | atomic batches plus 627 full graph scans and about 2M term lookups |
+| Propel, small | egglog DE / native DE | 2.72x wall | fixed graph lifecycle, host calls, and atomic action batches |
+| Propel, medium | egglog DE / native DE | 11.70x wall | repeated creation, measured frontend/database/query/stats work; rollback snapshots are an unisolated candidate |
+| Propel, large | egglog DE / native DE | 2.87x wall | native Propel work; rollback snapshots are an unisolated candidate |
+| EUF, 245 models | egglog DE / native DE | 12.27x wall | one cloned graph and atomic generated-command batch per SAT model |
+| EUF, 627 models | egglog DE / native DE | 12.66x wall | 403K operations across 628 atomic flushes, frontend work, and database execution |
+| EUF, 627 models with stats | egglog DE / native DE | 39.71x reported full time | atomic batches plus 627 full graph scans and about 2M term lookups |
 
 The answer to "typechecking or engine?" is workload-dependent:
 
@@ -97,6 +98,15 @@ Term reconstruction costs about 2.5 seconds, pair traversal about 0.6 seconds,
 and non-ruleset work about 1.7 seconds. The private disequality phase ranges
 from 0.2 to 11.8 ms.
 
+These accepted rows predate the final source-order `fail` fix. The parameter
+driver is consistent, so `(check-disequalities)` executes the private schedule
+directly and never enters that changed path. Two attempted reruns at the final
+revision were rejected in full: another worktree overlapped the first with
+compiler/benchmark processes, and the immediate follow-up remained thermally
+unstable, with egglog endpoints varying from about 5 to 10 seconds while the
+native endpoints stayed near their prior values. Their temporary observations
+are not committed or used in the table.
+
 The earlier removed `CompiledDisequalityWriter` established an optimistic
 lower bound: direct compiled database insertion could beat both artifact
 programs. It was not retained because it bypassed source typechecking and
@@ -116,9 +126,9 @@ crosses that interface. This is not an offline trace replay.
 
 | Program | Artifact precomputed native DE | Current native DE | Current egglog DE | Egglog / current native |
 | --- | ---: | ---: | ---: | ---: |
-| `tip_list_append_assoc` | 85 ms | 51.9 ms (44.4-70.4) | 136.3 ms (132.4-173.6) | 2.63x |
-| `tip_bin_plus_assoc` | 1.308 s | 577.5 ms (571.4-587.3) | 7.344 s (7.286-7.382) | 12.72x |
-| `tip_nat_times_alt_assoc` | 8.361 s | 4.227 s (4.143-6.667) | 14.106 s (14.017-18.399) | 3.34x |
+| `tip_list_append_assoc` | 85 ms | 51.6 ms (46.1-57.8) | 140.4 ms (133.3-154.1) | 2.72x |
+| `tip_bin_plus_assoc` | 1.308 s | 618.9 ms (610.0-639.0) | 7.240 s (6.742-7.640) | 11.70x |
+| `tip_nat_times_alt_assoc` | 8.361 s | 4.386 s (4.327-4.444) | 12.571 s (12.304-12.771) | 2.87x |
 
 The current native implementation is substantially faster than the artifact's
 precomputed numbers on these cases. The host machine or Scala Native build
@@ -133,8 +143,8 @@ Each consistency query adds two distinct snapshots: one validates the complete
 `fail` body, and another remains live while its schedule executes so a schedule
 that mutates and then errors can be rolled back. The medium profile counted
 1,393 such queries. Relative to the pre-atomic `55250f3` measurements, the
-final egglog medians increased from 101.2 ms, 3.497 s, and 6.356 s to 136.3 ms,
-7.344 s, and 14.106 s. An intermediate implementation that omitted rollback
+final egglog medians increased from 101.2 ms, 3.497 s, and 6.356 s to 140.4 ms,
+7.240 s, and 12.571 s. An intermediate implementation that omitted rollback
 for failing schedules measured 139.5 ms, 5.797 s, and 10.842 s; those numbers
 are not valid final results. The observed slowdown is consistent with retained
 snapshot overhead, but validation, action-batch, and failing-child snapshots
@@ -213,8 +223,8 @@ the artifact's 627 models exactly.
 
 | Input | Artifact precomputed native DE | Current native DE | Current egglog DE | Egglog / current native |
 | --- | ---: | ---: | ---: | ---: |
-| `uf.815405` | 100.366 ms | 42.1 ms (41.5-45.1) | 518.3 ms (511.8-534.5) | 12.31x |
-| `uf.614981` | 973.656 ms | 383.0 ms (372.8-409.8) | 4.780 s (4.764-4.805) | 12.48x |
+| `uf.815405` | 100.366 ms | 44.2 ms (42.6-49.5) | 541.7 ms (534.0-591.2) | 12.27x |
+| `uf.614981` | 973.656 ms | 410.9 ms (391.8-435.4) | 5.203 s (5.080-5.853) | 12.66x |
 
 As in Propel, current native DE is substantially faster than the artifact's
 precomputed result, so the environment does not explain the egglog ratio.
@@ -226,13 +236,13 @@ than presenting a narrow standard deviation.
 
 On `uf.614981`, enabling stats produced these single-run results:
 
-| Backend | Full wall | Setup |
+| Backend | Solver full time | Setup |
 | --- | ---: | ---: |
-| native DE | 397.752 ms | 1.547 ms |
-| egglog DE | 14.798 s | 1.471 s |
+| native DE | 387.892 ms | 1.425 ms |
+| egglog DE | 15.404 s | 1.558 s |
 
-Against the accepted 4.780-second no-stats median, this single egglog stats run
-adds about 10.02 seconds. It is about 37.2x the same single native stats run.
+Against the accepted 5.203-second no-stats median, this single egglog stats run
+adds about 10.20 seconds. It is 39.71x the same single native stats run.
 The solver requests stats once for each of 627 models. `graph.stats()` walks
 every host term, parses/evaluates its lookup expression, computes an e-class
 id, and scans extension tables. Instrumentation at revision `55250f3` counted
