@@ -1208,7 +1208,7 @@ impl TypeInfo {
         let ftype = self.prepare_function_type(fdecl)?;
         let outputs = ftype.outputs.clone();
         let is_tuple = fdecl.schema.is_tuple_output();
-        let symbol_gen_before = symbol_gen.clone();
+        let symbol_gen_checkpoint = symbol_gen.checkpoint();
 
         // For single-output functions the merge expression refers to `old`/`new`. For
         // tuple-output functions it refers to `old0`, `new0`, `old1`, `new1`, ... (one pair per
@@ -1277,9 +1277,12 @@ impl TypeInfo {
             Ok(Some(ResolvedMerge { actions, result }))
         });
         let merge = match merge_result {
-            Ok(merge) => merge,
+            Ok(merge) => {
+                symbol_gen.commit(symbol_gen_checkpoint);
+                merge
+            }
             Err(error) => {
-                *symbol_gen = symbol_gen_before;
+                symbol_gen.rollback(symbol_gen_checkpoint);
                 return Err(error);
             }
         };
@@ -1823,6 +1826,7 @@ mod test {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use crate::sort::Sort;
+    use crate::util::FreshGen;
     use crate::{ArcSort, EGraph, Error, Span, typechecking::TypeError};
 
     #[derive(Clone, Debug)]
@@ -1900,6 +1904,10 @@ mod test {
         let invalid_merge = "invalid-merge";
         let merge_generation = egraph.type_info.call_generation(invalid_merge);
         let symbol_gen_before = egraph.parser.symbol_gen.clone();
+        let expected_next_name = {
+            let mut expected = symbol_gen_before.clone();
+            expected.fresh("after-invalid-merge")
+        };
         let Error::TypeError(error) = egraph
             .resolve_program(
                 None,
@@ -1911,19 +1919,22 @@ mod test {
         else {
             panic!("invalid merge should fail during source typechecking")
         };
-        assert!(
-            matches!(
-                error,
-                TypeError::UnboundFunction(..) | TypeError::UnresolvedPrimitive { .. }
-            ),
-            "unexpected merge error: {error:?}"
-        );
+        match &error {
+            TypeError::UnboundFunction(name, _) | TypeError::UnresolvedPrimitive { name, .. } => {
+                assert_eq!(name, "missing-merge-primitive");
+            }
+            _ => panic!("unexpected merge error: {error:?}"),
+        }
         assert!(egraph.type_info.get_func_type(invalid_merge).is_none());
         assert_eq!(
             egraph.type_info.call_generation(invalid_merge),
             merge_generation
         );
         assert_eq!(egraph.parser.symbol_gen, symbol_gen_before);
+        assert_eq!(
+            egraph.parser.symbol_gen.fresh("after-invalid-merge"),
+            expected_next_name
+        );
 
         let recursive_merge = "recursive-merge";
         let recursive_generation = egraph.type_info.call_generation(recursive_merge);
