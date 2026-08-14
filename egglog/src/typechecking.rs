@@ -238,6 +238,9 @@ pub struct TypeInfo {
     pub(crate) sorts: HashMap<String, Arc<dyn Sort>>,
     primitives: HashMap<String, Vec<PrimitiveWithId>>,
     func_types: HashMap<String, FuncType>,
+    /// Monotonic, name-local invalidation stamps for exact call-resolution
+    /// caches. Only registrations for a head advance that head's stamp.
+    call_generations: HashMap<String, u64>,
     pub(crate) global_sorts: HashMap<String, ArcSort>,
     /// Sorts that do not allow union (e.g., from `:no-union` sorts or relations).
     pub(crate) non_unionable_sorts: HashSet<String>,
@@ -444,13 +447,14 @@ impl EGraph {
             });
             eg.type_info
                 .primitives
-                .entry(name)
+                .entry(name.clone())
                 .or_default()
                 .push(PrimitiveWithId {
                     primitive,
                     validator: validator.clone(),
                     context_ids,
                 });
+            eg.type_info.bump_call_generation(&name);
             match eg.proof_state.original_typechecking.as_deref_mut() {
                 Some(next) => eg = next,
                 None => break,
@@ -534,6 +538,7 @@ impl EGraph {
                 outputs: vec![unit],
             },
         );
+        self.type_info.bump_call_generation(name);
         self.type_info.indexes.insert(
             name.to_owned(),
             IndexInfo {
@@ -544,56 +549,73 @@ impl EGraph {
         Ok(())
     }
 
+    /// Validate and register a function declaration, including the generated
+    /// proof-encoding primitives and global metadata attached to special
+    /// internal functions. The registration is intentionally shared by source
+    /// typechecking and the exact-key generated binder.
+    pub(crate) fn register_function_declaration(
+        &mut self,
+        fdecl: &FunctionDecl,
+    ) -> Result<ResolvedFunctionDecl, TypeError> {
+        let resolved = self
+            .type_info
+            .typecheck_function(&mut self.parser.symbol_gen, fdecl)?;
+
+        // An FD view (function carrying `term_constructor` with a tuple
+        // `(eclass, proof)` output) gets a `set-if-empty` primitive (+ a
+        // proof-column reader) so the encoding can canonicalize a term to
+        // the view's e-class at insertion time. Registered here so it survives
+        // re-parse of the desugared program.
+        if resolved.term_constructor.is_some()
+            && let ResolvedCall::Func(ft) = &resolved.resolved_schema
+            && ft.outputs.len() >= 2
+        {
+            let (name, input, outputs) =
+                (resolved.name.clone(), ft.input.clone(), ft.outputs.clone());
+            crate::proofs::proof_fresh::register_set_if_empty(self, &name, input, outputs);
+        }
+        // A term-node relation (a term or proof node, whose last input is
+        // the minted id) gets a mint primitive, so the encoding writes a
+        // node in one statement. Registered here for the same reason as
+        // `set-if-empty` above.
+        if resolved.internal_term_node
+            && let ResolvedCall::Func(ft) = &resolved.resolved_schema
+            && let Some((id_sort, arg_sorts)) = ft.input.split_last()
+            && id_sort.is_eq_sort()
+        {
+            // `register_mint` stages one `Unit` value column, so a term-node
+            // relation must declare exactly that.
+            debug_assert!(
+                matches!(ft.outputs.as_slice(), [out] if out.name() == "Unit"),
+                "term-node relation `{}` must declare one `Unit` value column, got {:?}",
+                resolved.name,
+                ft.outputs.iter().map(|out| out.name()).collect::<Vec<_>>(),
+            );
+            let (name, id_sort, arg_sorts) =
+                (resolved.name.clone(), id_sort.clone(), arg_sorts.to_vec());
+            crate::proofs::proof_fresh::register_mint(self, &name, arg_sorts, id_sort);
+        }
+        // If this is a let binding, add it to global_sorts. This preserves
+        // behavior for lets after desugaring.
+        if resolved.internal_let {
+            let output_sort = self.type_info.sorts.get(fdecl.schema.output()).unwrap();
+            self.type_info
+                .global_sorts
+                .insert(fdecl.name.clone(), output_sort.clone());
+        }
+        Ok(resolved)
+    }
+
     fn typecheck_command(&mut self, command: &NCommand) -> Result<ResolvedNCommand, TypeError> {
+        if let NCommand::Function(fdecl) = command {
+            return Ok(ResolvedNCommand::Function(
+                self.register_function_declaration(fdecl)?,
+            ));
+        }
         let symbol_gen = &mut self.parser.symbol_gen;
 
         let command: ResolvedNCommand = match command {
-            NCommand::Function(fdecl) => {
-                let resolved = self.type_info.typecheck_function(symbol_gen, fdecl)?;
-                // An FD view (function carrying `term_constructor` with a tuple
-                // `(eclass, proof)` output) gets a `set-if-empty` primitive (+ a
-                // proof-column reader) so the encoding can canonicalize a term to
-                // the view's e-class at insertion time. Registered here so it
-                // survives re-parse of the desugared program.
-                if resolved.term_constructor.is_some()
-                    && let ResolvedCall::Func(ft) = &resolved.resolved_schema
-                    && ft.outputs.len() >= 2
-                {
-                    let (name, input, outputs) =
-                        (resolved.name.clone(), ft.input.clone(), ft.outputs.clone());
-                    crate::proofs::proof_fresh::register_set_if_empty(self, &name, input, outputs);
-                }
-                // A term-node relation (a term or proof node, whose last input is
-                // the minted id) gets a mint primitive, so the encoding writes a
-                // node in one statement. Registered here for the same reason as
-                // `set-if-empty` above.
-                if resolved.internal_term_node
-                    && let ResolvedCall::Func(ft) = &resolved.resolved_schema
-                    && let Some((id_sort, arg_sorts)) = ft.input.split_last()
-                    && id_sort.is_eq_sort()
-                {
-                    // `register_mint` stages one `Unit` value column, so a term-node
-                    // relation must declare exactly that.
-                    debug_assert!(
-                        matches!(ft.outputs.as_slice(), [out] if out.name() == "Unit"),
-                        "term-node relation `{}` must declare one `Unit` value column, got {:?}",
-                        resolved.name,
-                        ft.outputs.iter().map(|out| out.name()).collect::<Vec<_>>(),
-                    );
-                    let (name, id_sort, arg_sorts) =
-                        (resolved.name.clone(), id_sort.clone(), arg_sorts.to_vec());
-                    crate::proofs::proof_fresh::register_mint(self, &name, arg_sorts, id_sort);
-                }
-                // If this is a let binding, add it to global_sorts
-                // This preserves behavior for lets after desugaring
-                if resolved.internal_let {
-                    let output_sort = self.type_info.sorts.get(fdecl.schema.output()).unwrap();
-                    self.type_info
-                        .global_sorts
-                        .insert(fdecl.name.clone(), output_sort.clone());
-                }
-                ResolvedNCommand::Function(resolved)
-            }
+            NCommand::Function(_) => unreachable!("function declarations return above"),
             NCommand::NormRule { rule } => ResolvedNCommand::NormRule {
                 rule: self
                     .type_info
@@ -896,6 +918,17 @@ impl EGraph {
 }
 
 impl TypeInfo {
+    fn bump_call_generation(&mut self, head: &str) {
+        let generation = self.call_generations.entry(head.to_owned()).or_default();
+        *generation = generation
+            .checked_add(1)
+            .expect("call-resolution generation overflow");
+    }
+
+    pub(crate) fn call_generation(&self, head: &str) -> u64 {
+        self.call_generations.get(head).copied().unwrap_or_default()
+    }
+
     /// Adds a sort constructor to the typechecker's known set of types.
     pub fn add_presort<S: Presort>(&mut self, span: Span) -> Result<(), TypeError> {
         let name = S::presort_name();
@@ -1038,18 +1071,13 @@ impl TypeInfo {
             ));
         }
         let ftype = self.function_to_functype(fdecl)?;
-        if self.func_types.insert(fdecl.name.clone(), ftype).is_some() {
+        if self.func_types.contains_key(&fdecl.name) {
             return Err(TypeError::FunctionAlreadyBound(
                 fdecl.name.clone(),
                 fdecl.span.clone(),
             ));
         }
-        let outputs: Vec<ArcSort> = fdecl
-            .schema
-            .outputs
-            .iter()
-            .map(|name| self.sorts.get(name).unwrap().clone())
-            .collect();
+        let outputs = ftype.outputs.clone();
         let is_tuple = fdecl.schema.is_tuple_output();
 
         // Tuple outputs are only meaningful for custom functions (which carry a functional
@@ -1069,6 +1097,14 @@ impl TypeInfo {
                 fdecl.span.clone(),
             ));
         }
+
+        // A merge may refer to the function being declared, so make its type
+        // provisionally visible while the merge is checked. This provisional
+        // entry is rolled back on every later error and does not advance the
+        // name-local call generation until the declaration commits.
+        let symbol_gen_before = symbol_gen.clone();
+        let previous = self.func_types.insert(fdecl.name.clone(), ftype.clone());
+        debug_assert!(previous.is_none(), "duplicate function checked above");
 
         // For single-output functions the merge expression refers to `old`/`new`. For
         // tuple-output functions it refers to `old0`, `new0`, `old1`, `new1`, ... (one pair per
@@ -1091,57 +1127,67 @@ impl TypeInfo {
         // live DB reads would be untracked by seminaive rule execution), then `result` produces the
         // merged value(s). Both are typechecked with `old`/`new` (`old0`/`new0`/... for tuple)
         // bound; the actions go through the same action typechecker as rule bodies.
-        let merge = match &fdecl.merge {
-            Some(merge) => {
-                let actions = self.typecheck_standalone_actions(
-                    symbol_gen,
-                    &merge.actions,
-                    &bound_vars,
-                    Context::Write,
-                )?;
-                // The result is evaluated after the actions, so any `let`-bound variable is in
-                // scope for it. Extend the binding with each `let`'s solved type before checking
-                // the result. `let_bindings` owns the names so `result_scope` can borrow them.
-                let let_bindings: Vec<(String, Span, ArcSort)> = actions
-                    .0
-                    .iter()
-                    .filter_map(|a| match a {
-                        GenericAction::Let(span, var, _) => {
-                            Some((var.name.as_str().to_owned(), span.clone(), var.sort.clone()))
-                        }
-                        _ => None,
-                    })
-                    .collect();
-                let mut result_scope = bound_vars.clone();
-                for (name, span, sort) in &let_bindings {
-                    result_scope.insert(name.as_str(), (span.clone(), sort.clone()));
-                }
-                let result = if is_tuple {
-                    self.typecheck_tuple_merge(
-                        symbol_gen,
-                        fdecl,
-                        &merge.result,
-                        &outputs,
-                        &result_scope,
-                    )?
-                } else {
-                    self.typecheck_standalone_expr(
-                        symbol_gen,
-                        &merge.result,
-                        &result_scope,
-                        Context::Write,
-                    )?
-                };
-                Some(ResolvedMerge { actions, result })
+        let merge_result: Result<Option<ResolvedMerge>, TypeError> = (|| {
+            let Some(merge) = &fdecl.merge else {
+                return Ok(None);
+            };
+            let actions = self.typecheck_standalone_actions(
+                symbol_gen,
+                &merge.actions,
+                &bound_vars,
+                Context::Write,
+            )?;
+            // The result is evaluated after the actions, so any `let`-bound variable is in
+            // scope for it. Extend the binding with each `let`'s solved type before checking
+            // the result. `let_bindings` owns the names so `result_scope` can borrow them.
+            let let_bindings: Vec<(String, Span, ArcSort)> = actions
+                .0
+                .iter()
+                .filter_map(|a| match a {
+                    GenericAction::Let(span, var, _) => {
+                        Some((var.name.as_str().to_owned(), span.clone(), var.sort.clone()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            let mut result_scope = bound_vars.clone();
+            for (name, span, sort) in &let_bindings {
+                result_scope.insert(name.as_str(), (span.clone(), sort.clone()));
             }
-            None => None,
+            let result = if is_tuple {
+                self.typecheck_tuple_merge(
+                    symbol_gen,
+                    fdecl,
+                    &merge.result,
+                    &outputs,
+                    &result_scope,
+                )?
+            } else {
+                self.typecheck_standalone_expr(
+                    symbol_gen,
+                    &merge.result,
+                    &result_scope,
+                    Context::Write,
+                )?
+            };
+            Ok(Some(ResolvedMerge { actions, result }))
+        })();
+        let merge = match merge_result {
+            Ok(merge) => merge,
+            Err(error) => {
+                let removed = self.func_types.remove(&fdecl.name);
+                debug_assert!(removed.is_some(), "provisional function must exist");
+                *symbol_gen = symbol_gen_before;
+                return Err(error);
+            }
         };
+        self.bump_call_generation(&fdecl.name);
 
         Ok(ResolvedFunctionDecl {
             name: fdecl.name.clone(),
             subtype: fdecl.subtype,
             schema: fdecl.schema.clone(),
-            resolved_schema: ResolvedCall::Func(self.func_types.get(&fdecl.name).unwrap().clone()),
+            resolved_schema: ResolvedCall::Func(ftype),
             merge,
             cost: fdecl.cost,
             unextractable: fdecl.unextractable,
@@ -1333,7 +1379,7 @@ impl TypeInfo {
         Ok(())
     }
 
-    fn check_no_function_lookups_in_actions(
+    pub(crate) fn check_no_function_lookups_in_actions(
         &self,
         actions: &ResolvedActions,
     ) -> Result<(), TypeError> {
@@ -1670,6 +1716,8 @@ pub enum TypeError {
 
 #[cfg(test)]
 mod test {
+    use std::sync::Arc;
+
     use crate::{EGraph, Error, typechecking::TypeError};
 
     #[test]
@@ -1690,5 +1738,90 @@ mod test {
             }
             _ => panic!("Expected arity mismatch, got: {res:?}"),
         }
+    }
+
+    #[test]
+    fn function_registration_errors_leave_registry_and_generation_unchanged() {
+        let mut egraph = EGraph::default();
+
+        let invalid_constructor = "invalid-constructor";
+        let constructor_generation = egraph.type_info.call_generation(invalid_constructor);
+        let Error::TypeError(error) = egraph
+            .resolve_program(None, "(constructor invalid-constructor (i64) i64)")
+            .unwrap_err()
+        else {
+            panic!("invalid constructor should fail during source typechecking")
+        };
+        assert!(matches!(error, TypeError::ConstructorOutputNotSort(..)));
+        assert!(
+            egraph
+                .type_info
+                .get_func_type(invalid_constructor)
+                .is_none()
+        );
+        assert_eq!(
+            egraph.type_info.call_generation(invalid_constructor),
+            constructor_generation
+        );
+
+        let invalid_merge = "invalid-merge";
+        let merge_generation = egraph.type_info.call_generation(invalid_merge);
+        let symbol_gen_before = egraph.parser.symbol_gen.clone();
+        let Error::TypeError(error) = egraph
+            .resolve_program(
+                None,
+                "(function invalid-merge (i64) i64 \
+                 :merge ((let staged (+ old new)) \
+                         (missing-merge-primitive staged)))",
+            )
+            .unwrap_err()
+        else {
+            panic!("invalid merge should fail during source typechecking")
+        };
+        assert!(
+            matches!(
+                error,
+                TypeError::UnboundFunction(..) | TypeError::UnresolvedPrimitive { .. }
+            ),
+            "unexpected merge error: {error:?}"
+        );
+        assert!(egraph.type_info.get_func_type(invalid_merge).is_none());
+        assert_eq!(
+            egraph.type_info.call_generation(invalid_merge),
+            merge_generation
+        );
+        assert_eq!(egraph.parser.symbol_gen, symbol_gen_before);
+
+        let recursive_merge = "recursive-merge";
+        let recursive_generation = egraph.type_info.call_generation(recursive_merge);
+        egraph
+            .resolve_program(
+                None,
+                "(function recursive-merge (i64) i64 \
+                 :merge (recursive-merge old))",
+            )
+            .unwrap();
+        assert!(egraph.type_info.get_func_type(recursive_merge).is_some());
+        assert!(egraph.type_info.call_generation(recursive_merge) > recursive_generation);
+
+        let declaration = "stable-function";
+        let generation_before = egraph.type_info.call_generation(declaration);
+        egraph
+            .resolve_program(None, "(function stable-function (i64) i64 :no-merge)")
+            .unwrap();
+        let registered = egraph.type_info.get_func_type(declaration).unwrap().clone();
+        let generation = egraph.type_info.call_generation(declaration);
+        assert!(generation > generation_before);
+        let Error::TypeError(error) = egraph
+            .resolve_program(None, "(function stable-function (String) String :no-merge)")
+            .unwrap_err()
+        else {
+            panic!("duplicate function should fail during source typechecking")
+        };
+        assert!(matches!(error, TypeError::FunctionAlreadyBound(..)));
+        let after = egraph.type_info.get_func_type(declaration).unwrap();
+        assert!(Arc::ptr_eq(&registered.input[0], &after.input[0]));
+        assert!(Arc::ptr_eq(&registered.outputs[0], &after.outputs[0]));
+        assert_eq!(egraph.type_info.call_generation(declaration), generation);
     }
 }
