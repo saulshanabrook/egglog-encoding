@@ -49,9 +49,11 @@ labelled as hypotheses.
   `typecheck_program` 44.65%, `typecheck_rule` 37.38%, `Problem::solve` 15.66%,
   generated/source parsing 8.86% (92.3% under the proof encoder),
   `remove_globals` 5.41%, and generated desugaring 2.45%.
-- Clean Luminal typecheck attribution: generated proofs spent about 401.3 ms in
-  standalone action blocks and 203.4 ms in rules out of 637.6 ms total
-  typechecking per iteration.  This is workload-local, not a suite total.
+- Clean Luminal sampled-CPU attribution: generated proofs spent about 401.3 ms
+  inclusively in standalone action blocks and 203.4 ms inclusively in rules out
+  of 637.6 ms total typechecking per profiled iteration.  Off mode spent 15.2 ms
+  and 18.3 ms respectively.  These are workload-local inclusive samples, not
+  exclusive V4 leaves, confidence-bounded wall time, or suite totals.
 
 The prior numbers are retained evidence from the investigation at the frozen
 revision.  The implementation branch will record a new balanced baseline before
@@ -59,23 +61,37 @@ claiming a before/after result.
 
 ## Pre-registered savings budget
 
-These are hypotheses registered before implementation, not measured results.
-They allocate an approximately 900 ms gross suite-wide removable frontend pool
-using the V4 action/rule split, the 17 generated parser edges, and generated-form
-counts.  They intentionally do not book install or rule-planning savings.
+These are low-confidence priors registered before implementation, not measured
+results.  They allocate an approximately 900 ms gross suite-wide removable
+frontend pool using workload-local inclusive Luminal samples, the 17 generated
+parser edges, and generated-form counts.  V4 has no frontend family split: its
+typecheck, parse, and other-frontend leaves merge source and generated work, and
+its action/ruleset leaves measure downstream execution.  Five generated parser
+edges (one schedule, two facts, and two expressions) also bypass the timed
+program parser and currently land in `frontend_other`.  The priors intentionally
+do not book install or rule-planning savings.
 
-| Generated family | Gross removable budget | Expected net after binding | Evidence basis | Half-budget checkpoint |
+| Generated family | Gross removable prior | Conditional net prior | Evidence basis | Provisional half-net checkpoint |
 | --- | ---: | ---: | --- | ---: |
-| Ground actions, source globals, and extraction setup | 400 ms | 350 ms | Luminal standalone actions were 401.3/637.6 ms of typecheck; these forms also reparse and remove globals | 175 ms |
-| Instrumented source rules, rebuild, and subsumption rules | 300 ms | 260 ms | Luminal rules were 203.4/637.6 ms plus their generated parse/desugar share | 130 ms |
-| Headers, sorts, functions/views, proof declarations, and indexes | 160 ms | 130 ms | Declaration-heavy generated census and residual V4 frontend samples | 65 ms |
+| Ground actions, source globals, and extraction setup | 400 ms | 350 ms | Actions were 64.18% of Luminal's proof-minus-off sampled typecheck; these forms also reparse and remove globals | 175 ms |
+| Instrumented source rules, rebuild, and subsumption rules | 300 ms | 260 ms | Rules were 30.77% of Luminal's proof-minus-off sampled typecheck plus an unmeasured parse/desugar share | 130 ms |
+| Headers, sorts, functions/views, proof declarations, and indexes | 160 ms | 130 ms | Static generated census and the remaining unclassified frontend pool | 65 ms |
 | Checks, schedules, extraction command, and passthrough wrappers | 40 ms | 30 ms | Remaining parser edges and low-volume forms | 15 ms |
-| **Total** | **900 ms** | **770 ms** | Target is about 20% of the prior 3825.591 ms proofs-over-off delta | **385 ms** |
+| **Total** | **900 ms** | **770 ms** | Conditional on a 130 ms total binder residual | **385 ms** |
 
-The first converted family is selected by fresh attribution, not by this table's
-ordering.  After that family is oracle-green, stop and reassess if the measured
-suite saving is below half of its registered net budget.  Reattribute rather
-than silently moving missed milliseconds to later families.
+For family `k`, the accountable result is
+`net_k = measured_legacy_generated_frontend_k - measured_bind_k`; the fixed net
+numbers above are only the original priors under an assumed 130 ms aggregate
+binder residual.  A 20% reduction of the frozen 3825.591 ms proofs-over-off
+delta is 765.118 ms, so a 900 ms gross pool permits at most **134.882 ms** of
+binder residual.  The 150 ms H1 boundary remains a broader architectural
+kill-line, but would yield only 750 ms (19.605%) under that gross prior.
+
+The first converted family is selected by fresh tagged attribution, not by this
+table's ordering.  Until that exists, actions-first is only the qualitative
+Luminal prior.  After that family is oracle-green, stop and reassess if its
+measured suite saving is below half of its remeasured net budget.  Reattribute
+rather than silently moving missed milliseconds to later families.
 
 ## Architectural invariants
 
@@ -112,10 +128,27 @@ than silently moving missed milliseconds to later families.
 | H4 | Atomic declaration registration can be shared without source-mode drift. | Invalid duplicate sort/function/index and invalid merge tests before/after refactor. | Successful behavior unchanged; failed declaration leaves no replacement/partial state. | Open |
 | H5 | Generated output is a `remove_globals` fixed point except explicit extraction lowering. | Corpus-wide oracle projection and direct fixed-point test. | No generated top-level Let/LetBegin/global refs; cloned remove_globals is structurally identical. | Open |
 
+The smallest honest family probe tags each emitted command at its origin and
+records exclusive generated parse (all five helpers), desugar, typecheck,
+global-removal, bind, and registration-receipt time plus command/cache/node
+counts.  Final command shape is not a sufficient classifier because headers,
+pending declarations, source-derived output, and maintenance output are
+interleaved.  Any persisted version of that probe requires a timing-summary
+schema bump; it may instead remain an opt-in migration sidecar and be deleted
+with the oracle.
+
+Suite binder residual is the sum, over the ten files, of each file's mean bind
+nanoseconds divided by one million.  Do not divide by the file count or multiply
+by the round count.  Before corpus integration, extrapolation must separately
+measure batches, declaration receipts, cold misses, warm hits, and verifier
+nodes in both `(Pure, Write)` and `(Read, Full)` context pairs and use the 95%
+upper bound.
+
 ## Checkpoints
 
 - **Spike GO:** H1-H4 pass, key count and cache behavior recorded, binder residual
-  at most 150 ms, and the legacy/typed state projection is green.
+  at most 150 ms, its target-specific position relative to 134.882 ms reported,
+  and the legacy/typed state projection is green.
 - **First-family reassessment:** the highest-attributed family is fully converted
   and oracle-green.  Descope/abort if it delivers less than half its registered
   net budget unless fresh attribution proves the budget belonged elsewhere.
@@ -132,11 +165,17 @@ than silently moving missed milliseconds to later families.
   `make check`, `make benchmark-smoke`, and balanced 12-round
   `./bench.py --detail rulesets` evidence.
 
+The final performance run uses one append-only report: six rounds baseline-first,
+six rounds candidate-first, then a cache-only combined 12-round report.  Require
+improvement in both six-round orientations and use the combined result for the
+estimate; the JSONL observations are independent rather than paired.
+
 ## Evidence log
 
 | Date | Revision | Evidence | Decision |
 | --- | --- | --- | --- |
 | 2026-08-14 | `ffb8ae435bd6` | Investigation baseline and clean MISAAL/Luminal profiles frozen above. | Begin retained binder spike; do not start macro or encoder-wide conversion first. |
+| 2026-08-14 | `a2f6339` | V4 audit proved that family attribution is unavailable and five helper parser edges are charged to other-frontend. | Treat family budgets as low-confidence priors; add tagged migration attribution and use gross minus measured bind. |
 
 The intermediate differential harness and dual-path commits will remain in local
 branch history even though the final tree deletes them.  When the all-family
