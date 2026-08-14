@@ -192,7 +192,9 @@ preserves successful prefix commands. Static desugaring conservatively rejects
 commands whose runtime-dependent compiler state cannot be represented. The
 same review also required source-revision and dirty-state provenance before the
 bounded Propel parity result could be treated as current; that metadata is now
-part of the report schema. Final review follows report regeneration.
+part of the report schema. A final independent read-only re-review of `b56a72f`
+verified the one-pass `fail` repair, nested rollback and fatal-error behavior,
+all five capture modes, and the regenerated parity and performance evidence.
 
 Successful final gates include:
 
@@ -202,16 +204,17 @@ make benchmark-smoke                                   # 20/20 off/proofs runs
 cargo test -p egglog --test proof_mode_regression       # 31/31
 make -C benchmarks/disequality check                    # includes 80 replays
 uv run pytest tests/test_disequality_parameter_analysis.py
-git diff --check                                        # current authored edits
-git diff --check origin/main...HEAD -- . \
-  ':(exclude)benchmarks/disequality/README.md' \
+git diff --check origin/main...c52112f^                  # authored pre-import work
+git diff --check c52112f..HEAD -- . \
   ':(exclude)benchmarks/disequality/disegg.patch' \
-  ':(exclude)benchmarks/disequality/disegg/**' \
-  ':(exclude)benchmarks/disequality/inductive-prover/**' # all authored branch paths
+  ':(exclude)benchmarks/disequality/disegg/**'           # post-import tree changes
+git diff --check 55250f3^..55250f3 -- \
+  benchmarks/disequality/disegg/ARTIFACT_PROVENANCE.md   # authored reconstruction note
 ```
 
-The excluded paths are the byte-preserved Zenodo import from `c52112f`; its
-upstream whitespace is retained so archive member hashes remain reproducible.
+Commit `c52112f` preserves the selected Zenodo members byte-for-byte. Commit
+`55250f3` reconstructs the missing `disegg` checkout from upstream `egg` 0.9.5
+and the archived patch; upstream whitespace is intentionally not reformatted.
 
 The measured code revision and timing methodology are recorded in
 `benchmarks/disequality/PERFORMANCE_ANALYSIS.md`.
