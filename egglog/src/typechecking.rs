@@ -238,9 +238,6 @@ pub struct TypeInfo {
     pub(crate) sorts: HashMap<String, Arc<dyn Sort>>,
     primitives: HashMap<String, Vec<PrimitiveWithId>>,
     func_types: HashMap<String, FuncType>,
-    /// Monotonic, name-local invalidation stamps for exact call-resolution
-    /// caches. Only registrations for a head advance that head's stamp.
-    call_generations: HashMap<String, u64>,
     pub(crate) global_sorts: HashMap<String, ArcSort>,
     /// Sorts that do not allow union (e.g., from `:no-union` sorts or relations).
     pub(crate) non_unionable_sorts: HashSet<String>,
@@ -260,19 +257,19 @@ pub struct IndexInfo {
 
 /// Fully validated state for one index declaration. Keeping construction
 /// separate from commit makes the no-partial-registration boundary explicit
-/// for both source commands and the generated binder.
-pub(crate) struct PreparedIndex {
+/// for source commands.
+struct PreparedIndex {
     function_type: FuncType,
     info: IndexInfo,
 }
 
-pub(crate) struct SortDeclarationMetadata<'a> {
-    pub(crate) span: &'a Span,
-    pub(crate) name: &'a str,
-    pub(crate) uf: &'a Option<(String, Option<String>)>,
-    pub(crate) container_rebuild: &'a Option<ContainerRebuildSpec>,
-    pub(crate) proof_constructors: &'a Option<ProofConstructorNames>,
-    pub(crate) unionable: bool,
+struct SortDeclarationMetadata<'a> {
+    span: &'a Span,
+    name: &'a str,
+    uf: &'a Option<(String, Option<String>)>,
+    container_rebuild: &'a Option<ContainerRebuildSpec>,
+    proof_constructors: &'a Option<ProofConstructorNames>,
+    unionable: bool,
 }
 
 // These methods need to be on the `EGraph` in order to register sorts and
@@ -302,7 +299,7 @@ impl EGraph {
     /// The currently registered presort constructors only inspect `TypeInfo`;
     /// presort construction deliberately precedes duplicate-sort detection to
     /// preserve the source language's existing error ordering.
-    pub(crate) fn prepare_sort_declaration(
+    fn prepare_sort_declaration(
         &mut self,
         name: String,
         presort_and_args: &Option<(String, Vec<Expr>)>,
@@ -367,7 +364,7 @@ impl EGraph {
     /// checker detached by `commit_arcsort`; declaration-specific UF and
     /// container primitives run after it has been restored and therefore
     /// propagate through the complete proof-mode checker chain.
-    pub(crate) fn register_prepared_sort_declaration(
+    fn register_prepared_sort_declaration(
         &mut self,
         sort: ArcSort,
         metadata: SortDeclarationMetadata<'_>,
@@ -552,7 +549,6 @@ impl EGraph {
                     validator: validator.clone(),
                     context_ids,
                 });
-            eg.type_info.bump_call_generation(&name);
             match eg.proof_state.original_typechecking.as_deref_mut() {
                 Some(next) => eg = next,
                 None => break,
@@ -575,7 +571,7 @@ impl EGraph {
 
     /// Validate an index declaration and register it as a read-only relation
     /// `(value, <row of `function`>)`, so its atoms resolve like any other.
-    pub(crate) fn prepare_index_declaration(
+    fn prepare_index_declaration(
         &self,
         span: &Span,
         name: &str,
@@ -643,8 +639,8 @@ impl EGraph {
 
     /// Commit a fully validated index. The duplicate check is repeated so a
     /// caller that separates preparation from commit still cannot replace a
-    /// declaration or advance its generation.
-    pub(crate) fn commit_index_declaration(
+    /// declaration.
+    fn commit_index_declaration(
         &mut self,
         span: &Span,
         prepared: PreparedIndex,
@@ -656,16 +652,14 @@ impl EGraph {
         self.type_info
             .func_types
             .insert(name.clone(), prepared.function_type);
-        self.type_info.bump_call_generation(&name);
         self.type_info.indexes.insert(name, prepared.info);
         Ok(())
     }
 
     /// Validate and register a function declaration, including the generated
     /// proof-encoding primitives and global metadata attached to special
-    /// internal functions. The registration is intentionally shared by source
-    /// typechecking and the exact-key generated binder.
-    pub(crate) fn register_function_declaration(
+    /// internal functions.
+    fn register_function_declaration(
         &mut self,
         fdecl: &FunctionDecl,
     ) -> Result<ResolvedFunctionDecl, TypeError> {
@@ -677,10 +671,8 @@ impl EGraph {
     }
 
     /// Install the runtime primitives and global metadata implied by an
-    /// already committed function type. Both source typechecking and the
-    /// generated binder call this after their respective merge binders have
-    /// committed the declaration.
-    pub(crate) fn register_resolved_function_metadata(&mut self, resolved: &ResolvedFunctionDecl) {
+    /// already committed function type.
+    fn register_resolved_function_metadata(&mut self, resolved: &ResolvedFunctionDecl) {
         // An FD view (function carrying `term_constructor` with a tuple
         // `(eclass, proof)` output) gets a `set-if-empty` primitive (+ a
         // proof-column reader) so the encoding can canonicalize a term to
@@ -1003,17 +995,6 @@ impl EGraph {
 }
 
 impl TypeInfo {
-    fn bump_call_generation(&mut self, head: &str) {
-        let generation = self.call_generations.entry(head.to_owned()).or_default();
-        *generation = generation
-            .checked_add(1)
-            .expect("call-resolution generation overflow");
-    }
-
-    pub(crate) fn call_generation(&self, head: &str) -> u64 {
-        self.call_generations.get(head).copied().unwrap_or_default()
-    }
-
     /// Adds a sort constructor to the typechecker's known set of types.
     pub fn add_presort<S: Presort>(&mut self, span: Span) -> Result<(), TypeError> {
         let name = S::presort_name();
@@ -1101,7 +1082,7 @@ impl TypeInfo {
     /// Validate all declaration metadata that does not depend on the merge and
     /// construct its portable schema in this checker universe. No provisional
     /// function entry is installed until the caller begins merge binding.
-    pub(crate) fn prepare_function_type(&self, func: &FunctionDecl) -> Result<FuncType, TypeError> {
+    fn prepare_function_type(&self, func: &FunctionDecl) -> Result<FuncType, TypeError> {
         if self.sorts.contains_key(&func.name) {
             return Err(TypeError::SortAlreadyBound(
                 func.name.clone(),
@@ -1172,11 +1153,10 @@ impl TypeInfo {
     }
 
     /// Make a prepared function visible while its merge is bound, then either
-    /// roll the entry back on error or commit it and advance only that head's
-    /// call generation. The closure receives an immutable checker so it cannot
-    /// accidentally perform unrelated registration inside the provisional
-    /// window.
-    pub(crate) fn bind_with_provisional_function<T, E>(
+    /// roll the entry back on error or commit it. The closure receives an
+    /// immutable checker so it cannot accidentally perform unrelated
+    /// registration inside the provisional window.
+    fn bind_with_provisional_function<T, E>(
         &mut self,
         ftype: FuncType,
         bind: impl FnOnce(&TypeInfo) -> Result<T, E>,
@@ -1188,10 +1168,7 @@ impl TypeInfo {
             "function preparation rejects duplicates"
         );
         match bind(self) {
-            Ok(value) => {
-                self.bump_call_generation(&name);
-                Ok(value)
-            }
+            Ok(value) => Ok(value),
             Err(error) => {
                 let removed = self.func_types.remove(&name);
                 debug_assert!(removed.is_some(), "provisional function must exist");
@@ -1878,11 +1855,10 @@ mod test {
     }
 
     #[test]
-    fn function_registration_errors_leave_registry_and_generation_unchanged() {
+    fn function_registration_errors_leave_registry_and_symbol_gen_unchanged() {
         let mut egraph = EGraph::default();
 
         let invalid_constructor = "invalid-constructor";
-        let constructor_generation = egraph.type_info.call_generation(invalid_constructor);
         let Error::TypeError(error) = egraph
             .resolve_program(None, "(constructor invalid-constructor (i64) i64)")
             .unwrap_err()
@@ -1896,13 +1872,8 @@ mod test {
                 .get_func_type(invalid_constructor)
                 .is_none()
         );
-        assert_eq!(
-            egraph.type_info.call_generation(invalid_constructor),
-            constructor_generation
-        );
 
         let invalid_merge = "invalid-merge";
-        let merge_generation = egraph.type_info.call_generation(invalid_merge);
         let symbol_gen_before = egraph.parser.symbol_gen.clone();
         let expected_next_name = {
             let mut expected = symbol_gen_before.clone();
@@ -1926,10 +1897,6 @@ mod test {
             _ => panic!("unexpected merge error: {error:?}"),
         }
         assert!(egraph.type_info.get_func_type(invalid_merge).is_none());
-        assert_eq!(
-            egraph.type_info.call_generation(invalid_merge),
-            merge_generation
-        );
         assert_eq!(egraph.parser.symbol_gen, symbol_gen_before);
         assert_eq!(
             egraph.parser.symbol_gen.fresh("after-invalid-merge"),
@@ -1937,7 +1904,6 @@ mod test {
         );
 
         let recursive_merge = "recursive-merge";
-        let recursive_generation = egraph.type_info.call_generation(recursive_merge);
         egraph
             .resolve_program(
                 None,
@@ -1946,16 +1912,12 @@ mod test {
             )
             .unwrap();
         assert!(egraph.type_info.get_func_type(recursive_merge).is_some());
-        assert!(egraph.type_info.call_generation(recursive_merge) > recursive_generation);
 
         let declaration = "stable-function";
-        let generation_before = egraph.type_info.call_generation(declaration);
         egraph
             .resolve_program(None, "(function stable-function (i64) i64 :no-merge)")
             .unwrap();
         let registered = egraph.type_info.get_func_type(declaration).unwrap().clone();
-        let generation = egraph.type_info.call_generation(declaration);
-        assert!(generation > generation_before);
         let Error::TypeError(error) = egraph
             .resolve_program(None, "(function stable-function (String) String :no-merge)")
             .unwrap_err()
@@ -1966,7 +1928,6 @@ mod test {
         let after = egraph.type_info.get_func_type(declaration).unwrap();
         assert!(Arc::ptr_eq(&registered.input[0], &after.input[0]));
         assert!(Arc::ptr_eq(&registered.outputs[0], &after.outputs[0]));
-        assert_eq!(egraph.type_info.call_generation(declaration), generation);
     }
 
     #[test]
@@ -2034,12 +1995,11 @@ mod test {
     }
 
     #[test]
-    fn invalid_index_does_not_register_or_advance_generation() {
+    fn invalid_index_does_not_register() {
         let mut egraph = EGraph::default();
         egraph
             .resolve_program(None, "(function indexed (i64 String) i64 :no-merge)")
             .unwrap();
-        let generation = egraph.type_info.call_generation("Occ");
         let Error::TypeError(error) = egraph
             .resolve_program(None, "(index Occ indexed (any 0 1))")
             .unwrap_err()
@@ -2053,15 +2013,12 @@ mod test {
         ));
         assert!(egraph.type_info.get_func_type("Occ").is_none());
         assert!(!egraph.type_info.indexes.contains_key("Occ"));
-        assert_eq!(egraph.type_info.call_generation("Occ"), generation);
 
         egraph
             .resolve_program(None, "(index Occ indexed (any 0 2))")
             .unwrap();
         let registered = egraph.type_info.get_func_type("Occ").unwrap().clone();
         let info = egraph.type_info.indexes.get("Occ").unwrap().clone();
-        let committed_generation = egraph.type_info.call_generation("Occ");
-        assert!(committed_generation > generation);
         assert_eq!(
             registered
                 .input
@@ -2080,10 +2037,6 @@ mod test {
             panic!("duplicate index name should fail before target validation")
         };
         assert!(matches!(error, TypeError::FunctionAlreadyBound(name, _) if name == "Occ"));
-        assert_eq!(
-            egraph.type_info.call_generation("Occ"),
-            committed_generation
-        );
         assert_eq!(
             egraph.type_info.indexes.get("Occ").unwrap().function,
             "indexed"

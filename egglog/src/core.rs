@@ -461,7 +461,7 @@ impl ResolvedCall {
 /// This is the single function/primitive precedence and overload-ambiguity
 /// boundary. Callers that carry an expected call kind should match the returned
 /// [`ResolvedCall`] rather than searching the primitive registry themselves.
-pub(crate) fn resolve_call(
+fn resolve_call(
     head: &str,
     types: &[ArcSort],
     typeinfo: &TypeInfo,
