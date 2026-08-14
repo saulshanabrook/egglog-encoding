@@ -13,6 +13,8 @@ struct RecordFunctionInputArity {
 
 struct CountCommandMacroCalls(Arc<Mutex<usize>>);
 
+struct ExpandPrintSizeToInput;
+
 struct BindThenFail;
 
 impl UserDefinedCommand for BindThenFail {
@@ -32,6 +34,34 @@ impl CommandMacro for CountCommandMacroCalls {
         *self.0.lock().unwrap() += 1;
         Ok(vec![command])
     }
+}
+
+impl CommandMacro for ExpandPrintSizeToInput {
+    fn transform(
+        &self,
+        command: Command,
+        _symbol_gen: &mut SymbolGen,
+        _type_info: &TypeInfo,
+    ) -> Result<Vec<Command>, Error> {
+        match command {
+            Command::PrintSize(span, _) => Ok(vec![Command::Input {
+                span,
+                name: "Edge".to_owned(),
+                file: "missing.tsv".to_owned(),
+            }]),
+            command => Ok(vec![command]),
+        }
+    }
+}
+
+fn egraphs_for_all_modes() -> [EGraph; 5] {
+    [
+        EGraph::default(),
+        EGraph::new_with_term_encoding(),
+        EGraph::new_with_proofs(),
+        EGraph::new_with_proofs().with_proof_testing(),
+        EGraph::new_with_proofs().with_proof_extraction(),
+    ]
 }
 
 #[test]
@@ -62,6 +92,39 @@ fn fail_children_are_macro_expanded_once_in_source_order() {
 
     assert_eq!(*calls.lock().unwrap(), 2);
     assert_eq!(*seen.lock().unwrap(), vec![1]);
+}
+
+#[test]
+fn fail_stops_preparing_children_after_the_expected_failure() {
+    let programs = [
+        r#"
+        (fail
+          (check (= 1 2))
+          (check (= (missing) 1)))
+        "#,
+        r#"
+        (fail
+          (push)
+          (sort Scoped)
+          (pop)
+          (sort Scoped)
+          (check (= 1 2)))
+        "#,
+        r#"
+        (fail
+          (fail
+            (check (= 1 2))
+            (sort Hidden))
+          (sort Hidden)
+          (check (= 1 2)))
+        "#,
+    ];
+
+    for program in programs {
+        for mut egraph in egraphs_for_all_modes() {
+            egraph.parse_and_run_program(None, program).unwrap();
+        }
+    }
 }
 
 impl CommandMacro for RecordFunctionInputArity {
@@ -172,6 +235,47 @@ fn proof_mode_rejects_fail_wrapped_input() {
             .to_string()
             .contains("`fail` wrapping an `input` command")
     );
+}
+
+#[test]
+fn fail_rejects_include_before_reading_it() {
+    for mut egraph in egraphs_for_all_modes() {
+        let error = egraph
+            .parse_and_run_program(None, r#"(fail (include "missing.egg"))"#)
+            .unwrap_err();
+
+        assert!(matches!(error, Error::DesugarError(..)));
+        assert!(error.to_string().contains("include is not allowed"));
+    }
+}
+
+#[test]
+fn proof_mode_revalidates_command_macro_output_inside_fail() {
+    for mut egraph in [
+        EGraph::new_with_proofs(),
+        EGraph::new_with_proofs().with_proof_testing(),
+        EGraph::new_with_proofs().with_proof_extraction(),
+    ] {
+        egraph
+            .command_macros_mut()
+            .register(Arc::new(ExpandPrintSizeToInput));
+        let error = egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (relation Edge (String String))
+                (fail (print-size))
+                "#,
+            )
+            .unwrap_err();
+
+        assert!(matches!(error, Error::UnsupportedProofCommand { .. }));
+        assert!(
+            error
+                .to_string()
+                .contains("`fail` wrapping an `input` command")
+        );
+    }
 }
 
 #[test]

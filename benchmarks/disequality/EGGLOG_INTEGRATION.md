@@ -220,10 +220,11 @@ ordinary execution, term encoding, proof generation, proof testing, and proof
 extraction. Each raw capture is replayed under all four disequality encodings.
 
 The Rust regression suite additionally runs both raw captures with all four
-encodings in ordinary, term, proofs, and proof-testing modes. Top-level `begin`
-blocks are lowered to ordered actions for proof checking while execution retains
-the original local block scope. The emitted source uses the anonymous form and
-its equality witness forces proof testing to validate the captured union.
+encodings in ordinary, term, proofs, proof-testing, and proof-extraction modes.
+Top-level `begin` blocks are lowered to ordered actions for proof checking while
+execution retains the original local block scope. The emitted source uses the
+anonymous form and its equality witness forces proof testing and extraction to
+exercise the captured union.
 
 ```sh
 uv run --locked python benchmarks/disequality/scripts/generate_snapshots.py \

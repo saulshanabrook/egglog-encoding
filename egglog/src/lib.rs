@@ -351,11 +351,11 @@ struct CommandSnapshot {
     action_registry: egglog_bridge::ActionRegistry,
 }
 
-/// One source command after command-macro expansion. A macro may emit several
-/// plain commands, while a nested `fail` retains its own source-command groups.
-enum PreparedCommand {
-    Plain(Box<Command>),
-    Fail(Span, Vec<Vec<PreparedCommand>>),
+/// Distinguish a command error that satisfies an enclosing `fail` from an
+/// invalid `fail` context that must propagate through every enclosing `fail`.
+enum ExpectedFailureError {
+    Child(Error),
+    Fatal(Error),
 }
 
 /// A user-defined command allows users to inject custom command that can be called
@@ -3069,102 +3069,69 @@ impl EGraph {
         expanded
     }
 
-    fn parse_include_program(&mut self, span: &Span, file: &str) -> Result<Vec<Command>, Error> {
-        let include_timer = Instant::now();
-        let source = std::fs::read_to_string(file)
-            .map_err(|error| Error::IoError(file.into(), error, span.clone()));
-        self.overall_report.frontend_other += include_timer.elapsed();
-        self.parse_program_timed(Some(file.to_owned()), &source?)
-    }
-
-    /// Expand and typecheck an expected-failure body without executing it. The
-    /// resulting tree preserves the rollback boundary of every source child,
-    /// while expansion sees declarations and globals from preceding children.
-    fn prepare_expected_failure_body(
-        &mut self,
-        commands: Vec<Command>,
-        apply_command_macros: bool,
-    ) -> Result<Vec<Vec<PreparedCommand>>, Error> {
-        commands
-            .into_iter()
-            .map(|command| self.prepare_source_command(command, apply_command_macros))
-            .collect()
-    }
-
-    fn validate_expected_failure_context(
+    fn validate_expected_failure_command(
         &self,
         span: &Span,
-        commands: &[Command],
+        command: &Command,
     ) -> Result<(), Error> {
-        if self.are_proofs_enabled()
-            && commands
-                .iter()
-                .any(|command| matches!(command, Command::Input { .. }))
-        {
-            return Err(Error::UnsupportedProofCommand {
-                command: format!("{}", Command::Fail(span.clone(), commands.to_vec())),
-                reason: ProofEncodingUnsupportedReason::FailInputCommand,
-            });
+        match command {
+            Command::Input { .. } if self.are_proofs_enabled() => {
+                Err(Error::UnsupportedProofCommand {
+                    command: format!("{}", Command::Fail(span.clone(), vec![command.clone()])),
+                    reason: ProofEncodingUnsupportedReason::FailInputCommand,
+                })
+            }
+            Command::Include(..) => Err(Error::DesugarError(
+                span.clone(),
+                "include is not allowed inside (fail ...)".to_owned(),
+            )),
+            _ => Ok(()),
         }
-        Ok(())
     }
 
-    fn prepare_source_command(
+    /// Expand and execute one source child. Macro-generated commands share one
+    /// rollback boundary, and nested `fail` commands recursively retain their
+    /// own source-child boundaries.
+    fn process_expected_failure_child(
         &mut self,
         command: Command,
         apply_command_macros: bool,
-    ) -> Result<Vec<PreparedCommand>, Error> {
+        enclosing_span: &Span,
+    ) -> Result<ResolvedNCommandsWithOutput, ExpectedFailureError> {
+        self.validate_expected_failure_command(enclosing_span, &command)
+            .map_err(ExpectedFailureError::Fatal)?;
+
         if apply_command_macros && let Command::Fail(span, commands) = command {
-            self.validate_expected_failure_context(&span, &commands)?;
-            let prepared = self.prepare_expected_failure_body(commands, true)?;
-            return Ok(vec![PreparedCommand::Fail(span, prepared)]);
+            return self.process_expected_failure_internal(span, commands, true);
         }
 
         let expanded = if apply_command_macros {
-            self.apply_command_macros(command)?
+            self.apply_command_macros(command)
+                .map_err(ExpectedFailureError::Child)?
         } else {
             vec![command]
         };
-        let mut prepared = Vec::new();
-        for command in expanded {
-            match command {
-                Command::Fail(span, commands) => {
-                    self.validate_expected_failure_context(&span, &commands)?;
-                    prepared.push(PreparedCommand::Fail(
-                        span,
-                        self.prepare_expected_failure_body(commands, false)?,
-                    ));
-                }
-                Command::Include(span, file) => {
-                    for included in self.parse_include_program(&span, &file)? {
-                        prepared.extend(self.prepare_source_command(included, true)?);
-                    }
-                }
-                command => {
-                    self.resolve_command(command.clone())?;
-                    prepared.push(PreparedCommand::Plain(Box::new(command)));
-                }
-            }
-        }
-        Ok(prepared)
-    }
 
-    fn process_prepared_source_command(
-        &mut self,
-        commands: Vec<PreparedCommand>,
-    ) -> Result<ResolvedNCommandsWithOutput, Error> {
+        for command in &expanded {
+            self.validate_expected_failure_command(enclosing_span, command)
+                .map_err(ExpectedFailureError::Fatal)?;
+        }
+
         let mut desugared_before_proofs = Vec::new();
         let mut desugared = Vec::new();
         let mut outputs = Vec::new();
 
-        for command in commands {
+        for command in expanded {
             let resolved = match command {
-                PreparedCommand::Plain(command) => {
-                    self.process_program_internal(vec![*command], true, false, false)?
+                Command::Fail(span, commands) => {
+                    self.process_expected_failure_internal(span, commands, false)?
                 }
-                PreparedCommand::Fail(span, commands) => {
-                    self.process_prepared_expected_failure(span, commands)?
-                }
+                command => self
+                    .process_program_internal(vec![command], true, false, false)
+                    .map_err(|error| match error {
+                        error @ Error::ProofCommandMarker(_) => ExpectedFailureError::Fatal(error),
+                        error => ExpectedFailureError::Child(error),
+                    })?,
             };
             outputs.extend(resolved.outputs);
             desugared_before_proofs.extend(resolved.resolved_before_proofs);
@@ -3178,29 +3145,26 @@ impl EGraph {
         })
     }
 
-    /// Execute a previously validated expected-failure body at source-command
-    /// boundaries. A successful prefix remains committed, while the source
-    /// child that raises the expected error is rolled back as a unit.
-    fn process_prepared_expected_failure(
+    /// Expand and execute an expected-failure body one source child at a time.
+    /// A successful prefix remains committed, the failing child is rolled back
+    /// as a unit, and children after the first failure are never inspected.
+    fn process_expected_failure_internal(
         &mut self,
         span: Span,
-        commands: Vec<Vec<PreparedCommand>>,
-    ) -> Result<ResolvedNCommandsWithOutput, Error> {
+        commands: Vec<Command>,
+        apply_command_macros: bool,
+    ) -> Result<ResolvedNCommandsWithOutput, ExpectedFailureError> {
         let mut desugared_before_proofs = Vec::new();
         let mut desugared = Vec::new();
 
         for command in commands {
             let snapshot = self.command_snapshot();
-            match self.process_prepared_source_command(command) {
+            match self.process_expected_failure_child(command, apply_command_macros, &span) {
                 Ok(resolved) => {
                     desugared_before_proofs.extend(resolved.resolved_before_proofs);
                     desugared.extend(resolved.resolved);
                 }
-                Err(error @ Error::ProofCommandMarker(_)) => {
-                    self.restore_command_snapshot(snapshot);
-                    return Err(error);
-                }
-                Err(error) => {
+                Err(ExpectedFailureError::Child(error)) => {
                     self.restore_command_snapshot(snapshot);
                     log::info!("Command failed as expected: {error}");
                     return Ok(ResolvedNCommandsWithOutput {
@@ -3209,31 +3173,26 @@ impl EGraph {
                         resolved_before_proofs: desugared_before_proofs,
                     });
                 }
+                Err(ExpectedFailureError::Fatal(error)) => {
+                    self.restore_command_snapshot(snapshot);
+                    return Err(ExpectedFailureError::Fatal(error));
+                }
             }
         }
 
-        Err(Error::ExpectFail(span))
+        Err(ExpectedFailureError::Child(Error::ExpectFail(span)))
     }
 
-    /// Validate one live `fail` body once, then execute the cached expansion.
-    /// Validation runs on a clone so compiler changes from unreachable commands
-    /// do not leak, but command macros are not invoked again during execution.
     fn process_expected_failure(
         &mut self,
         span: Span,
         commands: Vec<Command>,
         apply_command_macros: bool,
     ) -> Result<ResolvedNCommandsWithOutput, Error> {
-        self.validate_expected_failure_context(&span, &commands)?;
-        let CommandSnapshot {
-            mut egraph,
-            action_registry,
-        } = self.command_snapshot();
-        let prepared = egraph.prepare_expected_failure_body(commands, apply_command_macros);
-        *self.backend.action_registry().write().unwrap() = action_registry;
-        std::mem::swap(&mut self.overall_report, &mut egraph.overall_report);
-        self.parser.symbol_gen = egraph.parser.symbol_gen;
-        self.process_prepared_expected_failure(span, prepared?)
+        self.process_expected_failure_internal(span, commands, apply_command_macros)
+            .map_err(|error| match error {
+                ExpectedFailureError::Child(error) | ExpectedFailureError::Fatal(error) => error,
+            })
     }
 
     /// Whether resolving a command may change compiler state in a way whose

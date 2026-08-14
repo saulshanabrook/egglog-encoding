@@ -199,11 +199,19 @@ Successful final gates include:
 ```sh
 make check                                             # full repository gate
 make benchmark-smoke                                   # 20/20 off/proofs runs
-cargo test -p egglog --test proof_mode_regression       # 28/28
+cargo test -p egglog --test proof_mode_regression       # 31/31
 make -C benchmarks/disequality check                    # includes 80 replays
 uv run pytest tests/test_disequality_parameter_analysis.py
-git diff --check
+git diff --check                                        # current authored edits
+git diff --check origin/main...HEAD -- . \
+  ':(exclude)benchmarks/disequality/README.md' \
+  ':(exclude)benchmarks/disequality/disegg.patch' \
+  ':(exclude)benchmarks/disequality/disegg/**' \
+  ':(exclude)benchmarks/disequality/inductive-prover/**' # all authored branch paths
 ```
+
+The excluded paths are the byte-preserved Zenodo import from `c52112f`; its
+upstream whitespace is retained so archive member hashes remain reproducible.
 
 The measured code revision and timing methodology are recorded in
 `benchmarks/disequality/PERFORMANCE_ANALYSIS.md`.
