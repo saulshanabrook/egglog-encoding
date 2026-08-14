@@ -3,7 +3,6 @@
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 
 use crate::{
     ArcSort, EGraph, TypeInfo, Value,
@@ -12,10 +11,7 @@ use crate::{
         ResolvedExprExt, ResolvedFact, ResolvedNCommand, Schedule, Span,
     },
     core::ResolvedCall,
-    proofs::{
-        proof_checker::is_container_side_condition,
-        proof_encoding::{GeneratedFamily, ProofInstrumentor},
-    },
+    proofs::{proof_checker::is_container_side_condition, proof_encoding::ProofInstrumentor},
     util::{FreshGen, HashMap, HashSet, SymbolGen},
 };
 
@@ -474,24 +470,9 @@ impl ProofInstrumentor<'_> {
         }
     }
 
-    pub(crate) fn parse_program(&mut self, family: GeneratedFamily, input: &str) -> Vec<Command> {
+    pub(crate) fn parse_program(&mut self, input: &str) -> Vec<Command> {
         self.egraph.parser.ensure_no_reserved_symbols = false;
-        let parse_timer = self
-            .egraph
-            .proof_state
-            .generated_frontend_attribution
-            .is_some()
-            .then(Instant::now);
         let res = self.egraph.parse_program_timed(None, input);
-        if let Some(parse_timer) = parse_timer
-            && let Some(attribution) = self
-                .egraph
-                .proof_state
-                .generated_frontend_attribution
-                .as_mut()
-        {
-            attribution.record_parse(family, parse_timer.elapsed());
-        }
         self.egraph.parser.ensure_no_reserved_symbols = true;
 
         // This program is generated internally by term encoding, so a parse
@@ -502,11 +483,7 @@ impl ProofInstrumentor<'_> {
     /// Like [`Self::parse_program`], but groups each maximal run of consecutive
     /// top-level actions into one [`Command::Actions`] block. Non-action commands
     /// pass through in place, preserving order.
-    pub(crate) fn parse_program_as_local_actions(
-        &mut self,
-        family: GeneratedFamily,
-        input: &str,
-    ) -> Vec<Command> {
+    pub(crate) fn parse_program_as_local_actions(&mut self, input: &str) -> Vec<Command> {
         use crate::ast::GenericActions;
         let mut out: Vec<Command> = vec![];
         let mut pending: Vec<crate::ast::Action> = vec![];
@@ -517,7 +494,7 @@ impl ProofInstrumentor<'_> {
                 ))));
             }
         };
-        for command in self.parse_program(family, input) {
+        for command in self.parse_program(input) {
             match command {
                 Command::Action(action) => pending.push(action),
                 other => {
@@ -579,7 +556,7 @@ impl ProofInstrumentor<'_> {
             return vec![];
         }
         let decls = decls.join("\n");
-        self.parse_program(GeneratedFamily::DeclarationsIndexes, &decls)
+        self.parse_program(&decls)
     }
 
     /// The packed proof constructor for a row of `columns` proof columns,
@@ -619,41 +596,20 @@ impl ProofInstrumentor<'_> {
             self.proof_names().rebuilding_cleanup_ruleset_name,
             self.proof_names().subsume_ruleset_name
         );
-        self.parse_program(GeneratedFamily::DeclarationsIndexes, &str)
+        self.parse_program(&str)
     }
 
     /// Internal parse helper for term encoding- parse and crash on failure.
-    pub(crate) fn parse_schedule(&mut self, family: GeneratedFamily, input: String) -> Schedule {
+    pub(crate) fn parse_schedule(&mut self, input: String) -> Schedule {
         self.egraph.parser.ensure_no_reserved_symbols = false;
-        let parse_timer = self
-            .egraph
-            .proof_state
-            .generated_frontend_attribution
-            .is_some()
-            .then(Instant::now);
         let res = self.egraph.parser.get_schedule_from_string(None, &input);
-        if let Some(parse_timer) = parse_timer
-            && let Some(attribution) = self
-                .egraph
-                .proof_state
-                .generated_frontend_attribution
-                .as_mut()
-        {
-            attribution.record_parse(family, parse_timer.elapsed());
-        }
         self.egraph.parser.ensure_no_reserved_symbols = true;
         res.expect("internally generated term-encoding schedule must parse")
     }
 
     /// Internal parse helper for term encoding- parse and crash on failure.
-    pub(crate) fn parse_facts(&mut self, family: GeneratedFamily, input: &[String]) -> Vec<Fact> {
+    pub(crate) fn parse_facts(&mut self, input: &[String]) -> Vec<Fact> {
         self.egraph.parser.ensure_no_reserved_symbols = false;
-        let parse_timer = self
-            .egraph
-            .proof_state
-            .generated_frontend_attribution
-            .is_some()
-            .then(Instant::now);
         let res = input
             .iter()
             .map(|f| {
@@ -663,38 +619,14 @@ impl ProofInstrumentor<'_> {
                     .expect("internally generated term-encoding fact must parse")
             })
             .collect();
-        if let Some(parse_timer) = parse_timer
-            && let Some(attribution) = self
-                .egraph
-                .proof_state
-                .generated_frontend_attribution
-                .as_mut()
-        {
-            attribution.record_parse(family, parse_timer.elapsed());
-        }
         self.egraph.parser.ensure_no_reserved_symbols = true;
         res
     }
 
     /// Internal parse helper for term encoding- parse an expression and crash on failure.
-    pub(crate) fn parse_expr(&mut self, family: GeneratedFamily, input: &str) -> Expr {
+    pub(crate) fn parse_expr(&mut self, input: &str) -> Expr {
         self.egraph.parser.ensure_no_reserved_symbols = false;
-        let parse_timer = self
-            .egraph
-            .proof_state
-            .generated_frontend_attribution
-            .is_some()
-            .then(Instant::now);
         let res = self.egraph.parser.get_expr_from_string(None, input);
-        if let Some(parse_timer) = parse_timer
-            && let Some(attribution) = self
-                .egraph
-                .proof_state
-                .generated_frontend_attribution
-                .as_mut()
-        {
-            attribution.record_parse(family, parse_timer.elapsed());
-        }
         self.egraph.parser.ensure_no_reserved_symbols = true;
         res.expect("internally generated term-encoding expression must parse")
     }

@@ -85,7 +85,7 @@ use util::*;
 use crate::ast::desugar::desugar_command;
 use crate::ast::*;
 use crate::core::{GenericActionsExt, ResolvedRuleExt};
-use crate::proofs::proof_encoding::{EncodingState, ProofInstrumentor, add_term_encoding};
+use crate::proofs::proof_encoding::{EncodingState, ProofInstrumentor};
 use crate::proofs::proof_encoding_helpers::{
     ProofEncodingUnsupportedReason, command_supports_proof_encoding,
 };
@@ -849,10 +849,6 @@ impl EGraph {
             Some(mut e) => {
                 // Work performed in the popped scope still belongs to this run.
                 std::mem::swap(&mut self.overall_report, &mut e.overall_report);
-                std::mem::swap(
-                    &mut self.proof_state.generated_frontend_attribution,
-                    &mut e.proof_state.generated_frontend_attribution,
-                );
                 // Preserve the symbol generator so that fresh symbols
                 // generated after pop don't collide with ones generated before pop.
                 std::mem::swap(&mut self.parser.symbol_gen, &mut e.parser.symbol_gen);
@@ -2712,33 +2708,12 @@ impl EGraph {
                 self.names.check_shadowing(command)?;
             }
 
-            let attribution_enabled = self.proof_state.generated_frontend_attribution.is_some();
-            let term_encoding_added = add_term_encoding(self, typechecked_no_globals)?;
-            if crate::proofs::generated_binder::shadow_probe_enabled() {
-                return Ok(ResolvedNCommands {
-                    desugared: crate::proofs::generated_binder::resolve_with_shadow_probe(
-                        self,
-                        term_encoding_added,
-                    )?,
-                    desugared_before_proofs: per_row_before_proofs,
-                });
-            }
+            let term_encoding_added =
+                ProofInstrumentor::add_term_encoding(self, typechecked_no_globals)?;
             let mut new_typechecked = vec![];
-            for generated in term_encoding_added {
-                let family = generated.origin.stage_family();
-                let desugar_timer = attribution_enabled.then(Instant::now);
-                let desugared = desugar_command(
-                    generated.command,
-                    &mut self.parser,
-                    self.proof_state.proof_testing,
-                )?;
-                if let Some(desugar_timer) = desugar_timer {
-                    self.proof_state
-                        .generated_frontend_attribution
-                        .as_mut()
-                        .expect("enabled generated attribution must remain present")
-                        .record_desugar(family, desugar_timer.elapsed(), desugared.len());
-                }
+            for new_cmd in term_encoding_added {
+                let desugared =
+                    desugar_command(new_cmd, &mut self.parser, self.proof_state.proof_testing)?;
                 for cmd in &desugared {
                     log::trace!("Desugared term encoding: {}", cmd.to_command());
                 }
@@ -2746,29 +2721,13 @@ impl EGraph {
                 // Now typecheck using self, adding term type information.
                 let typecheck_timer = Instant::now();
                 let desugared_typechecked = self.typecheck_program(&desugared)?;
-                let typecheck_elapsed = typecheck_timer.elapsed();
-                self.overall_report.typecheck += typecheck_elapsed;
-                if attribution_enabled {
-                    self.proof_state
-                        .generated_frontend_attribution
-                        .as_mut()
-                        .expect("enabled generated attribution must remain present")
-                        .record_typecheck(family, typecheck_elapsed);
-                }
+                self.overall_report.typecheck += typecheck_timer.elapsed();
                 // Remove the globals the term encoding itself introduced (its minted
                 // `let`s), the same way source-level globals were removed above.
-                let global_removal_timer = attribution_enabled.then(Instant::now);
                 let desugared_typechecked = remove_globals::remove_globals(
                     desugared_typechecked,
                     &mut self.parser.symbol_gen,
                 );
-                if let Some(global_removal_timer) = global_removal_timer {
-                    self.proof_state
-                        .generated_frontend_attribution
-                        .as_mut()
-                        .expect("enabled generated attribution must remain present")
-                        .record_global_removal(family, global_removal_timer.elapsed());
-                }
 
                 new_typechecked.extend(desugared_typechecked);
             }
@@ -3823,118 +3782,6 @@ mod tests {
     use crate::*;
 
     use crate::PureState;
-
-    #[test]
-    fn generated_frontend_attribution_closes_family_timings_and_counts() {
-        let mut egraph = EGraph::new_with_proofs();
-        assert!(egraph.proof_state.generated_frontend_attribution.is_none());
-        egraph.proof_state.generated_frontend_attribution = Some(Default::default());
-
-        egraph
-            .parse_and_run_program(
-                None,
-                r#"
-                    (datatype Math (Num i64) (Add Math Math))
-                    (relation chosen (Math))
-                    (rule ((chosen x)) ((chosen x)) :name "preserve-chosen")
-                    (let one (Num 1))
-                    (chosen one)
-                    (check (chosen one))
-                    (run 1)
-                    (extract one)
-                "#,
-            )
-            .unwrap();
-
-        let summary = egraph
-            .proof_state
-            .generated_frontend_attribution
-            .as_ref()
-            .unwrap()
-            .json();
-        assert!(summary["batches"].as_u64().unwrap() > 0);
-        assert!(summary["totals"]["batches_with_commands"].as_u64().unwrap() > 0);
-        for family in [
-            "actions_globals_extraction",
-            "rules_rebuild_subsumption",
-            "declarations_indexes",
-            "misc_checks_schedules_wrappers",
-        ] {
-            let metrics = &summary["families"][family];
-            assert!(
-                metrics["pre_desugar_commands"].as_u64().unwrap() > 0,
-                "expected generated commands for {family}"
-            );
-            assert!(
-                metrics["post_desugar_commands"].as_u64().unwrap() > 0,
-                "expected desugared commands for {family}"
-            );
-        }
-        assert_eq!(summary["closure"]["stage_timings_accounted"], true);
-        assert_eq!(
-            summary["closure"]["family_stage_attribution_complete"],
-            true
-        );
-        assert_eq!(summary["closure"]["family_attribution_complete"], false);
-        assert_eq!(summary["closure"]["pre_desugar_commands_match"], true);
-        assert_eq!(summary["closure"]["post_desugar_commands_accounted"], true);
-        assert_eq!(
-            summary["closure"]["encoder_nested_parse_matches_family_parse"],
-            true
-        );
-        assert_eq!(
-            summary["closure"]["encoder_elapsed_matches_nested_parse_plus_other"],
-            true
-        );
-    }
-
-    #[test]
-    fn generated_frontend_attribution_exposes_nested_fail_remainder() {
-        let mut egraph = EGraph::new_with_proofs();
-        egraph.proof_state.generated_frontend_attribution = Some(Default::default());
-        egraph
-            .parse_and_run_program(
-                None,
-                r#"
-                    (datatype Math (Num i64))
-                    (relation chosen (Math))
-                    (fail
-                        (chosen (Num 2))
-                        (check (chosen (Num 3))))
-                "#,
-            )
-            .unwrap();
-
-        let summary = egraph
-            .proof_state
-            .generated_frontend_attribution
-            .as_ref()
-            .unwrap()
-            .json();
-        let nested_fail = &summary["unattributed_nested_fail"];
-        assert_eq!(nested_fail["wrappers"], 1);
-        assert!(
-            nested_fail["nested_pre_desugar_commands_by_family"]["actions_globals_extraction"]
-                .as_u64()
-                .unwrap()
-                > 0
-        );
-        assert!(
-            nested_fail["nested_pre_desugar_commands_by_family"]["misc_checks_schedules_wrappers"]
-                .as_u64()
-                .unwrap()
-                > 0
-        );
-        assert!(nested_fail["typecheck_ns"].as_u64().unwrap() > 0);
-        assert!(nested_fail["post_desugar_commands"].as_u64().unwrap() > 0);
-        assert_eq!(summary["closure"]["stage_timings_accounted"], true);
-        assert_eq!(summary["closure"]["family_attribution_complete"], false);
-        assert_eq!(
-            summary["closure"]["family_stage_attribution_complete"],
-            false
-        );
-        assert_eq!(summary["closure"]["post_desugar_commands_accounted"], true);
-    }
 
     #[test]
     fn encoded_source_typecheck_is_charged_to_the_outer_egraph() {

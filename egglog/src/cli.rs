@@ -6,10 +6,6 @@ use clap::Parser;
 use env_logger::Env;
 use std::path::PathBuf;
 
-const GENERATED_FRONTEND_SIDECAR_ENV: &str = "EGGLOG_GENERATED_FRONTEND_SIDECAR";
-const GENERATED_BINDER_SIDECAR_ENV: &str = "EGGLOG_GENERATED_BINDER_SIDECAR";
-const GENERATED_BINDER_FAST_ABLATION_ENV: &str = "EGGLOG_GENERATED_BINDER_FAST_ABLATION";
-
 #[derive(Debug, Parser)]
 #[command(version = env!("FULL_VERSION"), about = env!("CARGO_PKG_DESCRIPTION"))]
 struct Args {
@@ -103,17 +99,6 @@ pub fn cli(mut egraph: EGraph) {
         .init();
 
     let args = Args::parse();
-    let generated_frontend_sidecar =
-        std::env::var_os(GENERATED_FRONTEND_SIDECAR_ENV).map(PathBuf::from);
-    let generated_binder_sidecar =
-        std::env::var_os(GENERATED_BINDER_SIDECAR_ENV).map(PathBuf::from);
-    let generated_binder_fast_ablation =
-        std::env::var_os(GENERATED_BINDER_FAST_ABLATION_ENV).is_some();
-
-    if generated_binder_fast_ablation && generated_binder_sidecar.is_none() {
-        log::error!("{GENERATED_BINDER_FAST_ABLATION_ENV} requires {GENERATED_BINDER_SIDECAR_ENV}");
-        std::process::exit(2);
-    }
 
     if args.timing_summary.is_some() && args.threads != 1 {
         log::error!("--timing-summary requires --threads 1 for accurate phase timing");
@@ -135,13 +120,6 @@ pub fn cli(mut egraph: EGraph) {
 
     if args.proof_extraction {
         egraph = egraph.with_proof_extraction();
-    }
-
-    if generated_frontend_sidecar.is_some() {
-        egraph.proof_state.generated_frontend_attribution = Some(Default::default());
-    }
-    if generated_binder_sidecar.is_some() {
-        crate::proofs::generated_binder::enable_shadow_probe(generated_binder_fast_ablation);
     }
 
     egraph.set_num_threads(args.threads);
@@ -265,43 +243,6 @@ pub fn cli(mut egraph: EGraph) {
         file.write_all(b"\n")
             .expect("Failed to finish writing timing summary");
         log::info!("Saved timing summary to {summary_path:?}");
-    }
-
-    if let Some(sidecar_path) = generated_frontend_sidecar {
-        let summary = egraph
-            .proof_state
-            .generated_frontend_attribution
-            .as_ref()
-            .expect("requested generated-frontend attribution must be enabled")
-            .json();
-        let mut file = std::fs::File::create(&sidecar_path).unwrap_or_else(|error| {
-            log::error!("Failed to create generated-frontend sidecar at {sidecar_path:?}: {error}");
-            std::process::exit(1);
-        });
-        serde_json::to_writer(&mut file, &summary).unwrap_or_else(|error| {
-            log::error!("Failed to serialize generated-frontend sidecar: {error}");
-            std::process::exit(1);
-        });
-        file.write_all(b"\n").unwrap_or_else(|error| {
-            log::error!("Failed to finish generated-frontend sidecar: {error}");
-            std::process::exit(1);
-        });
-    }
-
-    if let Some(sidecar_path) = generated_binder_sidecar {
-        let summary = crate::proofs::generated_binder::shadow_probe_json();
-        let mut file = std::fs::File::create(&sidecar_path).unwrap_or_else(|error| {
-            log::error!("Failed to create generated-binder sidecar at {sidecar_path:?}: {error}");
-            std::process::exit(1);
-        });
-        serde_json::to_writer(&mut file, &summary).unwrap_or_else(|error| {
-            log::error!("Failed to serialize generated-binder sidecar: {error}");
-            std::process::exit(1);
-        });
-        file.write_all(b"\n").unwrap_or_else(|error| {
-            log::error!("Failed to finish generated-binder sidecar: {error}");
-            std::process::exit(1);
-        });
     }
 
     // no need to drop the egraph if we are going to exit
