@@ -251,13 +251,17 @@ pair per enumerated SAT model.
 
 ## Performance
 
-[`PERFORMANCE_ANALYSIS.md`](PERFORMANCE_ANALYSIS.md) records current
+[`PERFORMANCE_ANALYSIS.md`](PERFORMANCE_ANALYSIS.md) records revision-pinned
 end-to-end measurements, diagnostic profiles, comparison with the artifact's
-precomputed timings, and prioritized optimization ideas. Relational term
-reconstruction, parsing/typechecking, graph lifecycle churn, full stats scans,
-and ordinary database execution are measured first-order costs; retained
-snapshots for atomic action batches and expected-failure rollback are an
-additional unisolated candidate. The private disequality schedules are small.
+precomputed timings, and prioritized optimization ideas. Parameter analysis was
+measured at `88c40cf`; Propel and EUF were measured at `e7b7969` on base
+`ffb8ae4`; the later proof-regression analysis used `fff36169` on base
+`fdd4eac`. The heavy integrations were not remeasured after the source-order
+`fail` change. Relational term reconstruction, parsing/typechecking, graph
+lifecycle churn, full stats scans, and ordinary database execution are measured
+first-order costs; retained snapshots for atomic action batches and
+expected-failure rollback are an additional unisolated candidate. The private
+disequality schedules are small.
 
 ## Validation boundary
 

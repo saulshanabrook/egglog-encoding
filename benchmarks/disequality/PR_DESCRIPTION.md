@@ -10,7 +10,7 @@
 - commit inspectable EUF and Propel `.egg` captures plus each encoding's actual
   desugared output, and execute them under ordinary, term, proofs,
   proof-testing, and proof-extraction modes
-- document parity limits, current performance, diagnosed bottlenecks, and
+- document parity limits, revision-pinned performance, diagnosed bottlenecks, and
   prioritized fixes in `benchmarks/disequality/PERFORMANCE_ANALYSIS.md`
 
 ## Motivation
@@ -109,10 +109,14 @@ are executable examples for manual inspection, not pseudocode.
 
 ## Performance
 
-Measurements were taken after merging current `origin/main` on an Apple M4.
-Propel and EUF values are medians of six accepted samples from two reversed
-endpoint orders; parameter analysis uses three interleaved rounds. These are
-descriptive measurements, not publication-quality confidence intervals.
+Measurements were taken on an Apple M4. Parameter analysis was measured at
+`88c40cf`; Propel and EUF were measured at `e7b7969` after merging base
+`ffb8ae4`; the later proof-regression analysis used `fff36169` after merging
+base `fdd4eac`. The heavy integrations were not remeasured after the
+source-order `fail` change. Propel and EUF values are medians of six accepted
+samples from two reversed endpoint orders; parameter analysis uses three
+interleaved rounds. These are descriptive measurements, not
+publication-quality confidence intervals.
 
 ### Parameter analysis
 
@@ -137,14 +141,17 @@ propagation is not the end-to-end bottleneck.
 Instrumentation on the medium case found 10,357 fresh graphs, 13,591 flushes,
 17,159 pair comparisons, and 620 full stats scans. Resolution/typechecking was
 larger than database execution, but both were material; consistency propagation
-was only 12 ms. Current atomic `(begin ...)` semantics introduce another
-first-order candidate: the graph snapshot retained during every host batch can
-disable unique-owner mutation paths. Each live consistency check also clones
-once to validate the complete `fail` body and retains a second rollback snapshot
-while its schedule runs. The observed post-atomic slowdown is consistent with
-this work, but the snapshot classes were counted rather than timed independently.
-Flattening the batch was tested and was worse because it compiled each action
-independently.
+was only 12 ms. Atomic `(begin ...)` semantics introduce another first-order
+candidate: the graph snapshot retained during every host batch can disable
+unique-owner mutation paths. At the measured `e7b7969` revision, each live
+consistency check also cloned once to validate the complete `fail` body and
+retained a second rollback snapshot while its schedule ran. Current source-order
+`fail` execution instead retains one outer snapshot per source child and
+disables the inner command snapshot; the heavy Propel and EUF integrations were
+not remeasured after that change. The observed post-atomic slowdown is
+consistent with this work, but the snapshot classes were counted rather than
+timed independently. Flattening the batch was tested and was worse because it
+compiled each action independently.
 
 ### EUF
 
@@ -167,6 +174,23 @@ with an explicit failure contract, initialized-graph reuse, typed pair queries,
 and reduced graph lifecycle churn.
 It explicitly does not recommend restoring the removed representation-specific
 database writer.
+
+Final validation also found a separate regression in existing proof-mode
+canaries: the new command-error recovery path cloned the full e-graph before
+every top-level action. Same-machine measurements initially showed the
+three-file suite 1.31-1.37x slower and `rw-analysis.egg` 1.50-1.60x slower than
+current main. The retained fix skips that clone only for recursively verified
+constructor trees. Constructor globals use a lightweight transaction over the
+two eagerly updated sort entries; relation facts, partial/custom actions, and
+multi-action blocks retain full rollback. It also moves committed proof-check
+source commands out of a draining queue. In balanced 30-round measurements,
+the stable endpoint order put suite wall time at 1.005-1.021x main and peak RSS
+at 1.02-1.04x. The other order retained one 410 ms observation among otherwise
+17-22 ms `integer_math.egg` runs, making its wall interval inconclusive. The
+report therefore claims only that the prior repeatable 32-59% regression no
+longer reproduces. The diagnostic history, non-reconstructible intermediate
+ablations, exact clean revisions, commands, and intervals are recorded in
+`benchmarks/disequality/PERFORMANCE_ANALYSIS.md`.
 
 ## Scope and known limits
 
@@ -192,16 +216,24 @@ preserves successful prefix commands. Static desugaring conservatively rejects
 commands whose runtime-dependent compiler state cannot be represented. The
 same review also required source-revision and dirty-state provenance before the
 bounded Propel parity result could be treated as current; that metadata is now
-part of the report schema. A final independent read-only re-review of `b56a72f`
-verified the one-pass `fail` repair, nested rollback and fatal-error behavior,
-all five capture modes, and the regenerated parity and performance evidence.
+part of the report schema. A read-only re-review of `b56a72f` verified the
+one-pass `fail` repair, nested rollback and fatal-error behavior, all five
+capture modes, and the regenerated parity and performance evidence. Final
+performance review then found a full-e-graph clone before every proof-mode
+action and a duplicate-global type-state corruption in the first optimization.
+The retained `fff36169` source restricts the no-clone path to recursively
+verified constructor trees and restores both global-sort entries if shadowing
+rejects a constructor global. A final full-diff documentation review required
+the heavy timing results to be revision-pinned rather than described as
+current; the exact measurement split is now recorded above and in the detailed
+report.
 
 Successful final gates include:
 
 ```sh
 make check                                             # full repository gate
 make benchmark-smoke                                   # 20/20 off/proofs runs
-cargo test -p egglog --test proof_mode_regression       # 31/31
+cargo test -p egglog --test proof_mode_regression       # 32/32
 make -C benchmarks/disequality check                    # includes 80 replays
 uv run pytest tests/test_disequality_parameter_analysis.py
 git diff --check origin/main...c52112f^                  # authored pre-import work

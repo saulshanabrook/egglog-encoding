@@ -11,10 +11,15 @@ attributing generic host/API overhead to the compiled disequality rules.
 
 - Apple M4, 16 GiB RAM, arm64 macOS (Darwin 25.6.0)
 - Rust 1.91.0, Cargo 1.91.0, uv 0.12.3
-- merged base `origin/main` at `ffb8ae435bd6421077b1c15826f32a6aeecf5b1b`
+- case-study timing base `origin/main` at
+  `ffb8ae435bd6421077b1c15826f32a6aeecf5b1b`
 - final Propel and EUF measurements at code commit
   `e7b796940dbc148c3a97cc4a421a6669fa441f0e`, after merging `origin/main` at
   `ffb8ae435bd6421077b1c15826f32a6aeecf5b1b`
+- final proof-mode regression analysis after merging `origin/main` at
+  `fdd4eac12c1318c578badbf5d1299e0e3eb4e6c0`; the measured candidate source
+  tree was committed unchanged as
+  `fff36169eb9527ee817477bceecf371ddbe67b8c`
 - parameter-analysis measurements at
   `88c40cf6a298a8c503a741b8e736d5cc7498f348`; the later commit changes live
   `fail` handling, which the consistent parameter workload does not execute
@@ -34,7 +39,7 @@ analysis. No sample inside an accepted invocation was discarded.
 
 ## Summary
 
-| Case study | Comparison | Current result | Observed costs and candidates |
+| Case study | Comparison | Measured result | Observed costs and candidates |
 | --- | --- | ---: | --- |
 | Parameter analysis | egglog EE / native EE | 5.29x wall | 3.7M occurrence rows, term reconstruction, and non-ruleset work |
 | Parameter analysis | egglog DE / native DE | 7.47x wall | same; DE propagation itself is 2.5 ms |
@@ -51,14 +56,99 @@ The answer to "typechecking or engine?" is workload-dependent:
   process/input/frontend work;
 - current Propel and EUF retain a complete command snapshot across every
   `(begin ...)` batch so a failed action block can roll back atomically;
-- each live `fail` also clones the graph once to validate its complete body and
-  retains a second snapshot while executing a potentially failing child, so a
-  partially mutating schedule can be rolled back correctly;
+- at the measured `e7b7969` revision, each live `fail` also cloned once for
+  whole-body validation and retained a second snapshot while executing a
+  potentially failing child;
+- current code executes a `fail` body in source order with one snapshot per
+  source child and no inner command snapshot, but the heavy integrations were
+  not remeasured after that change;
 - at the profiled pre-atomic revision, repeated parsing/typechecking and
   database execution were both material;
 - EUF with `--stats` is dominated by repeated graph scans; and
 - the encoding-specific `@disequality` schedule is small in all measured
   parameter-analysis encodings and in the instrumented host integrations.
+
+## Proof-mode regression found during final validation
+
+The first published branch head introduced a separate regression in existing
+proof workloads. GitHub's CodSpeed comparison reported a 31.76% aggregate
+regression, but also warned that the endpoints used different runtime
+environments. Same-machine runs confirmed the problem without accepting that
+cross-environment magnitude: relative to current `origin/main`, the three-file
+proof suite was 1.31-1.37x slower, `rw-analysis.egg` was 1.50-1.60x slower, and
+peak RSS was 1.14-1.24x higher on the affected files.
+
+The canaries contain no `fail` commands. A commit bisect placed the regression
+in the proof-history/rollback commit rather than the imported artifact or
+disequality rules. Timing-summary decomposition assigned 94-100% of the added
+wall time to the unmeasured residual, not parsing, typechecking, rules,
+equality maintenance, or ordinary command execution.
+
+The intermediate ablations below were run from disposable dirty worktrees at
+merge commit `52c81540753ede042136fd7da32b64a23d481ea6`. Their patches and raw
+reports were not retained, so the values are diagnostic rather than
+independently reproducible. The final comparison below uses committed source
+and retained reproduction commands.
+
+Two hypotheses were tested separately:
+
+1. Removing one of the two proof-history markers did not help. The suite
+   remained 1.32-1.38x slower and all affected files retained higher RSS, so
+   that experiment was reverted.
+2. Avoiding the full `EGraph` rollback clone for constructor-only unions cut
+   the suite result to 1.06-1.10x. The slowdown tracked the number and size of
+   top-level actions because proof mode had begun cloning the complete graph
+   before every action, including actions with no runtime failure path.
+
+The retained fix recognizes only constructor trees: literals and variables,
+plus calls whose heads are declared constructors and whose children are also
+constructor trees. Constructor-only unions and expression actions do not
+invoke partial primitives or custom function lookups, so they skip the full
+rollback clone after successful typechecking. Global bindings retain the clone
+only when their value is not a constructor tree. A constructor-valued global
+instead retains the old entries from the source and encoded global-sort maps,
+then restores them if later shadowing rejects the command. Relation facts
+retain the full clone because relations are not classified as constructors.
+`set`, `delete`/`subsume`, `panic`, action blocks, `let`-`begin`, and any
+expression containing a primitive or custom function remain on the atomic
+rollback path. A regression test confirms that rejecting a different-sort
+duplicate global does not corrupt type state in ordinary, term, proofs,
+proof-testing, or proof-extraction mode; the existing partial primitive,
+action-block, schedule, nested-`fail`, and `pop` recovery tests keep covering
+the conservative path.
+
+Committed proof-check source commands now live in a `VecDeque` and are moved
+into proof history as each marker commits, rather than cloned twice and
+retained beside the committed program. This preserves the remaining-stream
+semantics across `push`/`pop` while reducing retained AST storage.
+
+The first review repair conservatively restored full snapshots for every
+global. That clean revision (`5e04f88c2f1f99f940c99b68b55e49d04ab4c7a2`)
+fixed the type-state bug but measured 1.1266x slower as a suite (inverted 95%
+CI 1.0223-1.2310x) with 1.096-1.139x per-file peak RSS in the reverse 12-round
+report, `/tmp/disequality-proof-final-reverse-v2.jsonl`. The retained map-only
+transaction removes that cost.
+
+The final candidate was measured in both endpoint orders with 30 samples per
+file and endpoint. No observation was removed:
+
+| Collection order | Suite wall ratio, candidate / main | Candidate peak RSS / main |
+| --- | ---: | ---: |
+| main, then candidate | 0.785-1.70x; inconclusive | 1.02-1.04x across files |
+| candidate, then main | 1.005-1.021x (inverse reported interval) | 1.02-1.04x across files |
+
+The forward collection contains one 410 ms `integer_math.egg` observation;
+every other candidate observation for that file was 17-22 ms. That anomaly is
+retained and makes the forward confidence interval inconclusive. The reverse
+collection was stable, but endpoint order still matters, so the conservative
+conclusion is only that the prior repeatable 32-59% same-machine regression no
+longer reproduces. The remaining wall difference is below what these short,
+process-per-sample canaries resolve reliably; peak RSS is consistently 2-4%
+above main. All 32 focused proof-mode regressions and all 80 raw/desugared
+disequality capture replays pass with the retained implementation. The host
+integrations still submit multi-action `(begin ...)` blocks, which deliberately
+keep their full atomic snapshot; this fix therefore does not change the Propel
+or EUF timing tables below.
 
 ## Parameter analysis
 
@@ -124,35 +214,36 @@ crosses that interface. This is not an offline trace replay.
 
 ### End-to-end results
 
-| Program | Artifact precomputed native DE | Current native DE | Current egglog DE | Egglog / current native |
+| Program | Artifact precomputed native DE | Measured native DE | Measured egglog DE | Egglog / native |
 | --- | ---: | ---: | ---: | ---: |
 | `tip_list_append_assoc` | 85 ms | 51.6 ms (46.1-57.8) | 140.4 ms (133.3-154.1) | 2.72x |
 | `tip_bin_plus_assoc` | 1.308 s | 618.9 ms (610.0-639.0) | 7.240 s (6.742-7.640) | 11.70x |
 | `tip_nat_times_alt_assoc` | 8.361 s | 4.386 s (4.327-4.444) | 12.571 s (12.304-12.771) | 2.87x |
 
-The current native implementation is substantially faster than the artifact's
+The measured native implementation is substantially faster than the artifact's
 precomputed numbers on these cases. The host machine or Scala Native build
 therefore does not explain the egglog gaps. Values are medians of six accepted
 samples; parentheses contain the full accepted range.
 
-The host adapter submits each flush as one `(begin ...)` command. Current
-egglog preserves source-command atomicity by retaining a complete `EGraph`
+The host adapter submits each flush as one `(begin ...)` command. Egglog
+preserves source-command atomicity by retaining a complete `EGraph`
 snapshot while that block executes. This keeps rollback correct, but persistent
 tables lose their unique-owner fast path while thousands of mutations occur.
-Each consistency query adds two distinct snapshots: one validates the complete
-`fail` body, and another remains live while its schedule executes so a schedule
-that mutates and then errors can be rolled back. The medium profile counted
-1,393 such queries. Relative to the pre-atomic `55250f3` measurements, the
-final egglog medians increased from 101.2 ms, 3.497 s, and 6.356 s to 140.4 ms,
-7.240 s, and 12.571 s. An intermediate implementation that omitted rollback
-for failing schedules measured 139.5 ms, 5.797 s, and 10.842 s; those numbers
-are not valid final results. The observed slowdown is consistent with retained
-snapshot overhead, but validation, action-batch, and failing-child snapshots
-were not timed independently, so this comparison does not isolate their costs.
-A temporary diagnostic that flattened batches into independent top-level
-actions was not a fix: repeated compilation made the medium and large paths
-about 5.2 and 10.5 seconds even before preserving equivalent rollback
-semantics.
+At measured revision `e7b7969`, each consistency query added two distinct
+snapshots: one for complete-`fail` validation and another while its schedule
+executed. The medium profile counted 1,393 such queries. Relative to the
+pre-atomic `55250f3` measurements, the `e7b7969` medians increased from 101.2
+ms, 3.497 s, and 6.356 s to 140.4 ms, 7.240 s, and 12.571 s. An intermediate
+implementation that omitted rollback for failing schedules measured 139.5 ms,
+5.797 s, and 10.842 s; those numbers are not valid final results. The observed
+slowdown is consistent with retained snapshot overhead, but validation,
+action-batch, and failing-child snapshots were not timed independently, so this
+comparison does not isolate their costs. Since `b56a72f`, current `fail`
+execution retains one outer snapshot per source child and disables inner
+rollback; Propel was not remeasured after that change. A temporary diagnostic
+that flattened batches into independent top-level actions was not a fix:
+repeated compilation made the medium and large paths about 5.2 and 10.5 seconds
+even before preserving equivalent rollback semantics.
 
 ### Diagnostic profile
 
@@ -221,12 +312,12 @@ the artifact's 627 models exactly.
 
 ### Results without stats
 
-| Input | Artifact precomputed native DE | Current native DE | Current egglog DE | Egglog / current native |
+| Input | Artifact precomputed native DE | Measured native DE | Measured egglog DE | Egglog / native |
 | --- | ---: | ---: | ---: | ---: |
 | `uf.815405` | 100.366 ms | 44.2 ms (42.6-49.5) | 541.7 ms (534.0-591.2) | 12.27x |
 | `uf.614981` | 973.656 ms | 410.9 ms (391.8-435.4) | 5.203 s (5.080-5.853) | 12.66x |
 
-As in Propel, current native DE is substantially faster than the artifact's
+As in Propel, measured native DE is substantially faster than the artifact's
 precomputed result, so the environment does not explain the egglog ratio.
 Values are six-sample medians with full accepted ranges. Reversing endpoint
 order matters on the larger case, which is why the range is retained rather
@@ -270,15 +361,17 @@ The same pre-merge instrumented large case observed:
 
 Resolution/typechecking and database execution are both first-order costs at
 the profiled revision. The actual extension schedule is a small fraction of
-the no-stats run. Current code also retains a rollback snapshot during each of
-the 628 generated `(begin ...)` flushes. Every consistency check clones once
-for whole-body validation and once for rollback while the private schedule
-runs. These snapshot classes were counted but not timed independently, so the
-report treats them as additional first-order candidates rather than assigning
-the complete post-`55250f3` delta to any one class. Simply removing the block
-and compiling 403,221 operations as separate commands made a temporary
-large-case diagnostic roughly 19 seconds, so the needed primitive is one
-compiled batch without a full retained graph snapshot, not source flattening.
+the no-stats run. The measured code also retained a rollback snapshot during
+each of the 628 generated `(begin ...)` flushes. At `e7b7969`, every consistency
+check cloned once for whole-body validation and once for rollback while the
+private schedule ran. These snapshot classes were counted but not timed
+independently, so the report treats them as additional first-order candidates
+rather than assigning the complete post-`55250f3` delta to any one class. Since
+`b56a72f`, current `fail` execution uses one outer source-child snapshot; EUF
+was not remeasured after that change. Simply removing the block and compiling
+403,221 operations as separate commands made a temporary large-case diagnostic
+roughly 19 seconds, so the needed primitive is one compiled batch without a
+full retained graph snapshot, not source flattening.
 
 ## Prioritized fixes
 
@@ -356,6 +449,27 @@ hyperfine --warmup 2 --runs 3 --export-json /tmp/euf-reverse.json \
 
 "$EUF" "$EUF_INPUT" --backend disegg-de --stats
 "$EUF" "$EUF_INPUT" --backend egglog-de --stats
+```
+
+Reproduce the balanced proof-mode regression check:
+
+```sh
+CANARIES="egglog/tests/web-demo/rw-analysis.egg \
+egglog/tests/web-demo/resolution.egg egglog/tests/integer_math.egg"
+
+uv run --locked ./bench.py \
+  --target final=@fff36169eb9527ee817477bceecf371ddbe67b8c \
+  --treatment proofs --compare-target main=@fdd4eac12c13 \
+  --compare-treatment proofs --rounds 30 --timeout-sec 120 --force-run \
+  --report /tmp/disequality-proof-final-forward-v4.jsonl --format markdown \
+  $CANARIES
+
+uv run --locked ./bench.py \
+  --target main=@fdd4eac12c13 --treatment proofs \
+  --compare-target final=@fff36169eb9527ee817477bceecf371ddbe67b8c \
+  --compare-treatment proofs --rounds 30 --timeout-sec 120 --force-run \
+  --report /tmp/disequality-proof-final-reverse-v4.jsonl --format markdown \
+  $CANARIES
 ```
 
 Repeat the Propel pair with `tip_list_append_assoc.propel` and
