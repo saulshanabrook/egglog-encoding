@@ -9,6 +9,7 @@ extern "C" {
 #endif
 
 typedef struct EgglogDisequalityGraph EgglogDisequalityGraph;
+typedef struct EgglogDisequalityTemplate EgglogDisequalityTemplate;
 
 enum EgglogDisequalityEncoding {
   EGGLOG_DISEQUALITY_EE = 0,
@@ -24,6 +25,24 @@ enum EgglogDisequalityComparison {
   EGGLOG_COMPARISON_ERROR = -1,
 };
 
+enum EgglogTermLanguage {
+  EGGLOG_TERM_LANGUAGE_VEC = 0,
+  EGGLOG_TERM_LANGUAGE_DIRECT = 1,
+};
+
+EgglogDisequalityTemplate *egglog_disequality_template_new(
+    uint32_t encoding, uint32_t term_language, const char *sort_name);
+uint32_t egglog_disequality_template_register_operator(
+    EgglogDisequalityTemplate *template_, const char *source_name,
+    const char *preferred_name, size_t arity);
+int32_t egglog_disequality_template_finish(
+    EgglogDisequalityTemplate *template_);
+EgglogDisequalityGraph *egglog_disequality_graph_new_from_template(
+    const EgglogDisequalityTemplate *template_);
+void egglog_disequality_template_free(EgglogDisequalityTemplate *template_);
+const char *egglog_disequality_template_last_error(
+    const EgglogDisequalityTemplate *template_);
+
 EgglogDisequalityGraph *egglog_disequality_graph_new(uint32_t encoding);
 EgglogDisequalityGraph *egglog_disequality_graph_clone(
     const EgglogDisequalityGraph *graph);
@@ -33,6 +52,12 @@ uint64_t egglog_disequality_add(EgglogDisequalityGraph *graph,
                                 const char *operator_name,
                                 const uint64_t *children,
                                 size_t child_count);
+uint64_t egglog_disequality_add_atom(EgglogDisequalityGraph *graph,
+                                     const char *atom_name);
+uint64_t egglog_disequality_add_registered(EgglogDisequalityGraph *graph,
+                                           uint32_t operator_id,
+                                           const uint64_t *children,
+                                           size_t child_count);
 int32_t egglog_disequality_union(EgglogDisequalityGraph *graph, uint64_t lhs,
                                  uint64_t rhs);
 int32_t egglog_disequality_disunion(EgglogDisequalityGraph *graph,

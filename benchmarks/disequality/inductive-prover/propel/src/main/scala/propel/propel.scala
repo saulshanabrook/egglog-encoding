@@ -30,6 +30,8 @@ object defaults:
     Reflexive, Irreflexive, Antisymmetric, Symmetric, Connected, Transitive,
     Commutative, Selection, Idempotent, Associative)
   val egraphVariant: evaluator.EqualityGraphBackend = evaluator.EqualityGraphBackend.DisequalityEdges
+  val egglogTermLanguage = evaluator.EgglogTermLanguage.Vec
+  val cacheEgglogTemplate = true
   val emitSourceDirectory = Option.empty[String]
 
 @main def check(arguments: String*) =
@@ -53,6 +55,8 @@ object defaults:
     var keepRewritesBits = defaults.keepRewritesBits
     var propertiesOrder = defaults.propertiesOrder
     var egraphVariant = defaults.egraphVariant
+    var egglogTermLanguage = defaults.egglogTermLanguage
+    var cacheEgglogTemplate = defaults.cacheEgglogTemplate
     var emitSourceDirectory = defaults.emitSourceDirectory
 
     if arguments.size > 0 && arguments.head != "-h" && arguments.head != "--help" then
@@ -159,6 +163,16 @@ object defaults:
           case "--emit-source-dir" =>
             if args.hasNext then emitSourceDirectory = Some(args.next())
             else error = Some("No source output directory given.")
+          case "--term-language" =>
+            if args.hasNext then
+              args.next() match
+                case "direct" => egglogTermLanguage = evaluator.EgglogTermLanguage.Direct
+                case "vec" => egglogTermLanguage = evaluator.EgglogTermLanguage.Vec
+                case _ => error = Some("Specify an egglog term language in {direct; vec}.")
+            else
+              error = Some("No egglog term language given.")
+          case "--no-template-cache" =>
+            cacheEgglogTemplate = false
           case arg =>
             error = Some(s"Unknown option: $arg")
 
@@ -170,13 +184,13 @@ object defaults:
      ignorePosContradiction, ignoreNegContradiction,
      ignorePosNegContradiction, ignoreCyclicContradiction, runMain,
      keepRewritesBits, propertiesOrder, maxNumberOfLemmas, maxNumberOfFacts,
-     egraphVariant, emitSourceDirectory)
+     egraphVariant, egglogTermLanguage, cacheEgglogTemplate, emitSourceDirectory)
 
   parsedArguments match
-    case (Some(error), _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
+    case (Some(error), _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
       println(s"Error: $error")
 
-    case (_, None, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
+    case (_, None, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
       println("Usage: propel [ARGUMENT]...")
       println("Verifies the algebraic and relational properties of functions specified in Propel's input format.")
       println()
@@ -202,6 +216,8 @@ object defaults:
       println("      --keep-rewrites NUMBER       number of top-scored rewrites to keep")
       println("      --prop-order PROPERTIES      comma-separated list of properties")
       println("      --variant VARIANT            e-graph variant: de, ee, nee, egglog-ee, egglog-oee, egglog-nee, or egglog-de")
+      println("      --term-language LANGUAGE     egglog term language: vec (default) or direct")
+      println("      --no-template-cache          compile a fresh egglog schema for every e-graph")
       println("      --emit-source-dir DIRECTORY  emit egglog and desugared snapshots for inspected e-graphs")
 
     case (_, Some(content), deduction, reduction, discoverAlgebraicProperties,
@@ -209,14 +225,14 @@ object defaults:
           ignorePosContradiction, ignoreNegContradiction,
           ignorePosNegContradiction, ignoreCyclicContradiction, runMain,
           keepRewritesBits, propertiesOrder, maxNumberOfLemmas, maxNumberOfFacts,
-          egraphVariant, emitSourceDirectory) =>
+          egraphVariant, egglogTermLanguage, cacheEgglogTemplate, emitSourceDirectory) =>
       parseAndCheckSourceCode(
         content, deduction, reduction, discoverAlgebraicProperties,
         disableEqualities, disableInequalities,
         ignorePosContradiction, ignoreNegContradiction,
         ignorePosNegContradiction, ignoreCyclicContradiction, runMain,
         keepRewritesBits, propertiesOrder, maxNumberOfLemmas, maxNumberOfFacts,
-        egraphVariant, emitSourceDirectory)
+        egraphVariant, egglogTermLanguage, cacheEgglogTemplate, emitSourceDirectory)
 
 
 @JSExportTopLevel("parseAndCheckSourceCode")
@@ -237,6 +253,8 @@ def parseAndCheckSourceCode(
     maxNumberOfLemmas: Int = defaults.maxNumberOfLemmas,
     maxNumberOfFacts: Int = defaults.maxNumberOfFacts,
     egraphVariant: evaluator.EqualityGraphBackend = defaults.egraphVariant,
+    egglogTermLanguage: evaluator.EgglogTermLanguage = defaults.egglogTermLanguage,
+    cacheEgglogTemplate: Boolean = defaults.cacheEgglogTemplate,
     emitSourceDirectory: Option[String] = defaults.emitSourceDirectory) =
   val exprToEval = if runMain
                    then ast.Var(Symbol("main"))
@@ -254,7 +272,14 @@ def parseAndCheckSourceCode(
         println(s"Error: ${exception.getMessage}"),
 
       expr =>
-        evaluator.EGraphEqualities.backend = egraphVariant
+        evaluator.EGraphEqualities.backend =
+          if egraphVariant.isEgglog then
+            egraphVariant.withEgglogLanguage(
+              egglogTermLanguage,
+              evaluator.egraph.Language.PropelLanguage.egglogSchema(expr),
+              cacheEgglogTemplate,
+            )
+          else egraphVariant
         evaluator.EGraphEqualities.emitSourceDirectory = emitSourceDirectory
         evaluator.EGraphEqualities.EGraphStats.reset()
         evaluator.Equalities.debugDisableEqualities = disableEqualities

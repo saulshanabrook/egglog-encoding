@@ -34,6 +34,18 @@ def run_checked(command: list[str], description: str, success_suffix: str) -> No
         raise RuntimeError(f"{description} produced no success marker:\n{process.stdout}")
 
 
+def validate_direct_snapshot(contents: bytes, sort_name: str, description: str) -> None:
+    source = contents.decode()
+    required = (f"(sort {sort_name})", f"(constructor Atom (String) {sort_name})")
+    forbidden = ("BenchmarkNode", "BenchmarkTerms", "vec-of")
+    missing = [fragment for fragment in required if fragment not in source]
+    present = [fragment for fragment in forbidden if fragment in source]
+    if missing or present:
+        raise RuntimeError(
+            f"{description} is not a direct-constructor snapshot: missing={missing}, forbidden={present}",
+        )
+
+
 def replay_all_treatments(binary: Path, encoding: str | None, path: Path) -> None:
     for treatment, treatment_args in TREATMENTS.items():
         command = [str(binary), *treatment_args]
@@ -68,7 +80,7 @@ def replay_snapshots(binary: Path, output: Path) -> int:
 def generate(args: argparse.Namespace) -> dict[Path, bytes]:
     output: dict[Path, bytes] = {}
     manifest: dict[str, object] = {
-        "schema_version": 2,
+        "schema_version": 3,
         "encodings": list(ENCODINGS),
         "replay_treatments": list(TREATMENTS),
         "euf": {},
@@ -87,6 +99,8 @@ def generate(args: argparse.Namespace) -> dict[Path, bytes]:
                     str(args.euf_binary.resolve()),
                     "--backend",
                     f"egglog-{encoding}",
+                    "--term-language",
+                    "direct",
                     "--emit-source-dir",
                     str(directory),
                     str(euf_input),
@@ -99,7 +113,9 @@ def generate(args: argparse.Namespace) -> dict[Path, bytes]:
             desugared = sorted(directory.glob("*.desugared.egg"))
             if len(raw) != 1 or len(desugared) != 1:
                 raise RuntimeError(f"EUF {encoding} emitted {len(raw)} raw and {len(desugared)} desugared snapshots")
-            euf_sources.append(raw[0].read_bytes())
+            raw_source = raw[0].read_bytes()
+            validate_direct_snapshot(raw_source, "EufTerm", f"EUF {encoding}")
+            euf_sources.append(raw_source)
             output[Path("euf") / f"sat.{encoding}.desugared.egg"] = desugared[0].read_bytes()
         if len(set(euf_sources)) != 1:
             raise RuntimeError("EUF encodings emitted different pre-desugaring programs")
@@ -108,6 +124,7 @@ def generate(args: argparse.Namespace) -> dict[Path, bytes]:
             "input": "euf-solver/tests/sat.smt2",
             "input_sha256": hashlib.sha256(euf_input.read_bytes()).hexdigest(),
             "model_count": 1,
+            "term_language": "direct",
         }
 
         propel_sources: list[bytes] = []
@@ -124,6 +141,8 @@ def generate(args: argparse.Namespace) -> dict[Path, bytes]:
                     str(propel_input),
                     "--variant",
                     f"egglog-{encoding}",
+                    "--term-language",
+                    "direct",
                     "--emit-source-dir",
                     str(directory),
                 ],
@@ -140,7 +159,9 @@ def generate(args: argparse.Namespace) -> dict[Path, bytes]:
             if index >= len(raw):
                 raise RuntimeError(f"Propel graph index {index} is outside the {len(raw)} emitted graphs")
             selected_index = index
-            propel_sources.append(raw[index].read_bytes())
+            raw_source = raw[index].read_bytes()
+            validate_direct_snapshot(raw_source, "PropelTerm", f"Propel {encoding}")
+            propel_sources.append(raw_source)
             output[Path("propel") / f"gset_comm.{encoding}.desugared.egg"] = desugared[index].read_bytes()
         if len(set(graph_counts)) != 1:
             raise RuntimeError(f"Propel encodings emitted different graph counts: {graph_counts}")
@@ -152,6 +173,7 @@ def generate(args: argparse.Namespace) -> dict[Path, bytes]:
             "input_sha256": hashlib.sha256(propel_input.read_bytes()).hexdigest(),
             "graph_count": graph_counts[0],
             "selected_graph_index": selected_index,
+            "term_language": "direct",
         }
 
     files = {

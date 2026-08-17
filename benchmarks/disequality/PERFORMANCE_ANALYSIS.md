@@ -1,6 +1,6 @@
 # Disequality case-study performance analysis
 
-Run date: 2026-08-14 (America/New_York)
+Run date: 2026-08-17 (America/New_York)
 
 This report analyzes the egglog implementations of the three case studies from
 *Dis/Equality Graphs*: parameter analysis, Propel, and the EUF solver. It
@@ -49,6 +49,72 @@ analysis. No sample inside an accepted invocation was discarded.
 | EUF, 245 models | egglog DE / native DE | 12.27x wall | one cloned graph and atomic generated-command batch per SAT model |
 | EUF, 627 models | egglog DE / native DE | 12.66x wall | 403K operations across 628 atomic flushes, frontend work, and database execution |
 | EUF, 627 models with stats | egglog DE / native DE | 39.71x reported full time | atomic batches plus 627 full graph scans and about 2M term lookups |
+
+## Direct-constructor follow-up
+
+The 2026-08-17 follow-up replaces the generic host term in inspectable EUF and
+Propel programs with source-shaped constructors. It retains the old path behind
+`--term-language vec`, adds `--term-language direct`, and isolates schema reuse
+with `--no-template-cache`. The frozen baseline is parent commit `5069c43`; its
+Propel and EUF binaries have SHA-256
+`2140063b5030876f35c8f71b04d061e46f74cc73890584a8e5c59bdc366bdf81`
+and
+`35f541999e170b15ec1ecae3413499853fd82377f496691ef12b8353e8b9a22a`.
+Candidate commands name the term language explicitly, so the later one-line
+change making Vec Propel's CLI default does not affect these measurements.
+
+Propel uses two reversed Hyperfine invocations: five runs per order for
+`gset_comm` and three per order for `tip_bin_plus_assoc`, each after one warmup.
+EUF uses five runs per order for `uf.815405` and three per order for
+`uf.614981`, each after two warmups. No sample within an invocation was
+discarded. The full ranges therefore retain visible machine-noise outliers.
+All EUF measurements omit `--stats`.
+
+The eight raw Hyperfine JSON files and their hashes are committed under
+[`reports/term-language-performance/`](reports/term-language-performance/).
+[`benchmark_term_languages.sh`](scripts/benchmark_term_languages.sh) reproduces
+all forward and reversed invocations, including the frozen, cold, cached, Vec,
+and direct arms. It requires the two revision-pinned baseline executables and
+the two published EUF inputs because neither is rebuilt implicitly.
+
+### Propel representation and template ablation
+
+| Program | Frozen Vec, cold | Current Vec, cold | Current Vec, cached | Direct, cold | Direct, cached | Direct / cached Vec |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `gset_comm` | 271.7 ms (263.0-277.1) | 269.3 ms (266.3-326.2) | 193.3 ms (190.8-195.4) | 455.7 ms (445.3-468.2) | 239.2 ms (235.4-241.4) | 1.24x |
+| `tip_bin_plus_assoc` | 6.439 s (6.282-7.665) | 6.702 s (6.201-9.254) | 5.599 s (5.487-9.669) | not run | 7.438 s (7.004-7.683) | 1.33x |
+
+Template reuse is real: cached Vec is 1.41x and 1.15x faster by median than
+the frozen cold-Vec binary on the small and medium inputs. Direct mode also
+requires a cached schema; compiling it per graph is 1.91x slower on the small
+input. However, direct is still 1.24-1.33x slower than cached Vec. Propel creates
+many short-lived graphs, and every direct constructor is a separate egglog
+function/relation that participates in graph cloning and rebuild bookkeeping.
+This interpretation is supported by a diagnostic correction during the
+implementation: removing three declarations that could never occur cut a
+single medium direct run from about 15.2 seconds to 7.8 seconds. That diagnostic
+was not a balanced benchmark, so it establishes sensitivity to schema width,
+not a precise component cost.
+
+The result changes the rollout decision. Propel defaults to cached Vec to avoid
+a regression. Direct remains an explicit mode, is covered by source replay and
+corpus parity checks, and is used to generate the readable committed `.egg`
+captures.
+
+### EUF representation ablation
+
+| Input | Frozen Vec | Current Vec | Direct | Direct / current Vec |
+| --- | ---: | ---: | ---: | ---: |
+| `uf.815405` (245 models) | 551.3 ms (520.4-730.4) | 523.2 ms (519.3-541.3) | 497.1 ms (489.2-504.9) | 0.95x |
+| `uf.614981` (627 models) | 5.841 s (4.894-12.264) | 5.024 s (4.927-5.776) | 4.614 s (4.475-4.935) | 0.92x |
+
+Direct constructors are 1.05x and 1.09x faster than current Vec by median on
+the two published inputs, with especially stable direct ranges. Unlike Propel,
+EUF builds one declared term graph and clones its populated state per SAT model
+instead of creating thousands of independent empty schemas. EUF therefore
+defaults to direct. The frozen large-input range is noisy, so the rollout
+decision uses the paired current-Vec comparison rather than attributing the
+entire baseline delta to this change.
 
 The answer to "typechecking or engine?" is workload-dependent:
 
@@ -293,6 +359,10 @@ The largest tested opportunities are initialized-graph reuse, avoiding parsed
 top-level check programs for pair comparisons, and eliminating repeated stats
 scans. Cleanup batching is real but secondary.
 
+The follow-up now retains initialized-template reuse as production code. The
+table above supersedes the temporary template row with balanced measurements
+and separates that benefit from the direct-constructor representation.
+
 ## EUF solver
 
 ### Workload and boundary
@@ -392,10 +462,12 @@ cases.
    backend transaction support. Parameter analysis needs the analogous bulk
    relation/input path. The removed representation-specific writer is not the
    right API.
-3. **Cache the initialized generic-language graph.** Clone a compiled prelude
-   or instantiate a reusable database template rather than resolving the same
-   declarations for every short-lived Propel graph. The diagnostic lower bound
-   saved about 603 ms on the medium case.
+3. **Keep initialized-schema reuse; reduce direct-schema lifecycle cost.**
+   Template cloning is now implemented and improves cached Vec. Direct
+   constructors expose a different cost: each operator adds a relation that
+   every short-lived Propel graph must clone and rebuild. A future direct-mode
+   optimization should measure a cache keyed by the operators actually used by
+   a graph, or make empty relation schemas cheaper to instantiate.
 4. **Expose typed pair comparison.** Avoid constructing and parsing tiny check
    programs for every `equal`/`unequal` query. A backend query over the generated
    representation saved about 425 ms in the medium diagnostic, but the API must
@@ -449,6 +521,21 @@ hyperfine --warmup 2 --runs 3 --export-json /tmp/euf-reverse.json \
 
 "$EUF" "$EUF_INPUT" --backend disegg-de --stats
 "$EUF" "$EUF_INPUT" --backend egglog-de --stats
+```
+
+Reproduce the complete direct-constructor follow-up, including reversed order,
+with the committed driver. The first two executables are frozen builds from
+`5069c43`; the remaining two are the candidate builds above.
+
+```sh
+benchmarks/disequality/scripts/benchmark_term_languages.sh \
+  /path/to/5069c43/propel \
+  "$PROPEL" \
+  /path/to/5069c43/euf-solver \
+  "$EUF" \
+  /path/to/uf.815405.smt2 \
+  /path/to/uf.614981.smt2 \
+  /tmp/disequality-term-language-performance
 ```
 
 Reproduce the balanced proof-mode regression check:

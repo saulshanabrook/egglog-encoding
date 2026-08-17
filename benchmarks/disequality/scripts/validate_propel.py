@@ -40,11 +40,15 @@ def run_benchmark(
     binary: Path,
     benchmark: Path,
     variant: str,
+    term_language: str | None,
     timeout: float,
 ) -> Result:
+    command = [str(binary), "-f", str(benchmark), "--variant", variant]
+    if term_language is not None:
+        command.extend(("--term-language", term_language))
     try:
         process = subprocess.run(
-            [str(binary), "-f", str(benchmark), "--variant", variant],
+            command,
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -126,6 +130,7 @@ def main() -> int:
     )
     parser.add_argument("--output", type=Path)
     parser.add_argument("--allow-timeouts", action="store_true")
+    parser.add_argument("--term-language", choices=("vec", "direct"))
     parser.add_argument(
         "--repository",
         type=Path,
@@ -147,7 +152,11 @@ def main() -> int:
         parser.error(f"repository is not a Git checkout: {repository}")
     code_revision, code_status = git_provenance(repository)
 
-    jobs = [(binary, benchmark, variant, args.timeout) for benchmark in benchmarks for variant in variants]
+    jobs = [
+        (binary, benchmark, variant, args.term_language, args.timeout)
+        for benchmark in benchmarks
+        for variant in variants
+    ]
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as executor:
         results = list(executor.map(lambda job: run_benchmark(*job), jobs))
     results.sort(key=lambda result: (result.benchmark, variants.index(result.variant)))
@@ -208,6 +217,7 @@ def main() -> int:
         "benchmark_count": len(benchmarks),
         "reference": args.reference,
         "variants": list(variants),
+        "term_language": args.term_language or "cli_default",
         "timeout_seconds": args.timeout,
         "summary": {
             "run_count": len(results),

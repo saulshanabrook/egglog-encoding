@@ -8,6 +8,9 @@ PROPEL_BINARY ?= $(PROPEL_DIR)/.native/target/scala-3.4.2/propel
 PROPEL_INPUT := $(ROOT)/benchmarks/disequality/inductive-prover/benchmarks/propel
 PROPEL_TIMEOUT ?= 10
 PROPEL_JOBS ?= 8
+PROPEL_TERM_LANGUAGE ?= vec
+PROPEL_PARITY_OUTPUT ?= benchmarks/disequality/reports/propel-parity.json
+PROPEL_DIRECT_SMOKE_INPUTS := gset_comm.propel tip_list_append_assoc.propel
 SBT ?= sbt
 
 check: rust-test euf-test propel-jvm propel-native propel-smoke snapshots
@@ -33,6 +36,17 @@ propel-smoke: propel-native
 		printf '%s\n' "$$output"; \
 		test $$status -eq 0 || exit $$status; \
 		printf '%s\n' "$$output" | grep -Eq 'Check successful\.$$' || exit 1; \
+	done
+	@for input in $(PROPEL_DIRECT_SMOKE_INPUTS); do \
+		for variant in egglog-ee egglog-oee egglog-nee egglog-de; do \
+			output="$$("$(PROPEL_BINARY)" \
+				-f "$(PROPEL_INPUT)/$$input" \
+				--variant "$$variant" \
+				--term-language direct 2>&1)"; status=$$?; \
+			printf '%s\n' "$$output"; \
+			test $$status -eq 0 || exit $$status; \
+			printf '%s\n' "$$output" | grep -Eq 'Check successful\.$$' || exit 1; \
+		done; \
 	done
 
 snapshots: propel-native
@@ -65,8 +79,9 @@ propel-parity: propel-native
 		--variants de egglog-ee egglog-oee egglog-nee egglog-de \
 		--timeout "$(PROPEL_TIMEOUT)" \
 		--jobs "$(PROPEL_JOBS)" \
+		--term-language "$(PROPEL_TERM_LANGUAGE)" \
 		--allow-timeouts \
-		--output benchmarks/disequality/reports/propel-parity.json
+		--output "$(PROPEL_PARITY_OUTPUT)"
 
 import-check:
 	@test -n "$(ARCHIVE)" || (echo 'set ARCHIVE=/path/to/die-graph.zip' >&2; exit 2)

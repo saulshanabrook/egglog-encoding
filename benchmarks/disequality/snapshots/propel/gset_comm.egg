@@ -1,24 +1,43 @@
-; Generic host language used by the disequality case studies.
-(sort BenchmarkTerm)
-(sort BenchmarkTerms (Vec BenchmarkTerm))
-(constructor BenchmarkNode (String BenchmarkTerms) BenchmarkTerm)
-(constructor BenchmarkWitness (i64) BenchmarkTerm)
+; Direct host language generated from source declarations.
+(sort PropelTerm)
+(constructor Atom (String) PropelTerm)
+; source operator "@apply"/2
+(constructor Apply (PropelTerm PropelTerm) PropelTerm)
+; source operator "@case"/2
+(constructor Case (PropelTerm PropelTerm) PropelTerm)
+; source operator "@match"/2
+(constructor Match2 (PropelTerm PropelTerm) PropelTerm)
+; source operator "@match"/3
+(constructor Match3 (PropelTerm PropelTerm PropelTerm) PropelTerm)
+; source operator "@λ"/2
+(constructor Lambda (PropelTerm PropelTerm) PropelTerm)
+(constructor S (PropelTerm) PropelTerm)
+; source operator "Unit"/0
+(constructor Escaped_Unit () PropelTerm)
+(constructor Z () PropelTerm)
+(constructor ≛ (PropelTerm) PropelTerm)
+(constructor ≟ (PropelTerm PropelTerm) PropelTerm)
+; source operator "⊤"/0
+(constructor Top () PropelTerm)
+; source operator "⊥"/0
+(constructor Bot () PropelTerm)
+(constructor HostWitness (i64) PropelTerm)
 
 (begin
-  (let term0 (BenchmarkNode "x" (vec-of)))
-  (let term1 (BenchmarkNode "n" (vec-of)))
-  (let term2 (BenchmarkNode "@apply" (vec-of term0 term1)))
-  (let term3 (BenchmarkNode "⊥" (vec-of)))
+  (let term0 (Atom "x"))
+  (let term1 (Atom "n"))
+  (let term2 (Apply term0 term1))
+  (let term3 (Bot))
   (union term2 term3)
-  (let term4 (BenchmarkNode "⊤" (vec-of)))
+  (let term4 (Top))
   (disequal term4 term3)
   (disequal term2 term4)
-  (union term2 (BenchmarkWitness 0))
-  (union term3 (BenchmarkWitness 1))
+  (union term2 (HostWitness 0))
+  (union term3 (HostWitness 1))
 )
 
 ; Recheck one explicit host union as an equality proof witness.
-(check (= (BenchmarkWitness 0) (BenchmarkWitness 1)))
+(check (= (HostWitness 0) (HostWitness 1)))
 
 ; The command below records the expected graph consistency.
 (check-disequalities)

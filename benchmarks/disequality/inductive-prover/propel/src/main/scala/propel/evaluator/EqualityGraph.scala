@@ -26,6 +26,11 @@ trait EqualityGraphBackend:
   def name: String
   def isEgglog: Boolean
   def empty: EqualityGraph
+  def withEgglogLanguage(
+      termLanguage: EgglogTermLanguage,
+      schema: EgglogLanguageSchema,
+      cacheTemplate: Boolean,
+  ): EqualityGraphBackend = this
 
 object EqualityGraphBackend:
   val DisequalityEdges: EqualityGraphBackend = NativeBackend(
@@ -67,10 +72,29 @@ object EqualityGraphBackend:
   private case class EgglogBackend(
       name: String,
       encoding: EgglogEncoding,
+      termLanguage: EgglogTermLanguage = EgglogTermLanguage.Vec,
+      schema: EgglogLanguageSchema = EgglogLanguageSchema("BenchmarkTerm", Vector.empty),
+      cacheTemplate: Boolean = false,
   ) extends EqualityGraphBackend:
     override val isEgglog: Boolean = true
+    private lazy val template = EgglogRuntimePlatform.createTemplate(encoding, termLanguage, schema)
+    override def withEgglogLanguage(
+        termLanguage: EgglogTermLanguage,
+        schema: EgglogLanguageSchema,
+        cacheTemplate: Boolean,
+    ): EqualityGraphBackend = copy(
+      termLanguage = termLanguage,
+      schema = schema,
+      cacheTemplate = cacheTemplate,
+    )
     override def empty: EqualityGraph = EgglogEqualityGraph(
-      EgglogRuntimePlatform.create(encoding),
+      if termLanguage == EgglogTermLanguage.Vec && !cacheTemplate then
+        EgglogRuntimePlatform.create(encoding)
+      else if cacheTemplate then template.newRuntime()
+      else
+        val uncachedTemplate = EgglogRuntimePlatform.createTemplate(encoding, termLanguage, schema)
+        try uncachedTemplate.newRuntime()
+        finally uncachedTemplate.close(),
       mutable.Map.empty,
     )
 

@@ -1,7 +1,9 @@
 # Inductive Prover
 
 This copy also supports the `egglog-ee`, `egglog-oee`, `egglog-nee`, and
-`egglog-de` variants and can emit executable source snapshots. See
+`egglog-de` variants and can emit executable source snapshots. Cached Vec terms
+are the runtime default; `--term-language direct` selects source-shaped
+constructors and `--no-template-cache` retains the cold-schema ablation. See
 [`../EGGLOG_INTEGRATION.md`](../EGGLOG_INTEGRATION.md) for architecture,
 validation scope, and reproduction commands. The remainder of this file is the
 artifact's original Propel documentation.

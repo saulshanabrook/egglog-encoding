@@ -6,6 +6,24 @@ enum EgglogEncoding(val abiValue: Int):
   case NegatedEqualityEmbedding extends EgglogEncoding(2)
   case DisequalityEdges extends EgglogEncoding(3)
 
+enum EgglogTermLanguage(val abiValue: Int):
+  case Vec extends EgglogTermLanguage(0)
+  case Direct extends EgglogTermLanguage(1)
+
+case class EgglogOperatorSpec(
+    sourceName: String,
+    preferredName: Option[String],
+    arity: Int,
+)
+
+case class EgglogLanguageSchema(
+    sortName: String,
+    operators: Vector[EgglogOperatorSpec],
+)
+
+trait EgglogRuntimeTemplate extends AutoCloseable:
+  def newRuntime(): EgglogRuntime
+
 trait EgglogRuntime:
   def copyRuntime(): EgglogRuntime
   def add(operator: String, children: Array[Long]): Long

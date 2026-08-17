@@ -10,6 +10,8 @@
 - commit inspectable EUF and Propel `.egg` captures plus each encoding's actual
   desugared output, and execute them under ordinary, term, proofs,
   proof-testing, and proof-extraction modes
+- generate source-shaped EUF and Propel constructors for those captures, while
+  retaining the generic Vec representation as a measured runtime control
 - document parity limits, revision-pinned performance, diagnosed bottlenecks, and
   prioritized fixes in `benchmarks/disequality/PERFORMANCE_ANALYSIS.md`
 
@@ -45,11 +47,14 @@ CLI.
 
 The shared in-process adapter under `benchmarks/disequality/egglog-backend/`
 provides typed add, union, disequality, clone, comparison, consistency, and
-stats operations. Committed capture batches use immutable shared slices, so
-graph clones do not copy the accumulated operation history. The EUF solver
-calls it through Rust. Propel calls the same implementation through a
-panic-contained C ABI from Scala Native; no external egglog process
-participates in solving.
+stats operations. It can either use the original
+`BenchmarkNode(String, Vec)` language or compile a declared `(name, arity)`
+schema into real egglog constructors, with `Atom(String)` only for dynamic
+names. Compiled templates avoid reparsing either schema for every graph.
+Committed capture batches use immutable shared slices, so graph clones do not
+copy the accumulated operation history. The EUF solver calls it through Rust.
+Propel calls the same implementation through a panic-contained C ABI from
+Scala Native; no external egglog process participates in solving.
 
 Operations are submitted in `(begin ...)` batches. User-written blocks retain
 their local execution scope while their resolved actions are flattened in
@@ -79,18 +84,31 @@ congruence-UNSAT, and Boolean-congruence-UNSAT fixtures agree across all six
 backends. The full 7,591-file corpus is represented in the import manifest but
 is not committed or claimed as fully validated.
 
+The parser now retains SMT declarations. Direct mode emits declared constants
+and functions as `EufTerm` constructors and uses `Atom` only for generated
+names; it is the EUF default. The old Vec language remains selectable.
+
 ### Propel
 
 All original native variants remain selectable. Four `egglog-*` variants route
 the original graph operations through the shared backend. A bounded 10-second
-audit produced 277 directly comparable egglog/native observations across the
-128 imported programs; all completed pairs agreed. All five variants completed
-on 68 programs. The remaining 256 individual runs timed out and remain unknown
-rather than being counted as matches.
+audit of the default Vec path produced 285 directly comparable egglog/native
+observations across the 128 imported programs; every completed pair agreed. All
+five variants completed on 68 programs, and the remaining 246 individual runs
+timed out. A separate direct-constructor audit matched all 284 comparable
+observations, completed all variants on 69 programs, and retained 247 timeout
+rows. Timeout rows remain unknown rather than being counted as matches.
+The short-boundary completion counts are recorded-run coverage rather than a
+stable performance comparison between term languages.
+
+Propel can derive a direct schema from its parsed term, including source data
+constructors and actual match arities. Direct mode is explicit and drives the
+committed captures. Cached Vec remains the runtime default because balanced
+measurements found it faster for Propel's thousands of short-lived graphs.
 
 ## Inspectable generated programs
 
-`benchmarks/disequality/snapshots/` contains:
+`benchmarks/disequality/snapshots/` contains direct-constructor programs with:
 
 - one encoding-independent source capture for an EUF SAT model;
 - one encoding-independent source capture for Propel's selected final graph;
@@ -113,10 +131,33 @@ Measurements were taken on an Apple M4. Parameter analysis was measured at
 `88c40cf`; Propel and EUF were measured at `e7b7969` after merging base
 `ffb8ae4`; the later proof-regression analysis used `fff36169` after merging
 base `fdd4eac`. The heavy integrations were not remeasured after the
-source-order `fail` change. Propel and EUF values are medians of six accepted
-samples from two reversed endpoint orders; parameter analysis uses three
-interleaved rounds. These are descriptive measurements, not
-publication-quality confidence intervals.
+source-order `fail` change. Those earlier Propel and EUF values are medians of
+six accepted samples from two reversed endpoint orders; parameter analysis uses
+three interleaved rounds. The direct-constructor follow-up instead uses ten
+samples for each small input and six for each larger input, again split across
+reversed orders. These are descriptive measurements, not publication-quality
+confidence intervals.
+
+### Direct-constructor follow-up
+
+The follow-up compares a frozen pre-change binary, current Vec with and without
+template reuse, and direct constructors. On `gset_comm`, median wall time is
+271.7 ms for frozen cold Vec, 193.3 ms for cached Vec, and 239.2 ms for cached
+direct. On `tip_bin_plus_assoc`, the corresponding medians are 6.439 s,
+5.599 s, and 7.438 s. Cached Vec is therefore 1.24-1.33x faster than direct and
+remains Propel's default. Direct's extra constructor relations are expensive
+when Propel creates thousands of small graphs.
+
+EUF has the opposite result. Direct is 1.05x faster than current Vec on
+`uf.815405` (497.1 versus 523.2 ms) and 1.09x faster on `uf.614981` (4.614
+versus 5.024 s), so EUF defaults to direct. Every table reports medians and full
+ranges in `benchmarks/disequality/PERFORMANCE_ANALYSIS.md`; noisy baseline
+samples are retained rather than discarded.
+
+The eight raw Hyperfine reports, SHA-256 manifest, binary/input provenance, and
+the exact forward/reverse driver are committed under
+`benchmarks/disequality/reports/term-language-performance/` and
+`benchmarks/disequality/scripts/benchmark_term_languages.sh`.
 
 ### Parameter analysis
 
@@ -170,8 +211,9 @@ is retained in `benchmarks/disequality/reports/euf-large-stats-summary.csv`.
 The detailed report records timing boundaries, hashes, ranges, comparison with
 artifact-precomputed numbers, diagnostic ablations, and fix ideas. The leading
 opportunities are one-pass/cached stats, a generic typed proof-aware batch API
-with an explicit failure contract, initialized-graph reuse, typed pair queries,
-and reduced graph lifecycle churn.
+with an explicit failure contract, cheaper direct-schema instantiation, typed
+pair queries, and reduced graph lifecycle churn. Initialized-template reuse is
+now implemented.
 It explicitly does not recommend restoring the removed representation-specific
 database writer.
 

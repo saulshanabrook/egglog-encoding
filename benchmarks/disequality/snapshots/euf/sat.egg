@@ -1,24 +1,26 @@
-; Generic host language used by the disequality case studies.
-(sort BenchmarkTerm)
-(sort BenchmarkTerms (Vec BenchmarkTerm))
-(constructor BenchmarkNode (String BenchmarkTerms) BenchmarkTerm)
-(constructor BenchmarkWitness (i64) BenchmarkTerm)
+; Direct host language generated from source declarations.
+(sort EufTerm)
+(constructor Atom (String) EufTerm)
+(constructor x () EufTerm)
+(constructor y () EufTerm)
+(constructor z () EufTerm)
+(constructor HostWitness (i64) EufTerm)
 
 (begin
-  (let term0 (BenchmarkNode "x" (vec-of)))
-  (let term1 (BenchmarkNode "y" (vec-of)))
-  (let term2 (BenchmarkNode "z" (vec-of)))
-  (let term3 (BenchmarkNode "true" (vec-of)))
-  (let term4 (BenchmarkNode "false" (vec-of)))
+  (let term0 (x))
+  (let term1 (y))
+  (let term2 (z))
+  (let term3 (Atom "true"))
+  (let term4 (Atom "false"))
   (disequal term3 term4)
   (union term0 term1)
   (disequal term1 term2)
-  (union term0 (BenchmarkWitness 0))
-  (union term1 (BenchmarkWitness 1))
+  (union term0 (HostWitness 0))
+  (union term1 (HostWitness 1))
 )
 
 ; Recheck one explicit host union as an equality proof witness.
-(check (= (BenchmarkWitness 0) (BenchmarkWitness 1)))
+(check (= (HostWitness 0) (HostWitness 1)))
 
 ; The command below records the expected model result.
 (check-disequalities)

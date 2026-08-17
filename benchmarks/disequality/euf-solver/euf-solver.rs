@@ -9,7 +9,8 @@ use std::time::{Duration, Instant};
 
 use clap::{Parser, ValueEnum};
 use egglog_disequality_backend::{
-  BackendError, DisequalityGraph, GraphStats, TermId, desugar_source,
+  BackendError, DisequalityGraph, GraphStats, LanguageSchemaBuilder, OperatorId, TermId,
+  desugar_source,
 };
 use egglog_experimental::DisequalityEncoding;
 use minisat;
@@ -178,6 +179,43 @@ enum SExpr {
   List(Vec<SExpr>),
 }
 
+#[derive(Clone, Debug, Default)]
+struct EufDeclarations {
+  sorts: BTreeSet<String>,
+  functions: BTreeSet<(String, usize)>,
+}
+
+impl EufDeclarations {
+  fn from(sexprs: &[SExpr]) -> Self {
+    use crate::Const::Symbol;
+    use SExpr::{Atom, List};
+
+    let mut declarations = Self::default();
+    for sexpr in sexprs {
+      let List(items) = sexpr else { continue };
+      match items.as_slice() {
+        [Atom(Symbol(command)), Atom(Symbol(name)), _]
+          if command == "declare-sort" =>
+        {
+          declarations.sorts.insert(name.clone());
+        },
+        [Atom(Symbol(command)), Atom(Symbol(name)), List(arguments), _]
+          if command == "declare-fun" =>
+        {
+          declarations.functions.insert((name.clone(), arguments.len()));
+        },
+        [Atom(Symbol(command)), Atom(Symbol(name)), _]
+          if command == "declare-const" =>
+        {
+          declarations.functions.insert((name.clone(), 0));
+        },
+        _ => {},
+      }
+    }
+    declarations
+  }
+}
+
 fn parse_script(tokenizer: &mut Peekable<impl Iterator<Item=Token>>) -> Option<Vec<SExpr>> {//{{{
   use Token::*;
 
@@ -261,6 +299,21 @@ impl<T> QuantTerm<T> {
 #[derive(Clone)]
 struct Term_FQ_FN_UF_E(QuantTerm<Term<String, Self, Self, Self>>);
 
+#[derive(Clone)]
+struct ParsedEufScript {
+  term: Term_FQ_FN_UF_E,
+  declarations: EufDeclarations,
+}
+
+impl ParsedEufScript {
+  fn from(sexprs: &[SExpr]) -> Self {
+    Self {
+      term: Term_FQ_FN_UF_E::from(sexprs),
+      declarations: EufDeclarations::from(sexprs),
+    }
+  }
+}
+
 
 // Free quantification
 // Free negation
@@ -292,7 +345,7 @@ struct Term_RN(Term<Void, String, Void, Self>);
 
 
 impl Term_FQ_FN_UF_E {
-  fn from(sexprs: &Vec<SExpr>) -> Term_FQ_FN_UF_E {//{{{
+  fn from(sexprs: &[SExpr]) -> Term_FQ_FN_UF_E {//{{{
     use Term::*;
     use QuantTerm::*;
     use SExpr::*;
@@ -848,6 +901,12 @@ enum EGraphBackend {
   EgglogDisequalityEdges,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum EufTermLanguage {
+  Vec,
+  Direct,
+}
+
 impl EGraphBackend {
   fn egglog_encoding(self) -> Option<DisequalityEncoding> {
     match self {
@@ -880,6 +939,7 @@ struct EUFSolverConfig {
   exit_on_first_sat: bool,
   collect_stats: bool,
   backend: EGraphBackend,
+  term_language: EufTermLanguage,
   emit_source_dir: Option<PathBuf>,
 }
 
@@ -1071,14 +1131,50 @@ enum EUFSolver {} impl EUFSolver {
   fn get_or_add_egglog_term(
     egraph: &mut DisequalityGraph,
     terms: &mut HashMap<String, TermId>,
+    operator_ids: Option<&HashMap<(String, usize), OperatorId>>,
     name: &str,
   ) -> Result<TermId, BackendError> {
     if let Some(id) = terms.get(name) {
       return Ok(*id)
     }
-    let id = egraph.add(name, &[])?;
+    let id = if let Some(operator_ids) = operator_ids {
+      if let Some(&operator) = operator_ids.get(&(name.to_owned(), 0)) {
+        egraph.add_registered(operator, &[])?
+      } else {
+        egraph.add_atom(name)?
+      }
+    } else {
+      egraph.add(name, &[])?
+    };
     terms.insert(name.to_owned(), id);
     Ok(id)
+  }
+
+  fn make_egglog_graph(
+    config: &EUFSolverConfig,
+    encoding: DisequalityEncoding,
+    declarations: &EufDeclarations,
+    theory_eqs: &HashMap<String, (String, Vec<String>)>,
+  ) -> Result<(
+    DisequalityGraph,
+    Option<HashMap<(String, usize), OperatorId>>,
+  ), BackendError> {
+    if config.term_language == EufTermLanguage::Vec {
+      return Ok((DisequalityGraph::new(encoding)?, None))
+    }
+
+    let mut signatures = declarations.functions.clone();
+    for (function, arguments) in theory_eqs.values() {
+      signatures.insert((function.clone(), arguments.len()));
+    }
+    let mut schema = LanguageSchemaBuilder::new("EufTerm");
+    let mut operator_ids = HashMap::new();
+    for (name, arity) in signatures {
+      let id = schema.register_operator(name.clone(), None, arity)?;
+      operator_ids.insert((name, arity), id);
+    }
+    let template = schema.compile(encoding)?;
+    Ok((template.new_graph(), Some(operator_ids)))
   }
 
   fn emit_egglog_model(
@@ -1112,23 +1208,50 @@ enum EUFSolver {} impl EUFSolver {
   fn check_sat_egglog(
     config: &EUFSolverConfig,
     encoding: DisequalityEncoding,
-    t: &Term_FQ_FN_UF_E,
+    script: &ParsedEufScript,
   ) -> Result<EUFSolverResult, BackendError> {//{{{
     let start_full_solution_time = Instant::now();
-    let (cnf, theory_eqs, eq_names) = EUFSolver::to_cnf(t);
+    let (cnf, theory_eqs, eq_names) = EUFSolver::to_cnf(&script.term);
     let start_egraph_setup = Instant::now();
 
-    let mut egraph = DisequalityGraph::new(encoding)?;
+    let (mut egraph, operator_ids) = EUFSolver::make_egglog_graph(
+      config,
+      encoding,
+      &script.declarations,
+      &theory_eqs,
+    )?;
     let mut terms = HashMap::new();
     let mut theory_eqs = theory_eqs.into_iter().collect::<Vec<_>>();
     theory_eqs.sort_by(|(left, _), (right, _)| left.cmp(right));
     for (x, (function, args)) in theory_eqs {
-      let x_id = EUFSolver::get_or_add_egglog_term(&mut egraph, &mut terms, &x)?;
+      let x_id = EUFSolver::get_or_add_egglog_term(
+        &mut egraph,
+        &mut terms,
+        operator_ids.as_ref(),
+        &x,
+      )?;
       let arg_ids = args
         .iter()
-        .map(|arg| EUFSolver::get_or_add_egglog_term(&mut egraph, &mut terms, arg))
+        .map(|arg| {
+          EUFSolver::get_or_add_egglog_term(
+            &mut egraph,
+            &mut terms,
+            operator_ids.as_ref(),
+            arg,
+          )
+        })
         .collect::<Result<Vec<_>, _>>()?;
-      let application = egraph.add(function.clone(), &arg_ids)?;
+      let application = if let Some(operator_ids) = &operator_ids {
+        let operator = operator_ids
+          .get(&(function.clone(), args.len()))
+          .ok_or_else(|| BackendError::Other(format!(
+            "EUF operator {function:?}/{} was not registered",
+            args.len(),
+          )))?;
+        egraph.add_registered(*operator, &arg_ids)?
+      } else {
+        egraph.add(function.clone(), &arg_ids)?
+      };
       if config.debug { eprintln!("{x} = {}", sexpr_str!(function, args, |__|__)); }
       egraph.union(x_id, application)?;
     }
@@ -1136,8 +1259,18 @@ enum EUFSolver {} impl EUFSolver {
     let mut equality_terms = eq_names.iter().collect::<Vec<_>>();
     equality_terms.sort_by(|(left, _), (right, _)| left.cmp(right));
     for (_, (lhs, rhs)) in equality_terms {
-      EUFSolver::get_or_add_egglog_term(&mut egraph, &mut terms, lhs)?;
-      EUFSolver::get_or_add_egglog_term(&mut egraph, &mut terms, rhs)?;
+      EUFSolver::get_or_add_egglog_term(
+        &mut egraph,
+        &mut terms,
+        operator_ids.as_ref(),
+        lhs,
+      )?;
+      EUFSolver::get_or_add_egglog_term(
+        &mut egraph,
+        &mut terms,
+        operator_ids.as_ref(),
+        rhs,
+      )?;
     }
 
     let mut non_equality_variables = BTreeSet::new();
@@ -1153,10 +1286,25 @@ enum EUFSolver {} impl EUFSolver {
       }
     }
     for variable in &non_equality_variables {
-      EUFSolver::get_or_add_egglog_term(&mut egraph, &mut terms, variable)?;
+      EUFSolver::get_or_add_egglog_term(
+        &mut egraph,
+        &mut terms,
+        operator_ids.as_ref(),
+        variable,
+      )?;
     }
-    let true_id = EUFSolver::get_or_add_egglog_term(&mut egraph, &mut terms, "true")?;
-    let false_id = EUFSolver::get_or_add_egglog_term(&mut egraph, &mut terms, "false")?;
+    let true_id = EUFSolver::get_or_add_egglog_term(
+      &mut egraph,
+      &mut terms,
+      operator_ids.as_ref(),
+      "true",
+    )?;
+    let false_id = EUFSolver::get_or_add_egglog_term(
+      &mut egraph,
+      &mut terms,
+      operator_ids.as_ref(),
+      "false",
+    )?;
     egraph.disequal(true_id, false_id)?;
     egraph.rebuild()?;
 
@@ -1220,16 +1368,16 @@ enum EUFSolver {} impl EUFSolver {
 
   fn check_sat(
     config: &EUFSolverConfig,
-    t: &Term_FQ_FN_UF_E,
+    script: &ParsedEufScript,
   ) -> Result<EUFSolverResult, BackendError> {//{{{
     match config.backend {
-      EGraphBackend::EggEqualityEmbedding => Ok(EUFSolver::check_sat_ee(config, t)),
-      EGraphBackend::DiseggDisequalityEdges => Ok(EUFSolver::check_sat_de(config, t)),
+      EGraphBackend::EggEqualityEmbedding => Ok(EUFSolver::check_sat_ee(config, &script.term)),
+      EGraphBackend::DiseggDisequalityEdges => Ok(EUFSolver::check_sat_de(config, &script.term)),
       backend => {
         let encoding = backend
           .egglog_encoding()
           .expect("egglog backend variants have an encoding");
-        EUFSolver::check_sat_egglog(config, encoding, t)
+        EUFSolver::check_sat_egglog(config, encoding, script)
       },
     }
   }//}}}
@@ -1246,6 +1394,9 @@ struct Cli {
   /// Select the equality or disequality implementation
   #[arg(long, value_enum, default_value = "egg-ee")]
   backend: EGraphBackend,
+  /// Select the generic Vec encoding or direct source-language constructors for egglog terms
+  #[arg(long, value_enum, default_value = "direct")]
+  term_language: EufTermLanguage,
   /// Display the stats
   #[arg(short, long, default_value_t = false)]
   stats: bool,
@@ -1256,7 +1407,7 @@ struct Cli {
 
 
 fn main() -> Result<(),()> {
-  let Cli { file, disegg, backend, stats, emit_source_dir } = Cli::parse();
+  let Cli { file, disegg, backend, term_language, stats, emit_source_dir } = Cli::parse();
   let backend = if disegg {
     if backend != EGraphBackend::EggEqualityEmbedding {
       eprintln!("ERROR: --disegg cannot be combined with an explicit --backend");
@@ -1275,15 +1426,16 @@ fn main() -> Result<(),()> {
                   .into_iter().map(|c: u8| c.into()).collect();
 
   let sexprs = parse_script(&mut tokenize(&contents).peekable()).ok_or(())?;
-  let t = Term_FQ_FN_UF_E::from(&sexprs);
+  let script = ParsedEufScript::from(&sexprs);
 
   let result = EUFSolver::check_sat(&EUFSolverConfig {
     collect_stats: stats,
     debug: false,
     exit_on_first_sat: true,
     backend,
+    term_language,
     emit_source_dir,
-  }, &t).map_err(|error| {
+  }, &script).map_err(|error| {
     eprintln!("ERROR: {error}");
   })?;
 
@@ -1326,14 +1478,14 @@ mod tests {
     EGraphBackend::EgglogDisequalityEdges,
   ];
 
-  fn fixture(name: &str) -> Term_FQ_FN_UF_E {
+  fn fixture(name: &str) -> ParsedEufScript {
     let contents = std::fs::read(format!("tests/{name}.smt2"))
       .unwrap()
       .into_iter()
       .map(char::from)
       .collect();
     let sexprs = parse_script(&mut tokenize(&contents).peekable()).unwrap();
-    Term_FQ_FN_UF_E::from(&sexprs)
+    ParsedEufScript::from(&sexprs)
   }
 
   #[test]
@@ -1343,23 +1495,26 @@ mod tests {
       ("unsat", false),
       ("boolean-congruence-unsat", false),
     ] {
-      let term = fixture(fixture_name);
+      let script = fixture(fixture_name);
       for backend in BACKENDS {
-        let result = EUFSolver::check_sat(&EUFSolverConfig {
-          debug: false,
-          exit_on_first_sat: true,
-          collect_stats: true,
-          backend,
-          emit_source_dir: None,
-        }, &term).unwrap_or_else(|error| {
-          panic!("{} failed {fixture_name}: {error}", backend.cli_name())
-        });
-        assert_eq!(
-          result.sat,
-          expected_sat,
-          "{} disagreed on {fixture_name}",
-          backend.cli_name(),
-        );
+        for term_language in [EufTermLanguage::Vec, EufTermLanguage::Direct] {
+          let result = EUFSolver::check_sat(&EUFSolverConfig {
+            debug: false,
+            exit_on_first_sat: true,
+            collect_stats: true,
+            backend,
+            term_language,
+            emit_source_dir: None,
+          }, &script).unwrap_or_else(|error| {
+            panic!("{} {term_language:?} failed {fixture_name}: {error}", backend.cli_name())
+          });
+          assert_eq!(
+            result.sat,
+            expected_sat,
+            "{} {term_language:?} disagreed on {fixture_name}",
+            backend.cli_name(),
+          );
+        }
       }
     }
   }
@@ -1367,15 +1522,16 @@ mod tests {
   #[test]
   fn emitted_egglog_models_and_desugared_snapshots_replay() {
     let directory = tempfile::tempdir().unwrap();
-    let term = fixture("unsat");
+    let script = fixture("unsat");
     let backend = EGraphBackend::EgglogDisequalityEdges;
     let result = EUFSolver::check_sat(&EUFSolverConfig {
       debug: false,
       exit_on_first_sat: true,
       collect_stats: false,
       backend,
+      term_language: EufTermLanguage::Direct,
       emit_source_dir: Some(directory.path().to_owned()),
-    }, &term).unwrap();
+    }, &script).unwrap();
     assert!(!result.sat);
 
     let mut snapshots = std::fs::read_dir(directory.path())
@@ -1387,6 +1543,15 @@ mod tests {
     assert_eq!(snapshots.len() % 2, 0);
     for snapshot in snapshots {
       let source = std::fs::read_to_string(&snapshot).unwrap();
+      if snapshot.extension().is_some_and(|extension| extension == "egg")
+        && !snapshot.to_string_lossy().contains("desugared")
+      {
+        assert!(source.contains("(sort EufTerm)"));
+        assert!(source.contains("(constructor x () EufTerm)"));
+        assert!(source.contains("(constructor f (EufTerm EufTerm) EufTerm)"));
+        assert!(!source.contains("BenchmarkNode"));
+        assert!(!source.contains("vec-of"));
+      }
       let mut replay = new_experimental_egraph_with_disequality_encoding(
         DisequalityEncoding::DisequalityEdges,
       );
@@ -1394,5 +1559,13 @@ mod tests {
         .parse_and_run_program(Some(snapshot.display().to_string()), &source)
         .unwrap_or_else(|error| panic!("{} did not replay: {error}", snapshot.display()));
     }
+  }
+
+  #[test]
+  fn fixture_declarations_are_preserved_for_direct_terms() {
+    let script = fixture("sat");
+    assert!(script.declarations.sorts.contains("T"));
+    assert!(script.declarations.functions.contains(&("x".to_owned(), 0)));
+    assert!(script.declarations.functions.contains(&("y".to_owned(), 0)));
   }
 }
