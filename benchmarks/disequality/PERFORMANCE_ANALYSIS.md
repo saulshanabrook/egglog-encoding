@@ -60,6 +60,12 @@ Propel and EUF binaries have SHA-256
 `2140063b5030876f35c8f71b04d061e46f74cc73890584a8e5c59bdc366bdf81`
 and
 `35f541999e170b15ec1ecae3413499853fd82377f496691ef12b8353e8b9a22a`.
+The accepted candidate run used clean source revision
+`b87057b36f4c8cc2eed68e2a4dd950a530525216`; its Propel and EUF executables
+have SHA-256
+`0ce1df22cebf55dbfb33367dffdb98154b8ed8520df3166b5bf507768fb4ca0f`
+and
+`f56767aaee988076e118a2394b864a00f1f50d59c6621340d2b61745e1e71f96`.
 Candidate commands name the term language explicitly, so the later one-line
 change making Vec Propel's CLI default does not affect these measurements.
 
@@ -70,7 +76,8 @@ EUF uses five runs per order for `uf.815405` and three per order for
 discarded. The full ranges therefore retain visible machine-noise outliers.
 All EUF measurements omit `--stats`.
 
-The eight raw Hyperfine JSON files and their hashes are committed under
+The eight raw Hyperfine JSON files, run provenance, and their hashes are
+committed under
 [`reports/term-language-performance/`](reports/term-language-performance/).
 [`benchmark_term_languages.sh`](scripts/benchmark_term_languages.sh) reproduces
 all forward and reversed invocations, including the frozen, cold, cached, Vec,
@@ -81,13 +88,14 @@ the two published EUF inputs because neither is rebuilt implicitly.
 
 | Program | Frozen Vec, cold | Current Vec, cold | Current Vec, cached | Direct, cold | Direct, cached | Direct / cached Vec |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `gset_comm` | 271.7 ms (263.0-277.1) | 269.3 ms (266.3-326.2) | 193.3 ms (190.8-195.4) | 455.7 ms (445.3-468.2) | 239.2 ms (235.4-241.4) | 1.24x |
-| `tip_bin_plus_assoc` | 6.439 s (6.282-7.665) | 6.702 s (6.201-9.254) | 5.599 s (5.487-9.669) | not run | 7.438 s (7.004-7.683) | 1.33x |
+| `gset_comm` | 293.4 ms (279.8-462.9) | 306.0 ms (271.5-415.1) | 214.5 ms (195.7-294.0) | 480.7 ms (469.0-928.9) | 245.4 ms (238.6-285.3) | 1.14x |
+| `tip_bin_plus_assoc` | 6.575 s (6.309-7.820) | 7.150 s (6.395-8.090) | 6.142 s (5.663-6.965) | not run | 7.559 s (7.156-7.824) | 1.23x |
 
-Template reuse is real: cached Vec is 1.41x and 1.15x faster by median than
-the frozen cold-Vec binary on the small and medium inputs. Direct mode also
-requires a cached schema; compiling it per graph is 1.91x slower on the small
-input. However, direct is still 1.24-1.33x slower than cached Vec. Propel creates
+Template reuse is real: current cold Vec takes 1.43x and 1.16x as long as
+cached Vec on the small and medium inputs; frozen cold Vec takes 1.37x and
+1.07x as long. Direct mode also requires a cached schema; compiling it per
+graph takes 1.96x as long on the small input. Cached direct still takes
+1.14-1.23x as long as cached Vec. Propel creates
 many short-lived graphs, and every direct constructor is a separate egglog
 function/relation that participates in graph cloning and rebuild bookkeeping.
 This interpretation is supported by a diagnostic correction during the
@@ -105,16 +113,17 @@ captures.
 
 | Input | Frozen Vec | Current Vec | Direct | Direct / current Vec |
 | --- | ---: | ---: | ---: | ---: |
-| `uf.815405` (245 models) | 551.3 ms (520.4-730.4) | 523.2 ms (519.3-541.3) | 497.1 ms (489.2-504.9) | 0.95x |
-| `uf.614981` (627 models) | 5.841 s (4.894-12.264) | 5.024 s (4.927-5.776) | 4.614 s (4.475-4.935) | 0.92x |
+| `uf.815405` (245 models) | 530.9 ms (508.6-562.0) | 557.6 ms (526.3-595.5) | 523.0 ms (496.4-634.0) | 0.94x |
+| `uf.614981` (627 models) | 4.895 s (4.834-5.190) | 5.008 s (4.835-5.443) | 4.539 s (4.438-4.620) | 0.91x |
 
-Direct constructors are 1.05x and 1.09x faster than current Vec by median on
-the two published inputs, with especially stable direct ranges. Unlike Propel,
+Direct-constructor medians are 6.2% and 9.4% lower than current Vec on the two
+published inputs (current Vec takes 1.07x and 1.10x as long). The small input is
+endpoint-order-sensitive and its direct range overlaps both Vec ranges; the
+larger input is consistent across orders. Unlike Propel,
 EUF builds one declared term graph and clones its populated state per SAT model
 instead of creating thousands of independent empty schemas. EUF therefore
-defaults to direct. The frozen large-input range is noisy, so the rollout
-decision uses the paired current-Vec comparison rather than attributing the
-entire baseline delta to this change.
+defaults to direct. The rollout decision uses the current-Vec comparison rather
+than attributing baseline differences to this change.
 
 The answer to "typechecking or engine?" is workload-dependent:
 
@@ -525,7 +534,8 @@ hyperfine --warmup 2 --runs 3 --export-json /tmp/euf-reverse.json \
 
 Reproduce the complete direct-constructor follow-up, including reversed order,
 with the committed driver. The first two executables are frozen builds from
-`5069c43`; the remaining two are the candidate builds above.
+`5069c43`; the remaining two are clean builds from measured candidate
+`b87057b` (or a source-identical descendant).
 
 ```sh
 benchmarks/disequality/scripts/benchmark_term_languages.sh \

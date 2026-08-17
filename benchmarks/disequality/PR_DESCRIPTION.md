@@ -92,12 +92,13 @@ names; it is the EUF default. The old Vec language remains selectable.
 
 All original native variants remain selectable. Four `egglog-*` variants route
 the original graph operations through the shared backend. A bounded 10-second
-audit of the default Vec path produced 285 directly comparable egglog/native
+audit of the default Vec path produced 298 directly comparable egglog/native
 observations across the 128 imported programs; every completed pair agreed. All
-five variants completed on 68 programs, and the remaining 246 individual runs
-timed out. A separate direct-constructor audit matched all 284 comparable
-observations, completed all variants on 69 programs, and retained 247 timeout
-rows. Timeout rows remain unknown rather than being counted as matches.
+five variants completed on 72 programs, and the remaining 231 individual runs
+timed out. A separate direct-constructor audit matched all 289 comparable
+observations, completed all variants on 71 programs, and retained 242 timeout
+rows. Neither run had an execution error. Timeout rows remain unknown rather
+than being counted as matches.
 The short-boundary completion counts are recorded-run coverage rather than a
 stable performance comparison between term languages.
 
@@ -135,24 +136,26 @@ source-order `fail` change. Those earlier Propel and EUF values are medians of
 six accepted samples from two reversed endpoint orders; parameter analysis uses
 three interleaved rounds. The direct-constructor follow-up instead uses ten
 samples for each small input and six for each larger input, again split across
-reversed orders. These are descriptive measurements, not publication-quality
+reversed orders. That accepted follow-up used clean candidate revision
+`b87057b`. These are descriptive measurements, not publication-quality
 confidence intervals.
 
 ### Direct-constructor follow-up
 
 The follow-up compares a frozen pre-change binary, current Vec with and without
 template reuse, and direct constructors. On `gset_comm`, median wall time is
-271.7 ms for frozen cold Vec, 193.3 ms for cached Vec, and 239.2 ms for cached
-direct. On `tip_bin_plus_assoc`, the corresponding medians are 6.439 s,
-5.599 s, and 7.438 s. Cached Vec is therefore 1.24-1.33x faster than direct and
-remains Propel's default. Direct's extra constructor relations are expensive
-when Propel creates thousands of small graphs.
+293.4 ms for frozen cold Vec, 214.5 ms for cached Vec, and 245.4 ms for cached
+direct. On `tip_bin_plus_assoc`, the corresponding medians are 6.575 s,
+6.142 s, and 7.559 s. Cached direct therefore takes 1.14-1.23x as long as
+cached Vec, which remains Propel's default. Direct's extra constructor
+relations are expensive when Propel creates thousands of small graphs.
 
-EUF has the opposite result. Direct is 1.05x faster than current Vec on
-`uf.815405` (497.1 versus 523.2 ms) and 1.09x faster on `uf.614981` (4.614
-versus 5.024 s), so EUF defaults to direct. Every table reports medians and full
-ranges in `benchmarks/disequality/PERFORMANCE_ANALYSIS.md`; noisy baseline
-samples are retained rather than discarded.
+EUF has the opposite result. Direct medians are 6.2% lower on `uf.815405`
+(523.0 versus 557.6 ms) and 9.4% lower on `uf.614981` (4.539 versus 5.008 s),
+so EUF defaults to direct. The small-input samples are visibly order-sensitive.
+Every table reports combined medians and full ranges in
+`benchmarks/disequality/PERFORMANCE_ANALYSIS.md`; no accepted sample is
+discarded.
 
 The eight raw Hyperfine reports, SHA-256 manifest, binary/input provenance, and
 the exact forward/reverse driver are committed under
@@ -270,9 +273,19 @@ the heavy timing results to be revision-pinned rather than described as
 current; the exact measurement split is now recorded above and in the detailed
 report.
 
+The final direct-constructor review found four additional issues: generated
+Propel type-lambda binders needed an injective lowering, cached templates needed
+a concurrency boundary, parity evidence still described dirty source, and the
+term-language timing commands were not preserved. `TypeLambda(Atom(name),
+body)` now preserves generated binders; clones from one template serialize
+database access while remaining logically isolated; uncached and failed
+templates are closed; clean Vec/direct corpus reports are committed; and the
+exact timing driver, raw samples, hashes, and provenance are retained.
+
 Successful final gates include:
 
 ```sh
+make nits
 make check                                             # full repository gate
 make benchmark-smoke                                   # 20/20 off/proofs runs
 cargo test -p egglog --test proof_mode_regression       # 32/32

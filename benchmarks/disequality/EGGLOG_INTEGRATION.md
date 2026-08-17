@@ -213,11 +213,11 @@ execution errors separately. The checked-in
 source commit and dirty state, binary and corpus hashes, selected term
 language, and every individual result.
 
-One bounded 10-second Vec run over all 128 imported programs made 285 direct,
-comparable egglog-versus-native observations; all 285 matched. All five variants
-completed on 68 programs. The remaining 246 individual runs timed out. The
-corresponding direct-constructor run matched all 284 comparable observations,
-completed all five variants on 69 programs, and retained 247 timeout rows. No
+One bounded 10-second Vec run over all 128 imported programs made 298 direct,
+comparable egglog-versus-native observations; all 298 matched. All five variants
+completed on 72 programs. The remaining 231 individual runs timed out. The
+corresponding direct-constructor run matched all 289 comparable observations,
+completed all five variants on 71 programs, and retained 242 timeout rows. No
 semantic claim is made for timeout rows, and neither run ended in an execution
 error. Completion counts at this short boundary are load-sensitive; they are
 coverage metadata for these recorded runs, not a comparison between term
@@ -298,10 +298,11 @@ pair per enumerated SAT model.
 end-to-end measurements, diagnostic profiles, comparison with the artifact's
 precomputed timings, and prioritized optimization ideas. Its 2026-08-17
 follow-up compares direct constructors, cached Vec, and the frozen pre-change
-executables. Direct is 5-8% faster than current Vec on two published EUF inputs.
-On Propel, cached Vec is 1.24-1.33x faster than direct and remains the default;
-template reuse is nevertheless 1.15-1.41x faster than the frozen cold-Vec
-baseline by median on the two measured programs. Parameter analysis was
+executables. Direct medians are 6.2% and 9.4% lower than current Vec on two
+published EUF inputs. On Propel, cached direct takes 1.14-1.23x as long as
+cached Vec, which remains the default. Current cold Vec takes 1.16-1.43x as
+long as cached Vec, while the frozen cold-Vec baseline takes 1.07-1.37x as
+long on the two measured programs. Parameter analysis was
 measured at `88c40cf`; Propel and EUF were measured at `e7b7969` on base
 `ffb8ae4`; the later proof-regression analysis used `fff36169` on base
 `fdd4eac`. The heavy integrations were not remeasured after the source-order

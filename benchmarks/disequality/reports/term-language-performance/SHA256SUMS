@@ -1,8 +1,9 @@
-debcc70a27a8215e7d236bdd39ddac7317ed46c24a3146e894c4f5ae27ea7722  ./euf-large-forward.json
-47f0fdb87428c2b82a9c61f1fe31fa05210887bfedd47d3a06c580fe4186e681  ./euf-large-reverse.json
-22cbfbc73bd8b8d00df4520d642604892c743856ce6785f1fd674abe64a29f8f  ./euf-small-forward.json
-2be9a1194bbd093153a40cec1363f31a728c153c163189f5029389f8974e7f08  ./euf-small-reverse.json
-1e6fcf3a2f6890c86068c360d6647efdc1475fea2bc4ea27d3c974fde0fefd9d  ./propel-gset-forward.json
-46fde91899af4c1b37dcf358365a03ed0eaf22bd756688c3597057e11ff76487  ./propel-gset-reverse.json
-ee4ae1db6f1b4c8623b323bfa2acd6a4c20e4ca7484fd930574c099b99d395b9  ./propel-medium-forward.json
-988ea709829ef55281d5131ccb923e057d1da709e64a168623c7e0fa16fe3ef0  ./propel-medium-reverse.json
+a90f15409397ac7a9274b222b794f5885a8b44813e60f5d34fbeb916dee5917d  ./euf-large-forward.json
+08d490d052341d0f6ea10c7ba43d5398a5fd4b61ec389535131c130885878230  ./euf-large-reverse.json
+952e43c16094c3d116164d172cee0e5376626f4345b2a9a29e96b8c429112252  ./euf-small-forward.json
+7581a2f6a6adaffc30abab1b75e633101673a2b6688148b85a8a56466c95da82  ./euf-small-reverse.json
+a403eea7c4170022b9a072c215324f9355579ed1726fd3539d18cd90108bc2d7  ./propel-gset-forward.json
+541072ab1f6bc93aa9cb18190b5aa778c4e66bb0e62ba923d1c1a7d3e573048e  ./propel-gset-reverse.json
+813d2c00d5b8fe88187cf9f7c0b9645f545bc5da7a94492a7135d79017ad5cb5  ./propel-medium-forward.json
+ad03125d2e0800411b0779c12cb89a7ff86d12e2d3306d5dd86220575486247a  ./propel-medium-reverse.json
+8194d21b32dc0ab8d37cee0087e812d617327f5aa7363b77996a948bace8f0ab  ./provenance.json
