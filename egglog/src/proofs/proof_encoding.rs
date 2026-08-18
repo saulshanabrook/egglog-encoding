@@ -161,6 +161,7 @@ pub(crate) enum Anchor {
     /// The variable is the row proof's left-hand side.
     Lhs,
 }
+
 /// A value a body primitive read out of a container. Nothing in the query names
 /// it as a term, but it is a child of whichever of `containers` it came out of,
 /// so an anchor for one of those projects it out by term.
@@ -512,7 +513,7 @@ impl<'a> ProofInstrumentor<'a> {
                 }
             }
             ResolvedNCommand::LetBegin(..) => {
-                unreachable!("LetBegin is removed before generated emission")
+                unreachable!("LetBegin is removed by remove_globals")
             }
             ResolvedNCommand::Check(span, facts) => {
                 let lowered = command_direct::lower_check(self, span, facts);
@@ -626,7 +627,7 @@ impl<'a> ProofInstrumentor<'a> {
                 )
             }
             ResolvedNCommand::UserDefined(..) => {
-                panic!("User defined commands unsupported in term encoding")
+                panic!("User defined commands unsupported in term encoding");
             }
         }
         Ok(())
@@ -685,6 +686,7 @@ impl<'a> ProofInstrumentor<'a> {
         Ok(entries)
     }
 }
+
 /// Whether no maintenance rebuild is needed after `command`.
 ///
 /// Declarations (sorts, functions, rules) run no actions. A `set` (including a

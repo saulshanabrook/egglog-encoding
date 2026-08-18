@@ -337,9 +337,6 @@ impl EGraph {
 
     /// Add a user-defined sort to the e-graph.
     pub fn add_arcsort(&mut self, sort: ArcSort, span: Span) -> Result<(), TypeError> {
-        if self.type_info.sorts.contains_key(sort.name()) {
-            return Err(TypeError::SortAlreadyBound(sort.name().to_owned(), span));
-        }
         self.commit_arcsort(sort, span)
     }
 
@@ -674,7 +671,7 @@ impl EGraph {
     /// proof-encoding primitives and global metadata attached to special
     /// internal functions. The registration is intentionally shared by source
     /// typechecking and the exact-key generated binder.
-    pub(crate) fn register_function_declaration(
+    fn register_function_declaration(
         &mut self,
         fdecl: &FunctionDecl,
     ) -> Result<ResolvedFunctionDecl, TypeError> {
@@ -1402,7 +1399,7 @@ impl TypeInfo {
         ))
     }
 
-    pub(crate) fn typecheck_schedule(
+    fn typecheck_schedule(
         &self,
         symbol_gen: &mut SymbolGen,
         schedule: &Schedule,
@@ -1611,7 +1608,7 @@ impl TypeInfo {
         Ok(annotated_actions)
     }
 
-    pub(crate) fn typecheck_standalone_expr(
+    fn typecheck_standalone_expr(
         &self,
         symbol_gen: &mut SymbolGen,
         expr: &Expr,

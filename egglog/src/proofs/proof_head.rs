@@ -890,7 +890,6 @@ impl<'a> Firing<'a> {
             expr,
             &mut store.term_dag,
             &self.walk.bindings,
-            None,
         )
         .unwrap_or_else(|err| panic!("rule {}'s head did not replay: {err}", self.rule_name))
         .0

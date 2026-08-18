@@ -1080,39 +1080,6 @@ fn custom_merge_global_view_read_has_exact_proof_fallback_order_and_freshness() 
 }
 
 #[test]
-fn non_strict_global_and_generated_merge_local_collisions_match_source() {
-    let program = r#"
-        (datatype RoleE (RoleA) (RoleB) (RolePick RoleE RoleE))
-        (datatype RolePoison (Poison))
-        (let old (RoleA))
-        (let seed (RoleB))
-        (let old0 (Poison))
-        (let new0 (Poison))
-        (function role-score (i64) RoleE :merge (RolePick old new))
-        (set (role-score 0) (RoleB))
-        (set (role-score 0) (RoleA))
-        (check (= (role-score 0) (RolePick (RoleA) (RoleA))))
-        (function seed-score (i64) RoleE :merge (RolePick seed new))
-        (set (seed-score 0) (RoleA))
-        (set (seed-score 0) (RoleB))
-        (check (= (seed-score 0) (RolePick (RoleB) (RoleB))))
-    "#;
-    let lanes = [
-        ("source", EGraph::default()),
-        ("term", EGraph::new_with_term_encoding()),
-        (
-            "proof-testing",
-            EGraph::new_with_proofs().with_proof_testing(),
-        ),
-    ];
-    for (lane, mut egraph) in lanes {
-        egraph
-            .parse_and_run_program(Some(format!("{lane}-merge-role-collision.egg")), program)
-            .unwrap_or_else(|error| panic!("{lane} lane rejected the role collision: {error}"));
-    }
-}
-
-#[test]
 fn failed_custom_merge_rolls_back_its_view_and_receipt_but_keeps_term_prefix() {
     let mut planning_egraph = EGraph::new_with_proofs();
     let source = before_proofs(

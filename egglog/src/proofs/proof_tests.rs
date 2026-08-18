@@ -398,7 +398,7 @@ mod tests {
             bindings: &HashMap<String, TermId>,
             store: &mut ProofStore,
         ) -> TermId {
-            eval_expr_with_subst(rule_name, expr, &mut store.term_dag, bindings, None)
+            eval_expr_with_subst(rule_name, expr, &mut store.term_dag, bindings)
                 .unwrap_or_else(|e| panic!("rule '{rule_name}' head did not evaluate: {e}"))
                 .0
         }

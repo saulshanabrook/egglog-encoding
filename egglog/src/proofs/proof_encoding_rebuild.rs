@@ -1661,9 +1661,15 @@ impl ProofInstrumentor<'_> {
         self.queue_pending_declaration_group(declarations);
     }
 
-    /// Production maintenance lowering. It allocates stable semantic names and
-    /// constructs portable specs plus the non-rule packed declarations that
-    /// remain in the command stream.
+    /// Rebuild rules that keep a view canonical: one rule per rebuildable child
+    /// column (a canonical column has no `@UF` row, so the rule simply doesn't
+    /// match), plus a rule for the FD view's value column. A stale eq-sort column is
+    /// replaced by its `@UF` leader, a stale container by its rebuilt value.
+    ///
+    /// A child update re-keys the row (`set` at the canonicalized children, then
+    /// `delete`); a collision on the new key runs the view's `:merge`. The value
+    /// column is canonicalized by [`Self::fd_custom_value_rebuild_rule_direct`]. In
+    /// proof mode each rule composes the updated view proof.
     pub(super) fn rebuilding_rules(&mut self, fdecl: &ResolvedFunctionDecl) -> Vec<GeneratedEntry> {
         let proofs = self.proofs_enabled();
         let output_is_eclass = self.output_is_eclass(fdecl);
@@ -1727,7 +1733,9 @@ impl ProofInstrumentor<'_> {
             commands.extend(self.indexed_rebuild_rule_direct(fdecl, &key_vars, &types, &index));
         }
 
-        if !output_is_eclass && fdecl.subtype == FunctionSubtype::Custom && !fdecl.internal_let {
+        if output_is_eclass {
+            // Covered by the index rule above, which indexes the e-class column too.
+        } else if fdecl.subtype == FunctionSubtype::Custom && !fdecl.internal_let {
             if types[n - 1].is_eq_sort() {
                 commands.extend(self.fd_custom_value_rebuild_rule_direct(fdecl, &key_vars, n - 1));
             } else if types[n - 1].is_eq_container_sort() {
@@ -1770,6 +1778,23 @@ impl ProofInstrumentor<'_> {
         }
     }
 
+    /// The rebuild rule for one child eq-sort, driven by an `@UF_<S>` edge joined
+    /// against that sort's declared index.
+    ///
+    /// The index reaches every row mentioning the moved term — at any child
+    /// position or at the e-class — by lookup rather than by matching the view,
+    /// and its atom binds the whole row, so nothing else need be read. The action
+    /// then re-canonicalizes *every* eq-sort column with `uf_canon`, so one firing
+    /// yields the fully canonical row. Two children moving in the same iteration
+    /// therefore fire twice with the same result, rather than each producing a
+    /// differently half-rewritten row for a later pass to merge.
+    ///
+    /// `uf_canon` reads `@UF_<S>` in the action, which is what makes the rule
+    /// `:unsafe-seminaive` (or `:naive` under the test knob); the driving `@UF`
+    /// delta in the body is what makes that read sound.
+    ///
+    /// In proof mode a firing writes one packed-proof row, or none at all when
+    /// nothing was canonicalized and the view's output is not an e-class.
     fn indexed_rebuild_rule_direct(
         &mut self,
         fdecl: &ResolvedFunctionDecl,
@@ -1780,9 +1805,9 @@ impl ProofInstrumentor<'_> {
         use crate::proofs::proof_container_rebuild::{
             uf_canon_prim_name, uf_canon_proof_prim_name,
         };
-
         let proofs = self.proofs_enabled();
         let n_keys = key_vars.len();
+
         let follower = self.fresh_var();
         let leader = self.fresh_var();
         let leader_proof = self.fresh_var();
@@ -1911,6 +1936,13 @@ impl ProofInstrumentor<'_> {
         declaration_entries
     }
 
+    /// One rule that canonicalizes a custom function's stale eq-sort output, at
+    /// child index `out_idx`: chase the output's `@UF` edge, `delete` the stale
+    /// row first so the re-`set` inserts without re-running the user merge, and in
+    /// proof mode rewrite the row proof's output child by `Congr` at that position.
+    ///
+    /// A view whose value *is* an e-class needs no rule of its own — the whole-row
+    /// rebuild canonicalizes that column too (see [`Self::indexed_rebuild_rule_direct`]).
     fn fd_custom_value_rebuild_rule_direct(
         &mut self,
         fdecl: &ResolvedFunctionDecl,
@@ -1960,6 +1992,10 @@ impl ProofInstrumentor<'_> {
         vec![GeneratedEntry::Rule(spec.build(&mut self.signatures))]
     }
 
+    /// [`Self::fd_custom_value_rebuild_rule_direct`] for an eq-container output:
+    /// containers have no `@UF` to chase, so the value canonicalizes via the
+    /// container rebuild primitive (`:naive` — it reads `@UF` tables the rule
+    /// doesn't join on).
     fn fd_container_value_rebuild_rule_direct(
         &mut self,
         fdecl: &ResolvedFunctionDecl,
