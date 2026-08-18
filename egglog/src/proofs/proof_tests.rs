@@ -2,7 +2,8 @@
 mod tests {
     use crate::ast::{
         GenericAction, GenericNCommand, Literal, ResolvedAction, ResolvedCommand, ResolvedExpr,
-        ResolvedFact, RuleEvalMode, remove_globals::remove_globals, sanitize_internal_names,
+        ResolvedFact, ResolvedVar, RuleEvalMode, Span, remove_globals::remove_globals,
+        sanitize_internal_names,
     };
     use crate::core::ResolvedCall;
     use crate::proofs::proof_checker::eval_expr_with_subst;
@@ -397,7 +398,7 @@ mod tests {
             bindings: &HashMap<String, TermId>,
             store: &mut ProofStore,
         ) -> TermId {
-            eval_expr_with_subst(rule_name, expr, &mut store.term_dag, bindings)
+            eval_expr_with_subst(rule_name, expr, &mut store.term_dag, bindings, None)
                 .unwrap_or_else(|e| panic!("rule '{rule_name}' head did not evaluate: {e}"))
                 .0
         }
@@ -1717,5 +1718,78 @@ mod tests {
             .join("\n");
 
         insta::assert_snapshot!("doc_example_add_eqsort_children", snapshot);
+    }
+
+    #[test]
+    fn proof_testing_distinguishes_global_old_from_merge_local_old() {
+        EGraph::new_with_proofs()
+            .with_proof_testing()
+            .parse_and_run_program(
+                None,
+                r#"
+                (datatype Role (A) (B) (Pick Role Role))
+                (relation Seen (Role))
+                (let old (A))
+                (function role (i64) Role :merge (Pick old new))
+                (set (role 0) (B))
+                (set (role 0) (A))
+                (rule ((= value (role 0))) ((Seen value)))
+                (run 1)
+                (check (Seen (Pick (A) (A))))
+                "#,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn merge_evaluation_uses_resolved_variable_roles() {
+        let sort = EGraph::default()
+            .type_info
+            .get_sort_by_name("i64")
+            .unwrap()
+            .clone();
+        let expression = |is_global_ref| {
+            ResolvedExpr::Var(
+                Span::Panic,
+                ResolvedVar {
+                    name: "old".to_owned(),
+                    sort: sort.clone(),
+                    is_global_ref,
+                },
+            )
+        };
+
+        let mut term_dag = TermDag::default();
+        let local_old = term_dag.lit(Literal::Int(1));
+        let global_old = term_dag.lit(Literal::Int(2));
+        let mut locals = HashMap::default();
+        locals.insert("old".to_owned(), local_old);
+        let mut globals = HashMap::default();
+        globals.insert("old".to_owned(), global_old);
+
+        assert_eq!(
+            eval_expr_with_subst(
+                "merge_function",
+                &expression(true),
+                &mut term_dag,
+                &locals,
+                Some(&globals),
+            )
+            .unwrap()
+            .0,
+            global_old,
+        );
+        assert_eq!(
+            eval_expr_with_subst(
+                "merge_function",
+                &expression(false),
+                &mut term_dag,
+                &locals,
+                Some(&globals),
+            )
+            .unwrap()
+            .0,
+            local_old,
+        );
     }
 }

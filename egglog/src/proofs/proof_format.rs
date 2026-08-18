@@ -68,6 +68,7 @@ fn run_merge_subexpr(
     term_dag: &mut TermDag,
     func_name: &str,
     prog: &[ResolvedNCommand],
+    globals: &HashMap<String, TermId>,
     old_term: TermId,
     new_term: TermId,
     idx: usize,
@@ -89,7 +90,13 @@ fn run_merge_subexpr(
                     function_name: format!("{func_name} (merge subexpr index {idx} out of range)"),
                 })
             })?;
-            return eval_expr_with_subst("merge_function", subexpr, term_dag, &subst);
+            return eval_expr_with_subst(
+                "merge_function",
+                subexpr,
+                term_dag,
+                &subst,
+                Some(globals),
+            );
         }
     }
     Err(ProofCheckErrorKind::FunctionNotFound {
@@ -951,6 +958,7 @@ impl ProofStore {
                     &mut self.term_dag,
                     function,
                     prog,
+                    globals,
                     old_output,
                     new_output,
                     *idx,
@@ -967,9 +975,15 @@ impl ProofStore {
                 // `merged` is the whole merge body evaluated on the two premise outputs.
                 let (view_head, input_args, old_output, new_output) =
                     self.merge_premise_view(old_proof_id, new_proof_id);
-                let (merged_child, _props) =
-                    run_merge(&mut self.term_dag, function, prog, old_output, new_output)
-                        .unwrap_or_else(|e| panic!("failed to run merge for {function}: {e}"));
+                let (merged_child, _props) = run_merge(
+                    &mut self.term_dag,
+                    function,
+                    prog,
+                    globals,
+                    old_output,
+                    new_output,
+                )
+                .unwrap_or_else(|e| panic!("failed to run merge for {function}: {e}"));
                 let mut merged_args = input_args;
                 merged_args.push(merged_child);
                 let to_prove = self.term_dag.app(view_head, merged_args);
@@ -1195,7 +1209,7 @@ impl ProofStore {
             .map(|(var, term)| (var.clone(), *term))
             .collect();
         let eval = |store: &mut Self, expr: &ResolvedExpr| {
-            eval_expr_with_subst(rule_name, expr, &mut store.term_dag, &bindings)
+            eval_expr_with_subst(rule_name, expr, &mut store.term_dag, &bindings, None)
                 .ok()
                 .map(|(term, _props)| term)
         };
