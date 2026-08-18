@@ -81,11 +81,11 @@ semantic/twin feature tests. Two test-only source-frontend comparisons remain
 to pin diagnostic ordering and `SymbolGen` effects; they are not production
 emission paths.
 
-Publication requires a fresh post-merge `make check`, which owns the Python and
-Rust workspace tests, clippy, rustdoc, formatting, and lockfile checks, plus a
-fresh `make benchmark-smoke` for the public runner. The separate
-`make proof-tests` subset need not be repeated after the superset workspace
-test. The final single-path 30-cell performance protocol remains; no final
+The fresh post-merge `make check` passed the Python and Rust workspace tests,
+clippy, rustdoc, formatting, and lockfile checks. The fresh public-runner
+`make benchmark-smoke` also passed with 20/20 successful runs. The separate
+`make proof-tests` subset was not repeated after the superset workspace test.
+The final single-path 30-cell performance protocol remains; no final
 performance conclusion is recorded yet.
 
 ### Revival roles (historical)
@@ -350,10 +350,10 @@ upper bound.
   policy rather than presented as simultaneous equivalence bounds.
 - **Deadline — conversion met early:** every family reached the typed path on
   2026-08-17; the old 2026-10-19 conversion stop date no longer applies.
-- **Final validation:** publication requires fresh post-merge `make check` and
-  `make benchmark-smoke` gates. The balanced release benchmark is the only
-  performance gate; the proof-test subset is covered by the workspace test in
-  `make check` and need not be redundantly rerun.
+- **Final validation — repository correctness gates green:** fresh post-merge
+  `make check` and `make benchmark-smoke` passed. The balanced release benchmark
+  is the only performance gate; the proof-test subset is covered by the
+  workspace test in `make check` and was not redundantly rerun.
 
 The final performance run uses fresh, separate append-only reports and pinned
 binary hashes.  For every mode, six observations per endpoint are collected in
@@ -393,7 +393,7 @@ present in source.
 | 2026-08-17 | independent executed twin, uncommitted revival diff | Two factory-built EGraphs with distinct outer/source `ActionRegistry` Arcs independently run the legacy and direct lanes. Seven focused twin tests cover term, verified proofs, and proof extraction with seminaive off/on; execute source-derived globals/rules plus path-compression, ordinary rebuild, subsumption/rekey, push/pop, nested `Fail`, and a two-step choose-one scheduler; and compare frontend state, bound commands, tables/rows/subsumed bits, rulesets, outputs/proof strings, reports, proof state, cache restoration, and continuation names. Generated overload failures match class, payload, order, and state; two cases deliberately use the originating source span rather than offsets into deleted generated text. Feature-off library tests passed 160/160, oracle-feature library tests 204/204, proof fixtures 225/225, and the complete oracle-enabled workspace test including doctests exited successfully. Final pins include `twin_oracle.rs` `40411e73...`, `semantic_oracle.rs` `96eafa26...`, and `generated_binder.rs` `736f024f...`. | Semantic evidence is green for the **rules checkpoint**. Production direct-rule binding is verifier-free. Keep the independent legacy/oracle lane only through measurement, then delete it and rerun final single-path correctness gates. |
 | 2026-08-16 | oracle binary `cb03ac38…`, verifier off | Samply profiles: MISAAL 19 iterations/175 binder samples; Luminal one 68.7-second iteration/97 samples. Allocation/copy/drop leaves were 48.8%/42.5%; call resolution 22.3%/35.1%; full-key hash/map/equality leaves 9.7%/19.4%; returned `ResolvedCall` cloning only 7.1%/3.2%. Artifact: `/tmp/egglog-binder-off-samply.E49SVb`. | Measure detailed-stat instrumentation tax, then test compact/precomputed call-key lookup before broader AST or shared-call refactors. Do not optimize spans or reimplement the already-persistent cross-batch cache. |
 | 2026-08-16 | oracle binary `cb03ac38…`, verifier and detailed stats off | Six balanced detailed/suppressed corpus rounds. Detailed-stat tax was 5.247 ms mean, 5.175 ms median, paired 95% 1.688–8.806; all 120 sidecars retained exact differential parity and structure. Suppressed residual mean was 182.462 ms. Artifact: `/tmp/egglog-detailed-stat-tax.dMoOBo`. | Use suppressed statistics for subsequent causal binder comparisons. Treat the five milliseconds only as removal of oracle instrumentation, never as production/frontend savings. |
-| 2026-08-17 | uncommitted single-path cutover from `a54c798` | All producers emit structured `GeneratedEntry`/`GeneratedBatch` values into one generated resolver. The generated-text parser/formatter path, migration envelopes, semantic/twin comparison modules, selector/feature forwarding, sidecars, family/origin tags, timers, standalone verifier/portableizer, and dual-path tests were deleted. Single-path regressions pin all-mode path compression; exact Extract/Input/Output effects and failures; panic and `Fail` prefix commit; Push and generated error spans; role/global separation; declaration receipts and rollback. Two test-only source-frontend comparisons retain exact diagnostic-order and `SymbolGen` parity without adding a production alternate path. | Rerun the root correctness and benchmark-smoke gates after merging main. Do not claim final performance until the coordinator runs the pre-registered single-path 30-cell protocol. |
+| 2026-08-17 | single-path cutover from `a54c798` | All producers emit structured `GeneratedEntry`/`GeneratedBatch` values into one generated resolver. The generated-text parser/formatter path, migration envelopes, semantic/twin comparison modules, selector/feature forwarding, sidecars, family/origin tags, timers, standalone verifier/portableizer, and dual-path tests were deleted. Single-path regressions pin all-mode path compression; exact Extract/Input/Output effects and failures; panic and `Fail` prefix commit; Push and generated error spans; role/global separation; declaration receipts and rollback. Two test-only source-frontend comparisons retain exact diagnostic-order and `SymbolGen` parity without adding a production alternate path. | Fresh post-merge `make check` and `make benchmark-smoke` passed. Do not claim final performance until the coordinator runs the pre-registered single-path 30-cell protocol. |
 
 The first generated-binder draft passed focused flat-batch parity but was
 rejected because it omitted tuples, merges, sequential local lets, most

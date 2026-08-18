@@ -189,9 +189,7 @@ def resolve_targets(
         configured_target_dir = Path(os.environ.get("CARGO_TARGET_DIR", "target"))
         effective_target_dirs = {
             (
-                configured_target_dir
-                if configured_target_dir.is_absolute()
-                else checkout_path / configured_target_dir
+                configured_target_dir if configured_target_dir.is_absolute() else checkout_path / configured_target_dir
             ).resolve()
             for checkout_path in pending_by_checkout
         }
