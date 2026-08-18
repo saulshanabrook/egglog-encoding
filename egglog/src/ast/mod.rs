@@ -157,7 +157,7 @@ where
         file: String,
         exprs: Vec<GenericExpr<Head, Leaf>>,
     },
-    Push(usize),
+    Push(Span, usize),
     Pop(Span, usize),
     /// Assert that at least one of the wrapped commands fails. The commands run
     /// in order; the first error is swallowed (the `fail` succeeds), and if none
@@ -267,7 +267,7 @@ where
                 file: file.to_string(),
                 exprs: exprs.clone(),
             },
-            GenericNCommand::Push(n) => GenericCommand::Push(*n),
+            GenericNCommand::Push(span, n) => GenericCommand::Push(span.clone(), *n),
             GenericNCommand::Pop(span, n) => GenericCommand::Pop(span.clone(), *n),
             GenericNCommand::Fail(span, cmds) => GenericCommand::Fail(
                 span.clone(),
@@ -401,7 +401,7 @@ where
                 file,
                 exprs: exprs.into_iter().map(f).collect(),
             },
-            GenericNCommand::Push(n) => GenericNCommand::Push(n),
+            GenericNCommand::Push(span, n) => GenericNCommand::Push(span, n),
             GenericNCommand::Pop(span, n) => GenericNCommand::Pop(span, n),
             GenericNCommand::Fail(span, cmds) => GenericNCommand::Fail(
                 span,
@@ -1082,7 +1082,7 @@ where
     },
     /// `push` the current egraph `n` times so that it is saved.
     /// Later, the current database and rules can be restored using `pop`.
-    Push(usize),
+    Push(Span, usize),
     /// `pop` the current egraph, restoring the previous one.
     /// The argument specifies how many egraphs to pop.
     Pop(Span, usize),
@@ -1292,7 +1292,7 @@ where
             GenericCommand::ProveExists(_span, constructor) => {
                 write!(f, "(prove-exists {constructor})")
             }
-            GenericCommand::Push(n) => write!(f, "(push {n})"),
+            GenericCommand::Push(_span, n) => write!(f, "(push {n})"),
             GenericCommand::Pop(_span, n) => write!(f, "(pop {n})"),
             GenericCommand::PrintFunction(_span, name, n, file, mode) => {
                 write!(f, "(print-function {name}")?;
@@ -2150,7 +2150,7 @@ where
             GenericCommand::Output { span, file, exprs } => {
                 GenericCommand::Output { span, file, exprs }
             }
-            GenericCommand::Push(n) => GenericCommand::Push(n),
+            GenericCommand::Push(span, n) => GenericCommand::Push(span, n),
             GenericCommand::Pop(span, n) => GenericCommand::Pop(span, n),
             GenericCommand::Fail(span, cmds) => GenericCommand::Fail(
                 span,
@@ -2426,7 +2426,7 @@ where
                     .map(|expr| expr.map_symbols(head, leaf))
                     .collect(),
             },
-            GenericCommand::Push(n) => GenericCommand::Push(n),
+            GenericCommand::Push(span, n) => GenericCommand::Push(span, n),
             GenericCommand::Pop(span, n) => GenericCommand::Pop(span, n),
             GenericCommand::Fail(span, cmds) => GenericCommand::Fail(
                 span,

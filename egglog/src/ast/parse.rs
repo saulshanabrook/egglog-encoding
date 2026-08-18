@@ -893,8 +893,11 @@ impl Parser {
                 _ => return error!(span, "usage: (prove-exists <constructor>)"),
             },
             "push" => match tail {
-                [] => vec![Command::Push(1)],
-                [n] => vec![Command::Push(n.expect_uint("number of times to push")?)],
+                [] => vec![Command::Push(span, 1)],
+                [n] => vec![Command::Push(
+                    span,
+                    n.expect_uint("number of times to push")?,
+                )],
                 _ => return error!(span, "usage: (push <uint>?)"),
             },
             "pop" => match tail {
@@ -1564,5 +1567,19 @@ mod tests {
         let t = r#"(f (xxxx a 3) 4.0 (H "hello"))"#;
         let e = parser.get_expr_from_string(None, s).unwrap();
         assert_eq!(format!("{e}"), t);
+    }
+
+    #[test]
+    fn push_commands_retain_their_exact_source_spans() {
+        let source = "  (push)\n\n(push 17)  ";
+        let commands = Parser::default()
+            .get_program_from_string(Some("push-spans.egg".to_owned()), source)
+            .unwrap();
+        assert!(matches!(
+            &commands[..],
+            [Command::Push(default_span, 1), Command::Push(count_span, 17)]
+                if default_span.string() == "(push)"
+                    && count_span.string() == "(push 17)"
+        ));
     }
 }

@@ -272,6 +272,7 @@ def test_target_resolvers_share_materialization_and_select_build_profile(
 
 def test_build_target_uses_profiling_profile(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     commands: list[list[str]] = []
+    monkeypatch.delenv("CARGO_TARGET_DIR", raising=False)
     binary = tmp_path / "target" / "profiling" / "egglog-experimental"
     binary.parent.mkdir(parents=True)
     binary.write_text("binary", encoding="utf-8")
@@ -291,7 +292,22 @@ def test_build_target_uses_profiling_profile(monkeypatch: pytest.MonkeyPatch, tm
 
     binary_path, binary_sha256 = targets.build_target(row, Console(stderr=True), "profiling")
 
-    assert commands == [["cargo", "build", "--profile", "profiling", "-p", "egglog-experimental"]]
+    assert commands == [
+        [
+            "cargo",
+            "build",
+            "--locked",
+            "--profile",
+            "profiling",
+            "-p",
+            "egglog-experimental",
+            "--no-default-features",
+            "--features",
+            "bin",
+            "--bin",
+            "egglog-experimental",
+        ]
+    ]
     assert binary_path == binary
     assert binary_sha256 == "sha256:bin"
 

@@ -42,9 +42,9 @@ use egglog_ast::util::ListDisplay;
 use egglog_bridge::{ColumnTy, QueryEntry};
 use egglog_core_relations as core_relations;
 use egglog_numeric_id as numeric_id;
-use egglog_reports::{
-    OverallReport, ReportLevel, RulesetTimingRole, RunReport, TimingSummary, TimingSummaryError,
-};
+use egglog_reports::{OverallReport, ReportLevel, RulesetTimingRole, RunReport};
+#[cfg(feature = "bin")]
+use egglog_reports::{TimingSummary, TimingSummaryError};
 pub use exec_state::{
     Context, Core, Enode, FullState, FunctionEntry, PureState, Read, ReadState, Write, WriteState,
 };
@@ -2199,7 +2199,7 @@ impl EGraph {
                     Ok(vec![CommandOutput::ExtractVariants(termdag, terms)])
                 };
             }
-            ResolvedNCommand::Push(n) => {
+            ResolvedNCommand::Push(_span, n) => {
                 (0..n).for_each(|_| self.push());
                 log::info!("Pushed {n} levels.")
             }
@@ -2697,11 +2697,11 @@ impl EGraph {
             for command in &typechecked_no_globals {
                 if let GenericNCommand::Function(fdecl) = command
                     && fdecl.internal_let
-                    && let Some(output_sort) = self.type_info.sorts.get(fdecl.schema.output())
+                    && let Some(output_sort) =
+                        self.type_info.sorts.get(fdecl.schema.output()).cloned()
                 {
                     self.type_info
-                        .global_sorts
-                        .insert(fdecl.name.clone(), output_sort.clone());
+                        .register_global_sort(fdecl.name.clone(), output_sort);
                 }
             }
             for command in &typechecked_no_globals {
@@ -2710,27 +2710,10 @@ impl EGraph {
 
             let term_encoding_added =
                 ProofInstrumentor::add_term_encoding(self, typechecked_no_globals)?;
-            let mut new_typechecked = vec![];
-            for new_cmd in term_encoding_added {
-                let desugared =
-                    desugar_command(new_cmd, &mut self.parser, self.proof_state.proof_testing)?;
-                for cmd in &desugared {
-                    log::trace!("Desugared term encoding: {}", cmd.to_command());
-                }
-
-                // Now typecheck using self, adding term type information.
-                let typecheck_timer = Instant::now();
-                let desugared_typechecked = self.typecheck_program(&desugared)?;
-                self.overall_report.typecheck += typecheck_timer.elapsed();
-                // Remove the globals the term encoding itself introduced (its minted
-                // `let`s), the same way source-level globals were removed above.
-                let desugared_typechecked = remove_globals::remove_globals(
-                    desugared_typechecked,
-                    &mut self.parser.symbol_gen,
-                );
-
-                new_typechecked.extend(desugared_typechecked);
-            }
+            let new_typechecked = crate::proofs::generated_binder::resolve_generated_batch(
+                self,
+                term_encoding_added,
+            )?;
             Ok(ResolvedNCommands {
                 desugared: new_typechecked,
                 desugared_before_proofs: per_row_before_proofs,
@@ -2796,7 +2779,7 @@ impl EGraph {
                         if run_commands
                             || matches!(
                                 processed,
-                                ResolvedNCommand::Push(_) | ResolvedNCommand::Pop(_, _)
+                                ResolvedNCommand::Push(_, _) | ResolvedNCommand::Pop(_, _)
                             )
                         {
                             let result = self.run_command(processed)?;
@@ -2857,8 +2840,7 @@ impl EGraph {
         self.run_program(parsed)
     }
 
-    /// Parse through the single accounting boundary shared by source, include,
-    /// and generated term-encoding text.
+    /// Parse top-level and included source through one accounting boundary.
     pub(crate) fn parse_program_timed(
         &mut self,
         filename: Option<String>,
@@ -2924,6 +2906,7 @@ impl EGraph {
         &self.overall_report.run
     }
 
+    #[cfg(feature = "bin")]
     pub(crate) fn timing_summary(&self) -> Result<TimingSummary, TimingSummaryError> {
         TimingSummary::from_report(&self.overall_report)
     }
@@ -3823,6 +3806,7 @@ mod tests {
             iterations_before
         );
         assert!(egraph.overall_report.commands_check > check_time_before);
+        #[cfg(feature = "bin")]
         assert!(
             egraph
                 .timing_summary()

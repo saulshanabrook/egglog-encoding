@@ -9,6 +9,7 @@ selection, statistics, and rendering belong in :mod:`benchmarking.reports`.
 
 from __future__ import annotations
 
+import os
 import tempfile
 from collections import Counter
 from dataclasses import dataclass, replace
@@ -183,6 +184,22 @@ def resolve_targets(
         else:
             checkout_path = Path(target.row.path).resolve()
             pending_by_checkout.setdefault(checkout_path, []).append(target)
+
+    if len(pending_by_checkout) > 1:
+        configured_target_dir = Path(os.environ.get("CARGO_TARGET_DIR", "target"))
+        effective_target_dirs = {
+            (
+                configured_target_dir
+                if configured_target_dir.is_absolute()
+                else checkout_path / configured_target_dir
+            ).resolve()
+            for checkout_path in pending_by_checkout
+        }
+        if len(effective_target_dirs) != len(pending_by_checkout):
+            raise ValueError(
+                "multiple checkouts cannot share one CARGO_TARGET_DIR during collection; "
+                "build and freeze distinct endpoint binaries first"
+            )
 
     for checkout_path, pending_targets in pending_by_checkout.items():
         git_shas = {target.row.git_sha for target in pending_targets}

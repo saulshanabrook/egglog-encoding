@@ -10,10 +10,11 @@ mod tests {
     use crate::proofs::proof_extraction::ProveExistsError;
     use crate::proofs::proof_format::{ProofId, ProofStore, Proposition};
     use crate::proofs::proof_head::{Firing, HeadPlan, HeadProof, ProofAlgebra};
+    use crate::typechecking::TypeError;
     use crate::util::{HashMap, HashSet, IndexMap, SymbolGen};
     use crate::{
         CommandOutput, EGraph, Error, ProofEncodingUnsupportedReason, TermDag, TermId,
-        add_primitive_with_validator,
+        add_primitive, add_primitive_with_validator,
     };
 
     fn term_encode(source: &str) -> Vec<ResolvedCommand> {
@@ -397,7 +398,7 @@ mod tests {
             bindings: &HashMap<String, TermId>,
             store: &mut ProofStore,
         ) -> TermId {
-            eval_expr_with_subst(rule_name, expr, &mut store.term_dag, bindings)
+            eval_expr_with_subst(rule_name, expr, &mut store.term_dag, bindings, None)
                 .unwrap_or_else(|e| panic!("rule '{rule_name}' head did not evaluate: {e}"))
                 .0
         }
@@ -1717,5 +1718,280 @@ mod tests {
             .join("\n");
 
         insta::assert_snapshot!("doc_example_add_eqsort_children", snapshot);
+    }
+
+    #[test]
+    fn generated_path_compression_executes_in_all_encoding_modes() {
+        for mode in 0..3 {
+            for seminaive in [false, true] {
+                let (mut egraph, proof_mode) = match mode {
+                    0 => (EGraph::new_with_term_encoding(), false),
+                    1 => (EGraph::new_with_proofs(), true),
+                    2 => (EGraph::default().with_proof_extraction(), true),
+                    _ => unreachable!(),
+                };
+                egraph.seminaive = seminaive;
+                let assertion = if proof_mode {
+                    "(prove (= (A) (C)))"
+                } else {
+                    "(check (= (A) (C)))"
+                };
+                let outputs = egraph
+                    .parse_and_run_program(
+                        Some(format!("path-compression-{proof_mode}-{seminaive}.egg")),
+                        &format!(
+                            r#"
+                            (sort Pc)
+                            (constructor A () Pc)
+                            (constructor B () Pc)
+                            (constructor C () Pc)
+                            (A)
+                            (B)
+                            (C)
+                            (union (B) (C))
+                            (union (A) (B))
+                            (run 1)
+                            {assertion}
+                            "#
+                        ),
+                    )
+                    .unwrap();
+                assert_eq!(
+                    outputs
+                        .iter()
+                        .filter(|output| matches!(output, CommandOutput::ProveExists { .. }))
+                        .count(),
+                    usize::from(proof_mode)
+                );
+                assert!(
+                    egraph
+                        .get_function_names()
+                        .iter()
+                        .any(|name| name == "@UF_Pc")
+                );
+                assert!(egraph.num_tuples() > 0);
+                assert!(
+                    egraph
+                        .get_overall_run_report()
+                        .num_matches_per_rule
+                        .iter()
+                        .any(|(name, count)| name.contains("@uf_path_compress") && *count > 0),
+                    "generated path compression did not execute in proof_mode={proof_mode}, seminaive={seminaive}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn generated_extract_input_and_output_have_exact_runtime_effects() {
+        let directory = std::env::temp_dir().join(format!(
+            "egglog-generated-command-effects-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::remove_dir_all(&directory).ok();
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(directory.join("loaded.tsv"), "7\t8\n").unwrap();
+
+        let mut egraph = EGraph::new_with_proofs();
+        egraph.fact_directory = Some(directory.clone());
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (sort RuntimeExpr)
+                (constructor RuntimeNum (i64) RuntimeExpr)
+                (constructor RuntimeAdd (RuntimeExpr RuntimeExpr) RuntimeExpr)
+                (function RuntimeLoaded (i64) i64 :merge old)
+                "#,
+            )
+            .unwrap();
+
+        let outputs = egraph
+            .parse_and_run_program(
+                None,
+                "(extract (RuntimeAdd (RuntimeNum 1) (RuntimeNum 2)) 0)",
+            )
+            .unwrap();
+        assert_eq!(outputs.len(), 3);
+        assert!(matches!(outputs[0], CommandOutput::RunSchedule(_)));
+        let CommandOutput::ExtractBest(ref dag, cost, term) = outputs[1] else {
+            panic!("expected ExtractBest between generated schedules")
+        };
+        assert_eq!(
+            dag.to_string(term),
+            "(RuntimeAdd (RuntimeNum 1) (RuntimeNum 2))"
+        );
+        assert_eq!(cost, 5);
+        assert!(matches!(outputs[2], CommandOutput::RunSchedule(_)));
+
+        let before_input = egraph.num_tuples();
+        let outputs = egraph
+            .parse_and_run_program(None, "(input RuntimeLoaded \"loaded.tsv\")")
+            .unwrap();
+        assert!(
+            outputs
+                .iter()
+                .all(|output| matches!(output, CommandOutput::RunSchedule(_)))
+        );
+        assert_eq!(egraph.num_tuples(), before_input + 3);
+        egraph
+            .parse_and_run_program(None, "(check (= (RuntimeLoaded 7) 8))")
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(directory.join("loaded.tsv")).unwrap(),
+            "7\t8\n"
+        );
+
+        let before_output = egraph.num_tuples();
+        let outputs = egraph
+            .parse_and_run_program(None, "(output \"result.txt\" (+ 1 2))")
+            .unwrap();
+        assert_eq!(outputs.len(), 1);
+        assert!(matches!(outputs[0], CommandOutput::RunSchedule(_)));
+        assert_eq!(egraph.num_tuples(), before_output);
+        assert_eq!(
+            std::fs::read_to_string(directory.join("result.txt")).unwrap(),
+            "3\n"
+        );
+
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn generated_extract_input_and_output_preserve_failure_boundaries() {
+        let directory = std::env::temp_dir().join(format!(
+            "egglog-generated-command-errors-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::remove_dir_all(&directory).ok();
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(directory.join("malformed.tsv"), "7\n").unwrap();
+
+        let mut egraph = EGraph::new_with_term_encoding();
+        egraph.fact_directory = Some(directory.clone());
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (sort RuntimeExpr)
+                (constructor RuntimeNum (i64) RuntimeExpr)
+                (constructor RuntimeAdd (RuntimeExpr RuntimeExpr) RuntimeExpr)
+                (function RuntimeLoaded (i64) i64 :merge old)
+                "#,
+            )
+            .unwrap();
+
+        let error = egraph
+            .parse_and_run_program(None, "(extract (RuntimeNum 1) -1)")
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            Error::ExtractError(ref message)
+                if message == "cannot extract a negative number of variants"
+        ));
+
+        let before_input = (
+            egraph.num_tuples(),
+            egraph.get_function_names(),
+            egraph.parser.symbol_gen.clone(),
+        );
+        let error = egraph
+            .parse_and_run_program(None, "(input RuntimeLoaded \"malformed.tsv\")")
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            Error::InputFileFormatError(ref file) if file == "malformed.tsv"
+        ));
+        assert_eq!(
+            (
+                egraph.num_tuples(),
+                egraph.get_function_names(),
+                egraph.parser.symbol_gen.clone(),
+            ),
+            before_input
+        );
+
+        let before_output = egraph.num_tuples();
+        let error = egraph
+            .parse_and_run_program(None, "(output \"must-not-exist.txt\" (RuntimeNum 1))")
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            Error::TypeError(TypeError::Arity { expected: 2, ref expr })
+                if expr.to_string() == "(RuntimeNum 1)"
+        ));
+        assert!(!directory.join("must-not-exist.txt").exists());
+        assert_eq!(egraph.num_tuples(), before_output);
+
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn generated_source_rule_panic_keeps_the_seed() {
+        let mut egraph = EGraph::new_with_term_encoding();
+        let error = egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (relation PanicSeed ())
+                (PanicSeed)
+                (rule ((PanicSeed))
+                      ((panic "typed-rule-boom"))
+                      :name "typed-panic-rule")
+                (run 1)
+                "#,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                Error::BackendError(ref message) if message.contains("typed-rule-boom")
+            ),
+            "unexpected panic-rule error: {error:?}"
+        );
+        egraph
+            .parse_and_run_program(None, "(check (PanicSeed))")
+            .unwrap();
+    }
+
+    #[test]
+    fn generated_binding_errors_keep_source_spans_through_fail() {
+        let make_egraph = |header| {
+            let mut egraph = EGraph::new_with_term_encoding();
+            egraph.resolve_program(None, header).unwrap();
+            add_primitive!(&mut egraph, "!=" = |a: #, b: #| -?> () {
+                (a != b).then_some(())
+            });
+            egraph
+        };
+
+        for (header, source, expected_span) in [
+            (
+                "(relation ErrorHeader (i64))",
+                "(sort Broken)",
+                "(sort Broken)",
+            ),
+            (
+                "(relation NestedErrorHeader (i64))",
+                "(fail (sort NestedBroken))",
+                "(sort NestedBroken)",
+            ),
+        ] {
+            let error = make_egraph(header)
+                .parse_and_run_program(Some("generated-binding-span.egg".to_owned()), source)
+                .unwrap_err();
+            assert!(
+                matches!(
+                    error,
+                    Error::TypeError(TypeError::InferenceFailure(crate::ast::Expr::Var(
+                        ref span,
+                        ref variable
+                    ))) if variable == "@!=2" && span.string() == expected_span
+                ),
+                "unexpected generated binding error for {source}: {error:?}"
+            );
+        }
     }
 }

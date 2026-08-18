@@ -202,8 +202,8 @@ pub(crate) fn desugar_command(
         Command::Output { span, file, exprs } => {
             vec![NCommand::Output { span, file, exprs }]
         }
-        Command::Push(num) => {
-            vec![NCommand::Push(num)]
+        Command::Push(span, num) => {
+            vec![NCommand::Push(span, num)]
         }
         Command::Pop(span, num) => {
             vec![NCommand::Pop(span, num)]

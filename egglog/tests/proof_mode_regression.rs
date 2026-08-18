@@ -151,7 +151,8 @@ fn proof_mode_allows_fail_wrapping_multi_operation_encoding() {
 fn proof_mode_fail_catches_failure_among_wrapped_commands() {
     // `fail` runs the wrapped commands in order and succeeds at the first failure:
     // the set succeeds and the mismatched check fails, so the `fail` passes.
-    EGraph::new_with_proofs()
+    let mut egraph = EGraph::new_with_proofs();
+    egraph
         .parse_and_run_program(
             None,
             r#"
@@ -159,6 +160,9 @@ fn proof_mode_fail_catches_failure_among_wrapped_commands() {
             (fail (set (score) 1) (check (= (score) 2)))
             "#,
         )
+        .unwrap();
+    egraph
+        .parse_and_run_program(None, "(check (= (score) 1))")
         .unwrap();
 }
 

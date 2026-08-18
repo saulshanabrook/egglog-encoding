@@ -357,7 +357,7 @@ impl Hash for SpecializedPrimitive {
 
 #[derive(Debug, Clone)]
 pub enum ResolvedCall {
-    Func(FuncType),
+    Func(Arc<FuncType>),
     Primitive(SpecializedPrimitive),
     /// The `values` tuple constructor, used to destructure a tuple-output function's outputs in a
     /// query (`(= (values a b) (f x))`) or to construct them in a `set` action
@@ -393,6 +393,21 @@ impl Hash for ResolvedCall {
 }
 
 impl ResolvedCall {
+    /// Materialize the post-`remove_globals` representation of one live global.
+    ///
+    /// Globals are not registered function types: each reference carries this
+    /// ephemeral zero-input signature directly. Keeping construction here
+    /// gives source global removal and typed generated binding one canonical
+    /// metadata boundary without touching TypeInfo or any resolution cache.
+    pub(crate) fn global_ref(name: String, sort: ArcSort) -> Self {
+        Self::Func(Arc::new(FuncType {
+            name,
+            subtype: FunctionSubtype::Custom,
+            input: vec![],
+            outputs: vec![sort],
+        }))
+    }
+
     pub fn name(&self) -> &str {
         match self {
             ResolvedCall::Func(func) => &func.name,
