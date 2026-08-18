@@ -372,9 +372,8 @@ sharing it.
 ### Nightly
 
 `make nightly` benchmarks each treatment in `TREATMENTS` — `term`, `proofs`,
-and `proof-extraction` — on the current checkout and on the latest `main`, accumulating them all in
-the ordinary report cache, and copies the resulting interactive page and its
-cache to `nightly/output/index.html` and `index.jsonl`:
+and `proof-extraction` — on the current checkout and on the latest `main`,
+writing `nightly/output/index.jsonl` and the interactive page beside it:
 
 ```bash
 make nightly
@@ -386,9 +385,11 @@ page's dropdown can compare any two of them and it is clear which commit each
 side is; endpoints with identical binaries collapse to one option. The page
 opens on proof overhead of the current checkout. Populating is best effort: an
 endpoint that fails to build or run drops one dropdown option rather than
-failing the run, and the output directory is only overwritten after a
-successful run. Edit `TARGETS` and `TREATMENTS` in `scripts/nightly_bench.py` to
-change what is measured.
+failing the run. Edit `TARGETS` and `TREATMENTS` in `scripts/nightly_bench.py`
+to change what is measured.
+
+Each run replaces both published files, so `index.jsonl` is the cache that run
+measured into and a failed run publishes no page.
 
 `make nightly-local` is the same run at `--rounds 1`, for trying the whole
 pipeline out without waiting for a full nightly.
