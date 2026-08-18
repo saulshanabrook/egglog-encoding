@@ -1395,7 +1395,7 @@ struct Cli {
   #[arg(long, value_enum, default_value = "egg-ee")]
   backend: EGraphBackend,
   /// Select the generic Vec encoding or direct source-language constructors for egglog terms
-  #[arg(long, value_enum, default_value = "direct")]
+  #[arg(long, value_enum, default_value = "vec")]
   term_language: EufTermLanguage,
   /// Display the stats
   #[arg(short, long, default_value_t = false)]
@@ -1486,6 +1486,27 @@ mod tests {
       .collect();
     let sexprs = parse_script(&mut tokenize(&contents).peekable()).unwrap();
     ParsedEufScript::from(&sexprs)
+  }
+
+  #[test]
+  fn vec_is_the_default_and_direct_requires_a_flag() {
+    let default = Cli::try_parse_from([
+      "euf-solver",
+      "input.smt2",
+      "--backend",
+      "egglog-de",
+    ]).unwrap();
+    assert_eq!(default.term_language, EufTermLanguage::Vec);
+
+    let direct = Cli::try_parse_from([
+      "euf-solver",
+      "input.smt2",
+      "--backend",
+      "egglog-de",
+      "--term-language",
+      "direct",
+    ]).unwrap();
+    assert_eq!(direct.term_language, EufTermLanguage::Direct);
   }
 
   #[test]

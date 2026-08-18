@@ -128,13 +128,12 @@ consistent. This is the same live SAT-model/theory-check boundary used by the
 artifact; it is not an offline trace replay.
 
 The SMT-LIB parser now preserves declarations instead of discarding them.
-Direct mode, the default, emits declared constants and functions as real
-`EufTerm` constructors with their declared arities. Only generated names such
-as CNF variables and Skolems use `Atom(String)`. As in the paper's untyped
-`SymbolLang` baseline, SMT argument and result sorts are deliberately erased
-into one `EufTerm` sort; preserving SMT sorts is a separate variant.
-`--term-language vec` retains the former generic representation as a semantic
-and performance control.
+Vec mode is the default because its operator-plus-children representation
+matches the paper's untyped `SymbolLang` baseline. `--term-language direct`
+instead emits declared constants and functions as real `EufTerm` constructors
+with their declared arities. Only generated names such as CNF variables and
+Skolems use `Atom(String)`. Both modes deliberately erase SMT argument and
+result sorts into one term sort; preserving SMT sorts is a separate variant.
 
 Both direct-disequality backends also install `true != false` before enumerating
 models. The imported native-DE artifact omitted that edge, which accepts the
@@ -299,10 +298,11 @@ end-to-end measurements, diagnostic profiles, comparison with the artifact's
 precomputed timings, and prioritized optimization ideas. Its 2026-08-17
 follow-up compares direct constructors, cached Vec, and the frozen pre-change
 executables. Direct medians are 6.2% and 9.4% lower than current Vec on two
-published EUF inputs. On Propel, cached direct takes 1.14-1.23x as long as
-cached Vec, which remains the default. Current cold Vec takes 1.16-1.43x as
-long as cached Vec, while the frozen cold-Vec baseline takes 1.07-1.37x as
-long on the two measured programs. Parameter analysis was
+published EUF inputs, but Vec remains the paper-faithful default and direct is
+an explicit alternative. On Propel, cached direct takes 1.14-1.23x as long as
+cached Vec, which is also the default. Current cold Vec takes 1.16-1.43x as
+long as cached Vec, while the frozen cold-Vec baseline takes 1.07-1.37x as long
+on the two measured programs. Parameter analysis was
 measured at `88c40cf`; Propel and EUF were measured at `e7b7969` on base
 `ffb8ae4`; the later proof-regression analysis used `fff36169` on base
 `fdd4eac`. The heavy integrations were not remeasured after the source-order

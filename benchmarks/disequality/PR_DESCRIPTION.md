@@ -84,9 +84,10 @@ congruence-UNSAT, and Boolean-congruence-UNSAT fixtures agree across all six
 backends. The full 7,591-file corpus is represented in the import manifest but
 is not committed or claimed as fully validated.
 
-The parser now retains SMT declarations. Direct mode emits declared constants
-and functions as `EufTerm` constructors and uses `Atom` only for generated
-names; it is the EUF default. The old Vec language remains selectable.
+The parser now retains SMT declarations. Vec is the EUF default because it
+matches the paper artifact's `SymbolLang` representation. Explicit
+`--term-language direct` mode emits declared constants and functions as
+`EufTerm` constructors and uses `Atom` only for generated names.
 
 ### Propel
 
@@ -152,8 +153,9 @@ relations are expensive when Propel creates thousands of small graphs.
 
 EUF has the opposite result. Direct medians are 6.2% lower on `uf.815405`
 (523.0 versus 557.6 ms) and 9.4% lower on `uf.614981` (4.539 versus 5.008 s),
-so EUF defaults to direct. The small-input samples are visibly order-sensitive.
-Every table reports combined medians and full ranges in
+but Vec remains the default to match the paper baseline; direct is available
+only through `--term-language direct`. The small-input samples are visibly
+order-sensitive. Every table reports combined medians and full ranges in
 `benchmarks/disequality/PERFORMANCE_ANALYSIS.md`; no accepted sample is
 discarded.
 

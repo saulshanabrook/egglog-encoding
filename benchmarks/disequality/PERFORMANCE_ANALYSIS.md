@@ -52,10 +52,10 @@ analysis. No sample inside an accepted invocation was discarded.
 
 ## Direct-constructor follow-up
 
-The 2026-08-17 follow-up replaces the generic host term in inspectable EUF and
-Propel programs with source-shaped constructors. It retains the old path behind
-`--term-language vec`, adds `--term-language direct`, and isolates schema reuse
-with `--no-template-cache`. The frozen baseline is parent commit `5069c43`; its
+The 2026-08-17 follow-up adds source-shaped constructors as an explicit
+`--term-language direct` alternative while retaining generic Vec as the
+paper-faithful default. It also isolates schema reuse with
+`--no-template-cache`. The frozen baseline is parent commit `5069c43`; its
 Propel and EUF binaries have SHA-256
 `2140063b5030876f35c8f71b04d061e46f74cc73890584a8e5c59bdc366bdf81`
 and
@@ -66,8 +66,8 @@ have SHA-256
 `0ce1df22cebf55dbfb33367dffdb98154b8ed8520df3166b5bf507768fb4ca0f`
 and
 `f56767aaee988076e118a2394b864a00f1f50d59c6621340d2b61745e1e71f96`.
-Candidate commands name the term language explicitly, so the later one-line
-change making Vec Propel's CLI default does not affect these measurements.
+Candidate commands name the term language explicitly, so CLI default choices
+do not affect these measurements.
 
 Propel uses two reversed Hyperfine invocations: five runs per order for
 `gset_comm` and three per order for `tip_bin_plus_assoc`, each after one warmup.
@@ -122,8 +122,9 @@ endpoint-order-sensitive and its direct range overlaps both Vec ranges; the
 larger input is consistent across orders. Unlike Propel,
 EUF builds one declared term graph and clones its populated state per SAT model
 instead of creating thousands of independent empty schemas. EUF therefore
-defaults to direct. The rollout decision uses the current-Vec comparison rather
-than attributing baseline differences to this change.
+defaults to Vec to match the paper artifact's `SymbolLang` representation.
+Direct remains an explicit alternative and the source form used for readable
+snapshots despite its lower median on these two inputs.
 
 The answer to "typechecking or engine?" is workload-dependent:
 
