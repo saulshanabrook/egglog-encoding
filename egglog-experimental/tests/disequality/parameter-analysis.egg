@@ -1,5 +1,6 @@
 ;; Relational replay of parameter-analysis/exprs.in from the Dis/Equality
-;; Graphs artifact. The fact manifest records the exact source and ratio.
+;; Graphs artifact (Zenodo 13938878, DOI 10.5281/zenodo.13938878). The generated
+;; fact manifest records the exact source archive, input hash, and ratio.
 (datatype Expr
   (N1)
   (N2)

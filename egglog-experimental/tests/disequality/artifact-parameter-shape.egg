@@ -1,5 +1,6 @@
-;; Small port of parameter-analysis/ee: numeral disequalities plus a mixture
-;; of disequality and equality constraints over generated expressions.
+;; Small port of parameter-analysis/ee from Zenodo artifact 13938878: numeral
+;; disequalities plus a mixture of disequality and equality constraints over
+;; generated expressions.
 (datatype Expr
   (Num i64)
   (Add Expr Expr)

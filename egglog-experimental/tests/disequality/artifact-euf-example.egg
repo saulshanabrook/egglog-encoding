@@ -1,4 +1,5 @@
-;; Port of the worked SMT example in the artifact's euf-solver/README.md.
+;; Port of the worked SMT example in
+;; benchmarks/disequality/euf-solver/README.md from Zenodo artifact 13938878.
 ;; Each branch of the original disjunction is inconsistent once x = y.
 (datatype T
   (X)

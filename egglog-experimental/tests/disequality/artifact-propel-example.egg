@@ -1,4 +1,6 @@
-;; Port of testEGraph in Propel's mutable/EGraph.scala artifact source.
+;; Port of testEGraph from Zenodo artifact 13938878. The imported source is:
+;; benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/
+;; evaluator/egraph/mutable/EGraph.scala
 (datatype Term
   (A)
   (B)

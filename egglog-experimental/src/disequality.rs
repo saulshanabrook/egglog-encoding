@@ -952,7 +952,7 @@ mod tests {
         new_experimental_egraph_with_disequality_encoding,
     };
     use egglog::ast::sanitize_internal_names;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use tempfile::TempDir;
 
     const ENCODINGS: [DisequalityEncoding; 4] = [
@@ -1008,6 +1008,18 @@ mod tests {
             std::fs::write(directory.path().join(name), contents).unwrap();
         }
         directory
+    }
+
+    fn disequality_fixtures() -> Vec<PathBuf> {
+        let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/disequality");
+        let mut fixtures = std::fs::read_dir(fixture_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "egg"))
+            .collect::<Vec<_>>();
+        fixtures.sort();
+        assert!(!fixtures.is_empty());
+        fixtures
     }
 
     #[test]
@@ -1576,103 +1588,117 @@ mod tests {
     }
 
     #[test]
-    fn all_encodings_run_paper_and_artifact_ports() {
-        let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/disequality");
-        for fixture in [
-            "paper-figure-2.egg",
-            "artifact-euf-example.egg",
-            "artifact-propel-example.egg",
-            "artifact-parameter-shape.egg",
-        ] {
-            let program = std::fs::read_to_string(fixture_dir.join(fixture)).unwrap();
-            for encoding in ENCODINGS {
-                let mut egraph = new_experimental_egraph_with_disequality_encoding(encoding);
-                egraph
-                    .parse_and_run_program(Some(fixture.to_owned()), &program)
-                    .unwrap_or_else(|error| panic!("{encoding:?} failed {fixture}: {error}"));
-            }
-        }
-    }
-
-    #[test]
-    fn relational_parameter_analysis_composes_with_all_proof_modes() {
-        let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let program_path = crate_dir.join("benchmarks/disequality/parameter-analysis.egg");
-        let program = std::fs::read_to_string(&program_path).unwrap();
-        let facts = parameter_analysis_facts();
-
-        for encoding in ENCODINGS {
-            for (mode, mut egraph) in egraphs_for_all_modes(encoding) {
-                egraph.fact_directory = Some(facts.path().to_owned());
-                egraph
-                    .parse_and_run_program(Some(program_path.display().to_string()), &program)
-                    .unwrap_or_else(|error| {
-                        panic!("{encoding:?} {mode} failed relational input: {error}")
-                    });
-                egraph
-                    .parse_and_run_program(None, "(check (TermAt 3 (f (N1))))")
-                    .unwrap_or_else(|error| {
-                        panic!("{encoding:?} {mode} failed reconstructed-term check: {error}")
-                    });
-            }
-        }
-    }
-
-    #[test]
-    fn captured_artifact_sources_compose_with_all_proof_modes() {
-        let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let repository_root = crate_dir.parent().unwrap();
-        for relative_path in [
-            "benchmarks/disequality/snapshots/euf/sat.egg",
-            "benchmarks/disequality/snapshots/propel/gset_comm.egg",
-        ] {
-            let program_path = repository_root.join(relative_path);
-            let program = std::fs::read_to_string(&program_path).unwrap();
+    fn all_disequality_fixtures_compose_with_all_encodings_and_proof_modes() {
+        for fixture in disequality_fixtures() {
+            let program = std::fs::read_to_string(&fixture).unwrap();
+            let parameter_facts = (fixture.file_name().unwrap() == "parameter-analysis.egg")
+                .then(parameter_analysis_facts);
             for encoding in ENCODINGS {
                 for (mode, mut egraph) in egraphs_for_all_modes(encoding) {
+                    if let Some(facts) = &parameter_facts {
+                        egraph.fact_directory = Some(facts.path().to_owned());
+                    }
                     egraph
-                        .parse_and_run_program(Some(program_path.display().to_string()), &program)
+                        .parse_and_run_program(Some(fixture.display().to_string()), &program)
                         .unwrap_or_else(|error| {
-                            panic!("{encoding:?} {mode} failed {relative_path}: {error}")
+                            panic!("{encoding:?} {mode} failed {}: {error}", fixture.display())
                         });
+                    if parameter_facts.is_some() {
+                        egraph
+                            .parse_and_run_program(None, "(check (TermAt 3 (f (N1))))")
+                            .unwrap_or_else(|error| {
+                                panic!(
+                                    "{encoding:?} {mode} lost reconstructed terms in {}: {error}",
+                                    fixture.display()
+                                )
+                            });
+                    }
                 }
             }
         }
     }
 
     #[test]
-    fn parameter_analysis_desugared_snapshots_match_and_replay() {
+    fn disequality_fixture_desugared_snapshots_match_and_replay() {
         let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let program_path = crate_dir.join("benchmarks/disequality/parameter-analysis.egg");
-        let program = std::fs::read_to_string(&program_path).unwrap();
-        let facts = parameter_analysis_facts();
+        let snapshot_dir = crate_dir.join("tests/disequality/snapshots");
+        let fixtures = disequality_fixtures();
+        let mut expected_snapshots = fixtures
+            .iter()
+            .flat_map(|fixture| {
+                ENCODINGS.map(|encoding| {
+                    snapshot_dir.join(format!(
+                        "{}.{}.desugared.egg",
+                        fixture.file_stem().unwrap().to_string_lossy(),
+                        encoding.cli_name()
+                    ))
+                })
+            })
+            .collect::<Vec<_>>();
+        expected_snapshots.sort();
+        let mut actual_snapshots = std::fs::read_dir(&snapshot_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "egg"))
+            .collect::<Vec<_>>();
+        actual_snapshots.sort();
+        assert_eq!(actual_snapshots, expected_snapshots);
 
-        for encoding in ENCODINGS {
-            let mut compiler = new_experimental_egraph_with_disequality_encoding(encoding);
-            let resolved = compiler
-                .resolve_program(Some(program_path.display().to_string()), &program)
-                .unwrap_or_else(|error| panic!("{encoding:?} failed to desugar: {error}"));
-            let rendered = sanitize_internal_names(&resolved)
-                .into_iter()
-                .map(|command| command.to_string() + "\n")
-                .collect::<String>();
-            let snapshot_path = crate_dir.join(format!(
-                "benchmarks/disequality/desugared/{}.egg",
-                encoding.cli_name()
-            ));
-            let snapshot = std::fs::read_to_string(&snapshot_path).unwrap();
-            assert_eq!(rendered, snapshot, "stale {} snapshot", encoding.cli_name());
-
-            let mut replay = new_experimental_egraph();
-            replay.fact_directory = Some(facts.path().to_owned());
-            replay
-                .parse_and_run_program(Some(snapshot_path.display().to_string()), &snapshot)
-                .unwrap_or_else(|error| panic!("{encoding:?} snapshot failed to replay: {error}"));
-            replay
-                .parse_and_run_program(None, "(check (TermAt 3 (f (N1))))")
-                .unwrap_or_else(|error| {
-                    panic!("{encoding:?} snapshot lost reconstructed terms: {error}")
+        for fixture in fixtures {
+            let program = std::fs::read_to_string(&fixture).unwrap();
+            let stem = fixture.file_stem().unwrap().to_string_lossy();
+            let parameter_facts = (fixture.file_name().unwrap() == "parameter-analysis.egg")
+                .then(parameter_analysis_facts);
+            for encoding in ENCODINGS {
+                let mut compiler = new_experimental_egraph_with_disequality_encoding(encoding);
+                let resolved = compiler
+                    .resolve_program(Some(fixture.display().to_string()), &program)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "{encoding:?} failed to desugar {}: {error}",
+                            fixture.display()
+                        )
+                    });
+                let rendered = sanitize_internal_names(&resolved)
+                    .into_iter()
+                    .map(|command| command.to_string() + "\n")
+                    .collect::<String>();
+                let snapshot_path =
+                    snapshot_dir.join(format!("{stem}.{}.desugared.egg", encoding.cli_name()));
+                let snapshot = std::fs::read_to_string(&snapshot_path).unwrap_or_else(|error| {
+                    panic!("missing snapshot {}: {error}", snapshot_path.display())
                 });
+                assert_eq!(
+                    rendered,
+                    snapshot,
+                    "stale {} snapshot for {}",
+                    encoding.cli_name(),
+                    fixture.display()
+                );
+
+                for (mode, mut replay) in egraphs_for_all_modes(DisequalityEncoding::default()) {
+                    if let Some(facts) = &parameter_facts {
+                        replay.fact_directory = Some(facts.path().to_owned());
+                    }
+                    replay
+                        .parse_and_run_program(Some(snapshot_path.display().to_string()), &snapshot)
+                        .unwrap_or_else(|error| {
+                            panic!(
+                                "{encoding:?} {mode} snapshot for {} failed to replay: {error}",
+                                fixture.display()
+                            )
+                        });
+                    if parameter_facts.is_some() {
+                        replay
+                            .parse_and_run_program(None, "(check (TermAt 3 (f (N1))))")
+                            .unwrap_or_else(|error| {
+                                panic!(
+                                    "{encoding:?} {mode} snapshot lost reconstructed terms: {error}"
+                                )
+                            });
+                    }
+                }
+            }
         }
     }
 

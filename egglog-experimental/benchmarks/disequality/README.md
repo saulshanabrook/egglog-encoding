@@ -58,8 +58,9 @@ from the paper and artifact.
 
 ## Relational workload
 
-[`parameter-analysis.egg`](parameter-analysis.egg) is the complete benchmark
-driver. It uses only public egglog source constructs:
+[`parameter-analysis.egg`](../../tests/disequality/parameter-analysis.egg) is
+the complete benchmark driver and a checked-in test fixture. It uses only
+public egglog source constructs:
 
 1. Six TSV inputs describe numeral, `f`, `g`, and `h` AST occurrences, roots
    paired by the artifact, and the disequality cutoff.
@@ -142,7 +143,7 @@ target/release/egglog-experimental \
   --disequality-encoding nee \
   --threads 1 \
   --fact-directory egglog-experimental/benchmarks/disequality/parameter-analysis-facts \
-  egglog-experimental/benchmarks/disequality/parameter-analysis.egg
+  egglog-experimental/tests/disequality/parameter-analysis.egg
 ```
 
 Run three interleaved rounds against the artifact's native EE and DE binaries:
@@ -150,7 +151,7 @@ Run three interleaved rounds against the artifact's native EE and DE binaries:
 ```sh
 uv run python egglog-experimental/benchmarks/disequality/run_parameter_analysis.py \
   --egglog target/release/egglog-experimental \
-  --program egglog-experimental/benchmarks/disequality/parameter-analysis.egg \
+  --program egglog-experimental/tests/disequality/parameter-analysis.egg \
   --facts egglog-experimental/benchmarks/disequality/parameter-analysis-facts \
   --native-ee /path/to/parameter_analysis_ee \
   --native-de /path/to/parameter_analysis_de \
@@ -165,20 +166,15 @@ process wall time. With the current timing-summary-v4 schema, each ruleset cost
 includes assembly, search, apply, execution, and merge. Global native rebuild
 and command/frontend phases remain in `non_ruleset_wall_ms`.
 
-Regenerate the four actual compiler expansions after building the recorded
-compiler revision:
+Regenerate the readable EUF and Propel captures plus all four compiler
+expansions for every disequality test fixture:
 
 ```sh
-uv run python -m scripts.paper_benchmarks.snapshot_disequality_parameter_analysis \
-  --binary target/release/egglog-experimental \
-  --program egglog-experimental/benchmarks/disequality/parameter-analysis.egg \
-  --output egglog-experimental/benchmarks/disequality/desugared \
-  --compiler-revision "$(git rev-parse HEAD)" \
-  --force
+make -C benchmarks/disequality update-snapshots
 ```
 
-Use `--check` without `--compiler-revision` to regenerate all four expansions
-and compare them byte-for-byte with the committed files.
+Use `make -C benchmarks/disequality snapshots` to regenerate all outputs and
+compare them byte-for-byte with the committed files.
 
 ## Timing boundaries
 

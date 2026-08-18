@@ -245,23 +245,23 @@ Use `--glob 'tip_*.propel'` to select the 39 TIP programs used by the paper.
 
 ## Source snapshots
 
-[`snapshots/`](snapshots/) contains two compact examples:
+[`egglog-experimental/tests/disequality/`](../../egglog-experimental/tests/disequality/)
+contains seven encoding-independent source programs: Figure 2, three compact
+artifact ports, the full parameter-analysis driver, the SAT EUF fixture's
+single MiniSat model, and the final graph out of 52 produced by Propel's
+`gset_comm.propel` run. Each file names its source in opening comments.
 
-- the SAT EUF fixture's single MiniSat model; and
-- the final graph out of 52 produced by Propel's `gset_comm.propel` run.
-
-Each example has one encoding-independent direct-constructor source program and four actual
-desugared programs, one for EE, OEE, NEE, and DE. The replay attaches two
-`HostWitness` terms to the first explicit host union and checks that the
+The nested `snapshots/` directory contains four actual desugared programs for
+every source, one for EE, OEE, NEE, and DE. The EUF and Propel captures attach
+two `HostWitness` terms to the first explicit host union and check that the
 witnesses are equal, so proof testing validates an equality derived from the
 captured union. The manifest records the direct term language, input hashes,
-graph/model selection, output hashes, and the replay treatments.
-Generation replays every raw and desugared file through the egglog CLI under
-ordinary execution, term encoding, proof generation, proof testing, and proof
-extraction. Each raw capture is replayed under all four disequality encodings.
+graph/model selection, source hashes, output hashes, and replay treatments.
 
-The Rust regression suite additionally runs both raw captures with all four
-encodings in ordinary, term, proofs, proof-testing, and proof-extraction modes.
+Generation replays all 7 source programs under 4 encodings and all 28
+desugared programs through the egglog CLI under ordinary execution, term
+encoding, proof generation, proof testing, and proof extraction. The Rust
+regression independently desugars, byte-compares, and replays the same matrix.
 Top-level `begin` blocks are lowered to ordered actions for proof checking while
 execution retains the original local block scope. The emitted source uses the
 anonymous form and its equality witness forces proof testing and extraction to
@@ -274,7 +274,8 @@ uv run --locked python benchmarks/disequality/scripts/generate_snapshots.py \
 ```
 
 Use `--force` instead of `--check` to update the checked-in files. Replay the
-committed captures without rebuilding either host integration with:
+committed fixtures and snapshots without rebuilding either host integration
+with:
 
 ```sh
 make -C benchmarks/disequality replay-snapshots
