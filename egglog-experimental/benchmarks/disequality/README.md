@@ -29,7 +29,9 @@ That command saturates the private ruleset and reports `disequality constraint
 contradicted` if a stored constraint has become reflexive. It is a no-op before
 the first disequality is compiled. An ordinary `(run)` does not accidentally
 run extension rules. Generated names use egglog's reserved `@` prefix, which
-ordinary source programs cannot forge.
+ordinary source programs cannot forge. Sort-specific names include the source
+sort directly, as in `@disequality-ne-Term`; EE and OEE use the unsuffixed
+`@disequality-eq` for equality over their private truth sort.
 
 | CLI value | Paper name | Compiled representation |
 | --- | --- | --- |

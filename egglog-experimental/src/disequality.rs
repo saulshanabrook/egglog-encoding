@@ -8,7 +8,6 @@ use egglog::{
 };
 use std::{
     collections::{BTreeMap, HashSet},
-    fmt::Write,
     sync::Arc,
 };
 use std::{fmt, str::FromStr};
@@ -689,7 +688,6 @@ fn equality_support(span: &Span, sort: &str, encoding: DisequalityEncoding) -> V
 
 fn equality_embedding_support(span: &Span, sort: &str) -> Vec<Command> {
     let equality = equality_symbol(sort);
-    let suffix = symbol_component(sort);
     let x = Expr::Var(span.clone(), "@disequality-x".to_owned());
     let y = Expr::Var(span.clone(), "@disequality-y".to_owned());
     let eq_xy = call(span, &equality, vec![x.clone(), y.clone()]);
@@ -704,19 +702,19 @@ fn equality_embedding_support(span: &Span, sort: &str) -> Vec<Command> {
         constructor(span, &equality, vec![sort, sort], TRUTH_SORT),
         rule(
             span,
-            format!("@disequality-ee-lift-{suffix}"),
+            format!("@disequality-ee-lift-{sort}"),
             vec![Fact::Eq(span.clone(), eq_xy.clone(), true_expr.clone())],
             vec![Action::Union(span.clone(), x.clone(), y.clone())],
         ),
         rule(
             span,
-            format!("@disequality-ee-symmetry-{suffix}"),
+            format!("@disequality-ee-symmetry-{sort}"),
             vec![Fact::Eq(span.clone(), eq_xy.clone(), false_expr.clone())],
             vec![Action::Union(span.clone(), eq_yx, false_expr.clone())],
         ),
         rule(
             span,
-            format!("@disequality-ee-double-negation-{suffix}"),
+            format!("@disequality-ee-double-negation-{sort}"),
             vec![Fact::Eq(
                 span.clone(),
                 call(
@@ -730,13 +728,13 @@ fn equality_embedding_support(span: &Span, sort: &str) -> Vec<Command> {
         ),
         rule(
             span,
-            format!("@disequality-ee-reflexive-left-{suffix}"),
+            format!("@disequality-ee-reflexive-left-{sort}"),
             vec![Fact::Eq(span.clone(), eq_xy.clone(), false_expr.clone())],
             vec![Action::Union(span.clone(), eq_xx, true_expr.clone())],
         ),
         rule(
             span,
-            format!("@disequality-ee-reflexive-right-{suffix}"),
+            format!("@disequality-ee-reflexive-right-{sort}"),
             vec![Fact::Eq(span.clone(), eq_xy, false_expr)],
             vec![Action::Union(span.clone(), eq_yy, true_expr)],
         ),
@@ -745,7 +743,6 @@ fn equality_embedding_support(span: &Span, sort: &str) -> Vec<Command> {
 
 fn optimized_equality_embedding_support(span: &Span, sort: &str) -> Vec<Command> {
     let equality = equality_symbol(sort);
-    let suffix = symbol_component(sort);
     let x = Expr::Var(span.clone(), "@disequality-x".to_owned());
     let y = Expr::Var(span.clone(), "@disequality-y".to_owned());
     let eq_xy = call(span, &equality, vec![x.clone(), y.clone()]);
@@ -756,7 +753,7 @@ fn optimized_equality_embedding_support(span: &Span, sort: &str) -> Vec<Command>
         constructor(span, &equality, vec![sort, sort], TRUTH_SORT),
         rule(
             span,
-            format!("@disequality-oee-lift-{suffix}"),
+            format!("@disequality-oee-lift-{sort}"),
             vec![Fact::Eq(
                 span.clone(),
                 eq_xy.clone(),
@@ -766,7 +763,7 @@ fn optimized_equality_embedding_support(span: &Span, sort: &str) -> Vec<Command>
         ),
         rule(
             span,
-            format!("@disequality-oee-double-negation-{suffix}"),
+            format!("@disequality-oee-double-negation-{sort}"),
             vec![Fact::Eq(
                 span.clone(),
                 call(
@@ -780,7 +777,7 @@ fn optimized_equality_embedding_support(span: &Span, sort: &str) -> Vec<Command>
         ),
         rule(
             span,
-            format!("@disequality-oee-contradiction-{suffix}"),
+            format!("@disequality-oee-contradiction-{sort}"),
             vec![Fact::Eq(
                 span.clone(),
                 call(span, &equality, vec![x.clone(), x]),
@@ -801,7 +798,7 @@ fn negated_equality_support(span: &Span, sort: &str) -> Vec<Command> {
         constructor(span, &negated_equality, vec![sort, sort], sort),
         rule(
             span,
-            format!("@disequality-nee-contradiction-{}", symbol_component(sort)),
+            format!("@disequality-nee-contradiction-{sort}"),
             vec![Fact::Fact(call(
                 span,
                 &negated_equality,
@@ -827,7 +824,7 @@ fn disequality_edge_support(span: &Span, sort: &str) -> Vec<Command> {
         },
         rule(
             span,
-            format!("@disequality-de-symmetry-{}", symbol_component(sort)),
+            format!("@disequality-de-symmetry-{sort}"),
             vec![Fact::Fact(call(span, &edge, vec![x.clone(), y.clone()]))],
             vec![Action::Expr(
                 span.clone(),
@@ -836,7 +833,7 @@ fn disequality_edge_support(span: &Span, sort: &str) -> Vec<Command> {
         ),
         rule(
             span,
-            format!("@disequality-de-contradiction-{}", symbol_component(sort)),
+            format!("@disequality-de-contradiction-{sort}"),
             vec![Fact::Fact(call(span, &edge, vec![x.clone(), x]))],
             vec![Action::Panic(
                 span.clone(),
@@ -924,23 +921,19 @@ fn call(span: &Span, head: &str, args: Vec<Expr>) -> Expr {
 }
 
 fn equality_symbol(sort: &str) -> String {
-    format!("@disequality-eq-{}", symbol_component(sort))
+    if sort == TRUTH_SORT {
+        "@disequality-eq".to_owned()
+    } else {
+        format!("@disequality-eq-{sort}")
+    }
 }
 
 fn negated_equality_symbol(sort: &str) -> String {
-    format!("@disequality-ne-{}", symbol_component(sort))
+    format!("@disequality-ne-{sort}")
 }
 
 fn disequality_edge_symbol(sort: &str) -> String {
-    format!("@disequality-edge-{}", symbol_component(sort))
-}
-
-fn symbol_component(value: &str) -> String {
-    let mut encoded = String::with_capacity(value.len() * 2);
-    for byte in value.bytes() {
-        write!(encoded, "{byte:02x}").expect("writing to a String cannot fail");
-    }
-    encoded
+    format!("@disequality-edge-{sort}")
 }
 
 #[cfg(test)]
@@ -1020,6 +1013,20 @@ mod tests {
         fixtures.sort();
         assert!(!fixtures.is_empty());
         fixtures
+    }
+
+    #[test]
+    fn disequality_support_names_are_readable() {
+        assert_eq!(super::equality_symbol("Term"), "@disequality-eq-Term");
+        assert_eq!(super::equality_symbol(super::TRUTH_SORT), "@disequality-eq");
+        assert_eq!(
+            super::negated_equality_symbol("Term"),
+            "@disequality-ne-Term"
+        );
+        assert_eq!(
+            super::disequality_edge_symbol("Term"),
+            "@disequality-edge-Term"
+        );
     }
 
     #[test]
