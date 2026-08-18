@@ -104,8 +104,8 @@ pub(crate) fn eval_merge_expr(
         .vars()
         .filter_map(|var| {
             let value = match var.name.as_str() {
-                "old" => Some(old_term),
-                "new" => Some(new_term),
+                "old" if !var.is_global_ref => Some(old_term),
+                "new" if !var.is_global_ref => Some(new_term),
                 _ => globals.get(&var.name).copied(),
             };
             value.map(|value| (var.name, value))
