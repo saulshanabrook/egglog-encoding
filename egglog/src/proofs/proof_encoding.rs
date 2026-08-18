@@ -1907,6 +1907,11 @@ impl<'a> ProofInstrumentor<'a> {
                 })
             }
             ResolvedExpr::Call(_, ResolvedCall::Func(func_type), args) => {
+                if func_type.subtype == FunctionSubtype::Custom
+                    && self.egraph.type_info.is_global(&func_type.name)
+                {
+                    return Operand::plain(self.lookup_global(&func_type.name, emit.stmts));
+                }
                 let arg_vars = args
                     .iter()
                     .map(|a| self.instrument_merge_body(emit, a, fname, idx))

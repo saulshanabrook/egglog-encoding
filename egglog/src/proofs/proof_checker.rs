@@ -68,6 +68,7 @@ pub(crate) fn run_merge(
     term_dag: &mut TermDag,
     func_name: &str,
     prog: &[ResolvedNCommand],
+    globals: &HashMap<String, TermId>,
     old_term: TermId,
     new_term: TermId,
 ) -> Result<(TermId, HashSet<Proposition>), ProofCheckError> {
@@ -85,7 +86,13 @@ pub(crate) fn run_merge(
                     function_name: func_name.to_string(),
                 })
             })?;
-            return eval_expr_with_subst("merge_function", &merge.result, term_dag, &subst);
+            return eval_expr_with_subst(
+                "merge_function",
+                &merge.result,
+                term_dag,
+                &subst,
+                Some(globals),
+            );
         }
     }
     Err(ProofCheckErrorKind::FunctionNotFound {
@@ -114,16 +121,16 @@ pub(crate) fn process_actions(
             GenericAction::Let(_, var, expr) => {
                 // Evaluate the expression and collect propositions
                 let (term_id, new_props) =
-                    eval_expr_with_subst(rule_name, expr, term_dag, &bindings)?;
+                    eval_expr_with_subst(rule_name, expr, term_dag, &bindings, None)?;
                 bindings.insert(var.name.clone(), term_id);
                 propositions.extend(new_props);
             }
             GenericAction::Union(_, lhs_expr, rhs_expr) => {
                 // Union creates ground equalities
                 let (lhs_term, lhs_props) =
-                    eval_expr_with_subst(rule_name, lhs_expr, term_dag, &bindings)?;
+                    eval_expr_with_subst(rule_name, lhs_expr, term_dag, &bindings, None)?;
                 let (rhs_term, rhs_props) =
-                    eval_expr_with_subst(rule_name, rhs_expr, term_dag, &bindings)?;
+                    eval_expr_with_subst(rule_name, rhs_expr, term_dag, &bindings, None)?;
 
                 // Collect propositions from evaluating both sides
                 propositions.extend(lhs_props);
@@ -138,12 +145,13 @@ pub(crate) fn process_actions(
                 all_args.push(rhs.clone());
                 let call_expr = ResolvedExpr::Call(crate::ast::Span::Panic, func.clone(), all_args);
                 let (_term, new_props) =
-                    eval_expr_with_subst(rule_name, &call_expr, term_dag, &bindings)?;
+                    eval_expr_with_subst(rule_name, &call_expr, term_dag, &bindings, None)?;
                 propositions.extend(new_props);
             }
             GenericAction::Expr(_, expr) => {
                 // Expr creates reflexive equality for its result
-                let (_, new_props) = eval_expr_with_subst(rule_name, expr, term_dag, &bindings)?;
+                let (_, new_props) =
+                    eval_expr_with_subst(rule_name, expr, term_dag, &bindings, None)?;
                 propositions.extend(new_props);
             }
             GenericAction::Panic(_, _) => {
@@ -162,6 +170,8 @@ pub(crate) fn process_actions(
 }
 
 /// Evaluate an expression under a substitution.
+/// When `globals` is present, an explicitly global [`crate::ast::ResolvedVar`]
+/// reads that map even if a merge-local substitution has the same spelling.
 /// Returns Ok((TermId, propositions)) if successful, where propositions include
 /// all reflexive equalities for the term and its subterms.
 /// Returns Err(()) if evaluation fails.
@@ -170,23 +180,32 @@ pub(crate) fn eval_expr_with_subst(
     expr: &ResolvedExpr,
     dag: &mut TermDag,
     subst: &HashMap<String, TermId>,
+    globals: Option<&HashMap<String, TermId>>,
 ) -> Result<(TermId, HashSet<Proposition>), ProofCheckError> {
     let mut propositions = HashSet::default();
 
     let term_id = match expr {
         ResolvedExpr::Lit(_, lit) => dag.lit(lit.clone()),
-        ResolvedExpr::Var(_, var) => subst.get(&var.name).copied().ok_or_else(|| {
-            ProofCheckError::from(ProofCheckErrorKind::UnboundVariable {
-                rule_name: rule_name.to_string(),
-                variable: var.name.clone(),
-                available: subst.keys().cloned().collect::<Vec<_>>().join(", "),
+        ResolvedExpr::Var(_, var) => {
+            let bindings = if var.is_global_ref {
+                globals.unwrap_or(subst)
+            } else {
+                subst
+            };
+            bindings.get(&var.name).copied().ok_or_else(|| {
+                ProofCheckError::from(ProofCheckErrorKind::UnboundVariable {
+                    rule_name: rule_name.to_string(),
+                    variable: var.name.clone(),
+                    available: bindings.keys().cloned().collect::<Vec<_>>().join(", "),
+                })
             })
-        })?,
+        }?,
         ResolvedExpr::Call(_, head, args) => match head {
             ResolvedCall::Func(_func_type) => {
                 let mut arg_terms = Vec::new();
                 for arg in args {
-                    let (arg_term, arg_props) = eval_expr_with_subst(rule_name, arg, dag, subst)?;
+                    let (arg_term, arg_props) =
+                        eval_expr_with_subst(rule_name, arg, dag, subst, globals)?;
                     arg_terms.push(arg_term);
                     propositions.extend(arg_props);
                 }
@@ -196,7 +215,8 @@ pub(crate) fn eval_expr_with_subst(
                 // run validator, throwing error if it fails
                 let mut arg_terms = Vec::new();
                 for arg in args {
-                    let (arg_term, arg_props) = eval_expr_with_subst(rule_name, arg, dag, subst)?;
+                    let (arg_term, arg_props) =
+                        eval_expr_with_subst(rule_name, arg, dag, subst, globals)?;
                     arg_terms.push(arg_term);
                     propositions.extend(arg_props);
                 }
@@ -816,8 +836,14 @@ impl ProofStore {
                     };
 
                 // Run the merge function to get the expected result
-                let (merged_term_child, mut merged_props) =
-                    run_merge(&mut self.term_dag, function, program, old_term, new_term)?;
+                let (merged_term_child, mut merged_props) = run_merge(
+                    &mut self.term_dag,
+                    function,
+                    program,
+                    &ctx.global_bindings,
+                    old_term,
+                    new_term,
+                )?;
                 // Add f(inputs..., merged_term) to merged_props
                 let mut merged_view_args = input_args.clone();
                 merged_view_args.push(merged_term_child);
@@ -1050,7 +1076,7 @@ impl ProofStore {
             // A bare container-primitive fact binds nothing, but must still
             // evaluate under the substitution for the premise to hold.
             ResolvedFact::Fact(expr) => {
-                eval_expr_with_subst(rule_name, expr, &mut self.term_dag, subst)?;
+                eval_expr_with_subst(rule_name, expr, &mut self.term_dag, subst, None)?;
                 return Ok(());
             }
         };
@@ -1096,7 +1122,8 @@ impl ProofStore {
         match expr {
             ResolvedExpr::Var(_, v) => Ok(subst.get(&v.name).copied()),
             _ => {
-                let (term, _) = eval_expr_with_subst(rule_name, expr, &mut self.term_dag, subst)?;
+                let (term, _) =
+                    eval_expr_with_subst(rule_name, expr, &mut self.term_dag, subst, None)?;
                 Ok(Some(term))
             }
         }
