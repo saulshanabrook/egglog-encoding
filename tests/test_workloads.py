@@ -96,6 +96,89 @@ def test_default_workloads_are_the_ten_research_cases() -> None:
     assert pointer.fact_directory_sha256.startswith("sha256:")
 
 
+def test_disequality_suite_contains_the_two_large_proof_workloads() -> None:
+    expected = (
+        workloads.WorkloadConfig("egglog-experimental/benchmarks/disequality/euf-614981-model-0000.egg"),
+        workloads.WorkloadConfig(
+            file="egglog-experimental/tests/disequality/parameter-analysis.egg",
+            fact_directory="egglog-experimental/benchmarks/disequality/parameter-analysis-facts",
+            prepare_command="make disequality-parameter-facts",
+        ),
+    )
+    assert expected == workloads.DISEQUALITY_WORKLOADS
+
+
+def test_disequality_euf_benchmark_is_the_substantial_captured_model() -> None:
+    path = ROOT / "egglog-experimental/benchmarks/disequality/euf-614981-model-0000.egg"
+    source = path.read_text(encoding="utf-8")
+
+    assert source.count("  (let term") == 3_199
+    assert source.count("  (union ") == 1_442
+    assert source.count("  (disequal ") == 447
+    assert not workloads.file_contains_executable_prove_command(path)
+
+
+def test_disequality_suite_assigns_facts_only_to_parameter_analysis(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    euf = tmp_path / "euf.egg"
+    euf.write_text("(check (= 1 1))\n", encoding="utf-8")
+    parameter = tmp_path / "parameter.egg"
+    parameter.write_text('(relation Edge (i64 i64))\n(input Edge "edges.tsv")\n', encoding="utf-8")
+    facts = tmp_path / "facts"
+    facts.mkdir()
+    (facts / "edges.tsv").write_text("1\t2\n", encoding="utf-8")
+    monkeypatch.setitem(
+        workloads.WORKLOAD_SUITES,
+        "test-disequality",
+        (
+            workloads.WorkloadConfig("euf.egg"),
+            workloads.WorkloadConfig(
+                file="parameter.egg",
+                fact_directory="facts",
+                prepare_command="make facts",
+            ),
+        ),
+    )
+
+    resolved = workloads.resolve_files([], tmp_path, suite="test-disequality")
+
+    assert resolved[0].fact_directory is None
+    assert resolved[1].fact_directory == facts.resolve()
+    assert resolved[1].fact_directory_sha256 == targets.sha256_directory(facts)
+
+
+def test_disequality_suite_missing_facts_reports_preparation_command(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    program = tmp_path / "parameter.egg"
+    program.write_text('(relation Edge (i64 i64))\n(input Edge "edges.tsv")\n', encoding="utf-8")
+    monkeypatch.setitem(
+        workloads.WORKLOAD_SUITES,
+        "test-disequality",
+        (
+            workloads.WorkloadConfig(
+                file="parameter.egg",
+                fact_directory="facts",
+                prepare_command="make facts",
+            ),
+        ),
+    )
+
+    with pytest.raises(FileNotFoundError, match="make facts"):
+        workloads.resolve_files([], tmp_path, suite="test-disequality")
+
+
+def test_named_suite_cannot_be_combined_with_explicit_files(tmp_path: Path) -> None:
+    program = tmp_path / "input.egg"
+    program.write_text("(check (= 1 1))\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="cannot be combined"):
+        workloads.resolve_files(["input.egg"], tmp_path, suite="disequality")
+
+
 def test_pointer_initdb_facts_are_the_complete_consumed_artifact_relations() -> None:
     fact_directory = ROOT / "egglog/tests/pointer-analysis-initdb"
     files = tuple(sorted(fact_directory.glob("*.csv")))

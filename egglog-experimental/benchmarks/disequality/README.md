@@ -60,6 +60,25 @@ from the paper and artifact.
 
 ## Relational workload
 
+The root `./bench.py --suite disequality` suite runs two proof-performance
+workloads:
+
+- [`euf-614981-model-0000.egg`](euf-614981-model-0000.egg), a self-contained
+  direct-constructor capture from the larger of the two EUF inputs measured
+  during this integration; and
+- [`parameter-analysis.egg`](../../tests/disequality/parameter-analysis.egg),
+  the full relational parameter-analysis driver using generated facts.
+
+Propel is intentionally absent: its largest emitted standalone graph was only
+949 lines and ran in tens of milliseconds, which is too small for this tracking
+suite. Generate the ignored parameter facts and run proofs versus ordinary
+execution with:
+
+```sh
+make disequality-parameter-facts
+./bench.py --suite disequality
+```
+
 [`parameter-analysis.egg`](../../tests/disequality/parameter-analysis.egg) is
 the complete benchmark driver and a checked-in test fixture. It uses only
 public egglog source constructs:
