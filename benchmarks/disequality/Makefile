@@ -17,6 +17,8 @@ check: rust-test euf-test propel-jvm propel-native propel-smoke snapshots
 
 rust-test:
 	cd "$(ROOT)" && cargo test -p egglog-experimental disequality --lib
+	cd "$(ROOT)" && cargo test -p egglog-experimental --bin egglog-experimental
+	cd "$(ROOT)" && cargo test -p egglog --test container_rebuild custom_set_output_key_collapse_normal_mode
 	cd "$(ROOT)" && cargo test -p egglog-disequality-backend
 
 euf-test:

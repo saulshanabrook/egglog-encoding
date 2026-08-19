@@ -7,19 +7,18 @@ fn main() {
             eprintln!("error: {error}");
             std::process::exit(2);
         });
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+    if cli_options(&args).any(|arg| arg == "--help" || arg == "-h") {
         println!(
             "Experimental options:\n  --disequality-encoding <ENCODING>  Disequality encoding [default: ee] [possible values: {}]\n",
             DisequalityEncoding::POSSIBLE_VALUES
         );
     }
 
-    let proof_mode = args.iter().any(|arg| {
-        matches!(
-            arg.to_str(),
-            Some("--proofs" | "--proof-testing" | "--proof-extraction" | "--term-encoding")
-        )
-    });
+    let proof_mode =
+        validate_disequality_mode(disequality_encoding, &args).unwrap_or_else(|error| {
+            eprintln!("error: {error}");
+            std::process::exit(2);
+        });
     let egraph = if proof_mode {
         egglog_experimental::new_experimental_egraph_for_proofs_with_disequality_encoding(
             disequality_encoding,
@@ -28,6 +27,26 @@ fn main() {
         egglog_experimental::new_experimental_egraph_with_disequality_encoding(disequality_encoding)
     };
     egglog::cli_from(egraph, args)
+}
+
+fn validate_disequality_mode(
+    encoding: DisequalityEncoding,
+    args: &[OsString],
+) -> Result<bool, String> {
+    let proof_mode = cli_options(args).any(|arg| {
+        matches!(
+            arg.to_str(),
+            Some("--proofs" | "--proof-testing" | "--proof-extraction" | "--term-encoding")
+        )
+    });
+    if proof_mode && encoding == DisequalityEncoding::DisequalityEdges {
+        return Err("--disequality-encoding de is currently supported only in normal mode; it cannot be combined with --term-encoding, --proofs, --proof-testing, or --proof-extraction".to_owned());
+    }
+    Ok(proof_mode)
+}
+
+fn cli_options(args: &[OsString]) -> impl Iterator<Item = &OsString> {
+    args.iter().skip(1).take_while(|arg| *arg != "--")
 }
 
 fn parse_disequality_encoding(
@@ -136,5 +155,48 @@ mod tests {
         )
         .unwrap_err();
         assert!(duplicate.contains("only be specified once"));
+    }
+
+    #[test]
+    fn recognizes_every_term_and_proof_mode_as_incompatible_with_de() {
+        for flag in [
+            "--term-encoding",
+            "--proofs",
+            "--proof-testing",
+            "--proof-extraction",
+        ] {
+            let args = [OsString::from("egglog-experimental"), OsString::from(flag)];
+            assert!(
+                validate_disequality_mode(DisequalityEncoding::DisequalityEdges, &args)
+                    .unwrap_err()
+                    .contains("supported only in normal mode")
+            );
+        }
+        assert!(
+            !validate_disequality_mode(
+                DisequalityEncoding::DisequalityEdges,
+                &[OsString::from("egglog-experimental")]
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn mode_flags_after_end_of_options_are_input_paths() {
+        for flag in [
+            "--term-encoding",
+            "--proofs",
+            "--proof-testing",
+            "--proof-extraction",
+        ] {
+            let args = [
+                OsString::from("egglog-experimental"),
+                OsString::from("--"),
+                OsString::from(flag),
+            ];
+            assert!(
+                !validate_disequality_mode(DisequalityEncoding::DisequalityEdges, &args).unwrap()
+            );
+        }
     }
 }

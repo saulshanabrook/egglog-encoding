@@ -1,6 +1,6 @@
 # Dis/Equality Graphs egglog integration
 
-Run date: 2026-08-17 (America/New_York)
+Run dates: 2026-08-12 through 2026-08-19 (America/New_York)
 
 This directory evaluates the four compiled disequality encodings in all three
 case studies from *Dis/Equality Graphs*:
@@ -10,13 +10,15 @@ case studies from *Dis/Equality Graphs*:
 | `ee` | Equality embedding (EE) | A private equality term equated with false, plus the paper's propagation rules |
 | `oee` | Optimized equality embedding (OEE) | Equality terms with reduced propagation and a reflexive contradiction rule |
 | `nee` | Negated equality embedding (NEE) | A private `ne(lhs, rhs)` term and a reflexive contradiction rule |
-| `de` | Disequality edges (DE) | A symmetric relation over e-classes and a self-edge contradiction rule |
+| `de` | Disequality edges (DE) | A function from each e-class to a merged `Set` of disequal neighbors |
 
 These implementations do not modify union-find, e-class storage, or
 congruence closure. The `(disequal lhs rhs)`, `(check-disequal lhs rhs)`, and
 `(check-disequalities)` extensions compile to ordinary egglog declarations,
-actions, rules, and schedules. DE is therefore a relational encoding of the
-paper's interface, not the paper artifact's patched native edge data structure.
+actions, rules, and schedules. DE is therefore a container-backed encoding of
+the paper's adjacency-map interface, not the paper artifact's patched native
+edge data structure. Each insertion writes both orientations, key
+canonicalization merges sets, and container rebuild canonicalizes members.
 
 ## Provenance
 
@@ -61,7 +63,7 @@ small host interface:
 - rebuild and clone a graph;
 - query `equal`, `unequal`, or `indeterminate`;
 - check global consistency;
-- report host node/class counts and extension relation rows; and
+- report host node/class counts and extension support-table rows; and
 - emit executable source and fully desugared source.
 
 Operations accumulated by a host are submitted as one egglog `(begin ...)`
@@ -90,7 +92,8 @@ For inspection, the backend also retains the typed host operations and emits a
 normalized standalone replay. The replay constructs every term and applies
 every union/disequality in one local `(begin ...)` block, without exposing the
 runtime handle-lookup function. This makes the committed captures concise and
-allows the exact source programs to run under term and proof encodings.
+allows the exact EE, OEE, and NEE source programs to run under term and proof
+encodings. DE replays in ordinary mode only.
 
 The Rust API is used directly by the EUF solver. A panic-contained C ABI in
 [`include/egglog_disequality.h`](egglog-backend/include/egglog_disequality.h)
@@ -259,13 +262,16 @@ captured union. The manifest records the direct term language, input hashes,
 graph/model selection, source hashes, output hashes, and replay treatments.
 
 Generation replays all 7 source programs under 4 encodings and all 28
-desugared programs through the egglog CLI under ordinary execution, term
-encoding, proof generation, proof testing, and proof extraction. The Rust
-regression independently desugars, byte-compares, and replays the same matrix.
+desugared programs through the egglog CLI. EE, OEE, and NEE run under ordinary
+execution, term encoding, proof generation, proof testing, and proof
+extraction; DE runs under ordinary execution only. This is 224 source/snapshot
+treatments. The Rust regression independently desugars, byte-compares, and
+replays the same supported matrix.
 Top-level `begin` blocks are lowered to ordered actions for proof checking while
 execution retains the original local block scope. The emitted source uses the
 anonymous form and its equality witness forces proof testing and extraction to
-exercise the captured union.
+exercise the captured union for EE, OEE, and NEE. DE's set-valued custom merge
+is deliberately rejected by the term/proof pipeline.
 
 ```sh
 uv run --locked python benchmarks/disequality/scripts/generate_snapshots.py \
@@ -294,20 +300,29 @@ pair per enumerated SAT model.
 
 ## Performance
 
-[`PERFORMANCE_ANALYSIS.md`](PERFORMANCE_ANALYSIS.md) records revision-pinned
-end-to-end measurements, diagnostic profiles, comparison with the artifact's
-precomputed timings, and prioritized optimization ideas. Its 2026-08-17
-follow-up compares direct constructors, cached Vec, and the frozen pre-change
-executables. Direct medians are 6.2% and 9.4% lower than current Vec on two
-published EUF inputs, but Vec remains the paper-faithful default and direct is
-an explicit alternative. On Propel, cached direct takes 1.14-1.23x as long as
-cached Vec, which is also the default. Current cold Vec takes 1.16-1.43x as
-long as cached Vec, while the frozen cold-Vec baseline takes 1.07-1.37x as long
-on the two measured programs. Parameter analysis was
+[`PERFORMANCE_ANALYSIS.md`](PERFORMANCE_ANALYSIS.md) records revision-pinned and
+executable-hash-identified end-to-end measurements, diagnostic profiles,
+comparison with the artifact's precomputed timings, and prioritized
+optimization ideas. Its 2026-08-19 follow-up measures a hash-identified
+pre-final set-backed DE candidate in parameter analysis and two Propel programs.
+NEE has the lowest combined egglog median in all three; DE is 1.08x NEE on
+`gset_comm`, 1.44x on `tip_bin_plus_assoc`, and 1.10x on parameter analysis.
+Those descriptive samples are endpoint-order-sensitive, and the large EUF
+corpus was unavailable for that set-backed candidate timing run.
+
+The historical 2026-08-17 relation-backed follow-up compares direct
+constructors, `b87057b` cached Vec, and the frozen pre-change executables.
+Direct medians are 6.2% and 9.4% lower than `b87057b` Vec on two published EUF
+inputs, but Vec remains the paper-faithful default and direct is an explicit
+alternative. On Propel, cached direct takes 1.14-1.23x as long as cached Vec,
+which is also the default. The `b87057b` cold Vec takes 1.16-1.43x as long as
+cached Vec, while the frozen cold-Vec baseline takes
+1.07-1.37x as long on the two measured programs. Parameter analysis was
 measured at `88c40cf`; Propel and EUF were measured at `e7b7969` on base
 `ffb8ae4`; the later proof-regression analysis used `fff36169` on base
-`fdd4eac`. The heavy integrations were not remeasured after the source-order
-`fail` change. Relational term reconstruction, parsing/typechecking, graph
+`fdd4eac`. Those relation-backed heavy integrations were not remeasured after
+the source-order `fail` change. Relational term reconstruction,
+parsing/typechecking, graph
 lifecycle churn, full stats scans, and ordinary database execution are measured
 first-order costs; retained snapshots for atomic action batches and
 expected-failure rollback are an additional unisolated candidate. The private
@@ -322,8 +337,10 @@ implement the paper's semantics. In particular:
 
 - the full 7,591-file EUF corpus remains untested here;
 - timed-out Propel rows remain unknown;
-- generated DE relies on egglog's canonicalization of relation columns rather
-  than native adjacency stored in union-find; and
+- generated DE relies on key and `Set` member canonicalization rather than
+  native adjacency stored in union-find; and
+- DE is covered only in ordinary mode; term and proof encodings reject its
+  set-valued custom merge;
 - proof testing covers the captured egglog programs and parameter-analysis
   driver, but neither host emits a separate EUF or Propel proof certificate.
 

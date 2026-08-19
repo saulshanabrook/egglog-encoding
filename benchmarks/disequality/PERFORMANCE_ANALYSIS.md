@@ -1,6 +1,6 @@
 # Disequality case-study performance analysis
 
-Run date: 2026-08-17 (America/New_York)
+Run dates: 2026-08-12 through 2026-08-19 (America/New_York)
 
 This report analyzes the egglog implementations of the three case studies from
 *Dis/Equality Graphs*: parameter analysis, Propel, and the EUF solver. It
@@ -10,7 +10,8 @@ attributing generic host/API overhead to the compiled disequality rules.
 ## Environment and method
 
 - Apple M4, 16 GiB RAM, arm64 macOS (Darwin 25.6.0)
-- Rust 1.91.0, Cargo 1.91.0, uv 0.12.3
+- Rust 1.91.0 and Cargo 1.91.0; the older case-study tranches used uv 0.12.3,
+  while the 2026-08-19 set-backed follow-up used uv 0.12.5
 - case-study timing base `origin/main` at
   `ffb8ae435bd6421077b1c15826f32a6aeecf5b1b`
 - final Propel and EUF measurements at code commit
@@ -23,39 +24,86 @@ attributing generic host/API overhead to the compiled disequality rules.
 - parameter-analysis measurements at
   `88c40cf6a298a8c503a741b8e736d5cc7498f348`; the later commit changes live
   `fail` handling, which the consistent parameter workload does not execute
+- set-backed DE follow-up from an uncommitted tree based on `46a7377`, with
+  exact measured executable hashes under `reports/set-de-follow-up/`; its dirty
+  source diff was not retained, so this tranche is pre-final and not tied to a
+  reproducible source revision
 - release builds for timed Rust and Scala Native executables
 - six accepted samples per Propel and EUF endpoint: two three-run Hyperfine
   invocations with endpoint order reversed, after one Propel warmup and two EUF
   warmups
 - three interleaved endpoint rounds for parameter analysis
+- hash-identified pre-final set-backed follow-up in two opposite endpoint
+  orders: three samples per order for parameter analysis and medium Propel,
+  five for small Propel
 
-The commands below regenerate the results; generated parameter TSV files and
-the large EUF corpus are intentionally not committed. Six samples are enough to
-identify the large cost centers here, but not for a publication-quality
-statistical claim. Ranges are descriptive. Complete timing attempts that
-overlapped Rust builds, the independent reviewer's validation, or another
-worktree's concurrent benchmark and compiler processes were rejected before
-analysis. No sample inside an accepted invocation was discarded.
+The commands below regenerate the revision-pinned results. For the set-backed
+tranche, the retained commands reproduce the invocation shape, but its missing
+dirty source diff prevents reconstruction of the exact measured executables.
+Generated parameter TSV files and the large EUF corpus are intentionally not
+committed. Six samples are enough to identify the large cost centers here, but
+not for a publication-quality statistical claim. Ranges are descriptive.
+Complete timing attempts that overlapped Rust builds, the independent
+reviewer's validation, or another worktree's concurrent benchmark and compiler
+processes were rejected before analysis. No sample inside an accepted
+invocation was discarded.
 
 ## Summary
 
 | Case study | Comparison | Measured result | Observed costs and candidates |
 | --- | --- | ---: | --- |
-| Parameter analysis | egglog EE / native EE | 5.29x wall | 3.7M occurrence rows, term reconstruction, and non-ruleset work |
-| Parameter analysis | egglog DE / native DE | 7.47x wall | same; DE propagation itself is 2.5 ms |
-| Propel, small | egglog DE / native DE | 2.72x wall | fixed graph lifecycle, host calls, and atomic action batches |
-| Propel, medium | egglog DE / native DE | 11.70x wall | repeated creation, measured frontend/database/query/stats work; rollback snapshots are an unisolated candidate |
-| Propel, large | egglog DE / native DE | 2.87x wall | native Propel work; rollback snapshots are an unisolated candidate |
-| EUF, 245 models | egglog DE / native DE | 12.27x wall | one cloned graph and atomic generated-command batch per SAT model |
-| EUF, 627 models | egglog DE / native DE | 12.66x wall | 403K operations across 628 atomic flushes, frontend work, and database execution |
-| EUF, 627 models with stats | egglog DE / native DE | 39.71x reported full time | atomic batches plus 627 full graph scans and about 2M term lookups |
+| Set-backed candidate parameter analysis | set DE / NEE | 1.10x wall | 3.7M occurrence rows dominate; set DE private schedule was 13.1 ms in one diagnostic |
+| Set-backed candidate Propel, small | set DE / NEE; set DE / native DE | 1.08x; 3.99x wall | fixed graph lifecycle, host calls, and container work |
+| Set-backed candidate Propel, medium | set DE / NEE; set DE / native DE | 1.44x; 12.08x wall | repeated graph creation and set-valued adjacency merges |
+| Historical parameter analysis | relational DE / native DE | 7.47x wall | relation-backed DE propagation itself was 2.5 ms |
+| Historical Propel, medium | relational DE / native DE | 11.70x wall | repeated creation, frontend/database/query/stats work, and rollback snapshots |
+| Historical EUF, 627 models | relational DE / native DE | 12.66x wall | 403K operations across 628 atomic flushes, frontend work, and database execution |
+| Historical EUF, 627 models with stats | relational DE / native DE | 39.71x reported full time | 627 full graph scans and about 2M term lookups |
 
-## Direct-constructor follow-up
+## Set-backed DE follow-up
+
+The 2026-08-19 follow-up measured a hash-identified pre-final candidate using
+the set-backed DE compiler pass, which maps each e-class to a literal egglog
+`Set` of disequal neighbors. Each workload was run in two opposite endpoint
+orders after one warmup. Parameter analysis and the medium Propel input use
+three samples per order; small Propel uses five. Every sample is retained.
+Combined medians and full ranges follow:
+
+| Workload | EE | OEE | NEE | set-backed DE | native DE |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Parameter analysis | 5.701 s (5.394-5.893) | 5.679 s (5.473-6.266) | 5.524 s (5.263-6.421) | 6.062 s (5.483-6.890) | not rerun |
+| Propel `gset_comm` | 277.1 ms (260.9-323.1) | 241.6 ms (229.1-259.5) | 194.9 ms (188.1-242.9) | 210.5 ms (197.5-225.0) | 52.7 ms (50.2-57.7) |
+| Propel `tip_bin_plus_assoc` | 8.137 s (6.885-10.518) | 6.603 s (6.360-6.777) | 5.366 s (5.318-6.226) | 7.732 s (7.414-8.490) | 640.0 ms (600.9-806.3) |
+
+The parameter and medium Propel samples are visibly endpoint-order-sensitive,
+so these are descriptive results rather than significance claims. NEE has the
+lowest combined egglog median in each row. Set-backed DE is 1.08x NEE on small
+Propel, 1.44x on medium Propel, and 1.10x on parameter analysis. This cost is
+the tradeoff for representing the paper's per-class forbid list with generic
+egglog containers instead of a flat relation or patched union-find state.
+
+A separate single parameter-analysis timing-summary run attributed 20.003 ms
+to EE's private ruleset, 1.378 ms to OEE, 0.227 ms to NEE, and 13.096 ms to
+set-backed DE. The DE value excludes set construction, key collision merges,
+and container rebuild work outside the private schedule, so it is not the
+total representation cost. It does establish that schedule saturation alone
+does not explain the roughly 0.5-second DE/NEE median difference.
+
+The raw Hyperfine JSON, executable and input hashes, exact commands, and
+environment are retained in
+[`reports/set-de-follow-up/`](reports/set-de-follow-up/). The omitted published
+EUF corpus was unavailable locally for this follow-up. Current DE therefore has
+EUF semantic fixture coverage but no refreshed large-corpus timing result; the
+EUF numbers later in this report are explicitly historical relation-backed DE
+measurements.
+
+## Historical direct-constructor follow-up (relation-backed DE)
 
 The 2026-08-17 follow-up adds source-shaped constructors as an explicit
 `--term-language direct` alternative while retaining generic Vec as the
-paper-faithful default. It also isolates schema reuse with
-`--no-template-cache`. The frozen baseline is parent commit `5069c43`; its
+paper-faithful default. This tranche predates the set-backed DE compiler pass
+and must not be read as current DE performance. It also isolates schema reuse
+with `--no-template-cache`. The frozen baseline is parent commit `5069c43`; its
 Propel and EUF binaries have SHA-256
 `2140063b5030876f35c8f71b04d061e46f74cc73890584a8e5c59bdc366bdf81`
 and
@@ -86,12 +134,12 @@ the two published EUF inputs because neither is rebuilt implicitly.
 
 ### Propel representation and template ablation
 
-| Program | Frozen Vec, cold | Current Vec, cold | Current Vec, cached | Direct, cold | Direct, cached | Direct / cached Vec |
+| Program | Frozen Vec, cold | `b87057b` Vec, cold | `b87057b` Vec, cached | Direct, cold | Direct, cached | Direct / cached Vec |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | `gset_comm` | 293.4 ms (279.8-462.9) | 306.0 ms (271.5-415.1) | 214.5 ms (195.7-294.0) | 480.7 ms (469.0-928.9) | 245.4 ms (238.6-285.3) | 1.14x |
 | `tip_bin_plus_assoc` | 6.575 s (6.309-7.820) | 7.150 s (6.395-8.090) | 6.142 s (5.663-6.965) | not run | 7.559 s (7.156-7.824) | 1.23x |
 
-Template reuse is real: current cold Vec takes 1.43x and 1.16x as long as
+Template reuse is real: the `b87057b` cold Vec takes 1.43x and 1.16x as long as
 cached Vec on the small and medium inputs; frozen cold Vec takes 1.37x and
 1.07x as long. Direct mode also requires a cached schema; compiling it per
 graph takes 1.96x as long on the small input. Cached direct still takes
@@ -111,15 +159,15 @@ captures.
 
 ### EUF representation ablation
 
-| Input | Frozen Vec | Current Vec | Direct | Direct / current Vec |
+| Input | Frozen Vec | `b87057b` Vec | Direct | Direct / `b87057b` Vec |
 | --- | ---: | ---: | ---: | ---: |
 | `uf.815405` (245 models) | 530.9 ms (508.6-562.0) | 557.6 ms (526.3-595.5) | 523.0 ms (496.4-634.0) | 0.94x |
 | `uf.614981` (627 models) | 4.895 s (4.834-5.190) | 5.008 s (4.835-5.443) | 4.539 s (4.438-4.620) | 0.91x |
 
-Direct-constructor medians are 6.2% and 9.4% lower than current Vec on the two
-published inputs (current Vec takes 1.07x and 1.10x as long). The small input is
-endpoint-order-sensitive and its direct range overlaps both Vec ranges; the
-larger input is consistent across orders. Unlike Propel,
+Direct-constructor medians are 6.2% and 9.4% lower than `b87057b` Vec on the
+two published inputs (`b87057b` Vec takes 1.07x and 1.10x as long). The small
+input is endpoint-order-sensitive and its direct range overlaps both Vec
+ranges; the larger input is consistent across orders. Unlike Propel,
 EUF builds one declared term graph and clones its populated state per SAT model
 instead of creating thousands of independent empty schemas. EUF therefore
 defaults to Vec to match the paper artifact's `SymbolLang` representation.
@@ -220,13 +268,20 @@ collection was stable, but endpoint order still matters, so the conservative
 conclusion is only that the prior repeatable 32-59% same-machine regression no
 longer reproduces. The remaining wall difference is below what these short,
 process-per-sample canaries resolve reliably; peak RSS is consistently 2-4%
-above main. All 32 focused proof-mode regressions and all 80 raw/desugared
-disequality capture replays pass with the retained implementation. The host
+above main. All 32 focused proof-mode regressions passed for that retained
+proof implementation. Its 80 raw/desugared capture replays were the historical
+all-mode relation-backed matrix; the current set-backed gate instead replays
+224 supported treatments, with DE ordinary-only and EE/OEE/NEE retaining their
+term/proof modes. The host
 integrations still submit multi-action `(begin ...)` blocks, which deliberately
 keep their full atomic snapshot; this fix therefore does not change the Propel
 or EUF timing tables below.
 
-## Parameter analysis
+## Historical relation-backed parameter analysis
+
+This section records the earlier flat-relation DE implementation. It is useful
+for diagnosing generic ingestion and host overhead, but it does not measure the
+current set-backed DE compiler pass.
 
 ### Workload
 
@@ -254,8 +309,8 @@ schedule. Native wall time includes process startup and file reading; native
 
 Timing-summary v4 assigns assembly, search, apply, execution, and merge to each
 ruleset. Global native rebuild, command execution, frontend work, relation
-loading, and process overhead remain in `non_ruleset_wall_ms`. The current raw
-observations are in
+loading, and process overhead remain in `non_ruleset_wall_ms`. The raw
+observations for this historical tranche are in
 [`relational-ratio-0.5.csv`](../../egglog-experimental/benchmarks/disequality/relational-ratio-0.5.csv).
 
 All four egglog medians are within 166 ms. The selected disequality
@@ -280,7 +335,11 @@ proof instrumentation and duplicated representation-specific loading logic in
 Rust. The useful conclusion is not to restore that writer, but to add a generic
 typed, proof-aware bulk input path.
 
-## Propel
+## Historical relation-backed Propel
+
+This section likewise predates the set-backed DE change. The hash-identified
+set-backed small and medium Propel measurements are in the follow-up section
+above.
 
 ### Integration boundary
 
@@ -373,7 +432,11 @@ The follow-up now retains initialized-template reuse as production code. The
 table above supersedes the temporary template row with balanced measurements
 and separates that benefit from the direct-constructor representation.
 
-## EUF solver
+## Historical relation-backed EUF solver
+
+The large published inputs were not locally available for the set-backed
+follow-up, so every DE timing in this section describes the earlier relation
+representation.
 
 ### Workload and boundary
 

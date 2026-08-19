@@ -18,6 +18,7 @@ TREATMENTS = {
     "proof-testing": ("--proof-testing",),
     "proof-extraction": ("--proof-extraction",),
 }
+SUPPORTED_TREATMENTS = {encoding: tuple(TREATMENTS) if encoding != "de" else ("ordinary",) for encoding in ENCODINGS}
 PARAMETER_FACTS = {
     "config.tsv": "2\n",
     "f.tsv": "3\t2\n5\t4\n",
@@ -62,13 +63,16 @@ def validate_direct_snapshot(contents: bytes, sort_name: str, description: str) 
 
 def replay_all_treatments(
     binary: Path,
-    encoding: str | None,
+    encoding: str,
     path: Path,
     fact_directory: Path | None,
+    *,
+    pass_encoding: bool,
 ) -> None:
-    for treatment, treatment_args in TREATMENTS.items():
+    for treatment in SUPPORTED_TREATMENTS[encoding]:
+        treatment_args = TREATMENTS[treatment]
         command = [str(binary), *treatment_args]
-        if encoding is not None:
+        if pass_encoding:
             command.extend(("--disequality-encoding", encoding))
         if fact_directory is not None:
             command.extend(("--fact-directory", str(fact_directory)))
@@ -81,8 +85,7 @@ def replay_all_treatments(
             text=True,
         )
         if process.returncode != 0:
-            encoding_label = encoding or "desugared"
-            raise RuntimeError(f"replaying {path} with {encoding_label}/{treatment} failed:\n{process.stdout}")
+            raise RuntimeError(f"replaying {path} with {encoding}/{treatment} failed:\n{process.stdout}")
 
 
 def replay_snapshots(binary: Path, output: Path) -> int:
@@ -95,22 +98,23 @@ def replay_snapshots(binary: Path, output: Path) -> int:
         for path in sorted(output.glob("*.egg")):
             facts = fact_directory if path.name == "parameter-analysis.egg" else None
             for encoding in ENCODINGS:
-                replay_all_treatments(binary, encoding, path, facts)
-                replay_count += len(TREATMENTS)
+                replay_all_treatments(binary, encoding, path, facts, pass_encoding=True)
+                replay_count += len(SUPPORTED_TREATMENTS[encoding])
 
         for path in sorted((output / "snapshots").glob("*.desugared.egg")):
             facts = fact_directory if path.name.startswith("parameter-analysis.") else None
-            replay_all_treatments(binary, None, path, facts)
-            replay_count += len(TREATMENTS)
+            encoding = next(encoding for encoding in ENCODINGS if path.name.endswith(f".{encoding}.desugared.egg"))
+            replay_all_treatments(binary, encoding, path, facts, pass_encoding=False)
+            replay_count += len(SUPPORTED_TREATMENTS[encoding])
     return replay_count
 
 
 def generate(args: argparse.Namespace) -> dict[Path, bytes]:
     generated: dict[Path, bytes] = {}
     manifest: dict[str, object] = {
-        "schema_version": 4,
+        "schema_version": 5,
         "encodings": list(ENCODINGS),
-        "replay_treatments": list(TREATMENTS),
+        "replay_treatments": {encoding: list(treatments) for encoding, treatments in SUPPORTED_TREATMENTS.items()},
         "euf": {},
         "propel": {},
     }

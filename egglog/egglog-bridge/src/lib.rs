@@ -926,6 +926,10 @@ impl EGraph {
                 // Rebuilding containers first will find that v3 and v2 are equal, and the rest of
                 // the rules can proceed.
                 let container_rebuild = self.db.rebuild_containers(self.uf_table);
+                // Container rebuild can stage unions between container ids. Publish
+                // those leaders before rebuilding function rows so custom merges do
+                // not receive container ids retired by the rebuild above.
+                let container_unions = self.db.merge_all();
                 let next_ts = self.next_ts().to_value();
                 let table_rebuild = self.db.apply_rebuild(self.uf_table, &tables, next_ts);
                 // Container rebuild can make a parent row newly matchable without
@@ -936,7 +940,11 @@ impl EGraph {
                     .db
                     .refresh_rows_for_values(&tables, &dirty_ids, next_ts);
                 self.inc_ts();
-                if !table_rebuild && !refreshed_rows && !container_rebuild.changed() {
+                if !container_unions
+                    && !table_rebuild
+                    && !refreshed_rows
+                    && !container_rebuild.changed()
+                {
                     break;
                 }
             }

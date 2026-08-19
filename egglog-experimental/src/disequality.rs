@@ -1,7 +1,7 @@
 use egglog::{
     ArcSort, CommandMacro, Context, Error, TypeError, TypeInfo,
     ast::{
-        Action, Actions, Command, Expr, Fact, Macro, ParseError, Parser, Rule, RuleEvalMode,
+        Action, Actions, Command, Expr, Fact, Macro, Merge, ParseError, Parser, Rule, RuleEvalMode,
         RunConfig, Schedule, Schema, Sexp, Span,
     },
     util::SymbolGen,
@@ -30,7 +30,7 @@ pub enum DisequalityEncoding {
     OptimizedEqualityEmbedding,
     /// A private `ne` e-node with self-loop contradiction detection (NEE).
     NegatedEqualityEmbedding,
-    /// A symmetric database relation over e-classes (DE).
+    /// A symmetric per-e-class adjacency map (DE).
     DisequalityEdges,
 }
 
@@ -113,7 +113,7 @@ pub fn compare_disequality(
         DisequalityEncoding::EqualityEmbedding
         | DisequalityEncoding::OptimizedEqualityEmbedding => equality_symbol(sort.name()),
         DisequalityEncoding::NegatedEqualityEmbedding => negated_equality_symbol(sort.name()),
-        DisequalityEncoding::DisequalityEdges => disequality_edge_symbol(sort.name()),
+        DisequalityEncoding::DisequalityEdges => disequality_neighbors_symbol(sort.name()),
     };
     if egraph.get_function(&support).is_none() {
         return Ok(DisequalityComparison::Indeterminate);
@@ -367,7 +367,9 @@ impl CommandMacro for DisequalityMacro {
                             Command::AddRuleset(_, name) if name.starts_with("@disequality") => {
                                 Some(("ruleset", name.clone()))
                             }
-                            Command::Constructor { name, .. } | Command::Relation { name, .. }
+                            Command::Constructor { name, .. }
+                            | Command::Function { name, .. }
+                            | Command::Relation { name, .. }
                                 if name.starts_with("@disequality") =>
                             {
                                 Some(("function", name.clone()))
@@ -528,9 +530,14 @@ fn known_disequality_fact(
         DisequalityEncoding::NegatedEqualityEmbedding => {
             Fact::Fact(call(span, &negated_equality_symbol(sort), vec![lhs, rhs]))
         }
-        DisequalityEncoding::DisequalityEdges => {
-            Fact::Fact(call(span, &disequality_edge_symbol(sort), vec![lhs, rhs]))
-        }
+        DisequalityEncoding::DisequalityEdges => Fact::Fact(call(
+            span,
+            "set-contains",
+            vec![
+                call(span, &disequality_neighbors_symbol(sort), vec![lhs]),
+                rhs,
+            ],
+        )),
     }
 }
 
@@ -586,11 +593,21 @@ fn lower_disequality(
             call(&span, &negated_equality_symbol(sort), vec![lhs, rhs]),
         )],
         DisequalityEncoding::DisequalityEdges => {
-            let edge = disequality_edge_symbol(sort);
-            vec![Action::Expr(
-                span.clone(),
-                call(&span, &edge, vec![lhs, rhs]),
-            )]
+            let neighbors = disequality_neighbors_symbol(sort);
+            vec![
+                Action::Set(
+                    span.clone(),
+                    neighbors.clone(),
+                    vec![lhs.clone()],
+                    call(&span, "set-of", vec![rhs.clone()]),
+                ),
+                Action::Set(
+                    span.clone(),
+                    neighbors,
+                    vec![rhs],
+                    call(&span, "set-of", vec![lhs]),
+                ),
+            ]
         }
     }
 }
@@ -663,8 +680,8 @@ fn support_commands(
         }
         DisequalityEncoding::DisequalityEdges => {
             for (sort, span) in required_sorts {
-                let edge = disequality_edge_symbol(&sort);
-                if type_info.get_func_type(&edge).is_none() {
+                let neighbors = disequality_neighbors_symbol(&sort);
+                if type_info.get_func_type(&neighbors).is_none() {
                     commands.extend(disequality_edge_support(&span, &sort));
                 }
             }
@@ -813,28 +830,50 @@ fn negated_equality_support(span: &Span, sort: &str) -> Vec<Command> {
 }
 
 fn disequality_edge_support(span: &Span, sort: &str) -> Vec<Command> {
-    let edge = disequality_edge_symbol(sort);
+    let neighbor_set = disequality_neighbor_set_sort(sort);
+    let neighbors = disequality_neighbors_symbol(sort);
     let x = Expr::Var(span.clone(), "@disequality-x".to_owned());
-    let y = Expr::Var(span.clone(), "@disequality-y".to_owned());
     vec![
-        Command::Relation {
+        Command::Sort {
             span: span.clone(),
-            name: edge.clone(),
-            inputs: vec![sort.to_owned(), sort.to_owned()],
+            name: neighbor_set.clone(),
+            presort_and_args: Some((
+                "Set".to_owned(),
+                vec![Expr::Var(span.clone(), sort.to_owned())],
+            )),
+            uf: None,
+            container_rebuild: None,
+            proof_constructors: None,
+            unionable: true,
+        },
+        Command::Function {
+            span: span.clone(),
+            name: neighbors.clone(),
+            schema: Schema::new(vec![sort.to_owned()], neighbor_set),
+            merge: Some(Merge::result_only(call(
+                span,
+                "set-union",
+                vec![
+                    Expr::Var(span.clone(), "old".to_owned()),
+                    Expr::Var(span.clone(), "new".to_owned()),
+                ],
+            ))),
+            hidden: true,
+            let_binding: false,
+            term_constructor: None,
+            unextractable: true,
+            identity_vals: None,
+            cost: None,
+            term_node: false,
         },
         rule(
             span,
-            format!("@disequality-de-symmetry-{sort}"),
-            vec![Fact::Fact(call(span, &edge, vec![x.clone(), y.clone()]))],
-            vec![Action::Expr(
-                span.clone(),
-                call(span, &edge, vec![y, x.clone()]),
-            )],
-        ),
-        rule(
-            span,
             format!("@disequality-de-contradiction-{sort}"),
-            vec![Fact::Fact(call(span, &edge, vec![x.clone(), x]))],
+            vec![Fact::Fact(call(
+                span,
+                "set-contains",
+                vec![call(span, &neighbors, vec![x.clone()]), x],
+            ))],
             vec![Action::Panic(
                 span.clone(),
                 "disequality constraint contradicted".to_owned(),
@@ -932,8 +971,12 @@ fn negated_equality_symbol(sort: &str) -> String {
     format!("@disequality-ne-{sort}")
 }
 
-fn disequality_edge_symbol(sort: &str) -> String {
-    format!("@disequality-edge-{sort}")
+fn disequality_neighbor_set_sort(sort: &str) -> String {
+    format!("@disequality-neighbor-set-{sort}")
+}
+
+fn disequality_neighbors_symbol(sort: &str) -> String {
+    format!("@disequality-neighbors-{sort}")
 }
 
 #[cfg(test)]
@@ -955,34 +998,46 @@ mod tests {
         DisequalityEncoding::DisequalityEdges,
     ];
 
-    fn egraphs_for_all_modes(encoding: DisequalityEncoding) -> [(&'static str, egglog::EGraph); 5] {
-        [
-            (
-                "ordinary",
-                new_experimental_egraph_with_disequality_encoding(encoding),
-            ),
-            (
-                "term",
-                new_experimental_egraph_for_proofs_with_disequality_encoding(encoding)
-                    .with_term_encoding_enabled(),
-            ),
-            (
-                "proofs",
-                new_experimental_egraph_for_proofs_with_disequality_encoding(encoding)
-                    .with_proofs_enabled(),
-            ),
-            (
-                "proof-testing",
-                new_experimental_egraph_for_proofs_with_disequality_encoding(encoding)
-                    .with_proofs_enabled()
-                    .with_proof_testing(),
-            ),
-            (
+    const PROOF_ENCODINGS: [DisequalityEncoding; 3] = [
+        DisequalityEncoding::EqualityEmbedding,
+        DisequalityEncoding::OptimizedEqualityEmbedding,
+        DisequalityEncoding::NegatedEqualityEmbedding,
+    ];
+
+    fn egraphs_for_supported_modes(
+        encoding: DisequalityEncoding,
+    ) -> Vec<(&'static str, egglog::EGraph)> {
+        let mut modes = vec![(
+            "ordinary",
+            new_experimental_egraph_with_disequality_encoding(encoding),
+        )];
+        if encoding != DisequalityEncoding::DisequalityEdges {
+            modes.extend([
+                (
+                    "term",
+                    new_experimental_egraph_for_proofs_with_disequality_encoding(encoding)
+                        .with_term_encoding_enabled(),
+                ),
+                (
+                    "proofs",
+                    new_experimental_egraph_for_proofs_with_disequality_encoding(encoding)
+                        .with_proofs_enabled(),
+                ),
+                (
+                    "proof-testing",
+                    new_experimental_egraph_for_proofs_with_disequality_encoding(encoding)
+                        .with_proofs_enabled()
+                        .with_proof_testing(),
+                ),
+            ]);
+            #[cfg(feature = "bin")]
+            modes.push((
                 "proof-extraction",
                 new_experimental_egraph_for_proofs_with_disequality_encoding(encoding)
                     .with_proof_extraction(),
-            ),
-        ]
+            ));
+        }
+        modes
     }
 
     fn parameter_analysis_facts() -> TempDir {
@@ -1024,8 +1079,12 @@ mod tests {
             "@disequality-ne-Term"
         );
         assert_eq!(
-            super::disequality_edge_symbol("Term"),
-            "@disequality-edge-Term"
+            super::disequality_neighbor_set_sort("Term"),
+            "@disequality-neighbor-set-Term"
+        );
+        assert_eq!(
+            super::disequality_neighbors_symbol("Term"),
+            "@disequality-neighbors-Term"
         );
     }
 
@@ -1187,7 +1246,7 @@ mod tests {
     }
 
     #[test]
-    fn all_encodings_expand_fail_children_against_source_order_type_info() {
+    fn all_encodings_expand_fail_children_in_supported_modes() {
         let programs = [
             r#"
             (datatype Math (A) (B))
@@ -1209,7 +1268,7 @@ mod tests {
 
         for encoding in ENCODINGS {
             for program in programs {
-                for (mode, mut egraph) in egraphs_for_all_modes(encoding) {
+                for (mode, mut egraph) in egraphs_for_supported_modes(encoding) {
                     egraph
                         .parse_and_run_program(None, program)
                         .unwrap_or_else(|error| {
@@ -1223,7 +1282,7 @@ mod tests {
     }
 
     #[test]
-    fn all_encodings_support_pair_queries_under_proof_testing() {
+    fn proof_encodings_support_pair_queries_under_proof_testing() {
         let program = r#"
             (datatype Math (A) (B) (C))
             (disequal (A) (B))
@@ -1231,7 +1290,7 @@ mod tests {
             (fail (check-disequal (A) (C)))
         "#;
 
-        for encoding in ENCODINGS {
+        for encoding in PROOF_ENCODINGS {
             let mut egraph = new_experimental_egraph_for_proofs_with_disequality_encoding(encoding)
                 .with_proofs_enabled()
                 .with_proof_testing();
@@ -1576,7 +1635,7 @@ mod tests {
     }
 
     #[test]
-    fn disequality_edges_are_materialized_symmetrically() {
+    fn disequality_edges_are_stored_in_symmetric_adjacency_sets() {
         let mut egraph = new_experimental_egraph_with_disequality_encoding(
             DisequalityEncoding::DisequalityEdges,
         );
@@ -1591,17 +1650,55 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(egraph.get_size(&super::disequality_edge_symbol("Math")), 2);
+        assert_eq!(
+            egraph.get_size(&super::disequality_neighbors_symbol("Math")),
+            2
+        );
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (check (set-contains (@disequality-neighbors-Math (A)) (B)))
+                (check (set-contains (@disequality-neighbors-Math (B)) (A)))
+                "#,
+            )
+            .unwrap();
     }
 
     #[test]
-    fn all_disequality_fixtures_compose_with_all_encodings_and_proof_modes() {
+    fn disequality_adjacency_sets_merge_keys_and_rebuild_neighbors() {
+        let program = r#"
+            (datatype Math (A) (B) (C) (D) (E))
+            (disequal (A) (C))
+            (disequal (B) (D))
+            (union (A) (B))
+            (check-disequalities)
+            (check (set-contains (@disequality-neighbors-Math (A)) (C)))
+            (check (set-contains (@disequality-neighbors-Math (A)) (D)))
+            (union (C) (E))
+            (check-disequalities)
+            (check (set-contains (@disequality-neighbors-Math (A)) (E)))
+            (union (D) (E))
+            (check-disequalities)
+            (check (= (@disequality-neighbors-Math (A)) (set-of (E))))
+        "#;
+
+        for (mode, mut egraph) in egraphs_for_supported_modes(DisequalityEncoding::DisequalityEdges)
+        {
+            egraph
+                .parse_and_run_program(None, program)
+                .unwrap_or_else(|error| panic!("DE {mode} failed adjacency rebuild: {error}"));
+        }
+    }
+
+    #[test]
+    fn all_disequality_fixtures_compose_with_supported_modes() {
         for fixture in disequality_fixtures() {
             let program = std::fs::read_to_string(&fixture).unwrap();
             let parameter_facts = (fixture.file_name().unwrap() == "parameter-analysis.egg")
                 .then(parameter_analysis_facts);
             for encoding in ENCODINGS {
-                for (mode, mut egraph) in egraphs_for_all_modes(encoding) {
+                for (mode, mut egraph) in egraphs_for_supported_modes(encoding) {
                     if let Some(facts) = &parameter_facts {
                         egraph.fact_directory = Some(facts.path().to_owned());
                     }
@@ -1683,7 +1780,7 @@ mod tests {
                     fixture.display()
                 );
 
-                for (mode, mut replay) in egraphs_for_all_modes(DisequalityEncoding::default()) {
+                for (mode, mut replay) in egraphs_for_supported_modes(encoding) {
                     if let Some(facts) = &parameter_facts {
                         replay.fact_directory = Some(facts.path().to_owned());
                     }
@@ -1710,7 +1807,7 @@ mod tests {
     }
 
     #[test]
-    fn all_encodings_compose_with_term_and_proof_modes() {
+    fn proof_encodings_compose_with_term_and_proof_modes() {
         let program = r#"
             (datatype Math (A) (B) (C) (F Math))
             (disequal (F (A)) (F (C)))
@@ -1721,7 +1818,7 @@ mod tests {
             (fail (check-disequalities))
         "#;
 
-        for encoding in ENCODINGS {
+        for encoding in PROOF_ENCODINGS {
             let mut term_egraph =
                 new_experimental_egraph_for_proofs_with_disequality_encoding(encoding)
                     .with_term_encoding_enabled();
@@ -1737,5 +1834,42 @@ mod tests {
                 .parse_and_run_program(None, program)
                 .unwrap_or_else(|error| panic!("{encoding:?} failed proof testing: {error}"));
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "DE disequality encoding is currently supported only in normal mode")]
+    fn proof_egraph_constructor_rejects_de() {
+        new_experimental_egraph_for_proofs_with_disequality_encoding(
+            DisequalityEncoding::DisequalityEdges,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "DE disequality encoding is currently supported only in normal mode")]
+    fn normal_de_egraph_rejects_late_term_encoding() {
+        new_experimental_egraph_with_disequality_encoding(DisequalityEncoding::DisequalityEdges)
+            .with_term_encoding_enabled();
+    }
+
+    #[test]
+    #[should_panic(expected = "DE disequality encoding is currently supported only in normal mode")]
+    fn normal_de_egraph_rejects_late_proofs() {
+        new_experimental_egraph_with_disequality_encoding(DisequalityEncoding::DisequalityEdges)
+            .with_proofs_enabled();
+    }
+
+    #[test]
+    #[should_panic(expected = "DE disequality encoding is currently supported only in normal mode")]
+    fn normal_de_egraph_rejects_late_proof_testing() {
+        new_experimental_egraph_with_disequality_encoding(DisequalityEncoding::DisequalityEdges)
+            .with_proof_testing();
+    }
+
+    #[cfg(feature = "bin")]
+    #[test]
+    #[should_panic(expected = "DE disequality encoding is currently supported only in normal mode")]
+    fn normal_de_egraph_rejects_late_proof_extraction() {
+        new_experimental_egraph_with_disequality_encoding(DisequalityEncoding::DisequalityEdges)
+            .with_proof_extraction();
     }
 }

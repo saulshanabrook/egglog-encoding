@@ -20,8 +20,10 @@ full-size facts under `egglog-experimental/benchmarks/disequality/`.
 [`snapshots/`](snapshots/) contains the fully desugared EE, OEE, NEE, and DE
 program for every top-level source file. The Rust regression enumerates these
 files, independently desugars each source, checks the committed bytes, and
-replays every expansion in ordinary, term, proofs, proof-testing, and
-proof-extraction modes.
+replays every EE, OEE, and NEE expansion in ordinary, term, proofs,
+proof-testing, and proof-extraction modes. DE expansions replay in ordinary
+mode only because their set-valued custom merge is not yet supported by
+term/proof encoding.
 
 Run the focused regression with:
 

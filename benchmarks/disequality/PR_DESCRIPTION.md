@@ -1,19 +1,20 @@
 ## Summary
 
 - compile `(disequal lhs rhs)` and consistency checks into four selectable
-  egglog encodings: EE, OEE, NEE, and relational DE
+  egglog encodings: EE, OEE, NEE, and set-backed DE
 - keep every encoding outside union-find, e-class storage, and congruence
   closure so the extension remains a self-contained compiler pass
 - integrate the published parameter-analysis, Propel, and EUF case studies
 - import the paper artifact's source and Propel corpus in a provenance-isolated
   commit with an archive/member hash manifest
 - commit inspectable EUF and Propel `.egg` captures plus each encoding's actual
-  desugared output, and execute them under ordinary, term, proofs,
-  proof-testing, and proof-extraction modes
+  desugared output; execute every encoding in ordinary mode and execute EE,
+  OEE, and NEE under term, proofs, proof-testing, and proof-extraction modes
 - generate source-shaped EUF and Propel constructors for those captures, while
   retaining the generic Vec representation as a measured runtime control
-- document parity limits, revision-pinned performance, diagnosed bottlenecks, and
-  prioritized fixes in `benchmarks/disequality/PERFORMANCE_ANALYSIS.md`
+- document parity limits, provenance-qualified performance, diagnosed
+  bottlenecks, and prioritized fixes in
+  `benchmarks/disequality/PERFORMANCE_ANALYSIS.md`
 
 ## Motivation
 
@@ -23,10 +24,12 @@ by compilation: each representation is generated from the same typed egglog
 commands and private schedule, without adding disequality state to the
 union-find.
 
-The relational `de` backend intentionally differs from the paper artifact's
-patched adjacency structure. It stores a symmetric private relation over
-canonical e-class values, and contradiction is a self-edge produced by
-canonicalization. That distinction is explicit in the docs and generated
+The `de` backend expresses the paper artifact's adjacency-map shape with
+ordinary egglog containers rather than patched e-class storage. A private
+function maps each e-class to a `Set` of disequal neighbors. Each insertion
+writes both orientations; canonical key collisions merge sets with `set-union`;
+container rebuild canonicalizes their members; and a self-member is a
+contradiction. That distinction is explicit in the docs and generated
 snapshots.
 
 ## Implementation
@@ -45,6 +48,20 @@ top level, in anonymous action batches, and on rule right-hand sides. EE, OEE,
 NEE, and DE can be selected with `--disequality-encoding` on the experimental
 CLI.
 
+DE is currently normal-mode only. The CLI rejects it with `--term-encoding`,
+`--proofs`, `--proof-testing`, or `--proof-extraction`, and the proof-oriented
+experimental Rust constructor rejects it. EE, OEE, and NEE support all five
+modes. DE's literal set-valued custom merge is not yet supported by the
+term/proof encoding, so Rust callers must not bypass the guarded constructors
+by enabling those modes afterward; the hidden core mode-enabling path enforces
+the same incompatibility marker.
+
+The container-backed implementation exposed a normal-mode rebuild-order bug:
+container canonicalization could retire an output container id before a
+custom function merge consumed it. Native rebuild now publishes container
+unions before rebuilding function rows. A focused regression collapses both a
+set-valued function's keys and its outputs in the same rebuild.
+
 The shared in-process adapter under `benchmarks/disequality/egglog-backend/`
 provides typed add, union, disequality, clone, comparison, consistency, and
 stats operations. It can either use the original
@@ -60,7 +77,8 @@ Operations are submitted in `(begin ...)` batches. User-written blocks retain
 their local execution scope while their resolved actions are flattened in
 order for proof checking; `let`-`begin` additionally lowers its trailing value
 to the corresponding global binding in the proof-check program. This lets the
-committed host captures exercise the same batching shape under proof mode.
+committed host captures exercise the same batching shape under proof mode for
+EE, OEE, and NEE.
 
 ## Artifact case studies
 
@@ -120,33 +138,71 @@ programs with provenance comments for:
 
 The nested `snapshots/` directory has EE, OEE, NEE, and DE expansions for every
 source: 28 inspectable `.desugared.egg` files plus a hash manifest. The snapshot
-generator reruns both host integrations and replays 280 source/snapshot
-treatments. A Rust regression independently enumerates all fixtures, compares
-every expansion byte-for-byte, and replays the same ordinary, term, proofs,
-proof-testing, and proof-extraction modes. The host captures' witness checks
-exercise their explicit unions in proof modes. These are executable tests for
-manual inspection, not pseudocode.
+generator reruns both host integrations and replays 224 source/snapshot
+treatments. A Rust regression independently enumerates all fixtures and
+compares every expansion byte-for-byte. EE, OEE, and NEE replay in ordinary,
+term, proofs, proof-testing, and proof-extraction modes; DE replays in ordinary
+mode only. The host captures' witness checks exercise their explicit unions in
+the supported proof modes. These are executable tests for manual inspection,
+not pseudocode.
 
 ## Performance
 
-Measurements were taken on an Apple M4. Parameter analysis was measured at
-`88c40cf`; Propel and EUF were measured at `e7b7969` after merging base
-`ffb8ae4`; the later proof-regression analysis used `fff36169` after merging
-base `fdd4eac`. The heavy integrations were not remeasured after the
-source-order `fail` change. Those earlier Propel and EUF values are medians of
-six accepted samples from two reversed endpoint orders; parameter analysis uses
-three interleaved rounds. The direct-constructor follow-up instead uses ten
-samples for each small input and six for each larger input, again split across
-reversed orders. That accepted follow-up used clean candidate revision
-`b87057b`. These are descriptive measurements, not publication-quality
+Measurements were taken on an Apple M4. The historical relation-backed
+parameter analysis was measured at `88c40cf`; Propel and EUF were measured at
+`e7b7969` after merging base `ffb8ae4`; the later proof-regression analysis used
+`fff36169` after merging base `fdd4eac`. Those older heavy integrations were
+not remeasured after the source-order `fail` change. Their Propel and EUF values
+are medians of six accepted samples from two reversed endpoint orders;
+parameter analysis uses three interleaved rounds. The direct-constructor
+follow-up instead uses ten samples for each small input and six for each larger
+input, again split across reversed orders. That accepted follow-up used clean
+candidate revision `b87057b`. The hash-identified pre-final set-backed follow-up
+is described next. These are descriptive measurements, not publication-quality
 confidence intervals.
 
-### Direct-constructor follow-up
+### Set-backed DE follow-up
 
-The follow-up compares a frozen pre-change binary, current Vec with and without
-template reuse, and direct constructors. On `gset_comm`, median wall time is
-293.4 ms for frozen cold Vec, 214.5 ms for cached Vec, and 245.4 ms for cached
-direct. On `tip_bin_plus_assoc`, the corresponding medians are 6.575 s,
+The set-backed DE candidate was measured on 2026-08-19 in two opposite endpoint
+orders, retaining every sample and full ranges. Parameter analysis used three
+runs per order, Propel `gset_comm` used five, and
+`tip_bin_plus_assoc` used three. NEE has the lowest combined egglog median on
+all three workloads:
+
+| Workload | EE | OEE | NEE | set-backed DE | native DE |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Parameter analysis | 5.701 s | 5.679 s | 5.524 s | 6.062 s | not rerun |
+| Propel `gset_comm` | 277.1 ms | 241.6 ms | 194.9 ms | 210.5 ms | 52.7 ms |
+| Propel `tip_bin_plus_assoc` | 8.137 s | 6.603 s | 5.366 s | 7.732 s | 640.0 ms |
+
+Set-backed DE is 1.08x NEE on small Propel, 1.44x on medium Propel, and 1.10x
+on parameter analysis. A separate single parameter timing-summary run put its
+private schedule at 13.096 ms, versus 20.003 ms for EE, 1.378 ms for OEE, and
+0.227 ms for NEE. Container construction and rebuild outside the private
+schedule are not included in those rule timings. The parameter and medium
+Propel runs were endpoint-order-sensitive, so these are descriptive
+comparisons rather than significance claims.
+
+Raw Hyperfine JSON, exact commands, executable/input hashes, and the full
+ranges are retained under
+`benchmarks/disequality/reports/set-de-follow-up/`. The large EUF corpus was
+unavailable locally for this follow-up; current DE has focused EUF semantic
+coverage but no refreshed large-corpus timing claim. The older DE numbers below
+measure the superseded flat-relation compiler pass and are retained only as
+historical cost diagnosis.
+
+The set-backed timing candidate was an uncommitted tree based on `46a7377`.
+Its dirty source diff was not retained, so the executable hashes identify the
+measured artifacts but do not make this tranche revision-reproducible; no final
+measured source commit is claimed.
+
+### Historical direct-constructor follow-up (relation-backed DE)
+
+The `b87057b` follow-up predates set-backed DE and compares a frozen pre-change
+binary, Vec with and without template reuse, and direct constructors. On
+`gset_comm`, median wall time is 293.4 ms for frozen cold Vec, 214.5 ms for
+cached Vec, and 245.4 ms for cached direct. On `tip_bin_plus_assoc`, the
+corresponding medians are 6.575 s,
 6.142 s, and 7.559 s. Cached direct therefore takes 1.14-1.23x as long as
 cached Vec, which remains Propel's default. Direct's extra constructor
 relations are expensive when Propel creates thousands of small graphs.
@@ -164,7 +220,7 @@ the exact forward/reverse driver are committed under
 `benchmarks/disequality/reports/term-language-performance/` and
 `benchmarks/disequality/scripts/benchmark_term_languages.sh`.
 
-### Parameter analysis
+### Historical relation-backed parameter analysis
 
 | Comparison | Wall median | Ratio |
 | --- | ---: | ---: |
@@ -174,9 +230,9 @@ the exact forward/reverse driver are committed under
 All four egglog medians are within 166 ms. Term reconstruction costs about 2.5
 seconds, pair traversal about 0.6 seconds, and non-ruleset work about 1.7
 seconds. The private disequality phase is 0.2-11.8 ms, so representation
-propagation is not the end-to-end bottleneck.
+propagation is not the end-to-end bottleneck for that implementation.
 
-### Propel
+### Historical relation-backed Propel
 
 | Program | Native DE | Egglog DE | Ratio |
 | --- | ---: | ---: | ---: |
@@ -199,7 +255,7 @@ consistent with this work, but the snapshot classes were counted rather than
 timed independently. Flattening the batch was tested and was worse because it
 compiled each action independently.
 
-### EUF
+### Historical relation-backed EUF
 
 | Input | Native DE, no stats | Egglog DE, no stats | Ratio |
 | --- | ---: | ---: | ---: |
@@ -241,7 +297,10 @@ ablations, exact clean revisions, commands, and intervals are recorded in
 
 ## Scope and known limits
 
-- DE is a relational compiler encoding, not native adjacency in union-find.
+- DE is a container-backed compiler encoding, not native adjacency in
+  union-find.
+- DE is normal-mode only; term/proof encoding rejects its set-valued custom
+  merge. EE, OEE, and NEE retain full proof-mode coverage.
 - The full EUF corpus has not been run through all backends.
 - Propel timeout rows remain unknown.
 - `uf.815405` enumerates 245 current models versus 246 in the artifact result;
@@ -258,14 +317,17 @@ schedule, partial `pop`, nested `fail`, and an unrestricted user-defined command
 then found that a live `fail` expanded its complete body before earlier children
 could add type information. The implementation now validates expansions in
 source order, invokes each command macro once, gives every `fail` child one
-atomic source-command boundary in live execution and resolved replay, and
-preserves successful prefix commands. Static desugaring conservatively rejects
-commands whose runtime-dependent compiler state cannot be represented. The
+atomic source-command boundary in live execution and supported resolved replay,
+and preserves successful prefix commands. Static desugaring conservatively
+rejects commands whose runtime-dependent compiler state cannot be represented.
+Under term/proof encoding it also rejects a `fail` body containing `extract`,
+whose multi-command lowering cannot preserve the source rollback boundary. The
 same review also required source-revision and dirty-state provenance before the
 bounded Propel parity result could be treated as current; that metadata is now
 part of the report schema. A read-only re-review of `b56a72f` verified the
-one-pass `fail` repair, nested rollback and fatal-error behavior, all five
-capture modes, and the regenerated parity and performance evidence. Final
+one-pass `fail` repair, nested rollback and fatal-error behavior, the
+then-supported five-mode relation-backed capture matrix, and the regenerated
+parity and performance evidence. Final
 performance review then found a full-e-graph clone before every proof-mode
 action and a duplicate-global type-state corruption in the first optimization.
 The retained `fff36169` source restricts the no-clone path to recursively
@@ -290,8 +352,9 @@ Successful final gates include:
 make nits
 make check                                             # full repository gate
 make benchmark-smoke                                   # 20/20 off/proofs runs
-cargo test -p egglog --test proof_mode_regression       # 32/32
-make -C benchmarks/disequality check                    # includes 280 replays
+cargo test -p egglog --test proof_mode_regression       # 33/33
+make -C benchmarks/disequality check                    # includes 224 supported replays
+cargo test -p egglog --test container_rebuild           # includes normal-mode set merge regression
 uv run pytest tests/test_disequality_parameter_analysis.py
 git diff --check origin/main...c52112f^                  # authored pre-import work
 git diff --check c52112f..HEAD -- . \

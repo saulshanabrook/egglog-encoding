@@ -565,6 +565,41 @@ fn desugared_fail_children_preserve_the_source_command_rollback_boundary() {
 }
 
 #[test]
+fn static_term_desugaring_rejects_multi_command_fail_children() {
+    let program = r#"
+        (datatype Math (A))
+        (fail (extract (A) -1))
+        (print-size A)
+    "#;
+
+    for mut egraph in egraphs_for_all_modes() {
+        let outputs = egraph.parse_and_run_program(None, program).unwrap();
+        assert!(
+            outputs
+                .iter()
+                .any(|output| matches!(output, CommandOutput::PrintFunctionSize(0)))
+        );
+    }
+
+    assert!(EGraph::default().resolve_program(None, program).is_ok());
+
+    for mut encoder in [
+        EGraph::new_with_term_encoding(),
+        EGraph::new_with_proofs(),
+        EGraph::new_with_proofs().with_proof_testing(),
+        EGraph::new_with_proofs().with_proof_extraction(),
+    ] {
+        let error = encoder.resolve_program(None, program).unwrap_err();
+        assert!(matches!(error, Error::DesugarError(..)));
+        assert!(
+            error
+                .to_string()
+                .contains("the source command's rollback boundary cannot be preserved")
+        );
+    }
+}
+
+#[test]
 fn failed_user_defined_commands_roll_back_and_are_not_statically_desugared() {
     let mut live = EGraph::default();
     live.add_command("bind-then-fail".to_owned(), Arc::new(BindThenFail))

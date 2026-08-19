@@ -336,6 +336,8 @@ pub struct EGraph {
     /// Registry for command-level macros
     command_macros: CommandMacroRegistry,
     proof_state: EncodingState,
+    /// Reason an installed extension cannot be translated by term/proof encoding.
+    term_encoding_unsupported: Option<&'static str>,
     /// In proof mode, this is the program before proof instrumentation and the version we use for proof checking.
     proof_check_program: Vec<ResolvedNCommand>,
     /// Static pre-instrumentation commands addressed by generated execution
@@ -623,6 +625,7 @@ impl EGraph {
             warned_about_global_prefix: false,
             command_macros: Default::default(),
             proof_state,
+            term_encoding_unsupported: None,
             proof_check_program: vec![],
             proof_check_source_program: VecDeque::new(),
             proof_check_pending_top: None,
@@ -820,8 +823,25 @@ impl EGraph {
     /// This method is to support the current CLI implementation with egglog-experimental (https://github.com/egraphs-good/egglog/issues/768)
     #[doc(hidden)]
     pub fn with_term_encoding_enabled(mut self) -> Self {
+        if let Some(reason) = self.term_encoding_unsupported {
+            panic!("{reason}");
+        }
         let typechecker = self.clone();
         self.enable_term_encoding(typechecker);
+        self
+    }
+
+    /// Mark an e-graph extension as unsupported by term/proof encoding.
+    ///
+    /// This method exists for experimental constructors that install state the
+    /// term/proof compiler cannot yet translate.
+    #[doc(hidden)]
+    pub fn with_term_encoding_unsupported(mut self, reason: &'static str) -> Self {
+        assert!(
+            self.proof_state.original_typechecking.is_none(),
+            "term encoding was enabled before the incompatible extension: {reason}"
+        );
+        self.term_encoding_unsupported = Some(reason);
         self
     }
 
@@ -839,6 +859,9 @@ impl EGraph {
 
     /// Enable testing of getting proofs for all `check` commands.
     pub fn with_proof_testing(mut self) -> Self {
+        if let Some(reason) = self.term_encoding_unsupported {
+            panic!("{reason}");
+        }
         self.proof_state.proof_testing = true;
         self
     }
@@ -3205,6 +3228,38 @@ impl EGraph {
         }
     }
 
+    fn command_contains_extract(command: &Command) -> bool {
+        match command {
+            Command::Extract(..) => true,
+            Command::Fail(_, commands) => commands.iter().any(Self::command_contains_extract),
+            _ => false,
+        }
+    }
+
+    fn validate_static_expected_failure_body(
+        &self,
+        span: &Span,
+        commands: &[Command],
+    ) -> Result<(), Error> {
+        if commands.iter().any(Self::command_may_change_static_state) {
+            return Err(Error::DesugarError(
+                span.clone(),
+                "cannot statically desugar a `fail` body that may change compiler state: which changes survive depends on which command fails at runtime"
+                    .to_owned(),
+            ));
+        }
+        if self.proof_state.original_typechecking.is_some()
+            && commands.iter().any(Self::command_contains_extract)
+        {
+            return Err(Error::DesugarError(
+                span.clone(),
+                "cannot statically desugar this `fail` body with term encoding: an `extract` expands into multiple commands, so the source command's rollback boundary cannot be preserved"
+                    .to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Constructor trees cannot invoke partial primitives or custom function
     /// lookups. Once typechecking succeeds, their proof encoding has no
     /// expected runtime error path, so cloning the entire e-graph solely for
@@ -3260,15 +3315,8 @@ impl EGraph {
                 continue;
             }
 
-            if !run_commands
-                && let Command::Fail(span, commands) = &before_expanded_command
-                && commands.iter().any(Self::command_may_change_static_state)
-            {
-                return Err(Error::DesugarError(
-                    span.clone(),
-                    "cannot statically desugar a `fail` body that may change compiler state: which changes survive depends on which command fails at runtime"
-                        .to_owned(),
-                ));
+            if !run_commands && let Command::Fail(span, commands) = &before_expanded_command {
+                self.validate_static_expected_failure_body(span, commands)?;
             }
 
             let macro_expanded = if apply_command_macros {
@@ -3285,15 +3333,8 @@ impl EGraph {
                     continue;
                 }
 
-                if !run_commands
-                    && let Command::Fail(span, commands) = &command
-                    && commands.iter().any(Self::command_may_change_static_state)
-                {
-                    return Err(Error::DesugarError(
-                        span.clone(),
-                        "cannot statically desugar a `fail` body that may change compiler state: which changes survive depends on which command fails at runtime"
-                            .to_owned(),
-                    ));
+                if !run_commands && let Command::Fail(span, commands) = &command {
+                    self.validate_static_expected_failure_body(span, commands)?;
                 }
 
                 // handle include specially- we keep them as-is for desugaring

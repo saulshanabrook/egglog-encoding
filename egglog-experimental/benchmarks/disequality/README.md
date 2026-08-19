@@ -1,12 +1,14 @@
 # Disequality encoding validation and benchmark
 
-Run dates: 2026-08-12 through 2026-08-14 (America/New_York)
+Run dates: 2026-08-12 through 2026-08-19 (America/New_York)
 
 Initial implementation base: `46f69b70d0819b03da110e6e785f91c080d58556`.
 The branch was subsequently merged with `origin/main` at
-`ffb8ae435bd6421077b1c15826f32a6aeecf5b1b`. The compiler revision used to
-produce the checked-in expansions is recorded in
-[`desugared/manifest.json`](desugared/manifest.json).
+`ffb8ae435bd6421077b1c15826f32a6aeecf5b1b`. The committed
+[`snapshot manifest`](../../tests/disequality/snapshots/manifest.json) records
+the source and output hashes, selected graph/model, and supported replay
+matrix. The snapshot test separately verifies that the current compiler still
+emits those exact bytes.
 
 Machine: Apple M4, arm64 macOS 26.6; `rustc 1.91.0`; one egglog worker thread.
 
@@ -38,24 +40,27 @@ sort directly, as in `@disequality-ne-Term`; EE and OEE use the unsuffixed
 | `ee` | Equality embedding | `eq(lhs, rhs) = false` plus the paper's propagation rules |
 | `oee` | Optimized equality embedding | The reduced equality embedding with a reflexive contradiction rule |
 | `nee` | Negated equality embedding | A private `ne(lhs, rhs)` constructor and a reflexive contradiction rule |
-| `de` | Disequality edges | A private symmetric relation and a self-loop contradiction rule |
+| `de` | Disequality edges | A private function from each e-class to a merged `Set` of disequal neighbors |
 
-DE is a relational encoding of the paper's interface, not its patched native
-data structure. Both edge orientations are materialized by an egglog rule.
-Congruence closure canonicalizes relation columns after union, so an invalid
-edge becomes a self-loop without modifying union-find.
+DE is a container-backed encoding of the paper's adjacency-map interface, not
+its patched native data structure. Compiling `(disequal a b)` writes `b` into
+`a`'s set and `a` into `b`'s set. Key canonicalization merges adjacency sets
+with `set-union`, while container rebuild canonicalizes their members. An
+invalid edge is therefore detected when a class occurs in its own set, without
+modifying union-find.
 
 ## Composition
 
-The same generated commands pass ordinary execution, term encoding, proof
-generation, proof testing, and proof extraction for all four encodings. This
-establishes composition with those existing compiler modes. Proof testing
-checks generated equality proofs; this change does not yet expose a standalone
-certificate whose conclusion is disequality inconsistency.
+The same generated commands pass ordinary execution for all four encodings.
+EE, OEE, and NEE also pass term encoding, proof generation, proof testing, and
+proof extraction. DE is deliberately rejected in those four modes because the
+required set-valued custom merge is not yet supported by term/proof encoding.
+Proof testing checks generated equality proofs; this change does not yet expose
+a standalone certificate whose conclusion is disequality inconsistency.
 
 The fixtures in [`tests/disequality/`](../../tests/disequality/) cover direct
 and congruence-created contradictions, rule and action local variables,
-multiple e-sorts, push/pop, symmetric DE materialization, and examples ported
+multiple e-sorts, push/pop, symmetric DE adjacency insertion, and examples ported
 from the paper and artifact.
 
 ## Relational workload
@@ -195,7 +200,10 @@ make -C benchmarks/disequality update-snapshots
 ```
 
 Use `make -C benchmarks/disequality snapshots` to regenerate all outputs and
-compare them byte-for-byte with the committed files.
+compare them byte-for-byte with the committed files. Source and desugared EE,
+OEE, and NEE programs replay in ordinary, term, proofs, proof-testing, and
+proof-extraction modes. DE source and desugared programs replay in ordinary
+mode only.
 
 ## Timing boundaries
 
@@ -216,7 +224,48 @@ expression parsing, insertion, rebuild/saturation, and consistency checking.
 The two internal timers therefore do not have identical boundaries; only broad
 wall time is presented as an end-to-end comparison.
 
-## Relational results
+## Set-backed DE follow-up
+
+On 2026-08-19, the set-backed DE candidate was measured in two opposite
+endpoint orders. Parameter analysis used three samples per order after one
+warmup; Propel `gset_comm` used five and `tip_bin_plus_assoc` used three. The
+tables combine both orders, retain every sample, and show full ranges. The raw
+Hyperfine reports and exact commands are under
+[`../../../benchmarks/disequality/reports/set-de-follow-up/`](../../../benchmarks/disequality/reports/set-de-follow-up/).
+The measured tree's dirty source diff was not retained, so this is a
+hash-identified pre-final tranche rather than a revision-reproducible benchmark.
+These are descriptive same-machine measurements: the parameter and medium
+Propel runs were visibly order-sensitive.
+
+| Parameter-analysis encoding | Combined median | Full range |
+| --- | ---: | ---: |
+| EE | 5.701 s | 5.394-5.893 s |
+| OEE | 5.679 s | 5.473-6.266 s |
+| NEE | 5.524 s | 5.263-6.421 s |
+| set-backed DE | 6.062 s | 5.483-6.890 s |
+
+A separate single timing-summary run attributed 20.003 ms to EE's private
+ruleset, 1.378 ms to OEE, 0.227 ms to NEE, and 13.096 ms to set-backed DE. Even
+for DE, the private schedule remains a small fraction of the end-to-end run;
+set construction, key merging, and container rebuild can also occur outside
+that ruleset boundary.
+
+| Propel backend | `gset_comm` median (10 samples) | `tip_bin_plus_assoc` median (6 samples) |
+| --- | ---: | ---: |
+| native DE | 52.7 ms (50.2-57.7) | 640.0 ms (600.9-806.3) |
+| egglog EE | 277.1 ms (260.9-323.1) | 8.137 s (6.885-10.518) |
+| egglog OEE | 241.6 ms (229.1-259.5) | 6.603 s (6.360-6.777) |
+| egglog NEE | 194.9 ms (188.1-242.9) | 5.366 s (5.318-6.226) |
+| egglog set-backed DE | 210.5 ms (197.5-225.0) | 7.732 s (7.414-8.490) |
+
+The set-backed representation is therefore not uniformly fastest: it is close
+to NEE on the small Propel program and materially slower on the medium one. Its
+value here is fidelity to the paper's per-class forbid-list shape while
+remaining generated egglog source. The omitted large EUF corpus was not
+available locally for this follow-up, so the current set-backed implementation
+has semantic EUF fixture coverage but no refreshed large-corpus timing claim.
+
+## Historical relational-DE results
 
 Median of three accepted, interleaved ratio-0.5 trials at `88c40cf` on
 2026-08-14 after merging `origin/main`. The later `e7b7969` change only affects
@@ -224,6 +273,8 @@ live `fail`; this consistent workload invokes the private schedule directly.
 Ranges are wall-time ranges, not confidence intervals. Rejected final-revision
 reruns and their host-contention evidence are documented in
 [`../../../benchmarks/disequality/PERFORMANCE_ANALYSIS.md`](../../../benchmarks/disequality/PERFORMANCE_ANALYSIS.md).
+These rows measured the earlier relation-backed DE compiler pass and are
+retained for history; they are not measurements of the current set-backed DE.
 
 | Engine | Encoding | Wall | Term rules | Pair rules | Disequality rules | Non-ruleset wall | Wall range |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -239,7 +290,7 @@ Raw observations are in
 for a statistical significance claim, and the first EE observation reached
 5.33 seconds. No observations were discarded.
 
-The end-to-end relational replay is about 5.3x the native EE wall median and
+The historical end-to-end relational replay is about 5.3x the native EE wall median and
 7.5x the native DE median. That result should not be attributed to the
 disequality representation: all four egglog wall medians are within 166 ms,
 while term reconstruction costs about 2.5 seconds, pair traversal about 0.6
@@ -247,7 +298,7 @@ seconds, and non-ruleset work about 1.7 seconds. The private extension phase
 costs 11.8 ms for EE, 2.5 ms for DE, 1.2 ms for OEE, and 0.2 ms for NEE.
 
 EE's larger extension cost follows from its additional equality terms and
-propagation rules. DE materializes symmetric edges. OEE and NEE need only a
+propagation rules. The historical DE materializes symmetric relation rows. OEE and NEE need only a
 reflexive contradiction check once congruence has canonicalized their stored
 terms. These are observed implementation facts, not a claim that the encodings
 have equal behavior on every workload.
@@ -269,7 +320,7 @@ The writer showed that direct compiled database insertion could beat the two
 native artifact programs on this machine, but it bypassed source typechecking
 and proof instrumentation and exposed encoding-specific Rust loading logic.
 It was removed in favor of the self-contained relational `.egg` program. The
-current result therefore supports a narrower claim: all four extensions can be
+historical result therefore supports a narrower claim: all four extensions can be
 compiled and exercised compositionally without Rust-side access to their
 representations, with low encoding-specific saturation overhead. It also
 identifies bulk relational ingestion and term reconstruction as the remaining
@@ -287,6 +338,6 @@ uv run mypy .
 The Python test verifies deterministic fixture conversion, row counts, timing
 summary parsing, and command construction. The full-corpus TSV directory is
 ignored and regenerated on demand. The Rust tests execute the same relational
-source with the small fixture under every encoding and proof treatment. The
+source with the small fixture under every supported encoding/mode combination. The
 desugared snapshot test resolves the source with the compiler and compares all
 four generated programs byte-for-byte.

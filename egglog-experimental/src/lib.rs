@@ -64,6 +64,9 @@ pub use disequality::{
     DisequalityComparison, DisequalityEncoding, compare_disequality, disequalities_are_consistent,
 };
 
+const DE_TERM_ENCODING_UNSUPPORTED: &str =
+    "the DE disequality encoding is currently supported only in normal mode";
+
 // Sugar modules using parse-time macros
 mod sugar;
 pub use sugar::*;
@@ -86,6 +89,10 @@ pub fn new_experimental_egraph_for_proofs() -> EGraph {
 pub fn new_experimental_egraph_for_proofs_with_disequality_encoding(
     encoding: DisequalityEncoding,
 ) -> EGraph {
+    assert!(
+        encoding != DisequalityEncoding::DisequalityEdges,
+        "{DE_TERM_ENCODING_UNSUPPORTED}"
+    );
     new_experimental_egraph_with_options(false, encoding)
 }
 
@@ -95,6 +102,9 @@ fn new_experimental_egraph_with_options(
 ) -> EGraph {
     let mut egraph = EGraph::default();
     add_experimental_extensions(&mut egraph, extended_run_schedule, disequality_encoding);
+    if disequality_encoding == DisequalityEncoding::DisequalityEdges {
+        egraph = egraph.with_term_encoding_unsupported(DE_TERM_ENCODING_UNSUPPORTED);
+    }
     egraph
 }
 

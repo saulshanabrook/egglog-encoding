@@ -129,12 +129,6 @@ impl LanguageSchemaBuilder {
         Ok(id)
     }
 
-    pub fn operator_id(&self, source_name: &str, arity: usize) -> Option<OperatorId> {
-        self.operator_ids
-            .get(&(source_name.to_owned(), arity))
-            .copied()
-    }
-
     pub fn compile(
         self,
         encoding: DisequalityEncoding,
@@ -1483,7 +1477,7 @@ pub unsafe extern "C" fn egglog_disequality_num_classes(graph: *mut EgglogDisequ
 }
 
 #[unsafe(no_mangle)]
-/// Return the number of rows in generated disequality support relations.
+/// Return the number of rows in generated disequality support tables.
 ///
 /// # Safety
 ///
