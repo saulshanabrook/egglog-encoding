@@ -15,11 +15,12 @@ use crate::ast::{
     Span,
 };
 use crate::core::ResolvedCall;
+use crate::proofs::generated_binder::SortSemanticClass::{Eq, Value};
 use crate::proofs::generated_binder::{
     CallKey, FunctionKey, GeneratedCommand, GeneratedExpr, GeneratedFunctionDecl,
     GeneratedIndexDecl, GeneratedMerge, GeneratedPresort, GeneratedPresortArg, GeneratedRule,
     GeneratedSemanticEmitter, GeneratedSignatureCatalog, GeneratedSortDecl, PrimitiveKey, SortKey,
-    SortSemanticClass, ValueShape,
+    SortSemanticClass, ValueShape, build_checked_rule,
 };
 use crate::proofs::proof_encoding_helpers::{Skeleton, recomputable_premises};
 use crate::typechecking::FuncType;
@@ -833,56 +834,54 @@ impl ProofInstrumentor<'_> {
         pc_name: String,
         compressed_name: Option<String>,
     ) -> GeneratedRule {
-        let mut emitter = GeneratedSemanticEmitter::new(catalog, span);
-        for key in [sort.clone(), carried.clone()] {
-            emitter.sort(key);
-        }
-        let unit = emitter.sort(SortKey {
-            name: "Unit".to_owned(),
-            class: SortSemanticClass::Value,
+        let proofs_enabled = self.proofs_enabled();
+        let expected_class = if proofs_enabled { Eq } else { Value };
+        assert!(
+            carried.name == self.proof_type_str()
+                && carried.class == expected_class
+                && compressed_name.is_some() == proofs_enabled,
+            "invalid generated semantic emission: path compression proof-mode coherence failed at {span}"
+        );
+        let trans_name = compressed_name.as_ref().map(|_| {
+            crate::proofs::proof_fresh::mint_prim_name(&self.proof_names().eq_trans_constructor)
         });
-        let uf = emitter.function(uf);
-        let unequal = emitter.primitive(PrimitiveKey {
-            name: "!=".to_owned(),
-            inputs: vec![sort.clone(), sort.clone()],
-            output: unit,
-        });
-        let values = emitter.values(vec![sort.clone(), carried.clone()]);
-        let trans = compressed_name.as_ref().map(|_| {
-            emitter.primitive(PrimitiveKey {
-                name: crate::proofs::proof_fresh::mint_prim_name(
-                    &self.proof_names().eq_trans_constructor,
-                ),
-                inputs: vec![carried.clone(), carried.clone()],
-                output: carried.clone(),
-            })
-        });
+        let metadata = (name, ruleset, RuleEvalMode::Seminaive, false);
+        build_checked_rule(catalog, span, metadata, move |builder| {
+            let sort = builder.sort(sort);
+            let carried = builder.sort(carried);
+            let unit = builder.sort(SortKey {
+                name: "Unit".to_owned(),
+                class: SortSemanticClass::Value,
+            });
+            let values = builder.values([sort, carried]);
+            let uf = builder.function(uf);
+            let unequal = builder.primitive("!=", [sort, sort], unit);
+            let trans = trans_name.map(|name| builder.primitive(name, [carried, carried], carried));
 
-        let b = emitter.local(b_name, sort.clone());
-        let pb = emitter.local(pb_name, carried.clone());
-        let a = emitter.local(a_name, sort.clone());
-        let c = emitter.local(c_name, sort.clone());
-        let pc = emitter.local(pc_name, carried.clone());
-        let var = |variable| GenericExpr::Var(span.clone(), variable);
-        let first_row = emitter.call(values.clone(), vec![var(b.clone()), var(pb.clone())]);
-        let first_uf = emitter.call(uf.clone(), vec![var(a.clone())]);
-        let second_row = emitter.call(values.clone(), vec![var(c.clone()), var(pc.clone())]);
-        let second_uf = emitter.call(uf.clone(), vec![var(b.clone())]);
-        let unequal = emitter.call(unequal, vec![var(b), var(c.clone())]);
-        let body = vec![
-            crate::ast::GenericFact::Eq(span.clone(), first_row, first_uf),
-            crate::ast::GenericFact::Eq(span.clone(), second_row, second_uf),
-            crate::ast::GenericFact::Fact(unequal),
-        ];
-        let carried_value = if let (Some(name), Some(trans)) = (compressed_name, trans) {
-            let compressed = emitter.bind_call(name, carried, trans, vec![var(pb), var(pc)]);
-            var(compressed)
-        } else {
-            GenericExpr::Lit(span.clone(), Literal::Unit)
-        };
-        let row = emitter.call(values, vec![var(c), carried_value]);
-        emitter.set(uf, vec![var(a)], row);
-        emitter.finish_rule(body, name, ruleset, RuleEvalMode::Seminaive, false)
+            // Query-observation order is generated local-ID order.
+            let b = builder.local(b_name, sort);
+            let pb = builder.local(pb_name, carried);
+            let a = builder.local(a_name, sort);
+            let c = builder.local(c_name, sort);
+            let pc = builder.local(pc_name, carried);
+            let first_row = builder.apply(values, [b, pb]);
+            let first_uf = builder.apply(uf, [a]);
+            builder.eq(first_row, first_uf);
+            let second_row = builder.apply(values, [c, pc]);
+            let second_uf = builder.apply(uf, [b]);
+            builder.eq(second_row, second_uf);
+            let unequal = builder.apply(unequal, [b, c]);
+            builder.fact(unequal);
+
+            let carried_value = if let (Some(name), Some(trans)) = (compressed_name, trans) {
+                let transitive = builder.apply(trans, [pb, pc]);
+                builder.bind(name, transitive)
+            } else {
+                builder.lit(Literal::Unit)
+            };
+            let row = builder.apply(values, [c, carried_value]);
+            builder.set(uf, [a], row);
+        })
     }
 
     /// Plan one source sort and every declaration which follows it immediately,

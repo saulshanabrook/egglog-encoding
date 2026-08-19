@@ -8,6 +8,7 @@ use super::proof_encoding_helpers::{DROP_REFLEXIVE_STEP, Skeleton};
 use crate::proofs::generated_binder::{
     CallKey, FunctionKey, GeneratedEntry, GeneratedRule, GeneratedSemanticEmitter,
     GeneratedSignatureCatalog, PrimitiveKey, SortKey, SortSemanticClass, ValueShape,
+    build_checked_rule,
 };
 use crate::typechecking::FuncType;
 use crate::*;
@@ -416,7 +417,6 @@ impl EqContainerKeyRebuildSpec {
 struct IndexedCanonicalStepSpec {
     position: usize,
     sort: ArcSort,
-    before: String,
     canonical: String,
     value_primitive: String,
     proof_step: Option<(String, String)>,
@@ -448,210 +448,200 @@ struct IndexedWholeRowRebuildSpec {
 
 impl IndexedWholeRowRebuildSpec {
     fn build(self, catalog: &mut GeneratedSignatureCatalog) -> GeneratedRule {
-        let signatures = self.common.register(catalog);
-        let span = &self.common.span;
-        let mut emitter = GeneratedSemanticEmitter::new(catalog, span);
-        let index_sort = emitter.sort(SortKey::from_sort(&self.index_sort));
-        debug_assert_eq!(index_sort.class, SortSemanticClass::Eq);
-        let uf_call = emitter.function(FunctionKey {
-            name: self.uf.clone(),
-            subtype: FunctionSubtype::Custom,
-            inputs: vec![index_sort.clone()],
-            output: ValueShape::Tuple(vec![index_sort.clone(), signatures.carried_sort.clone()]),
-        });
-        let uf_values = emitter.values(vec![index_sort.clone(), signatures.carried_sort.clone()]);
-        let not_equal_call = emitter.primitive(PrimitiveKey {
-            name: "!=".to_owned(),
-            inputs: vec![index_sort.clone(), index_sort.clone()],
-            output: signatures.unit_sort.clone(),
-        });
-        let mut index_inputs = vec![index_sort.clone()];
-        index_inputs.extend(signatures.input_sorts.iter().cloned());
-        index_inputs.push(signatures.output_sort.clone());
-        index_inputs.push(signatures.carried_sort.clone());
-        let index_call = emitter.function(FunctionKey {
-            name: self.index.name.clone(),
-            subtype: FunctionSubtype::Custom,
-            inputs: index_inputs,
-            output: ValueShape::Scalar(signatures.unit_sort.clone()),
-        });
-
-        // The first UF tuple binds leader/proof before its follower. The index
-        // atom then introduces the whole view row in declared column order.
-        let leader = emitter.local(self.leader, index_sort.clone());
-        let leader_proof = emitter.local(self.leader_proof, signatures.carried_sort.clone());
-        let follower = emitter.local(self.follower, index_sort);
-        let keys = self
-            .keys
-            .into_iter()
-            .zip(signatures.input_sorts.iter().cloned())
-            .map(|(name, sort)| emitter.local(name, sort))
-            .collect::<Vec<_>>();
-        let value = emitter.local(self.value, signatures.output_sort.clone());
-        let row_proof = emitter.local(self.row_proof, signatures.carried_sort.clone());
-        let var = |variable| GenericExpr::Var(span.clone(), variable);
-        let mut index_args = vec![var(follower.clone())];
-        index_args.extend(keys.iter().cloned().map(&var));
-        index_args.push(var(value.clone()));
-        index_args.push(var(row_proof.clone()));
-        let uf_row = emitter.call(uf_values, vec![var(leader.clone()), var(leader_proof)]);
-        let uf = emitter.call(uf_call, vec![var(follower.clone())]);
-        let unequal = emitter.call(not_equal_call, vec![var(follower), var(leader)]);
-        let index = emitter.call(index_call, index_args);
-        let body = vec![
-            GenericFact::Eq(span.clone(), uf_row, uf),
-            GenericFact::Fact(unequal),
-            GenericFact::Fact(index),
-        ];
-
-        let mut updated_args = keys.iter().cloned().map(&var).collect::<Vec<_>>();
-        let mut moved = Vec::new();
-        let mut step_proofs = Vec::new();
-        for step in self.children {
-            let sort = emitter.sort(SortKey::from_sort(&step.sort));
-            debug_assert_eq!(sort, signatures.input_sorts[step.position]);
-            let value_call = emitter.primitive(PrimitiveKey {
-                name: step.value_primitive.clone(),
-                inputs: vec![sort.clone(), sort.clone()],
-                output: sort.clone(),
-            });
-            let before = keys[step.position].clone();
-            debug_assert_eq!(before.name, step.before);
-            let canonical = emitter.bind_call(
-                step.canonical,
-                sort.clone(),
-                value_call,
-                vec![var(before.clone()), var(before.clone())],
-            );
-            if let Some((proof_name, proof_primitive)) = step.proof_step {
-                let proof_call = emitter.primitive(PrimitiveKey {
-                    name: proof_primitive.clone(),
-                    inputs: vec![sort.clone(), signatures.carried_sort.clone()],
-                    output: signatures.carried_sort.clone(),
-                });
-                let proof = emitter.bind_call(
-                    proof_name,
-                    signatures.carried_sort.clone(),
-                    proof_call,
-                    vec![var(before.clone()), var(row_proof.clone())],
-                );
-                step_proofs.push(proof);
-                moved.push((sort, before, canonical.clone()));
-            }
-            updated_args[step.position] = var(canonical);
-        }
-
-        let mut updated_value = value.clone();
-        if let Some(step) = self.output {
-            let sort = emitter.sort(SortKey::from_sort(&step.sort));
-            debug_assert_eq!(sort, signatures.output_sort);
-            let value_call = emitter.primitive(PrimitiveKey {
-                name: step.value_primitive.clone(),
-                inputs: vec![sort.clone(), sort.clone()],
-                output: sort.clone(),
-            });
-            debug_assert_eq!(value.name, step.before);
-            let canonical = emitter.bind_call(
-                step.canonical,
-                sort.clone(),
-                value_call,
-                vec![var(value.clone()), var(value.clone())],
-            );
-            if let Some((proof_name, proof_primitive)) = step.proof_step {
-                let proof_call = emitter.primitive(PrimitiveKey {
-                    name: proof_primitive.clone(),
-                    inputs: vec![sort.clone(), signatures.carried_sort.clone()],
-                    output: signatures.carried_sort.clone(),
-                });
-                let proof = emitter.bind_call(
-                    proof_name,
-                    signatures.carried_sort.clone(),
-                    proof_call,
-                    vec![var(value.clone()), var(row_proof.clone())],
-                );
-                step_proofs.push(proof);
-                moved.push((sort, value.clone(), canonical.clone()));
-            }
-            updated_value = canonical;
-        }
-
-        let carried = if let Some(packed) = self.packed {
-            debug_assert_eq!(packed.narrowed.len(), moved.len());
-            let string_sort = emitter.sort(SortKey {
-                name: "String".to_owned(),
-                class: SortSemanticClass::Value,
-            });
-            let i64_sort = emitter.sort(SortKey {
-                name: "i64".to_owned(),
-                class: SortSemanticClass::Value,
-            });
-            let mut spelling = GenericExpr::Lit(span.clone(), Literal::String(packed.skeleton));
-            for (column, (result, (sort, before, after))) in packed
-                .narrowed
-                .into_iter()
-                .zip(moved.into_iter())
-                .enumerate()
-            {
-                let drop_call = emitter.primitive(PrimitiveKey {
-                    name: DROP_REFLEXIVE_STEP.to_owned(),
-                    inputs: vec![string_sort.clone(), i64_sort.clone(), sort.clone(), sort],
-                    output: string_sort.clone(),
-                });
-                let narrowed = emitter.bind_call(
-                    result,
-                    string_sort.clone(),
-                    drop_call,
-                    vec![
-                        spelling,
-                        GenericExpr::Lit(span.clone(), Literal::Int((column + 1) as i64)),
-                        var(before),
-                        var(after),
-                    ],
-                );
-                spelling = var(narrowed);
-            }
-            let mut mint_inputs = vec![string_sort];
-            mint_inputs.extend(std::iter::repeat_n(
-                signatures.carried_sort.clone(),
-                1 + step_proofs.len(),
-            ));
-            let mint_name = crate::proofs::proof_fresh::mint_prim_name(&packed.constructor);
-            let packed_call = emitter.primitive(PrimitiveKey {
-                name: mint_name.clone(),
-                inputs: mint_inputs,
-                output: signatures.carried_sort.clone(),
-            });
-            let mut args = vec![spelling, var(row_proof.clone())];
-            args.extend(step_proofs.into_iter().map(&var));
-            let result = emitter.bind_call(
-                packed.result,
-                signatures.carried_sort.clone(),
-                packed_call,
-                args,
-            );
-            var(result)
-        } else if self.common.proofs_enabled {
-            var(row_proof)
-        } else {
-            GenericExpr::Lit(span.clone(), Literal::Unit)
-        };
-
-        // Whole-row rebuilds delete first: an e-class-only move leaves the key
-        // unchanged, and the replacement must survive that case.
-        emitter.change(
-            Change::Delete,
-            signatures.view_call.clone(),
-            keys.iter().cloned().map(&var).collect(),
+        let RebuildRuleCommonSpec {
+            span,
+            function,
+            proof_sort,
+            proofs_enabled,
+            view,
+            name,
+            ruleset,
+        } = self.common;
+        let input_keys: Vec<_> = function.input.iter().map(SortKey::from_sort).collect();
+        let output_key = SortKey::from_sort(function.output());
+        let index_sort_key = SortKey::from_sort(&self.index_sort);
+        assert!(
+            self.keys.len() == input_keys.len()
+                && index_sort_key.class == SortSemanticClass::Eq
+                && index_sort_key.name == self.index.sort_name,
+            "invalid generated semantic emission: indexed rebuild key or index sort mismatch at {span}"
         );
-        let row = emitter.call(signatures.values_call, vec![var(updated_value), carried]);
-        emitter.set(signatures.view_call.clone(), updated_args, row);
-        emitter.finish_rule(
-            body,
-            self.common.name,
-            self.common.ruleset,
-            self.eval_mode,
-            true,
-        )
+        for step in &self.children {
+            assert!(
+                step.position < input_keys.len()
+                    && SortKey::from_sort(&step.sort) == input_keys[step.position]
+                    && step.proof_step.is_some() == proofs_enabled,
+                "invalid generated semantic emission: indexed rebuild child plan mismatch at {span}"
+            );
+        }
+        if let Some(step) = &self.output {
+            assert!(
+                step.position == input_keys.len()
+                    && SortKey::from_sort(&step.sort) == output_key
+                    && step.proof_step.is_some() == proofs_enabled,
+                "invalid generated semantic emission: indexed rebuild output plan mismatch at {span}"
+            );
+        }
+        let step_count = self.children.len() + usize::from(self.output.is_some());
+        assert_eq!(
+            self.packed.as_ref().map(|packed| packed.narrowed.len()),
+            (proofs_enabled && step_count > 0).then_some(step_count),
+            "invalid generated semantic emission: indexed rebuild packed or narrowed proof count disagrees with proof mode at {span}"
+        );
+        let metadata = (name, ruleset, self.eval_mode, true);
+        build_checked_rule(catalog, &span, metadata, move |builder| {
+            // Recreate common handles in this scope before assembly.
+            let input_sorts: Vec<_> = input_keys
+                .iter()
+                .cloned()
+                .map(|sort| builder.sort(sort))
+                .collect();
+            let output_sort = builder.sort(output_key.clone());
+            let unit_key = SortKey {
+                name: "Unit".to_owned(),
+                class: SortSemanticClass::Value,
+            };
+            let unit_sort = builder.sort(unit_key.clone());
+            let (carried_key, carried_sort) = if proofs_enabled {
+                let key = SortKey {
+                    name: proof_sort,
+                    class: SortSemanticClass::Eq,
+                };
+                (key.clone(), builder.sort(key))
+            } else {
+                (unit_key.clone(), unit_sort)
+            };
+            let view_values = builder.values([output_sort, carried_sort]);
+            let view_call = builder.function(FunctionKey {
+                name: view,
+                subtype: FunctionSubtype::Custom,
+                inputs: input_keys.clone(),
+                output: ValueShape::Tuple(vec![output_key.clone(), carried_key.clone()]),
+            });
+            let index_sort = builder.sort(index_sort_key.clone());
+            let uf_values = builder.values([index_sort, carried_sort]);
+            let uf_call = builder.function(FunctionKey {
+                name: self.uf,
+                subtype: FunctionSubtype::Custom,
+                inputs: vec![index_sort_key.clone()],
+                output: ValueShape::Tuple(vec![index_sort_key.clone(), carried_key.clone()]),
+            });
+            let not_equal_call = builder.primitive("!=", [index_sort, index_sort], unit_sort);
+            let mut index_inputs = vec![index_sort_key];
+            index_inputs.extend(input_keys.iter().cloned());
+            index_inputs.extend([output_key.clone(), carried_key]);
+            let index_call = builder.function(FunctionKey {
+                name: self.index.name,
+                subtype: FunctionSubtype::Custom,
+                inputs: index_inputs,
+                output: ValueShape::Scalar(unit_key),
+            });
+
+            // Bind leader/proof before follower, then the indexed row in column order.
+            let leader = builder.local(self.leader, index_sort);
+            let leader_proof = builder.local(self.leader_proof, carried_sort);
+            let follower = builder.local(self.follower, index_sort);
+            let keys = self
+                .keys
+                .into_iter()
+                .zip(input_sorts.iter().copied())
+                .map(|(name, sort)| builder.local(name, sort))
+                .collect::<Vec<_>>();
+            let value = builder.local(self.value, output_sort);
+            let row_proof = builder.local(self.row_proof, carried_sort);
+            let mut index_args = vec![follower];
+            index_args.extend(keys.iter().copied());
+            index_args.extend([value, row_proof]);
+            let uf_row = builder.apply(uf_values, [leader, leader_proof]);
+            let uf_value = builder.apply(uf_call, [follower]);
+            builder.eq(uf_row, uf_value);
+            let unequal = builder.apply(not_equal_call, [follower, leader]);
+            builder.fact(unequal);
+            let index_value = builder.apply(index_call, index_args);
+            builder.fact(index_value);
+
+            let mut updated_args = keys.clone();
+            let mut moved = Vec::new();
+            let mut step_proofs = Vec::new();
+            for step in self.children {
+                let sort = input_sorts[step.position];
+                let value_call = builder.primitive(step.value_primitive, [sort, sort], sort);
+                let before = keys[step.position];
+                let canonical_value = builder.apply(value_call, [before, before]);
+                let canonical = builder.bind(step.canonical, canonical_value);
+                if let Some((proof_name, proof_primitive)) = step.proof_step {
+                    let proof_call =
+                        builder.primitive(proof_primitive, [sort, carried_sort], carried_sort);
+                    let proof_value = builder.apply(proof_call, [before, row_proof]);
+                    let proof = builder.bind(proof_name, proof_value);
+                    step_proofs.push(proof);
+                    moved.push((sort, before, canonical));
+                }
+                updated_args[step.position] = canonical;
+            }
+
+            let mut updated_value = value;
+            if let Some(step) = self.output {
+                let sort = output_sort;
+                let value_call = builder.primitive(step.value_primitive, [sort, sort], sort);
+                let canonical_value = builder.apply(value_call, [value, value]);
+                let canonical = builder.bind(step.canonical, canonical_value);
+                if let Some((proof_name, proof_primitive)) = step.proof_step {
+                    let proof_call =
+                        builder.primitive(proof_primitive, [sort, carried_sort], carried_sort);
+                    let proof_value = builder.apply(proof_call, [value, row_proof]);
+                    let proof = builder.bind(proof_name, proof_value);
+                    step_proofs.push(proof);
+                    moved.push((sort, value, canonical));
+                }
+                updated_value = canonical;
+            }
+
+            let carried = if let Some(packed) = self.packed {
+                let string_sort = builder.sort(SortKey {
+                    name: "String".to_owned(),
+                    class: SortSemanticClass::Value,
+                });
+                let i64_sort = builder.sort(SortKey {
+                    name: "i64".to_owned(),
+                    class: SortSemanticClass::Value,
+                });
+                let mut spelling = builder.lit(Literal::String(packed.skeleton));
+                for (column, (result, (sort, before, after))) in
+                    packed.narrowed.into_iter().zip(moved).enumerate()
+                {
+                    let drop_call = builder.primitive(
+                        DROP_REFLEXIVE_STEP,
+                        [string_sort, i64_sort, sort, sort],
+                        string_sort,
+                    );
+                    let position = builder.lit(Literal::Int((column + 1) as i64));
+                    let narrowed = builder.apply(drop_call, [spelling, position, before, after]);
+                    spelling = builder.bind(result, narrowed);
+                }
+                let mut mint_inputs = vec![string_sort];
+                mint_inputs.extend(std::iter::repeat_n(carried_sort, 1 + step_proofs.len()));
+                let packed_call = builder.primitive(
+                    crate::proofs::proof_fresh::mint_prim_name(&packed.constructor),
+                    mint_inputs,
+                    carried_sort,
+                );
+                let mut args = vec![spelling, row_proof];
+                args.extend(step_proofs);
+                let result = builder.apply(packed_call, args);
+                builder.bind(packed.result, result)
+            } else if proofs_enabled {
+                row_proof
+            } else {
+                builder.lit(Literal::Unit)
+            };
+
+            // Whole-row rebuilds alone delete first: an e-class-only move
+            // leaves the key unchanged, so replacement must come second.
+            builder.change(Change::Delete, view_call, keys);
+            let row = builder.apply(view_values, [updated_value, carried]);
+            builder.set(view_call, updated_args, row);
+        })
     }
 }
 
@@ -1174,7 +1164,6 @@ impl ProofInstrumentor<'_> {
             if types[position].is_eq_container_sort() || !types[position].is_eq_sort() {
                 continue;
             }
-            let before = key_vars[position].clone();
             let canonical = format!("c{position}_canon_");
             let child_uf = self.uf_name(types[position].name());
             let value_primitive = uf_canon_prim_name(&child_uf);
@@ -1188,7 +1177,6 @@ impl ProofInstrumentor<'_> {
             children.push(IndexedCanonicalStepSpec {
                 position,
                 sort: types[position].clone(),
-                before,
                 canonical,
                 value_primitive,
                 proof_step,
@@ -1210,7 +1198,6 @@ impl ProofInstrumentor<'_> {
             Some(IndexedCanonicalStepSpec {
                 position: n_keys,
                 sort: types[n_keys].clone(),
-                before: value.clone(),
                 canonical: format!("e{n_keys}_canon_"),
                 value_primitive: uf_canon_prim_name(&output_uf),
                 proof_step,
@@ -1383,5 +1370,574 @@ impl ProofInstrumentor<'_> {
             proof,
         };
         vec![GeneratedEntry::Rule(spec.build(&mut self.signatures))]
+    }
+}
+
+#[cfg(test)]
+mod checked_builder_tests {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::ast::{GenericActions, GenericFact, GenericRule};
+    use crate::proofs::generated_binder::{GeneratedVar, GeneratedVarRole, LocalId};
+
+    fn indexed_plan(span: &Span, proofs_enabled: bool) -> IndexedWholeRowRebuildSpec {
+        let e: ArcSort = Arc::new(crate::sort::EqSort {
+            name: "E".to_owned(),
+        });
+        IndexedWholeRowRebuildSpec {
+            common: RebuildRuleCommonSpec {
+                span: span.clone(),
+                function: FuncType {
+                    name: "F".to_owned(),
+                    subtype: FunctionSubtype::Custom,
+                    input: vec![e.clone()],
+                    outputs: vec![e.clone()],
+                },
+                proof_sort: "Proof".to_owned(),
+                proofs_enabled,
+                view: "FView".to_owned(),
+                name: "rebuild".to_owned(),
+                ruleset: "rebuild-rules".to_owned(),
+            },
+            index: ViewIndex {
+                name: "FIndex".to_owned(),
+                sort_name: "E".to_owned(),
+            },
+            index_sort: e.clone(),
+            uf: "UF-E".to_owned(),
+            follower: "follower".to_owned(),
+            leader: "leader".to_owned(),
+            leader_proof: "leader-proof".to_owned(),
+            keys: vec!["key".to_owned()],
+            value: "value".to_owned(),
+            row_proof: "row-proof".to_owned(),
+            children: vec![IndexedCanonicalStepSpec {
+                position: 0,
+                sort: e.clone(),
+                canonical: "canonical-key".to_owned(),
+                value_primitive: "canonicalize-key".to_owned(),
+                proof_step: proofs_enabled
+                    .then(|| ("proof-key".to_owned(), "prove-key".to_owned())),
+            }],
+            output: Some(IndexedCanonicalStepSpec {
+                position: 1,
+                sort: e,
+                canonical: "canonical-value".to_owned(),
+                value_primitive: "canonicalize-value".to_owned(),
+                proof_step: proofs_enabled
+                    .then(|| ("proof-value".to_owned(), "prove-value".to_owned())),
+            }),
+            packed: proofs_enabled.then(|| IndexedPackedProofSpec {
+                skeleton: "(. (.))".to_owned(),
+                narrowed: vec!["narrow-key".to_owned(), "narrow-value".to_owned()],
+                constructor: "Packed".to_owned(),
+                result: "packed".to_owned(),
+            }),
+            eval_mode: RuleEvalMode::UnsafeSeminaive,
+        }
+    }
+
+    fn rejected_plan(
+        span: &Span,
+        proofs_enabled: bool,
+        expected: &str,
+        edit: impl FnOnce(&mut IndexedWholeRowRebuildSpec),
+    ) {
+        let mut spec = indexed_plan(span, proofs_enabled);
+        edit(&mut spec);
+        let mut catalog = GeneratedSignatureCatalog::default();
+        let panic = catch_unwind(AssertUnwindSafe(|| spec.build(&mut catalog)))
+            .expect_err("incoherent indexed rebuild plan must panic");
+        let message = panic
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| {
+                panic
+                    .downcast_ref::<&str>()
+                    .map(|message| (*message).to_owned())
+            })
+            .expect("indexed rebuild panic must contain text");
+        assert!(message.contains(expected), "unexpected panic: {message}");
+        assert!(
+            message.contains(&span.to_string()),
+            "missing span: {message}"
+        );
+    }
+
+    #[test]
+    fn indexed_whole_row_checked_builder_pins_proof_and_term_structures() {
+        let span = crate::span!();
+        let e: ArcSort = Arc::new(crate::sort::EqSort {
+            name: "E".to_owned(),
+        });
+        let i64_sort = crate::sort::literal_sort(&Literal::Int(0));
+        let e_key = SortKey::from_sort(&e);
+        let i64_key = SortKey::from_sort(&i64_sort);
+        let unit_key = SortKey {
+            name: "Unit".to_owned(),
+            class: SortSemanticClass::Value,
+        };
+        let proof_key = SortKey {
+            name: "Proof".to_owned(),
+            class: SortSemanticClass::Eq,
+        };
+        let mut catalog = GeneratedSignatureCatalog::default();
+        let proof_rule = IndexedWholeRowRebuildSpec {
+            common: RebuildRuleCommonSpec {
+                span: span.clone(),
+                function: FuncType {
+                    name: "F".to_owned(),
+                    subtype: FunctionSubtype::Custom,
+                    input: vec![e.clone(), i64_sort.clone()],
+                    outputs: vec![e.clone()],
+                },
+                proof_sort: "Proof".to_owned(),
+                proofs_enabled: true,
+                view: "FView".to_owned(),
+                name: "rebuild-proof".to_owned(),
+                ruleset: "rebuild-rules".to_owned(),
+            },
+            index: ViewIndex {
+                name: "FIndex".to_owned(),
+                sort_name: "E".to_owned(),
+            },
+            index_sort: e.clone(),
+            uf: "UF-E".to_owned(),
+            follower: "follower".to_owned(),
+            leader: "leader".to_owned(),
+            leader_proof: "leader-proof".to_owned(),
+            keys: vec!["k0".to_owned(), "k1".to_owned()],
+            value: "value".to_owned(),
+            row_proof: "row-proof".to_owned(),
+            children: vec![IndexedCanonicalStepSpec {
+                position: 0,
+                sort: e.clone(),
+                canonical: "canonical-k0".to_owned(),
+                value_primitive: "canonicalize-k0".to_owned(),
+                proof_step: Some(("proof-k0".to_owned(), "prove-k0".to_owned())),
+            }],
+            output: Some(IndexedCanonicalStepSpec {
+                position: 2,
+                sort: e.clone(),
+                canonical: "canonical-value".to_owned(),
+                value_primitive: "canonicalize-value".to_owned(),
+                proof_step: Some(("proof-value".to_owned(), "prove-value".to_owned())),
+            }),
+            packed: Some(IndexedPackedProofSpec {
+                skeleton: "(. (.))".to_owned(),
+                narrowed: vec!["narrow-1".to_owned(), "narrow-2".to_owned()],
+                constructor: "Packed".to_owned(),
+                result: "packed".to_owned(),
+            }),
+            eval_mode: RuleEvalMode::UnsafeSeminaive,
+        }
+        .build(&mut catalog);
+
+        let local = |id, name: &str, sort: &SortKey| GeneratedVar {
+            id: LocalId(id),
+            name: name.to_owned(),
+            sort: sort.clone(),
+            role: GeneratedVarRole::Local,
+        };
+        let leader = local(0, "leader", &e_key);
+        let leader_proof = local(1, "leader-proof", &proof_key);
+        let follower = local(2, "follower", &e_key);
+        let k0 = local(3, "k0", &e_key);
+        let k1 = local(4, "k1", &i64_key);
+        let value = local(5, "value", &e_key);
+        let row_proof = local(6, "row-proof", &proof_key);
+        let canonical_k0 = local(7, "canonical-k0", &e_key);
+        let proof_k0 = local(8, "proof-k0", &proof_key);
+        let canonical_value = local(9, "canonical-value", &e_key);
+        let proof_value = local(10, "proof-value", &proof_key);
+        let narrow_1 = local(
+            11,
+            "narrow-1",
+            &SortKey {
+                name: "String".to_owned(),
+                class: SortSemanticClass::Value,
+            },
+        );
+        let narrow_2 = local(
+            12,
+            "narrow-2",
+            &SortKey {
+                name: "String".to_owned(),
+                class: SortSemanticClass::Value,
+            },
+        );
+        let packed = local(13, "packed", &proof_key);
+        let var = |variable: &GeneratedVar| GenericExpr::Var(span.clone(), variable.clone());
+        let call = |head, args| GenericExpr::Call(span.clone(), head, args);
+        let view_values = CallKey::Values(vec![e_key.clone(), proof_key.clone()]);
+        let view_call = CallKey::Function(FunctionKey {
+            name: "FView".to_owned(),
+            subtype: FunctionSubtype::Custom,
+            inputs: vec![e_key.clone(), i64_key.clone()],
+            output: ValueShape::Tuple(vec![e_key.clone(), proof_key.clone()]),
+        });
+        let uf_values = CallKey::Values(vec![e_key.clone(), proof_key.clone()]);
+        let uf_call = CallKey::Function(FunctionKey {
+            name: "UF-E".to_owned(),
+            subtype: FunctionSubtype::Custom,
+            inputs: vec![e_key.clone()],
+            output: ValueShape::Tuple(vec![e_key.clone(), proof_key.clone()]),
+        });
+        let unequal = CallKey::Primitive(PrimitiveKey {
+            name: "!=".to_owned(),
+            inputs: vec![e_key.clone(), e_key.clone()],
+            output: unit_key.clone(),
+        });
+        let index_call = CallKey::Function(FunctionKey {
+            name: "FIndex".to_owned(),
+            subtype: FunctionSubtype::Custom,
+            inputs: vec![
+                e_key.clone(),
+                e_key.clone(),
+                i64_key.clone(),
+                e_key.clone(),
+                proof_key.clone(),
+            ],
+            output: ValueShape::Scalar(unit_key.clone()),
+        });
+        let canonicalize_k0 = CallKey::Primitive(PrimitiveKey {
+            name: "canonicalize-k0".to_owned(),
+            inputs: vec![e_key.clone(), e_key.clone()],
+            output: e_key.clone(),
+        });
+        let prove_k0 = CallKey::Primitive(PrimitiveKey {
+            name: "prove-k0".to_owned(),
+            inputs: vec![e_key.clone(), proof_key.clone()],
+            output: proof_key.clone(),
+        });
+        let canonicalize_value = CallKey::Primitive(PrimitiveKey {
+            name: "canonicalize-value".to_owned(),
+            inputs: vec![e_key.clone(), e_key.clone()],
+            output: e_key.clone(),
+        });
+        let prove_value = CallKey::Primitive(PrimitiveKey {
+            name: "prove-value".to_owned(),
+            inputs: vec![e_key.clone(), proof_key.clone()],
+            output: proof_key.clone(),
+        });
+        let drop_reflexive = CallKey::Primitive(PrimitiveKey {
+            name: DROP_REFLEXIVE_STEP.to_owned(),
+            inputs: vec![
+                SortKey {
+                    name: "String".to_owned(),
+                    class: SortSemanticClass::Value,
+                },
+                i64_key.clone(),
+                e_key.clone(),
+                e_key.clone(),
+            ],
+            output: SortKey {
+                name: "String".to_owned(),
+                class: SortSemanticClass::Value,
+            },
+        });
+        let mint = CallKey::Primitive(PrimitiveKey {
+            name: crate::proofs::proof_fresh::mint_prim_name("Packed"),
+            inputs: vec![
+                SortKey {
+                    name: "String".to_owned(),
+                    class: SortSemanticClass::Value,
+                },
+                proof_key.clone(),
+                proof_key.clone(),
+                proof_key.clone(),
+            ],
+            output: proof_key.clone(),
+        });
+        assert_eq!(
+            proof_rule,
+            GenericRule {
+                span: span.clone(),
+                body: vec![
+                    GenericFact::Eq(
+                        span.clone(),
+                        call(uf_values, vec![var(&leader), var(&leader_proof)],),
+                        call(uf_call, vec![var(&follower)]),
+                    ),
+                    GenericFact::Fact(call(unequal, vec![var(&follower), var(&leader)],)),
+                    GenericFact::Fact(call(
+                        index_call,
+                        vec![
+                            var(&follower),
+                            var(&k0),
+                            var(&k1),
+                            var(&value),
+                            var(&row_proof),
+                        ],
+                    )),
+                ],
+                head: GenericActions(vec![
+                    GenericAction::Let(
+                        span.clone(),
+                        canonical_k0.clone(),
+                        call(canonicalize_k0, vec![var(&k0), var(&k0)],),
+                    ),
+                    GenericAction::Let(
+                        span.clone(),
+                        proof_k0.clone(),
+                        call(prove_k0, vec![var(&k0), var(&row_proof)]),
+                    ),
+                    GenericAction::Let(
+                        span.clone(),
+                        canonical_value.clone(),
+                        call(canonicalize_value, vec![var(&value), var(&value)],),
+                    ),
+                    GenericAction::Let(
+                        span.clone(),
+                        proof_value.clone(),
+                        call(prove_value, vec![var(&value), var(&row_proof)]),
+                    ),
+                    GenericAction::Let(
+                        span.clone(),
+                        narrow_1.clone(),
+                        call(
+                            drop_reflexive.clone(),
+                            vec![
+                                GenericExpr::Lit(
+                                    span.clone(),
+                                    Literal::String("(. (.))".to_owned()),
+                                ),
+                                GenericExpr::Lit(span.clone(), Literal::Int(1)),
+                                var(&k0),
+                                var(&canonical_k0),
+                            ],
+                        ),
+                    ),
+                    GenericAction::Let(
+                        span.clone(),
+                        narrow_2.clone(),
+                        call(
+                            drop_reflexive,
+                            vec![
+                                var(&narrow_1),
+                                GenericExpr::Lit(span.clone(), Literal::Int(2)),
+                                var(&value),
+                                var(&canonical_value),
+                            ],
+                        ),
+                    ),
+                    GenericAction::Let(
+                        span.clone(),
+                        packed.clone(),
+                        call(
+                            mint,
+                            vec![
+                                var(&narrow_2),
+                                var(&row_proof),
+                                var(&proof_k0),
+                                var(&proof_value),
+                            ],
+                        ),
+                    ),
+                    GenericAction::Change(
+                        span.clone(),
+                        Change::Delete,
+                        view_call.clone(),
+                        vec![var(&k0), var(&k1)],
+                    ),
+                    GenericAction::Set(
+                        span.clone(),
+                        view_call,
+                        vec![var(&canonical_k0), var(&k1)],
+                        call(view_values, vec![var(&canonical_value), var(&packed)],),
+                    ),
+                ]),
+                name: "rebuild-proof".to_owned(),
+                ruleset: "rebuild-rules".to_owned(),
+                eval_mode: RuleEvalMode::UnsafeSeminaive,
+                no_decomp: false,
+                include_subsumed: true,
+            }
+        );
+
+        let mut catalog = GeneratedSignatureCatalog::default();
+        let term_rule = IndexedWholeRowRebuildSpec {
+            common: RebuildRuleCommonSpec {
+                span: span.clone(),
+                function: FuncType {
+                    name: "T".to_owned(),
+                    subtype: FunctionSubtype::Custom,
+                    input: vec![e.clone()],
+                    outputs: vec![i64_sort.clone()],
+                },
+                proof_sort: "unused-proof".to_owned(),
+                proofs_enabled: false,
+                view: "TView".to_owned(),
+                name: "rebuild-term".to_owned(),
+                ruleset: "rebuild-rules".to_owned(),
+            },
+            index: ViewIndex {
+                name: "TIndex".to_owned(),
+                sort_name: "E".to_owned(),
+            },
+            index_sort: e.clone(),
+            uf: "UF-E-term".to_owned(),
+            follower: "follower".to_owned(),
+            leader: "leader".to_owned(),
+            leader_proof: "leader-proof".to_owned(),
+            keys: vec!["k0".to_owned()],
+            value: "value".to_owned(),
+            row_proof: "row-proof".to_owned(),
+            children: vec![IndexedCanonicalStepSpec {
+                position: 0,
+                sort: e,
+                canonical: "canonical-k0".to_owned(),
+                value_primitive: "canonicalize-k0".to_owned(),
+                proof_step: None,
+            }],
+            output: None,
+            packed: None,
+            eval_mode: RuleEvalMode::Naive,
+        }
+        .build(&mut catalog);
+        let leader = local(0, "leader", &e_key);
+        let leader_proof = local(1, "leader-proof", &unit_key);
+        let follower = local(2, "follower", &e_key);
+        let k0 = local(3, "k0", &e_key);
+        let value = local(4, "value", &i64_key);
+        let row_proof = local(5, "row-proof", &unit_key);
+        let canonical_k0 = local(6, "canonical-k0", &e_key);
+        let view_values = CallKey::Values(vec![i64_key.clone(), unit_key.clone()]);
+        let view_call = CallKey::Function(FunctionKey {
+            name: "TView".to_owned(),
+            subtype: FunctionSubtype::Custom,
+            inputs: vec![e_key.clone()],
+            output: ValueShape::Tuple(vec![i64_key.clone(), unit_key.clone()]),
+        });
+        assert_eq!(
+            term_rule,
+            GenericRule {
+                span: span.clone(),
+                body: vec![
+                    GenericFact::Eq(
+                        span.clone(),
+                        call(
+                            CallKey::Values(vec![e_key.clone(), unit_key.clone()]),
+                            vec![var(&leader), var(&leader_proof)],
+                        ),
+                        call(
+                            CallKey::Function(FunctionKey {
+                                name: "UF-E-term".to_owned(),
+                                subtype: FunctionSubtype::Custom,
+                                inputs: vec![e_key.clone()],
+                                output: ValueShape::Tuple(vec![e_key.clone(), unit_key.clone(),]),
+                            }),
+                            vec![var(&follower)],
+                        ),
+                    ),
+                    GenericFact::Fact(call(
+                        CallKey::Primitive(PrimitiveKey {
+                            name: "!=".to_owned(),
+                            inputs: vec![e_key.clone(), e_key.clone()],
+                            output: unit_key.clone(),
+                        }),
+                        vec![var(&follower), var(&leader)],
+                    )),
+                    GenericFact::Fact(call(
+                        CallKey::Function(FunctionKey {
+                            name: "TIndex".to_owned(),
+                            subtype: FunctionSubtype::Custom,
+                            inputs: vec![
+                                e_key.clone(),
+                                e_key.clone(),
+                                i64_key.clone(),
+                                unit_key.clone(),
+                            ],
+                            output: ValueShape::Scalar(unit_key.clone()),
+                        }),
+                        vec![var(&follower), var(&k0), var(&value), var(&row_proof)],
+                    )),
+                ],
+                head: GenericActions(vec![
+                    GenericAction::Let(
+                        span.clone(),
+                        canonical_k0.clone(),
+                        call(
+                            CallKey::Primitive(PrimitiveKey {
+                                name: "canonicalize-k0".to_owned(),
+                                inputs: vec![e_key.clone(), e_key.clone()],
+                                output: e_key.clone(),
+                            }),
+                            vec![var(&k0), var(&k0)],
+                        ),
+                    ),
+                    GenericAction::Change(
+                        span.clone(),
+                        Change::Delete,
+                        view_call.clone(),
+                        vec![var(&k0)],
+                    ),
+                    GenericAction::Set(
+                        span.clone(),
+                        view_call,
+                        vec![var(&canonical_k0)],
+                        call(
+                            view_values,
+                            vec![var(&value), GenericExpr::Lit(span.clone(), Literal::Unit),],
+                        ),
+                    ),
+                ]),
+                name: "rebuild-term".to_owned(),
+                ruleset: "rebuild-rules".to_owned(),
+                eval_mode: RuleEvalMode::Naive,
+                no_decomp: false,
+                include_subsumed: true,
+            }
+        );
+    }
+
+    #[test]
+    fn indexed_whole_row_rejects_incoherent_producer_plans() {
+        let span = crate::span!();
+        let i64_sort = crate::sort::literal_sort(&Literal::Int(0));
+        rejected_plan(&span, true, "key or index sort", |spec| {
+            spec.keys.clear();
+        });
+        rejected_plan(&span, true, "key or index sort", |spec| {
+            spec.index.sort_name = "i64".to_owned();
+            spec.index_sort = i64_sort.clone();
+        });
+        rejected_plan(&span, true, "child plan", |spec| {
+            spec.children[0].position = 1;
+        });
+        rejected_plan(&span, true, "child plan", |spec| {
+            spec.children[0].sort = i64_sort.clone();
+        });
+        rejected_plan(&span, true, "child plan", |spec| {
+            spec.children[0].proof_step = None;
+        });
+        rejected_plan(&span, true, "output plan", |spec| {
+            spec.output.as_mut().unwrap().position = 0;
+        });
+        rejected_plan(&span, true, "output plan", |spec| {
+            spec.output.as_mut().unwrap().sort = i64_sort.clone();
+        });
+        rejected_plan(&span, true, "output plan", |spec| {
+            spec.output.as_mut().unwrap().proof_step = None;
+        });
+        rejected_plan(&span, true, "packed or narrowed", |spec| {
+            spec.packed = None;
+        });
+        rejected_plan(&span, true, "packed or narrowed", |spec| {
+            spec.packed.as_mut().unwrap().narrowed.pop();
+        });
+        rejected_plan(&span, false, "child plan", |spec| {
+            spec.children[0].proof_step = Some(("proof".to_owned(), "prove".to_owned()));
+        });
+        rejected_plan(&span, false, "packed or narrowed", |spec| {
+            spec.packed = Some(IndexedPackedProofSpec {
+                skeleton: "()".to_owned(),
+                narrowed: vec![],
+                constructor: "Packed".to_owned(),
+                result: "packed".to_owned(),
+            });
+        });
     }
 }

@@ -2,9 +2,10 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use super::*;
 use crate::EGraph;
-use crate::ast::{GenericActions, GenericRule, ResolvedNCommand};
+use crate::ast::{GenericActions, GenericFact, GenericRule, ResolvedNCommand};
 use crate::proofs::generated_binder::{
-    GeneratedBatch, GeneratedEntry, GeneratedVarRole, LocalId, resolve_generated_batch,
+    GeneratedBatch, GeneratedEntry, GeneratedVar, GeneratedVarRole, LocalId,
+    resolve_generated_batch,
 };
 use crate::typechecking::TypeError;
 
@@ -287,6 +288,271 @@ fn pending_relations_are_typed_one_shot_and_subsumption_stays_adjacent() {
             .declarations
             .is_empty()
     );
+}
+
+#[test]
+fn path_compression_checked_builder_pins_full_proof_and_term_structures() {
+    let mut egraph = EGraph::new_with_proofs();
+    let instrumentor = ProofInstrumentor::new(&mut egraph);
+    let span = crate::span!();
+    let e = SortKey {
+        name: "E".to_owned(),
+        class: SortSemanticClass::Eq,
+    };
+    let proof = SortKey {
+        name: instrumentor.proof_names().proof_datatype.clone(),
+        class: SortSemanticClass::Eq,
+    };
+    let proof_values = CallKey::Values(vec![e.clone(), proof.clone()]);
+    let proof_uf = FunctionKey {
+        name: "UF-E-proof".to_owned(),
+        subtype: FunctionSubtype::Custom,
+        inputs: vec![e.clone()],
+        output: ValueShape::Tuple(vec![e.clone(), proof.clone()]),
+    };
+    let mut catalog = GeneratedSignatureCatalog::default();
+    let rule = instrumentor.path_compression_rule_direct(
+        &mut catalog,
+        &span,
+        e.clone(),
+        proof.clone(),
+        proof_uf.clone(),
+        "compress-proof".to_owned(),
+        "compress-rules".to_owned(),
+        "a".to_owned(),
+        "b".to_owned(),
+        "c".to_owned(),
+        "pb".to_owned(),
+        "pc".to_owned(),
+        Some("compressed".to_owned()),
+    );
+    let local = |id, name: &str, sort: &SortKey| GeneratedVar {
+        id: LocalId(id),
+        name: name.to_owned(),
+        sort: sort.clone(),
+        role: GeneratedVarRole::Local,
+    };
+    let b = local(0, "b", &e);
+    let pb = local(1, "pb", &proof);
+    let a = local(2, "a", &e);
+    let c = local(3, "c", &e);
+    let pc = local(4, "pc", &proof);
+    let compressed = local(5, "compressed", &proof);
+    let var = |variable: &GeneratedVar| GenericExpr::Var(span.clone(), variable.clone());
+    let unequal = CallKey::Primitive(PrimitiveKey {
+        name: "!=".to_owned(),
+        inputs: vec![e.clone(), e.clone()],
+        output: SortKey {
+            name: "Unit".to_owned(),
+            class: SortSemanticClass::Value,
+        },
+    });
+    let trans = CallKey::Primitive(PrimitiveKey {
+        name: crate::proofs::proof_fresh::mint_prim_name(
+            &instrumentor.proof_names().eq_trans_constructor,
+        ),
+        inputs: vec![proof.clone(), proof.clone()],
+        output: proof.clone(),
+    });
+    assert_eq!(
+        rule,
+        GenericRule {
+            span: span.clone(),
+            body: vec![
+                GenericFact::Eq(
+                    span.clone(),
+                    GenericExpr::Call(span.clone(), proof_values.clone(), vec![var(&b), var(&pb)],),
+                    GenericExpr::Call(
+                        span.clone(),
+                        CallKey::Function(proof_uf.clone()),
+                        vec![var(&a)],
+                    ),
+                ),
+                GenericFact::Eq(
+                    span.clone(),
+                    GenericExpr::Call(span.clone(), proof_values.clone(), vec![var(&c), var(&pc)],),
+                    GenericExpr::Call(
+                        span.clone(),
+                        CallKey::Function(proof_uf.clone()),
+                        vec![var(&b)],
+                    ),
+                ),
+                GenericFact::Fact(GenericExpr::Call(
+                    span.clone(),
+                    unequal.clone(),
+                    vec![var(&b), var(&c)],
+                )),
+            ],
+            head: GenericActions(vec![
+                GenericAction::Let(
+                    span.clone(),
+                    compressed.clone(),
+                    GenericExpr::Call(span.clone(), trans, vec![var(&pb), var(&pc)],),
+                ),
+                GenericAction::Set(
+                    span.clone(),
+                    CallKey::Function(proof_uf.clone()),
+                    vec![var(&a)],
+                    GenericExpr::Call(span.clone(), proof_values, vec![var(&c), var(&compressed)],),
+                ),
+            ]),
+            name: "compress-proof".to_owned(),
+            ruleset: "compress-rules".to_owned(),
+            eval_mode: RuleEvalMode::Seminaive,
+            no_decomp: false,
+            include_subsumed: false,
+        }
+    );
+
+    let unit = SortKey {
+        name: "Unit".to_owned(),
+        class: SortSemanticClass::Value,
+    };
+    let term_values = CallKey::Values(vec![e.clone(), unit.clone()]);
+    let term_uf = FunctionKey {
+        name: "UF-E-term".to_owned(),
+        subtype: FunctionSubtype::Custom,
+        inputs: vec![e.clone()],
+        output: ValueShape::Tuple(vec![e.clone(), unit.clone()]),
+    };
+    drop(instrumentor);
+    let mut term_egraph = EGraph::new_with_term_encoding();
+    let term_instrumentor = ProofInstrumentor::new(&mut term_egraph);
+    let mut catalog = GeneratedSignatureCatalog::default();
+    let rule = term_instrumentor.path_compression_rule_direct(
+        &mut catalog,
+        &span,
+        e.clone(),
+        unit.clone(),
+        term_uf.clone(),
+        "compress-term".to_owned(),
+        "compress-rules".to_owned(),
+        "a".to_owned(),
+        "b".to_owned(),
+        "c".to_owned(),
+        "pb".to_owned(),
+        "pc".to_owned(),
+        None,
+    );
+    let b = local(0, "b", &e);
+    let pb = local(1, "pb", &unit);
+    let a = local(2, "a", &e);
+    let c = local(3, "c", &e);
+    let pc = local(4, "pc", &unit);
+    assert_eq!(
+        rule,
+        GenericRule {
+            span: span.clone(),
+            body: vec![
+                GenericFact::Eq(
+                    span.clone(),
+                    GenericExpr::Call(span.clone(), term_values.clone(), vec![var(&b), var(&pb)],),
+                    GenericExpr::Call(
+                        span.clone(),
+                        CallKey::Function(term_uf.clone()),
+                        vec![var(&a)],
+                    ),
+                ),
+                GenericFact::Eq(
+                    span.clone(),
+                    GenericExpr::Call(span.clone(), term_values.clone(), vec![var(&c), var(&pc)],),
+                    GenericExpr::Call(
+                        span.clone(),
+                        CallKey::Function(term_uf.clone()),
+                        vec![var(&b)],
+                    ),
+                ),
+                GenericFact::Fact(GenericExpr::Call(
+                    span.clone(),
+                    unequal,
+                    vec![var(&b), var(&c)],
+                )),
+            ],
+            head: GenericActions(vec![GenericAction::Set(
+                span.clone(),
+                CallKey::Function(term_uf),
+                vec![var(&a)],
+                GenericExpr::Call(
+                    span.clone(),
+                    term_values,
+                    vec![var(&c), GenericExpr::Lit(span.clone(), Literal::Unit)],
+                ),
+            )]),
+            name: "compress-term".to_owned(),
+            ruleset: "compress-rules".to_owned(),
+            eval_mode: RuleEvalMode::Seminaive,
+            no_decomp: false,
+            include_subsumed: false,
+        }
+    );
+}
+
+#[test]
+fn path_compression_rejects_proof_mode_and_carried_sort_drift() {
+    let span = crate::span!();
+    let e = SortKey {
+        name: "E".to_owned(),
+        class: SortSemanticClass::Eq,
+    };
+    let unit = SortKey {
+        name: "Unit".to_owned(),
+        class: SortSemanticClass::Value,
+    };
+    let uf = |carried: &SortKey| FunctionKey {
+        name: "UF-E".to_owned(),
+        subtype: FunctionSubtype::Custom,
+        inputs: vec![e.clone()],
+        output: ValueShape::Tuple(vec![e.clone(), carried.clone()]),
+    };
+    let rejected =
+        |instrumentor: &ProofInstrumentor<'_>, carried: SortKey, compressed: Option<String>| {
+            let mut catalog = GeneratedSignatureCatalog::default();
+            let panic = catch_unwind(AssertUnwindSafe(|| {
+                instrumentor.path_compression_rule_direct(
+                    &mut catalog,
+                    &span,
+                    e.clone(),
+                    carried.clone(),
+                    uf(&carried),
+                    "compress".to_owned(),
+                    "rules".to_owned(),
+                    "a".to_owned(),
+                    "b".to_owned(),
+                    "c".to_owned(),
+                    "pb".to_owned(),
+                    "pc".to_owned(),
+                    compressed,
+                )
+            }))
+            .expect_err("incoherent path compression plan must panic");
+            panic
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| {
+                    panic
+                        .downcast_ref::<&str>()
+                        .map(|message| (*message).to_owned())
+                })
+                .expect("path compression panic must contain text")
+        };
+
+    let mut proof_egraph = EGraph::new_with_proofs();
+    let proof_instrumentor = ProofInstrumentor::new(&mut proof_egraph);
+    let proof = SortKey {
+        name: proof_instrumentor.proof_names().proof_datatype.clone(),
+        class: SortSemanticClass::Eq,
+    };
+    let message = rejected(&proof_instrumentor, unit.clone(), Some("proof".to_owned()));
+    assert!(message.contains("proof-mode coherence"));
+    let message = rejected(&proof_instrumentor, proof, None);
+    assert!(message.contains("proof-mode coherence"));
+    drop(proof_instrumentor);
+
+    let mut term_egraph = EGraph::new_with_term_encoding();
+    let term_instrumentor = ProofInstrumentor::new(&mut term_egraph);
+    let message = rejected(&term_instrumentor, unit, Some("proof".to_owned()));
+    assert!(message.contains("proof-mode coherence"));
+    assert!(message.contains(&span.to_string()));
 }
 
 #[test]

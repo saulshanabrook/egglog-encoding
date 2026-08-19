@@ -5,6 +5,7 @@
 //! re-enter the source parser, desugarer, or general-purpose typechecker.
 
 use std::fmt::{Display, Formatter};
+use std::marker::PhantomData;
 use std::sync::Arc;
 
 use enum_map::EnumMap;
@@ -775,6 +776,315 @@ impl<'a> GeneratedSemanticEmitter<'a> {
             result,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Branded<'id, Kind>(usize, PhantomData<(fn(&'id ()) -> &'id (), Kind)>);
+
+macro_rules! branded_refs {
+    ($($name:ident => $tag:ident),+ $(,)?) => {$(
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub(super) struct $tag;
+        pub(super) type $name<'id> = Branded<'id, $tag>;
+    )+};
+}
+branded_refs!(
+    SortRef => SortTag, FunctionRef => FunctionTag, PrimitiveRef => PrimitiveTag,
+    ValuesRef => ValuesTag, ExprRef => ExprTag
+);
+
+pub(super) trait CallTag: Copy {}
+impl CallTag for FunctionTag {}
+impl CallTag for PrimitiveTag {}
+impl CallTag for ValuesTag {}
+
+enum ExprNode {
+    Var(GeneratedVar),
+    Lit(Literal),
+    Call(usize, Vec<usize>),
+}
+
+/// Closure-scoped adapter from branded append-only IDs to the current AST.
+/// Handle creation registers signatures; the boundary materializes the result.
+pub(super) struct CheckedRuleBuilder<'catalog, 'id> {
+    emitter: GeneratedSemanticEmitter<'catalog>,
+    sorts: Vec<SortKey>,
+    calls: Vec<CallKey>,
+    expressions: Vec<ExprNode>,
+    body: Vec<GeneratedFact>,
+    brand: PhantomData<fn(&'id ()) -> &'id ()>,
+}
+
+impl<'catalog, 'id> CheckedRuleBuilder<'catalog, 'id> {
+    fn new(catalog: &'catalog mut GeneratedSignatureCatalog, span: &Span) -> Self {
+        Self {
+            emitter: GeneratedSemanticEmitter::new(catalog, span),
+            sorts: Vec::new(),
+            calls: Vec::new(),
+            expressions: Vec::new(),
+            body: Vec::new(),
+            brand: PhantomData,
+        }
+    }
+
+    fn check_shape(&self, actual: &ValueShape, expected: &ValueShape) {
+        assert_eq!(
+            actual, expected,
+            "invalid generated semantic emission: shape mismatch at {}",
+            self.emitter.span
+        );
+    }
+
+    fn register_call<Tag>(&mut self, key: CallKey) -> Branded<'id, Tag> {
+        GeneratedSemanticEmitter::producer_value(
+            self.emitter
+                .catalog
+                .register_call_key(&key, &self.emitter.span),
+        );
+        let id = self.calls.len();
+        self.calls.push(key);
+        Branded(id, PhantomData)
+    }
+
+    fn push_expr(&mut self, node: ExprNode) -> ExprRef<'id> {
+        let id = self.expressions.len();
+        self.expressions.push(node);
+        Branded(id, PhantomData)
+    }
+
+    fn expression_shape(&self, expression: usize) -> ValueShape {
+        match &self.expressions[expression] {
+            ExprNode::Var(variable) => ValueShape::Scalar(variable.sort.clone()),
+            ExprNode::Lit(literal) => {
+                ValueShape::Scalar(SortKey::from_sort(&crate::sort::literal_sort(literal)))
+            }
+            ExprNode::Call(call, _) => match &self.calls[*call] {
+                CallKey::Function(function) => function.output.clone(),
+                CallKey::Primitive(primitive) => ValueShape::Scalar(primitive.output.clone()),
+                CallKey::Values(sorts) => ValueShape::Tuple(sorts.clone()),
+            },
+        }
+    }
+
+    fn checked_args<Call: CallTag>(
+        &self,
+        call: Branded<'id, Call>,
+        args: impl AsRef<[ExprRef<'id>]>,
+    ) -> Vec<usize> {
+        let args = args.as_ref().iter().map(|arg| arg.0).collect::<Vec<_>>();
+        let inputs = match &self.calls[call.0] {
+            CallKey::Function(function) => &function.inputs,
+            CallKey::Primitive(primitive) => &primitive.inputs,
+            CallKey::Values(sorts) => sorts,
+        };
+        assert_eq!(
+            args.len(),
+            inputs.len(),
+            "invalid generated semantic emission: wrong arity at {}",
+            self.emitter.span
+        );
+        for (expected, arg) in inputs.iter().zip(args.iter().copied()) {
+            let actual = self.expression_shape(arg);
+            self.check_shape(&actual, &ValueShape::Scalar(expected.clone()));
+        }
+        args
+    }
+
+    pub(super) fn sort(&mut self, key: SortKey) -> SortRef<'id> {
+        let key = self.emitter.sort(key);
+        let id = self.sorts.len();
+        self.sorts.push(key);
+        Branded(id, PhantomData)
+    }
+
+    pub(super) fn values(&mut self, sorts: impl AsRef<[SortRef<'id>]>) -> ValuesRef<'id> {
+        let sorts = sorts
+            .as_ref()
+            .iter()
+            .map(|sort| self.sorts[sort.0].clone())
+            .collect::<Vec<_>>();
+        self.register_call(CallKey::Values(sorts))
+    }
+
+    pub(super) fn function(&mut self, key: FunctionKey) -> FunctionRef<'id> {
+        self.register_call(CallKey::Function(key))
+    }
+
+    pub(super) fn primitive(
+        &mut self,
+        name: impl Into<String>,
+        inputs: impl AsRef<[SortRef<'id>]>,
+        output: SortRef<'id>,
+    ) -> PrimitiveRef<'id> {
+        let inputs = inputs
+            .as_ref()
+            .iter()
+            .map(|sort| self.sorts[sort.0].clone())
+            .collect::<Vec<_>>();
+        let output = self.sorts[output.0].clone();
+        self.register_call(CallKey::Primitive(PrimitiveKey {
+            name: name.into(),
+            inputs,
+            output,
+        }))
+    }
+
+    pub(super) fn local(&mut self, name: impl Into<String>, sort: SortRef<'id>) -> ExprRef<'id> {
+        let variable = self.emitter.local(name, self.sorts[sort.0].clone());
+        self.push_expr(ExprNode::Var(variable))
+    }
+
+    pub(super) fn lit(&mut self, literal: Literal) -> ExprRef<'id> {
+        let sort = SortKey::from_sort(&crate::sort::literal_sort(&literal));
+        GeneratedSemanticEmitter::producer_value(
+            self.emitter.catalog.require_sort(&sort, &self.emitter.span),
+        );
+        self.push_expr(ExprNode::Lit(literal))
+    }
+
+    pub(super) fn apply<Call: CallTag>(
+        &mut self,
+        call: Branded<'id, Call>,
+        args: impl AsRef<[ExprRef<'id>]>,
+    ) -> ExprRef<'id> {
+        let args = self.checked_args(call, args);
+        self.push_expr(ExprNode::Call(call.0, args))
+    }
+
+    pub(super) fn bind(&mut self, name: impl Into<String>, value: ExprRef<'id>) -> ExprRef<'id> {
+        let shape = self.expression_shape(value.0);
+        let ValueShape::Scalar(sort) = shape else {
+            panic!(
+                "invalid generated semantic emission: cannot bind tuple at {}",
+                self.emitter.span,
+            );
+        };
+        let variable = self.emitter.local(name, sort);
+        self.emitter.head.push(GenericAction::Let(
+            self.emitter.span.clone(),
+            variable.clone(),
+            self.materialize(value.0),
+        ));
+        self.push_expr(ExprNode::Var(variable))
+    }
+
+    pub(super) fn set(
+        &mut self,
+        function: FunctionRef<'id>,
+        args: impl AsRef<[ExprRef<'id>]>,
+        value: ExprRef<'id>,
+    ) {
+        let CallKey::Function(key) = &self.calls[function.0] else {
+            unreachable!("function handle must carry a function")
+        };
+        if key.subtype == FunctionSubtype::Constructor {
+            panic!(
+                "invalid generated semantic emission: {}",
+                TypeError::SetConstructorDisallowed(key.name.clone(), self.emitter.span.clone())
+            );
+        }
+        let args = self.checked_args(function, args);
+        self.check_shape(&self.expression_shape(value.0), &key.output);
+        let args = args.into_iter().map(|arg| self.materialize(arg)).collect();
+        let value = self.materialize(value.0);
+        self.emitter
+            .set(self.calls[function.0].clone(), args, value);
+    }
+
+    pub(super) fn change(
+        &mut self,
+        change: Change,
+        function: FunctionRef<'id>,
+        args: impl AsRef<[ExprRef<'id>]>,
+    ) {
+        let args = self.checked_args(function, args);
+        let args = args.into_iter().map(|arg| self.materialize(arg)).collect();
+        self.emitter
+            .change(change, self.calls[function.0].clone(), args);
+    }
+
+    fn materialize(&self, expression: usize) -> GeneratedExpr {
+        let span = &self.emitter.span;
+        match &self.expressions[expression] {
+            ExprNode::Var(variable) => GenericExpr::Var(span.clone(), variable.clone()),
+            ExprNode::Lit(literal) => GenericExpr::Lit(span.clone(), literal.clone()),
+            ExprNode::Call(call, args) => GenericExpr::Call(
+                span.clone(),
+                self.calls[*call].clone(),
+                args.iter().map(|&arg| self.materialize(arg)).collect(),
+            ),
+        }
+    }
+
+    pub(super) fn eq(&mut self, left: ExprRef<'id>, right: ExprRef<'id>) {
+        let expected = self.expression_shape(left.0);
+        self.check_shape(&self.expression_shape(right.0), &expected);
+        self.body.push(GenericFact::Eq(
+            self.emitter.span.clone(),
+            self.materialize(left.0),
+            self.materialize(right.0),
+        ));
+    }
+
+    pub(super) fn fact(&mut self, expr: ExprRef<'id>) {
+        self.body.push(GenericFact::Fact(self.materialize(expr.0)));
+    }
+}
+
+fn validate_rule_scope(body: &[GeneratedFact], head: &[GeneratedAction], span: &Span) {
+    let mut bound = Vec::new();
+    visit_query_binding_vars(body, &mut |_, variable| {
+        let index = variable.id.0 as usize;
+        bound.resize(bound.len().max(index + 1), false);
+        bound[index] = true;
+        Ok::<_, ()>(())
+    })
+    .unwrap();
+    let require = |bound: &[bool], variable: &GeneratedVar| {
+        let declared = bound.get(variable.id.0 as usize).copied().unwrap_or(false);
+        let name = &variable.name;
+        assert!(
+            declared,
+            "invalid generated semantic emission: undeclared local `{name}` at {span}"
+        );
+    };
+    for fact in body {
+        fact.visit_vars(&mut |_, variable| require(&bound, variable));
+    }
+    for action in head {
+        let mut require = |_: &Span, variable: &GeneratedVar| {
+            require(&bound, variable);
+            Ok(())
+        };
+        if let GenericAction::Let(_, variable, value) = action {
+            visit_expr_vars(value, &mut require).unwrap();
+            let index = variable.id.0 as usize;
+            let name = &variable.name;
+            assert!(
+                !bound.get(index).copied().unwrap_or(false),
+                "invalid generated semantic emission: duplicate local `{name}` at {span}"
+            );
+            bound.resize(bound.len().max(index + 1), false);
+            bound[index] = true;
+        } else {
+            visit_action_vars(action, &mut require).unwrap();
+        }
+    }
+}
+
+pub(super) fn build_checked_rule(
+    catalog: &mut GeneratedSignatureCatalog,
+    span: &Span,
+    metadata: (String, String, RuleEvalMode, bool),
+    build: impl for<'id> FnOnce(&mut CheckedRuleBuilder<'_, 'id>),
+) -> GeneratedRule {
+    let mut builder = CheckedRuleBuilder::new(catalog, span);
+    build(&mut builder);
+    validate_rule_scope(&builder.body, &builder.emitter.head, span);
+    let (name, ruleset, eval_mode, include_subsumed) = metadata;
+    builder
+        .emitter
+        .finish_rule(builder.body, name, ruleset, eval_mode, include_subsumed)
 }
 
 #[derive(Debug, Error)]
@@ -2724,4 +3034,198 @@ pub(crate) fn resolve_generated_batch(
     let state = std::mem::take(&mut binder.state);
     *binder.egraph.extension_state_or_default::<BindingState>() = state;
     result
+}
+
+#[cfg(test)]
+mod checked_builder_tests {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    use super::*;
+
+    fn rejected(expected: &str, build: impl for<'id> FnOnce(&mut CheckedRuleBuilder<'_, 'id>)) {
+        let span = crate::span!();
+        let mut catalog = GeneratedSignatureCatalog::default();
+        let panic = catch_unwind(AssertUnwindSafe(|| {
+            build_checked_rule(
+                &mut catalog,
+                &span,
+                (
+                    "invalid".to_owned(),
+                    "rules".to_owned(),
+                    RuleEvalMode::Seminaive,
+                    false,
+                ),
+                build,
+            )
+        }))
+        .expect_err("invalid checked construction must panic");
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .expect("checked builder panic must contain text");
+        assert!(message.contains(expected), "unexpected panic: {message}");
+    }
+
+    #[test]
+    fn checked_builder_preserves_generic_action_order_and_local_ids() {
+        let span = crate::span!();
+        let i64_key = SortKey {
+            name: "i64".to_owned(),
+            class: SortSemanticClass::Value,
+        };
+        let function = FunctionKey {
+            name: "f".to_owned(),
+            subtype: FunctionSubtype::Custom,
+            inputs: vec![i64_key.clone()],
+            output: ValueShape::Scalar(i64_key.clone()),
+        };
+        let mut catalog = GeneratedSignatureCatalog::default();
+        let rule = build_checked_rule(
+            &mut catalog,
+            &span,
+            (
+                "order".to_owned(),
+                "rules".to_owned(),
+                RuleEvalMode::Seminaive,
+                false,
+            ),
+            move |builder| {
+                let i64_sort = builder.sort(i64_key);
+                let function = builder.function(function);
+                let x = builder.local("x", i64_sort);
+                let one = builder.lit(Literal::Int(1));
+                builder.eq(x, x);
+                builder.set(function, [x], one);
+                builder.change(Change::Delete, function, [x]);
+            },
+        );
+        assert!(matches!(
+            rule.body.as_slice(),
+            [GenericFact::Eq(_, GenericExpr::Var(_, left), GenericExpr::Var(_, right))]
+                if left.id == LocalId(0) && right.id == LocalId(0)
+        ));
+        let [
+            GenericAction::Set(set_span, _, set_args, _),
+            GenericAction::Change(delete_span, Change::Delete, _, delete_args),
+        ] = rule.head.0.as_slice()
+        else {
+            panic!("generic action order changed: {:?}", rule.head)
+        };
+        assert_eq!((set_span, delete_span), (&span, &span));
+        for args in [set_args, delete_args] {
+            let [GenericExpr::Var(expr_span, variable)] = args.as_slice() else {
+                panic!("action target must be the original local: {args:?}")
+            };
+            assert_eq!((expr_span, variable.id), (&span, LocalId(0)));
+        }
+    }
+
+    #[test]
+    fn checked_builder_rejects_arity_sort_shape_set_target_and_duplicate_bind() {
+        rejected("wrong arity", |builder| {
+            let i64_sort = builder.sort(SortKey {
+                name: "i64".to_owned(),
+                class: SortSemanticClass::Value,
+            });
+            let values = builder.values([i64_sort, i64_sort]);
+            let x = builder.local("x", i64_sort);
+            builder.apply(values, [x]);
+        });
+        rejected("shape mismatch", |builder| {
+            let i64_key = SortKey {
+                name: "i64".to_owned(),
+                class: SortSemanticClass::Value,
+            };
+            let i64_sort = builder.sort(i64_key.clone());
+            let bool_sort = builder.sort(SortKey {
+                name: "bool".to_owned(),
+                class: SortSemanticClass::Value,
+            });
+            let primitive = builder.primitive("identity", [i64_sort], i64_sort);
+            let value = builder.local("value", bool_sort);
+            builder.apply(primitive, [value]);
+        });
+        rejected("shape mismatch", |builder| {
+            let i64_key = SortKey {
+                name: "i64".to_owned(),
+                class: SortSemanticClass::Value,
+            };
+            let i64_sort = builder.sort(i64_key.clone());
+            let function = builder.function(FunctionKey {
+                name: "scalar".to_owned(),
+                subtype: FunctionSubtype::Custom,
+                inputs: vec![i64_key.clone()],
+                output: ValueShape::Scalar(i64_key),
+            });
+            let values = builder.values([i64_sort, i64_sort]);
+            let x = builder.local("x", i64_sort);
+            let tuple = builder.apply(values, [x, x]);
+            builder.apply(function, [tuple]);
+        });
+        rejected("Cannot set constructor", |builder| {
+            let i64_key = SortKey {
+                name: "i64".to_owned(),
+                class: SortSemanticClass::Value,
+            };
+            let i64_sort = builder.sort(i64_key.clone());
+            let constructor = builder.function(FunctionKey {
+                name: "Constructor".to_owned(),
+                subtype: FunctionSubtype::Constructor,
+                inputs: vec![],
+                output: ValueShape::Scalar(i64_key),
+            });
+            let value = builder.local("value", i64_sort);
+            builder.set(constructor, [], value);
+        });
+        rejected("duplicate local", |builder| {
+            let i64_sort = builder.sort(SortKey {
+                name: "i64".to_owned(),
+                class: SortSemanticClass::Value,
+            });
+            let identity = builder.primitive("identity", [i64_sort], i64_sort);
+            let x = builder.local("x", i64_sort);
+            builder.eq(x, x);
+            let first = builder.apply(identity, [x]);
+            builder.bind("bound", first);
+            let second = builder.apply(identity, [x]);
+            builder.bind("bound", second);
+        });
+        rejected("undeclared local", |builder| {
+            let i64_key = SortKey {
+                name: "i64".to_owned(),
+                class: SortSemanticClass::Value,
+            };
+            let i64_sort = builder.sort(i64_key.clone());
+            let function = builder.function(FunctionKey {
+                name: "f".to_owned(),
+                subtype: FunctionSubtype::Custom,
+                inputs: vec![i64_key.clone()],
+                output: ValueShape::Scalar(i64_key),
+            });
+            let x = builder.local("x", i64_sort);
+            builder.set(function, [x], x);
+        });
+        rejected("duplicate local", |builder| {
+            let i64_sort = builder.sort(SortKey {
+                name: "i64".to_owned(),
+                class: SortSemanticClass::Value,
+            });
+            let x = builder.local("x", i64_sort);
+            builder.eq(x, x);
+            builder.bind("x", x);
+        });
+    }
+
+    #[test]
+    fn checked_builder_rejects_bare_variable_fact() {
+        rejected("undeclared local", |builder| {
+            let i64_sort = builder.sort(SortKey {
+                name: "i64".to_owned(),
+                class: SortSemanticClass::Value,
+            });
+            let x = builder.local("x", i64_sort);
+            builder.fact(x);
+        });
+    }
 }
