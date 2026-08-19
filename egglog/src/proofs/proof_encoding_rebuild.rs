@@ -7,8 +7,8 @@ use super::proof_encoding::{ProofInstrumentor, ViewIndex};
 use super::proof_encoding_helpers::{DROP_REFLEXIVE_STEP, Skeleton};
 use crate::proofs::generated_binder::{
     CheckedRuleBuilder, FunctionKey, FunctionRef, GeneratedEntry, GeneratedRule,
-    GeneratedSemanticEmitter, GeneratedSignatureCatalog, PrimitiveKey, SortKey, SortRef,
-    SortSemanticClass, ValueShape, ValuesRef, build_checked_rule,
+    GeneratedSignatureCatalog, SortKey, SortRef, SortSemanticClass, ValueShape, ValuesRef,
+    build_checked_rule,
 };
 use crate::typechecking::FuncType;
 use crate::*;
@@ -65,142 +65,176 @@ struct SubsumptionRuleSpec {
     rekeys: Vec<SubsumeRekeyRuleSpec>,
 }
 
+#[derive(Clone)]
+struct SubsumptionSignatures {
+    input_keys: Vec<SortKey>,
+    carried_key: SortKey,
+    marker: String,
+}
+
+impl SubsumptionSignatures {
+    /// Register the marker's shared inputs and carried sort in one rule scope.
+    /// `between` inserts the apply-only output sort before Unit and Proof.
+    fn register_checked<'id, Extra>(
+        &self,
+        builder: &mut CheckedRuleBuilder<'_, 'id>,
+        between: impl FnOnce(&mut CheckedRuleBuilder<'_, 'id>) -> Extra,
+    ) -> (
+        (Vec<SortRef<'id>>, Extra),
+        [SortRef<'id>; 2],
+        FunctionRef<'id>,
+    ) {
+        let input_sorts = self
+            .input_keys
+            .iter()
+            .cloned()
+            .map(|key| builder.sort(key))
+            .collect();
+        let extra = between(builder);
+        let unit_key = SortKey::from_sort(&crate::sort::literal_sort(&Literal::Unit));
+        let unit_sort = builder.sort(unit_key.clone());
+        let carried_sort = if self.carried_key == unit_key {
+            unit_sort
+        } else {
+            builder.sort(self.carried_key.clone())
+        };
+        let marker_call = builder.function(FunctionKey {
+            name: self.marker.clone(),
+            subtype: FunctionSubtype::Custom,
+            inputs: self.input_keys.clone(),
+            output: ValueShape::Scalar(unit_key),
+        });
+        ((input_sorts, extra), [carried_sort, unit_sort], marker_call)
+    }
+}
+
 impl SubsumptionRuleSpec {
     fn build(self, catalog: &mut GeneratedSignatureCatalog) -> Vec<GeneratedRule> {
-        let span = &self.span;
-        let (input_sorts, output_sort, unit_sort, proof_sort, marker_call, view_call, view_values) = {
-            let mut signatures = GeneratedSemanticEmitter::new(catalog, span);
-            let input_sorts = self
-                .function
-                .input
-                .iter()
-                .map(SortKey::from_sort)
-                .map(|sort| signatures.sort(sort))
-                .collect::<Vec<_>>();
-            let output_sort = signatures.sort(SortKey::from_sort(self.function.output()));
-            let unit_sort = signatures.sort(SortKey {
-                name: "Unit".to_owned(),
-                class: SortSemanticClass::Value,
-            });
-            let proof_sort = if self.proofs_enabled {
-                signatures.sort(SortKey {
-                    name: self.proof_sort,
+        let Self {
+            span,
+            function,
+            proof_sort,
+            proofs_enabled,
+            marker,
+            view,
+            apply_name,
+            apply_value,
+            apply_proof,
+            subsume_ruleset: subsume_rules,
+            rebuilding_ruleset: rebuild_rules,
+            rekeys,
+        } = self;
+        let output_key = SortKey::from_sort(function.output());
+        let signatures = SubsumptionSignatures {
+            input_keys: function.input.iter().map(SortKey::from_sort).collect(),
+            carried_key: if proofs_enabled {
+                SortKey {
+                    name: proof_sort,
                     class: SortSemanticClass::Eq,
-                })
+                }
             } else {
-                unit_sort.clone()
-            };
-            let marker_call = signatures.function(FunctionKey {
-                name: self.marker.clone(),
-                subtype: FunctionSubtype::Custom,
-                inputs: input_sorts.clone(),
-                output: ValueShape::Scalar(unit_sort.clone()),
-            });
-            let view_call = signatures.function(FunctionKey {
-                name: self.view.clone(),
-                subtype: FunctionSubtype::Custom,
-                inputs: input_sorts.clone(),
-                output: ValueShape::Tuple(vec![output_sort.clone(), proof_sort.clone()]),
-            });
-            let view_values = signatures.values(vec![output_sort.clone(), proof_sort.clone()]);
-            (
-                input_sorts,
-                output_sort,
-                unit_sort,
-                proof_sort,
-                marker_call,
-                view_call,
-                view_values,
-            )
+                SortKey::from_sort(&crate::sort::literal_sort(&Literal::Unit))
+            },
+            marker,
         };
+        assert!(
+            rekeys.iter().map(|rekey| rekey.position).eq(signatures
+                .input_keys
+                .iter()
+                .enumerate()
+                .filter_map(
+                    |(position, key)| (key.class == SortSemanticClass::Eq).then_some(position)
+                )),
+            "invalid generated semantic emission: subsumption rekey plan mismatch at {span}"
+        );
 
         // The frontend observes all key variables in the marker atom first,
         // followed by the view's value and proof tuple.
-        let mut apply_emitter = GeneratedSemanticEmitter::new(catalog, span);
-        let apply_children = input_sorts
-            .iter()
-            .enumerate()
-            .map(|(index, sort)| apply_emitter.local(format!("c{index}_"), sort.clone()))
-            .collect::<Vec<_>>();
-        let apply_value = apply_emitter.local(self.apply_value, output_sort);
-        let apply_proof = apply_emitter.local(self.apply_proof, proof_sort.clone());
-        let var = |variable| GenericExpr::Var(span.clone(), variable);
-        let apply_args = apply_children.iter().cloned().map(&var).collect::<Vec<_>>();
-        let marker = apply_emitter.call(marker_call.clone(), apply_args.clone());
-        let row = apply_emitter.call(
-            view_values.clone(),
-            vec![var(apply_value), var(apply_proof)],
-        );
-        let view = apply_emitter.call(view_call.clone(), apply_args.clone());
-        let body = vec![
-            GenericFact::Fact(marker),
-            GenericFact::Eq(span.clone(), row, view),
-        ];
-        apply_emitter.change(Change::Subsume, view_call.clone(), apply_args);
-        let apply = apply_emitter.finish_rule(
-            body,
-            self.apply_name,
-            self.subsume_ruleset,
-            RuleEvalMode::Seminaive,
-            false,
+        let apply_signatures = signatures.clone();
+        let apply = build_checked_rule(
+            catalog,
+            &span,
+            (apply_name, subsume_rules, RuleEvalMode::Seminaive, false),
+            move |builder| {
+                let ((input_sorts, output_sort), [carried_sort, _], marker_call) = apply_signatures
+                    .register_checked(builder, |builder| builder.sort(output_key.clone()));
+                let view_call = builder.function(FunctionKey {
+                    name: view,
+                    subtype: FunctionSubtype::Custom,
+                    inputs: apply_signatures.input_keys.clone(),
+                    output: ValueShape::Tuple(vec![
+                        output_key,
+                        apply_signatures.carried_key.clone(),
+                    ]),
+                });
+                let view_values = builder.values([output_sort, carried_sort]);
+                let children = input_sorts
+                    .iter()
+                    .enumerate()
+                    .map(|(index, &sort)| builder.local(format!("c{index}_"), sort))
+                    .collect::<Vec<_>>();
+                let value = builder.local(apply_value, output_sort);
+                let proof = builder.local(apply_proof, carried_sort);
+                let args = children.clone();
+                let marker = builder.apply(marker_call, args.clone());
+                builder.fact(marker);
+                let row = builder.apply(view_values, [value, proof]);
+                let view = builder.apply(view_call, args.clone());
+                builder.eq(row, view);
+                builder.change(Change::Subsume, view_call, args);
+            },
         );
         let mut rules = vec![apply];
 
-        for rekey in self.rekeys {
-            let eq_sort = input_sorts[rekey.position].clone();
-            debug_assert_eq!(eq_sort.class, SortSemanticClass::Eq);
-            let mut emitter = GeneratedSemanticEmitter::new(catalog, span);
-            let uf_call = emitter.function(FunctionKey {
-                name: rekey.uf.clone(),
-                subtype: FunctionSubtype::Custom,
-                inputs: vec![eq_sort.clone()],
-                output: ValueShape::Tuple(vec![eq_sort.clone(), proof_sort.clone()]),
-            });
-            let not_equal_call = emitter.primitive(PrimitiveKey {
-                name: "!=".to_owned(),
-                inputs: vec![eq_sort.clone(), eq_sort.clone()],
-                output: unit_sort.clone(),
-            });
-            let uf_values = emitter.values(vec![eq_sort.clone(), proof_sort.clone()]);
+        for rekey in rekeys {
+            let SubsumeRekeyRuleSpec {
+                position,
+                leader,
+                proof,
+                uf,
+                name,
+            } = rekey;
+            let eq_key = signatures.input_keys[position].clone();
+            let rule_signatures = signatures.clone();
+            let metadata = (name, rebuild_rules.clone(), RuleEvalMode::Seminaive, true);
+            let direct = build_checked_rule(catalog, &span, metadata, move |builder| {
+                let ((input_sorts, _), [carried_sort, unit_sort], marker_call) =
+                    rule_signatures.register_checked(builder, |_| ());
+                let eq_sort = input_sorts[position];
+                let uf_call = builder.function(FunctionKey {
+                    name: uf,
+                    subtype: FunctionSubtype::Custom,
+                    inputs: vec![eq_key.clone()],
+                    output: ValueShape::Tuple(vec![eq_key, rule_signatures.carried_key.clone()]),
+                });
+                let not_equal_call = builder.primitive("!=", [eq_sort, eq_sort], unit_sort);
+                let uf_values = builder.values([eq_sort, carried_sort]);
 
-            // Each re-key rule has its own local scope: children in lexical key
-            // order, then the selected column's leader and unused UF proof.
-            let children = input_sorts
-                .iter()
-                .enumerate()
-                .map(|(index, sort)| emitter.local(format!("c{index}_"), sort.clone()))
-                .collect::<Vec<_>>();
-            let leader = emitter.local(rekey.leader, eq_sort);
-            let proof = emitter.local(rekey.proof, proof_sort.clone());
-            let old_args = children.iter().cloned().map(&var).collect::<Vec<_>>();
-            let mut updated_args = old_args.clone();
-            updated_args[rekey.position] = var(leader.clone());
-            let selected = var(children[rekey.position].clone());
-            let marker = emitter.call(marker_call.clone(), old_args.clone());
-            let uf_row = emitter.call(uf_values, vec![var(leader), var(proof)]);
-            let uf = emitter.call(uf_call, vec![selected.clone()]);
-            let unequal = emitter.call(
-                not_equal_call,
-                vec![selected, updated_args[rekey.position].clone()],
-            );
-            let body = vec![
-                GenericFact::Fact(marker),
-                GenericFact::Eq(span.clone(), uf_row, uf),
-                GenericFact::Fact(unequal),
-            ];
-            emitter.set(
-                marker_call.clone(),
-                updated_args,
-                GenericExpr::Lit(span.clone(), Literal::Unit),
-            );
-            emitter.change(Change::Delete, marker_call.clone(), old_args);
-            let direct = emitter.finish_rule(
-                body,
-                rekey.name,
-                self.rebuilding_ruleset.clone(),
-                RuleEvalMode::Seminaive,
-                true,
-            );
+                // Each re-key rule has its own local scope: children in
+                // lexical key order, then the selected column's leader
+                // and unused UF proof.
+                let children = input_sorts
+                    .iter()
+                    .enumerate()
+                    .map(|(index, &sort)| builder.local(format!("c{index}_"), sort))
+                    .collect::<Vec<_>>();
+                let leader = builder.local(leader, eq_sort);
+                let proof = builder.local(proof, carried_sort);
+                let old_args = children.clone();
+                let mut updated_args = old_args.clone();
+                updated_args[position] = leader;
+                let selected = children[position];
+                let marker = builder.apply(marker_call, old_args.clone());
+                builder.fact(marker);
+                let uf_row = builder.apply(uf_values, [leader, proof]);
+                let uf = builder.apply(uf_call, [selected]);
+                builder.eq(uf_row, uf);
+                let unequal = builder.apply(not_equal_call, [selected, leader]);
+                builder.fact(unequal);
+                let unit = builder.lit(Literal::Unit);
+                builder.set(marker_call, updated_args, unit);
+                builder.change(Change::Delete, marker_call, old_args);
+            });
             rules.push(direct);
         }
         rules
@@ -1338,7 +1372,7 @@ mod checked_builder_tests {
     use super::*;
     use crate::ast::{GenericActions, GenericFact, GenericRule};
     use crate::proofs::generated_binder::{
-        CallKey, GeneratedExpr, GeneratedVar, GeneratedVarRole, LocalId,
+        CallKey, GeneratedExpr, GeneratedVar, GeneratedVarRole, LocalId, PrimitiveKey,
     };
 
     fn expr_shape(expression: &GeneratedExpr, span: &Span) -> String {
@@ -1431,17 +1465,21 @@ mod checked_builder_tests {
                         expr_shape(value, span)
                     )
                 }
-                GenericAction::Change(actual, Change::Delete, function, args) => {
+                GenericAction::Change(actual, change, function, args) => {
                     assert_eq!(actual, span);
                     let CallKey::Function(function) = function else {
-                        panic!("delete target must be a function")
+                        panic!("change target must be a function")
                     };
                     let args = args
                         .iter()
                         .map(|arg| expr_shape(arg, span))
                         .collect::<Vec<_>>()
                         .join(",");
-                    format!("delete fn:{}({args})", function.name)
+                    let change = match change {
+                        Change::Delete => "delete",
+                        Change::Subsume => "subsume",
+                    };
+                    format!("{change} fn:{}({args})", function.name)
                 }
                 action => panic!("unexpected generated rebuild action: {action:?}"),
             })
@@ -1456,6 +1494,151 @@ mod checked_builder_tests {
             rule.include_subsumed,
             locals.into_values().collect::<Vec<_>>().join(",")
         )
+    }
+
+    fn subsumption_plan(
+        span: &Span,
+        label: &str,
+        input: Vec<ArcSort>,
+        proofs_enabled: bool,
+    ) -> SubsumptionRuleSpec {
+        let rekeys = input
+            .iter()
+            .enumerate()
+            .filter(|(_, sort)| sort.is_eq_sort())
+            .map(|(position, sort)| SubsumeRekeyRuleSpec {
+                position,
+                leader: format!("c{position}_leader_"),
+                proof: format!("proof{position}"),
+                uf: format!("UF-{}", sort.name()),
+                name: format!("rekey-{label}-{position}"),
+            })
+            .collect();
+        SubsumptionRuleSpec {
+            span: span.clone(),
+            function: FuncType {
+                name: label.to_owned(),
+                subtype: FunctionSubtype::Custom,
+                input,
+                outputs: vec![crate::sort::literal_sort(&Literal::Int(0))],
+            },
+            proof_sort: "Proof".to_owned(),
+            proofs_enabled,
+            marker: format!("{label}-subsumed"),
+            view: format!("{label}-view"),
+            apply_name: format!("apply-{label}"),
+            apply_value: "value".to_owned(),
+            apply_proof: "row-proof".to_owned(),
+            subsume_ruleset: "subsume-rules".to_owned(),
+            rebuilding_ruleset: "rebuild-rules".to_owned(),
+            rekeys,
+        }
+    }
+
+    #[test]
+    fn subsumption_rules_pin_mixed_arity_proof_and_term_structures() {
+        let span = crate::span!();
+        let eq = |name: &str| -> ArcSort {
+            Arc::new(crate::sort::EqSort {
+                name: name.to_owned(),
+            })
+        };
+        let i64_sort = crate::sort::literal_sort(&Literal::Int(0));
+        let cases = [
+            (
+                subsumption_plan(
+                    &span,
+                    "proof",
+                    vec![eq("E"), i64_sort.clone(), eq("K")],
+                    true,
+                ),
+                vec![
+                    "name=apply-proof;ruleset=subsume-rules;eval=Seminaive;no_decomp=false;include=false\n\
+                     locals=[v0:c0_:E:Eq,v1:c1_:i64:Value,v2:c2_:K:Eq,v3:value:i64:Value,v4:row-proof:Proof:Eq]\n\
+                     body=[fact(fn:proof-subsumed(v0,v1,v2));eq(values(v3,v4),fn:proof-view(v0,v1,v2))]\n\
+                     head=[subsume fn:proof-view(v0,v1,v2)]",
+                    "name=rekey-proof-0;ruleset=rebuild-rules;eval=Seminaive;no_decomp=false;include=true\n\
+                     locals=[v0:c0_:E:Eq,v1:c1_:i64:Value,v2:c2_:K:Eq,v3:c0_leader_:E:Eq,v4:proof0:Proof:Eq]\n\
+                     body=[fact(fn:proof-subsumed(v0,v1,v2));eq(values(v3,v4),fn:UF-E(v0));fact(prim:!=(v0,v3))]\n\
+                     head=[set fn:proof-subsumed(v3,v1,v2)=unit;delete fn:proof-subsumed(v0,v1,v2)]",
+                    "name=rekey-proof-2;ruleset=rebuild-rules;eval=Seminaive;no_decomp=false;include=true\n\
+                     locals=[v0:c0_:E:Eq,v1:c1_:i64:Value,v2:c2_:K:Eq,v3:c2_leader_:K:Eq,v4:proof2:Proof:Eq]\n\
+                     body=[fact(fn:proof-subsumed(v0,v1,v2));eq(values(v3,v4),fn:UF-K(v2));fact(prim:!=(v2,v3))]\n\
+                     head=[set fn:proof-subsumed(v0,v1,v3)=unit;delete fn:proof-subsumed(v0,v1,v2)]",
+                ],
+            ),
+            (
+                subsumption_plan(&span, "term", vec![eq("K")], false),
+                vec![
+                    "name=apply-term;ruleset=subsume-rules;eval=Seminaive;no_decomp=false;include=false\n\
+                     locals=[v0:c0_:K:Eq,v1:value:i64:Value,v2:row-proof:Unit:Value]\n\
+                     body=[fact(fn:term-subsumed(v0));eq(values(v1,v2),fn:term-view(v0))]\n\
+                     head=[subsume fn:term-view(v0)]",
+                    "name=rekey-term-0;ruleset=rebuild-rules;eval=Seminaive;no_decomp=false;include=true\n\
+                     locals=[v0:c0_:K:Eq,v1:c0_leader_:K:Eq,v2:proof0:Unit:Value]\n\
+                     body=[fact(fn:term-subsumed(v0));eq(values(v1,v2),fn:UF-K(v0));fact(prim:!=(v0,v1))]\n\
+                     head=[set fn:term-subsumed(v1)=unit;delete fn:term-subsumed(v0)]",
+                ],
+            ),
+            (
+                subsumption_plan(&span, "apply-only", vec![i64_sort], false),
+                vec![
+                    "name=apply-apply-only;ruleset=subsume-rules;eval=Seminaive;no_decomp=false;include=false\n\
+                     locals=[v0:c0_:i64:Value,v1:value:i64:Value,v2:row-proof:Unit:Value]\n\
+                     body=[fact(fn:apply-only-subsumed(v0));eq(values(v1,v2),fn:apply-only-view(v0))]\n\
+                     head=[subsume fn:apply-only-view(v0)]",
+                ],
+            ),
+        ];
+        for (plan, expected) in cases {
+            let rules = plan.build(&mut GeneratedSignatureCatalog::default());
+            assert_eq!(
+                rules
+                    .iter()
+                    .map(|rule| rule_shape(rule, &span))
+                    .collect::<Vec<_>>(),
+                expected
+            );
+        }
+
+        let edits: [fn(&mut SubsumptionRuleSpec); 5] = [
+            |plan| {
+                plan.rekeys.pop();
+            },
+            |plan| plan.rekeys[1].position = 0,
+            |plan| plan.rekeys.swap(0, 1),
+            |plan| plan.rekeys[0].position = usize::MAX,
+            |plan| plan.rekeys[0].position = 1,
+        ];
+        for edit in edits {
+            let mut plan = subsumption_plan(
+                &span,
+                "rejected",
+                vec![
+                    eq("E"),
+                    crate::sort::literal_sort(&Literal::Int(0)),
+                    eq("K"),
+                ],
+                true,
+            );
+            edit(&mut plan);
+            let mut catalog = GeneratedSignatureCatalog::default();
+            let before = format!("{catalog:?}");
+            let panic = catch_unwind(AssertUnwindSafe(|| plan.build(&mut catalog)))
+                .expect_err("incoherent subsumption plan must panic");
+            let message = panic
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| {
+                    panic
+                        .downcast_ref::<&str>()
+                        .map(|message| (*message).to_owned())
+                })
+                .expect("subsumption-plan panic must contain text");
+            assert!(message.contains("subsumption rekey plan mismatch"));
+            assert!(message.contains(&span.to_string()));
+            assert_eq!(format!("{catalog:?}"), before, "catalog mutated");
+        }
     }
 
     fn indexed_plan(span: &Span, proofs_enabled: bool) -> IndexedWholeRowRebuildSpec {
