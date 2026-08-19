@@ -3,6 +3,10 @@
 //! semantics are deliberately separate from standalone action lowering:
 //! subexpressions mint `MergeIdx` rows and the final view row mints `MergeRow`.
 
+use super::super::action_direct::{
+    Deferred, DeferredProofs, EmissionNatural, EmissionOperand, lower_single_step,
+    proof_constructor, visit_action_dependencies,
+};
 use super::{PlannedDeclaration, TypedHoistGroup};
 use crate::ast::{
     GenericAction, GenericActions, GenericExpr, Literal, ResolvedExpr, ResolvedFunctionDecl, Span,
@@ -12,51 +16,19 @@ use crate::proofs::generated_binder::{
     CallKey, FunctionKey, GeneratedAction, GeneratedExpr, GeneratedMerge, GeneratedRuleBuilder,
     GeneratedVar, GeneratedVarRole, PrimitiveKey, SortKey, SortSemanticClass, ValueShape,
 };
-use crate::proofs::proof_encoding_helpers::{Composition, ProofTree};
+use crate::proofs::proof_encoding_helpers::Composition;
 use crate::proofs::proof_fresh::{
     GET_FRESH_PRIM_NAME, mint_prim_name, set_if_empty_prim_name, view_proof_prim_name,
 };
 use crate::proofs::proof_head::ProofAlgebra;
 use crate::typechecking::FuncType;
-use crate::util::{HashMap, HashSet};
+use crate::util::HashMap;
 use crate::{FunctionSubtype, literal_sort};
 
 use super::ProofInstrumentor;
 
-#[derive(Clone)]
-struct Operand {
-    value: GeneratedExpr,
-    natural: GeneratedExpr,
-    connector: Option<String>,
-}
-
-impl Operand {
-    fn plain(value: GeneratedExpr) -> Self {
-        Self {
-            natural: value.clone(),
-            value,
-            connector: None,
-        }
-    }
-
-    fn built(value: GeneratedExpr, natural: GeneratedExpr, connector: String) -> Self {
-        Self {
-            value,
-            natural,
-            connector: Some(connector),
-        }
-    }
-}
-
-struct Natural {
-    dedup_args: Vec<GeneratedExpr>,
-    natural: GeneratedExpr,
-    to_dedup: String,
-}
-
-enum Deferred {
-    Composed(Composition),
-}
+type Operand = EmissionOperand<GeneratedExpr, String>;
+type Natural = EmissionNatural<GeneratedExpr, String>;
 
 struct CustomMergeLowerer<'lower, 'egraph> {
     instrumentor: &'lower mut ProofInstrumentor<'egraph>,
@@ -66,9 +38,7 @@ struct CustomMergeLowerer<'lower, 'egraph> {
     carry_sort: SortKey,
     variables: HashMap<(String, GeneratedVarRole), SortKey>,
     builder: GeneratedRuleBuilder,
-    reflexive: HashSet<String>,
-    deferred: HashMap<String, Deferred>,
-    sealed: HashSet<String>,
+    proofs_state: DeferredProofs<GeneratedAction>,
     pending: Vec<PlannedDeclaration>,
 }
 
@@ -104,9 +74,7 @@ pub(super) fn lower(
         carry_sort,
         variables: HashMap::default(),
         builder: GeneratedRuleBuilder::default(),
-        reflexive: HashSet::default(),
-        deferred: HashMap::default(),
-        sealed: HashSet::default(),
+        proofs_state: DeferredProofs::default(),
         pending: vec![],
     };
     let mut actions = vec![];
@@ -117,8 +85,7 @@ pub(super) fn lower(
 
     // A composition which the merge result never reads has no observable row.
     // Do not let it leak into the whole-row proof or a later declaration.
-    lowerer.deferred.clear();
-    lowerer.sealed.clear();
+    lowerer.proofs_state.discard_unobserved();
 
     let row_proof = if lowerer.proofs {
         let fresh = lowerer.merge_row_proof(&mut actions);
@@ -241,43 +208,10 @@ impl CustomMergeLowerer<'_, '_> {
         self.variable_expr(name.to_owned(), self.carry_sort.clone())
     }
 
-    fn emit_pending_for_expr(&mut self, actions: &mut Vec<GeneratedAction>, expr: &GeneratedExpr) {
-        match expr {
-            GenericExpr::Var(_, variable) if variable.role == GeneratedVarRole::Local => {
-                self.emit_pending_group(actions, &variable.name)
-            }
-            GenericExpr::Var(..) => {}
-            GenericExpr::Call(_, _, args) => {
-                for arg in args {
-                    self.emit_pending_for_expr(actions, arg);
-                }
-            }
-            GenericExpr::Lit(..) => {}
-        }
-    }
-
     fn emit_action(&mut self, actions: &mut Vec<GeneratedAction>, action: GeneratedAction) {
-        match &action {
-            GenericAction::Let(_, _, value) | GenericAction::Expr(_, value) => {
-                self.emit_pending_for_expr(actions, value);
-            }
-            GenericAction::Set(_, _, args, value) => {
-                for arg in args {
-                    self.emit_pending_for_expr(actions, arg);
-                }
-                self.emit_pending_for_expr(actions, value);
-            }
-            GenericAction::Change(_, _, _, args) => {
-                for arg in args {
-                    self.emit_pending_for_expr(actions, arg);
-                }
-            }
-            GenericAction::Union(_, left, right) => {
-                self.emit_pending_for_expr(actions, left);
-                self.emit_pending_for_expr(actions, right);
-            }
-            GenericAction::Panic(..) => {}
-        }
+        visit_action_dependencies(&action, &mut |proof| {
+            self.emit_pending_group(actions, proof)
+        });
         actions.push(action);
     }
 
@@ -381,7 +315,7 @@ impl CustomMergeLowerer<'_, '_> {
             carry_sort,
         );
         let proof = Self::expect_variable(&proof).name.clone();
-        self.reflexive.insert(proof.clone());
+        self.proofs_state.reflexive.insert(proof.clone());
         proof
     }
 
@@ -405,66 +339,21 @@ impl CustomMergeLowerer<'_, '_> {
             carry_sort,
         );
         let proof = Self::expect_variable(&proof).name.clone();
-        self.reflexive.insert(proof.clone());
+        self.proofs_state.reflexive.insert(proof.clone());
         proof
     }
 
-    fn composition(&self, proof: &str) -> Composition {
-        match self.deferred.get(proof) {
-            Some(Deferred::Composed(composition)) if !self.sealed.contains(proof) => {
-                composition.clone()
-            }
-            _ => ProofTree::Leaf(proof.to_owned()),
-        }
-    }
-
     fn compose(&mut self, composition: Composition) -> String {
-        let proof = self.fresh_expr(self.carry_sort.clone());
-        let name = Self::expect_variable(&proof).name.clone();
-        self.deferred
-            .insert(name.clone(), Deferred::Composed(composition));
-        name
+        let name = Self::expect_variable(&self.fresh_expr(self.carry_sort.clone()))
+            .name
+            .clone();
+        self.proofs_state.defer(name, composition)
     }
 
     fn single_step(&mut self, composition: &Composition) -> Option<(String, Vec<GeneratedExpr>)> {
-        Some(match composition {
-            ProofTree::Sym(inner) => {
-                let relation = self.instrumentor.proof_names().eq_sym_constructor.clone();
-                (relation, vec![self.proof_expr(inner.leaf()?)])
-            }
-            ProofTree::Trans(left, right) => {
-                let relation = self.instrumentor.proof_names().eq_trans_constructor.clone();
-                (
-                    relation,
-                    vec![
-                        self.proof_expr(left.leaf()?),
-                        self.proof_expr(right.leaf()?),
-                    ],
-                )
-            }
-            ProofTree::Congr(base, index, child) => {
-                let relation = self.instrumentor.proof_names().congr_constructor.clone();
-                (
-                    relation,
-                    vec![
-                        self.proof_expr(base.leaf()?),
-                        GenericExpr::Lit(self.span.clone(), Literal::Int(*index as i64)),
-                        self.proof_expr(child.leaf()?),
-                    ],
-                )
-            }
-            ProofTree::Proj(base, index) => {
-                let relation = self.instrumentor.proof_names().proj_constructor.clone();
-                (
-                    relation,
-                    vec![
-                        self.proof_expr(base.leaf()?),
-                        GenericExpr::Lit(self.span.clone(), Literal::Int(*index as i64)),
-                    ],
-                )
-            }
-            ProofTree::Leaf(_) => return None,
-        })
+        let relation = proof_constructor(composition, self.instrumentor.proof_names())?;
+        let span = self.span.clone();
+        lower_single_step(composition, relation, &span, |proof| self.proof_expr(proof))
     }
 
     fn emit_composition(
@@ -497,16 +386,25 @@ impl CustomMergeLowerer<'_, '_> {
     }
 
     fn emit_pending_group(&mut self, actions: &mut Vec<GeneratedAction>, proof: &str) {
-        if let Some(Deferred::Composed(composition)) = self.deferred.remove(proof) {
-            self.emit_composition(actions, proof, composition);
+        match self.proofs_state.pending.remove(proof) {
+            Some(Deferred::Composed(composition)) => {
+                self.emit_composition(actions, proof, composition)
+            }
+            Some(Deferred::Actions(_)) => {
+                unreachable!("custom merge lowering never defers action groups")
+            }
+            None => {}
         }
     }
 
     fn level_connector(&mut self, chain: &str, dedup: &str) -> String {
-        let composed = matches!(self.deferred.get(chain), Some(Deferred::Composed(_)));
+        let composed = matches!(
+            self.proofs_state.pending.get(chain),
+            Some(Deferred::Composed(_))
+        );
         let connector = self.connect(chain.to_owned(), dedup.to_owned());
         if composed {
-            self.sealed.insert(connector.clone());
+            self.proofs_state.sealed.insert(connector.clone());
         }
         connector
     }
@@ -816,29 +714,17 @@ impl ProofAlgebra for CustomMergeLowerer<'_, '_> {
     type Proof = String;
 
     fn sym(&mut self, proof: String) -> String {
-        if self.reflexive.contains(&proof) {
-            return proof;
-        }
-        let composition = self.composition(&proof);
-        self.compose(composition.sym())
+        let planned = self.proofs_state.sym(proof);
+        planned.realize(|composition| self.compose(composition))
     }
 
     fn trans(&mut self, left: String, right: String) -> String {
-        if self.reflexive.contains(&left) {
-            return right;
-        }
-        if self.reflexive.contains(&right) {
-            return left;
-        }
-        let (left, right) = (self.composition(&left), self.composition(&right));
-        self.compose(left.trans(right))
+        let planned = self.proofs_state.trans(left, right);
+        planned.realize(|composition| self.compose(composition))
     }
 
     fn congr(&mut self, base: String, child: usize, step: String) -> String {
-        if self.reflexive.contains(&step) {
-            return base;
-        }
-        let (base, step) = (self.composition(&base), self.composition(&step));
-        self.compose(base.congr(child, step))
+        let planned = self.proofs_state.congr(base, child, step);
+        planned.realize(|composition| self.compose(composition))
     }
 }

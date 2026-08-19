@@ -16,9 +16,7 @@ use crate::proofs::generated_binder::{
     SortSemanticClass, ValueShape,
 };
 use crate::proofs::proof_checker::is_container_side_condition;
-use crate::proofs::proof_encoding_helpers::{
-    Composition, ProofTree, holds_sort, recomputable_premises,
-};
+use crate::proofs::proof_encoding_helpers::{Composition, holds_sort, recomputable_premises};
 use crate::proofs::proof_fresh::{
     GET_FRESH_PRIM_NAME, mint_prim_name, set_if_empty_prim_name, view_proof_prim_name,
 };
@@ -26,9 +24,13 @@ use crate::proofs::proof_head::{
     Head, HeadPlan, HeadPosition, HeadProof, HeadRun, ProofAlgebra, constructor_operand,
 };
 use crate::typechecking::FuncType;
-use crate::util::{FreshGen, HashMap, HashSet};
+use crate::util::{FreshGen, HashMap};
 use crate::{Change, FunctionSubtype, literal_sort};
 
+use super::action_direct::{
+    Deferred, DeferredProofs, EmissionNatural, EmissionOperand, EmissionScope, PendingLocal,
+    lower_single_step, proof_constructor, value_sort, visit_action_dependencies,
+};
 use super::{Anchor, BodyAnchors, Connector, Element, ProofInstrumentor};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -41,6 +43,12 @@ struct DraftVar {
 impl Display for DraftVar {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.name)
+    }
+}
+
+impl PendingLocal for DraftVar {
+    fn pending_local(&self) -> Option<&str> {
+        (self.role == GeneratedVarRole::Local).then_some(&self.name)
     }
 }
 
@@ -110,10 +118,8 @@ pub(super) fn register_signatures(rule: &GeneratedRule, catalog: &mut GeneratedS
 
 /// Register precisely the calls retained by a top-level query consumer.
 ///
-/// Query lowering deliberately exposes proof lookup actions and premise values
-/// as part of its full product, but Check and schedule-until discard those
-/// products, but Check and schedule-until discard those products. Registering
-/// them would make discarded code affect the portable signature universe.
+/// Check and schedule-until discard proof lookup actions and premise values;
+/// registering them would make discarded code affect the signature universe.
 pub(super) fn register_query_signatures(
     facts: &[GeneratedFact],
     catalog: &mut GeneratedSignatureCatalog,
@@ -140,53 +146,9 @@ pub(super) fn register_query_signatures(
     }
 }
 
-#[derive(Clone)]
-struct DraftOperand {
-    value: DraftExpr,
-    natural: DraftExpr,
-    connector: Option<Connector>,
-}
-
-impl DraftOperand {
-    fn plain(value: DraftExpr) -> Self {
-        Self {
-            natural: value.clone(),
-            value,
-            connector: None,
-        }
-    }
-
-    fn built(value: DraftExpr, natural: DraftExpr, connector: Connector) -> Self {
-        Self {
-            value,
-            natural,
-            connector: Some(connector),
-        }
-    }
-}
-
-#[derive(Default)]
-struct DraftScope(HashMap<String, DraftOperand>);
-
-impl DraftScope {
-    fn bind(&mut self, name: &str, operand: &DraftOperand, bound: DraftExpr) {
-        if operand.connector.is_some() {
-            self.0.insert(
-                name.to_owned(),
-                DraftOperand {
-                    value: bound,
-                    ..operand.clone()
-                },
-            );
-        }
-    }
-}
-
-struct DraftNatural {
-    dedup_args: Vec<DraftExpr>,
-    natural: DraftExpr,
-    to_dedup: Option<String>,
-}
+type DraftOperand = EmissionOperand<DraftExpr, Connector>;
+type DraftScope = EmissionScope<DraftExpr, Connector>;
+type DraftNatural = EmissionNatural<DraftExpr, Option<String>>;
 
 #[derive(Clone)]
 struct RuleJustification {
@@ -237,11 +199,6 @@ impl<'a> DraftEmit<'a> {
     }
 }
 
-enum DraftDeferred {
-    Actions(Vec<DraftAction>),
-    Composed(Composition),
-}
-
 struct SourceRuleLowerer<'instrumentor, 'egraph> {
     instrumentor: &'instrumentor mut ProofInstrumentor<'egraph>,
     span: Span,
@@ -251,9 +208,7 @@ struct SourceRuleLowerer<'instrumentor, 'egraph> {
     i64_sort: SortKey,
     carry_sort: SortKey,
     variables: HashMap<(String, GeneratedVarRole), SortKey>,
-    reflexive: HashSet<String>,
-    deferred: HashMap<String, DraftDeferred>,
-    sealed: HashSet<String>,
+    proofs_state: DeferredProofs<DraftAction>,
     anchors: BodyAnchors,
     unanchored: HashMap<String, String>,
 }
@@ -290,20 +245,12 @@ pub(super) fn lower_query_facts(
     // consumed SymbolGen names already live on the instrumentor and deliberately
     // survive; the returned actions and premises are the complete materialized
     // auxiliary product which each top-level query consumer explicitly discards.
-    lowerer.deferred.clear();
-    lowerer.sealed.clear();
+    lowerer.proofs_state.discard_unobserved();
     if lowerer.proofs {
         lowerer.unanchored.clear();
     }
 
     finalize_query(facts, GenericActions(action_lookups), premises)
-}
-
-fn value_sort(name: &str) -> SortKey {
-    SortKey {
-        name: name.to_owned(),
-        class: SortSemanticClass::Value,
-    }
 }
 
 impl<'instrumentor, 'egraph> SourceRuleLowerer<'instrumentor, 'egraph> {
@@ -333,9 +280,7 @@ impl<'instrumentor, 'egraph> SourceRuleLowerer<'instrumentor, 'egraph> {
             i64_sort: value_sort("i64"),
             carry_sort,
             variables: HashMap::default(),
-            reflexive: HashSet::default(),
-            deferred: HashMap::default(),
-            sealed: HashSet::default(),
+            proofs_state: DeferredProofs::default(),
             anchors: BodyAnchors::default(),
             unanchored: HashMap::default(),
         }
@@ -505,43 +450,10 @@ impl SourceRuleLowerer<'_, '_> {
         variable
     }
 
-    fn emit_pending_for_expr(&mut self, actions: &mut Vec<DraftAction>, expr: &DraftExpr) {
-        match expr {
-            GenericExpr::Var(_, variable) if variable.role == GeneratedVarRole::Local => {
-                self.emit_pending_group(actions, &variable.name)
-            }
-            GenericExpr::Var(..) => {}
-            GenericExpr::Call(_, _, args) => {
-                for arg in args {
-                    self.emit_pending_for_expr(actions, arg);
-                }
-            }
-            GenericExpr::Lit(..) => {}
-        }
-    }
-
     fn emit_action(&mut self, actions: &mut Vec<DraftAction>, action: DraftAction) {
-        match &action {
-            GenericAction::Let(_, _, expr) | GenericAction::Expr(_, expr) => {
-                self.emit_pending_for_expr(actions, expr)
-            }
-            GenericAction::Set(_, _, args, value) => {
-                for arg in args {
-                    self.emit_pending_for_expr(actions, arg);
-                }
-                self.emit_pending_for_expr(actions, value);
-            }
-            GenericAction::Change(_, _, _, args) => {
-                for arg in args {
-                    self.emit_pending_for_expr(actions, arg);
-                }
-            }
-            GenericAction::Union(_, left, right) => {
-                self.emit_pending_for_expr(actions, left);
-                self.emit_pending_for_expr(actions, right);
-            }
-            GenericAction::Panic(..) => {}
-        }
+        visit_action_dependencies(&action, &mut |proof| {
+            self.emit_pending_group(actions, proof)
+        });
         actions.push(action);
     }
 
@@ -585,103 +497,31 @@ impl SourceRuleLowerer<'_, '_> {
         GenericExpr::Var(self.span.clone(), variable)
     }
 
-    fn composition(&self, proof: &str) -> Composition {
-        match self.deferred.get(proof) {
-            Some(DraftDeferred::Composed(composition)) if !self.sealed.contains(proof) => {
-                composition.clone()
-            }
-            _ => Composition::Leaf(proof.to_owned()),
-        }
-    }
-
     fn compose(&mut self, composition: Composition) -> String {
-        let proof = self.fresh_expr(self.carry_sort.clone());
-        let name = Self::expect_variable(&proof).name.clone();
-        self.deferred
-            .insert(name.clone(), DraftDeferred::Composed(composition));
-        name
-    }
-
-    fn mint_sym(&mut self, proof: &str) -> String {
-        if self.reflexive.contains(proof) {
-            return proof.to_owned();
-        }
-        let composition = self.composition(proof);
-        self.compose(composition.sym())
-    }
-
-    fn mint_trans(&mut self, left: &str, right: &str) -> String {
-        if self.reflexive.contains(left) {
-            return right.to_owned();
-        }
-        if self.reflexive.contains(right) {
-            return left.to_owned();
-        }
-        let (left, right) = (self.composition(left), self.composition(right));
-        self.compose(left.trans(right))
-    }
-
-    fn mint_congr(&mut self, base: &str, child: usize, step: &str) -> String {
-        if self.reflexive.contains(step) {
-            return base.to_owned();
-        }
-        let (base, step) = (self.composition(base), self.composition(step));
-        self.compose(base.congr(child, step))
+        let name = Self::expect_variable(&self.fresh_expr(self.carry_sort.clone()))
+            .name
+            .clone();
+        self.proofs_state.defer(name, composition)
     }
 
     fn mint_proj(&mut self, base: &str, child: usize) -> String {
-        let base = self.composition(base);
+        let base = self.proofs_state.composition(base);
         let proof = self.compose(base.proj(child));
-        self.reflexive.insert(proof.clone());
+        self.proofs_state.reflexive.insert(proof.clone());
         proof
     }
 
     fn mint_lhs_reflexive(&mut self, base: &str) -> String {
-        let back = self.mint_sym(base);
-        let proof = self.mint_trans(base, &back);
-        self.reflexive.insert(proof.clone());
+        let back = self.sym(base.to_owned());
+        let proof = self.trans(base.to_owned(), back);
+        self.proofs_state.reflexive.insert(proof.clone());
         proof
     }
 
     fn single_step(&mut self, composition: &Composition) -> Option<(String, Vec<DraftExpr>)> {
-        Some(match composition {
-            ProofTree::Sym(inner) => {
-                let relation = self.instrumentor.proof_names().eq_sym_constructor.clone();
-                (relation, vec![self.proof_expr(inner.leaf()?)])
-            }
-            ProofTree::Trans(left, right) => {
-                let relation = self.instrumentor.proof_names().eq_trans_constructor.clone();
-                (
-                    relation,
-                    vec![
-                        self.proof_expr(left.leaf()?),
-                        self.proof_expr(right.leaf()?),
-                    ],
-                )
-            }
-            ProofTree::Congr(base, index, child) => {
-                let relation = self.instrumentor.proof_names().congr_constructor.clone();
-                (
-                    relation,
-                    vec![
-                        self.proof_expr(base.leaf()?),
-                        GenericExpr::Lit(self.span.clone(), Literal::Int(*index as i64)),
-                        self.proof_expr(child.leaf()?),
-                    ],
-                )
-            }
-            ProofTree::Proj(base, index) => {
-                let relation = self.instrumentor.proof_names().proj_constructor.clone();
-                (
-                    relation,
-                    vec![
-                        self.proof_expr(base.leaf()?),
-                        GenericExpr::Lit(self.span.clone(), Literal::Int(*index as i64)),
-                    ],
-                )
-            }
-            ProofTree::Leaf(_) => return None,
-        })
+        let relation = proof_constructor(composition, self.instrumentor.proof_names())?;
+        let span = self.span.clone();
+        lower_single_step(composition, relation, &span, |proof| self.proof_expr(proof))
     }
 
     fn emit_composition(
@@ -715,11 +555,11 @@ impl SourceRuleLowerer<'_, '_> {
     }
 
     fn emit_pending_group(&mut self, actions: &mut Vec<DraftAction>, proof: &str) {
-        match self.deferred.remove(proof) {
-            Some(DraftDeferred::Composed(composition)) => {
+        match self.proofs_state.pending.remove(proof) {
+            Some(Deferred::Composed(composition)) => {
                 self.emit_composition(actions, proof, composition)
             }
-            Some(DraftDeferred::Actions(group)) => actions.extend(group),
+            Some(Deferred::Actions(group)) => actions.extend(group),
             None => {
                 assert!(
                     !self.unanchored.contains_key(proof),
@@ -748,15 +588,16 @@ impl SourceRuleLowerer<'_, '_> {
             self.carry_sort.clone(),
         );
         let name = Self::expect_variable(&proof).name.clone();
-        self.reflexive.insert(name.clone());
+        self.proofs_state.reflexive.insert(name.clone());
         name
     }
 
     fn deferred_fiat_reflexive(&mut self, value: DraftExpr, sort: SortKey) -> String {
         let mut actions = vec![];
         let proof = self.fiat_reflexive(&mut actions, value, sort);
-        self.deferred
-            .insert(proof.clone(), DraftDeferred::Actions(actions));
+        self.proofs_state
+            .pending
+            .insert(proof.clone(), Deferred::Actions(actions));
         proof
     }
 
@@ -764,7 +605,7 @@ impl SourceRuleLowerer<'_, '_> {
         let proof = self.fresh_expr(self.carry_sort.clone());
         let proof_name = Self::expect_variable(&proof).name.clone();
         self.anchors.request(&proof_name, value);
-        self.reflexive.insert(proof_name.clone());
+        self.proofs_state.reflexive.insert(proof_name.clone());
         proof_name
     }
 
@@ -804,10 +645,11 @@ impl SourceRuleLowerer<'_, '_> {
             let derived = self.anchor_composition(&row_proof, anchor);
             if chain.is_empty() {
                 let held = self
-                    .deferred
+                    .proofs_state
+                    .pending
                     .remove(&derived)
                     .expect("a minted anchor composition is held back");
-                self.deferred.insert(proof.clone(), held);
+                self.proofs_state.pending.insert(proof.clone(), held);
                 continue;
             }
             let mut group = vec![];
@@ -844,16 +686,20 @@ impl SourceRuleLowerer<'_, '_> {
                 );
                 base = Self::expect_variable(&projected).name.clone();
             }
-            self.deferred
-                .insert(proof.clone(), DraftDeferred::Actions(group));
+            self.proofs_state
+                .pending
+                .insert(proof.clone(), Deferred::Actions(group));
         }
     }
 
     fn level_connector(&mut self, chain: &str, dedup: &str) -> String {
-        let composed = matches!(self.deferred.get(chain), Some(DraftDeferred::Composed(_)));
+        let composed = matches!(
+            self.proofs_state.pending.get(chain),
+            Some(Deferred::Composed(_))
+        );
         let connector = self.connect(chain.to_owned(), dedup.to_owned());
         if composed {
-            self.sealed.insert(connector.clone());
+            self.proofs_state.sealed.insert(connector.clone());
         }
         connector
     }
@@ -863,15 +709,18 @@ impl ProofAlgebra for SourceRuleLowerer<'_, '_> {
     type Proof = String;
 
     fn sym(&mut self, proof: String) -> String {
-        self.mint_sym(&proof)
+        let planned = self.proofs_state.sym(proof);
+        planned.realize(|composition| self.compose(composition))
     }
 
     fn trans(&mut self, left: String, right: String) -> String {
-        self.mint_trans(&left, &right)
+        let planned = self.proofs_state.trans(left, right);
+        planned.realize(|composition| self.compose(composition))
     }
 
     fn congr(&mut self, base: String, child: usize, step: String) -> String {
-        self.mint_congr(&base, child, &step)
+        let planned = self.proofs_state.congr(base, child, step);
+        planned.realize(|composition| self.compose(composition))
     }
 }
 
@@ -962,7 +811,7 @@ impl SourceRuleLowerer<'_, '_> {
                             let mut proof = row_name;
                             for (index, child) in proofs.into_iter().enumerate() {
                                 if let Some(child) = child {
-                                    proof = self.mint_congr(&proof, index, &child);
+                                    proof = self.congr(proof, index, child);
                                 }
                             }
                             proof
@@ -1071,7 +920,7 @@ impl SourceRuleLowerer<'_, '_> {
                         .into_iter()
                         .enumerate()
                         .fold(row_name, |proof, (index, child)| {
-                            self.mint_congr(&proof, index, &child)
+                            self.congr(proof, index, child)
                         })
                 } else {
                     "()".to_owned()
@@ -1087,8 +936,8 @@ impl SourceRuleLowerer<'_, '_> {
                 ));
                 if self.proofs {
                     self.anchors.alias(&left.to_string(), &right.to_string());
-                    let back = self.mint_sym(&left_proof);
-                    self.mint_trans(&back, &right_proof)
+                    let back = self.sym(left_proof);
+                    self.trans(back, right_proof)
                 } else {
                     "()".to_owned()
                 }
@@ -1198,7 +1047,7 @@ impl SourceRuleLowerer<'_, '_> {
         _sort: &SortKey,
     ) -> String {
         let proof = self.rule_row(emit);
-        self.reflexive.insert(proof.clone());
+        self.proofs_state.reflexive.insert(proof.clone());
         proof
     }
 
@@ -1941,9 +1790,7 @@ impl SourceRuleLowerer<'_, '_> {
     }
 
     fn lower_rule(&mut self, rule: &ResolvedRule) -> DraftRule {
-        self.reflexive.clear();
-        self.deferred.clear();
-        self.sealed.clear();
+        self.proofs_state = DeferredProofs::default();
         if self.proofs {
             self.anchors = BodyAnchors::default();
             self.unanchored.clear();
@@ -1984,8 +1831,7 @@ impl SourceRuleLowerer<'_, '_> {
 
         // Anything still deferred reached no emitted statement and must not
         // leak into the next rule.
-        self.deferred.clear();
-        self.sealed.clear();
+        self.proofs_state.discard_unobserved();
         if self.proofs {
             self.unanchored.clear();
         }
