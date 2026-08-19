@@ -10,16 +10,16 @@
 //! contains no parser tokens or checker-universe handles.
 
 use crate::ast::{
-    ContainerRebuildSpec, Expr, FunctionSubtype, GenericAction, GenericActions, GenericExpr,
-    GenericFunctionDecl, GenericMerge, GenericRule, Literal, ProofConstructorNames,
-    ResolvedFunctionDecl, ResolvedNCommand, RuleEvalMode, Schema, Span,
+    ContainerRebuildSpec, Expr, FunctionSubtype, GenericAction, GenericExpr, GenericFunctionDecl,
+    Literal, ProofConstructorNames, ResolvedFunctionDecl, ResolvedNCommand, RuleEvalMode, Schema,
+    Span,
 };
 use crate::core::ResolvedCall;
 use crate::proofs::generated_binder::{
     CallKey, FunctionKey, GeneratedCommand, GeneratedExpr, GeneratedFunctionDecl,
     GeneratedIndexDecl, GeneratedMerge, GeneratedPresort, GeneratedPresortArg, GeneratedRule,
-    GeneratedRuleBuilder, GeneratedSignatureCatalog, GeneratedSortDecl, GeneratedVarRole,
-    PrimitiveKey, SortKey, SortSemanticClass, ValueShape,
+    GeneratedSemanticEmitter, GeneratedSignatureCatalog, GeneratedSortDecl, PrimitiveKey, SortKey,
+    SortSemanticClass, ValueShape,
 };
 use crate::proofs::proof_encoding_helpers::{Skeleton, recomputable_premises};
 use crate::typechecking::FuncType;
@@ -708,11 +708,13 @@ impl ProofInstrumentor<'_> {
     /// before the function owning `merge`.
     fn plan_ordered_union_merge_direct(
         &mut self,
+        catalog: &mut GeneratedSignatureCatalog,
         span: &Span,
         value_sort: SortKey,
         uf: FunctionKey,
         composition: Skeleton,
     ) -> (TypedHoistGroup, GeneratedMerge) {
+        let mut emitter = GeneratedSemanticEmitter::new(catalog, span);
         let carried_sort = if self.proofs_enabled() {
             SortKey {
                 name: self.proof_names().proof_datatype.clone(),
@@ -724,91 +726,50 @@ impl ProofInstrumentor<'_> {
                 class: SortSemanticClass::Value,
             }
         };
-        let ordering_max = CallKey::Primitive(PrimitiveKey {
+        let ordering_max = emitter.primitive(PrimitiveKey {
             name: "ordering-max".to_owned(),
             inputs: vec![value_sort.clone(), value_sort.clone()],
             output: value_sort.clone(),
         });
-        let ordering_min = CallKey::Primitive(PrimitiveKey {
+        let ordering_min = emitter.primitive(PrimitiveKey {
             name: "ordering-min".to_owned(),
             inputs: vec![value_sort.clone(), value_sort.clone()],
             output: value_sort.clone(),
         });
-        let values = CallKey::Values(vec![value_sort.clone(), carried_sort.clone()]);
+        let values = emitter.values(vec![value_sort.clone(), carried_sort.clone()]);
 
         let var = |variable| GenericExpr::Var(span.clone(), variable);
-        let mut actions = vec![];
         let (pending, old0, new0, displaced, retained) = if self.proofs_enabled() {
             // `proof-of-max` observes old0, old1, new0, new1 in that order.
             // Preserve those local IDs even though `ordering-max` appears
             // later in the action sequence.
-            let mut locals = GeneratedRuleBuilder::default();
-            let old0 = locals
-                .variable("old0", value_sort.clone(), GeneratedVarRole::Local, span)
-                .expect("old0 merge variable must keep the value sort");
-            let old1 = locals
-                .variable("old1", carried_sort.clone(), GeneratedVarRole::Local, span)
-                .expect("old1 merge variable must keep the proof sort");
-            let new0 = locals
-                .variable("new0", value_sort.clone(), GeneratedVarRole::Local, span)
-                .expect("new0 merge variable must keep the value sort");
-            let new1 = locals
-                .variable("new1", carried_sort.clone(), GeneratedVarRole::Local, span)
-                .expect("new1 merge variable must keep the proof sort");
-            let proof_selector = |name: &str| {
-                CallKey::Primitive(PrimitiveKey {
-                    name: name.to_owned(),
-                    inputs: vec![
-                        value_sort.clone(),
-                        carried_sort.clone(),
-                        value_sort.clone(),
-                        carried_sort.clone(),
-                    ],
-                    output: carried_sort.clone(),
-                })
+            let old0 = emitter.local("old0", value_sort.clone());
+            let old1 = emitter.local("old1", carried_sort.clone());
+            let new0 = emitter.local("new0", value_sort.clone());
+            let new1 = emitter.local("new1", carried_sort.clone());
+            let proof_selector = |name: &str| PrimitiveKey {
+                name: name.to_owned(),
+                inputs: vec![
+                    value_sort.clone(),
+                    carried_sort.clone(),
+                    value_sort.clone(),
+                    carried_sort.clone(),
+                ],
+                output: carried_sort.clone(),
             };
+            let proof_of_max = emitter.primitive(proof_selector("proof-of-max"));
+            let proof_of_min = emitter.primitive(proof_selector("proof-of-min"));
             let selector_args = vec![var(old0.clone()), var(old1), var(new0.clone()), var(new1)];
-            let hi = locals
-                .variable(
-                    "hi_pf_",
-                    carried_sort.clone(),
-                    GeneratedVarRole::Local,
-                    span,
-                )
-                .expect("selected displaced proof must keep the proof sort");
-            actions.push(GenericAction::Let(
-                span.clone(),
-                hi.clone(),
-                GenericExpr::Call(
-                    span.clone(),
-                    proof_selector("proof-of-max"),
-                    selector_args.clone(),
-                ),
-            ));
-            let lo = locals
-                .variable(
-                    "lo_pf_",
-                    carried_sort.clone(),
-                    GeneratedVarRole::Local,
-                    span,
-                )
-                .expect("selected retained proof must keep the proof sort");
-            actions.push(GenericAction::Let(
-                span.clone(),
-                lo.clone(),
-                GenericExpr::Call(span.clone(), proof_selector("proof-of-min"), selector_args),
-            ));
+            let hi = emitter.bind_call(
+                "hi_pf_",
+                carried_sort.clone(),
+                proof_of_max,
+                selector_args.clone(),
+            );
+            let lo = emitter.bind_call("lo_pf_", carried_sort.clone(), proof_of_min, selector_args);
             let (packed, pending) = self.plan_packed_pending_direct(span, composition.width());
             let displaced_name = self.fresh_var();
-            let displaced = locals
-                .variable(
-                    displaced_name,
-                    carried_sort.clone(),
-                    GeneratedVarRole::Local,
-                    span,
-                )
-                .expect("packed displaced proof must keep the proof sort");
-            let mint = CallKey::Primitive(PrimitiveKey {
+            let mint = emitter.primitive(PrimitiveKey {
                 name: crate::proofs::proof_fresh::mint_prim_name(&packed),
                 inputs: vec![
                     SortKey {
@@ -820,28 +781,20 @@ impl ProofInstrumentor<'_> {
                 ],
                 output: carried_sort.clone(),
             });
-            actions.push(GenericAction::Let(
-                span.clone(),
-                displaced.clone(),
-                GenericExpr::Call(
-                    span.clone(),
-                    mint,
-                    vec![
-                        GenericExpr::Lit(span.clone(), Literal::String(composition.spelling())),
-                        var(hi),
-                        var(lo.clone()),
-                    ],
-                ),
-            ));
+            let displaced = emitter.bind_call(
+                displaced_name,
+                carried_sort.clone(),
+                mint,
+                vec![
+                    GenericExpr::Lit(span.clone(), Literal::String(composition.spelling())),
+                    var(hi),
+                    var(lo.clone()),
+                ],
+            );
             (pending, old0, new0, var(displaced), var(lo))
         } else {
-            let mut locals = GeneratedRuleBuilder::default();
-            let old0 = locals
-                .variable("old0", value_sort.clone(), GeneratedVarRole::Local, span)
-                .expect("old0 merge variable must keep the value sort");
-            let new0 = locals
-                .variable("new0", value_sort.clone(), GeneratedVarRole::Local, span)
-                .expect("new0 merge variable must keep the value sort");
+            let old0 = emitter.local("old0", value_sort.clone());
+            let new0 = emitter.local("new0", value_sort.clone());
             (
                 TypedHoistGroup::default(),
                 old0,
@@ -850,31 +803,17 @@ impl ProofInstrumentor<'_> {
                 GenericExpr::Lit(span.clone(), Literal::Unit),
             )
         };
-        let order = |call: CallKey| {
-            GenericExpr::Call(
-                span.clone(),
-                call,
-                vec![var(old0.clone()), var(new0.clone())],
-            )
-        };
-        actions.push(GenericAction::Set(
-            span.clone(),
-            CallKey::Function(uf),
-            vec![order(ordering_max.clone())],
-            GenericExpr::Call(
-                span.clone(),
-                values.clone(),
-                vec![order(ordering_min.clone()), displaced],
-            ),
-        ));
-        let result = GenericExpr::Call(span.clone(), values, vec![order(ordering_min), retained]);
-        (
-            pending,
-            GenericMerge {
-                actions: GenericActions(actions),
-                result,
-            },
-        )
+        let maximum = emitter.call(ordering_max, vec![var(old0.clone()), var(new0.clone())]);
+        let minimum = emitter.call(
+            ordering_min.clone(),
+            vec![var(old0.clone()), var(new0.clone())],
+        );
+        let replacement = emitter.call(values.clone(), vec![minimum, displaced]);
+        let uf = emitter.function(uf);
+        emitter.set(uf, vec![maximum], replacement);
+        let minimum = emitter.call(ordering_min, vec![var(old0), var(new0)]);
+        let result = emitter.call(values, vec![minimum, retained]);
+        (pending, emitter.finish_merge(result))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -894,123 +833,56 @@ impl ProofInstrumentor<'_> {
         pc_name: String,
         compressed_name: Option<String>,
     ) -> GeneratedRule {
+        let mut emitter = GeneratedSemanticEmitter::new(catalog, span);
         for key in [sort.clone(), carried.clone()] {
-            catalog
-                .register_sort(key, span)
-                .expect("path-compression sort signatures must be consistent");
+            emitter.sort(key);
         }
-        let unit = catalog
-            .register_sort(
-                SortKey {
-                    name: "Unit".to_owned(),
-                    class: SortSemanticClass::Value,
-                },
-                span,
-            )
-            .expect("Unit signature must be consistent");
-        let uf = catalog
-            .register_function(uf, span)
-            .expect("path-compression UF signature must be consistent");
-        let unequal = catalog
-            .register_primitive(
-                PrimitiveKey {
-                    name: "!=".to_owned(),
-                    inputs: vec![sort.clone(), sort.clone()],
-                    output: unit,
-                },
-                span,
-            )
-            .expect("path-compression inequality signature must be consistent");
-        let values = catalog
-            .values_call(vec![sort.clone(), carried.clone()], span)
-            .expect("path-compression row signature must be consistent");
+        let unit = emitter.sort(SortKey {
+            name: "Unit".to_owned(),
+            class: SortSemanticClass::Value,
+        });
+        let uf = emitter.function(uf);
+        let unequal = emitter.primitive(PrimitiveKey {
+            name: "!=".to_owned(),
+            inputs: vec![sort.clone(), sort.clone()],
+            output: unit,
+        });
+        let values = emitter.values(vec![sort.clone(), carried.clone()]);
         let trans = compressed_name.as_ref().map(|_| {
-            catalog
-                .register_primitive(
-                    PrimitiveKey {
-                        name: crate::proofs::proof_fresh::mint_prim_name(
-                            &self.proof_names().eq_trans_constructor,
-                        ),
-                        inputs: vec![carried.clone(), carried.clone()],
-                        output: carried.clone(),
-                    },
-                    span,
-                )
-                .expect("path-compression transitivity mint must be consistent")
+            emitter.primitive(PrimitiveKey {
+                name: crate::proofs::proof_fresh::mint_prim_name(
+                    &self.proof_names().eq_trans_constructor,
+                ),
+                inputs: vec![carried.clone(), carried.clone()],
+                output: carried.clone(),
+            })
         });
 
-        let mut builder = GeneratedRuleBuilder::default();
-        let b = builder
-            .variable(b_name, sort.clone(), GeneratedVarRole::Local, span)
-            .expect("path-compression b must keep the equality sort");
-        let pb = builder
-            .variable(pb_name, carried.clone(), GeneratedVarRole::Local, span)
-            .expect("path-compression pb must keep the carried sort");
-        let a = builder
-            .variable(a_name, sort.clone(), GeneratedVarRole::Local, span)
-            .expect("path-compression a must keep the equality sort");
-        let c = builder
-            .variable(c_name, sort.clone(), GeneratedVarRole::Local, span)
-            .expect("path-compression c must keep the equality sort");
-        let pc = builder
-            .variable(pc_name, carried.clone(), GeneratedVarRole::Local, span)
-            .expect("path-compression pc must keep the carried sort");
+        let b = emitter.local(b_name, sort.clone());
+        let pb = emitter.local(pb_name, carried.clone());
+        let a = emitter.local(a_name, sort.clone());
+        let c = emitter.local(c_name, sort.clone());
+        let pc = emitter.local(pc_name, carried.clone());
         let var = |variable| GenericExpr::Var(span.clone(), variable);
+        let first_row = emitter.call(values.clone(), vec![var(b.clone()), var(pb.clone())]);
+        let first_uf = emitter.call(uf.clone(), vec![var(a.clone())]);
+        let second_row = emitter.call(values.clone(), vec![var(c.clone()), var(pc.clone())]);
+        let second_uf = emitter.call(uf.clone(), vec![var(b.clone())]);
+        let unequal = emitter.call(unequal, vec![var(b), var(c.clone())]);
         let body = vec![
-            crate::ast::GenericFact::Eq(
-                span.clone(),
-                GenericExpr::Call(
-                    span.clone(),
-                    values.clone(),
-                    vec![var(b.clone()), var(pb.clone())],
-                ),
-                GenericExpr::Call(span.clone(), uf.clone(), vec![var(a.clone())]),
-            ),
-            crate::ast::GenericFact::Eq(
-                span.clone(),
-                GenericExpr::Call(
-                    span.clone(),
-                    values.clone(),
-                    vec![var(c.clone()), var(pc.clone())],
-                ),
-                GenericExpr::Call(span.clone(), uf.clone(), vec![var(b.clone())]),
-            ),
-            crate::ast::GenericFact::Fact(GenericExpr::Call(
-                span.clone(),
-                unequal,
-                vec![var(b), var(c.clone())],
-            )),
+            crate::ast::GenericFact::Eq(span.clone(), first_row, first_uf),
+            crate::ast::GenericFact::Eq(span.clone(), second_row, second_uf),
+            crate::ast::GenericFact::Fact(unequal),
         ];
         let carried_value = if let (Some(name), Some(trans)) = (compressed_name, trans) {
-            let compressed = builder
-                .variable(name, carried, GeneratedVarRole::Local, span)
-                .expect("compressed proof must keep the carried sort");
-            let action = GenericAction::Let(
-                span.clone(),
-                compressed.clone(),
-                GenericExpr::Call(span.clone(), trans, vec![var(pb), var(pc)]),
-            );
-            (Some(action), var(compressed))
+            let compressed = emitter.bind_call(name, carried, trans, vec![var(pb), var(pc)]);
+            var(compressed)
         } else {
-            (None, GenericExpr::Lit(span.clone(), Literal::Unit))
+            GenericExpr::Lit(span.clone(), Literal::Unit)
         };
-        let mut head = carried_value.0.into_iter().collect::<Vec<_>>();
-        head.push(GenericAction::Set(
-            span.clone(),
-            uf,
-            vec![var(a)],
-            GenericExpr::Call(span.clone(), values, vec![var(c), carried_value.1]),
-        ));
-        GenericRule {
-            span: span.clone(),
-            body,
-            head: GenericActions(head),
-            name,
-            ruleset,
-            eval_mode: RuleEvalMode::Seminaive,
-            no_decomp: false,
-            include_subsumed: false,
-        }
+        let row = emitter.call(values, vec![var(c), carried_value]);
+        emitter.set(uf, vec![var(a)], row);
+        emitter.finish_rule(body, name, ruleset, RuleEvalMode::Seminaive, false)
     }
 
     /// Plan one source sort and every declaration which follows it immediately,
@@ -1093,6 +965,7 @@ impl ProofInstrumentor<'_> {
         let pb = self.egraph.parser.symbol_gen.fresh("uf_pb");
         let pc = self.egraph.parser.symbol_gen.fresh("uf_pc");
         let (packed, merge) = self.plan_ordered_union_merge_direct(
+            catalog,
             span,
             key.clone(),
             uf.clone(),
@@ -1316,6 +1189,7 @@ impl ProofInstrumentor<'_> {
                 ]),
             };
             let (packed, merge) = self.plan_ordered_union_merge_direct(
+                catalog,
                 span,
                 source_output.clone(),
                 uf,

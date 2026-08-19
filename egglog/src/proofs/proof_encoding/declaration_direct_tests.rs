@@ -2,7 +2,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use super::*;
 use crate::EGraph;
-use crate::ast::{GenericRule, ResolvedNCommand};
+use crate::ast::{GenericActions, GenericRule, ResolvedNCommand};
 use crate::proofs::generated_binder::{
     GeneratedBatch, GeneratedEntry, GeneratedVarRole, LocalId, resolve_generated_batch,
 };
@@ -1355,6 +1355,7 @@ fn ordered_union_merge_has_exact_structure_ids_and_first_use_packed_group() {
         output: ValueShape::Tuple(vec![value.clone(), proof]),
     };
     let (pending, merge) = instrumentor.plan_ordered_union_merge_direct(
+        &mut catalog,
         &span,
         value.clone(),
         uf.clone(),
@@ -1390,6 +1391,7 @@ fn ordered_union_merge_has_exact_structure_ids_and_first_use_packed_group() {
     ));
 
     let (repeat, _) = instrumentor.plan_ordered_union_merge_direct(
+        &mut catalog,
         &span,
         value,
         uf,

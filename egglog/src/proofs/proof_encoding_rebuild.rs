@@ -5,11 +5,9 @@
 
 use super::proof_encoding::{ProofInstrumentor, ViewIndex};
 use super::proof_encoding_helpers::{DROP_REFLEXIVE_STEP, Skeleton};
-use crate::ast::GenericRule;
 use crate::proofs::generated_binder::{
-    CallKey, FunctionKey, GeneratedEntry, GeneratedRule, GeneratedRuleBuilder,
-    GeneratedSignatureCatalog, GeneratedVarRole, PrimitiveKey, SortKey, SortSemanticClass,
-    ValueShape,
+    CallKey, FunctionKey, GeneratedEntry, GeneratedRule, GeneratedSemanticEmitter,
+    GeneratedSignatureCatalog, PrimitiveKey, SortKey, SortSemanticClass, ValueShape,
 };
 use crate::typechecking::FuncType;
 use crate::*;
@@ -69,233 +67,139 @@ struct SubsumptionRuleSpec {
 impl SubsumptionRuleSpec {
     fn build(self, catalog: &mut GeneratedSignatureCatalog) -> Vec<GeneratedRule> {
         let span = &self.span;
-        let input_sorts = self
-            .function
-            .input
-            .iter()
-            .map(SortKey::from_sort)
-            .map(|sort| {
-                catalog
-                    .register_sort(sort, span)
-                    .expect("subsumption input signature must be internally consistent")
-            })
-            .collect::<Vec<_>>();
-        let output_sort = catalog
-            .register_sort(SortKey::from_sort(self.function.output()), span)
-            .expect("subsumption output signature must be internally consistent");
-        let unit_sort = catalog
-            .register_sort(
-                SortKey {
-                    name: "Unit".to_owned(),
-                    class: SortSemanticClass::Value,
-                },
-                span,
+        let (input_sorts, output_sort, unit_sort, proof_sort, marker_call, view_call, view_values) = {
+            let mut signatures = GeneratedSemanticEmitter::new(catalog, span);
+            let input_sorts = self
+                .function
+                .input
+                .iter()
+                .map(SortKey::from_sort)
+                .map(|sort| signatures.sort(sort))
+                .collect::<Vec<_>>();
+            let output_sort = signatures.sort(SortKey::from_sort(self.function.output()));
+            let unit_sort = signatures.sort(SortKey {
+                name: "Unit".to_owned(),
+                class: SortSemanticClass::Value,
+            });
+            let proof_sort = if self.proofs_enabled {
+                signatures.sort(SortKey {
+                    name: self.proof_sort,
+                    class: SortSemanticClass::Eq,
+                })
+            } else {
+                unit_sort.clone()
+            };
+            let marker_call = signatures.function(FunctionKey {
+                name: self.marker.clone(),
+                subtype: FunctionSubtype::Custom,
+                inputs: input_sorts.clone(),
+                output: ValueShape::Scalar(unit_sort.clone()),
+            });
+            let view_call = signatures.function(FunctionKey {
+                name: self.view.clone(),
+                subtype: FunctionSubtype::Custom,
+                inputs: input_sorts.clone(),
+                output: ValueShape::Tuple(vec![output_sort.clone(), proof_sort.clone()]),
+            });
+            let view_values = signatures.values(vec![output_sort.clone(), proof_sort.clone()]);
+            (
+                input_sorts,
+                output_sort,
+                unit_sort,
+                proof_sort,
+                marker_call,
+                view_call,
+                view_values,
             )
-            .expect("Unit signature must be internally consistent");
-        let proof_sort = if self.proofs_enabled {
-            catalog
-                .register_sort(
-                    SortKey {
-                        name: self.proof_sort,
-                        class: SortSemanticClass::Eq,
-                    },
-                    span,
-                )
-                .expect("proof signature must be internally consistent")
-        } else {
-            unit_sort.clone()
         };
-        let marker_call = catalog
-            .register_function(
-                FunctionKey {
-                    name: self.marker.clone(),
-                    subtype: FunctionSubtype::Custom,
-                    inputs: input_sorts.clone(),
-                    output: ValueShape::Scalar(unit_sort.clone()),
-                },
-                span,
-            )
-            .expect("subsumption marker signature must be internally consistent");
-        let view_call = catalog
-            .register_function(
-                FunctionKey {
-                    name: self.view.clone(),
-                    subtype: FunctionSubtype::Custom,
-                    inputs: input_sorts.clone(),
-                    output: ValueShape::Tuple(vec![output_sort.clone(), proof_sort.clone()]),
-                },
-                span,
-            )
-            .expect("subsumption view signature must be internally consistent");
-        let view_values_call = catalog
-            .values_call(vec![output_sort.clone(), proof_sort.clone()], span)
-            .expect("subsumption view row signature must be internally consistent");
 
         // The frontend observes all key variables in the marker atom first,
         // followed by the view's value and proof tuple.
-        let mut apply_builder = GeneratedRuleBuilder::default();
+        let mut apply_emitter = GeneratedSemanticEmitter::new(catalog, span);
         let apply_children = input_sorts
             .iter()
             .enumerate()
-            .map(|(index, sort)| {
-                apply_builder
-                    .variable(
-                        format!("c{index}_"),
-                        sort.clone(),
-                        GeneratedVarRole::Local,
-                        span,
-                    )
-                    .expect("subsumption key variable must keep one sort")
-            })
+            .map(|(index, sort)| apply_emitter.local(format!("c{index}_"), sort.clone()))
             .collect::<Vec<_>>();
-        let apply_value = apply_builder
-            .variable(self.apply_value, output_sort, GeneratedVarRole::Local, span)
-            .expect("subsumption value variable must keep one sort");
-        let apply_proof = apply_builder
-            .variable(
-                self.apply_proof,
-                proof_sort.clone(),
-                GeneratedVarRole::Local,
-                span,
-            )
-            .expect("subsumption proof variable must keep one sort");
+        let apply_value = apply_emitter.local(self.apply_value, output_sort);
+        let apply_proof = apply_emitter.local(self.apply_proof, proof_sort.clone());
         let var = |variable| GenericExpr::Var(span.clone(), variable);
         let apply_args = apply_children.iter().cloned().map(&var).collect::<Vec<_>>();
-        let apply = GenericRule {
-            span: span.clone(),
-            body: vec![
-                GenericFact::Fact(GenericExpr::Call(
-                    span.clone(),
-                    marker_call.clone(),
-                    apply_args.clone(),
-                )),
-                GenericFact::Eq(
-                    span.clone(),
-                    GenericExpr::Call(
-                        span.clone(),
-                        view_values_call.clone(),
-                        vec![var(apply_value), var(apply_proof)],
-                    ),
-                    GenericExpr::Call(span.clone(), view_call.clone(), apply_args.clone()),
-                ),
-            ],
-            head: GenericActions(vec![GenericAction::Change(
-                span.clone(),
-                Change::Subsume,
-                view_call,
-                apply_args,
-            )]),
-            name: self.apply_name,
-            ruleset: self.subsume_ruleset,
-            eval_mode: RuleEvalMode::Seminaive,
-            no_decomp: false,
-            include_subsumed: false,
-        };
+        let marker = apply_emitter.call(marker_call.clone(), apply_args.clone());
+        let row = apply_emitter.call(
+            view_values.clone(),
+            vec![var(apply_value), var(apply_proof)],
+        );
+        let view = apply_emitter.call(view_call.clone(), apply_args.clone());
+        let body = vec![
+            GenericFact::Fact(marker),
+            GenericFact::Eq(span.clone(), row, view),
+        ];
+        apply_emitter.change(Change::Subsume, view_call.clone(), apply_args);
+        let apply = apply_emitter.finish_rule(
+            body,
+            self.apply_name,
+            self.subsume_ruleset,
+            RuleEvalMode::Seminaive,
+            false,
+        );
         let mut rules = vec![apply];
 
         for rekey in self.rekeys {
             let eq_sort = input_sorts[rekey.position].clone();
             debug_assert_eq!(eq_sort.class, SortSemanticClass::Eq);
-            let uf_call = catalog
-                .register_function(
-                    FunctionKey {
-                        name: rekey.uf.clone(),
-                        subtype: FunctionSubtype::Custom,
-                        inputs: vec![eq_sort.clone()],
-                        output: ValueShape::Tuple(vec![eq_sort.clone(), proof_sort.clone()]),
-                    },
-                    span,
-                )
-                .expect("subsumption UF signature must be internally consistent");
-            let not_equal_call = catalog
-                .register_primitive(
-                    PrimitiveKey {
-                        name: "!=".to_owned(),
-                        inputs: vec![eq_sort.clone(), eq_sort.clone()],
-                        output: unit_sort.clone(),
-                    },
-                    span,
-                )
-                .expect("subsumption inequality signature must be internally consistent");
-            let uf_values_call = catalog
-                .values_call(vec![eq_sort.clone(), proof_sort.clone()], span)
-                .expect("subsumption UF row signature must be internally consistent");
+            let mut emitter = GeneratedSemanticEmitter::new(catalog, span);
+            let uf_call = emitter.function(FunctionKey {
+                name: rekey.uf.clone(),
+                subtype: FunctionSubtype::Custom,
+                inputs: vec![eq_sort.clone()],
+                output: ValueShape::Tuple(vec![eq_sort.clone(), proof_sort.clone()]),
+            });
+            let not_equal_call = emitter.primitive(PrimitiveKey {
+                name: "!=".to_owned(),
+                inputs: vec![eq_sort.clone(), eq_sort.clone()],
+                output: unit_sort.clone(),
+            });
+            let uf_values = emitter.values(vec![eq_sort.clone(), proof_sort.clone()]);
 
             // Each re-key rule has its own local scope: children in lexical key
             // order, then the selected column's leader and unused UF proof.
-            let mut builder = GeneratedRuleBuilder::default();
             let children = input_sorts
                 .iter()
                 .enumerate()
-                .map(|(index, sort)| {
-                    builder
-                        .variable(
-                            format!("c{index}_"),
-                            sort.clone(),
-                            GeneratedVarRole::Local,
-                            span,
-                        )
-                        .expect("subsumption key variable must keep one sort")
-                })
+                .map(|(index, sort)| emitter.local(format!("c{index}_"), sort.clone()))
                 .collect::<Vec<_>>();
-            let leader = builder
-                .variable(rekey.leader, eq_sort, GeneratedVarRole::Local, span)
-                .expect("subsumption leader must keep its equality sort");
-            let proof = builder
-                .variable(
-                    rekey.proof,
-                    proof_sort.clone(),
-                    GeneratedVarRole::Local,
-                    span,
-                )
-                .expect("subsumption UF proof must keep its carried sort");
+            let leader = emitter.local(rekey.leader, eq_sort);
+            let proof = emitter.local(rekey.proof, proof_sort.clone());
             let old_args = children.iter().cloned().map(&var).collect::<Vec<_>>();
             let mut updated_args = old_args.clone();
             updated_args[rekey.position] = var(leader.clone());
             let selected = var(children[rekey.position].clone());
-            let direct = GenericRule {
-                span: span.clone(),
-                body: vec![
-                    GenericFact::Fact(GenericExpr::Call(
-                        span.clone(),
-                        marker_call.clone(),
-                        old_args.clone(),
-                    )),
-                    GenericFact::Eq(
-                        span.clone(),
-                        GenericExpr::Call(
-                            span.clone(),
-                            uf_values_call,
-                            vec![var(leader), var(proof)],
-                        ),
-                        GenericExpr::Call(span.clone(), uf_call, vec![selected.clone()]),
-                    ),
-                    GenericFact::Fact(GenericExpr::Call(
-                        span.clone(),
-                        not_equal_call,
-                        vec![selected, updated_args[rekey.position].clone()],
-                    )),
-                ],
-                head: GenericActions(vec![
-                    GenericAction::Set(
-                        span.clone(),
-                        marker_call.clone(),
-                        updated_args,
-                        GenericExpr::Lit(span.clone(), Literal::Unit),
-                    ),
-                    GenericAction::Change(
-                        span.clone(),
-                        Change::Delete,
-                        marker_call.clone(),
-                        old_args,
-                    ),
-                ]),
-                name: rekey.name,
-                ruleset: self.rebuilding_ruleset.clone(),
-                eval_mode: RuleEvalMode::Seminaive,
-                no_decomp: false,
-                include_subsumed: true,
-            };
+            let marker = emitter.call(marker_call.clone(), old_args.clone());
+            let uf_row = emitter.call(uf_values, vec![var(leader), var(proof)]);
+            let uf = emitter.call(uf_call, vec![selected.clone()]);
+            let unequal = emitter.call(
+                not_equal_call,
+                vec![selected, updated_args[rekey.position].clone()],
+            );
+            let body = vec![
+                GenericFact::Fact(marker),
+                GenericFact::Eq(span.clone(), uf_row, uf),
+                GenericFact::Fact(unequal),
+            ];
+            emitter.set(
+                marker_call.clone(),
+                updated_args,
+                GenericExpr::Lit(span.clone(), Literal::Unit),
+            );
+            emitter.change(Change::Delete, marker_call.clone(), old_args);
+            let direct = emitter.finish_rule(
+                body,
+                rekey.name,
+                self.rebuilding_ruleset.clone(),
+                RuleEvalMode::Seminaive,
+                true,
+            );
             rules.push(direct);
         }
         rules
@@ -327,56 +231,34 @@ impl RebuildRuleCommonSpec {
     /// source of truth for the portable view shape: children are keys and the
     /// value is the `(output, Proof|Unit)` pair carried by the source view.
     fn register(&self, catalog: &mut GeneratedSignatureCatalog) -> RegisteredRebuildSignatures {
+        let mut emitter = GeneratedSemanticEmitter::new(catalog, &self.span);
         let input_sorts = self
             .function
             .input
             .iter()
             .map(SortKey::from_sort)
-            .map(|sort| {
-                catalog
-                    .register_sort(sort, &self.span)
-                    .expect("rebuild input signature must be internally consistent")
-            })
+            .map(|sort| emitter.sort(sort))
             .collect::<Vec<_>>();
-        let output_sort = catalog
-            .register_sort(SortKey::from_sort(self.function.output()), &self.span)
-            .expect("rebuild output signature must be internally consistent");
-        let unit_sort = catalog
-            .register_sort(
-                SortKey {
-                    name: "Unit".to_owned(),
-                    class: SortSemanticClass::Value,
-                },
-                &self.span,
-            )
-            .expect("Unit signature must be internally consistent");
+        let output_sort = emitter.sort(SortKey::from_sort(self.function.output()));
+        let unit_sort = emitter.sort(SortKey {
+            name: "Unit".to_owned(),
+            class: SortSemanticClass::Value,
+        });
         let carried_sort = if self.proofs_enabled {
-            catalog
-                .register_sort(
-                    SortKey {
-                        name: self.proof_sort.clone(),
-                        class: SortSemanticClass::Eq,
-                    },
-                    &self.span,
-                )
-                .expect("proof signature must be internally consistent")
+            emitter.sort(SortKey {
+                name: self.proof_sort.clone(),
+                class: SortSemanticClass::Eq,
+            })
         } else {
             unit_sort.clone()
         };
-        let view_call = catalog
-            .register_function(
-                FunctionKey {
-                    name: self.view.clone(),
-                    subtype: FunctionSubtype::Custom,
-                    inputs: input_sorts.clone(),
-                    output: ValueShape::Tuple(vec![output_sort.clone(), carried_sort.clone()]),
-                },
-                &self.span,
-            )
-            .expect("rebuild view signature must be internally consistent");
-        let values_call = catalog
-            .values_call(vec![output_sort.clone(), carried_sort.clone()], &self.span)
-            .expect("rebuild row signature must be internally consistent");
+        let view_call = emitter.function(FunctionKey {
+            name: self.view.clone(),
+            subtype: FunctionSubtype::Custom,
+            inputs: input_sorts.clone(),
+            output: ValueShape::Tuple(vec![output_sort.clone(), carried_sort.clone()]),
+        });
+        let values_call = emitter.values(vec![output_sort.clone(), carried_sort.clone()]);
         RegisteredRebuildSignatures {
             input_sorts,
             output_sort,
@@ -405,259 +287,128 @@ impl EqContainerKeyRebuildSpec {
         let span = &self.common.span;
         let key_sort = signatures.input_sorts[self.position].clone();
         debug_assert_eq!(key_sort.class, SortSemanticClass::EqContainer);
-        let rebuild_call = catalog
-            .register_primitive(
-                PrimitiveKey {
-                    name: self.value_primitive.clone(),
-                    inputs: vec![key_sort.clone()],
-                    output: key_sort.clone(),
-                },
-                span,
-            )
-            .expect("container rebuild signature must be internally consistent");
-        let not_equal_call = catalog
-            .register_primitive(
-                PrimitiveKey {
-                    name: "!=".to_owned(),
-                    inputs: vec![key_sort.clone(), key_sort.clone()],
-                    output: signatures.unit_sort.clone(),
-                },
-                span,
-            )
-            .expect("container inequality signature must be internally consistent");
+        let mut emitter = GeneratedSemanticEmitter::new(catalog, span);
+        let rebuild_call = emitter.primitive(PrimitiveKey {
+            name: self.value_primitive.clone(),
+            inputs: vec![key_sort.clone()],
+            output: key_sort.clone(),
+        });
+        let not_equal_call = emitter.primitive(PrimitiveKey {
+            name: "!=".to_owned(),
+            inputs: vec![key_sort.clone(), key_sort.clone()],
+            output: signatures.unit_sort.clone(),
+        });
 
         // The view tuple is observed before its key arguments; the canonical
         // value is first introduced by the second body equality.
-        let mut builder = GeneratedRuleBuilder::default();
-        let value = builder
-            .variable(
-                self.value,
-                signatures.output_sort.clone(),
-                GeneratedVarRole::Local,
-                span,
-            )
-            .expect("view value must keep its output sort");
-        let view_proof = builder
-            .variable(
-                self.view_proof,
-                signatures.carried_sort.clone(),
-                GeneratedVarRole::Local,
-                span,
-            )
-            .expect("view proof must keep its carried sort");
+        let value = emitter.local(self.value, signatures.output_sort.clone());
+        let view_proof = emitter.local(self.view_proof, signatures.carried_sort.clone());
         let keys = self
             .keys
             .into_iter()
             .zip(signatures.input_sorts.iter().cloned())
-            .map(|(name, sort)| {
-                builder
-                    .variable(name, sort, GeneratedVarRole::Local, span)
-                    .expect("view key must keep its declared sort")
-            })
+            .map(|(name, sort)| emitter.local(name, sort))
             .collect::<Vec<_>>();
-        let canonical = builder
-            .variable(
-                self.canonical,
-                key_sort.clone(),
-                GeneratedVarRole::Local,
-                span,
-            )
-            .expect("rebuilt container must keep the container sort");
+        let canonical = emitter.local(self.canonical, key_sort.clone());
         let var = |variable| GenericExpr::Var(span.clone(), variable);
         let old_args = keys.iter().cloned().map(&var).collect::<Vec<_>>();
         let mut updated_args = old_args.clone();
         updated_args[self.position] = var(canonical.clone());
         let selected = var(keys[self.position].clone());
+        let view_row = emitter.call(
+            signatures.values_call.clone(),
+            vec![var(value.clone()), var(view_proof.clone())],
+        );
+        let view = emitter.call(signatures.view_call.clone(), old_args.clone());
+        let rebuilt = emitter.call(rebuild_call, vec![selected.clone()]);
+        let unequal = emitter.call(not_equal_call, vec![selected, var(canonical.clone())]);
         let body = vec![
-            GenericFact::Eq(
-                span.clone(),
-                GenericExpr::Call(
-                    span.clone(),
-                    signatures.values_call.clone(),
-                    vec![var(value.clone()), var(view_proof.clone())],
-                ),
-                GenericExpr::Call(span.clone(), signatures.view_call.clone(), old_args.clone()),
-            ),
-            GenericFact::Eq(
-                span.clone(),
-                var(canonical.clone()),
-                GenericExpr::Call(span.clone(), rebuild_call, vec![selected.clone()]),
-            ),
-            GenericFact::Fact(GenericExpr::Call(
-                span.clone(),
-                not_equal_call,
-                vec![selected, var(canonical)],
-            )),
+            GenericFact::Eq(span.clone(), view_row, view),
+            GenericFact::Eq(span.clone(), var(canonical.clone()), rebuilt),
+            GenericFact::Fact(unequal),
         ];
 
-        let mut head = Vec::new();
         let carried = if let Some(proof) = self.proof.clone() {
             assert_eq!(
                 proof.index, self.position,
                 "container proof plan must target the rebuilt key column"
             );
-            let planned_view_proof = builder
-                .variable(
-                    &proof.view_proof,
-                    signatures.carried_sort.clone(),
-                    GeneratedVarRole::Local,
-                    span,
-                )
-                .expect("planned view proof must keep the carried sort");
+            let planned_view_proof =
+                emitter.local(&proof.view_proof, signatures.carried_sort.clone());
             assert_eq!(
                 planned_view_proof, view_proof,
                 "container proof plan must use the queried row proof"
             );
-            let planned_container = builder
-                .variable(
-                    &proof.container,
-                    key_sort.clone(),
-                    GeneratedVarRole::Local,
-                    span,
-                )
-                .expect("planned container must keep the rebuilt key sort");
+            let planned_container = emitter.local(&proof.container, key_sort.clone());
             assert_eq!(
                 planned_container, keys[self.position],
                 "container proof plan must use the selected key"
             );
-            let i64_sort = catalog
-                .register_sort(
-                    SortKey {
-                        name: "i64".to_owned(),
-                        class: SortSemanticClass::Value,
-                    },
-                    span,
-                )
-                .expect("i64 signature must be internally consistent");
-            let projection_call = catalog
-                .register_primitive(
-                    PrimitiveKey {
-                        name: crate::proofs::proof_fresh::mint_prim_name(
-                            &proof.projection_constructor,
-                        ),
-                        inputs: vec![signatures.carried_sort.clone(), i64_sort.clone()],
-                        output: signatures.carried_sort.clone(),
-                    },
-                    span,
-                )
-                .expect("projection mint signature must be internally consistent");
-            let rebuild_proof_call = catalog
-                .register_primitive(
-                    PrimitiveKey {
-                        name: proof.rebuild_primitive.clone(),
-                        inputs: vec![key_sort.clone(), signatures.carried_sort.clone()],
-                        output: signatures.carried_sort.clone(),
-                    },
-                    span,
-                )
-                .expect("container proof signature must be internally consistent");
-            let congruence_call = catalog
-                .register_primitive(
-                    PrimitiveKey {
-                        name: crate::proofs::proof_fresh::mint_prim_name(
-                            &proof.congruence_constructor,
-                        ),
-                        inputs: vec![
-                            signatures.carried_sort.clone(),
-                            i64_sort,
-                            signatures.carried_sort.clone(),
-                        ],
-                        output: signatures.carried_sort.clone(),
-                    },
-                    span,
-                )
-                .expect("congruence mint signature must be internally consistent");
-            let anchor = builder
-                .variable(
-                    proof.anchor,
+            let i64_sort = emitter.sort(SortKey {
+                name: "i64".to_owned(),
+                class: SortSemanticClass::Value,
+            });
+            let projection_call = emitter.primitive(PrimitiveKey {
+                name: crate::proofs::proof_fresh::mint_prim_name(&proof.projection_constructor),
+                inputs: vec![signatures.carried_sort.clone(), i64_sort.clone()],
+                output: signatures.carried_sort.clone(),
+            });
+            let rebuild_proof_call = emitter.primitive(PrimitiveKey {
+                name: proof.rebuild_primitive.clone(),
+                inputs: vec![key_sort.clone(), signatures.carried_sort.clone()],
+                output: signatures.carried_sort.clone(),
+            });
+            let congruence_call = emitter.primitive(PrimitiveKey {
+                name: crate::proofs::proof_fresh::mint_prim_name(&proof.congruence_constructor),
+                inputs: vec![
                     signatures.carried_sort.clone(),
-                    GeneratedVarRole::Local,
-                    span,
-                )
-                .expect("container anchor must keep the proof sort");
-            head.push(GenericAction::Let(
-                span.clone(),
-                anchor.clone(),
-                GenericExpr::Call(
-                    span.clone(),
-                    projection_call,
-                    vec![
-                        var(planned_view_proof.clone()),
-                        GenericExpr::Lit(span.clone(), Literal::Int(proof.index as i64)),
-                    ],
-                ),
-            ));
-            let rebuild_proof = builder
-                .variable(
-                    proof.rebuild_proof,
+                    i64_sort,
                     signatures.carried_sort.clone(),
-                    GeneratedVarRole::Local,
-                    span,
-                )
-                .expect("container rebuild proof must keep the proof sort");
-            head.push(GenericAction::Let(
-                span.clone(),
-                rebuild_proof.clone(),
-                GenericExpr::Call(
-                    span.clone(),
-                    rebuild_proof_call,
-                    vec![var(planned_container), var(anchor)],
-                ),
-            ));
-            let result = builder
-                .variable(
-                    proof.result,
-                    signatures.carried_sort.clone(),
-                    GeneratedVarRole::Local,
-                    span,
-                )
-                .expect("rebuilt row proof must keep the proof sort");
-            head.push(GenericAction::Let(
-                span.clone(),
-                result.clone(),
-                GenericExpr::Call(
-                    span.clone(),
-                    congruence_call,
-                    vec![
-                        var(planned_view_proof),
-                        GenericExpr::Lit(span.clone(), Literal::Int(proof.index as i64)),
-                        var(rebuild_proof),
-                    ],
-                ),
-            ));
+                ],
+                output: signatures.carried_sort.clone(),
+            });
+            let anchor = emitter.bind_call(
+                proof.anchor,
+                signatures.carried_sort.clone(),
+                projection_call,
+                vec![
+                    var(planned_view_proof.clone()),
+                    GenericExpr::Lit(span.clone(), Literal::Int(proof.index as i64)),
+                ],
+            );
+            let rebuild_proof = emitter.bind_call(
+                proof.rebuild_proof,
+                signatures.carried_sort.clone(),
+                rebuild_proof_call,
+                vec![var(planned_container), var(anchor)],
+            );
+            let result = emitter.bind_call(
+                proof.result,
+                signatures.carried_sort.clone(),
+                congruence_call,
+                vec![
+                    var(planned_view_proof),
+                    GenericExpr::Lit(span.clone(), Literal::Int(proof.index as i64)),
+                    var(rebuild_proof),
+                ],
+            );
             var(result)
         } else {
             GenericExpr::Lit(span.clone(), Literal::Unit)
         };
         // Re-keying must insert first: on a collision the view merge observes
         // the replacement before the stale key is removed.
-        head.push(GenericAction::Set(
-            span.clone(),
-            signatures.view_call.clone(),
-            updated_args,
-            GenericExpr::Call(
-                span.clone(),
-                signatures.values_call,
-                vec![var(value), carried],
-            ),
-        ));
-        head.push(GenericAction::Change(
-            span.clone(),
-            Change::Delete,
-            signatures.view_call,
-            old_args,
-        ));
+        let row = emitter.call(signatures.values_call, vec![var(value), carried]);
+        emitter.set(signatures.view_call.clone(), updated_args, row);
+        emitter.change(Change::Delete, signatures.view_call, old_args);
 
-        GenericRule {
-            span: span.clone(),
+        emitter.finish_rule(
             body,
-            head: GenericActions(head),
-            name: self.common.name,
-            ruleset: self.common.ruleset,
-            eval_mode: RuleEvalMode::Naive,
-            no_decomp: false,
-            include_subsumed: true,
-        }
+            self.common.name,
+            self.common.ruleset,
+            RuleEvalMode::Naive,
+            true,
+        )
     }
 }
 
@@ -699,188 +450,91 @@ impl IndexedWholeRowRebuildSpec {
     fn build(self, catalog: &mut GeneratedSignatureCatalog) -> GeneratedRule {
         let signatures = self.common.register(catalog);
         let span = &self.common.span;
-        let index_sort = catalog
-            .register_sort(SortKey::from_sort(&self.index_sort), span)
-            .expect("indexed rebuild sort must be internally consistent");
+        let mut emitter = GeneratedSemanticEmitter::new(catalog, span);
+        let index_sort = emitter.sort(SortKey::from_sort(&self.index_sort));
         debug_assert_eq!(index_sort.class, SortSemanticClass::Eq);
-        let uf_call = catalog
-            .register_function(
-                FunctionKey {
-                    name: self.uf.clone(),
-                    subtype: FunctionSubtype::Custom,
-                    inputs: vec![index_sort.clone()],
-                    output: ValueShape::Tuple(vec![
-                        index_sort.clone(),
-                        signatures.carried_sort.clone(),
-                    ]),
-                },
-                span,
-            )
-            .expect("indexed rebuild UF signature must be internally consistent");
-        let uf_values_call = catalog
-            .values_call(
-                vec![index_sort.clone(), signatures.carried_sort.clone()],
-                span,
-            )
-            .expect("indexed rebuild UF row must be internally consistent");
-        let not_equal_call = catalog
-            .register_primitive(
-                PrimitiveKey {
-                    name: "!=".to_owned(),
-                    inputs: vec![index_sort.clone(), index_sort.clone()],
-                    output: signatures.unit_sort.clone(),
-                },
-                span,
-            )
-            .expect("indexed rebuild inequality must be internally consistent");
+        let uf_call = emitter.function(FunctionKey {
+            name: self.uf.clone(),
+            subtype: FunctionSubtype::Custom,
+            inputs: vec![index_sort.clone()],
+            output: ValueShape::Tuple(vec![index_sort.clone(), signatures.carried_sort.clone()]),
+        });
+        let uf_values = emitter.values(vec![index_sort.clone(), signatures.carried_sort.clone()]);
+        let not_equal_call = emitter.primitive(PrimitiveKey {
+            name: "!=".to_owned(),
+            inputs: vec![index_sort.clone(), index_sort.clone()],
+            output: signatures.unit_sort.clone(),
+        });
         let mut index_inputs = vec![index_sort.clone()];
         index_inputs.extend(signatures.input_sorts.iter().cloned());
         index_inputs.push(signatures.output_sort.clone());
         index_inputs.push(signatures.carried_sort.clone());
-        let index_call = catalog
-            .register_function(
-                FunctionKey {
-                    name: self.index.name.clone(),
-                    subtype: FunctionSubtype::Custom,
-                    inputs: index_inputs,
-                    output: ValueShape::Scalar(signatures.unit_sort.clone()),
-                },
-                span,
-            )
-            .expect("view index signature must be internally consistent");
+        let index_call = emitter.function(FunctionKey {
+            name: self.index.name.clone(),
+            subtype: FunctionSubtype::Custom,
+            inputs: index_inputs,
+            output: ValueShape::Scalar(signatures.unit_sort.clone()),
+        });
 
         // The first UF tuple binds leader/proof before its follower. The index
         // atom then introduces the whole view row in declared column order.
-        let mut builder = GeneratedRuleBuilder::default();
-        let leader = builder
-            .variable(
-                self.leader,
-                index_sort.clone(),
-                GeneratedVarRole::Local,
-                span,
-            )
-            .expect("UF leader must keep the indexed sort");
-        let leader_proof = builder
-            .variable(
-                self.leader_proof,
-                signatures.carried_sort.clone(),
-                GeneratedVarRole::Local,
-                span,
-            )
-            .expect("UF proof must keep the carried sort");
-        let follower = builder
-            .variable(self.follower, index_sort, GeneratedVarRole::Local, span)
-            .expect("UF follower must keep the indexed sort");
+        let leader = emitter.local(self.leader, index_sort.clone());
+        let leader_proof = emitter.local(self.leader_proof, signatures.carried_sort.clone());
+        let follower = emitter.local(self.follower, index_sort);
         let keys = self
             .keys
             .into_iter()
             .zip(signatures.input_sorts.iter().cloned())
-            .map(|(name, sort)| {
-                builder
-                    .variable(name, sort, GeneratedVarRole::Local, span)
-                    .expect("indexed view key must keep its declared sort")
-            })
+            .map(|(name, sort)| emitter.local(name, sort))
             .collect::<Vec<_>>();
-        let value = builder
-            .variable(
-                self.value,
-                signatures.output_sort.clone(),
-                GeneratedVarRole::Local,
-                span,
-            )
-            .expect("indexed view value must keep its output sort");
-        let row_proof = builder
-            .variable(
-                self.row_proof,
-                signatures.carried_sort.clone(),
-                GeneratedVarRole::Local,
-                span,
-            )
-            .expect("indexed row proof must keep the carried sort");
+        let value = emitter.local(self.value, signatures.output_sort.clone());
+        let row_proof = emitter.local(self.row_proof, signatures.carried_sort.clone());
         let var = |variable| GenericExpr::Var(span.clone(), variable);
         let mut index_args = vec![var(follower.clone())];
         index_args.extend(keys.iter().cloned().map(&var));
         index_args.push(var(value.clone()));
         index_args.push(var(row_proof.clone()));
+        let uf_row = emitter.call(uf_values, vec![var(leader.clone()), var(leader_proof)]);
+        let uf = emitter.call(uf_call, vec![var(follower.clone())]);
+        let unequal = emitter.call(not_equal_call, vec![var(follower), var(leader)]);
+        let index = emitter.call(index_call, index_args);
         let body = vec![
-            GenericFact::Eq(
-                span.clone(),
-                GenericExpr::Call(
-                    span.clone(),
-                    uf_values_call,
-                    vec![var(leader.clone()), var(leader_proof)],
-                ),
-                GenericExpr::Call(span.clone(), uf_call, vec![var(follower.clone())]),
-            ),
-            GenericFact::Fact(GenericExpr::Call(
-                span.clone(),
-                not_equal_call,
-                vec![var(follower), var(leader)],
-            )),
-            GenericFact::Fact(GenericExpr::Call(span.clone(), index_call, index_args)),
+            GenericFact::Eq(span.clone(), uf_row, uf),
+            GenericFact::Fact(unequal),
+            GenericFact::Fact(index),
         ];
 
-        let mut head = Vec::new();
         let mut updated_args = keys.iter().cloned().map(&var).collect::<Vec<_>>();
         let mut moved = Vec::new();
         let mut step_proofs = Vec::new();
         for step in self.children {
-            let sort = catalog
-                .register_sort(SortKey::from_sort(&step.sort), span)
-                .expect("canonicalized child sort must be internally consistent");
+            let sort = emitter.sort(SortKey::from_sort(&step.sort));
             debug_assert_eq!(sort, signatures.input_sorts[step.position]);
-            let value_call = catalog
-                .register_primitive(
-                    PrimitiveKey {
-                        name: step.value_primitive.clone(),
-                        inputs: vec![sort.clone(), sort.clone()],
-                        output: sort.clone(),
-                    },
-                    span,
-                )
-                .expect("UF canonicalization signature must be internally consistent");
+            let value_call = emitter.primitive(PrimitiveKey {
+                name: step.value_primitive.clone(),
+                inputs: vec![sort.clone(), sort.clone()],
+                output: sort.clone(),
+            });
             let before = keys[step.position].clone();
             debug_assert_eq!(before.name, step.before);
-            let canonical = builder
-                .variable(step.canonical, sort.clone(), GeneratedVarRole::Local, span)
-                .expect("canonicalized child must keep its equality sort");
-            head.push(GenericAction::Let(
-                span.clone(),
-                canonical.clone(),
-                GenericExpr::Call(
-                    span.clone(),
-                    value_call,
-                    vec![var(before.clone()), var(before.clone())],
-                ),
-            ));
+            let canonical = emitter.bind_call(
+                step.canonical,
+                sort.clone(),
+                value_call,
+                vec![var(before.clone()), var(before.clone())],
+            );
             if let Some((proof_name, proof_primitive)) = step.proof_step {
-                let proof_call = catalog
-                    .register_primitive(
-                        PrimitiveKey {
-                            name: proof_primitive.clone(),
-                            inputs: vec![sort.clone(), signatures.carried_sort.clone()],
-                            output: signatures.carried_sort.clone(),
-                        },
-                        span,
-                    )
-                    .expect("UF canonical proof signature must be internally consistent");
-                let proof = builder
-                    .variable(
-                        proof_name,
-                        signatures.carried_sort.clone(),
-                        GeneratedVarRole::Local,
-                        span,
-                    )
-                    .expect("canonical child proof must keep the proof sort");
-                head.push(GenericAction::Let(
-                    span.clone(),
-                    proof.clone(),
-                    GenericExpr::Call(
-                        span.clone(),
-                        proof_call,
-                        vec![var(before.clone()), var(row_proof.clone())],
-                    ),
-                ));
+                let proof_call = emitter.primitive(PrimitiveKey {
+                    name: proof_primitive.clone(),
+                    inputs: vec![sort.clone(), signatures.carried_sort.clone()],
+                    output: signatures.carried_sort.clone(),
+                });
+                let proof = emitter.bind_call(
+                    proof_name,
+                    signatures.carried_sort.clone(),
+                    proof_call,
+                    vec![var(before.clone()), var(row_proof.clone())],
+                );
                 step_proofs.push(proof);
                 moved.push((sort, before, canonical.clone()));
             }
@@ -889,61 +543,32 @@ impl IndexedWholeRowRebuildSpec {
 
         let mut updated_value = value.clone();
         if let Some(step) = self.output {
-            let sort = catalog
-                .register_sort(SortKey::from_sort(&step.sort), span)
-                .expect("canonicalized e-class sort must be internally consistent");
+            let sort = emitter.sort(SortKey::from_sort(&step.sort));
             debug_assert_eq!(sort, signatures.output_sort);
-            let value_call = catalog
-                .register_primitive(
-                    PrimitiveKey {
-                        name: step.value_primitive.clone(),
-                        inputs: vec![sort.clone(), sort.clone()],
-                        output: sort.clone(),
-                    },
-                    span,
-                )
-                .expect("e-class canonicalization signature must be internally consistent");
+            let value_call = emitter.primitive(PrimitiveKey {
+                name: step.value_primitive.clone(),
+                inputs: vec![sort.clone(), sort.clone()],
+                output: sort.clone(),
+            });
             debug_assert_eq!(value.name, step.before);
-            let canonical = builder
-                .variable(step.canonical, sort.clone(), GeneratedVarRole::Local, span)
-                .expect("canonicalized e-class must keep the output sort");
-            head.push(GenericAction::Let(
-                span.clone(),
-                canonical.clone(),
-                GenericExpr::Call(
-                    span.clone(),
-                    value_call,
-                    vec![var(value.clone()), var(value.clone())],
-                ),
-            ));
+            let canonical = emitter.bind_call(
+                step.canonical,
+                sort.clone(),
+                value_call,
+                vec![var(value.clone()), var(value.clone())],
+            );
             if let Some((proof_name, proof_primitive)) = step.proof_step {
-                let proof_call = catalog
-                    .register_primitive(
-                        PrimitiveKey {
-                            name: proof_primitive.clone(),
-                            inputs: vec![sort.clone(), signatures.carried_sort.clone()],
-                            output: signatures.carried_sort.clone(),
-                        },
-                        span,
-                    )
-                    .expect("e-class canonical proof signature must be internally consistent");
-                let proof = builder
-                    .variable(
-                        proof_name,
-                        signatures.carried_sort.clone(),
-                        GeneratedVarRole::Local,
-                        span,
-                    )
-                    .expect("canonical e-class proof must keep the proof sort");
-                head.push(GenericAction::Let(
-                    span.clone(),
-                    proof.clone(),
-                    GenericExpr::Call(
-                        span.clone(),
-                        proof_call,
-                        vec![var(value.clone()), var(row_proof.clone())],
-                    ),
-                ));
+                let proof_call = emitter.primitive(PrimitiveKey {
+                    name: proof_primitive.clone(),
+                    inputs: vec![sort.clone(), signatures.carried_sort.clone()],
+                    output: signatures.carried_sort.clone(),
+                });
+                let proof = emitter.bind_call(
+                    proof_name,
+                    signatures.carried_sort.clone(),
+                    proof_call,
+                    vec![var(value.clone()), var(row_proof.clone())],
+                );
                 step_proofs.push(proof);
                 moved.push((sort, value.clone(), canonical.clone()));
             }
@@ -952,24 +577,14 @@ impl IndexedWholeRowRebuildSpec {
 
         let carried = if let Some(packed) = self.packed {
             debug_assert_eq!(packed.narrowed.len(), moved.len());
-            let string_sort = catalog
-                .register_sort(
-                    SortKey {
-                        name: "String".to_owned(),
-                        class: SortSemanticClass::Value,
-                    },
-                    span,
-                )
-                .expect("String signature must be internally consistent");
-            let i64_sort = catalog
-                .register_sort(
-                    SortKey {
-                        name: "i64".to_owned(),
-                        class: SortSemanticClass::Value,
-                    },
-                    span,
-                )
-                .expect("i64 signature must be internally consistent");
+            let string_sort = emitter.sort(SortKey {
+                name: "String".to_owned(),
+                class: SortSemanticClass::Value,
+            });
+            let i64_sort = emitter.sort(SortKey {
+                name: "i64".to_owned(),
+                class: SortSemanticClass::Value,
+            });
             let mut spelling = GenericExpr::Lit(span.clone(), Literal::String(packed.skeleton));
             for (column, (result, (sort, before, after))) in packed
                 .narrowed
@@ -977,33 +592,22 @@ impl IndexedWholeRowRebuildSpec {
                 .zip(moved.into_iter())
                 .enumerate()
             {
-                let drop_call = catalog
-                    .register_primitive(
-                        PrimitiveKey {
-                            name: DROP_REFLEXIVE_STEP.to_owned(),
-                            inputs: vec![string_sort.clone(), i64_sort.clone(), sort.clone(), sort],
-                            output: string_sort.clone(),
-                        },
-                        span,
-                    )
-                    .expect("proof-spelling narrowing must be internally consistent");
-                let narrowed = builder
-                    .variable(result, string_sort.clone(), GeneratedVarRole::Local, span)
-                    .expect("narrowed proof spelling must keep String sort");
-                head.push(GenericAction::Let(
-                    span.clone(),
-                    narrowed.clone(),
-                    GenericExpr::Call(
-                        span.clone(),
-                        drop_call,
-                        vec![
-                            spelling,
-                            GenericExpr::Lit(span.clone(), Literal::Int((column + 1) as i64)),
-                            var(before),
-                            var(after),
-                        ],
-                    ),
-                ));
+                let drop_call = emitter.primitive(PrimitiveKey {
+                    name: DROP_REFLEXIVE_STEP.to_owned(),
+                    inputs: vec![string_sort.clone(), i64_sort.clone(), sort.clone(), sort],
+                    output: string_sort.clone(),
+                });
+                let narrowed = emitter.bind_call(
+                    result,
+                    string_sort.clone(),
+                    drop_call,
+                    vec![
+                        spelling,
+                        GenericExpr::Lit(span.clone(), Literal::Int((column + 1) as i64)),
+                        var(before),
+                        var(after),
+                    ],
+                );
                 spelling = var(narrowed);
             }
             let mut mint_inputs = vec![string_sort];
@@ -1012,31 +616,19 @@ impl IndexedWholeRowRebuildSpec {
                 1 + step_proofs.len(),
             ));
             let mint_name = crate::proofs::proof_fresh::mint_prim_name(&packed.constructor);
-            let packed_call = catalog
-                .register_primitive(
-                    PrimitiveKey {
-                        name: mint_name.clone(),
-                        inputs: mint_inputs,
-                        output: signatures.carried_sort.clone(),
-                    },
-                    span,
-                )
-                .expect("packed proof mint signature must be internally consistent");
-            let result = builder
-                .variable(
-                    packed.result,
-                    signatures.carried_sort.clone(),
-                    GeneratedVarRole::Local,
-                    span,
-                )
-                .expect("packed proof must keep the proof sort");
+            let packed_call = emitter.primitive(PrimitiveKey {
+                name: mint_name.clone(),
+                inputs: mint_inputs,
+                output: signatures.carried_sort.clone(),
+            });
             let mut args = vec![spelling, var(row_proof.clone())];
             args.extend(step_proofs.into_iter().map(&var));
-            head.push(GenericAction::Let(
-                span.clone(),
-                result.clone(),
-                GenericExpr::Call(span.clone(), packed_call, args),
-            ));
+            let result = emitter.bind_call(
+                packed.result,
+                signatures.carried_sort.clone(),
+                packed_call,
+                args,
+            );
             var(result)
         } else if self.common.proofs_enabled {
             var(row_proof)
@@ -1046,32 +638,20 @@ impl IndexedWholeRowRebuildSpec {
 
         // Whole-row rebuilds delete first: an e-class-only move leaves the key
         // unchanged, and the replacement must survive that case.
-        head.push(GenericAction::Change(
-            span.clone(),
+        emitter.change(
             Change::Delete,
             signatures.view_call.clone(),
             keys.iter().cloned().map(&var).collect(),
-        ));
-        head.push(GenericAction::Set(
-            span.clone(),
-            signatures.view_call.clone(),
-            updated_args,
-            GenericExpr::Call(
-                span.clone(),
-                signatures.values_call,
-                vec![var(updated_value), carried],
-            ),
-        ));
-        GenericRule {
-            span: span.clone(),
+        );
+        let row = emitter.call(signatures.values_call, vec![var(updated_value), carried]);
+        emitter.set(signatures.view_call.clone(), updated_args, row);
+        emitter.finish_rule(
             body,
-            head: GenericActions(head),
-            name: self.common.name,
-            ruleset: self.common.ruleset,
-            eval_mode: self.eval_mode,
-            no_decomp: false,
-            include_subsumed: true,
-        }
+            self.common.name,
+            self.common.ruleset,
+            self.eval_mode,
+            true,
+        )
     }
 }
 
@@ -1091,217 +671,114 @@ impl CustomDirectOutputRebuildSpec {
         let signatures = self.common.register(catalog);
         let span = &self.common.span;
         debug_assert_eq!(signatures.output_sort.class, SortSemanticClass::Eq);
-        let uf_call = catalog
-            .register_function(
-                FunctionKey {
-                    name: self.uf.clone(),
-                    subtype: FunctionSubtype::Custom,
-                    inputs: vec![signatures.output_sort.clone()],
-                    output: ValueShape::Tuple(vec![
-                        signatures.output_sort.clone(),
-                        signatures.carried_sort.clone(),
-                    ]),
-                },
-                span,
-            )
-            .expect("custom-output UF signature must be internally consistent");
-        let uf_values_call = catalog
-            .values_call(
-                vec![
-                    signatures.output_sort.clone(),
-                    signatures.carried_sort.clone(),
-                ],
-                span,
-            )
-            .expect("custom-output UF row must be internally consistent");
-        let not_equal_call = catalog
-            .register_primitive(
-                PrimitiveKey {
-                    name: "!=".to_owned(),
-                    inputs: vec![
-                        signatures.output_sort.clone(),
-                        signatures.output_sort.clone(),
-                    ],
-                    output: signatures.unit_sort.clone(),
-                },
-                span,
-            )
-            .expect("custom-output inequality must be internally consistent");
-
-        let mut builder = GeneratedRuleBuilder::default();
-        let value = builder
-            .variable(
-                self.value,
+        let mut emitter = GeneratedSemanticEmitter::new(catalog, span);
+        let uf_call = emitter.function(FunctionKey {
+            name: self.uf.clone(),
+            subtype: FunctionSubtype::Custom,
+            inputs: vec![signatures.output_sort.clone()],
+            output: ValueShape::Tuple(vec![
                 signatures.output_sort.clone(),
-                GeneratedVarRole::Local,
-                span,
-            )
-            .expect("custom output must keep its declared sort");
-        let view_proof = builder
-            .variable(
-                self.view_proof,
                 signatures.carried_sort.clone(),
-                GeneratedVarRole::Local,
-                span,
-            )
-            .expect("view proof must keep the carried sort");
+            ]),
+        });
+        let uf_values = emitter.values(vec![
+            signatures.output_sort.clone(),
+            signatures.carried_sort.clone(),
+        ]);
+        let not_equal_call = emitter.primitive(PrimitiveKey {
+            name: "!=".to_owned(),
+            inputs: vec![
+                signatures.output_sort.clone(),
+                signatures.output_sort.clone(),
+            ],
+            output: signatures.unit_sort.clone(),
+        });
+
+        let value = emitter.local(self.value, signatures.output_sort.clone());
+        let view_proof = emitter.local(self.view_proof, signatures.carried_sort.clone());
         let keys = self
             .keys
             .into_iter()
             .zip(signatures.input_sorts.iter().cloned())
-            .map(|(name, sort)| {
-                builder
-                    .variable(name, sort, GeneratedVarRole::Local, span)
-                    .expect("custom view key must keep its declared sort")
-            })
+            .map(|(name, sort)| emitter.local(name, sort))
             .collect::<Vec<_>>();
-        let canonical = builder
-            .variable(
-                self.canonical,
-                signatures.output_sort.clone(),
-                GeneratedVarRole::Local,
-                span,
-            )
-            .expect("canonical output must keep its equality sort");
-        let equality_proof = builder
-            .variable(
-                self.equality_proof,
-                signatures.carried_sort.clone(),
-                GeneratedVarRole::Local,
-                span,
-            )
-            .expect("output UF proof must keep the carried sort");
+        let canonical = emitter.local(self.canonical, signatures.output_sort.clone());
+        let equality_proof = emitter.local(self.equality_proof, signatures.carried_sort.clone());
         let var = |variable| GenericExpr::Var(span.clone(), variable);
         let args = keys.iter().cloned().map(&var).collect::<Vec<_>>();
+        let view_row = emitter.call(
+            signatures.values_call.clone(),
+            vec![var(value.clone()), var(view_proof.clone())],
+        );
+        let view = emitter.call(signatures.view_call.clone(), args.clone());
+        let uf_row = emitter.call(
+            uf_values,
+            vec![var(canonical.clone()), var(equality_proof.clone())],
+        );
+        let uf = emitter.call(uf_call, vec![var(value.clone())]);
+        let unequal = emitter.call(
+            not_equal_call,
+            vec![var(value.clone()), var(canonical.clone())],
+        );
         let body = vec![
-            GenericFact::Eq(
-                span.clone(),
-                GenericExpr::Call(
-                    span.clone(),
-                    signatures.values_call.clone(),
-                    vec![var(value.clone()), var(view_proof.clone())],
-                ),
-                GenericExpr::Call(span.clone(), signatures.view_call.clone(), args.clone()),
-            ),
-            GenericFact::Eq(
-                span.clone(),
-                GenericExpr::Call(
-                    span.clone(),
-                    uf_values_call,
-                    vec![var(canonical.clone()), var(equality_proof.clone())],
-                ),
-                GenericExpr::Call(span.clone(), uf_call, vec![var(value.clone())]),
-            ),
-            GenericFact::Fact(GenericExpr::Call(
-                span.clone(),
-                not_equal_call,
-                vec![var(value.clone()), var(canonical.clone())],
-            )),
+            GenericFact::Eq(span.clone(), view_row, view),
+            GenericFact::Eq(span.clone(), uf_row, uf),
+            GenericFact::Fact(unequal),
         ];
 
-        let mut head = Vec::new();
         let carried = if let Some(proof) = self.proof.clone() {
-            let planned_view_proof = builder
-                .variable(
-                    &proof.view_proof,
-                    signatures.carried_sort.clone(),
-                    GeneratedVarRole::Local,
-                    span,
-                )
-                .expect("planned view proof must keep the carried sort");
+            let planned_view_proof =
+                emitter.local(&proof.view_proof, signatures.carried_sort.clone());
             assert_eq!(
                 planned_view_proof, view_proof,
                 "congruence plan must use the queried row proof"
             );
-            let planned_equality_proof = builder
-                .variable(
-                    &proof.equality_proof,
-                    signatures.carried_sort.clone(),
-                    GeneratedVarRole::Local,
-                    span,
-                )
-                .expect("planned equality proof must keep the carried sort");
+            let planned_equality_proof =
+                emitter.local(&proof.equality_proof, signatures.carried_sort.clone());
             assert_eq!(
                 planned_equality_proof, equality_proof,
                 "congruence plan must use the output UF proof"
             );
-            let i64_sort = catalog
-                .register_sort(
-                    SortKey {
-                        name: "i64".to_owned(),
-                        class: SortSemanticClass::Value,
-                    },
-                    span,
-                )
-                .expect("i64 signature must be internally consistent");
-            let congruence_call = catalog
-                .register_primitive(
-                    PrimitiveKey {
-                        name: crate::proofs::proof_fresh::mint_prim_name(&proof.constructor),
-                        inputs: vec![
-                            signatures.carried_sort.clone(),
-                            i64_sort,
-                            signatures.carried_sort.clone(),
-                        ],
-                        output: signatures.carried_sort.clone(),
-                    },
-                    span,
-                )
-                .expect("custom-output congruence must be internally consistent");
-            let result = builder
-                .variable(
-                    proof.result,
+            let i64_sort = emitter.sort(SortKey {
+                name: "i64".to_owned(),
+                class: SortSemanticClass::Value,
+            });
+            let congruence_call = emitter.primitive(PrimitiveKey {
+                name: crate::proofs::proof_fresh::mint_prim_name(&proof.constructor),
+                inputs: vec![
                     signatures.carried_sort.clone(),
-                    GeneratedVarRole::Local,
-                    span,
-                )
-                .expect("rewritten row proof must keep the proof sort");
-            head.push(GenericAction::Let(
-                span.clone(),
-                result.clone(),
-                GenericExpr::Call(
-                    span.clone(),
-                    congruence_call,
-                    vec![
-                        var(planned_view_proof),
-                        GenericExpr::Lit(span.clone(), Literal::Int(proof.index as i64)),
-                        var(planned_equality_proof),
-                    ],
-                ),
-            ));
+                    i64_sort,
+                    signatures.carried_sort.clone(),
+                ],
+                output: signatures.carried_sort.clone(),
+            });
+            let result = emitter.bind_call(
+                proof.result,
+                signatures.carried_sort.clone(),
+                congruence_call,
+                vec![
+                    var(planned_view_proof),
+                    GenericExpr::Lit(span.clone(), Literal::Int(proof.index as i64)),
+                    var(planned_equality_proof),
+                ],
+            );
             var(result)
         } else {
             GenericExpr::Lit(span.clone(), Literal::Unit)
         };
         // Delete first so this maintenance rewrite cannot re-run the custom
         // view merge against the stale value it is replacing.
-        head.push(GenericAction::Change(
-            span.clone(),
-            Change::Delete,
-            signatures.view_call.clone(),
-            args.clone(),
-        ));
-        head.push(GenericAction::Set(
-            span.clone(),
-            signatures.view_call.clone(),
-            args,
-            GenericExpr::Call(
-                span.clone(),
-                signatures.values_call,
-                vec![var(canonical), carried],
-            ),
-        ));
+        emitter.change(Change::Delete, signatures.view_call.clone(), args.clone());
+        let row = emitter.call(signatures.values_call, vec![var(canonical), carried]);
+        emitter.set(signatures.view_call.clone(), args, row);
 
-        GenericRule {
-            span: span.clone(),
+        emitter.finish_rule(
             body,
-            head: GenericActions(head),
-            name: self.common.name,
-            ruleset: self.common.ruleset,
-            eval_mode: RuleEvalMode::Seminaive,
-            no_decomp: false,
-            include_subsumed: true,
-        }
+            self.common.name,
+            self.common.ruleset,
+            RuleEvalMode::Seminaive,
+            true,
+        )
     }
 }
 
@@ -1321,258 +798,130 @@ impl CustomContainerOutputRebuildSpec {
         let signatures = self.common.register(catalog);
         let span = &self.common.span;
         debug_assert_eq!(signatures.output_sort.class, SortSemanticClass::EqContainer);
-        let rebuild_call = catalog
-            .register_primitive(
-                PrimitiveKey {
-                    name: self.value_primitive.clone(),
-                    inputs: vec![signatures.output_sort.clone()],
-                    output: signatures.output_sort.clone(),
-                },
-                span,
-            )
-            .expect("output-container rebuild must be internally consistent");
-        let not_equal_call = catalog
-            .register_primitive(
-                PrimitiveKey {
-                    name: "!=".to_owned(),
-                    inputs: vec![
-                        signatures.output_sort.clone(),
-                        signatures.output_sort.clone(),
-                    ],
-                    output: signatures.unit_sort.clone(),
-                },
-                span,
-            )
-            .expect("output-container inequality must be internally consistent");
-
-        let mut builder = GeneratedRuleBuilder::default();
-        let value = builder
-            .variable(
-                self.value,
+        let mut emitter = GeneratedSemanticEmitter::new(catalog, span);
+        let rebuild_call = emitter.primitive(PrimitiveKey {
+            name: self.value_primitive.clone(),
+            inputs: vec![signatures.output_sort.clone()],
+            output: signatures.output_sort.clone(),
+        });
+        let not_equal_call = emitter.primitive(PrimitiveKey {
+            name: "!=".to_owned(),
+            inputs: vec![
                 signatures.output_sort.clone(),
-                GeneratedVarRole::Local,
-                span,
-            )
-            .expect("container output must keep its declared sort");
-        let view_proof = builder
-            .variable(
-                self.view_proof,
-                signatures.carried_sort.clone(),
-                GeneratedVarRole::Local,
-                span,
-            )
-            .expect("view proof must keep the carried sort");
+                signatures.output_sort.clone(),
+            ],
+            output: signatures.unit_sort.clone(),
+        });
+
+        let value = emitter.local(self.value, signatures.output_sort.clone());
+        let view_proof = emitter.local(self.view_proof, signatures.carried_sort.clone());
         let keys = self
             .keys
             .into_iter()
             .zip(signatures.input_sorts.iter().cloned())
-            .map(|(name, sort)| {
-                builder
-                    .variable(name, sort, GeneratedVarRole::Local, span)
-                    .expect("container-output view key must keep its declared sort")
-            })
+            .map(|(name, sort)| emitter.local(name, sort))
             .collect::<Vec<_>>();
-        let canonical = builder
-            .variable(
-                self.canonical,
-                signatures.output_sort.clone(),
-                GeneratedVarRole::Local,
-                span,
-            )
-            .expect("rebuilt output must keep its container sort");
+        let canonical = emitter.local(self.canonical, signatures.output_sort.clone());
         let var = |variable| GenericExpr::Var(span.clone(), variable);
         let args = keys.iter().cloned().map(&var).collect::<Vec<_>>();
+        let view_row = emitter.call(
+            signatures.values_call.clone(),
+            vec![var(value.clone()), var(view_proof.clone())],
+        );
+        let view = emitter.call(signatures.view_call.clone(), args.clone());
+        let rebuilt = emitter.call(rebuild_call, vec![var(value.clone())]);
+        let unequal = emitter.call(
+            not_equal_call,
+            vec![var(value.clone()), var(canonical.clone())],
+        );
         let body = vec![
-            GenericFact::Eq(
-                span.clone(),
-                GenericExpr::Call(
-                    span.clone(),
-                    signatures.values_call.clone(),
-                    vec![var(value.clone()), var(view_proof.clone())],
-                ),
-                GenericExpr::Call(span.clone(), signatures.view_call.clone(), args.clone()),
-            ),
-            GenericFact::Eq(
-                span.clone(),
-                var(canonical.clone()),
-                GenericExpr::Call(span.clone(), rebuild_call, vec![var(value.clone())]),
-            ),
-            GenericFact::Fact(GenericExpr::Call(
-                span.clone(),
-                not_equal_call,
-                vec![var(value.clone()), var(canonical.clone())],
-            )),
+            GenericFact::Eq(span.clone(), view_row, view),
+            GenericFact::Eq(span.clone(), var(canonical.clone()), rebuilt),
+            GenericFact::Fact(unequal),
         ];
 
-        let mut head = Vec::new();
         let carried = if let Some(proof) = self.proof.clone() {
             assert_eq!(
                 proof.index, self.position,
                 "container proof plan must target the rebuilt output column"
             );
-            let planned_view_proof = builder
-                .variable(
-                    &proof.view_proof,
-                    signatures.carried_sort.clone(),
-                    GeneratedVarRole::Local,
-                    span,
-                )
-                .expect("planned view proof must keep the carried sort");
+            let planned_view_proof =
+                emitter.local(&proof.view_proof, signatures.carried_sort.clone());
             assert_eq!(
                 planned_view_proof, view_proof,
                 "output-container plan must use the queried row proof"
             );
-            let planned_container = builder
-                .variable(
-                    &proof.container,
-                    signatures.output_sort.clone(),
-                    GeneratedVarRole::Local,
-                    span,
-                )
-                .expect("planned container must keep the output sort");
+            let planned_container = emitter.local(&proof.container, signatures.output_sort.clone());
             assert_eq!(
                 planned_container, value,
                 "output-container plan must use the stale output value"
             );
-            let i64_sort = catalog
-                .register_sort(
-                    SortKey {
-                        name: "i64".to_owned(),
-                        class: SortSemanticClass::Value,
-                    },
-                    span,
-                )
-                .expect("i64 signature must be internally consistent");
-            let projection_call = catalog
-                .register_primitive(
-                    PrimitiveKey {
-                        name: crate::proofs::proof_fresh::mint_prim_name(
-                            &proof.projection_constructor,
-                        ),
-                        inputs: vec![signatures.carried_sort.clone(), i64_sort.clone()],
-                        output: signatures.carried_sort.clone(),
-                    },
-                    span,
-                )
-                .expect("output projection mint must be internally consistent");
-            let rebuild_proof_call = catalog
-                .register_primitive(
-                    PrimitiveKey {
-                        name: proof.rebuild_primitive.clone(),
-                        inputs: vec![
-                            signatures.output_sort.clone(),
-                            signatures.carried_sort.clone(),
-                        ],
-                        output: signatures.carried_sort.clone(),
-                    },
-                    span,
-                )
-                .expect("output-container proof must be internally consistent");
-            let congruence_call = catalog
-                .register_primitive(
-                    PrimitiveKey {
-                        name: crate::proofs::proof_fresh::mint_prim_name(
-                            &proof.congruence_constructor,
-                        ),
-                        inputs: vec![
-                            signatures.carried_sort.clone(),
-                            i64_sort,
-                            signatures.carried_sort.clone(),
-                        ],
-                        output: signatures.carried_sort.clone(),
-                    },
-                    span,
-                )
-                .expect("output congruence mint must be internally consistent");
-            let anchor = builder
-                .variable(
-                    proof.anchor,
+            let i64_sort = emitter.sort(SortKey {
+                name: "i64".to_owned(),
+                class: SortSemanticClass::Value,
+            });
+            let projection_call = emitter.primitive(PrimitiveKey {
+                name: crate::proofs::proof_fresh::mint_prim_name(&proof.projection_constructor),
+                inputs: vec![signatures.carried_sort.clone(), i64_sort.clone()],
+                output: signatures.carried_sort.clone(),
+            });
+            let rebuild_proof_call = emitter.primitive(PrimitiveKey {
+                name: proof.rebuild_primitive.clone(),
+                inputs: vec![
+                    signatures.output_sort.clone(),
                     signatures.carried_sort.clone(),
-                    GeneratedVarRole::Local,
-                    span,
-                )
-                .expect("output-container anchor must keep the proof sort");
-            head.push(GenericAction::Let(
-                span.clone(),
-                anchor.clone(),
-                GenericExpr::Call(
-                    span.clone(),
-                    projection_call,
-                    vec![
-                        var(planned_view_proof.clone()),
-                        GenericExpr::Lit(span.clone(), Literal::Int(proof.index as i64)),
-                    ],
-                ),
-            ));
-            let rebuild_proof = builder
-                .variable(
-                    proof.rebuild_proof,
+                ],
+                output: signatures.carried_sort.clone(),
+            });
+            let congruence_call = emitter.primitive(PrimitiveKey {
+                name: crate::proofs::proof_fresh::mint_prim_name(&proof.congruence_constructor),
+                inputs: vec![
                     signatures.carried_sort.clone(),
-                    GeneratedVarRole::Local,
-                    span,
-                )
-                .expect("output-container rebuild proof must keep the proof sort");
-            head.push(GenericAction::Let(
-                span.clone(),
-                rebuild_proof.clone(),
-                GenericExpr::Call(
-                    span.clone(),
-                    rebuild_proof_call,
-                    vec![var(planned_container), var(anchor)],
-                ),
-            ));
-            let result = builder
-                .variable(
-                    proof.result,
+                    i64_sort,
                     signatures.carried_sort.clone(),
-                    GeneratedVarRole::Local,
-                    span,
-                )
-                .expect("output-container row proof must keep the proof sort");
-            head.push(GenericAction::Let(
-                span.clone(),
-                result.clone(),
-                GenericExpr::Call(
-                    span.clone(),
-                    congruence_call,
-                    vec![
-                        var(planned_view_proof),
-                        GenericExpr::Lit(span.clone(), Literal::Int(proof.index as i64)),
-                        var(rebuild_proof),
-                    ],
-                ),
-            ));
+                ],
+                output: signatures.carried_sort.clone(),
+            });
+            let anchor = emitter.bind_call(
+                proof.anchor,
+                signatures.carried_sort.clone(),
+                projection_call,
+                vec![
+                    var(planned_view_proof.clone()),
+                    GenericExpr::Lit(span.clone(), Literal::Int(proof.index as i64)),
+                ],
+            );
+            let rebuild_proof = emitter.bind_call(
+                proof.rebuild_proof,
+                signatures.carried_sort.clone(),
+                rebuild_proof_call,
+                vec![var(planned_container), var(anchor)],
+            );
+            let result = emitter.bind_call(
+                proof.result,
+                signatures.carried_sort.clone(),
+                congruence_call,
+                vec![
+                    var(planned_view_proof),
+                    GenericExpr::Lit(span.clone(), Literal::Int(proof.index as i64)),
+                    var(rebuild_proof),
+                ],
+            );
             var(result)
         } else {
             GenericExpr::Lit(span.clone(), Literal::Unit)
         };
-        head.push(GenericAction::Change(
-            span.clone(),
-            Change::Delete,
-            signatures.view_call.clone(),
-            args.clone(),
-        ));
-        head.push(GenericAction::Set(
-            span.clone(),
-            signatures.view_call.clone(),
-            args,
-            GenericExpr::Call(
-                span.clone(),
-                signatures.values_call,
-                vec![var(canonical), carried],
-            ),
-        ));
+        emitter.change(Change::Delete, signatures.view_call.clone(), args.clone());
+        let row = emitter.call(signatures.values_call, vec![var(canonical), carried]);
+        emitter.set(signatures.view_call.clone(), args, row);
 
-        GenericRule {
-            span: span.clone(),
+        emitter.finish_rule(
             body,
-            head: GenericActions(head),
-            name: self.common.name,
-            ruleset: self.common.ruleset,
-            eval_mode: RuleEvalMode::Naive,
-            no_decomp: false,
-            include_subsumed: true,
-        }
+            self.common.name,
+            self.common.ruleset,
+            RuleEvalMode::Naive,
+            true,
+        )
     }
 }
 

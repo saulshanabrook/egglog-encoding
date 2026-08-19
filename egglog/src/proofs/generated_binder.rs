@@ -11,11 +11,11 @@ use enum_map::EnumMap;
 use thiserror::Error;
 
 use crate::ast::{
-    ContainerRebuildSpec, Expr, FunctionDecl, FunctionSubtype, GenericAction, GenericActions,
-    GenericExpr, GenericFact, GenericFunctionDecl, GenericMerge, GenericRule, GenericSchedule,
-    Literal, PrintFunctionMode, ProofConstructorNames, ResolvedAction, ResolvedActions,
-    ResolvedExpr, ResolvedFact, ResolvedFunctionDecl, ResolvedNCommand, ResolvedRule,
-    ResolvedRunConfig, ResolvedSchedule, RuleEvalMode, Schema, Span,
+    Change, ContainerRebuildSpec, Expr, FunctionDecl, FunctionSubtype, GenericAction,
+    GenericActions, GenericExpr, GenericFact, GenericFunctionDecl, GenericMerge, GenericRule,
+    GenericSchedule, Literal, PrintFunctionMode, ProofConstructorNames, ResolvedAction,
+    ResolvedActions, ResolvedExpr, ResolvedFact, ResolvedFunctionDecl, ResolvedNCommand,
+    ResolvedRule, ResolvedRunConfig, ResolvedSchedule, RuleEvalMode, Schema, Span,
 };
 use crate::core::ResolvedCall;
 use crate::proofs::proof_encoding::declaration_direct::TypedDeclarationEntry;
@@ -642,6 +642,139 @@ impl GeneratedRuleBuilder {
         };
         self.variables.insert(identity, variable.clone());
         Ok(variable)
+    }
+}
+
+/// Construction boundary for generated rules and merges.
+///
+/// Producers supply semantic signatures and variable names; this emitter owns
+/// their canonical catalog registration, one lexical local-ID namespace, the
+/// default generated span, and head-action order. Any failure here is a bug in
+/// a generated-code producer rather than a source-program diagnostic, so the
+/// boundary deliberately converts [`GeneratedBindError`] into one panic.
+pub(super) struct GeneratedSemanticEmitter<'a> {
+    catalog: &'a mut GeneratedSignatureCatalog,
+    span: Span,
+    variables: GeneratedRuleBuilder,
+    head: Vec<GeneratedAction>,
+}
+
+impl<'a> GeneratedSemanticEmitter<'a> {
+    pub(super) fn new(catalog: &'a mut GeneratedSignatureCatalog, span: &Span) -> Self {
+        Self {
+            catalog,
+            span: span.clone(),
+            variables: GeneratedRuleBuilder::default(),
+            head: Vec::new(),
+        }
+    }
+
+    fn producer_value<T>(result: Result<T, GeneratedBindError>) -> T {
+        result.unwrap_or_else(|error| panic!("invalid generated semantic emission: {error}"))
+    }
+
+    pub(super) fn sort(&mut self, key: SortKey) -> SortKey {
+        Self::producer_value(self.catalog.register_sort(key, &self.span))
+    }
+
+    pub(super) fn function(&mut self, key: FunctionKey) -> CallKey {
+        let call = CallKey::Function(key);
+        Self::producer_value(self.catalog.register_call_key(&call, &self.span));
+        call
+    }
+
+    pub(super) fn primitive(&mut self, key: PrimitiveKey) -> CallKey {
+        let call = CallKey::Primitive(key);
+        Self::producer_value(self.catalog.register_call_key(&call, &self.span));
+        call
+    }
+
+    pub(super) fn values(&mut self, sorts: Vec<SortKey>) -> CallKey {
+        let call = CallKey::Values(sorts);
+        Self::producer_value(self.catalog.register_call_key(&call, &self.span));
+        call
+    }
+
+    pub(super) fn local(&mut self, name: impl Into<String>, sort: SortKey) -> GeneratedVar {
+        Self::producer_value(self.variables.variable(
+            name,
+            sort,
+            GeneratedVarRole::Local,
+            &self.span,
+        ))
+    }
+
+    /// Build a call at the generated span. Call keys passed here must come
+    /// from this emitter's signature constructors or from an earlier emitter
+    /// over the same batch catalog.
+    pub(super) fn call(&mut self, key: CallKey, args: Vec<GeneratedExpr>) -> GeneratedExpr {
+        GenericExpr::Call(self.span.clone(), key, args)
+    }
+
+    /// Allocate a local and append its defining call as the next head action.
+    /// Keeping those operations indivisible prevents local-ID order from
+    /// drifting away from lexical action order during emitter refactors.
+    pub(super) fn bind_call(
+        &mut self,
+        name: impl Into<String>,
+        sort: SortKey,
+        call: CallKey,
+        args: Vec<GeneratedExpr>,
+    ) -> GeneratedVar {
+        let value = self.call(call, args);
+        let variable = self.local(name, sort);
+        self.head.push(GenericAction::Let(
+            self.span.clone(),
+            variable.clone(),
+            value,
+        ));
+        variable
+    }
+
+    pub(super) fn set(
+        &mut self,
+        function: CallKey,
+        args: Vec<GeneratedExpr>,
+        value: GeneratedExpr,
+    ) {
+        self.head
+            .push(GenericAction::Set(self.span.clone(), function, args, value));
+    }
+
+    pub(super) fn change(&mut self, change: Change, function: CallKey, args: Vec<GeneratedExpr>) {
+        self.head.push(GenericAction::Change(
+            self.span.clone(),
+            change,
+            function,
+            args,
+        ));
+    }
+
+    pub(super) fn finish_rule(
+        self,
+        body: Vec<GeneratedFact>,
+        name: String,
+        ruleset: String,
+        eval_mode: RuleEvalMode,
+        include_subsumed: bool,
+    ) -> GeneratedRule {
+        GenericRule {
+            span: self.span,
+            body,
+            head: GenericActions(self.head),
+            name,
+            ruleset,
+            eval_mode,
+            no_decomp: false,
+            include_subsumed,
+        }
+    }
+
+    pub(super) fn finish_merge(self, result: GeneratedExpr) -> GeneratedMerge {
+        GenericMerge {
+            actions: GenericActions(self.head),
+            result,
+        }
     }
 }
 
