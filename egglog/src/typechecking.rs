@@ -1253,7 +1253,7 @@ impl TypeInfo {
         let outputs = ftype.outputs.clone();
         let is_tuple = fdecl.schema.is_tuple_output();
         let merge = if let Some(merge) = &fdecl.merge {
-            let symbol_gen_checkpoint = symbol_gen.checkpoint();
+            let symbol_gen_before = symbol_gen.clone();
 
             // For single-output functions the merge expression refers to `old`/`new`. For
             // tuple-output functions it refers to `old0`, `new0`, `old1`, ... (one pair per
@@ -1318,12 +1318,9 @@ impl TypeInfo {
                 },
             );
             match merge_result {
-                Ok(merge) => {
-                    symbol_gen.commit(symbol_gen_checkpoint);
-                    merge
-                }
+                Ok(merge) => merge,
                 Err(error) => {
-                    symbol_gen.rollback(symbol_gen_checkpoint);
+                    *symbol_gen = symbol_gen_before;
                     return Err(error);
                 }
             }
