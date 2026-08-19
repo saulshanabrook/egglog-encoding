@@ -6,9 +6,9 @@
 use super::proof_encoding::{ProofInstrumentor, ViewIndex};
 use super::proof_encoding_helpers::{DROP_REFLEXIVE_STEP, Skeleton};
 use crate::proofs::generated_binder::{
-    CallKey, FunctionKey, GeneratedEntry, GeneratedRule, GeneratedSemanticEmitter,
-    GeneratedSignatureCatalog, PrimitiveKey, SortKey, SortSemanticClass, ValueShape,
-    build_checked_rule,
+    CheckedRuleBuilder, FunctionKey, FunctionRef, GeneratedEntry, GeneratedRule,
+    GeneratedSemanticEmitter, GeneratedSignatureCatalog, PrimitiveKey, SortKey, SortRef,
+    SortSemanticClass, ValueShape, ValuesRef, build_checked_rule,
 };
 use crate::typechecking::FuncType;
 use crate::*;
@@ -218,51 +218,65 @@ struct RebuildRuleCommonSpec {
     ruleset: String,
 }
 
-struct RegisteredRebuildSignatures {
-    input_sorts: Vec<SortKey>,
-    output_sort: SortKey,
-    carried_sort: SortKey,
-    unit_sort: SortKey,
-    view_call: CallKey,
-    values_call: CallKey,
+struct CheckedRebuildSignatures<'id> {
+    input_sorts: Vec<SortRef<'id>>,
+    output_key: SortKey,
+    output_sort: SortRef<'id>,
+    carried_key: SortKey,
+    carried_sort: SortRef<'id>,
+    unit_sort: SortRef<'id>,
+    view_call: FunctionRef<'id>,
+    values_call: ValuesRef<'id>,
 }
 
 impl RebuildRuleCommonSpec {
-    /// Register the signatures every FD-view rebuild shares. This is the one
-    /// source of truth for the portable view shape: children are keys and the
-    /// value is the `(output, Proof|Unit)` pair carried by the source view.
-    fn register(&self, catalog: &mut GeneratedSignatureCatalog) -> RegisteredRebuildSignatures {
-        let mut emitter = GeneratedSemanticEmitter::new(catalog, &self.span);
-        let input_sorts = self
-            .function
-            .input
-            .iter()
-            .map(SortKey::from_sort)
-            .map(|sort| emitter.sort(sort))
-            .collect::<Vec<_>>();
-        let output_sort = emitter.sort(SortKey::from_sort(self.function.output()));
-        let unit_sort = emitter.sort(SortKey {
+    /// Register the signatures every FD-view rebuild shares in the current
+    /// checked scope. Children are keys and the value is the
+    /// `(output, Proof|Unit)` pair carried by the source view.
+    fn register_checked<'id>(
+        builder: &mut CheckedRuleBuilder<'_, 'id>,
+        input_keys: Vec<SortKey>,
+        output_key: SortKey,
+        proof_sort: String,
+        proofs_enabled: bool,
+        view: String,
+    ) -> CheckedRebuildSignatures<'id> {
+        let unit_key = SortKey {
             name: "Unit".to_owned(),
             class: SortSemanticClass::Value,
-        });
-        let carried_sort = if self.proofs_enabled {
-            emitter.sort(SortKey {
-                name: self.proof_sort.clone(),
-                class: SortSemanticClass::Eq,
-            })
-        } else {
-            unit_sort.clone()
         };
-        let view_call = emitter.function(FunctionKey {
-            name: self.view.clone(),
+        let carried_key = if proofs_enabled {
+            SortKey {
+                name: proof_sort,
+                class: SortSemanticClass::Eq,
+            }
+        } else {
+            unit_key.clone()
+        };
+        let input_sorts = input_keys
+            .iter()
+            .cloned()
+            .map(|sort| builder.sort(sort))
+            .collect::<Vec<_>>();
+        let output_sort = builder.sort(output_key.clone());
+        let unit_sort = builder.sort(unit_key);
+        let carried_sort = if proofs_enabled {
+            builder.sort(carried_key.clone())
+        } else {
+            unit_sort
+        };
+        let view_call = builder.function(FunctionKey {
+            name: view,
             subtype: FunctionSubtype::Custom,
-            inputs: input_sorts.clone(),
-            output: ValueShape::Tuple(vec![output_sort.clone(), carried_sort.clone()]),
+            inputs: input_keys.clone(),
+            output: ValueShape::Tuple(vec![output_key.clone(), carried_key.clone()]),
         });
-        let values_call = emitter.values(vec![output_sort.clone(), carried_sort.clone()]);
-        RegisteredRebuildSignatures {
+        let values_call = builder.values([output_sort, carried_sort]);
+        CheckedRebuildSignatures {
             input_sorts,
+            output_key,
             output_sort,
+            carried_key,
             carried_sort,
             unit_sort,
             view_call,
@@ -284,132 +298,111 @@ struct EqContainerKeyRebuildSpec {
 
 impl EqContainerKeyRebuildSpec {
     fn build(self, catalog: &mut GeneratedSignatureCatalog) -> GeneratedRule {
-        let signatures = self.common.register(catalog);
-        let span = &self.common.span;
-        let key_sort = signatures.input_sorts[self.position].clone();
-        debug_assert_eq!(key_sort.class, SortSemanticClass::EqContainer);
-        let mut emitter = GeneratedSemanticEmitter::new(catalog, span);
-        let rebuild_call = emitter.primitive(PrimitiveKey {
-            name: self.value_primitive.clone(),
-            inputs: vec![key_sort.clone()],
-            output: key_sort.clone(),
-        });
-        let not_equal_call = emitter.primitive(PrimitiveKey {
-            name: "!=".to_owned(),
-            inputs: vec![key_sort.clone(), key_sort.clone()],
-            output: signatures.unit_sort.clone(),
-        });
-
-        // The view tuple is observed before its key arguments; the canonical
-        // value is first introduced by the second body equality.
-        let value = emitter.local(self.value, signatures.output_sort.clone());
-        let view_proof = emitter.local(self.view_proof, signatures.carried_sort.clone());
-        let keys = self
-            .keys
-            .into_iter()
-            .zip(signatures.input_sorts.iter().cloned())
-            .map(|(name, sort)| emitter.local(name, sort))
+        let RebuildRuleCommonSpec {
+            span,
+            function,
+            proof_sort,
+            proofs_enabled,
+            view,
+            name,
+            ruleset,
+        } = self.common;
+        let input_keys = function
+            .input
+            .iter()
+            .map(SortKey::from_sort)
             .collect::<Vec<_>>();
-        let canonical = emitter.local(self.canonical, key_sort.clone());
-        let var = |variable| GenericExpr::Var(span.clone(), variable);
-        let old_args = keys.iter().cloned().map(&var).collect::<Vec<_>>();
-        let mut updated_args = old_args.clone();
-        updated_args[self.position] = var(canonical.clone());
-        let selected = var(keys[self.position].clone());
-        let view_row = emitter.call(
-            signatures.values_call.clone(),
-            vec![var(value.clone()), var(view_proof.clone())],
+        let output_key = SortKey::from_sort(function.output());
+        assert!(
+            self.keys.len() == input_keys.len()
+                && self.position < input_keys.len()
+                && input_keys[self.position].class == SortSemanticClass::EqContainer
+                && self.proof.is_some() == proofs_enabled,
+            "invalid generated semantic emission: container-key rebuild plan mismatch at {span}"
         );
-        let view = emitter.call(signatures.view_call.clone(), old_args.clone());
-        let rebuilt = emitter.call(rebuild_call, vec![selected.clone()]);
-        let unequal = emitter.call(not_equal_call, vec![selected, var(canonical.clone())]);
-        let body = vec![
-            GenericFact::Eq(span.clone(), view_row, view),
-            GenericFact::Eq(span.clone(), var(canonical.clone()), rebuilt),
-            GenericFact::Fact(unequal),
-        ];
+        if let Some(proof) = &self.proof {
+            assert!(
+                proof.index == self.position
+                    && proof.view_proof == self.view_proof
+                    && proof.container == self.keys[self.position],
+                "invalid generated semantic emission: container-key proof plan mismatch at {span}"
+            );
+        }
+        let metadata = (name, ruleset, RuleEvalMode::Naive, true);
+        build_checked_rule(catalog, &span, metadata, move |builder| {
+            let signatures = RebuildRuleCommonSpec::register_checked(
+                builder,
+                input_keys,
+                output_key,
+                proof_sort,
+                proofs_enabled,
+                view,
+            );
+            let key_sort = signatures.input_sorts[self.position];
+            let rebuild_call = builder.primitive(self.value_primitive, [key_sort], key_sort);
+            let not_equal_call =
+                builder.primitive("!=", [key_sort, key_sort], signatures.unit_sort);
 
-        let carried = if let Some(proof) = self.proof.clone() {
-            assert_eq!(
-                proof.index, self.position,
-                "container proof plan must target the rebuilt key column"
-            );
-            let planned_view_proof =
-                emitter.local(&proof.view_proof, signatures.carried_sort.clone());
-            assert_eq!(
-                planned_view_proof, view_proof,
-                "container proof plan must use the queried row proof"
-            );
-            let planned_container = emitter.local(&proof.container, key_sort.clone());
-            assert_eq!(
-                planned_container, keys[self.position],
-                "container proof plan must use the selected key"
-            );
-            let i64_sort = emitter.sort(SortKey {
-                name: "i64".to_owned(),
-                class: SortSemanticClass::Value,
-            });
-            let projection_call = emitter.primitive(PrimitiveKey {
-                name: crate::proofs::proof_fresh::mint_prim_name(&proof.projection_constructor),
-                inputs: vec![signatures.carried_sort.clone(), i64_sort.clone()],
-                output: signatures.carried_sort.clone(),
-            });
-            let rebuild_proof_call = emitter.primitive(PrimitiveKey {
-                name: proof.rebuild_primitive.clone(),
-                inputs: vec![key_sort.clone(), signatures.carried_sort.clone()],
-                output: signatures.carried_sort.clone(),
-            });
-            let congruence_call = emitter.primitive(PrimitiveKey {
-                name: crate::proofs::proof_fresh::mint_prim_name(&proof.congruence_constructor),
-                inputs: vec![
-                    signatures.carried_sort.clone(),
-                    i64_sort,
-                    signatures.carried_sort.clone(),
-                ],
-                output: signatures.carried_sort.clone(),
-            });
-            let anchor = emitter.bind_call(
-                proof.anchor,
-                signatures.carried_sort.clone(),
-                projection_call,
-                vec![
-                    var(planned_view_proof.clone()),
-                    GenericExpr::Lit(span.clone(), Literal::Int(proof.index as i64)),
-                ],
-            );
-            let rebuild_proof = emitter.bind_call(
-                proof.rebuild_proof,
-                signatures.carried_sort.clone(),
-                rebuild_proof_call,
-                vec![var(planned_container), var(anchor)],
-            );
-            let result = emitter.bind_call(
-                proof.result,
-                signatures.carried_sort.clone(),
-                congruence_call,
-                vec![
-                    var(planned_view_proof),
-                    GenericExpr::Lit(span.clone(), Literal::Int(proof.index as i64)),
-                    var(rebuild_proof),
-                ],
-            );
-            var(result)
-        } else {
-            GenericExpr::Lit(span.clone(), Literal::Unit)
-        };
-        // Re-keying must insert first: on a collision the view merge observes
-        // the replacement before the stale key is removed.
-        let row = emitter.call(signatures.values_call, vec![var(value), carried]);
-        emitter.set(signatures.view_call.clone(), updated_args, row);
-        emitter.change(Change::Delete, signatures.view_call, old_args);
+            // The view tuple is observed before its key arguments; the canonical
+            // value is first introduced by the second body equality.
+            let value = builder.local(self.value, signatures.output_sort);
+            let view_proof = builder.local(self.view_proof, signatures.carried_sort);
+            let keys = self
+                .keys
+                .into_iter()
+                .zip(signatures.input_sorts.iter().copied())
+                .map(|(name, sort)| builder.local(name, sort))
+                .collect::<Vec<_>>();
+            let canonical = builder.local(self.canonical, key_sort);
+            let old_args = keys.clone();
+            let mut updated_args = old_args.clone();
+            updated_args[self.position] = canonical;
+            let selected = keys[self.position];
+            let view_row = builder.apply(signatures.values_call, [value, view_proof]);
+            let view = builder.apply(signatures.view_call, old_args.clone());
+            builder.eq(view_row, view);
+            let rebuilt = builder.apply(rebuild_call, [selected]);
+            builder.eq(canonical, rebuilt);
+            let unequal = builder.apply(not_equal_call, [selected, canonical]);
+            builder.fact(unequal);
 
-        emitter.finish_rule(
-            body,
-            self.common.name,
-            self.common.ruleset,
-            RuleEvalMode::Naive,
-            true,
-        )
+            let carried = if let Some(proof) = self.proof {
+                let i64_sort = builder.sort(SortKey {
+                    name: "i64".to_owned(),
+                    class: SortSemanticClass::Value,
+                });
+                let projection_call = builder.primitive(
+                    crate::proofs::proof_fresh::mint_prim_name(&proof.projection_constructor),
+                    [signatures.carried_sort, i64_sort],
+                    signatures.carried_sort,
+                );
+                let rebuild_proof_call = builder.primitive(
+                    proof.rebuild_primitive,
+                    [key_sort, signatures.carried_sort],
+                    signatures.carried_sort,
+                );
+                let congruence_call = builder.primitive(
+                    crate::proofs::proof_fresh::mint_prim_name(&proof.congruence_constructor),
+                    [signatures.carried_sort, i64_sort, signatures.carried_sort],
+                    signatures.carried_sort,
+                );
+                let position = builder.lit(Literal::Int(proof.index as i64));
+                let anchor_value = builder.apply(projection_call, [view_proof, position]);
+                let anchor = builder.bind(proof.anchor, anchor_value);
+                let rebuild_value = builder.apply(rebuild_proof_call, [selected, anchor]);
+                let rebuild_proof = builder.bind(proof.rebuild_proof, rebuild_value);
+                let result_value =
+                    builder.apply(congruence_call, [view_proof, position, rebuild_proof]);
+                builder.bind(proof.result, result_value)
+            } else {
+                builder.lit(Literal::Unit)
+            };
+            // Re-keying must insert first: on a collision the view merge observes
+            // the replacement before the stale key is removed.
+            let row = builder.apply(signatures.values_call, [value, carried]);
+            builder.set(signatures.view_call, updated_args, row);
+            builder.change(Change::Delete, signatures.view_call, old_args);
+        })
     }
 }
 
@@ -658,117 +651,104 @@ struct CustomDirectOutputRebuildSpec {
 
 impl CustomDirectOutputRebuildSpec {
     fn build(self, catalog: &mut GeneratedSignatureCatalog) -> GeneratedRule {
-        let signatures = self.common.register(catalog);
-        let span = &self.common.span;
-        debug_assert_eq!(signatures.output_sort.class, SortSemanticClass::Eq);
-        let mut emitter = GeneratedSemanticEmitter::new(catalog, span);
-        let uf_call = emitter.function(FunctionKey {
-            name: self.uf.clone(),
-            subtype: FunctionSubtype::Custom,
-            inputs: vec![signatures.output_sort.clone()],
-            output: ValueShape::Tuple(vec![
-                signatures.output_sort.clone(),
-                signatures.carried_sort.clone(),
-            ]),
-        });
-        let uf_values = emitter.values(vec![
-            signatures.output_sort.clone(),
-            signatures.carried_sort.clone(),
-        ]);
-        let not_equal_call = emitter.primitive(PrimitiveKey {
-            name: "!=".to_owned(),
-            inputs: vec![
-                signatures.output_sort.clone(),
-                signatures.output_sort.clone(),
-            ],
-            output: signatures.unit_sort.clone(),
-        });
-
-        let value = emitter.local(self.value, signatures.output_sort.clone());
-        let view_proof = emitter.local(self.view_proof, signatures.carried_sort.clone());
-        let keys = self
-            .keys
-            .into_iter()
-            .zip(signatures.input_sorts.iter().cloned())
-            .map(|(name, sort)| emitter.local(name, sort))
+        let RebuildRuleCommonSpec {
+            span,
+            function,
+            proof_sort,
+            proofs_enabled,
+            view,
+            name,
+            ruleset,
+        } = self.common;
+        let input_keys = function
+            .input
+            .iter()
+            .map(SortKey::from_sort)
             .collect::<Vec<_>>();
-        let canonical = emitter.local(self.canonical, signatures.output_sort.clone());
-        let equality_proof = emitter.local(self.equality_proof, signatures.carried_sort.clone());
-        let var = |variable| GenericExpr::Var(span.clone(), variable);
-        let args = keys.iter().cloned().map(&var).collect::<Vec<_>>();
-        let view_row = emitter.call(
-            signatures.values_call.clone(),
-            vec![var(value.clone()), var(view_proof.clone())],
+        let output_key = SortKey::from_sort(function.output());
+        assert!(
+            self.keys.len() == input_keys.len()
+                && output_key.class == SortSemanticClass::Eq
+                && self.proof.is_some() == proofs_enabled,
+            "invalid generated semantic emission: direct-output rebuild plan mismatch at {span}"
         );
-        let view = emitter.call(signatures.view_call.clone(), args.clone());
-        let uf_row = emitter.call(
-            uf_values,
-            vec![var(canonical.clone()), var(equality_proof.clone())],
-        );
-        let uf = emitter.call(uf_call, vec![var(value.clone())]);
-        let unequal = emitter.call(
-            not_equal_call,
-            vec![var(value.clone()), var(canonical.clone())],
-        );
-        let body = vec![
-            GenericFact::Eq(span.clone(), view_row, view),
-            GenericFact::Eq(span.clone(), uf_row, uf),
-            GenericFact::Fact(unequal),
-        ];
-
-        let carried = if let Some(proof) = self.proof.clone() {
-            let planned_view_proof =
-                emitter.local(&proof.view_proof, signatures.carried_sort.clone());
-            assert_eq!(
-                planned_view_proof, view_proof,
-                "congruence plan must use the queried row proof"
+        if let Some(proof) = &self.proof {
+            assert!(
+                proof.index == input_keys.len()
+                    && proof.view_proof == self.view_proof
+                    && proof.equality_proof == self.equality_proof,
+                "invalid generated semantic emission: direct-output proof plan mismatch at {span}"
             );
-            let planned_equality_proof =
-                emitter.local(&proof.equality_proof, signatures.carried_sort.clone());
-            assert_eq!(
-                planned_equality_proof, equality_proof,
-                "congruence plan must use the output UF proof"
+        }
+        let metadata = (name, ruleset, RuleEvalMode::Seminaive, true);
+        build_checked_rule(catalog, &span, metadata, move |builder| {
+            let signatures = RebuildRuleCommonSpec::register_checked(
+                builder,
+                input_keys,
+                output_key,
+                proof_sort,
+                proofs_enabled,
+                view,
             );
-            let i64_sort = emitter.sort(SortKey {
-                name: "i64".to_owned(),
-                class: SortSemanticClass::Value,
+            let uf_call = builder.function(FunctionKey {
+                name: self.uf,
+                subtype: FunctionSubtype::Custom,
+                inputs: vec![signatures.output_key.clone()],
+                output: ValueShape::Tuple(vec![
+                    signatures.output_key.clone(),
+                    signatures.carried_key.clone(),
+                ]),
             });
-            let congruence_call = emitter.primitive(PrimitiveKey {
-                name: crate::proofs::proof_fresh::mint_prim_name(&proof.constructor),
-                inputs: vec![
-                    signatures.carried_sort.clone(),
-                    i64_sort,
-                    signatures.carried_sort.clone(),
-                ],
-                output: signatures.carried_sort.clone(),
-            });
-            let result = emitter.bind_call(
-                proof.result,
-                signatures.carried_sort.clone(),
-                congruence_call,
-                vec![
-                    var(planned_view_proof),
-                    GenericExpr::Lit(span.clone(), Literal::Int(proof.index as i64)),
-                    var(planned_equality_proof),
-                ],
+            let uf_values = builder.values([signatures.output_sort, signatures.carried_sort]);
+            let not_equal_call = builder.primitive(
+                "!=",
+                [signatures.output_sort, signatures.output_sort],
+                signatures.unit_sort,
             );
-            var(result)
-        } else {
-            GenericExpr::Lit(span.clone(), Literal::Unit)
-        };
-        // Delete first so this maintenance rewrite cannot re-run the custom
-        // view merge against the stale value it is replacing.
-        emitter.change(Change::Delete, signatures.view_call.clone(), args.clone());
-        let row = emitter.call(signatures.values_call, vec![var(canonical), carried]);
-        emitter.set(signatures.view_call.clone(), args, row);
 
-        emitter.finish_rule(
-            body,
-            self.common.name,
-            self.common.ruleset,
-            RuleEvalMode::Seminaive,
-            true,
-        )
+            let value = builder.local(self.value, signatures.output_sort);
+            let view_proof = builder.local(self.view_proof, signatures.carried_sort);
+            let keys = self
+                .keys
+                .into_iter()
+                .zip(signatures.input_sorts.iter().copied())
+                .map(|(name, sort)| builder.local(name, sort))
+                .collect::<Vec<_>>();
+            let canonical = builder.local(self.canonical, signatures.output_sort);
+            let equality_proof = builder.local(self.equality_proof, signatures.carried_sort);
+            let args = keys.clone();
+            let view_row = builder.apply(signatures.values_call, [value, view_proof]);
+            let view = builder.apply(signatures.view_call, args.clone());
+            builder.eq(view_row, view);
+            let uf_row = builder.apply(uf_values, [canonical, equality_proof]);
+            let uf = builder.apply(uf_call, [value]);
+            builder.eq(uf_row, uf);
+            let unequal = builder.apply(not_equal_call, [value, canonical]);
+            builder.fact(unequal);
+
+            let carried = if let Some(proof) = self.proof {
+                let i64_sort = builder.sort(SortKey {
+                    name: "i64".to_owned(),
+                    class: SortSemanticClass::Value,
+                });
+                let congruence_call = builder.primitive(
+                    crate::proofs::proof_fresh::mint_prim_name(&proof.constructor),
+                    [signatures.carried_sort, i64_sort, signatures.carried_sort],
+                    signatures.carried_sort,
+                );
+                let position = builder.lit(Literal::Int(proof.index as i64));
+                let result_value =
+                    builder.apply(congruence_call, [view_proof, position, equality_proof]);
+                builder.bind(proof.result, result_value)
+            } else {
+                builder.lit(Literal::Unit)
+            };
+            // Delete first so this maintenance rewrite cannot re-run the custom
+            // view merge against the stale value it is replacing.
+            builder.change(Change::Delete, signatures.view_call, args.clone());
+            let row = builder.apply(signatures.values_call, [canonical, carried]);
+            builder.set(signatures.view_call, args, row);
+        })
     }
 }
 
@@ -785,133 +765,110 @@ struct CustomContainerOutputRebuildSpec {
 
 impl CustomContainerOutputRebuildSpec {
     fn build(self, catalog: &mut GeneratedSignatureCatalog) -> GeneratedRule {
-        let signatures = self.common.register(catalog);
-        let span = &self.common.span;
-        debug_assert_eq!(signatures.output_sort.class, SortSemanticClass::EqContainer);
-        let mut emitter = GeneratedSemanticEmitter::new(catalog, span);
-        let rebuild_call = emitter.primitive(PrimitiveKey {
-            name: self.value_primitive.clone(),
-            inputs: vec![signatures.output_sort.clone()],
-            output: signatures.output_sort.clone(),
-        });
-        let not_equal_call = emitter.primitive(PrimitiveKey {
-            name: "!=".to_owned(),
-            inputs: vec![
-                signatures.output_sort.clone(),
-                signatures.output_sort.clone(),
-            ],
-            output: signatures.unit_sort.clone(),
-        });
-
-        let value = emitter.local(self.value, signatures.output_sort.clone());
-        let view_proof = emitter.local(self.view_proof, signatures.carried_sort.clone());
-        let keys = self
-            .keys
-            .into_iter()
-            .zip(signatures.input_sorts.iter().cloned())
-            .map(|(name, sort)| emitter.local(name, sort))
+        let RebuildRuleCommonSpec {
+            span,
+            function,
+            proof_sort,
+            proofs_enabled,
+            view,
+            name,
+            ruleset,
+        } = self.common;
+        let input_keys = function
+            .input
+            .iter()
+            .map(SortKey::from_sort)
             .collect::<Vec<_>>();
-        let canonical = emitter.local(self.canonical, signatures.output_sort.clone());
-        let var = |variable| GenericExpr::Var(span.clone(), variable);
-        let args = keys.iter().cloned().map(&var).collect::<Vec<_>>();
-        let view_row = emitter.call(
-            signatures.values_call.clone(),
-            vec![var(value.clone()), var(view_proof.clone())],
+        let output_key = SortKey::from_sort(function.output());
+        assert!(
+            self.keys.len() == input_keys.len()
+                && self.position == input_keys.len()
+                && output_key.class == SortSemanticClass::EqContainer
+                && self.proof.is_some() == proofs_enabled,
+            "invalid generated semantic emission: container-output rebuild plan mismatch at {span}"
         );
-        let view = emitter.call(signatures.view_call.clone(), args.clone());
-        let rebuilt = emitter.call(rebuild_call, vec![var(value.clone())]);
-        let unequal = emitter.call(
-            not_equal_call,
-            vec![var(value.clone()), var(canonical.clone())],
-        );
-        let body = vec![
-            GenericFact::Eq(span.clone(), view_row, view),
-            GenericFact::Eq(span.clone(), var(canonical.clone()), rebuilt),
-            GenericFact::Fact(unequal),
-        ];
+        if let Some(proof) = &self.proof {
+            assert!(
+                proof.index == self.position
+                    && proof.view_proof == self.view_proof
+                    && proof.container == self.value,
+                "invalid generated semantic emission: container-output proof plan mismatch at {span}"
+            );
+        }
+        let metadata = (name, ruleset, RuleEvalMode::Naive, true);
+        build_checked_rule(catalog, &span, metadata, move |builder| {
+            let signatures = RebuildRuleCommonSpec::register_checked(
+                builder,
+                input_keys,
+                output_key,
+                proof_sort,
+                proofs_enabled,
+                view,
+            );
+            let rebuild_call = builder.primitive(
+                self.value_primitive,
+                [signatures.output_sort],
+                signatures.output_sort,
+            );
+            let not_equal_call = builder.primitive(
+                "!=",
+                [signatures.output_sort, signatures.output_sort],
+                signatures.unit_sort,
+            );
 
-        let carried = if let Some(proof) = self.proof.clone() {
-            assert_eq!(
-                proof.index, self.position,
-                "container proof plan must target the rebuilt output column"
-            );
-            let planned_view_proof =
-                emitter.local(&proof.view_proof, signatures.carried_sort.clone());
-            assert_eq!(
-                planned_view_proof, view_proof,
-                "output-container plan must use the queried row proof"
-            );
-            let planned_container = emitter.local(&proof.container, signatures.output_sort.clone());
-            assert_eq!(
-                planned_container, value,
-                "output-container plan must use the stale output value"
-            );
-            let i64_sort = emitter.sort(SortKey {
-                name: "i64".to_owned(),
-                class: SortSemanticClass::Value,
-            });
-            let projection_call = emitter.primitive(PrimitiveKey {
-                name: crate::proofs::proof_fresh::mint_prim_name(&proof.projection_constructor),
-                inputs: vec![signatures.carried_sort.clone(), i64_sort.clone()],
-                output: signatures.carried_sort.clone(),
-            });
-            let rebuild_proof_call = emitter.primitive(PrimitiveKey {
-                name: proof.rebuild_primitive.clone(),
-                inputs: vec![
-                    signatures.output_sort.clone(),
-                    signatures.carried_sort.clone(),
-                ],
-                output: signatures.carried_sort.clone(),
-            });
-            let congruence_call = emitter.primitive(PrimitiveKey {
-                name: crate::proofs::proof_fresh::mint_prim_name(&proof.congruence_constructor),
-                inputs: vec![
-                    signatures.carried_sort.clone(),
-                    i64_sort,
-                    signatures.carried_sort.clone(),
-                ],
-                output: signatures.carried_sort.clone(),
-            });
-            let anchor = emitter.bind_call(
-                proof.anchor,
-                signatures.carried_sort.clone(),
-                projection_call,
-                vec![
-                    var(planned_view_proof.clone()),
-                    GenericExpr::Lit(span.clone(), Literal::Int(proof.index as i64)),
-                ],
-            );
-            let rebuild_proof = emitter.bind_call(
-                proof.rebuild_proof,
-                signatures.carried_sort.clone(),
-                rebuild_proof_call,
-                vec![var(planned_container), var(anchor)],
-            );
-            let result = emitter.bind_call(
-                proof.result,
-                signatures.carried_sort.clone(),
-                congruence_call,
-                vec![
-                    var(planned_view_proof),
-                    GenericExpr::Lit(span.clone(), Literal::Int(proof.index as i64)),
-                    var(rebuild_proof),
-                ],
-            );
-            var(result)
-        } else {
-            GenericExpr::Lit(span.clone(), Literal::Unit)
-        };
-        emitter.change(Change::Delete, signatures.view_call.clone(), args.clone());
-        let row = emitter.call(signatures.values_call, vec![var(canonical), carried]);
-        emitter.set(signatures.view_call.clone(), args, row);
+            let value = builder.local(self.value, signatures.output_sort);
+            let view_proof = builder.local(self.view_proof, signatures.carried_sort);
+            let keys = self
+                .keys
+                .into_iter()
+                .zip(signatures.input_sorts.iter().copied())
+                .map(|(name, sort)| builder.local(name, sort))
+                .collect::<Vec<_>>();
+            let canonical = builder.local(self.canonical, signatures.output_sort);
+            let args = keys.clone();
+            let view_row = builder.apply(signatures.values_call, [value, view_proof]);
+            let view = builder.apply(signatures.view_call, args.clone());
+            builder.eq(view_row, view);
+            let rebuilt = builder.apply(rebuild_call, [value]);
+            builder.eq(canonical, rebuilt);
+            let unequal = builder.apply(not_equal_call, [value, canonical]);
+            builder.fact(unequal);
 
-        emitter.finish_rule(
-            body,
-            self.common.name,
-            self.common.ruleset,
-            RuleEvalMode::Naive,
-            true,
-        )
+            let carried = if let Some(proof) = self.proof {
+                let i64_sort = builder.sort(SortKey {
+                    name: "i64".to_owned(),
+                    class: SortSemanticClass::Value,
+                });
+                let projection_call = builder.primitive(
+                    crate::proofs::proof_fresh::mint_prim_name(&proof.projection_constructor),
+                    [signatures.carried_sort, i64_sort],
+                    signatures.carried_sort,
+                );
+                let rebuild_proof_call = builder.primitive(
+                    proof.rebuild_primitive,
+                    [signatures.output_sort, signatures.carried_sort],
+                    signatures.carried_sort,
+                );
+                let congruence_call = builder.primitive(
+                    crate::proofs::proof_fresh::mint_prim_name(&proof.congruence_constructor),
+                    [signatures.carried_sort, i64_sort, signatures.carried_sort],
+                    signatures.carried_sort,
+                );
+                let position = builder.lit(Literal::Int(proof.index as i64));
+                let anchor_value = builder.apply(projection_call, [view_proof, position]);
+                let anchor = builder.bind(proof.anchor, anchor_value);
+                let rebuild_value = builder.apply(rebuild_proof_call, [value, anchor]);
+                let rebuild_proof = builder.bind(proof.rebuild_proof, rebuild_value);
+                let result_value =
+                    builder.apply(congruence_call, [view_proof, position, rebuild_proof]);
+                builder.bind(proof.result, result_value)
+            } else {
+                builder.lit(Literal::Unit)
+            };
+            builder.change(Change::Delete, signatures.view_call, args.clone());
+            let row = builder.apply(signatures.values_call, [canonical, carried]);
+            builder.set(signatures.view_call, args, row);
+        })
     }
 }
 
@@ -1380,7 +1337,126 @@ mod checked_builder_tests {
 
     use super::*;
     use crate::ast::{GenericActions, GenericFact, GenericRule};
-    use crate::proofs::generated_binder::{GeneratedVar, GeneratedVarRole, LocalId};
+    use crate::proofs::generated_binder::{
+        CallKey, GeneratedExpr, GeneratedVar, GeneratedVarRole, LocalId,
+    };
+
+    fn expr_shape(expression: &GeneratedExpr, span: &Span) -> String {
+        let expression_span = match expression {
+            GenericExpr::Lit(actual, _)
+            | GenericExpr::Var(actual, _)
+            | GenericExpr::Call(actual, _, _) => actual,
+        };
+        assert_eq!(expression_span, span);
+        match expression {
+            GenericExpr::Var(_, variable) => format!("v{}", variable.id.0),
+            GenericExpr::Lit(_, Literal::Int(value)) => format!("int:{value}"),
+            GenericExpr::Lit(_, Literal::Unit) => "unit".to_owned(),
+            GenericExpr::Lit(_, literal) => format!("lit:{literal:?}"),
+            GenericExpr::Call(_, head, args) => {
+                let head = match head {
+                    CallKey::Function(function) => format!("fn:{}", function.name),
+                    CallKey::Primitive(primitive) => format!("prim:{}", primitive.name),
+                    CallKey::Values(_) => "values".to_owned(),
+                };
+                let args = args
+                    .iter()
+                    .map(|arg| expr_shape(arg, span))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!("{head}({args})")
+            }
+        }
+    }
+
+    fn rule_shape(rule: &GeneratedRule, span: &Span) -> String {
+        assert_eq!(&rule.span, span);
+        let mut locals = std::collections::BTreeMap::new();
+        for fact in &rule.body {
+            fact.visit_vars(&mut |_, variable| {
+                locals.insert(
+                    variable.id.0,
+                    format!(
+                        "v{}:{}:{}:{:?}",
+                        variable.id.0, variable.name, variable.sort.name, variable.sort.class
+                    ),
+                );
+            });
+        }
+        for action in &rule.head.0 {
+            if let GenericAction::Let(_, variable, _) = action {
+                locals.insert(
+                    variable.id.0,
+                    format!(
+                        "v{}:{}:{}:{:?}",
+                        variable.id.0, variable.name, variable.sort.name, variable.sort.class
+                    ),
+                );
+            }
+        }
+        let body = rule
+            .body
+            .iter()
+            .map(|fact| match fact {
+                GenericFact::Eq(actual, left, right) => {
+                    assert_eq!(actual, span);
+                    format!("eq({},{})", expr_shape(left, span), expr_shape(right, span))
+                }
+                GenericFact::Fact(expression) => format!("fact({})", expr_shape(expression, span)),
+            })
+            .collect::<Vec<_>>()
+            .join(";");
+        let head = rule
+            .head
+            .0
+            .iter()
+            .map(|action| match action {
+                GenericAction::Let(actual, variable, value) => {
+                    assert_eq!(actual, span);
+                    format!("let v{}={}", variable.id.0, expr_shape(value, span))
+                }
+                GenericAction::Set(actual, function, args, value) => {
+                    assert_eq!(actual, span);
+                    let CallKey::Function(function) = function else {
+                        panic!("set target must be a function")
+                    };
+                    let args = args
+                        .iter()
+                        .map(|arg| expr_shape(arg, span))
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    format!(
+                        "set fn:{}({args})={}",
+                        function.name,
+                        expr_shape(value, span)
+                    )
+                }
+                GenericAction::Change(actual, Change::Delete, function, args) => {
+                    assert_eq!(actual, span);
+                    let CallKey::Function(function) = function else {
+                        panic!("delete target must be a function")
+                    };
+                    let args = args
+                        .iter()
+                        .map(|arg| expr_shape(arg, span))
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    format!("delete fn:{}({args})", function.name)
+                }
+                action => panic!("unexpected generated rebuild action: {action:?}"),
+            })
+            .collect::<Vec<_>>()
+            .join(";");
+        format!(
+            "name={};ruleset={};eval={:?};no_decomp={};include={}\nlocals=[{}]\nbody=[{body}]\nhead=[{head}]",
+            rule.name,
+            rule.ruleset,
+            rule.eval_mode,
+            rule.no_decomp,
+            rule.include_subsumed,
+            locals.into_values().collect::<Vec<_>>().join(",")
+        )
+    }
 
     fn indexed_plan(span: &Span, proofs_enabled: bool) -> IndexedWholeRowRebuildSpec {
         let e: ArcSort = Arc::new(crate::sort::EqSort {
@@ -1891,6 +1967,230 @@ mod checked_builder_tests {
                 include_subsumed: true,
             }
         );
+    }
+
+    #[test]
+    fn remaining_rebuild_checked_builders_pin_structures_and_reject_incoherence() {
+        let span = crate::span!();
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(None, "(datatype E (Mk)) (sort Container (Vec E))")
+            .unwrap();
+        let types = &egraph.type_info;
+        let e = types.get_sort_by_name("E").unwrap().clone();
+        let container = types.get_sort_by_name("Container").unwrap().clone();
+        let i64_sort = crate::sort::literal_sort(&Literal::Int(0));
+        let common = |family: &str, input: Vec<ArcSort>, output: ArcSort, proofs_enabled: bool| {
+            let mode = if proofs_enabled { "proof" } else { "term" };
+            RebuildRuleCommonSpec {
+                span: span.clone(),
+                function: FuncType {
+                    name: format!("{family}-source"),
+                    subtype: FunctionSubtype::Custom,
+                    input,
+                    outputs: vec![output],
+                },
+                proof_sort: "Proof".to_owned(),
+                proofs_enabled,
+                view: format!("{family}-{mode}-view"),
+                name: format!("{family}-{mode}"),
+                ruleset: "rebuild-rules".to_owned(),
+            }
+        };
+        let container_proof =
+            |view_proof: &str, index: usize, container: &str| ContainerRebuildProofPlan {
+                view_proof: view_proof.to_owned(),
+                index,
+                container: container.to_owned(),
+                projection_constructor: "Proj".to_owned(),
+                rebuild_primitive: "prove-container".to_owned(),
+                congruence_constructor: "Congr".to_owned(),
+                rebuild_proof: "rebuild-proof".to_owned(),
+                anchor: "anchor".to_owned(),
+                result: "result".to_owned(),
+            };
+        let key_plan = |proofs_enabled| EqContainerKeyRebuildSpec {
+            common: common(
+                "key",
+                vec![i64_sort.clone(), container.clone()],
+                i64_sort.clone(),
+                proofs_enabled,
+            ),
+            position: 1,
+            keys: vec!["key".to_owned(), "container".to_owned()],
+            value: "value".to_owned(),
+            view_proof: "view-proof".to_owned(),
+            canonical: "canonical".to_owned(),
+            value_primitive: "rebuild-container".to_owned(),
+            proof: proofs_enabled.then(|| container_proof("view-proof", 1, "container")),
+        };
+        let direct_plan = |proofs_enabled| CustomDirectOutputRebuildSpec {
+            common: common("direct", vec![i64_sort.clone()], e.clone(), proofs_enabled),
+            keys: vec!["key".to_owned()],
+            value: "value".to_owned(),
+            view_proof: "view-proof".to_owned(),
+            canonical: "canonical".to_owned(),
+            equality_proof: "equality-proof".to_owned(),
+            uf: "UF-E".to_owned(),
+            proof: proofs_enabled.then(|| CongruenceProofPlan {
+                view_proof: "view-proof".to_owned(),
+                index: 1,
+                equality_proof: "equality-proof".to_owned(),
+                constructor: "Congr".to_owned(),
+                result: "result".to_owned(),
+            }),
+        };
+        let output_plan = |proofs_enabled| CustomContainerOutputRebuildSpec {
+            common: common(
+                "output",
+                vec![i64_sort.clone()],
+                container.clone(),
+                proofs_enabled,
+            ),
+            position: 1,
+            keys: vec!["key".to_owned()],
+            value: "value".to_owned(),
+            view_proof: "view-proof".to_owned(),
+            canonical: "canonical".to_owned(),
+            value_primitive: "rebuild-container".to_owned(),
+            proof: proofs_enabled.then(|| container_proof("view-proof", 1, "value")),
+        };
+
+        let projection = crate::proofs::proof_fresh::mint_prim_name("Proj");
+        let congruence = crate::proofs::proof_fresh::mint_prim_name("Congr");
+        let cases = [
+            (
+                key_plan(true).build(&mut GeneratedSignatureCatalog::default()),
+                format!(
+                    "name=key-proof;ruleset=rebuild-rules;eval=Naive;no_decomp=false;include=true\n\
+                     locals=[v0:value:i64:Value,v1:view-proof:Proof:Eq,v2:key:i64:Value,v3:container:Container:EqContainer,v4:canonical:Container:EqContainer,v5:anchor:Proof:Eq,v6:rebuild-proof:Proof:Eq,v7:result:Proof:Eq]\n\
+                     body=[eq(values(v0,v1),fn:key-proof-view(v2,v3));eq(v4,prim:rebuild-container(v3));fact(prim:!=(v3,v4))]\n\
+                     head=[let v5=prim:{projection}(v1,int:1);let v6=prim:prove-container(v3,v5);let v7=prim:{congruence}(v1,int:1,v6);set fn:key-proof-view(v2,v4)=values(v0,v7);delete fn:key-proof-view(v2,v3)]"
+                ),
+            ),
+            (
+                key_plan(false).build(&mut GeneratedSignatureCatalog::default()),
+                "name=key-term;ruleset=rebuild-rules;eval=Naive;no_decomp=false;include=true\n\
+                 locals=[v0:value:i64:Value,v1:view-proof:Unit:Value,v2:key:i64:Value,v3:container:Container:EqContainer,v4:canonical:Container:EqContainer]\n\
+                 body=[eq(values(v0,v1),fn:key-term-view(v2,v3));eq(v4,prim:rebuild-container(v3));fact(prim:!=(v3,v4))]\n\
+                 head=[set fn:key-term-view(v2,v4)=values(v0,unit);delete fn:key-term-view(v2,v3)]"
+                    .to_owned(),
+            ),
+            (
+                direct_plan(true).build(&mut GeneratedSignatureCatalog::default()),
+                format!(
+                    "name=direct-proof;ruleset=rebuild-rules;eval=Seminaive;no_decomp=false;include=true\n\
+                     locals=[v0:value:E:Eq,v1:view-proof:Proof:Eq,v2:key:i64:Value,v3:canonical:E:Eq,v4:equality-proof:Proof:Eq,v5:result:Proof:Eq]\n\
+                     body=[eq(values(v0,v1),fn:direct-proof-view(v2));eq(values(v3,v4),fn:UF-E(v0));fact(prim:!=(v0,v3))]\n\
+                     head=[let v5=prim:{congruence}(v1,int:1,v4);delete fn:direct-proof-view(v2);set fn:direct-proof-view(v2)=values(v3,v5)]"
+                ),
+            ),
+            (
+                direct_plan(false).build(&mut GeneratedSignatureCatalog::default()),
+                "name=direct-term;ruleset=rebuild-rules;eval=Seminaive;no_decomp=false;include=true\n\
+                 locals=[v0:value:E:Eq,v1:view-proof:Unit:Value,v2:key:i64:Value,v3:canonical:E:Eq,v4:equality-proof:Unit:Value]\n\
+                 body=[eq(values(v0,v1),fn:direct-term-view(v2));eq(values(v3,v4),fn:UF-E(v0));fact(prim:!=(v0,v3))]\n\
+                 head=[delete fn:direct-term-view(v2);set fn:direct-term-view(v2)=values(v3,unit)]"
+                    .to_owned(),
+            ),
+            (
+                output_plan(true).build(&mut GeneratedSignatureCatalog::default()),
+                format!(
+                    "name=output-proof;ruleset=rebuild-rules;eval=Naive;no_decomp=false;include=true\n\
+                     locals=[v0:value:Container:EqContainer,v1:view-proof:Proof:Eq,v2:key:i64:Value,v3:canonical:Container:EqContainer,v4:anchor:Proof:Eq,v5:rebuild-proof:Proof:Eq,v6:result:Proof:Eq]\n\
+                     body=[eq(values(v0,v1),fn:output-proof-view(v2));eq(v3,prim:rebuild-container(v0));fact(prim:!=(v0,v3))]\n\
+                     head=[let v4=prim:{projection}(v1,int:1);let v5=prim:prove-container(v0,v4);let v6=prim:{congruence}(v1,int:1,v5);delete fn:output-proof-view(v2);set fn:output-proof-view(v2)=values(v3,v6)]"
+                ),
+            ),
+            (
+                output_plan(false).build(&mut GeneratedSignatureCatalog::default()),
+                "name=output-term;ruleset=rebuild-rules;eval=Naive;no_decomp=false;include=true\n\
+                 locals=[v0:value:Container:EqContainer,v1:view-proof:Unit:Value,v2:key:i64:Value,v3:canonical:Container:EqContainer]\n\
+                 body=[eq(values(v0,v1),fn:output-term-view(v2));eq(v3,prim:rebuild-container(v0));fact(prim:!=(v0,v3))]\n\
+                 head=[delete fn:output-term-view(v2);set fn:output-term-view(v2)=values(v3,unit)]"
+                    .to_owned(),
+            ),
+        ];
+        for (rule, expected) in cases {
+            assert_eq!(rule_shape(&rule, &span), expected);
+        }
+
+        enum RejectedPlan {
+            Key(bool, fn(&mut EqContainerKeyRebuildSpec)),
+            Direct(bool, fn(&mut CustomDirectOutputRebuildSpec)),
+            Output(bool, fn(&mut CustomContainerOutputRebuildSpec)),
+        }
+        use RejectedPlan::{Direct, Key, Output};
+        let rejected = [
+            Key(false, |p| p.keys.clear()),
+            Key(false, |p| p.position = usize::MAX),
+            Key(false, |p| p.position = 0),
+            Key(false, |p| p.common.proofs_enabled = false),
+            Key(true, |p| p.proof.as_mut().unwrap().index = 0),
+            Key(true, |p| p.proof.as_mut().unwrap().view_proof.clear()),
+            Key(true, |p| p.proof.as_mut().unwrap().container.clear()),
+            Direct(false, |p| p.keys.clear()),
+            Direct(false, |p| {
+                p.common.function.outputs = p.common.function.input.clone()
+            }),
+            Direct(false, |p| p.common.proofs_enabled = false),
+            Direct(true, |p| p.proof.as_mut().unwrap().index = 0),
+            Direct(true, |p| p.proof.as_mut().unwrap().view_proof.clear()),
+            Direct(true, |p| p.proof.as_mut().unwrap().equality_proof.clear()),
+            Output(false, |p| p.keys.clear()),
+            Output(false, |p| p.position = 0),
+            Output(false, |p| {
+                p.common.function.outputs = p.common.function.input.clone()
+            }),
+            Output(false, |p| p.common.proofs_enabled = false),
+            Output(true, |p| p.proof.as_mut().unwrap().index = 0),
+            Output(true, |p| p.proof.as_mut().unwrap().view_proof.clear()),
+            Output(true, |p| p.proof.as_mut().unwrap().container.clear()),
+        ];
+        for rejected in rejected {
+            let (family, proof_error) = match &rejected {
+                Key(proof_error, _) => ("container-key", proof_error),
+                Direct(proof_error, _) => ("direct-output", proof_error),
+                Output(proof_error, _) => ("container-output", proof_error),
+            };
+            let phase = if *proof_error { "proof" } else { "rebuild" };
+            let expected = format!("{family} {phase}");
+            let mut catalog = GeneratedSignatureCatalog::default();
+            let before = format!("{catalog:?}");
+            let panic = catch_unwind(AssertUnwindSafe(|| match rejected {
+                Key(_, edit) => {
+                    let mut plan = key_plan(true);
+                    edit(&mut plan);
+                    plan.build(&mut catalog);
+                }
+                Direct(_, edit) => {
+                    let mut plan = direct_plan(true);
+                    edit(&mut plan);
+                    plan.build(&mut catalog);
+                }
+                Output(_, edit) => {
+                    let mut plan = output_plan(true);
+                    edit(&mut plan);
+                    plan.build(&mut catalog);
+                }
+            }))
+            .expect_err("incoherent rebuild plan must panic");
+            let message = panic
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| {
+                    panic
+                        .downcast_ref::<&str>()
+                        .map(|message| (*message).to_owned())
+                })
+                .expect("rebuild-plan panic must contain text");
+            assert!(message.contains(&expected), "unexpected panic: {message}");
+            assert!(
+                message.contains(&span.to_string()),
+                "missing span: {message}"
+            );
+            assert_eq!(format!("{catalog:?}"), before, "catalog mutated");
+        }
     }
 
     #[test]
