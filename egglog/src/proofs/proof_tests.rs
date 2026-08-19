@@ -1913,17 +1913,26 @@ mod tests {
             before_input
         );
 
-        let before_output = egraph.num_tuples();
+        let before_output = (egraph.num_tuples(), egraph.parser.symbol_gen.clone());
         let error = egraph
             .parse_and_run_program(None, "(output \"must-not-exist.txt\" (RuntimeNum 1))")
             .unwrap_err();
-        assert!(matches!(
-            error,
-            Error::TypeError(TypeError::Arity { expected: 2, ref expr })
-                if expr.to_string() == "(RuntimeNum 1)"
-        ));
+        assert!(
+            matches!(
+                error,
+                Error::TypeError(TypeError::UnresolvedPrimitive {
+                    ref name,
+                    ctx: crate::Context::Full,
+                    ref span,
+                }) if name == "RuntimeNum" && span.string() == "(RuntimeNum 1)"
+            ),
+            "unexpected native output binding error: {error:?}"
+        );
         assert!(!directory.join("must-not-exist.txt").exists());
-        assert_eq!(egraph.num_tuples(), before_output);
+        assert_eq!(
+            (egraph.num_tuples(), egraph.parser.symbol_gen.clone()),
+            before_output
+        );
 
         std::fs::remove_dir_all(directory).unwrap();
     }
@@ -1985,10 +1994,11 @@ mod tests {
             assert!(
                 matches!(
                     error,
-                    Error::TypeError(TypeError::InferenceFailure(crate::ast::Expr::Var(
+                    Error::TypeError(TypeError::AmbiguousPrimitive {
+                        ref name,
+                        ctx: crate::Context::Pure,
                         ref span,
-                        ref variable
-                    ))) if variable == "@!=2" && span.string() == expected_span
+                    }) if name == "!=" && span.string() == expected_span
                 ),
                 "unexpected generated binding error for {source}: {error:?}"
             );

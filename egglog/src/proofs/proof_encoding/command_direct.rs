@@ -4,7 +4,7 @@
 //! action lowering.  In particular, extraction setup has top-level-global
 //! semantics even though it is produced by the action-expression kernel.
 //! ProveExists/Input resolve through the encoded-role overlay, while Output
-//! preserves the source call shape for its historical generated-frontend pass.
+//! preserves the source call shape for validation by the native typed binder.
 
 use crate::ast::{
     FunctionSubtype, GenericAction, GenericExpr, GenericRunConfig, GenericSchedule, ResolvedExpr,
@@ -323,10 +323,10 @@ impl OutputPlan {
         fn register_expr(expr: &GeneratedExpr, signatures: &mut GeneratedSignatureCatalog) {
             if let GenericExpr::Call(span, call, args) = expr {
                 // Source function keys deliberately describe the pre-encoding
-                // expression accepted by the first frontend. They are replayed
-                // against the encoded TypeInfo, where every such call acquires
-                // the source arity error before binding, and therefore must not
-                // conflict with the term relation's same-name catalog entry.
+                // expression accepted by the source frontend. Do not register
+                // those stale keys in the generated catalog: native binding
+                // resolves them against the encoded TypeInfo and reports any
+                // source/term signature mismatch at this expression's span.
                 if !matches!(call, CallKey::Function(_)) {
                     signatures
                         .register_call_key(call, span)
@@ -350,9 +350,9 @@ struct SourceExprLowerer {
 
 impl SourceExprLowerer {
     /// Retain the source-resolved call signature and one portable local
-    /// namespace. Output is replayed through the generated frontend unchanged;
-    /// using the post-encoding term signature here would replace its historical
-    /// TypeError with a binder error.
+    /// namespace. The native binder validates this shape against the live
+    /// encoded registry; lowering it to the term signature here would silently
+    /// change what the user's output expression denotes.
     fn lower(&mut self, expr: &ResolvedExpr) -> Result<GeneratedExpr, GeneratedBindError> {
         match expr {
             GenericExpr::Lit(span, literal) => Ok(GenericExpr::Lit(span.clone(), literal.clone())),
@@ -385,8 +385,8 @@ impl SourceExprLowerer {
 }
 
 /// Output is deliberately not action instrumentation. Its source expressions
-/// are replayed and rebound in Full context with their source-resolved shape,
-/// matching the source post-encoding typecheck and error boundary.
+/// are bound in Full context with their source-resolved shape, preserving the
+/// post-encoding validation boundary without another frontend pass.
 pub(super) fn lower_output(
     span: &Span,
     file: &str,
@@ -407,7 +407,7 @@ pub(super) fn lower_output(
 }
 
 /// Resolve ProveExists to the exact encoded term relation. The generated binder
-/// owns the subsequent Read-context resolution and its frontend diagnostics.
+/// owns the subsequent Read-context resolution and typed diagnostics.
 #[derive(Debug)]
 pub(super) struct ProveExistsPlan {
     pub(super) span: Span,

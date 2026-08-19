@@ -20,8 +20,7 @@ use crate::ast::{
 use crate::core::ResolvedCall;
 use crate::proofs::proof_encoding::declaration_direct::TypedDeclarationEntry;
 use crate::typechecking::{SortDeclarationMetadata, TypeError, TypeInfo};
-use crate::util::SymbolGen;
-use crate::util::{FreshGen, HashMap, HashSet};
+use crate::util::{HashMap, HashSet};
 use crate::{ArcSort, Context, EGraph, Error as EgglogError, ResolvedExprExt, ResolvedVar};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1359,746 +1358,6 @@ fn rule_call_contexts(global_seminaive: bool, eval_mode: &RuleEvalMode) -> (Cont
     }
 }
 
-struct GeneratedTupleDestructure<'a> {
-    values_args: &'a [GeneratedExpr],
-    function_head: &'a CallKey,
-    function_span: &'a Span,
-    function_args: &'a [GeneratedExpr],
-}
-
-fn match_generated_tuple_destructure<'a>(
-    left: &'a GeneratedExpr,
-    right: &'a GeneratedExpr,
-    type_info: &TypeInfo,
-) -> Option<GeneratedTupleDestructure<'a>> {
-    for (values, function) in [(left, right), (right, left)] {
-        let GenericExpr::Call(_, CallKey::Values(_), values_args) = values else {
-            continue;
-        };
-        let GenericExpr::Call(function_span, function_head, function_args) = function else {
-            continue;
-        };
-        let function_name = match function_head {
-            CallKey::Function(function) => function.name.as_str(),
-            CallKey::Primitive(primitive) => primitive.name.as_str(),
-            CallKey::Values(_) => "values",
-        };
-        if type_info
-            .get_func_type(function_name)
-            .is_some_and(|function| function.is_tuple_output())
-        {
-            return Some(GeneratedTupleDestructure {
-                values_args,
-                function_head,
-                function_span,
-                function_args,
-            });
-        }
-    }
-    None
-}
-
-/// Replays the observable rule-frontend effects at the traversal point where
-/// the source frontend produced them. This deliberately derives its events
-/// from the portable AST and the live checker registry: a flat success trace
-/// cannot preserve the prefix when a later query/action validation fails.
-struct RuleFrontendEffects<'a> {
-    type_info: &'a TypeInfo,
-    symbol_gen: &'a mut SymbolGen,
-    scope: HashSet<String>,
-    expr_outputs: HashMap<usize, String>,
-    action_outputs: HashMap<usize, Vec<String>>,
-    synthetic: Option<&'a SyntheticGlobals>,
-    query_context: Context,
-    action_context: Context,
-}
-
-impl RuleFrontendEffects<'_> {
-    fn variable_is_bound(&self, variable: &GeneratedVar) -> bool {
-        if self.synthetic.is_some_and(|synthetic| {
-            synthetic.get(&variable.id).is_some_and(|existing| {
-                existing.variable.name == variable.name
-                    && existing.variable.sort == variable.sort
-                    && existing.variable.role == variable.role
-            })
-        }) {
-            return true;
-        }
-        match variable.role {
-            GeneratedVarRole::Global => self.type_info.is_global(&variable.name),
-            GeneratedVarRole::Local => self.scope.contains(&variable.name),
-        }
-    }
-
-    fn observe_query_binding(&mut self, variable: &GeneratedVar) {
-        if self.synthetic.is_some_and(|synthetic| {
-            synthetic.get(&variable.id).is_some_and(|existing| {
-                existing.variable.name == variable.name
-                    && existing.variable.sort == variable.sort
-                    && existing.variable.role == variable.role
-            })
-        }) {
-            return;
-        }
-        match variable.role {
-            GeneratedVarRole::Global => {}
-            GeneratedVarRole::Local => {
-                self.scope.insert(variable.name.clone());
-            }
-        }
-    }
-
-    /// Convert a portable call back to the unresolved head spelling used as
-    /// the source `SymbolGen` hint, then return the actual minted name. The
-    /// returned spelling matters because expression-call outputs enter the
-    /// source action/query binding scope.
-    fn fresh_source_call(&mut self, call: &CallKey) -> String {
-        let hint = match call {
-            CallKey::Function(function) => function.name.as_str(),
-            CallKey::Primitive(primitive) => primitive.name.as_str(),
-            CallKey::Values(_) => "values",
-        };
-        self.symbol_gen.fresh(hint)
-    }
-
-    /// Reproduce the source solver's stable ambiguity payload without
-    /// invoking source inference. Exact generated keys already carry the full
-    /// concrete signature; only indistinguishable primitive registrations can
-    /// leave the source solver unable to name a type for the minted output.
-    fn validate_diagnostic_resolution(
-        &self,
-        call: &CallKey,
-        context: Context,
-        span: &Span,
-        output: &str,
-    ) -> Result<(), TypeError> {
-        let name = match call {
-            CallKey::Function(function) => function.name.as_str(),
-            CallKey::Primitive(primitive) => primitive.name.as_str(),
-            CallKey::Values(_) => return Ok(()),
-        };
-        let context_valid_primitives = self
-            .type_info
-            .get_prims(name)
-            .into_iter()
-            .flatten()
-            .filter(|primitive| primitive.is_valid_in_context(context))
-            .count();
-        if context_valid_primitives <= 1
-            && (context_valid_primitives == 0 || self.type_info.get_func_type(name).is_none())
-        {
-            return Ok(());
-        }
-
-        let resolve_sort = |key: &SortKey| {
-            self.type_info
-                .get_sort_by_name(&key.name)
-                .filter(|sort| key.matches_sort(sort))
-                .cloned()
-        };
-        let mut signature = match call {
-            CallKey::Function(function) => function
-                .inputs
-                .iter()
-                .map(resolve_sort)
-                .collect::<Option<Vec<_>>>(),
-            CallKey::Primitive(primitive) => primitive
-                .inputs
-                .iter()
-                .map(resolve_sort)
-                .collect::<Option<Vec<_>>>(),
-            CallKey::Values(_) => unreachable!("values returned before diagnostic resolution"),
-        };
-        let Some(ref mut signature) = signature else {
-            return Ok(());
-        };
-        match call {
-            CallKey::Function(function) => match &function.output {
-                ValueShape::Scalar(sort) => {
-                    let Some(sort) = resolve_sort(sort) else {
-                        return Ok(());
-                    };
-                    signature.push(sort);
-                }
-                ValueShape::Tuple(sorts) => {
-                    let Some(sorts) = sorts.iter().map(resolve_sort).collect::<Option<Vec<_>>>()
-                    else {
-                        return Ok(());
-                    };
-                    signature.extend(sorts);
-                }
-            },
-            CallKey::Primitive(primitive) => {
-                let Some(sort) = resolve_sort(&primitive.output) else {
-                    return Ok(());
-                };
-                signature.push(sort);
-            }
-            CallKey::Values(_) => unreachable!("values returned before diagnostic resolution"),
-        }
-
-        match ResolvedCall::from_resolution(name, signature, self.type_info, context, span) {
-            Err(TypeError::AmbiguousPrimitive { .. })
-            | Err(TypeError::UnresolvedPrimitive { .. }) => Err(TypeError::InferenceFailure(
-                Expr::Var(span.clone(), output.to_owned()),
-            )),
-            Err(error) => Err(error),
-            Ok(_) => Ok(()),
-        }
-    }
-
-    /// Match the eager failure boundary of atom-constraint construction. At
-    /// this point source typechecking only requires some function or a
-    /// context-valid primitive with this head; signature defects are solved
-    /// later and are impossible for producer-owned typed IR.
-    fn validate_query_or_action_head(
-        &self,
-        call: &CallKey,
-        context: Context,
-        span: &Span,
-    ) -> Result<(), TypeError> {
-        let name = match call {
-            CallKey::Function(function) => function.name.as_str(),
-            CallKey::Primitive(primitive) => primitive.name.as_str(),
-            CallKey::Values(_) => "values",
-        };
-        let has_candidate = self.type_info.get_func_type(name).is_some()
-            || self.type_info.get_prims(name).is_some_and(|primitives| {
-                primitives
-                    .iter()
-                    .any(|primitive| primitive.is_valid_in_context(context))
-            });
-        if has_candidate {
-            Ok(())
-        } else {
-            Err(TypeError::UnboundFunction(name.to_owned(), span.clone()))
-        }
-    }
-
-    /// Preserve the source constraint solver's arity error when a retained
-    /// pre-encoding function expression is replayed against its encoded table.
-    /// An expression atom has one synthetic result column, so the displayed
-    /// source arity is the live function's total row width minus that column.
-    /// A context-valid primitive keeps the original XOR alternative alive and
-    /// must be left to diagnostic resolution below.
-    fn validate_source_expression_arity(
-        &self,
-        expr: &GeneratedExpr,
-        call: &CallKey,
-        args: &[GeneratedExpr],
-        context: Context,
-    ) -> Result<(), TypeError> {
-        let name = match call {
-            CallKey::Function(function) => function.name.as_str(),
-            CallKey::Primitive(primitive) => primitive.name.as_str(),
-            CallKey::Values(_) => return Ok(()),
-        };
-        if self.type_info.get_prims(name).is_some_and(|primitives| {
-            primitives
-                .iter()
-                .any(|primitive| primitive.is_valid_in_context(context))
-        }) {
-            return Ok(());
-        }
-        let Some(function) = self.type_info.get_func_type(name) else {
-            return Ok(());
-        };
-        let expected_row_width = function.input.len() + function.num_outputs();
-        if expected_row_width == args.len() + 1 {
-            return Ok(());
-        }
-        let source_expr = expr.clone().map_symbols(
-            &mut |head| match head {
-                CallKey::Function(function) => function.name,
-                CallKey::Primitive(primitive) => primitive.name,
-                CallKey::Values(_) => "values".to_owned(),
-            },
-            &mut |variable| variable.name,
-        );
-        Err(TypeError::Arity {
-            expr: source_expr,
-            expected: expected_row_width - 1,
-        })
-    }
-
-    fn lower_query_expr(&mut self, expr: &GeneratedExpr) {
-        match expr {
-            GenericExpr::Var(..) => {}
-            GenericExpr::Lit(..) => {}
-            GenericExpr::Call(_, call, args) => {
-                // `GenericExprExt::to_query` mints the output before walking
-                // children, even though it appends the resulting atom after
-                // its children's atoms.
-                let output = self.fresh_source_call(call);
-                self.expr_outputs
-                    .insert(expr as *const GeneratedExpr as usize, output.clone());
-                self.scope.insert(output);
-                for arg in args {
-                    self.lower_query_expr(arg);
-                }
-            }
-        }
-    }
-
-    fn lower_query_fact(&mut self, fact: &GeneratedFact) {
-        match fact {
-            GenericFact::Eq(_, left, right) => {
-                if let Some(tuple) = match_generated_tuple_destructure(left, right, self.type_info)
-                {
-                    // Tuple destructuring bypasses both outer expression calls:
-                    // it lowers inputs, then outputs, then mints two mapped-AST
-                    // correspondence names that never enter the query scope.
-                    for arg in tuple.function_args {
-                        self.lower_query_expr(arg);
-                    }
-                    for value in tuple.values_args {
-                        self.lower_query_expr(value);
-                    }
-                    let _ = self.fresh_source_call(tuple.function_head);
-                    let _ = self.fresh_source_call(tuple.function_head);
-                } else {
-                    self.lower_query_expr(left);
-                    self.lower_query_expr(right);
-                }
-            }
-            GenericFact::Fact(expr) => self.lower_query_expr(expr),
-        }
-    }
-
-    fn validate_query_expr_candidates(&self, expr: &GeneratedExpr) -> Result<(), TypeError> {
-        match expr {
-            GenericExpr::Var(..) | GenericExpr::Lit(..) => Ok(()),
-            GenericExpr::Call(span, call, args) => {
-                for arg in args {
-                    self.validate_query_expr_candidates(arg)?;
-                }
-                self.validate_query_or_action_head(call, self.query_context, span)
-            }
-        }
-    }
-
-    fn resolve_query_expr_diagnostics(&self, expr: &GeneratedExpr) -> Result<(), TypeError> {
-        match expr {
-            GenericExpr::Var(..) | GenericExpr::Lit(..) => Ok(()),
-            GenericExpr::Call(span, call, args) => {
-                for arg in args {
-                    self.resolve_query_expr_diagnostics(arg)?;
-                }
-                self.validate_source_expression_arity(expr, call, args, self.query_context)?;
-                let output = self
-                    .expr_outputs
-                    .get(&(expr as *const GeneratedExpr as usize))
-                    .expect("query call lowering must mint its output before validation");
-                self.validate_diagnostic_resolution(call, self.query_context, span, output)
-            }
-        }
-    }
-
-    fn validate_query_fact_candidates(&self, fact: &GeneratedFact) -> Result<(), TypeError> {
-        match fact {
-            GenericFact::Eq(_, left, right) => {
-                if let Some(tuple) = match_generated_tuple_destructure(left, right, self.type_info)
-                {
-                    for arg in tuple.function_args {
-                        self.validate_query_expr_candidates(arg)?;
-                    }
-                    for value in tuple.values_args {
-                        self.validate_query_expr_candidates(value)?;
-                    }
-                    self.validate_query_or_action_head(
-                        tuple.function_head,
-                        self.query_context,
-                        tuple.function_span,
-                    )
-                } else {
-                    self.validate_query_expr_candidates(left)?;
-                    self.validate_query_expr_candidates(right)
-                }
-            }
-            GenericFact::Fact(expr) => self.validate_query_expr_candidates(expr),
-        }
-    }
-
-    fn resolve_query_fact_diagnostics(&self, fact: &GeneratedFact) -> Result<(), TypeError> {
-        match fact {
-            GenericFact::Eq(_, left, right) => {
-                if let Some(tuple) = match_generated_tuple_destructure(left, right, self.type_info)
-                {
-                    for arg in tuple.function_args {
-                        self.resolve_query_expr_diagnostics(arg)?;
-                    }
-                    for value in tuple.values_args {
-                        self.resolve_query_expr_diagnostics(value)?;
-                    }
-                    Ok(())
-                } else {
-                    self.resolve_query_expr_diagnostics(left)?;
-                    self.resolve_query_expr_diagnostics(right)
-                }
-            }
-            GenericFact::Fact(expr) => self.resolve_query_expr_diagnostics(expr),
-        }
-    }
-
-    fn lower_action_expr(&mut self, expr: &GeneratedExpr) -> Result<(), TypeError> {
-        match expr {
-            GenericExpr::Var(span, variable) => {
-                if self.variable_is_bound(variable) {
-                    Ok(())
-                } else {
-                    Err(TypeError::Unbound(variable.name.clone(), span.clone()))
-                }
-            }
-            GenericExpr::Lit(..) => Ok(()),
-            GenericExpr::Call(_, call, args) => {
-                for arg in args {
-                    self.lower_action_expr(arg)?;
-                }
-                // Action lowering is postorder and makes expression-call
-                // outputs visible to subsequent actions.
-                let output = self.fresh_source_call(call);
-                self.expr_outputs
-                    .insert(expr as *const GeneratedExpr as usize, output.clone());
-                self.scope.insert(output);
-                Ok(())
-            }
-        }
-    }
-
-    fn lower_action(&mut self, action: &GeneratedAction) -> Result<(), TypeError> {
-        match action {
-            GenericAction::Let(span, variable, expr) => {
-                if self.scope.contains(&variable.name) {
-                    return Err(TypeError::AlreadyDefined(
-                        variable.name.clone(),
-                        span.clone(),
-                    ));
-                }
-                self.lower_action_expr(expr)?;
-                self.scope.insert(variable.name.clone());
-            }
-            GenericAction::Set(_, head, args, value) => {
-                for arg in args {
-                    self.lower_action_expr(arg)?;
-                }
-                if let GenericExpr::Call(_, CallKey::Values(_), values) = value {
-                    for value in values {
-                        self.lower_action_expr(value)?;
-                    }
-                    let _: String = self.symbol_gen.fresh("values");
-                } else {
-                    self.lower_action_expr(value)?;
-                }
-                let output = self.fresh_source_call(head);
-                self.action_outputs
-                    .insert(action as *const GeneratedAction as usize, vec![output]);
-            }
-            GenericAction::Change(_, _, head, args) => {
-                for arg in args {
-                    self.lower_action_expr(arg)?;
-                }
-                let output = self.fresh_source_call(head);
-                self.action_outputs
-                    .insert(action as *const GeneratedAction as usize, vec![output]);
-            }
-            GenericAction::Union(_, left, right) => {
-                self.lower_action_expr(left)?;
-                self.lower_action_expr(right)?;
-            }
-            GenericAction::Panic(..) => {}
-            GenericAction::Expr(_, expr) => self.lower_action_expr(expr)?,
-        }
-        Ok(())
-    }
-
-    fn validate_action_expr_candidates(&self, expr: &GeneratedExpr) -> Result<(), TypeError> {
-        match expr {
-            GenericExpr::Var(..) | GenericExpr::Lit(..) => Ok(()),
-            GenericExpr::Call(span, call, args) => {
-                for arg in args {
-                    self.validate_action_expr_candidates(arg)?;
-                }
-                self.validate_query_or_action_head(call, self.action_context, span)
-            }
-        }
-    }
-
-    fn resolve_action_expr_diagnostics(&self, expr: &GeneratedExpr) -> Result<(), TypeError> {
-        match expr {
-            GenericExpr::Var(..) | GenericExpr::Lit(..) => Ok(()),
-            GenericExpr::Call(span, call, args) => {
-                for arg in args {
-                    self.resolve_action_expr_diagnostics(arg)?;
-                }
-                self.validate_source_expression_arity(expr, call, args, self.action_context)?;
-                let output = self
-                    .expr_outputs
-                    .get(&(expr as *const GeneratedExpr as usize))
-                    .expect("action call lowering must mint its output before validation");
-                self.validate_diagnostic_resolution(call, self.action_context, span, output)
-            }
-        }
-    }
-
-    fn validate_action_candidates(&mut self, action: &GeneratedAction) -> Result<(), TypeError> {
-        match action {
-            GenericAction::Let(_, _, expr) | GenericAction::Expr(_, expr) => {
-                self.validate_action_expr_candidates(expr)?;
-            }
-            GenericAction::Set(span, head, args, value) => {
-                for arg in args {
-                    self.validate_action_expr_candidates(arg)?;
-                }
-                if let GenericExpr::Call(_, CallKey::Values(_), values) = value {
-                    for value in values {
-                        self.validate_action_expr_candidates(value)?;
-                    }
-                } else {
-                    self.validate_action_expr_candidates(value)?;
-                }
-                let name = match head {
-                    CallKey::Function(function) => function.name.as_str(),
-                    CallKey::Primitive(primitive) => primitive.name.as_str(),
-                    CallKey::Values(_) => "values",
-                };
-                if self.type_info.is_constructor(name) {
-                    return Err(TypeError::SetConstructorDisallowed(
-                        name.to_owned(),
-                        span.clone(),
-                    ));
-                }
-                self.validate_query_or_action_head(head, self.action_context, span)?;
-            }
-            GenericAction::Change(span, _, head, args) => {
-                for arg in args {
-                    self.validate_action_expr_candidates(arg)?;
-                }
-                let name = match head {
-                    CallKey::Function(function) => function.name.as_str(),
-                    CallKey::Primitive(primitive) => primitive.name.as_str(),
-                    CallKey::Values(_) => "values",
-                };
-                let output_count = self
-                    .type_info
-                    .get_func_type(name)
-                    .map(|function| function.num_outputs())
-                    .unwrap_or(1);
-                let mut outputs = Vec::with_capacity(output_count);
-                for _ in 0..output_count {
-                    outputs.push(self.fresh_source_call(head));
-                }
-                self.action_outputs
-                    .insert(action as *const GeneratedAction as usize, outputs);
-                self.validate_query_or_action_head(head, self.action_context, span)?;
-            }
-            GenericAction::Union(_, left, right) => {
-                self.validate_action_expr_candidates(left)?;
-                self.validate_action_expr_candidates(right)?;
-            }
-            GenericAction::Panic(..) => {}
-        }
-        Ok(())
-    }
-
-    fn resolve_action_diagnostics(&self, action: &GeneratedAction) -> Result<(), TypeError> {
-        match action {
-            GenericAction::Let(_, _, expr) | GenericAction::Expr(_, expr) => {
-                self.resolve_action_expr_diagnostics(expr)?;
-            }
-            GenericAction::Set(span, head, args, value) => {
-                for arg in args {
-                    self.resolve_action_expr_diagnostics(arg)?;
-                }
-                if let GenericExpr::Call(_, CallKey::Values(_), values) = value {
-                    for value in values {
-                        self.resolve_action_expr_diagnostics(value)?;
-                    }
-                } else {
-                    self.resolve_action_expr_diagnostics(value)?;
-                }
-                let output = self
-                    .action_outputs
-                    .get(&(action as *const GeneratedAction as usize))
-                    .and_then(|outputs| outputs.first())
-                    .expect("set lowering must mint its table-call output before validation");
-                self.validate_diagnostic_resolution(head, self.action_context, span, output)?;
-            }
-            GenericAction::Change(span, _, head, args) => {
-                for arg in args {
-                    self.resolve_action_expr_diagnostics(arg)?;
-                }
-                let output = self
-                    .action_outputs
-                    .get(&(action as *const GeneratedAction as usize))
-                    .and_then(|outputs| outputs.first())
-                    .expect("change validation must mint at least one output");
-                self.validate_diagnostic_resolution(head, self.action_context, span, output)?;
-            }
-            GenericAction::Union(_, left, right) => {
-                self.resolve_action_expr_diagnostics(left)?;
-                self.resolve_action_expr_diagnostics(right)?;
-            }
-            GenericAction::Panic(..) => {}
-        }
-        Ok(())
-    }
-
-    fn replay(&mut self, rule: &GeneratedRule) -> Result<(), TypeError> {
-        // Query candidate construction precedes head lowering. Constraint
-        // ambiguity and inference errors do not surface until after the whole
-        // head has lowered and every query/head constraint has been built.
-        for fact in &rule.body {
-            self.lower_query_fact(fact);
-        }
-        visit_query_binding_vars(&rule.body, &mut |_, variable| {
-            self.observe_query_binding(variable);
-            Ok::<(), TypeError>(())
-        })?;
-        for fact in &rule.body {
-            self.validate_query_fact_candidates(fact)?;
-        }
-        for action in &rule.head.0 {
-            self.lower_action(action)?;
-        }
-        for action in &rule.head.0 {
-            self.validate_action_candidates(action)?;
-        }
-        for fact in &rule.body {
-            self.resolve_query_fact_diagnostics(fact)?;
-        }
-        for action in &rule.head.0 {
-            self.resolve_action_diagnostics(action)?;
-        }
-        Ok(())
-    }
-}
-
-fn replay_direct_rule_frontend_effects(
-    egraph: &mut EGraph,
-    rule: &GeneratedRule,
-) -> Result<(), TypeError> {
-    let (query_context, action_context) = rule_call_contexts(egraph.seminaive, &rule.eval_mode);
-    let mut effects = RuleFrontendEffects {
-        type_info: &egraph.type_info,
-        symbol_gen: &mut egraph.parser.symbol_gen,
-        scope: HashSet::default(),
-        expr_outputs: HashMap::default(),
-        action_outputs: HashMap::default(),
-        synthetic: None,
-        query_context,
-        action_context,
-    };
-    effects.replay(rule)
-}
-
-fn replay_generated_actions_effects(
-    type_info: &TypeInfo,
-    symbol_gen: &mut SymbolGen,
-    actions: &GeneratedActions,
-    synthetic: Option<&SyntheticGlobals>,
-    scope: HashSet<String>,
-    context: Context,
-) -> Result<(), TypeError> {
-    let mut effects = RuleFrontendEffects {
-        type_info,
-        symbol_gen,
-        scope,
-        expr_outputs: HashMap::default(),
-        action_outputs: HashMap::default(),
-        synthetic,
-        query_context: Context::Read,
-        action_context: context,
-    };
-    // Lower the complete block, build every candidate constraint in source
-    // order, then surface deferred solver diagnostics.
-    for action in &actions.0 {
-        effects.lower_action(action)?;
-    }
-    for action in &actions.0 {
-        effects.validate_action_candidates(action)?;
-    }
-    for action in &actions.0 {
-        effects.resolve_action_diagnostics(action)?;
-    }
-    Ok(())
-}
-
-fn replay_generated_expr_effects(
-    type_info: &TypeInfo,
-    symbol_gen: &mut SymbolGen,
-    expr: &GeneratedExpr,
-    synthetic: Option<&SyntheticGlobals>,
-    scope: HashSet<String>,
-    context: Context,
-) -> Result<(), TypeError> {
-    let mut effects = RuleFrontendEffects {
-        type_info,
-        symbol_gen,
-        scope,
-        expr_outputs: HashMap::default(),
-        action_outputs: HashMap::default(),
-        synthetic,
-        query_context: Context::Read,
-        action_context: context,
-    };
-    effects.lower_action_expr(expr)?;
-    effects.validate_action_expr_candidates(expr)?;
-    effects.resolve_action_expr_diagnostics(expr)
-}
-
-fn replay_direct_facts_frontend_effects(
-    egraph: &mut EGraph,
-    facts: &[GeneratedFact],
-    synthetic: Option<&SyntheticGlobals>,
-) -> Result<(), TypeError> {
-    let mut effects = RuleFrontendEffects {
-        type_info: &egraph.type_info,
-        symbol_gen: &mut egraph.parser.symbol_gen,
-        scope: HashSet::default(),
-        expr_outputs: HashMap::default(),
-        action_outputs: HashMap::default(),
-        synthetic,
-        query_context: Context::Read,
-        action_context: Context::Full,
-    };
-    for fact in facts {
-        effects.lower_query_fact(fact);
-    }
-    visit_query_binding_vars(facts, &mut |_, variable| {
-        effects.observe_query_binding(variable);
-        Ok::<(), TypeError>(())
-    })?;
-    for fact in facts {
-        effects.validate_query_fact_candidates(fact)?;
-    }
-    for fact in facts {
-        effects.resolve_query_fact_diagnostics(fact)?;
-    }
-    Ok(())
-}
-
-fn replay_direct_schedule_frontend_effects(
-    egraph: &mut EGraph,
-    schedule: &GeneratedSchedule,
-    synthetic: Option<&SyntheticGlobals>,
-) -> Result<(), TypeError> {
-    match schedule {
-        GenericSchedule::Saturate(_, schedule) | GenericSchedule::Repeat(_, _, schedule) => {
-            replay_direct_schedule_frontend_effects(egraph, schedule, synthetic)
-        }
-        GenericSchedule::Sequence(_, schedules) => {
-            for schedule in schedules {
-                replay_direct_schedule_frontend_effects(egraph, schedule, synthetic)?;
-            }
-            Ok(())
-        }
-        GenericSchedule::Run(_, config) => match &config.until {
-            Some(facts) => replay_direct_facts_frontend_effects(egraph, facts, synthetic),
-            None => Ok(()),
-        },
-    }
-}
-
 /// Bind portable typed expressions through exact cached call/sort resolution,
 /// the current lexical scope, and the command's explicit global policy.
 struct ExpressionBinder<'a> {
@@ -2866,8 +2125,6 @@ impl GeneratedBinder<'_> {
         let generated_merge = decl.merge;
         let state = &mut self.state;
         let egraph = &mut *self.egraph;
-        let symbol_gen = &mut egraph.parser.symbol_gen;
-        let symbol_gen_checkpoint = generated_merge.as_ref().map(|_| symbol_gen.checkpoint());
         let outputs = ftype.outputs.clone();
         let merge_result =
             egraph
@@ -2876,27 +2133,6 @@ impl GeneratedBinder<'_> {
                     let Some(generated_merge) = generated_merge else {
                         return Ok::<_, GeneratedBindError>(None);
                     };
-                    let tuple_var_names: Vec<(String, String)> = (0..outputs.len())
-                        .map(|index| (format!("old{index}"), format!("new{index}")))
-                        .collect();
-                    let mut merge_bound_names = HashSet::default();
-                    if matches!(&key.output, ValueShape::Tuple(_)) {
-                        for (old, new) in &tuple_var_names {
-                            merge_bound_names.insert(old.clone());
-                            merge_bound_names.insert(new.clone());
-                        }
-                    } else {
-                        merge_bound_names.insert("old".to_owned());
-                        merge_bound_names.insert("new".to_owned());
-                    }
-                    replay_generated_actions_effects(
-                        type_info,
-                        symbol_gen,
-                        &generated_merge.actions,
-                        None,
-                        merge_bound_names.clone(),
-                        Context::Write,
-                    )?;
                     let mut binder = ExpressionBinder {
                         type_info,
                         state,
@@ -2912,19 +2148,6 @@ impl GeneratedBinder<'_> {
 
                     let result = match &key.output {
                         ValueShape::Scalar(_) => {
-                            replay_generated_expr_effects(
-                                type_info,
-                                symbol_gen,
-                                &generated_merge.result,
-                                None,
-                                scope
-                                    .by_name
-                                    .keys()
-                                    .cloned()
-                                    .chain(merge_bound_names.iter().cloned())
-                                    .collect(),
-                                Context::Write,
-                            )?;
                             binder.observe_merge_result_scope(
                                 &generated_merge.result,
                                 &key.output,
@@ -2969,19 +2192,6 @@ impl GeneratedBinder<'_> {
                             );
                             let mut resolved_args = Vec::with_capacity(result_args.len());
                             for (arg, expected) in result_args.iter().zip(&outputs) {
-                                replay_generated_expr_effects(
-                                    type_info,
-                                    symbol_gen,
-                                    arg,
-                                    None,
-                                    scope
-                                        .by_name
-                                        .keys()
-                                        .cloned()
-                                        .chain(merge_bound_names.iter().cloned())
-                                        .collect(),
-                                    Context::Write,
-                                )?;
                                 binder.observe_merge_result_scope(arg, &key.output, &mut scope)?;
                                 let resolved =
                                     binder.bind_expr(arg.clone(), &scope, Context::Write)?;
@@ -3020,16 +2230,8 @@ impl GeneratedBinder<'_> {
                     Ok::<_, GeneratedBindError>(Some(crate::ast::ResolvedMerge { actions, result }))
                 });
         let merge = match merge_result {
-            Ok(merge) => {
-                if let Some(checkpoint) = symbol_gen_checkpoint {
-                    symbol_gen.commit(checkpoint);
-                }
-                merge
-            }
+            Ok(merge) => merge,
             Err(error) => {
-                if let Some(checkpoint) = symbol_gen_checkpoint {
-                    symbol_gen.rollback(checkpoint);
-                }
                 // The provisional insertion deliberately does not advance the
                 // head generation. A self-reference may therefore have filled
                 // this generation's exact-call cache before a later merge
@@ -3217,14 +2419,13 @@ impl GeneratedBinder<'_> {
 
     /// Run the typed rule boundary. A generated rule never enters source
     /// parsing, desugaring, inference, or global removal; this method owns the
-    /// ordered freshness, binding, and prefix-validation contract shared by
-    /// top-level and nested entries.
+    /// binding and prefix-validation contract shared by top-level and nested
+    /// entries. Generated binding does not consume source-parser freshness.
     fn typecheck_direct_rule(
         &mut self,
         rule: GeneratedRule,
     ) -> Result<ResolvedNCommand, EgglogError> {
         let rule_span = rule.span.clone();
-        replay_direct_rule_frontend_effects(self.egraph, &rule)?;
         let direct = self.bind_direct_rule(rule)?;
         let ResolvedNCommand::NormRule { rule } = &direct else {
             return Err(GeneratedBindError::InternalInvariant {
@@ -3251,21 +2452,6 @@ impl GeneratedBinder<'_> {
         for step in setup {
             match step {
                 GeneratedExtractionStep::Scratch(scratch) => {
-                    let generated_action = GenericAction::Let(
-                        scratch.span.clone(),
-                        scratch.variable.clone(),
-                        scratch.value.clone(),
-                    );
-                    let generated_actions = GenericActions(vec![generated_action]);
-                    replay_generated_actions_effects(
-                        &self.egraph.type_info,
-                        &mut self.egraph.parser.symbol_gen,
-                        &generated_actions,
-                        Some(&synthetic_globals),
-                        HashSet::default(),
-                        Context::Full,
-                    )?;
-
                     if synthetic_globals.contains_key(&scratch.variable.id)
                         || synthetic_globals
                             .values()
@@ -3355,15 +2541,6 @@ impl GeneratedBinder<'_> {
                     return Err(GeneratedBindError::TopLevelLet { span }.into());
                 }
                 GeneratedExtractionStep::Action(action) => {
-                    let generated_actions = GenericActions(vec![action.clone()]);
-                    replay_generated_actions_effects(
-                        &self.egraph.type_info,
-                        &mut self.egraph.parser.symbol_gen,
-                        &generated_actions,
-                        Some(&synthetic_globals),
-                        HashSet::default(),
-                        Context::Full,
-                    )?;
                     let action = {
                         let type_info = self.egraph.type_info();
                         let mut binder = ExpressionBinder {
@@ -3380,7 +2557,6 @@ impl GeneratedBinder<'_> {
             }
         }
 
-        replay_direct_schedule_frontend_effects(self.egraph, &rebuild, Some(&synthetic_globals))?;
         let schedule = {
             let type_info = self.egraph.type_info();
             let mut binder = ExpressionBinder {
@@ -3404,14 +2580,6 @@ impl GeneratedBinder<'_> {
             return Err(TypeError::CannotExtractTupleOutput(function.name.clone(), span).into());
         }
 
-        replay_generated_expr_effects(
-            &self.egraph.type_info,
-            &mut self.egraph.parser.symbol_gen,
-            &expr,
-            Some(&synthetic_globals),
-            HashSet::default(),
-            Context::Full,
-        )?;
         let expr = {
             let type_info = self.egraph.type_info();
             let mut binder = ExpressionBinder {
@@ -3433,14 +2601,6 @@ impl GeneratedBinder<'_> {
             expr
         };
 
-        replay_generated_expr_effects(
-            &self.egraph.type_info,
-            &mut self.egraph.parser.symbol_gen,
-            &variants,
-            Some(&synthetic_globals),
-            HashSet::default(),
-            Context::Full,
-        )?;
         let resolved_variants = {
             let type_info = self.egraph.type_info();
             let mut binder = ExpressionBinder {
@@ -3483,90 +2643,20 @@ impl GeneratedBinder<'_> {
         &mut self,
         generated: GeneratedCommand,
     ) -> Result<Vec<ResolvedNCommand>, EgglogError> {
-        let generated = match generated {
+        match generated {
             GeneratedCommand::Extraction {
                 span,
                 setup,
                 rebuild,
                 expr,
                 variants,
-            } => {
-                return self.typecheck_direct_extraction(span, setup, rebuild, expr, variants);
-            }
-            generated => generated,
-        };
-        let mut output_checkpoint = None;
-        match &generated {
-            GeneratedCommand::Rule(rule) => {
-                return self
-                    .typecheck_direct_rule(rule.clone())
-                    .map(|rule| vec![rule]);
-            }
-            GeneratedCommand::Actions(actions) => {
-                replay_generated_actions_effects(
-                    &self.egraph.type_info,
-                    &mut self.egraph.parser.symbol_gen,
-                    actions,
-                    None,
-                    HashSet::default(),
-                    Context::Full,
-                )?;
-            }
-            GeneratedCommand::Sort(_)
-            | GeneratedCommand::Function(_)
-            | GeneratedCommand::Index(_)
-            | GeneratedCommand::AddRuleset(..)
-            | GeneratedCommand::CombinedRuleset(..)
-            | GeneratedCommand::PrintOverallStatistics(..)
-            | GeneratedCommand::PrintFunction(..)
-            | GeneratedCommand::ProveExists(..)
-            | GeneratedCommand::PrintSize(..)
-            | GeneratedCommand::Push(..)
-            | GeneratedCommand::Pop(..)
-            | GeneratedCommand::Input { .. } => {}
-            GeneratedCommand::Extraction { .. } => {
-                unreachable!("extraction plans return before ordinary command binding")
-            }
-            GeneratedCommand::Schedule(schedule) => {
-                replay_direct_schedule_frontend_effects(self.egraph, schedule, None)?;
-            }
-            GeneratedCommand::Check(_, facts) => {
-                replay_direct_facts_frontend_effects(self.egraph, facts, None)?;
-            }
-            GeneratedCommand::Output { exprs, .. } => {
-                let checkpoint = self.egraph.parser.symbol_gen.checkpoint();
-                let result = exprs.iter().try_for_each(|expr| {
-                    replay_generated_expr_effects(
-                        &self.egraph.type_info,
-                        &mut self.egraph.parser.symbol_gen,
-                        expr,
-                        None,
-                        HashSet::default(),
-                        Context::Full,
-                    )
-                });
-                if let Err(error) = result {
-                    self.egraph.parser.symbol_gen.commit(checkpoint);
-                    return Err(error.into());
-                }
-                output_checkpoint = Some(checkpoint);
+            } => self.typecheck_direct_extraction(span, setup, rebuild, expr, variants),
+            GeneratedCommand::Rule(rule) => self.typecheck_direct_rule(rule).map(|rule| vec![rule]),
+            generated => {
+                let bound = self.bind_command(generated)?;
+                Ok(vec![bound])
             }
         }
-        let bound = match self.bind_command(generated) {
-            Ok(bound) => {
-                if let Some(checkpoint) = output_checkpoint {
-                    self.egraph.parser.symbol_gen.commit(checkpoint);
-                }
-                bound
-            }
-            Err(error) => {
-                if let Some(checkpoint) = output_checkpoint {
-                    self.egraph.parser.symbol_gen.rollback(checkpoint);
-                }
-                return Err(error.into());
-            }
-        };
-        Ok(vec![bound])
     }
 
     /// Bind one declaration and publish its source-role layout only after the
@@ -3634,215 +2724,4 @@ pub(crate) fn resolve_generated_batch(
     let state = std::mem::take(&mut binder.state);
     *binder.egraph.extension_state_or_default::<BindingState>() = state;
     result
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rule_frontend_defers_query_ambiguity_until_after_rhs_candidates() {
-        let mut source_egraph = EGraph::default();
-        crate::add_primitive!(&mut source_egraph, "!=" = |a: #, b: #| -?> () {
-            (a != b).then_some(())
-        });
-        let mut direct_egraph = source_egraph.clone();
-        let mut expected_symbols = source_egraph.parser.symbol_gen.clone();
-        let _: String = expected_symbols.fresh("!=");
-        let _: String = expected_symbols.fresh("missing");
-
-        let span = crate::span!();
-        let source_rule = GenericRule {
-            span: span.clone(),
-            body: vec![GenericFact::Fact(GenericExpr::Call(
-                span.clone(),
-                "!=".to_owned(),
-                vec![
-                    GenericExpr::Var(span.clone(), "x".to_owned()),
-                    GenericExpr::Var(span.clone(), "x".to_owned()),
-                ],
-            ))],
-            head: GenericActions(vec![GenericAction::Expr(
-                span.clone(),
-                GenericExpr::Call(
-                    span.clone(),
-                    "missing".to_owned(),
-                    vec![GenericExpr::Var(span.clone(), "x".to_owned())],
-                ),
-            )]),
-            name: "source-order".to_owned(),
-            ruleset: String::new(),
-            eval_mode: RuleEvalMode::Seminaive,
-            no_decomp: false,
-            include_subsumed: false,
-        };
-        let source_type_info = source_egraph.type_info().clone();
-        let source_error = source_type_info
-            .typecheck_rule(
-                &mut source_egraph.parser.symbol_gen,
-                &source_rule,
-                source_egraph.seminaive,
-            )
-            .unwrap_err();
-
-        let i64_key = SortKey {
-            name: "i64".to_owned(),
-            class: SortSemanticClass::Value,
-        };
-        let unit_key = SortKey {
-            name: "Unit".to_owned(),
-            class: SortSemanticClass::Value,
-        };
-        let x = GeneratedVar {
-            id: LocalId(0),
-            name: "x".to_owned(),
-            sort: i64_key.clone(),
-            role: GeneratedVarRole::Local,
-        };
-        let direct_rule = GenericRule {
-            span: span.clone(),
-            body: vec![GenericFact::Fact(GenericExpr::Call(
-                span.clone(),
-                CallKey::Primitive(PrimitiveKey {
-                    name: "!=".to_owned(),
-                    inputs: vec![i64_key.clone(), i64_key.clone()],
-                    output: unit_key.clone(),
-                }),
-                vec![
-                    GenericExpr::Var(span.clone(), x.clone()),
-                    GenericExpr::Var(span.clone(), x.clone()),
-                ],
-            ))],
-            head: GenericActions(vec![GenericAction::Expr(
-                span.clone(),
-                GenericExpr::Call(
-                    span.clone(),
-                    CallKey::Function(FunctionKey {
-                        name: "missing".to_owned(),
-                        subtype: FunctionSubtype::Custom,
-                        inputs: vec![i64_key],
-                        output: ValueShape::Scalar(unit_key),
-                    }),
-                    vec![GenericExpr::Var(span.clone(), x)],
-                ),
-            )]),
-            name: "direct-order".to_owned(),
-            ruleset: String::new(),
-            eval_mode: RuleEvalMode::Seminaive,
-            no_decomp: false,
-            include_subsumed: false,
-        };
-        let direct_error =
-            replay_direct_rule_frontend_effects(&mut direct_egraph, &direct_rule).unwrap_err();
-
-        assert!(matches!(
-            source_error,
-            TypeError::UnboundFunction(ref name, _) if name == "missing"
-        ));
-        assert!(matches!(
-            direct_error,
-            TypeError::UnboundFunction(ref name, _) if name == "missing"
-        ));
-        assert_eq!(source_egraph.parser.symbol_gen, expected_symbols);
-        assert_eq!(direct_egraph.parser.symbol_gen, expected_symbols);
-    }
-
-    #[test]
-    fn standalone_actions_defer_ambiguity_until_after_all_candidates() {
-        let mut source_egraph = EGraph::default();
-        crate::add_primitive!(&mut source_egraph, "!=" = |a: #, b: #| -?> () {
-            (a != b).then_some(())
-        });
-        let mut direct_egraph = source_egraph.clone();
-        let mut expected_symbols = source_egraph.parser.symbol_gen.clone();
-        let _: String = expected_symbols.fresh("!=");
-        let _: String = expected_symbols.fresh("missing");
-
-        let span = crate::span!();
-        let source_actions = GenericActions(vec![
-            GenericAction::Expr(
-                span.clone(),
-                GenericExpr::Call(
-                    span.clone(),
-                    "!=".to_owned(),
-                    vec![
-                        GenericExpr::Lit(span.clone(), Literal::Int(1)),
-                        GenericExpr::Lit(span.clone(), Literal::Int(1)),
-                    ],
-                ),
-            ),
-            GenericAction::Expr(
-                span.clone(),
-                GenericExpr::Call(span.clone(), "missing".to_owned(), vec![]),
-            ),
-        ]);
-        let source_type_info = source_egraph.type_info().clone();
-        let source_error = source_type_info
-            .typecheck_standalone_actions(
-                &mut source_egraph.parser.symbol_gen,
-                &source_actions,
-                &Default::default(),
-                Context::Full,
-            )
-            .unwrap_err();
-
-        let i64_key = SortKey {
-            name: "i64".to_owned(),
-            class: SortSemanticClass::Value,
-        };
-        let unit_key = SortKey {
-            name: "Unit".to_owned(),
-            class: SortSemanticClass::Value,
-        };
-        let direct_actions = GenericActions(vec![
-            GenericAction::Expr(
-                span.clone(),
-                GenericExpr::Call(
-                    span.clone(),
-                    CallKey::Primitive(PrimitiveKey {
-                        name: "!=".to_owned(),
-                        inputs: vec![i64_key.clone(), i64_key],
-                        output: unit_key.clone(),
-                    }),
-                    vec![
-                        GenericExpr::Lit(span.clone(), Literal::Int(1)),
-                        GenericExpr::Lit(span.clone(), Literal::Int(1)),
-                    ],
-                ),
-            ),
-            GenericAction::Expr(
-                span.clone(),
-                GenericExpr::Call(
-                    span.clone(),
-                    CallKey::Function(FunctionKey {
-                        name: "missing".to_owned(),
-                        subtype: FunctionSubtype::Custom,
-                        inputs: vec![],
-                        output: ValueShape::Scalar(unit_key),
-                    }),
-                    vec![],
-                ),
-            ),
-        ]);
-        let direct_error = replay_generated_actions_effects(
-            &direct_egraph.type_info,
-            &mut direct_egraph.parser.symbol_gen,
-            &direct_actions,
-            None,
-            HashSet::default(),
-            Context::Full,
-        )
-        .unwrap_err();
-
-        assert!(matches!(
-            source_error,
-            TypeError::UnboundFunction(ref name, _) if name == "missing"
-        ));
-        assert!(matches!(
-            direct_error,
-            TypeError::UnboundFunction(ref name, _) if name == "missing"
-        ));
-        assert_eq!(source_egraph.parser.symbol_gen, expected_symbols);
-        assert_eq!(direct_egraph.parser.symbol_gen, expected_symbols);
-    }
 }
