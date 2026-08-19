@@ -1,0 +1,10 @@
+(def tip_nat_lt (fun (rec X {(S X) Z}) (rec X {(S X) Z}) {True False})
+  (lambda (x (rec X {(S X) Z})) (y (rec X {(S X) Z})) (cases y
+    [Z False]
+    [(S z) (cases x
+      [Z True]
+      [(S n) (tip_nat_lt n z)])])))
+
+(def tip_nat_gt
+  (lambda [trans] (x (rec X {(S X) Z})) (y (rec X {(S X) Z}))
+    (tip_nat_lt y x)))

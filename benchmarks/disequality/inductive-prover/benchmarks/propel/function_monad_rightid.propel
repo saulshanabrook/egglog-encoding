@@ -1,0 +1,12 @@
+(type nat {Z (S nat)})
+(type function (fun nat nat))
+
+(def return (lambda (x nat) (lambda (v nat) x)))
+
+(def >>= (fun function (fun nat function) function)
+  (lambda (x function) (f (fun nat function))
+    (lambda (v nat) (f (x v) v))))
+
+(prop-for >>=
+  (forall (m function)
+    (== (>>= m return) m)))

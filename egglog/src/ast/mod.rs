@@ -132,8 +132,9 @@ where
     },
     CoreAction(GenericAction<Head, Leaf>),
     /// A block of actions run once, immediately, with a shared *local* scope:
-    /// `let`s bind local variables rather than global functions. A user-written
-    /// block is unsupported under the term/proof encoding.
+    /// `let`s bind local variables rather than global functions. User-written
+    /// blocks preserve their ordered local actions when lowered for term/proof
+    /// checking.
     CoreActions(GenericActions<Head, Leaf>),
     /// `(let <var> (begin <action>* <expr>))`: run the block with a shared local
     /// scope, then bind the *global* `<var>` to the trailing `<expr>`. The last

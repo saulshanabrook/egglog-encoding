@@ -1,0 +1,20 @@
+{
+  "baseline_source_revision": "5069c4317492d9a3c8d0d1da4265d59e556bbaeb",
+  "binary_sha256": {
+    "baseline_euf": "35f541999e170b15ec1ecae3413499853fd82377f496691ef12b8353e8b9a22a",
+    "baseline_propel": "2140063b5030876f35c8f71b04d061e46f74cc73890584a8e5c59bdc366bdf81",
+    "candidate_euf": "f56767aaee988076e118a2394b864a00f1f50d59c6621340d2b61745e1e71f96",
+    "candidate_propel": "0ce1df22cebf55dbfb33367dffdb98154b8ed8520df3166b5bf507768fb4ca0f"
+  },
+  "candidate_source_revision": "b87057b36f4c8cc2eed68e2a4dd950a530525216",
+  "candidate_source_status": [],
+  "generated_at": "2026-08-17T18:43:30.576252+00:00",
+  "input_sha256": {
+    "euf_uf_614981": "3f6de121f080be7d0b8220993fe72610a2bb50dbb80e9e8a21ef9e056335a5da",
+    "euf_uf_815405": "957697674165b33dc541f2a905e60e7524c314e58b3d74991127d6f598a0a800",
+    "propel_gset_comm": "e032fdc6c85c82c48993e06336deab5cd0cd2f2fa94aa2cbaf68373c64d8045e",
+    "propel_tip_bin_plus_assoc": "680ef39351e0de07432b8d195178ed9af92ad5ab7dd2261e304c2501c837df3a"
+  },
+  "platform": "macOS-26.6-arm64-arm-64bit-Mach-O",
+  "schema_version": 1
+}

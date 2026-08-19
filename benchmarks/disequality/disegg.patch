@@ -1,0 +1,140 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index b444e30..fe91f84 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -5,7 +5,7 @@ description = "An implementation of egraphs"
+ edition = "2018"
+ keywords = ["e-graphs"]
+ license = "MIT"
+-name = "egg"
++name = "disegg"
+ readme = "README.md"
+ repository = "https://github.com/egraphs-good/egg"
+ version = "0.9.5"
+diff --git a/src/eclass.rs b/src/eclass.rs
+index 5f74b2c..6a40387 100644
+--- a/src/eclass.rs
++++ b/src/eclass.rs
+@@ -12,6 +12,8 @@ pub struct EClass<L, D> {
+     pub id: Id,
+     /// The equivalent enodes in this equivalence class.
+     pub nodes: Vec<L>,
++    /// The eclasses known to be unequal to this one.
++    pub forbid: Vec<Id>,
+     /// The analysis data associated with this eclass.
+     ///
+     /// Modifying this field will _not_ cause changes to propagate through the e-graph.
+diff --git a/src/egraph.rs b/src/egraph.rs
+index 2295634..b5a2039 100644
+--- a/src/egraph.rs
++++ b/src/egraph.rs
+@@ -84,6 +84,10 @@ pub struct EGraph<L: Language, N: Analysis<L>> {
+     /// Only manually set it if you know what you're doing.
+     #[cfg_attr(feature = "serde-1", serde(skip))]
+     pub clean: bool,
++    /// Whether the graph is inconsistent or not, i.e. whether some eclass exists that belongs to
++    /// its own forbid list (see `disunion` and `perform_union`).
++    #[cfg_attr(feature = "serde-1", serde(skip))]
++    pub inconsistent: bool,
+ }
+ 
+ #[cfg(feature = "serde-1")]
+@@ -120,6 +124,7 @@ impl<L: Language, N: Analysis<L>> EGraph<L, N> {
+             memo: Default::default(),
+             analysis_pending: Default::default(),
+             classes_by_op: Default::default(),
++            inconsistent: false,
+         }
+     }
+ 
+@@ -739,6 +744,7 @@ impl<L: Language, N: Analysis<L>> EGraph<L, N> {
+         let class = EClass {
+             id,
+             nodes: vec![enode.clone()],
++            forbid: vec![],
+             data: N::make(self, &enode),
+             parents: Default::default(),
+         };
+@@ -881,6 +887,17 @@ impl<L: Language, N: Analysis<L>> EGraph<L, N> {
+         // make id1 the new root
+         self.unionfind.union(id1, id2);
+ 
++        // Check for inconsistency
++        // Searching inside class1 is not necessary, searching inside class2's forbid is enough:
++        // 1. if the graph is already inconsistent then the `||` will short circuit
++        // 2. if the graph is consistent, then:
++        //    a) id1 \not\in class1.forbid and,
++        //    b) id2 \not\in class2.forbid.
++        //    the graph is inconsistent when $id1 \in class1.forbid \cup class2.forbid$
++        //    which is equivalent to $(id1 \in class1.forbid) or (id1 \in class2.forbid)$
++        //    which, because of (a), is equivalent to $id1 \in class2.forbid$
++        self.inconsistent = self.inconsistent || self.classes[&id2].forbid.iter().any(|id| self.find(*id) == id1);
++
+         assert_ne!(id1, id2);
+         let class2 = self.classes.remove(&id2).unwrap();
+         let class1 = self.classes.get_mut(&id1).unwrap();
+@@ -897,11 +914,64 @@ impl<L: Language, N: Analysis<L>> EGraph<L, N> {
+ 
+         concat_vecs(&mut class1.nodes, class2.nodes);
+         concat_vecs(&mut class1.parents, class2.parents);
++        concat_vecs(&mut class1.forbid, class2.forbid);
+ 
+         N::modify(self, id1);
+         true
+     }
+ 
++    /// Marks that two nodes are unequal
++    ///
++    /// The [`EGraph::inconsistent`] flag may be set to true here if:
++    ///   1. [`id1`] and [`id2`] are the same; i.e. two nodes of the same eclass (two equal nodes)
++    ///      are marked as unequal, or
++    ///   2. [`id1`] occurs in the forbid list of [`id2`] or vice-versa
++    pub fn disunion(&mut self, id1: Id, id2: Id) {
++      let id1 = self.find(id1);
++      let id2 = self.find(id2);
++
++      fn set_inconsistent_or_add<L: Language, N: Analysis<L>>(
++        egraph: &mut EGraph<L, N>,
++        id: Id, // id that will make the egraph inconsistent
++        id_to_add: Id,
++      ) {
++        let mut found = false;
++        let mut inconsistent = egraph.inconsistent || id_to_add == id;
++        for forbidden in &egraph.classes[&id].forbid {
++          let forbidden = egraph.find(*forbidden);
++          inconsistent |= forbidden == id;
++          if forbidden == id_to_add {
++            found = true;
++            break;
++          }
++        }
++        if !found {
++          egraph.classes.get_mut(&id).unwrap().forbid.push(id_to_add);
++        }
++        egraph.inconsistent = inconsistent;
++      }
++
++      set_inconsistent_or_add(self, id1, id2);
++      set_inconsistent_or_add(self, id2, id1);
++    }
++
++    /// Checks if two nodes are unequal
++    pub fn are_unequal(&self, id1: Id, id2: Id) -> bool {
++      let mut id1 = self.find(id1);
++      let mut id2 = self.find(id2);
++
++      if self.classes[&id1].forbid.len() > self.classes[&id2].forbid.len() {
++        std::mem::swap(&mut id1, &mut id2);
++      }
++
++      self.classes[&id1].forbid.iter().any(|id| self.find(*id) == id2)
++    }
++
++    /// Checks that no inconsistency was found in the egraph
++    pub fn is_consistent(&self) -> bool {
++      !self.inconsistent
++    }
++
+     /// Update the analysis data of an e-class.
+     ///
+     /// This also propagates the changes through the e-graph,

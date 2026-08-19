@@ -1,0 +1,11 @@
+---
+source: egglog-experimental/tests/files.rs
+expression: snapshot
+---
+(Trans
+  (= (HostWitness 0) (HostWitness 1))
+  (Sym (= (HostWitness 0) (x)) (Fiat (= (x) (HostWitness 0))))
+  (Trans
+    (= (x) (HostWitness 1))
+    (Fiat (= (x) (y)))
+    (Fiat (= (y) (HostWitness 1)))))

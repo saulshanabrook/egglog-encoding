@@ -1,0 +1,10 @@
+(type nat {Z (S nat)})
+(type list {Nil (Cons nat list)})
+
+(def fmap (fun (fun nat nat) list list)
+  (lambda (f (fun nat nat)) (x list)
+    (cases x
+      [Nil Nil]
+      [(Cons x xs) (Cons (f x) (fmap f xs))])))
+
+(prop-for fmap (forall (x list) (== (fmap (lambda (y nat) y) x) x)))

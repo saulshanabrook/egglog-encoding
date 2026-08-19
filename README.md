@@ -210,6 +210,29 @@ Paths are resolved relative to the command invocation directory, not relative
 to either target. Both endpoints therefore run the exact same file and fact
 directory contents. Their SHA-256 hashes are part of the cache identity.
 
+The named `disequality` suite tracks proof overhead on two substantial
+workloads from the *Dis/Equality Graphs* artifact: a self-contained EUF model
+capture and the full parameter-analysis replay. The latter keeps its generated
+59 MB of TSV facts out of Git. Prepare them once, then run the ordinary
+proofs-versus-off comparison:
+
+```bash
+make disequality-parameter-facts
+./bench.py --suite disequality
+# Equivalent convenience target:
+make disequality-benchmark
+```
+
+Preparation downloads and verifies the artifact's 795 MB (758 MiB) Zenodo
+archive when it is not already in the local cache. The benchmark varies only
+the proof treatment; both workloads use egglog-experimental's default
+disequality encoding.
+
+The EUF source and parameter-analysis program are part of the cache identity;
+the parameter fact-directory hash is recorded separately. Propel is omitted
+from this suite because its largest standalone capture is too small to be a
+useful proof-performance signal.
+
 With no positional files, the representative suite is:
 
 - `egglog-experimental/tests/math-microbenchmark-rational.egg`

@@ -1,0 +1,25 @@
+(def bv_succ (fun (rec X {(B0 X) (B1 X) BZ}) (rec X {(B0 X) (B1 X) BZ}))
+  (lambda (x (rec X {(B0 X) (B1 X) BZ})) (cases x
+    [BZ (B1 BZ)]
+    [(B0 x) (B1 x)]
+    [(B1 x) (B0 (bv_succ x))])))
+
+(def bv_add (fun (rec X {(B0 X) (B1 X) BZ}) (rec X {(B0 X) (B1 X) BZ}) (rec X {(B0 X) (B1 X) BZ}))
+  (lambda (x (rec X {(B0 X) (B1 X) BZ})) (y (rec X {(B0 X) (B1 X) BZ})) (cases (Tuple x y)
+    [(Tuple BZ BZ) BZ]
+    [(Tuple BZ (B0 y)) (B0 y)]
+    [(Tuple BZ (B1 y)) (B1 y)]
+    [(Tuple (B0 x) BZ) (B0 x)]
+    [(Tuple (B1 x) BZ) (B1 x)]
+    [(Tuple (B0 x) (B0 y)) (B0 (bv_add x y))]
+    [(Tuple (B0 x) (B1 y)) (B1 (bv_add x y))]
+    [(Tuple (B1 x) (B0 y)) (B1 (bv_add x y))]
+    [(Tuple (B1 x) (B1 y)) (B0 (bv_succ (bv_add x y)))])))
+
+(def bv_mult (fun (rec X {(B0 X) (B1 X) BZ}) (rec X {(B0 X) (B1 X) BZ}) (rec X {(B0 X) (B1 X) BZ}))
+  (lambda [assoc] (x (rec X {(B0 X) (B1 X) BZ})) (y (rec X {(B0 X) (B1 X) BZ}))
+    (cases (Pair x y)
+      [(Pair _ BZ) BZ]
+      [(Pair BZ _) BZ]
+      [(Pair (B0 x) y) (B0 (bv_mult x y))]
+      [(Pair (B1 x) y) (bv_add y (B0 (bv_mult x y)))])))

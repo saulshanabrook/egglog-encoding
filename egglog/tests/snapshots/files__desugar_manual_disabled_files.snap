@@ -1,0 +1,5 @@
+---
+source: egglog/tests/files.rs
+expression: "snapshot.join(\"\\n\")"
+---
+looking_up_global.egg: the expected-failure body binds a global name; static desugaring cannot determine whether that binding survives without executing the command

@@ -1,0 +1,10 @@
+(type nat {Z (S nat)})
+(type function (fun nat nat))
+
+(def fmap (fun (fun nat nat) function function)
+  (lambda (f (fun nat nat)) (x function)
+    (lambda (v nat) (f (x v)))))
+
+(prop-for fmap
+  (forall (x function) (f (fun nat nat)) (g (fun nat nat))
+    (== (fmap (lambda (y nat) (f (g y))) x) (fmap f (fmap g x)))))

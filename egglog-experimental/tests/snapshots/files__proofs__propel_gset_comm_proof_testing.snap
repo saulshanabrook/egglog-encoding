@@ -1,0 +1,12 @@
+---
+source: egglog-experimental/tests/files.rs
+expression: snapshot
+---
+(let t0 (Apply (Atom "x") (Atom "n")))
+(Trans
+  (= (HostWitness 0) (HostWitness 1))
+  (Sym (= (HostWitness 0) t0) (Fiat (= t0 (HostWitness 0))))
+  (Trans
+    (= t0 (HostWitness 1))
+    (Fiat (= t0 (Bot)))
+    (Fiat (= (Bot) (HostWitness 1)))))

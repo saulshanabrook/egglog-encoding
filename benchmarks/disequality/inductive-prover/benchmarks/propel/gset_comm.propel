@@ -1,0 +1,3 @@
+(def gset
+  (lambda [comm] (x (fun (rec X {(S X) Z}) {True False})) (y (fun (rec X {(S X) Z}) {True False}))
+    (lambda (n (rec X {(S X) Z})) (or (x n) (y n)))))

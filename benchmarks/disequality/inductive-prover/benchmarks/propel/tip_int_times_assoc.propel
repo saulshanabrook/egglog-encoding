@@ -1,0 +1,42 @@
+(def tip_nat_plus (fun (rec X {(S X) Z}) (rec X {(S X) Z}) (rec X {(S X) Z}))
+  (lambda (x (rec X {(S X) Z})) (y (rec X {(S X) Z})) (cases x
+    [Z y]
+    [(S z) (S (tip_nat_plus z y))])))
+
+(def tip_nat_times (fun (rec X {(S X) Z}) (rec X {(S X) Z}) (rec X {(S X) Z}))
+  (lambda (x (rec X {(S X) Z})) (y (rec X {(S X) Z})) (cases x
+    [Z Z]
+    [(S z) (tip_nat_plus y (tip_nat_times z y))])))
+
+(def tip_to_integer
+ (lambda (x {Pos Neg}) (y (rec X {(S X) Z})) (cases x
+   [Pos (P y)]
+   [Neg (cases y
+     [Z (P Z)]
+     [(S z) (N z)])])))
+
+(def tip_sign
+ (lambda (x {(P (rec X {(S X) Z})) (N (rec X {(S X) Z}))}) (cases x
+   [(P y) Pos]
+   [(N z) Neg])))
+
+(def tip_opposite_sign
+ (lambda (x {Pos Neg}) (cases x
+   [Pos Neg]
+   [Neg Pos])))
+
+(def tip_times_sign
+ (lambda (x {Pos Neg}) (y {Pos Neg}) (cases x
+   [Pos y]
+   [Neg (tip_opposite_sign y)])))
+
+(def tip_abs
+ (lambda (x {(P (rec X {(S X) Z})) (N (rec X {(S X) Z}))}) (cases x
+   [(P n) n]
+   [(N m) (tip_nat_plus (S Z) m)])))
+
+(def tip_int_times
+  (lambda [assoc] (x {(P (rec X {(S X) Z})) (N (rec X {(S X) Z}))}) (y {(P (rec X {(S X) Z})) (N (rec X {(S X) Z}))})
+    (tip_to_integer
+      (tip_times_sign (tip_sign x) (tip_sign y))
+      (tip_nat_times (tip_abs x) (tip_abs y)))))

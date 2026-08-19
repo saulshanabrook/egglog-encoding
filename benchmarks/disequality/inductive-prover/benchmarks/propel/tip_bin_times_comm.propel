@@ -1,0 +1,23 @@
+(def bin_s (fun (rec X {(ZeroAnd X) (OneAnd X) One}) (rec X {(ZeroAnd X) (OneAnd X) One}))
+  (lambda (x (rec X {(ZeroAnd X) (OneAnd X) One})) (cases x
+    [One (ZeroAnd One)]
+    [(ZeroAnd xs) (OneAnd xs)]
+    [(OneAnd ys) (ZeroAnd (bin_s ys))])))
+
+(def tip_bin_plus (fun (rec X {(ZeroAnd X) (OneAnd X) One}) (rec X {(ZeroAnd X) (OneAnd X) One}) (rec X {(ZeroAnd X) (OneAnd X) One}))
+  (lambda (x (rec X {(ZeroAnd X) (OneAnd X) One})) (y (rec X {(ZeroAnd X) (OneAnd X) One})) (cases x
+    [One (bin_s y)]
+    [(ZeroAnd z) (cases y
+      [One (bin_s x)]
+      [(ZeroAnd ys) (ZeroAnd (tip_bin_plus z ys))]
+      [(OneAnd xs) (OneAnd (tip_bin_plus z xs))])]
+    [(OneAnd x2) (cases y
+      [One (bin_s x)]
+      [(ZeroAnd zs) (OneAnd (tip_bin_plus x2 zs))]
+      [(OneAnd ys2) (ZeroAnd (bin_s (tip_bin_plus x2 ys2)))])])))
+
+(def tip_bin_times (fun (rec X {(ZeroAnd X) (OneAnd X) One}) (rec X {(ZeroAnd X) (OneAnd X) One}) (rec X {(ZeroAnd X) (OneAnd X) One}))
+  (lambda [comm] (x (rec X {(ZeroAnd X) (OneAnd X) One})) (y (rec X {(ZeroAnd X) (OneAnd X) One})) (cases x
+    [One y]
+    [(ZeroAnd xs1) (ZeroAnd (tip_bin_times xs1 y))]
+    [(OneAnd xs12) (tip_bin_plus (ZeroAnd (tip_bin_times xs12 y)) y)])))

@@ -1,0 +1,14 @@
+(type nat {Z (S nat)})
+(type state (fun nat {(Return nat nat)}))
+
+(def nat_add (fun nat nat nat)
+  (lambda (x nat) (y nat) (cases x
+    [Z y]
+    [(S x) (S (nat_add x y))])))
+
+(def <> (fun state state state)
+  (lambda [assoc] (m state) (n state)
+    (lambda (r nat)
+      (let (Return x t) (m r)
+        (let (Return y s) (n t)
+          (Return (nat_add x y) s))))))

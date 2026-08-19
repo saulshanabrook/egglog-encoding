@@ -1,0 +1,1322 @@
+{
+  "import": {
+    "commit": "c52112f751c6e3a05205f275a85a5e0e7829e192",
+    "excluded_categories": {
+      "artifact_container_wrapper": {
+        "file_count": 2,
+        "uncompressed_size_bytes": 1545
+      },
+      "large_euf_benchmark_corpus": {
+        "file_count": 7591,
+        "uncompressed_size_bytes": 437074618
+      },
+      "nested_repository_metadata": {
+        "file_count": 2,
+        "uncompressed_size_bytes": 587
+      },
+      "parameter_analysis_managed_by_existing_pipeline": {
+        "file_count": 10,
+        "uncompressed_size_bytes": 11148054
+      },
+      "prebuilt_container_image": {
+        "file_count": 1,
+        "uncompressed_size_bytes": 742060280
+      },
+      "precomputed_results": {
+        "file_count": 2,
+        "uncompressed_size_bytes": 14279354
+      }
+    },
+    "excluded_file_count": 7608,
+    "imported_at": "2026-08-13T14:06:36-04:00",
+    "included_file_count": 213
+  },
+  "included_files": [
+    {
+      "archive_path": "README.md",
+      "repository_path": "benchmarks/disequality/README.md",
+      "sha256": "8ba17b43408ed0edacf1027982e50a5b0445f3461910e7fd6bb21f68a7912436",
+      "size_bytes": 18655
+    },
+    {
+      "archive_path": "disegg.patch",
+      "repository_path": "benchmarks/disequality/disegg.patch",
+      "sha256": "1f62bed78a804b4cd56ff379775b7d333c40624f3fcff4e37e7bbb247196eb46",
+      "size_bytes": 5244
+    },
+    {
+      "archive_path": "euf-solver/Cargo.lock",
+      "repository_path": "benchmarks/disequality/euf-solver/Cargo.lock",
+      "sha256": "067873d4969f3966e954752884d128f03b924186627041348f35123881f28754",
+      "size_bytes": 18879
+    },
+    {
+      "archive_path": "euf-solver/Cargo.toml",
+      "repository_path": "benchmarks/disequality/euf-solver/Cargo.toml",
+      "sha256": "9bfb4b1a5361e89ca21beadaafd20115e483c7e991179e131247894286a1cf72",
+      "size_bytes": 427
+    },
+    {
+      "archive_path": "euf-solver/README.md",
+      "repository_path": "benchmarks/disequality/euf-solver/README.md",
+      "sha256": "c0650c9ef15cd5611e39e9c21f380fb496e6db0b62d3513690066d4c85820f35",
+      "size_bytes": 10745
+    },
+    {
+      "archive_path": "euf-solver/euf-solver.rs",
+      "repository_path": "benchmarks/disequality/euf-solver/euf-solver.rs",
+      "sha256": "8aef5340ca9e7fccbe60b03a2546b7f256dfc3b4ebf8ad77ce0f12259ef30bc5",
+      "size_bytes": 35272
+    },
+    {
+      "archive_path": "euf-solver/gen-table.py",
+      "repository_path": "benchmarks/disequality/euf-solver/gen-table.py",
+      "sha256": "415dc41df5bcc81822df4c8331228fcfc1cda555af178754ae65e725e9ec8bbb",
+      "size_bytes": 3400
+    },
+    {
+      "archive_path": "euf-solver/run.sh",
+      "repository_path": "benchmarks/disequality/euf-solver/run.sh",
+      "sha256": "141aa4dc38baaaf5cfbb508d14ad8be8ea735ac7906da3ec4ea8783ce3192a66",
+      "size_bytes": 467
+    },
+    {
+      "archive_path": "inductive-prover/README.md",
+      "repository_path": "benchmarks/disequality/inductive-prover/README.md",
+      "sha256": "a52bd37d02bd186fd6bb6994217291c9041a7919f03e5820de4e428c94ef8ea9",
+      "size_bytes": 15461
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/bv_add_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/bv_add_assoc.propel",
+      "sha256": "7a618f410e36c6ae30fd4704bf852d041ed0a7148e7d94592e949861b22be895",
+      "size_bytes": 736
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/bv_add_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/bv_add_comm.propel",
+      "sha256": "a46cd13adddbd2c02cb637f9e331e973ab1a05f52db5af64167f30d6cec1f925",
+      "size_bytes": 735
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/bv_add_leftid.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/bv_add_leftid.propel",
+      "sha256": "6fa2ae74cf61c73de99bd9a5350b7a4036557c715576a13b5bec8c398a438143",
+      "size_bytes": 808
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/bv_add_rightid.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/bv_add_rightid.propel",
+      "sha256": "6fa2ae74cf61c73de99bd9a5350b7a4036557c715576a13b5bec8c398a438143",
+      "size_bytes": 808
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/bv_addmod_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/bv_addmod_assoc.propel",
+      "sha256": "7e9db9550de52311ddb6cf187cd98a56e71cae583a429035a48563d5413a3601",
+      "size_bytes": 643
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/bv_addmod_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/bv_addmod_comm.propel",
+      "sha256": "942286704c906f962fd53a7791398a4c0350b6425e4d6ac3fb12edd816e6037e",
+      "size_bytes": 642
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/bv_lwwreg_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/bv_lwwreg_assoc.propel",
+      "sha256": "57b35ea05a1284c56176e5b62ba634b6cbffeb8f59d5f3b05550a7d4c5f6d950",
+      "size_bytes": 1204
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/bv_lwwreg_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/bv_lwwreg_comm.propel",
+      "sha256": "67de6ea0b8f95d66fa9c7dd2df08671cdd8f4fb25cf9b765e323b12fb6c279cc",
+      "size_bytes": 1203
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/bv_lwwreg_idem.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/bv_lwwreg_idem.propel",
+      "sha256": "7e50facbaba7f727a59afd998d0dca13f20c857ce0ff2099ffa1c46ee34f44bf",
+      "size_bytes": 1203
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/bv_max_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/bv_max_assoc.propel",
+      "sha256": "c684b0a11ac6aea9e82e7d0eb871302e0b0e2f50f583232e52a59c1c5c7b0da1",
+      "size_bytes": 817
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/bv_max_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/bv_max_comm.propel",
+      "sha256": "c32c895a50942865372dc0bac8890ab3fca7358133680362f90e0fc531f4d670",
+      "size_bytes": 816
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/bv_max_idem.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/bv_max_idem.propel",
+      "sha256": "126f37457541192c8738b51d7194c730ee479164e2fd56514c8904f84cd74ada",
+      "size_bytes": 816
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/bv_max_leftid.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/bv_max_leftid.propel",
+      "sha256": "0acc571025c3fb18feae6e20e8965d9cecb7c3003a465ee623a3959c7b88a054",
+      "size_bytes": 889
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/bv_max_rightid.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/bv_max_rightid.propel",
+      "sha256": "28525570e2f528604391ef5a23545585f3617c83696c1abe1c100c702b0c3ff6",
+      "size_bytes": 889
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/bv_min_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/bv_min_assoc.propel",
+      "sha256": "40df26c75603f18946b355b783fe13e474cdaba31b99309794ee9a667cd2a2b7",
+      "size_bytes": 819
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/bv_min_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/bv_min_comm.propel",
+      "sha256": "9056ad5e36db08a5c86df689dc6a734eb3ee8e3897470be1b067ab4a144d8114",
+      "size_bytes": 818
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/bv_min_idem.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/bv_min_idem.propel",
+      "sha256": "d5cfb6407c4f5af6bd2579b117418243c4b282bb1da879d859a11c5b66601014",
+      "size_bytes": 818
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/bv_mult_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/bv_mult_assoc.propel",
+      "sha256": "795518cbee1526140fa0f677aef9eb0fce5a370fb14c847441913d04ee85d6f4",
+      "size_bytes": 1077
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/bv_mult_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/bv_mult_comm.propel",
+      "sha256": "b827d1367696df49ea6404e81727180d368c7c30cf89a24f628e773b2ba771c7",
+      "size_bytes": 1076
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/bv_mult_leftid.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/bv_mult_leftid.propel",
+      "sha256": "402ec44ae57be4ec36c93e79042b8dc3ec43a1044d807b3b39eec79a22b9dff7",
+      "size_bytes": 1156
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/bv_mult_rightid.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/bv_mult_rightid.propel",
+      "sha256": "02f03289bf40e1f9296f1691a7d25b85f6b65fc02a65af1edccd28fcfd48cabf",
+      "size_bytes": 1156
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/bv_multmod_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/bv_multmod_assoc.propel",
+      "sha256": "7e69cdeb2e5baad0d0a8017806f37740d72450a772a7c0aad0d87fd20f75ed95",
+      "size_bytes": 996
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/bv_multmod_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/bv_multmod_comm.propel",
+      "sha256": "dbae9cee48996619136d328cfe8c86fb5ad57d4e20b4b28646ea7aa241e57ee6",
+      "size_bytes": 995
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/bvlist_gcounter_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/bvlist_gcounter_assoc.propel",
+      "sha256": "607203b87a9f16732d8cf83d2c1492227babd06b9eed7638abca6d58e0e102b7",
+      "size_bytes": 1267
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/bvlist_gcounter_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/bvlist_gcounter_comm.propel",
+      "sha256": "8a0b9d6b266fd4e54f871bda1b0e62d45666ead674a770b191596decfcea2491",
+      "size_bytes": 1266
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/bvlist_gcounter_idem.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/bvlist_gcounter_idem.propel",
+      "sha256": "00dc07f09943990e11e58aabe953ecd48ec90262d03512a4a980d8f91b22db8e",
+      "size_bytes": 1266
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/function_functor_composition.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/function_functor_composition.propel",
+      "sha256": "7f6bab5a2b3afed2c41f53778aaf9104be0d5676df3769d56303e42cf4f7e130",
+      "size_bytes": 318
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/function_functor_id.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/function_functor_id.propel",
+      "sha256": "a0820cd0e6833ab175d469a8c9eb6aff6dd1b4c9918e0e4c82b59e8fd94e709a",
+      "size_bytes": 250
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/function_monad_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/function_monad_assoc.propel",
+      "sha256": "eb11e2f06739b9f369c57f506d94f61e1a723bead9a9b9527e1e621044d74abd",
+      "size_bytes": 389
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/function_monad_leftid.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/function_monad_leftid.propel",
+      "sha256": "74c3a39ac585b490f57f465b95c83341cd24de93cb4f8e4474e6e5a1691832f9",
+      "size_bytes": 329
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/function_monad_rightid.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/function_monad_rightid.propel",
+      "sha256": "86a1a863e0311545d85d58829aaab2ec6a7d2d47606ad4f20fdd75432630d528",
+      "size_bytes": 303
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/function_semigroup_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/function_semigroup_assoc.propel",
+      "sha256": "cf4d7a0c8c7b0aa5ac459bb476d1ab879d8ded2870abea12b6f51e56fa61a0b1",
+      "size_bytes": 294
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/gset_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/gset_assoc.propel",
+      "sha256": "7ed69186c9b78d27c811e2a88cbca6a107026c116e041b28e02aeec42bceea77",
+      "size_bytes": 164
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/gset_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/gset_comm.propel",
+      "sha256": "e032fdc6c85c82c48993e06336deab5cd0cd2f2fa94aa2cbaf68373c64d8045e",
+      "size_bytes": 163
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/gset_idem.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/gset_idem.propel",
+      "sha256": "3fb70064e6a9f45fe393fb000856a87b785ca90d45694a5b93f9b6eb96a5df76",
+      "size_bytes": 163
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/list_functor_composition.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/list_functor_composition.propel",
+      "sha256": "bb14cc4af2bfab3105764e7c7e2eae490749efb7d9539d66cae7a010ee7cb802",
+      "size_bytes": 350
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/list_functor_id.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/list_functor_id.propel",
+      "sha256": "58af8882dfc2f9ad54ed8d7760c7e41d6b395ea527e62cb39773c60813049488",
+      "size_bytes": 282
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/list_monad_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/list_monad_assoc.propel",
+      "sha256": "5e7c1bf5531aedcf8728067ec09443d370d9bd49417a56861acea051539eb920",
+      "size_bytes": 521
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/list_monad_leftid.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/list_monad_leftid.propel",
+      "sha256": "31cf87d725c4938a8b54d56e6765d3fb6f1df213d339520b33699759320b9bad",
+      "size_bytes": 469
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/list_monad_rightid.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/list_monad_rightid.propel",
+      "sha256": "c763f1950f8d6beb27c10ce34a425206a251ee1c40842c05d43c48f4f4a039c0",
+      "size_bytes": 443
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/list_semigroup_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/list_semigroup_assoc.propel",
+      "sha256": "a9f1eb1dc267bd8b96e468973eaac2938a558560064852a04f6971c11e838e21",
+      "size_bytes": 192
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/maybe_functor_composition.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/maybe_functor_composition.propel",
+      "sha256": "0be1d48f87322e17a1cdb337acfc637bef4242169b9b82835726de96d35b0545",
+      "size_bytes": 347
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/maybe_functor_id.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/maybe_functor_id.propel",
+      "sha256": "0dd6cd479ac8e931443d6db90ccc6b7c7e0178a31e2ace4a4649d2be0f8d144e",
+      "size_bytes": 279
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/maybe_monad_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/maybe_monad_assoc.propel",
+      "sha256": "1d8c4a6884decb457ef8c91f730e2caabc382361a13332fe0b085bb8a570772d",
+      "size_bytes": 387
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/maybe_monad_leftid.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/maybe_monad_leftid.propel",
+      "sha256": "3a04c72c561b294a5b7f4ca6d3e3dfdf30d8c8750f75853f6bccf52a1f6ddb34",
+      "size_bytes": 333
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/maybe_monad_rightid.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/maybe_monad_rightid.propel",
+      "sha256": "b0f8132117b760857835c44e2363eb64f49125fff1a18d6c3d70a237bce5c3fd",
+      "size_bytes": 307
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/maybe_semigroup_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/maybe_semigroup_assoc.propel",
+      "sha256": "66ca3327451d7016b08765c52f349331115d9e968eccf9dc4f5f43c472c0146b",
+      "size_bytes": 371
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/nat_add1_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/nat_add1_assoc.propel",
+      "sha256": "4966109a0954ce96037aede736082bd2f2bcaf89e27fa9c66fdbd9271b928a3f",
+      "size_bytes": 189
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/nat_add1_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/nat_add1_comm.propel",
+      "sha256": "0de495739cc9f26d1640cb1ee6f9408721531c2e26f00303e22b3a4dc5873f8f",
+      "size_bytes": 188
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/nat_add1_leftid.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/nat_add1_leftid.propel",
+      "sha256": "6689d225c3cc62f3e1fadde5e9752e6d80471c4c787b8ade76854f75931e8843",
+      "size_bytes": 255
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/nat_add1_rightid.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/nat_add1_rightid.propel",
+      "sha256": "b2bcc1ade06baf70f39da583696503a538178768b255c6aab5648643f7bda300",
+      "size_bytes": 255
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/nat_add2_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/nat_add2_assoc.propel",
+      "sha256": "b1dade5c25f8800e70a009dec9672ec835cb3ad6f9525b3bd206c247dc9f64e1",
+      "size_bytes": 189
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/nat_add2_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/nat_add2_comm.propel",
+      "sha256": "e613ee556c72f2cea4ecb80cabe3684283a7095a206290bf225a678f46c61556",
+      "size_bytes": 188
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/nat_add2_leftid.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/nat_add2_leftid.propel",
+      "sha256": "9a5c631cb1837485816823ea1dee6f24db93edec650f3c586a5ccda2336fde9b",
+      "size_bytes": 255
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/nat_add2_rightid.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/nat_add2_rightid.propel",
+      "sha256": "ccbc6e0a7bc9ea2af6e4d01af0e6c2e7e71db6ab68827ceef02ea736474b92f0",
+      "size_bytes": 255
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/nat_add3_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/nat_add3_assoc.propel",
+      "sha256": "6cb9ad6423d6e0be250a6f001c92dda75c7acdab30135a469340cb9d90cd97d5",
+      "size_bytes": 247
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/nat_add3_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/nat_add3_comm.propel",
+      "sha256": "c1c9f7ac8fdd6f2b0564798ee97fa1580a78e0e3198fae70ea60323a37f5972f",
+      "size_bytes": 246
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/nat_add3_leftid.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/nat_add3_leftid.propel",
+      "sha256": "b2dedb513cb7b0653dff19b8d8b4835f9b7f8841aa99d0524b044960f4ce13e1",
+      "size_bytes": 313
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/nat_add3_rightid.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/nat_add3_rightid.propel",
+      "sha256": "ca6d84b5abef08e867a3e29b47ef88a59d5b480f3257d09229e06eb82f716c21",
+      "size_bytes": 313
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/nat_lwwreg_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/nat_lwwreg_assoc.propel",
+      "sha256": "774c01f678e367447394b587266079550c0d11bd59a39b3b37af7ab9a1b08da8",
+      "size_bytes": 869
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/nat_lwwreg_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/nat_lwwreg_comm.propel",
+      "sha256": "5ae5ed33d998ecf6255e464e1ee506dce2caa4bd34b3d57dcd35de33c44ab128",
+      "size_bytes": 868
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/nat_lwwreg_idem.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/nat_lwwreg_idem.propel",
+      "sha256": "f179c4aca7d82782c11849afea9a0259785bb9e6a090cd265ba82558ad66f89c",
+      "size_bytes": 868
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/nat_max_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/nat_max_assoc.propel",
+      "sha256": "b1b10949b65b33fce7c0a62c2facd29d845d12f253f440e37aa54dd1214e632c",
+      "size_bytes": 241
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/nat_max_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/nat_max_comm.propel",
+      "sha256": "a363c57f2d3ccde2e43690b7f518a7edc7cfa9da995456b11fa35f74aefd1f72",
+      "size_bytes": 240
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/nat_max_idem.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/nat_max_idem.propel",
+      "sha256": "0762ed4ab27294f074260d86ebd43ce18a48cbd01bb02da18c1d481e677646ac",
+      "size_bytes": 240
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/nat_max_leftid.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/nat_max_leftid.propel",
+      "sha256": "44fdbac97e706e95cde96c0923956364e953abdc905a0b19bb2d6f60e9f23d01",
+      "size_bytes": 305
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/nat_max_rightid.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/nat_max_rightid.propel",
+      "sha256": "cd5fde5f901e6a6edfb4419d8aa8fbc50c1370fd41dcdebf3b6fc2b4fd15e246",
+      "size_bytes": 305
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/nat_min_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/nat_min_assoc.propel",
+      "sha256": "123086c54f7347b5c422847eebb5a226d75fa14902694f62af535f75834ec3dd",
+      "size_bytes": 241
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/nat_min_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/nat_min_comm.propel",
+      "sha256": "ecec4773b6b52c72b897340ceafc48b0cf90b81e77fe3e25ba1d9ff523d5e57c",
+      "size_bytes": 240
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/nat_min_idem.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/nat_min_idem.propel",
+      "sha256": "04b4f47d42a37bae84bf86b324dde4fc143e7c23c1288ed8d6f715718f0db264",
+      "size_bytes": 240
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/nat_mult_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/nat_mult_assoc.propel",
+      "sha256": "5fc2ce4d6072728c5a3a09794001c89efac8316552ebce0520fcb38d3887fbf1",
+      "size_bytes": 376
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/nat_mult_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/nat_mult_comm.propel",
+      "sha256": "99b3aee194a4ce0549818a1167ba5334b52d80c30a0f4e94c319e32a808f2f4e",
+      "size_bytes": 375
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/nat_mult_leftid.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/nat_mult_leftid.propel",
+      "sha256": "cd2db747467e1ea9315a75d4e0820159c49c4edefff2415dd04cb354dd61ed3d",
+      "size_bytes": 446
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/nat_mult_rightid.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/nat_mult_rightid.propel",
+      "sha256": "77e962e354286523d85c0fc3bcb213c31011d015e8d19118e2a8a2959f81d523",
+      "size_bytes": 446
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/natlist_gcounter_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/natlist_gcounter_assoc.propel",
+      "sha256": "5a9cba60dc1af80cc5a53ae21307c3b0ed2b0f9df40d1c2719117b77d583e8f5",
+      "size_bytes": 649
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/natlist_gcounter_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/natlist_gcounter_comm.propel",
+      "sha256": "094a75e3ac9e4a49b015a15ab8d0cb2737f56099b43c9d581ed47a7567d4c631",
+      "size_bytes": 648
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/natlist_gcounter_idem.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/natlist_gcounter_idem.propel",
+      "sha256": "a94f851d09db7432a3399d69179d1c92d912460c6e3d460c44fc9ce115c6f91d",
+      "size_bytes": 648
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/pair_functor_composition.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/pair_functor_composition.propel",
+      "sha256": "0642c1adf0d5cfd11ed595720bb1e7b26cc037e663e72372a931b81ac3a8e50f",
+      "size_bytes": 308
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/pair_functor_id.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/pair_functor_id.propel",
+      "sha256": "c508e7cedc525cd21b21589f73c2271607c4f00bf522a3a13440ffea3a30ed96",
+      "size_bytes": 240
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/pair_monad_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/pair_monad_assoc.propel",
+      "sha256": "23d38f4195e13dfb3a30037012ac058d551dc9c1618259d805e39ff1d1b961bd",
+      "size_bytes": 508
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/pair_monad_leftid.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/pair_monad_leftid.propel",
+      "sha256": "7003bdfaad38ed97b2555a13a7c6952a56aa77642588051351c376193c770b9e",
+      "size_bytes": 456
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/pair_monad_rightid.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/pair_monad_rightid.propel",
+      "sha256": "24632843ed8e9970d729dd869119ee575b7669d06faf030beb1187155c8a7c54",
+      "size_bytes": 430
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/pair_semigroup_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/pair_semigroup_assoc.propel",
+      "sha256": "0d46cfb4a1f9266d2864febdd4c158c36b655ba5acb418b25696d64ce7f55a35",
+      "size_bytes": 323
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/state_functor_composition.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/state_functor_composition.propel",
+      "sha256": "c5806d8c7fa94417b3a89c5d51f0702953baba79d60f00d1f5f16f7c1ba612d1",
+      "size_bytes": 356
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/state_functor_id.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/state_functor_id.propel",
+      "sha256": "bf39922a61e01ea71cc1cc57d6844cde908c52e51582d4f36a7a99daa6b2c3c0",
+      "size_bytes": 288
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/state_monad_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/state_monad_assoc.propel",
+      "sha256": "a6ad2b4214791e72553bb8ea876d06d45e85804ae84d969c960c0f6797e50ce9",
+      "size_bytes": 419
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/state_monad_leftid.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/state_monad_leftid.propel",
+      "sha256": "661eb800fe2933062c7c42cd62572eed48830670ff2be77e7186ef4e2fe7601b",
+      "size_bytes": 365
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/state_monad_rightid.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/state_monad_rightid.propel",
+      "sha256": "a065758287484576c843777fed6ca5bb22366d6f42c40d5b69058da888f5a06c",
+      "size_bytes": 339
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/state_semigroup_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/state_semigroup_assoc.propel",
+      "sha256": "d599abeaa5cec2d9a9b6110d0df1e68d894d750b55c04f2f7fc0f6bcd5ba2ace",
+      "size_bytes": 368
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_bin_plus_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_bin_plus_assoc.propel",
+      "sha256": "680ef39351e0de07432b8d195178ed9af92ad5ab7dd2261e304c2501c837df3a",
+      "size_bytes": 828
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_bin_plus_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_bin_plus_comm.propel",
+      "sha256": "fec29c8270b9bcf6301ea968680e46ad69661395cad8a4fbab8b232ef81a5ac8",
+      "size_bytes": 827
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_bin_times_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_bin_times_assoc.propel",
+      "sha256": "cdb0504beb9cc062d85e4a5b427926c1887e2efe6300ed2506e29847fbe9b96d",
+      "size_bytes": 1203
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_bin_times_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_bin_times_comm.propel",
+      "sha256": "e74b535a8fb955759b52f1e41d637d45bff4723517ce5494972f8a06add1e06a",
+      "size_bytes": 1202
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_int_plus_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_int_plus_assoc.propel",
+      "sha256": "49891e3659bf62a8e37c4cf364cc36728e4d9675704d217dafa3333f2e96a063",
+      "size_bytes": 973
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_int_plus_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_int_plus_comm.propel",
+      "sha256": "53f3ee26d5f7377a973f66854fff4f313c0f15bfb50746ee9c137261e5ba2ca7",
+      "size_bytes": 972
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_int_times_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_int_times_assoc.propel",
+      "sha256": "f009f0ad823a87628b1c12b8125740f97f41044d5440dee260092513973b2f14",
+      "size_bytes": 1241
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_int_times_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_int_times_comm.propel",
+      "sha256": "7164ab96bc15b0ce360c7b01e386e5b2fb2b3acdf3824b4471fa98bb131d0022",
+      "size_bytes": 1240
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_list_append_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_list_append_assoc.propel",
+      "sha256": "d312e4dae466f9142422fbb148f2582515b32263af43adfd3ddf7f6240e43b15",
+      "size_bytes": 280
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_geq_antisym.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_geq_antisym.propel",
+      "sha256": "5a2e52b0c44b356d0c7c24a2fea18b2fb11a1a127746e7af506589fc69a32f2e",
+      "size_bytes": 325
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_geq_refl.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_geq_refl.propel",
+      "sha256": "aa5afda5df0d009ee9376cad541a2e6ef9fe399501e946ede55ca03bee011ab3",
+      "size_bytes": 322
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_geq_trans.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_geq_trans.propel",
+      "sha256": "7d3905b11b87971b2716160cd6ec9e4c3100a98e63649d03f388016c97c1012f",
+      "size_bytes": 323
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_gt_asym.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_gt_asym.propel",
+      "sha256": "cf5796917ea317dc8dd2cac56741cff2b116766b671d4cef055006e35ecd20ff",
+      "size_bytes": 320
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_gt_irefl.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_gt_irefl.propel",
+      "sha256": "b4862b01e29c3e9c388a7e1b506e09def6a5ef98f4639816e7f0313a6d1e4348",
+      "size_bytes": 321
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_gt_trans.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_gt_trans.propel",
+      "sha256": "61d8c8ba99e7f4af8a28b6b701a82e34191ba9cdb84733460253888f75f97639",
+      "size_bytes": 321
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_leq_antisym.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_leq_antisym.propel",
+      "sha256": "2ef7e131ba178a7de7c0ac22ebddb550ed392c4146397bf8de9f0a8a8efac652",
+      "size_bytes": 233
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_leq_refl.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_leq_refl.propel",
+      "sha256": "59a2b2d5687a0adeb8a5fa67e77c9556661a391319d3997926ab666a66808d68",
+      "size_bytes": 230
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_leq_trans.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_leq_trans.propel",
+      "sha256": "978259bef109094503ce434de720f65829d482635f63147ea4f0165633e7138f",
+      "size_bytes": 231
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_lt_asym.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_lt_asym.propel",
+      "sha256": "8f566db26a8291e9bc78d88d3fd1096abfce5b31c47fa8d91d7e610b5c398993",
+      "size_bytes": 226
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_lt_irefl.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_lt_irefl.propel",
+      "sha256": "d1f03a5db41bfe836c954549d535f26fab90874476c2af40d51f9c3eb10a0b7c",
+      "size_bytes": 227
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_lt_trans.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_lt_trans.propel",
+      "sha256": "eb86982478f89b09f8378d155d9af279d83add8a25601beb3ec85932d38ce2ce",
+      "size_bytes": 227
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_max_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_max_assoc.propel",
+      "sha256": "a285bfef5103a6d7f6ab8650e848cefde4318bf197733ac5ad691f8044a51921",
+      "size_bytes": 336
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_max_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_max_comm.propel",
+      "sha256": "7f9a36e6fecc1a6badb19f9a140af958dc2cccaa734529ad0f8c5c569cb698ad",
+      "size_bytes": 335
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_max_idem.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_max_idem.propel",
+      "sha256": "d869a9f28cce827e6a02a6ea68176690448c8023e43d43c8b1acac2a6f39fe8f",
+      "size_bytes": 335
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_min_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_min_assoc.propel",
+      "sha256": "552d29e8999f1aca9024b50f881e57f50b6f0f2eee25f038b1b0b4c85413b4d8",
+      "size_bytes": 336
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_min_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_min_comm.propel",
+      "sha256": "b7683fc334830a8d9961764f8780ba43535b422d9bf95e5abccc1814e417aa0c",
+      "size_bytes": 335
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_min_idem.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_min_idem.propel",
+      "sha256": "bb5176d32b8a10b3009e3e22ce442aba5eeb02f44171f14fd1dafc9d0ae80e6d",
+      "size_bytes": 335
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_plus_acc_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_plus_acc_assoc.propel",
+      "sha256": "963429a27cb6a61a82f95b09e72a32e7529d04ffef0a8b202cd5e68c667d6bdd",
+      "size_bytes": 205
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_plus_acc_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_plus_acc_comm.propel",
+      "sha256": "eec270499b239c69e70199f57d8f50ca57b761d3914fe257e5af0f84cfc0f776",
+      "size_bytes": 204
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_plus_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_plus_assoc.propel",
+      "sha256": "bf01f49a05d2981bc2c3aac7f650f6c3d85273b2ef463b7bdc2b4142fceb3e8d",
+      "size_bytes": 197
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_plus_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_plus_comm.propel",
+      "sha256": "49a2c2166c5035d87006e048361609be6292712bbb37d39972b95511fa2f3d83",
+      "size_bytes": 196
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_times_acc_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_times_acc_assoc.propel",
+      "sha256": "9d09f92c3cd43f8c28f1d90d41487f7d2086416a2baca3ed607d4b9f1af9a924",
+      "size_bytes": 482
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_times_acc_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_times_acc_comm.propel",
+      "sha256": "269e4276b83a41074a19ec53a300b59b562750a03d3b0bf866e539550e5de508",
+      "size_bytes": 481
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_times_alt_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_times_alt_assoc.propel",
+      "sha256": "cc2f6c9724475c465b1e2cecca67ee9ae81422ee24955a45258eacf1c5891462",
+      "size_bytes": 487
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_times_alt_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_times_alt_comm.propel",
+      "sha256": "aab961e6bba492a02db8e4bdd64f61daa3a6c29e7220b63ff8bed36079158947",
+      "size_bytes": 486
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_times_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_times_assoc.propel",
+      "sha256": "b2c7e2104e3292616d9a0e7163fc641307441832e336fd01f3916195458628da",
+      "size_bytes": 402
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_times_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_times_comm.propel",
+      "sha256": "d3a165d0232b98b646fec07c6e71dbe31167995774b8a780885cd91a9e489791",
+      "size_bytes": 401
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_times_weird_assoc.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_times_weird_assoc.propel",
+      "sha256": "a55b5fbbcf081bff498b5851d463ecf0d63f083aed64b66eb97f00b166e4eaae",
+      "size_bytes": 759
+    },
+    {
+      "archive_path": "inductive-prover/benchmarks/propel/tip_nat_times_weird_comm.propel",
+      "repository_path": "benchmarks/disequality/inductive-prover/benchmarks/propel/tip_nat_times_weird_comm.propel",
+      "sha256": "db40fb2d11d7a91f5849f20a97092e2c2ef0bbab49adee2c10260c43b99f51b3",
+      "size_bytes": 758
+    },
+    {
+      "archive_path": "inductive-prover/gen-table.py",
+      "repository_path": "benchmarks/disequality/inductive-prover/gen-table.py",
+      "sha256": "525006f2e7f892c7c49787b5001f89b8c50ba8673449336c4a4da0c520cd1777",
+      "size_bytes": 1235
+    },
+    {
+      "archive_path": "inductive-prover/propel/LICENSE",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "size_bytes": 11358
+    },
+    {
+      "archive_path": "inductive-prover/propel/build.sbt",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/build.sbt",
+      "sha256": "d85c9ac053816af6527f6dd8dfc37cd88fef83a17ec7e5a7241c251bb3fca8f6",
+      "size_bytes": 2089
+    },
+    {
+      "archive_path": "inductive-prover/propel/project/build.properties",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/project/build.properties",
+      "sha256": "7eec732340313479433996321d158c6fb684d2df4b0e80648c10fa3603c763da",
+      "size_bytes": 19
+    },
+    {
+      "archive_path": "inductive-prover/propel/project/build.sbt",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/project/build.sbt",
+      "sha256": "f31d1b0ce7b8f34fb4e9a6b583fc02b911012330a57829950df05532283f1353",
+      "size_bytes": 83
+    },
+    {
+      "archive_path": "inductive-prover/propel/project/plugins.sbt",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/project/plugins.sbt",
+      "sha256": "0e26b81703d353bf5ba13011c33c2d29ec3dd032643b3e326a6a3a773d764656",
+      "size_bytes": 273
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/ast/ast.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/ast/ast.scala",
+      "sha256": "9087799fc64e064e0981eac704667b5c92e1a1d0778b824b22c07b113db9243e",
+      "size_bytes": 8134
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/ast/conversion.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/ast/conversion.scala",
+      "sha256": "e6477251416303d2bd1ae1496490d7547b641e34b44a11dbfdc2e31a4b4bb488",
+      "size_bytes": 7058
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/ast/dsl/dsl.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/ast/dsl/dsl.scala",
+      "sha256": "4ff67c03626be89058f50ee198307e65d1c240dfda2ad13f1c389c6837c5d322",
+      "size_bytes": 4925
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/ast/dsl/impl/impl.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/ast/dsl/impl/impl.scala",
+      "sha256": "8a38124d7caf191aa3176042800770af0f5692cde534f7ee16bfb725bbcf7344",
+      "size_bytes": 4028
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/ast/enrichment.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/ast/enrichment.scala",
+      "sha256": "805c4af91cc57be81c35580dd91f40979159ca2caa81f2ad2adfc0decee568b3",
+      "size_bytes": 4123
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/ast/error.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/ast/error.scala",
+      "sha256": "eaa9e2740e067b4bfc8e22bee342cacd38a8529693019d1bad232bf2635847fc",
+      "size_bytes": 2899
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/ast/impl/impl.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/ast/impl/impl.scala",
+      "sha256": "1f0c00d2cc42b1522fa34b672adb1163091b868003d4d72eaa21434e0af61a4a",
+      "size_bytes": 7404
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/ast/naming.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/ast/naming.scala",
+      "sha256": "9d515c5ab5eab4be83d47d84f88a7e8e76a88174b632e23a5c5d05b7e85af2c2",
+      "size_bytes": 783
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/ast/substitution.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/ast/substitution.scala",
+      "sha256": "6e030c10785981cda33f3732197ab75eb3c89f64d7150ebf9141f88d857bd8f3",
+      "size_bytes": 7537
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/ast/syntactic.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/ast/syntactic.scala",
+      "sha256": "a5a3d730c03c706bdd51db3c238253010ebea72fde7714672a09cccb9bf7c5eb",
+      "size_bytes": 9373
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/ast/util.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/ast/util.scala",
+      "sha256": "9848153a0ee7a8871e4e6f1652edabee6f788a54e499136d8807477b06c7e5a6",
+      "size_bytes": 2187
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/dsl/impl/argument.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/dsl/impl/argument.scala",
+      "sha256": "0f590d671583546ae5c7623cbea4205f7f99e6967454685c17a3008093aab221",
+      "size_bytes": 194
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/dsl/impl/checked.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/dsl/impl/checked.scala",
+      "sha256": "e0102c6cad0d20ccc0483f150172e47e98bb8d26844d7f0a59800301c314c370",
+      "size_bytes": 51306
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/dsl/impl/function.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/dsl/impl/function.scala",
+      "sha256": "6e52870a36a8462ddaae99a18adca43b09101af090bcbfb9148ec5c59e0eb8b9",
+      "size_bytes": 5893
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/dsl/impl/lifting.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/dsl/impl/lifting.scala",
+      "sha256": "2de12dad0972c58eee3435bafa875dc23989fadd1c6e8577f1e21b2707587262",
+      "size_bytes": 5637
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/dsl/impl/unchecked.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/dsl/impl/unchecked.scala",
+      "sha256": "0fab44cba3465cee397d11ff0767fe3131beb74860a0fc3cb6de6e059bd23628",
+      "size_bytes": 194
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/dsl/scala/package.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/dsl/scala/package.scala",
+      "sha256": "786f2efb8cb310fe250cf6234b332b3691b915bb910f3df0115523e68a16fc1f",
+      "size_bytes": 1377
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/evaluator/concrete.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/evaluator/concrete.scala",
+      "sha256": "e0fc9258d1652f6d8bdc285b750d78ace5cb90d009c48db07efb7e8a2a420fdb",
+      "size_bytes": 2348
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/evaluator/egraph/EClass.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/evaluator/egraph/EClass.scala",
+      "sha256": "30c11705ed3cfcfed664f37cda9df76c62ef1bfe959735d45d523dabe096f030",
+      "size_bytes": 813
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/evaluator/egraph/EClassGenerator.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/evaluator/egraph/EClassGenerator.scala",
+      "sha256": "2a2f813f45060f9e627dc8a20c214119f7b7f6c8d660b9700cfeec308c9fa9a1",
+      "size_bytes": 168
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/evaluator/egraph/ENode.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/evaluator/egraph/ENode.scala",
+      "sha256": "916a9f640ad65d3110165a0b7df9e21fcf7174c985d90103068708c453db96f1",
+      "size_bytes": 1048
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/evaluator/egraph/Element.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/evaluator/egraph/Element.scala",
+      "sha256": "adf0ee218bcf19268476e5cbd1bb9f2e5275888eed62c397ee0fed1b1a1f0d66",
+      "size_bytes": 341
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/evaluator/egraph/Language.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/evaluator/egraph/Language.scala",
+      "sha256": "b6b1d51dca9b9d1671dde568c22e12332d0fe57dd0f1f9fa3cb975d379e8d371",
+      "size_bytes": 3971
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/evaluator/egraph/Operator.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/evaluator/egraph/Operator.scala",
+      "sha256": "12fed4d1bba4285c36a0594c52f6ec004fb8a17b75f8ba62c7797bd329d618b7",
+      "size_bytes": 472
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/evaluator/egraph/mutable/EGraph.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/evaluator/egraph/mutable/EGraph.scala",
+      "sha256": "827dd1792ec4ae7e13e7e2054c83195aacafdd6b8b8c7461fcaac1e91b43f295",
+      "size_bytes": 13815
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/evaluator/egraph/mutable/EGraphOps.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/evaluator/egraph/mutable/EGraphOps.scala",
+      "sha256": "1e771306d399ce91371e20c630bb0ba3e9438496af75fda3f6d1b6c307a23c27",
+      "size_bytes": 2425
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/evaluator/egraph/mutable/UnionFind.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/evaluator/egraph/mutable/UnionFind.scala",
+      "sha256": "5d094d912c8c7c24dc0e782c2d7594cd62cafbdbc1166c8ff71769efedf692be",
+      "size_bytes": 3944
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/evaluator/egraph/mutable/UnionFindOps.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/evaluator/egraph/mutable/UnionFindOps.scala",
+      "sha256": "a26223e56d7c2c5c24cb0b10d50a01117323af3e91b0059ec5768e8f16e94f28",
+      "size_bytes": 1092
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/evaluator/equality.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/evaluator/equality.scala",
+      "sha256": "7607743910da9e42b0eedc3d0a0fe027dbc61c09862036584c9debf382883827",
+      "size_bytes": 20722
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/evaluator/ordering.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/evaluator/ordering.scala",
+      "sha256": "eb096d8d4618b22387fa0b61017656a0d2b63d1462fb231c01353a94098673ea",
+      "size_bytes": 4598
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/evaluator/properties/checking.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/evaluator/properties/checking.scala",
+      "sha256": "654d85aea190d3a8c55238ded63fabf311095e575afb3d3cd652c84d51e30010",
+      "size_bytes": 43791
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/evaluator/properties/conjecture.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/evaluator/properties/conjecture.scala",
+      "sha256": "a00adfab5707cd193bee95730344ce333319d56c3ed03ebf5f70af1ce19232f9",
+      "size_bytes": 27997
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/evaluator/properties/custom.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/evaluator/properties/custom.scala",
+      "sha256": "147f0fa176e5ec11e479d7e94e7e4249c61aac64c862f08b3dfcd769089a7ece",
+      "size_bytes": 5267
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/evaluator/properties/decrease.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/evaluator/properties/decrease.scala",
+      "sha256": "cf477e2f816a3ff6674e380642ca1805c75e25a3bf21ba943ba9927df102b0a6",
+      "size_bytes": 3118
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/evaluator/properties/derivation.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/evaluator/properties/derivation.scala",
+      "sha256": "3ca2b8949e5f4d2c2e79664061d30390aa211499643cdf81cd2c48c737f15f92",
+      "size_bytes": 8322
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/evaluator/properties/derived.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/evaluator/properties/derived.scala",
+      "sha256": "5b2988fe2da8c5807304da14a8c2d4ff19b028f032fc87950de400fbb9594d82",
+      "size_bytes": 235
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/evaluator/properties/dsl.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/evaluator/properties/dsl.scala",
+      "sha256": "c8685d5afb4bcae9a9184def79107611bc83193fdf2b938dfec645aed73af61b",
+      "size_bytes": 763
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/evaluator/properties/normalization.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/evaluator/properties/normalization.scala",
+      "sha256": "4b6b6a6ddc3e3427de6d18427836fd1cc5c2713a36b7bf7cfacae9e2ecbf9ad4",
+      "size_bytes": 12915
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/evaluator/properties/properties.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/evaluator/properties/properties.scala",
+      "sha256": "eb3b79556b0af99b8d4fa100be92e548b68f8459b023c6ff114b7f99a99dcbdb",
+      "size_bytes": 17168
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/evaluator/properties/property.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/evaluator/properties/property.scala",
+      "sha256": "72f396aefd2147cbc0cbf369ed3c1ac46cad2ee99856b15258cb47218e52a751",
+      "size_bytes": 8360
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/evaluator/properties/util.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/evaluator/properties/util.scala",
+      "sha256": "9bd8caa75c54881fdca380708896d5cd36d21a00f46ec489c15567d85a011c31",
+      "size_bytes": 2439
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/evaluator/properties/weight.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/evaluator/properties/weight.scala",
+      "sha256": "daf34595f8a7519782b0f8658231f2c7f19cefa97628cd6079220405a575311b",
+      "size_bytes": 2377
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/evaluator/symbolic.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/evaluator/symbolic.scala",
+      "sha256": "5f3aaaa4f3e4a94f7dfcb8e81a1cc2259b7ab687487374f23ffdb059656dabe1",
+      "size_bytes": 32437
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/evaluator/unification.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/evaluator/unification.scala",
+      "sha256": "ab73219bf6c772b5728c1acb7da0f18609b1e4999dfcd2679bdc3d17ce4a15ed",
+      "size_bytes": 11128
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/parser/exception.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/parser/exception.scala",
+      "sha256": "63a93f8d3b08eb9b9f6763e0bf5876b899966229c797c17a569abfd63f0bd096",
+      "size_bytes": 96
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/parser/parsing.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/parser/parsing.scala",
+      "sha256": "2ec801b7fc59b59784800cad7f844cd5118c0917dbdd658942dc9c8d74fc76db",
+      "size_bytes": 19694
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/parser/sexpr.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/parser/sexpr.scala",
+      "sha256": "577544d0864ea6ca66dde78f1e2fa65c7f4d58e17d707f88f31076915c4a480e",
+      "size_bytes": 6757
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/printing/impl/format.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/printing/impl/format.scala",
+      "sha256": "b2037cd7ba23dedb0c5c4e3a0cd1fccab55b3691397ccbc758676824ff2f3844",
+      "size_bytes": 13147
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/printing/show.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/printing/show.scala",
+      "sha256": "176b4384fd2ff6ac7f8204684dc6a4be8f6c95578bb4e40d00f4328cee3d664e",
+      "size_bytes": 3829
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/propel.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/propel.scala",
+      "sha256": "1418290d1e72290ff5ae402f43576ee05861012ce6878d5cb9247618f783f9d2",
+      "size_bytes": 92125
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/typer/abstraction.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/typer/abstraction.scala",
+      "sha256": "4c39b9530f48047952e848e1318fa595479e68b069a933af9395675e9d1319ee",
+      "size_bytes": 3561
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/typer/bounds.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/typer/bounds.scala",
+      "sha256": "c7dc3714e2d22e6ca3e4c38bd78f43766492396ade15c269246fdfb6303986d7",
+      "size_bytes": 6338
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/typer/folding.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/typer/folding.scala",
+      "sha256": "e53870e55f3c508998b3c69d507787f5dbffece87dede26b91bef10d08979688",
+      "size_bytes": 1368
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/typer/patterns.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/typer/patterns.scala",
+      "sha256": "ccfdcbad92de30b2b52d75cd8fe2ea5867e170000e42c2b8016f49fa4169b964",
+      "size_bytes": 1827
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/typer/typing.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/typer/typing.scala",
+      "sha256": "79c8a9b589a81ca5ff16c474220771599b1b75734c773749d2651b59c52e037f",
+      "size_bytes": 14624
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/main/scala/propel/util/util.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/util/util.scala",
+      "sha256": "e0fc98bfdd6d4093f00491e34c17e84c582932ce183c047c10873ac5d35e7772",
+      "size_bytes": 2416
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/test/scala/propel/PropelBenchmarks.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/test/scala/propel/PropelBenchmarks.scala",
+      "sha256": "07af379830ad68fe35be7a427fedcdad86b074c00a8cef86f447eb1f35b2cfcd",
+      "size_bytes": 36313
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/test/scala/propel/PropelMoreExamples.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/test/scala/propel/PropelMoreExamples.scala",
+      "sha256": "da45438c0a63a5e81235cdfda05bd83a68dc2d46d4722ec0f4c84292d848873e",
+      "size_bytes": 10163
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/test/scala/propel/ScalaExamplesList.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/test/scala/propel/ScalaExamplesList.scala",
+      "sha256": "def8e2eb9167c672844e4f090184e7a2916ca5b843c7e5404a15d64a360a23bb",
+      "size_bytes": 323
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/test/scala/propel/ScalaExamplesNat.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/test/scala/propel/ScalaExamplesNat.scala",
+      "sha256": "c7a1a705f0d47e8723730301814bfc1f373fa9dc89402eb7ee70a760a74f93c8",
+      "size_bytes": 762
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/test/scala/propel/ScalaExamplesNum.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/test/scala/propel/ScalaExamplesNum.scala",
+      "sha256": "704f6a2e23518101d0e9abcc8b10cbcbe20b26baffd8d3719c6de8d2d969c8b4",
+      "size_bytes": 1795
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/test/scala/propel/ScalaOptionLaws.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/test/scala/propel/ScalaOptionLaws.scala",
+      "sha256": "80b9486e10e0b1e4fa5c4cdf3efb773c8de1747e31ea942fd98d71ff0818b203",
+      "size_bytes": 1192
+    },
+    {
+      "archive_path": "inductive-prover/propel/src/test/scala/propel/Tests.scala",
+      "repository_path": "benchmarks/disequality/inductive-prover/propel/src/test/scala/propel/Tests.scala",
+      "sha256": "8b77008df64b1d4da1d9f93b505ac46f2c69ccdaf7bd7343e88558af14bfbab0",
+      "size_bytes": 1360
+    },
+    {
+      "archive_path": "inductive-prover/run.sh",
+      "repository_path": "benchmarks/disequality/inductive-prover/run.sh",
+      "sha256": "64ce4701d24dd4a8efeb908622cae8dee66c1bf5f5de3d1364974df02af83030",
+      "size_bytes": 690
+    },
+    {
+      "archive_path": "inductive-prover/scripts/modules/benchmark.py",
+      "repository_path": "benchmarks/disequality/inductive-prover/scripts/modules/benchmark.py",
+      "sha256": "ed6abcafc42635940e386f6969eeac6b7b634c409de3329574529dd690f18ab9",
+      "size_bytes": 4975
+    },
+    {
+      "archive_path": "inductive-prover/scripts/modules/experiment.py",
+      "repository_path": "benchmarks/disequality/inductive-prover/scripts/modules/experiment.py",
+      "sha256": "0cfcdb47891371e381e308eb9e66726b1f76e7555ffb3fd02d4587d53775cb4c",
+      "size_bytes": 9202
+    },
+    {
+      "archive_path": "inductive-prover/scripts/modules/performance.py",
+      "repository_path": "benchmarks/disequality/inductive-prover/scripts/modules/performance.py",
+      "sha256": "954707f18dbc9ffdac39adb79edeeac05f869024dd5816734f4033a36a31a668",
+      "size_bytes": 8076
+    },
+    {
+      "archive_path": "inductive-prover/scripts/modules/printing.py",
+      "repository_path": "benchmarks/disequality/inductive-prover/scripts/modules/printing.py",
+      "sha256": "282ac1666330a085d01d67b6198e6d53f7a2e8068d7485121d10141d239d5b8f",
+      "size_bytes": 4443
+    },
+    {
+      "archive_path": "inductive-prover/scripts/modules/util.py",
+      "repository_path": "benchmarks/disequality/inductive-prover/scripts/modules/util.py",
+      "sha256": "21b4271af00bd6cf3dc54451e428d8b75966a6370884575a494153f404770be8",
+      "size_bytes": 877
+    },
+    {
+      "archive_path": "inductive-prover/scripts/run.py",
+      "repository_path": "benchmarks/disequality/inductive-prover/scripts/run.py",
+      "sha256": "abde554c619ceb1ea08899d74c85e1d8d54fdf957bf7946a6d8a99e9d008f48c",
+      "size_bytes": 289
+    }
+  ],
+  "schema_version": 1,
+  "source": {
+    "archive_name": "die-graph.zip",
+    "archive_sha256": "3e9080ca461457af0a10cfc433a5150952f82f752b4c316df1e03236d93599c4",
+    "archive_size_bytes": 795031027,
+    "archive_url": "https://zenodo.org/records/13938878/files/die-graph.zip?download=1",
+    "doi": "10.5281/zenodo.13938878"
+  }
+}

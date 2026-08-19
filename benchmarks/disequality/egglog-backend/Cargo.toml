@@ -1,0 +1,16 @@
+[package]
+name = "egglog-disequality-backend"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+egglog-experimental = { path = "../../../egglog-experimental" }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

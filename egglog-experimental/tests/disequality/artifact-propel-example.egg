@@ -1,0 +1,23 @@
+;; Port of testEGraph from Zenodo artifact 13938878. The imported source is:
+;; benchmarks/disequality/inductive-prover/propel/src/main/scala/propel/
+;; evaluator/egraph/mutable/EGraph.scala
+(datatype Term
+  (A)
+  (B)
+  (C)
+  (D)
+  (E)
+  (F)
+  (G)
+  (H)
+  (I)
+  (Fn Term))
+
+(let $fa (Fn (A)))
+(let $fb (Fn (B)))
+(union (A) (B))
+(union (C) (D))
+(union (E) (F))
+(union (C) (B))
+(disequal $fa $fb)
+(fail (check-disequalities))

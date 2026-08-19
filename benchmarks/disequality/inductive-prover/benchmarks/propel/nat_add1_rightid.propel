@@ -1,0 +1,6 @@
+(def nat_add1 (fun (rec X {(S X) Z}) (rec X {(S X) Z}) (rec X {(S X) Z}))
+  (lambda (x (rec X {(S X) Z})) (y (rec X {(S X) Z})) (cases x
+    [Z y]
+    [(S x) (S (nat_add1 x y))])))
+
+(prop-for nat_add1 (forall (x (rec X {(S X) Z})) (== (nat_add1 x Z) x)))

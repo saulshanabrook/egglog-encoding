@@ -22,6 +22,7 @@ files = ["."]
 exclude = [
     "^\\.bench-worktrees/",
     "^\\.venv/",
+    "^benchmarks/disequality/(euf-solver|inductive-prover|parameter-analysis)/",
     "^build/",
     "^dist/",
     "^egglog/",
@@ -51,6 +52,9 @@ line-length = 120
 extend-exclude = [
     ".bench-worktrees",
     ".venv",
+    "benchmarks/disequality/euf-solver",
+    "benchmarks/disequality/inductive-prover",
+    "benchmarks/disequality/parameter-analysis",
     "build",
     "dist",
     "egglog",

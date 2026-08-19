@@ -195,6 +195,12 @@ fn generate_tests(glob: &str) -> Vec<Trial> {
 
     for entry in glob::glob(glob).unwrap() {
         let path = entry.unwrap();
+        if path
+            .components()
+            .any(|component| component.as_os_str() == "snapshots")
+        {
+            continue;
+        }
         let is_fixture = path
             .components()
             .any(|component| component.as_os_str() == "fixtures");
@@ -205,7 +211,9 @@ fn generate_tests(glob: &str) -> Vec<Trial> {
             proof_testing: false,
             snapshot_across_treatments: false,
         };
-        if skipped_files.iter().any(|file| run.path.ends_with(file)) {
+        // The dedicated disequality regression supplies deterministic TSV facts.
+        let requires_fact_directory = run.path.ends_with("disequality/parameter-analysis.egg");
+        if requires_fact_directory || skipped_files.iter().any(|file| run.path.ends_with(file)) {
             continue;
         }
         let should_fail = run.should_fail();
