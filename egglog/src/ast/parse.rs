@@ -305,6 +305,10 @@ impl Parser {
         filename: Option<String>,
         input: &str,
     ) -> Result<Vec<Command>, ParseError> {
+        #[cfg(test)]
+        crate::source_frontend_call_ledger::record(
+            crate::source_frontend_call_ledger::Stage::Parse,
+        );
         let sexps = all_sexps(SexpParser::new(filename, input))?;
         let nested: Vec<Vec<_>> = map_fallible(&sexps, self, Self::parse_command)?;
         Ok(nested.into_iter().flatten().collect())
@@ -316,6 +320,10 @@ impl Parser {
         filename: Option<String>,
         input: &str,
     ) -> Result<Expr, ParseError> {
+        #[cfg(test)]
+        crate::source_frontend_call_ledger::record(
+            crate::source_frontend_call_ledger::Stage::Parse,
+        );
         let sexp = sexp(&mut SexpParser::new(filename, input))?;
         self.parse_expr(&sexp)
     }
@@ -325,6 +333,10 @@ impl Parser {
         filename: Option<String>,
         input: &str,
     ) -> Result<Schedule, ParseError> {
+        #[cfg(test)]
+        crate::source_frontend_call_ledger::record(
+            crate::source_frontend_call_ledger::Stage::Parse,
+        );
         let sexp = sexp(&mut SexpParser::new(filename, input))?;
         self.parse_schedule(&sexp)
     }
@@ -335,6 +347,10 @@ impl Parser {
         filename: Option<String>,
         input: &str,
     ) -> Result<Fact, ParseError> {
+        #[cfg(test)]
+        crate::source_frontend_call_ledger::record(
+            crate::source_frontend_call_ledger::Stage::Parse,
+        );
         let sexp = sexp(&mut SexpParser::new(filename, input))?;
         self.parse_fact(&sexp)
     }

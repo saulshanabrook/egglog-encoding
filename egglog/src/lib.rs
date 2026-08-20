@@ -97,6 +97,159 @@ pub const GLOBAL_NAME_PREFIX: &str = "$";
 
 pub type ArcSort = Arc<dyn Sort>;
 
+/// Test-only accounting for calls into the four source-frontend passes that
+/// generated semantic emission must bypass. The ledger is thread-local so a
+/// concurrently running test cannot contribute calls to an observation, and
+/// both observation and generated-window state are restored by drop guards.
+/// Generated emission currently stays on the invoking thread; moving it to a
+/// worker would require propagating the observation boundary to that worker.
+#[cfg(test)]
+mod source_frontend_call_ledger {
+    use std::cell::RefCell;
+    use std::marker::PhantomData;
+    use std::rc::Rc;
+
+    #[derive(Clone, Copy, Debug)]
+    pub(crate) enum Stage {
+        Parse,
+        Desugar,
+        Typecheck,
+        RemoveGlobals,
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub(crate) struct Counts {
+        pub(crate) parse: usize,
+        pub(crate) desugar: usize,
+        pub(crate) typecheck: usize,
+        pub(crate) remove_globals: usize,
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub(crate) struct Snapshot {
+        pub(crate) outside_generated: Counts,
+        pub(crate) generated: Counts,
+        pub(crate) generated_windows: usize,
+    }
+
+    #[derive(Default)]
+    struct ActiveLedger {
+        snapshot: Snapshot,
+        generated_depth: usize,
+    }
+
+    std::thread_local! {
+        static ACTIVE: RefCell<Option<ActiveLedger>> = const { RefCell::new(None) };
+    }
+
+    pub(crate) struct Observation {
+        active: bool,
+        _thread_bound: PhantomData<Rc<()>>,
+    }
+
+    impl Observation {
+        pub(crate) fn start() -> Self {
+            ACTIVE.with(|active| {
+                let mut active = active.borrow_mut();
+                assert!(
+                    active.is_none(),
+                    "source frontend call observations cannot be nested"
+                );
+                *active = Some(ActiveLedger::default());
+            });
+            Self {
+                active: true,
+                _thread_bound: PhantomData,
+            }
+        }
+
+        pub(crate) fn finish(mut self) -> Snapshot {
+            let ledger = ACTIVE.with(|active| {
+                active
+                    .borrow_mut()
+                    .take()
+                    .expect("source frontend call observation is not active")
+            });
+            assert_eq!(
+                ledger.generated_depth, 0,
+                "generated frontend window outlived its observation"
+            );
+            self.active = false;
+            ledger.snapshot
+        }
+    }
+
+    impl Drop for Observation {
+        fn drop(&mut self) {
+            if self.active {
+                ACTIVE.with(|active| {
+                    active.borrow_mut().take();
+                });
+            }
+        }
+    }
+
+    pub(crate) struct GeneratedWindow {
+        observed: bool,
+        _thread_bound: PhantomData<Rc<()>>,
+    }
+
+    pub(crate) fn enter_generated_window() -> GeneratedWindow {
+        let observed = ACTIVE.with(|active| {
+            let mut active = active.borrow_mut();
+            let Some(ledger) = active.as_mut() else {
+                return false;
+            };
+            if ledger.generated_depth == 0 {
+                ledger.snapshot.generated_windows += 1;
+            }
+            ledger.generated_depth += 1;
+            true
+        });
+        GeneratedWindow {
+            observed,
+            _thread_bound: PhantomData,
+        }
+    }
+
+    impl Drop for GeneratedWindow {
+        fn drop(&mut self) {
+            if self.observed {
+                ACTIVE.with(|active| {
+                    let mut active = active.borrow_mut();
+                    let ledger = active
+                        .as_mut()
+                        .expect("generated frontend window lost its observation");
+                    ledger.generated_depth = ledger
+                        .generated_depth
+                        .checked_sub(1)
+                        .expect("generated frontend window depth underflow");
+                });
+            }
+        }
+    }
+
+    pub(crate) fn record(stage: Stage) {
+        ACTIVE.with(|active| {
+            let mut active = active.borrow_mut();
+            let Some(ledger) = active.as_mut() else {
+                return;
+            };
+            let counts = if ledger.generated_depth == 0 {
+                &mut ledger.snapshot.outside_generated
+            } else {
+                &mut ledger.snapshot.generated
+            };
+            match stage {
+                Stage::Parse => counts.parse += 1,
+                Stage::Desugar => counts.desugar += 1,
+                Stage::Typecheck => counts.typecheck += 1,
+                Stage::RemoveGlobals => counts.remove_globals += 1,
+            }
+        });
+    }
+}
+
 /// Methods shared by every kind-specific primitive trait.
 ///
 /// `name` and `get_type_constraints` aren't capability-dependent, so
@@ -2708,12 +2861,14 @@ impl EGraph {
                 self.names.check_shadowing(command)?;
             }
 
-            let term_encoding_added =
-                ProofInstrumentor::add_term_encoding(self, typechecked_no_globals)?;
-            let new_typechecked = crate::proofs::generated_binder::resolve_generated_batch(
-                self,
-                term_encoding_added,
-            )?;
+            let new_typechecked = {
+                #[cfg(test)]
+                let _generated_frontend_window =
+                    source_frontend_call_ledger::enter_generated_window();
+                let term_encoding_added =
+                    ProofInstrumentor::add_term_encoding(self, typechecked_no_globals)?;
+                crate::proofs::generated_binder::resolve_generated_batch(self, term_encoding_added)?
+            };
             Ok(ResolvedNCommands {
                 desugared: new_typechecked,
                 desugared_before_proofs: per_row_before_proofs,
@@ -3781,6 +3936,117 @@ mod tests {
             source_checker.overall_report.typecheck,
             std::time::Duration::ZERO,
             "the child checker must not retain time omitted from the outer summary"
+        );
+    }
+
+    #[test]
+    fn generated_emission_makes_zero_source_frontend_calls() {
+        let mut egraph = EGraph::new_with_term_encoding();
+        let observation = source_frontend_call_ledger::Observation::start();
+
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                    (datatype Math (Num i64))
+                    (function score (Math) i64 :merge (max old new))
+                    (rule ((Num n)) ((set (score (Num n)) n)))
+                "#,
+            )
+            .expect("the source fixture must reach generated semantic emission");
+
+        let calls = observation.finish();
+        assert!(
+            calls.outside_generated.parse > 0,
+            "the fixture did not exercise source parsing"
+        );
+        assert!(
+            calls.outside_generated.desugar > 0,
+            "the fixture did not exercise source desugaring"
+        );
+        assert!(
+            calls.outside_generated.typecheck > 0,
+            "the fixture did not exercise source typechecking"
+        );
+        assert!(
+            calls.outside_generated.remove_globals > 0,
+            "the fixture did not exercise source global removal"
+        );
+        assert!(
+            calls.generated_windows > 0,
+            "the fixture did not enter the generated-emission window"
+        );
+        assert_eq!(
+            calls.generated,
+            source_frontend_call_ledger::Counts::default(),
+            "add_term_encoding plus resolve_generated_batch re-entered the source frontend"
+        );
+    }
+
+    #[test]
+    fn source_frontend_ledger_covers_every_string_parser_entrypoint() {
+        let observation = source_frontend_call_ledger::Observation::start();
+        let mut parser = crate::ast::Parser::default();
+
+        parser
+            .get_program_from_string(None, "(sort E)")
+            .expect("program parser positive control must succeed");
+        parser
+            .get_expr_from_string(None, "x")
+            .expect("expression parser positive control must succeed");
+        parser
+            .get_schedule_from_string(None, "ruleset")
+            .expect("schedule parser positive control must succeed");
+        parser
+            .get_fact_from_string(None, "(= x y)")
+            .expect("fact parser positive control must succeed");
+
+        let calls = observation.finish();
+        assert_eq!(calls.outside_generated.parse, 4);
+        assert_eq!(
+            calls.generated,
+            source_frontend_call_ledger::Counts::default()
+        );
+    }
+
+    #[test]
+    fn generated_frontend_call_window_restores_after_error_and_unwind() {
+        use source_frontend_call_ledger::Stage;
+
+        let observation = source_frontend_call_ledger::Observation::start();
+        let failed: Result<(), ()> = {
+            let _window = source_frontend_call_ledger::enter_generated_window();
+            source_frontend_call_ledger::record(Stage::Parse);
+            Err(())
+        };
+        assert_eq!(failed, Err(()));
+        source_frontend_call_ledger::record(Stage::Desugar);
+
+        let unwind = std::panic::catch_unwind(|| {
+            let _window = source_frontend_call_ledger::enter_generated_window();
+            source_frontend_call_ledger::record(Stage::Typecheck);
+            panic!("exercise generated-window unwind restoration");
+        });
+        assert!(unwind.is_err());
+        source_frontend_call_ledger::record(Stage::RemoveGlobals);
+
+        let calls = observation.finish();
+        assert_eq!(calls.generated_windows, 2);
+        assert_eq!(
+            calls.generated,
+            source_frontend_call_ledger::Counts {
+                parse: 1,
+                typecheck: 1,
+                ..Default::default()
+            }
+        );
+        assert_eq!(
+            calls.outside_generated,
+            source_frontend_call_ledger::Counts {
+                desugar: 1,
+                remove_globals: 1,
+                ..Default::default()
+            }
         );
     }
 
