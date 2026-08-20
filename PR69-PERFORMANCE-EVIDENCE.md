@@ -38,6 +38,42 @@ same treatment on both endpoints, and six fresh rounds per endpoint/file. All
 | term | `5.091 s` | `4.935 s` | `0.9692` | `[0.9485, 0.9904]` | 3.1% faster |
 | proofs | `7.361 s` | `6.381 s` | `0.8669` | `[0.8481, 0.8865]` | 13.3% faster |
 
+### Per-file wall time
+
+These are the public runner's Markdown confidence intervals from the same six
+fresh rounds per endpoint/file. Ratios are PR/main; intervals below `1.0` are
+faster, while intervals crossing `1.0` are inconclusive.
+
+#### Term
+
+| File | Main (95% CI) | PR (95% CI) | PR/main (95% CI) | Result |
+| --- | ---: | ---: | ---: | --- |
+| math-microbenchmark-rational.egg | 859–901 ms | 907–953 ms | 1.02–1.09x | slower |
+| eggcc-2mm-pass1.egg | 1.15–1.27 s | 1.12–1.25 s | 0.903–1.05x | CI includes 1 |
+| pointer-analysis-initdb.egg | 137–144 ms | 124–173 ms | 0.886–1.24x | CI includes 1 |
+| hardboiled_conv1d_32.egg | 213–221 ms | 195–204 ms | 0.896–0.946x | faster |
+| luminal-llama.egg | 1.25–1.28 s | 1.11–1.18 s | 0.876–0.934x | faster |
+| herbie.egg | 104–109 ms | 97.4–104 ms | 0.905–0.979x | faster |
+| misaal-hvx-dot-product.egg | 103–105 ms | 75.0–80.3 ms | 0.717–0.770x | faster |
+| churchroad-wide-multiply.egg | 709–734 ms | 714–726 ms | 0.979–1.02x | CI includes 1 |
+| dialegg-nmm40.egg | 266–274 ms | 264–276 ms | 0.973–1.03x | CI includes 1 |
+| speq-preserved-reference-suite.egg | 165–181 ms | 158–163 ms | 0.886–0.976x | faster |
+
+#### Proofs
+
+| File | Main (95% CI) | PR (95% CI) | PR/main (95% CI) | Result |
+| --- | ---: | ---: | ---: | --- |
+| math-microbenchmark-rational.egg | 1.52–1.74 s | 1.50–1.54 s | 0.869–1.00x | CI includes 1 |
+| eggcc-2mm-pass1.egg | 1.56–1.71 s | 1.41–1.45 s | 0.833–0.918x | faster |
+| pointer-analysis-initdb.egg | 207–226 ms | 197–204 ms | 0.884–0.973x | faster |
+| hardboiled_conv1d_32.egg | 309–321 ms | 264–267 ms | 0.826–0.860x | faster |
+| luminal-llama.egg | 1.98–2.12 s | 1.59–1.61 s | 0.754–0.811x | faster |
+| herbie.egg | 155–166 ms | 141–148 ms | 0.867–0.939x | faster |
+| misaal-hvx-dot-product.egg | 146–161 ms | 100–105 ms | 0.636–0.706x | faster |
+| churchroad-wide-multiply.egg | 482–517 ms | 473–478 ms | 0.920–0.987x | faster |
+| dialegg-nmm40.egg | 474–525 ms | 467–473 ms | 0.895–0.993x | faster |
+| speq-preserved-reference-suite.egg | 194–215 ms | 176–179 ms | 0.824–0.914x | faster |
+
 The public phase decomposition attributes the proofs suite's `979 ms` mean
 reduction primarily to `828 ms` less typechecking. The typed path adds `117 ms`
 of other frontend work, while program rules, equality/rebuild, commands, and
