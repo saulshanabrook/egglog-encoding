@@ -24,6 +24,34 @@ permanent call-counting regression covers the complete `add_term_encoding` plus
 `resolve_generated_batch` window; archived phase timings have the expected
 direction, but their exact magnitude is not clean sizing evidence.
 
+## August 20 direct PR-versus-main snapshot
+
+The simplest current public-CLI comparison uses PR base/main
+`fdd4eac12c1318c578badbf5d1299e0e3eb4e6c0` and PR head
+`cd84530d37571c853cc480642fca8647a5776e35`, the default ten workloads, the
+same treatment on both endpoints, and six fresh rounds per endpoint/file. All
+360 rows succeeded.
+
+| Mode | Main suite | PR suite | PR/main | 95% Fieller CI | Reading |
+| --- | ---: | ---: | ---: | --- | --- |
+| off | `3.147 s` | `3.118 s` | `0.9905` | `[0.9771, 1.0041]` | no clear change |
+| term | `5.091 s` | `4.935 s` | `0.9692` | `[0.9485, 0.9904]` | 3.1% faster |
+| proofs | `7.361 s` | `6.381 s` | `0.8669` | `[0.8481, 0.8865]` | 13.3% faster |
+
+The public phase decomposition attributes the proofs suite's `979 ms` mean
+reduction primarily to `828 ms` less typechecking. The typed path adds `117 ms`
+of other frontend work, while program rules, equality/rebuild, commands, and
+the residual are also lower in this snapshot. Term saves `358 ms` of
+typechecking but adds `75 ms` of frontend work and smaller runtime increases,
+for a net `157 ms` reduction. Off's `30 ms` point improvement is statistically
+inconclusive.
+
+This is deliberately the straightforward baseline-first `./bench.py` run, not
+the preregistered balanced final gate. Main ran first in every mode, and its
+first off block immediately followed a `22.27 s` release build. Treat these as
+the clearest current snapshot rather than replacing the archived balanced
+evidence or its caveats.
+
 Churchroad remains a performance risk. Its proofs-mode point estimate was
 `1.011920`, CI `[1.000121, 1.023817]`, initially and `1.023252`,
 CI `[0.999861, 1.046852]`, on retest. The slowdown direction reproduced and
