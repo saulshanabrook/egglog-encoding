@@ -46,6 +46,10 @@ pub(crate) fn remove_globals(
     prog: Vec<ResolvedNCommand>,
     fresh: &mut SymbolGen,
 ) -> Vec<ResolvedNCommand> {
+    #[cfg(test)]
+    crate::source_frontend_call_ledger::record(
+        crate::source_frontend_call_ledger::Stage::RemoveGlobals,
+    );
     let mut remover = GlobalRemover { fresh };
     prog.into_iter()
         .flat_map(|cmd| remover.remove_globals_cmd(cmd))

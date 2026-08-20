@@ -2,7 +2,8 @@
 //!
 //! Proof instrumentation constructs portable typed nodes and binds them once,
 //! directly into the destination e-graph universe. Generated commands never
-//! re-enter the source parser, desugarer, or general-purpose typechecker.
+//! re-enter source program parsing, `desugar_command`, `typecheck_program`, or
+//! `remove_globals`.
 
 use std::fmt::{Display, Formatter};
 use std::marker::PhantomData;
@@ -645,12 +646,18 @@ impl GeneratedRuleBuilder {
     }
 }
 
-/// Converts fallible catalog and local-namespace checks into the single panic
-/// boundary used for bugs in generated-code producers.
+/// Converts portable catalog and local-namespace failures into the panic
+/// boundary for bugs in generated-code producers. Errors discovered later
+/// while binding into the destination universe remain fallible and are
+/// converted into the [`enum@EgglogError`] returned by [`resolve_generated_batch`].
 fn producer_value<T>(result: Result<T, GeneratedBindError>) -> T {
     result.unwrap_or_else(|error| panic!("invalid generated semantic emission: {error}"))
 }
 
+/// Append-only builder-table index carrying the fresh lifetime brand supplied
+/// by `build_checked_rule` or `build_checked_merge`. The higher-ranked builder
+/// closure prevents a handle from escaping its invocation or being reused by a
+/// later builder.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Branded<'id, Kind>(usize, PhantomData<(fn(&'id ()) -> &'id (), Kind)>);
 
@@ -677,8 +684,13 @@ enum ExprNode {
     Call(usize, Vec<usize>),
 }
 
+/// Rule construction mode. In addition to the common expression, `bind`, and
+/// `set` operations, it exposes query locals and facts plus `change` actions.
 pub(super) struct RuleMode;
 
+/// Merge construction mode. It exposes the common expression, `bind`, and
+/// `set` operations plus one declaration of the merge inputs; rule facts,
+/// query locals, and `change` actions are unavailable at the type level.
 pub(super) struct MergeMode {
     expected: [SortKey; 2],
     inputs_declared: bool,
@@ -701,9 +713,20 @@ impl CheckedMode for MergeMode {
 }
 
 /// Closure-scoped construction boundary from branded append-only IDs to the
-/// current AST. It owns catalog registration, one lexical local-ID namespace,
-/// the generated span, and head-action order; the boundary materializes the
-/// result only after checking the complete rule or merge.
+/// current AST.
+///
+/// Sort and call handles register their keys eagerly in the portable signature
+/// catalog, while a literal requires its sort to have already been registered.
+/// Emitted expressions, facts, and actions all receive the one cloned `span`.
+/// Local IDs are allocated in first-use order within one namespace, and head
+/// actions retain builder call order. Mode-specific impl blocks make rule facts
+/// and merge inputs different capabilities rather than runtime conventions.
+///
+/// The builder checks portable shape, arity, catalog, local-scope, action-order,
+/// and mode invariants. It does not claim that portable names are installed in
+/// the destination `TypeInfo` or replace destination binding. A producer that
+/// violates these construction invariants panics; `resolve_generated_batch`
+/// reports destination binding failures as `EgglogError` instead.
 pub(super) struct CheckedBuilder<'catalog, 'id, Mode> {
     catalog: &'catalog mut GeneratedSignatureCatalog,
     span: Span,
@@ -1036,6 +1059,19 @@ fn validate_rule_scope(body: &[GeneratedFact], head: &[GeneratedAction], span: &
     }
 }
 
+/// Build one generated rule under a fresh handle brand.
+///
+/// The higher-ranked closure cannot leak its sort, call, or expression handles.
+/// Rule query locals must be bound by the completed body; action-local `bind`s
+/// then extend scope in call order for following actions. The supplied span is
+/// used uniformly for the rule and all materialized nodes. `metadata` supplies
+/// `(name, ruleset, eval_mode, include_subsumed)`; generated rules always set
+/// `no_decomp` to false.
+///
+/// These checks cover the builder's portable construction contract, not full
+/// destination typechecking. Producer-contract violations panic here, while
+/// destination lookup and binding errors remain fallible at
+/// `resolve_generated_batch`.
 pub(super) fn build_checked_rule(
     catalog: &mut GeneratedSignatureCatalog,
     span: &Span,
@@ -1058,6 +1094,19 @@ pub(super) fn build_checked_rule(
     }
 }
 
+/// Build a two-column generated merge under a fresh handle brand.
+///
+/// `expected` is the exact pair of result-column sorts. The closure must call
+/// `inputs` exactly once with either one column or both columns, in matching
+/// prefix order, before emitting any `bind` or `set` action. Those inputs are
+/// named `old0`/`new0` and, when requested, `old1`/`new1`; the four names are
+/// reserved against later `bind`s. The returned handle must directly name a
+/// `values` application with exactly the two `expected` result sorts. Actions
+/// and materialized nodes preserve builder order and the supplied span.
+///
+/// The higher-ranked closure confines all handles to this invocation. As with
+/// rules, portable producer-contract violations panic during construction;
+/// binding the completed merge into the destination is a later fallible step.
 pub(super) fn build_checked_merge(
     catalog: &mut GeneratedSignatureCatalog,
     span: &Span,
@@ -2725,9 +2774,10 @@ impl GeneratedBinder<'_> {
     }
 
     /// Run the typed rule boundary. A generated rule never enters source
-    /// parsing, desugaring, inference, or global removal; this method owns the
-    /// binding and prefix-validation contract shared by top-level and nested
-    /// entries. Generated binding does not consume source-parser freshness.
+    /// program parsing, `desugar_command`, `typecheck_program`, or
+    /// `remove_globals`; this method owns the binding and prefix-validation
+    /// contract shared by top-level and nested entries. Generated binding does
+    /// not consume source-parser freshness.
     fn typecheck_direct_rule(
         &mut self,
         rule: GeneratedRule,
@@ -3289,6 +3339,14 @@ mod checked_builder_tests {
             GenericExpr::Call(actual, CallKey::Values(sorts), args)
                 if actual == &span && sorts.len() == 2 && args.len() == 2
         ));
+    }
+
+    #[test]
+    fn checked_merge_rejects_action_before_inputs() {
+        rejected_merge("invalid checked merge action", |builder, _, _| {
+            let value = builder.lit(Literal::Int(0));
+            builder.bind("staged", value)
+        });
     }
 
     #[test]
