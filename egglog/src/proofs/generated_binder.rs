@@ -645,80 +645,10 @@ impl GeneratedRuleBuilder {
     }
 }
 
-/// Construction boundary for generated rules.
-///
-/// Producers supply semantic signatures and variable names; this emitter owns
-/// their canonical catalog registration, one lexical local-ID namespace, the
-/// default generated span, and head-action order. Any failure here is a bug in
-/// a generated-code producer rather than a source-program diagnostic, so the
-/// boundary deliberately converts [`GeneratedBindError`] into one panic.
-struct GeneratedSemanticEmitter<'a> {
-    catalog: &'a mut GeneratedSignatureCatalog,
-    span: Span,
-    variables: GeneratedRuleBuilder,
-    head: Vec<GeneratedAction>,
-}
-
-impl<'a> GeneratedSemanticEmitter<'a> {
-    fn new(catalog: &'a mut GeneratedSignatureCatalog, span: &Span) -> Self {
-        Self {
-            catalog,
-            span: span.clone(),
-            variables: GeneratedRuleBuilder::default(),
-            head: Vec::new(),
-        }
-    }
-
-    fn producer_value<T>(result: Result<T, GeneratedBindError>) -> T {
-        result.unwrap_or_else(|error| panic!("invalid generated semantic emission: {error}"))
-    }
-
-    fn sort(&mut self, key: SortKey) -> SortKey {
-        Self::producer_value(self.catalog.register_sort(key, &self.span))
-    }
-
-    fn local(&mut self, name: impl Into<String>, sort: SortKey) -> GeneratedVar {
-        Self::producer_value(self.variables.variable(
-            name,
-            sort,
-            GeneratedVarRole::Local,
-            &self.span,
-        ))
-    }
-
-    fn set(&mut self, function: CallKey, args: Vec<GeneratedExpr>, value: GeneratedExpr) {
-        self.head
-            .push(GenericAction::Set(self.span.clone(), function, args, value));
-    }
-
-    fn change(&mut self, change: Change, function: CallKey, args: Vec<GeneratedExpr>) {
-        self.head.push(GenericAction::Change(
-            self.span.clone(),
-            change,
-            function,
-            args,
-        ));
-    }
-
-    fn finish_rule(
-        self,
-        body: Vec<GeneratedFact>,
-        name: String,
-        ruleset: String,
-        eval_mode: RuleEvalMode,
-        include_subsumed: bool,
-    ) -> GeneratedRule {
-        GenericRule {
-            span: self.span,
-            body,
-            head: GenericActions(self.head),
-            name,
-            ruleset,
-            eval_mode,
-            no_decomp: false,
-            include_subsumed,
-        }
-    }
+/// Converts fallible catalog and local-namespace checks into the single panic
+/// boundary used for bugs in generated-code producers.
+fn producer_value<T>(result: Result<T, GeneratedBindError>) -> T {
+    result.unwrap_or_else(|error| panic!("invalid generated semantic emission: {error}"))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -770,10 +700,15 @@ impl CheckedMode for MergeMode {
     }
 }
 
-/// Closure-scoped adapter from branded append-only IDs to the current AST.
-/// Handle creation registers signatures; the boundary materializes the result.
+/// Closure-scoped construction boundary from branded append-only IDs to the
+/// current AST. It owns catalog registration, one lexical local-ID namespace,
+/// the generated span, and head-action order; the boundary materializes the
+/// result only after checking the complete rule or merge.
 pub(super) struct CheckedBuilder<'catalog, 'id, Mode> {
-    emitter: GeneratedSemanticEmitter<'catalog>,
+    catalog: &'catalog mut GeneratedSignatureCatalog,
+    span: Span,
+    variables: GeneratedRuleBuilder,
+    head: Vec<GeneratedAction>,
     sorts: Vec<SortKey>,
     calls: Vec<CallKey>,
     expressions: Vec<ExprNode>,
@@ -788,7 +723,10 @@ pub(super) type CheckedMergeBuilder<'catalog, 'id> = CheckedBuilder<'catalog, 'i
 impl<'catalog, 'id, Mode: CheckedMode> CheckedBuilder<'catalog, 'id, Mode> {
     fn new(catalog: &'catalog mut GeneratedSignatureCatalog, span: &Span, mode: Mode) -> Self {
         Self {
-            emitter: GeneratedSemanticEmitter::new(catalog, span),
+            catalog,
+            span: span.clone(),
+            variables: GeneratedRuleBuilder::default(),
+            head: Vec::new(),
             sorts: Vec::new(),
             calls: Vec::new(),
             expressions: Vec::new(),
@@ -802,16 +740,12 @@ impl<'catalog, 'id, Mode: CheckedMode> CheckedBuilder<'catalog, 'id, Mode> {
         assert_eq!(
             actual, expected,
             "invalid generated semantic emission: shape mismatch at {}",
-            self.emitter.span
+            self.span
         );
     }
 
     fn register_call<Tag>(&mut self, key: CallKey) -> Branded<'id, Tag> {
-        GeneratedSemanticEmitter::producer_value(
-            self.emitter
-                .catalog
-                .register_call_key(&key, &self.emitter.span),
-        );
+        producer_value(self.catalog.register_call_key(&key, &self.span));
         let id = self.calls.len();
         self.calls.push(key);
         Branded(id, PhantomData)
@@ -852,7 +786,7 @@ impl<'catalog, 'id, Mode: CheckedMode> CheckedBuilder<'catalog, 'id, Mode> {
             args.len(),
             inputs.len(),
             "invalid generated semantic emission: wrong arity at {}",
-            self.emitter.span
+            self.span
         );
         for (expected, arg) in inputs.iter().zip(args.iter().copied()) {
             let actual = self.expression_shape(arg);
@@ -862,7 +796,7 @@ impl<'catalog, 'id, Mode: CheckedMode> CheckedBuilder<'catalog, 'id, Mode> {
     }
 
     pub(super) fn sort(&mut self, key: SortKey) -> SortRef<'id> {
-        let key = self.emitter.sort(key);
+        let key = producer_value(self.catalog.register_sort(key, &self.span));
         let id = self.sorts.len();
         self.sorts.push(key);
         Branded(id, PhantomData)
@@ -902,9 +836,7 @@ impl<'catalog, 'id, Mode: CheckedMode> CheckedBuilder<'catalog, 'id, Mode> {
 
     pub(super) fn lit(&mut self, literal: Literal) -> ExprRef<'id> {
         let sort = SortKey::from_sort(&crate::sort::literal_sort(&literal));
-        GeneratedSemanticEmitter::producer_value(
-            self.emitter.catalog.require_sort(&sort, &self.emitter.span),
-        );
+        producer_value(self.catalog.require_sort(&sort, &self.span));
         self.push_expr(ExprNode::Lit(literal))
     }
 
@@ -922,20 +854,25 @@ impl<'catalog, 'id, Mode: CheckedMode> CheckedBuilder<'catalog, 'id, Mode> {
         let ValueShape::Scalar(sort) = shape else {
             panic!(
                 "invalid generated semantic emission: cannot bind tuple at {}",
-                self.emitter.span,
+                self.span,
             );
         };
         let name = name.into();
-        self.mode.check_action(&name, &self.emitter.span);
-        let next = LocalId(self.emitter.variables.next_local_id);
-        let variable = self.emitter.local(name, sort);
+        self.mode.check_action(&name, &self.span);
+        let next = LocalId(self.variables.next_local_id);
+        let variable = producer_value(self.variables.variable(
+            name,
+            sort,
+            GeneratedVarRole::Local,
+            &self.span,
+        ));
         assert_eq!(
             variable.id, next,
             "invalid generated semantic emission: duplicate local `{}` at {}",
-            &variable.name, self.emitter.span
+            &variable.name, self.span
         );
-        self.emitter.head.push(GenericAction::Let(
-            self.emitter.span.clone(),
+        self.head.push(GenericAction::Let(
+            self.span.clone(),
             variable.clone(),
             self.materialize(value.0),
         ));
@@ -954,20 +891,24 @@ impl<'catalog, 'id, Mode: CheckedMode> CheckedBuilder<'catalog, 'id, Mode> {
         if key.subtype == FunctionSubtype::Constructor {
             panic!(
                 "invalid generated semantic emission: {}",
-                TypeError::SetConstructorDisallowed(key.name.clone(), self.emitter.span.clone())
+                TypeError::SetConstructorDisallowed(key.name.clone(), self.span.clone())
             );
         }
         let args = self.checked_args(function, args);
         self.check_shape(&self.expression_shape(value.0), &key.output);
-        self.mode.check_action("", &self.emitter.span);
+        self.mode.check_action("", &self.span);
         let args = args.into_iter().map(|arg| self.materialize(arg)).collect();
         let value = self.materialize(value.0);
-        self.emitter
-            .set(self.calls[function.0].clone(), args, value);
+        self.head.push(GenericAction::Set(
+            self.span.clone(),
+            self.calls[function.0].clone(),
+            args,
+            value,
+        ));
     }
 
     fn materialize(&self, expression: usize) -> GeneratedExpr {
-        let span = &self.emitter.span;
+        let span = &self.span;
         match &self.expressions[expression] {
             ExprNode::Var(variable) => GenericExpr::Var(span.clone(), variable.clone()),
             ExprNode::Lit(literal) => GenericExpr::Lit(span.clone(), literal.clone()),
@@ -982,7 +923,12 @@ impl<'catalog, 'id, Mode: CheckedMode> CheckedBuilder<'catalog, 'id, Mode> {
 
 impl<'catalog, 'id> CheckedRuleBuilder<'catalog, 'id> {
     pub(super) fn local(&mut self, name: impl Into<String>, sort: SortRef<'id>) -> ExprRef<'id> {
-        let variable = self.emitter.local(name, self.sorts[sort.0].clone());
+        let variable = producer_value(self.variables.variable(
+            name,
+            self.sorts[sort.0].clone(),
+            GeneratedVarRole::Local,
+            &self.span,
+        ));
         self.push_expr(ExprNode::Var(variable))
     }
 
@@ -994,15 +940,19 @@ impl<'catalog, 'id> CheckedRuleBuilder<'catalog, 'id> {
     ) {
         let args = self.checked_args(function, args);
         let args = args.into_iter().map(|arg| self.materialize(arg)).collect();
-        self.emitter
-            .change(change, self.calls[function.0].clone(), args);
+        self.head.push(GenericAction::Change(
+            self.span.clone(),
+            change,
+            self.calls[function.0].clone(),
+            args,
+        ));
     }
 
     pub(super) fn eq(&mut self, left: ExprRef<'id>, right: ExprRef<'id>) {
         let expected = self.expression_shape(left.0);
         self.check_shape(&self.expression_shape(right.0), &expected);
         self.body.push(GenericFact::Eq(
-            self.emitter.span.clone(),
+            self.span.clone(),
             self.materialize(left.0),
             self.materialize(right.0),
         ));
@@ -1027,14 +977,17 @@ impl<'catalog, 'id> CheckedMergeBuilder<'catalog, 'id> {
                     .enumerate()
                     .all(|(index, sort)| self.sorts[sort.0] == self.mode.expected[index]),
             "invalid generated semantic emission: invalid merge inputs at {}",
-            self.emitter.span
+            self.span
         );
         self.mode.inputs_declared = true;
         let mut make = |names: [&str; 2]| -> [ExprRef<'id>; N] {
             std::array::from_fn(|index| {
-                let variable = self
-                    .emitter
-                    .local(names[index], self.sorts[sorts[index].0].clone());
+                let variable = producer_value(self.variables.variable(
+                    names[index],
+                    self.sorts[sorts[index].0].clone(),
+                    GeneratedVarRole::Local,
+                    &self.span,
+                ));
                 self.push_expr(ExprNode::Var(variable))
             })
         };
@@ -1091,11 +1044,18 @@ pub(super) fn build_checked_rule(
 ) -> GeneratedRule {
     let mut builder = CheckedBuilder::new(catalog, span, RuleMode);
     build(&mut builder);
-    validate_rule_scope(&builder.body, &builder.emitter.head, span);
+    validate_rule_scope(&builder.body, &builder.head, span);
     let (name, ruleset, eval_mode, include_subsumed) = metadata;
-    builder
-        .emitter
-        .finish_rule(builder.body, name, ruleset, eval_mode, include_subsumed)
+    GenericRule {
+        span: builder.span,
+        body: builder.body,
+        head: GenericActions(builder.head),
+        name,
+        ruleset,
+        eval_mode,
+        no_decomp: false,
+        include_subsumed,
+    }
 }
 
 pub(super) fn build_checked_merge(
@@ -1119,7 +1079,7 @@ pub(super) fn build_checked_merge(
     );
     let result = builder.materialize(result.0);
     GenericMerge {
-        actions: GenericActions(builder.emitter.head),
+        actions: GenericActions(builder.head),
         result,
     }
 }
