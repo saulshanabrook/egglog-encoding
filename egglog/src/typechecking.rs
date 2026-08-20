@@ -570,6 +570,10 @@ impl EGraph {
         &mut self,
         program: &Vec<NCommand>,
     ) -> Result<Vec<ResolvedNCommand>, TypeError> {
+        #[cfg(test)]
+        crate::source_frontend_call_ledger::record(
+            crate::source_frontend_call_ledger::Stage::Typecheck,
+        );
         let mut result = vec![];
         for command in program {
             result.push(self.typecheck_command(command)?);
