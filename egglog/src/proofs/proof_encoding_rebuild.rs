@@ -1151,12 +1151,12 @@ impl ProofInstrumentor<'_> {
             .clone();
         let mut children = Vec::new();
         let mut moved_positions = Vec::new();
-        for position in 0..n_keys {
-            if types[position].is_eq_container_sort() || !types[position].is_eq_sort() {
+        for (position, sort) in types[..n_keys].iter().enumerate() {
+            if sort.is_eq_container_sort() || !sort.is_eq_sort() {
                 continue;
             }
             let canonical = format!("c{position}_canon_");
-            let child_uf = self.uf_name(types[position].name());
+            let child_uf = self.uf_name(sort.name());
             let value_primitive = uf_canon_prim_name(&child_uf);
             let proof_step = proofs.then(|| {
                 let result = self.fresh_var();
@@ -1167,7 +1167,7 @@ impl ProofInstrumentor<'_> {
             }
             children.push(IndexedCanonicalStepSpec {
                 position,
-                sort: types[position].clone(),
+                sort: sort.clone(),
                 canonical,
                 value_primitive,
                 proof_step,
