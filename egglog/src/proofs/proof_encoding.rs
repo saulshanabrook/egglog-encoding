@@ -1,10 +1,12 @@
 use crate::proofs::generated_binder::{
-    CallKey, GeneratedBatch, GeneratedCommand, GeneratedEntry, GeneratedSignatureCatalog,
+    CallKey, GeneratedBatch, GeneratedCommand, GeneratedEntry, GeneratedPhase,
+    GeneratedSignatureCatalog,
 };
 #[doc = include_str!("proof_encoding.md")]
 use crate::proofs::proof_encoding_helpers::EncodingNames;
 use crate::typechecking::FuncType;
 use crate::*;
+use std::time::Instant;
 
 mod action_direct;
 mod command_direct;
@@ -348,9 +350,15 @@ impl<'a> ProofInstrumentor<'a> {
         egraph: &'a mut EGraph,
         program: Vec<ResolvedNCommand>,
     ) -> Result<GeneratedBatch, Error> {
+        GeneratedPhase::Signatures.reset();
+        let started = Instant::now();
         let mut instrumentor = Self::new(egraph);
-        let entries = instrumentor.add_term_encoding_helper(program)?;
-        Ok(GeneratedBatch { entries })
+        let result = instrumentor.add_term_encoding_helper(program);
+        let signatures = GeneratedPhase::Signatures.drain();
+        let total = started.elapsed();
+        instrumentor.egraph.overall_report.generated_signatures += signatures;
+        instrumentor.egraph.overall_report.generated_construct += total.saturating_sub(signatures);
+        result.map(|entries| GeneratedBatch { entries })
     }
 
     pub(crate) fn lower_inputs(
@@ -721,6 +729,34 @@ fn command_skips_rebuild(command: &ResolvedNCommand) -> bool {
         ResolvedNCommand::CoreAction(action) => action_skips_rebuild(action),
         ResolvedNCommand::CoreActions(actions) => actions.0.iter().all(action_skips_rebuild),
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod generated_timing_tests {
+    use super::*;
+
+    #[test]
+    fn construction_timing_is_drained_after_error_before_next_producer() {
+        let span = crate::span!();
+        let mut egraph = EGraph::new_with_proofs();
+        let missing_input = ResolvedNCommand::Input {
+            span: span.clone(),
+            name: "missing".to_owned(),
+            file: "missing.csv".to_owned(),
+        };
+
+        assert!(ProofInstrumentor::add_term_encoding(&mut egraph, vec![missing_input]).is_err());
+        assert!(egraph.overall_report.generated_construct > std::time::Duration::ZERO);
+        assert!(egraph.overall_report.generated_signatures > std::time::Duration::ZERO);
+
+        let construct_after_error = egraph.overall_report.generated_construct;
+        ProofInstrumentor::add_term_encoding(
+            &mut egraph,
+            vec![ResolvedNCommand::AddRuleset(span, "after-error".to_owned())],
+        )
+        .unwrap();
+        assert!(egraph.overall_report.generated_construct > construct_after_error);
     }
 }
 

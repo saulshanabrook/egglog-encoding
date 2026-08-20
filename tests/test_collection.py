@@ -547,8 +547,17 @@ def test_collect_rows_rejects_unsupported_timing_summary_before_append(
         _timeout_sec: int,
     ) -> processes.TimingResult:
         summary_path = Path(command[command.index("--timing-summary") + 1])
+        summary = cast(dict[str, object], make_timing_summary())
+        summary["schema_version"] = 4
+        for field in (
+            "frontend_generated_construct_ns",
+            "frontend_generated_signatures_ns",
+            "frontend_generated_resolve_ns",
+            "frontend_generated_lower_ns",
+        ):
+            del summary[field]
         summary_path.write_text(
-            json.dumps({"schema_version": 1, "rulesets": []}),
+            json.dumps(summary),
             encoding="utf-8",
         )
         return processes.TimingResult("success", processes.TimingRow(wall_sec=1.0), None)
@@ -557,7 +566,7 @@ def test_collect_rows_rejects_unsupported_timing_summary_before_append(
 
     store = ReportStore(report)
     plan = collection.build_collection_plan(store, target, (selected_endpoint,), (file_spec,), 1, 120, False)
-    with pytest.raises(ValueError, match=r"unsupported timing summary.*1"):
+    with pytest.raises(ValueError, match=r"unsupported timing summary.*4"):
         collection.collect_rows(
             store,
             plan,
@@ -583,11 +592,15 @@ def test_run_process_passes_treatment_flags(
         summary_path.write_text(
             json.dumps(
                 {
-                    "schema_version": 4,
+                    "schema_version": 5,
                     "typecheck_ns": 1,
                     "frontend_parse_ns": 2,
                     "frontend_other_ns": 3,
                     "frontend_install_ns": 4,
+                    "frontend_generated_construct_ns": 9,
+                    "frontend_generated_signatures_ns": 10,
+                    "frontend_generated_resolve_ns": 11,
+                    "frontend_generated_lower_ns": 12,
                     "commands_actions_ns": 5,
                     "commands_check_ns": 6,
                     "commands_other_ns": 7,

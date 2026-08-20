@@ -4,9 +4,11 @@
 //! directly into the destination e-graph universe. Generated commands never
 //! re-enter the source parser, desugarer, or general-purpose typechecker.
 
+use std::cell::Cell;
 use std::fmt::{Display, Formatter};
 use std::marker::PhantomData;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use enum_map::EnumMap;
 use thiserror::Error;
@@ -343,6 +345,99 @@ pub(crate) struct GeneratedBatch {
     pub(super) entries: Vec<GeneratedEntry>,
 }
 
+/// Per-thread diagnostic state for one generated-frontend phase. Keeping the
+/// clock outside catalogs and binding caches avoids adding allocation, clone,
+/// or formatting work to the path being measured.
+#[derive(Default)]
+struct GeneratedPhaseTimerState {
+    depth: Cell<usize>,
+    elapsed: Cell<Duration>,
+}
+
+struct GeneratedPhaseTimerGuard {
+    phase: GeneratedPhase,
+    started: Option<Instant>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum GeneratedPhase {
+    Signatures,
+    Resolution,
+}
+
+thread_local! {
+    static GENERATED_SIGNATURE_TIMING: GeneratedPhaseTimerState = GeneratedPhaseTimerState::default();
+    static GENERATED_RESOLUTION_TIMING: GeneratedPhaseTimerState = GeneratedPhaseTimerState::default();
+}
+
+impl GeneratedPhase {
+    fn enter(self) -> GeneratedPhaseTimerGuard {
+        let enter = |state: &GeneratedPhaseTimerState| {
+            let depth = state.depth.get();
+            state.depth.set(depth + 1);
+            depth == 0
+        };
+        let outermost = match self {
+            Self::Signatures => GENERATED_SIGNATURE_TIMING.with(enter),
+            Self::Resolution => GENERATED_RESOLUTION_TIMING.with(enter),
+        };
+        GeneratedPhaseTimerGuard {
+            phase: self,
+            started: outermost.then(Instant::now),
+        }
+    }
+
+    pub(super) fn reset(self) {
+        let reset = |state: &GeneratedPhaseTimerState| {
+            assert!(
+                state.depth.get() == 0,
+                "cannot reset an active generated phase timer"
+            );
+            state.elapsed.set(Duration::ZERO);
+        };
+        match self {
+            Self::Signatures => GENERATED_SIGNATURE_TIMING.with(reset),
+            Self::Resolution => GENERATED_RESOLUTION_TIMING.with(reset),
+        }
+    }
+
+    pub(super) fn drain(self) -> Duration {
+        let drain = |state: &GeneratedPhaseTimerState| {
+            assert!(
+                state.depth.get() == 0,
+                "cannot drain an active generated phase timer"
+            );
+            state.elapsed.replace(Duration::ZERO)
+        };
+        match self {
+            Self::Signatures => GENERATED_SIGNATURE_TIMING.with(drain),
+            Self::Resolution => GENERATED_RESOLUTION_TIMING.with(drain),
+        }
+    }
+}
+
+impl Drop for GeneratedPhaseTimerGuard {
+    fn drop(&mut self) {
+        let started = self.started.take();
+        let exit = |state: &GeneratedPhaseTimerState| {
+            let depth = state.depth.get();
+            debug_assert!(depth > 0, "generated phase timer depth underflowed");
+            debug_assert!(
+                started.is_none() || depth == 1,
+                "outer generated phase timer guard did not exit last"
+            );
+            if let Some(started) = started {
+                state.elapsed.set(state.elapsed.get() + started.elapsed());
+            }
+            state.depth.set(depth - 1);
+        };
+        match self.phase {
+            GeneratedPhase::Signatures => GENERATED_SIGNATURE_TIMING.with(exit),
+            GeneratedPhase::Resolution => GENERATED_RESOLUTION_TIMING.with(exit),
+        }
+    }
+}
+
 /// Portable signatures known while generated commands are being constructed.
 /// The catalog deliberately contains no handles from either checker universe.
 #[derive(Clone, Debug, Default)]
@@ -363,6 +458,7 @@ impl GeneratedSignatureCatalog {
         key: &CallKey,
         span: &Span,
     ) -> Result<(), GeneratedBindError> {
+        let _timing = GeneratedPhase::Signatures.enter();
         let mut register_sort = |sort: &SortKey| self.register_sort(sort.clone(), span).map(|_| ());
         match key {
             CallKey::Function(function) => {
@@ -401,6 +497,7 @@ impl GeneratedSignatureCatalog {
         key: SortKey,
         span: &Span,
     ) -> Result<SortKey, GeneratedBindError> {
+        let _timing = GeneratedPhase::Signatures.enter();
         if let Some(existing) = self.sorts.get(&key.name) {
             if existing == &key {
                 return Ok(existing.clone());
@@ -420,6 +517,7 @@ impl GeneratedSignatureCatalog {
         key: FunctionKey,
         span: &Span,
     ) -> Result<CallKey, GeneratedBindError> {
+        let _timing = GeneratedPhase::Signatures.enter();
         if let Some(existing) = self.functions.get(&key.name) {
             if existing == &key {
                 return Ok(CallKey::Function(existing.clone()));
@@ -451,6 +549,7 @@ impl GeneratedSignatureCatalog {
         any_of: &[usize],
         span: &Span,
     ) -> Result<(), GeneratedBindError> {
+        let _timing = GeneratedPhase::Signatures.enter();
         if self.functions.contains_key(&name) || self.indexes.contains(&name) {
             return Err(GeneratedBindError::CatalogSignatureConflict {
                 kind: "function or index",
@@ -542,6 +641,7 @@ impl GeneratedSignatureCatalog {
         key: PrimitiveKey,
         span: &Span,
     ) -> Result<CallKey, GeneratedBindError> {
+        let _timing = GeneratedPhase::Signatures.enter();
         for sort in key.inputs.iter().chain(std::iter::once(&key.output)) {
             self.require_sort(sort, span)?;
         }
@@ -555,6 +655,7 @@ impl GeneratedSignatureCatalog {
         name: &str,
         span: &Span,
     ) -> Result<CallKey, GeneratedBindError> {
+        let _timing = GeneratedPhase::Signatures.enter();
         self.functions
             .get(name)
             .cloned()
@@ -571,6 +672,7 @@ impl GeneratedSignatureCatalog {
         sorts: Vec<SortKey>,
         span: &Span,
     ) -> Result<CallKey, GeneratedBindError> {
+        let _timing = GeneratedPhase::Signatures.enter();
         if sorts.len() < 2 {
             return Err(GeneratedBindError::InvalidTupleArity {
                 actual: sorts.len(),
@@ -584,6 +686,7 @@ impl GeneratedSignatureCatalog {
     }
 
     fn require_sort(&self, key: &SortKey, span: &Span) -> Result<(), GeneratedBindError> {
+        let _timing = GeneratedPhase::Signatures.enter();
         match self.sorts.get(&key.name) {
             Some(existing) if existing == key => Ok(()),
             Some(_) => Err(GeneratedBindError::CatalogSignatureConflict {
@@ -1309,6 +1412,7 @@ impl BindingState {
         key: &SortKey,
         span: &Span,
     ) -> Result<ArcSort, GeneratedBindError> {
+        let _timing = GeneratedPhase::Resolution.enter();
         if let Some(cached) = self.sort_cache.get(key) {
             return Ok(cached.sort.clone());
         }
@@ -1337,6 +1441,7 @@ impl BindingState {
         context: Context,
         span: &Span,
     ) -> Result<ResolvedCall, GeneratedBindError> {
+        let _timing = GeneratedPhase::Resolution.enter();
         let head = match key {
             CallKey::Function(key) => key.name.as_str(),
             CallKey::Primitive(key) => key.name.as_str(),
@@ -1506,6 +1611,7 @@ impl BindingState {
         key: FunctionKey,
         call: ResolvedCall,
     ) {
+        let _timing = GeneratedPhase::Resolution.enter();
         debug_assert!(matches!(&call, ResolvedCall::Func(function) if function.name == key.name));
         let (generation, _) = type_info.call_cache_stamp(&key.name, false);
         let cache = self.call_cache.entry(key.name.clone()).or_default();
@@ -3025,11 +3131,17 @@ pub(crate) fn resolve_generated_batch(
     egraph: &mut EGraph,
     batch: GeneratedBatch,
 ) -> Result<Vec<ResolvedNCommand>, EgglogError> {
+    GeneratedPhase::Resolution.reset();
+    let started = Instant::now();
     let state = std::mem::take(egraph.extension_state_or_default::<BindingState>());
     let mut binder = GeneratedBinder { egraph, state };
     let result = binder.typecheck_entries(batch.entries);
+    let resolve = GeneratedPhase::Resolution.drain();
     let state = std::mem::take(&mut binder.state);
     *binder.egraph.extension_state_or_default::<BindingState>() = state;
+    let total = started.elapsed();
+    binder.egraph.overall_report.generated_resolve += resolve;
+    binder.egraph.overall_report.generated_lower += total.saturating_sub(resolve);
     result
 }
 
@@ -3038,6 +3150,115 @@ mod checked_builder_tests {
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
     use super::*;
+
+    #[test]
+    fn signature_timer_recovers_after_nested_error() {
+        let span = crate::span!();
+        let value_sort = SortKey {
+            name: "S".to_owned(),
+            class: SortSemanticClass::Value,
+        };
+        let conflicting_sort = SortKey {
+            name: "S".to_owned(),
+            class: SortSemanticClass::Eq,
+        };
+        let mut catalog = GeneratedSignatureCatalog::default();
+        catalog.register_sort(value_sort.clone(), &span).unwrap();
+        GeneratedPhase::Signatures.reset();
+
+        let conflicting = CallKey::Function(FunctionKey {
+            name: "f".to_owned(),
+            subtype: FunctionSubtype::Custom,
+            inputs: vec![conflicting_sort.clone()],
+            output: ValueShape::Scalar(conflicting_sort),
+        });
+        assert!(catalog.register_call_key(&conflicting, &span).is_err());
+        let valid = CallKey::Function(FunctionKey {
+            name: "f".to_owned(),
+            subtype: FunctionSubtype::Custom,
+            inputs: vec![value_sort.clone()],
+            output: ValueShape::Scalar(value_sort),
+        });
+        catalog.register_call_key(&valid, &span).unwrap();
+
+        let _measured = GeneratedPhase::Signatures.drain();
+        GeneratedPhase::Signatures.reset();
+        assert_eq!(GeneratedPhase::Signatures.drain(), Duration::ZERO);
+    }
+
+    #[test]
+    fn resolution_timer_recovers_after_nested_error() {
+        let mut egraph = EGraph::default();
+        let type_info = egraph.type_info();
+        let span = crate::span!();
+        let i64_sort = SortKey::from_sort(type_info.get_sort_by_name("i64").unwrap());
+        let missing_sort = SortKey {
+            name: "missing".to_owned(),
+            class: SortSemanticClass::Value,
+        };
+        let mut state = BindingState::default();
+        GeneratedPhase::Resolution.reset();
+
+        assert!(
+            state
+                .resolve_call(
+                    type_info,
+                    &CallKey::Values(vec![i64_sort.clone(), missing_sort]),
+                    Context::Read,
+                    &span,
+                )
+                .is_err()
+        );
+        state
+            .resolve_call(
+                type_info,
+                &CallKey::Values(vec![i64_sort.clone(), i64_sort]),
+                Context::Read,
+                &span,
+            )
+            .unwrap();
+
+        let _measured = GeneratedPhase::Resolution.drain();
+        GeneratedPhase::Resolution.reset();
+        assert_eq!(GeneratedPhase::Resolution.drain(), Duration::ZERO);
+    }
+
+    #[test]
+    fn batch_timing_restores_binding_state_after_error_before_success() {
+        let span = crate::span!();
+        let mut egraph = EGraph::default();
+        egraph
+            .extension_state_or_default::<BindingState>()
+            .call_cache
+            .insert("sentinel".to_owned(), HeadCallCache::default());
+
+        let invalid = GeneratedBatch {
+            entries: vec![GeneratedEntry::Fail(span.clone(), Vec::new())],
+        };
+        assert!(resolve_generated_batch(&mut egraph, invalid).is_err());
+        assert!(egraph.overall_report.generated_lower > Duration::ZERO);
+        assert!(
+            egraph
+                .extension_state_or_default::<BindingState>()
+                .call_cache
+                .contains_key("sentinel")
+        );
+
+        let lower_after_error = egraph.overall_report.generated_lower;
+        let valid = GeneratedBatch {
+            entries: vec![GeneratedEntry::Command(Box::new(
+                GeneratedCommand::AddRuleset(span, "after-error".to_owned()),
+            ))],
+        };
+        resolve_generated_batch(&mut egraph, valid).unwrap();
+        assert!(egraph.overall_report.generated_lower > lower_after_error);
+        assert!(
+            egraph
+                .extension_state_or_default::<BindingState>()
+                .call_cache
+                .contains_key("sentinel")
+        );
+    }
 
     fn assert_rejected<T>(expected: &str, span: &Span, run: impl FnOnce() -> T) {
         let panic = catch_unwind(AssertUnwindSafe(run))

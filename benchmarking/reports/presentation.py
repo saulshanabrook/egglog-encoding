@@ -63,13 +63,21 @@ RATIO_DIRECTION = "Ratios are candidate / baseline; below 1 is lower and above 1
 DECOMPOSITION_CAPTION = (
     "The Suite total row sums each selected file's candidate − baseline mean; file rows are per-file mean deltas. "
     "Each mechanism cell is its share of that row's wall-time change followed by its signed mean time change. "
-    "Frontend includes parsing, other lowering, and declaration/install commands. Program rules includes every "
+    "Frontend includes parsing, residual source lowering, declaration/install commands, and the four exclusive "
+    "typed-emission leaves detailed in the following table. Program rules includes every "
     "phase of source-origin rulesets except rebuild. Equality/rebuild combines encoded maintenance rulesets with "
     "native rebuild tails. Commands includes actions/input, checks, and other schedules. Shares may be negative or "
     "exceed 100% when mechanisms offset. ◆ and bold type mark each row's largest absolute share; contributions below "
     "5% are dimmed and improvements are green in Rich and interactive reports. Signed values carry the same "
     "information without styling. Residual is wall time minus every recorded leaf; ! means an endpoint's mean "
     "residual is negative."
+)
+GENERATED_CAPTION = (
+    "For each file and the suite total, these four ordered, mutually exclusive leaves are the generated portion of "
+    "Frontend above. Construct is typed producer work excluding signature catalog operations; Signatures is "
+    "outermost catalog work. Resolve/cache is outermost generated sort/call resolution and receipt work; "
+    "Lower/materialize is remaining generated batch work. Δ is the candidate − baseline mean with an adaptive unit; "
+    "Wall share uses the same row's wall-time change."
 )
 RULESET_CAPTION = (
     "Each panel unfolds the Program and Equality cells from the decomposition. Parent rows exactly match those "
@@ -387,7 +395,49 @@ def _phases_section(
         caption=DECOMPOSITION_CAPTION,
         alignments=("left", "right", "right", "right", "right", "right", "right", "right"),
     )
-    return ReportSection("phases", "Slowdown decomposition", (table,))
+    generated_rows = []
+    for row in rows:
+        if row.file_order is None:
+            row_id = report_id("row", "phases", "generated", "suite")
+            file_count = len(comparison.files)
+            label = f"Suite total ({file_count} {'file' if file_count == 1 else 'files'})"
+        else:
+            file = comparison.files[row.file_order]
+            row_id = report_id("row", "phases", "generated", file.sha256, file.fact_directory_sha256)
+            label = file_labels[file]
+        phases = (
+            ("construct", "Construct", row.generated_construct_delta_ns),
+            ("signatures", "Signatures", row.generated_signatures_delta_ns),
+            ("resolve", "Resolve/cache", row.generated_resolve_delta_ns),
+            ("lower", "Lower/materialize", row.generated_lower_delta_ns),
+        )
+        for index, (phase_id, phase_label, delta) in enumerate(phases):
+            value = None if row.issue is not None else delta
+            share = (
+                None
+                if value is None or row.wall_delta_ns is None or row.wall_delta_ns == 0
+                else value / row.wall_delta_ns
+            )
+            tone = _delta_tone(value, share=share)
+            generated_rows.append(
+                _row(
+                    report_id(row_id, phase_id),
+                    text_cell(row.file_order if index == 0 else None, label if index == 0 else ""),
+                    text_cell(phase_id, phase_label),
+                    text_cell(value, format_duration(value, signed=True), tone=tone),
+                    text_cell(share, _format_percent(share, signed=True), tone=tone),
+                )
+            )
+    generated = _table(
+        report_id("table", "phases", "generated"),
+        "Generated frontend breakdown",
+        ("file", "generated_phase", "delta", "wall_share"),
+        ("File", "Generated phase", "Δ", "Wall share"),
+        tuple(generated_rows),
+        caption=GENERATED_CAPTION,
+        alignments=("left", "left", "right", "right"),
+    )
+    return ReportSection("phases", "Slowdown decomposition", (table, generated))
 
 
 def _slowdown_cell(

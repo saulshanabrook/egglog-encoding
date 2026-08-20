@@ -15,6 +15,7 @@ from benchmarking.reports.store import (
     RulesetTimingRecord,
     TimingSummaryRecord,
     parse_report_record,
+    parse_timing_summary,
 )
 
 from .report_fixtures import make_record, make_ruleset_timing, make_timing_summary, write_report
@@ -144,7 +145,7 @@ def test_typed_dict_schema_and_nested_values_round_trip(tmp_path: Path) -> None:
     assert summary["native_rebuild_ns"] == 3
 
 
-@pytest.mark.parametrize("schema_version", [None, 2], ids=["missing", "wrong"])
+@pytest.mark.parametrize("schema_version", [None, 4], ids=["missing", "prior-v4"])
 def test_incompatible_report_schema_fails_during_load(tmp_path: Path, schema_version: int | None) -> None:
     report = tmp_path / "report.jsonl"
     current = make_record(0, started_at="2026-07-15T12:00:00Z")
@@ -153,6 +154,15 @@ def test_incompatible_report_schema_fails_during_load(tmp_path: Path, schema_ver
         del old["report_schema_version"]
     else:
         old["report_schema_version"] = schema_version
+        timing = cast(dict[str, object], old["timing_summary"])
+        timing["schema_version"] = 4
+        for field in (
+            "frontend_generated_construct_ns",
+            "frontend_generated_signatures_ns",
+            "frontend_generated_resolve_ns",
+            "frontend_generated_lower_ns",
+        ):
+            del timing[field]
     report.write_text(f"{json.dumps(current)}\n{json.dumps(old)}\n", encoding="utf-8")
 
     with pytest.raises(ValueError, match=r"invalid or incompatible benchmark report.*recompute"):
@@ -165,9 +175,44 @@ def test_incompatible_report_shapes_fail_during_load(tmp_path: Path, mixed: bool
     current = make_record(0, started_at="2026-07-15T12:00:00Z")
     old = cast(dict[str, object], make_record(1, started_at="2026-07-15T12:00:01Z"))
     timing = cast(dict[str, object], old["timing_summary"])
-    timing["schema_version"] = 2
+    timing["schema_version"] = 4
+    for field in (
+        "frontend_generated_construct_ns",
+        "frontend_generated_signatures_ns",
+        "frontend_generated_resolve_ns",
+        "frontend_generated_lower_ns",
+    ):
+        del timing[field]
     records = (current, old) if mixed else (old,)
     report.write_text("".join(f"{json.dumps(record)}\n" for record in records), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"invalid or incompatible benchmark report.*recompute"):
+        ReportStore(report)
+
+
+def test_prior_v4_timing_summary_fails_at_the_engine_summary_boundary() -> None:
+    old = cast(dict[str, object], make_timing_summary())
+    old["schema_version"] = 4
+    for field in (
+        "frontend_generated_construct_ns",
+        "frontend_generated_signatures_ns",
+        "frontend_generated_resolve_ns",
+        "frontend_generated_lower_ns",
+    ):
+        del old[field]
+
+    with pytest.raises(ValueError, match=r"unsupported timing summary.*4"):
+        parse_timing_summary(json.dumps(old).encode())
+
+
+def test_prior_v4_timed_out_row_fails_during_load(tmp_path: Path) -> None:
+    report = tmp_path / "report.jsonl"
+    old = cast(
+        dict[str, object],
+        make_record(0, started_at="2026-07-15T12:00:00Z", status="timed-out"),
+    )
+    old["report_schema_version"] = 4
+    report.write_text(f"{json.dumps(old)}\n", encoding="utf-8")
 
     with pytest.raises(ValueError, match=r"invalid or incompatible benchmark report.*recompute"):
         ReportStore(report)

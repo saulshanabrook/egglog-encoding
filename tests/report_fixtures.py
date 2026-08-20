@@ -89,6 +89,10 @@ def make_timing_summary(
     frontend_parse_ns: int = 0,
     frontend_other_ns: int = 0,
     frontend_install_ns: int = 0,
+    frontend_generated_construct_ns: int = 0,
+    frontend_generated_signatures_ns: int = 0,
+    frontend_generated_resolve_ns: int = 0,
+    frontend_generated_lower_ns: int = 0,
     commands_actions_ns: int = 0,
     commands_check_ns: int = 0,
     commands_other_ns: int = 0,
@@ -97,11 +101,15 @@ def make_timing_summary(
     """Construct a valid dense timing-summary fixture."""
 
     return {
-        "schema_version": 4,
+        "schema_version": 5,
         "typecheck_ns": typecheck_ns,
         "frontend_parse_ns": frontend_parse_ns,
         "frontend_other_ns": frontend_other_ns,
         "frontend_install_ns": frontend_install_ns,
+        "frontend_generated_construct_ns": frontend_generated_construct_ns,
+        "frontend_generated_signatures_ns": frontend_generated_signatures_ns,
+        "frontend_generated_resolve_ns": frontend_generated_resolve_ns,
+        "frontend_generated_lower_ns": frontend_generated_lower_ns,
         "commands_actions_ns": commands_actions_ns,
         "commands_check_ns": commands_check_ns,
         "commands_other_ns": commands_other_ns,

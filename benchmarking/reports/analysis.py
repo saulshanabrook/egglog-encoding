@@ -114,6 +114,10 @@ class FileTimingBreakdown(NamedTuple):
     wall_delta_ns: float | None
     typecheck_delta_ns: float
     frontend_delta_ns: float
+    generated_construct_delta_ns: float
+    generated_signatures_delta_ns: float
+    generated_resolve_delta_ns: float
+    generated_lower_delta_ns: float
     program: RulesetGroup
     equality: RulesetGroup
     commands_delta_ns: float
@@ -155,6 +159,10 @@ class _TimingMean(NamedTuple):
 
     typecheck_ns: float
     frontend_ns: float
+    generated_construct_ns: float
+    generated_signatures_ns: float
+    generated_resolve_ns: float
+    generated_lower_ns: float
     commands_ns: float
     rulesets: dict[tuple[RulesetMechanism, str], PhaseValues]
     native_rebuild_ns: float
@@ -384,6 +392,10 @@ def _timing_breakdowns(
                 wall_delta_ns,
                 candidate.typecheck_ns - baseline.typecheck_ns,
                 candidate.frontend_ns - baseline.frontend_ns,
+                candidate.generated_construct_ns - baseline.generated_construct_ns,
+                candidate.generated_signatures_ns - baseline.generated_signatures_ns,
+                candidate.generated_resolve_ns - baseline.generated_resolve_ns,
+                candidate.generated_lower_ns - baseline.generated_lower_ns,
                 _ruleset_group_delta(baseline, candidate, "program"),
                 _ruleset_group_delta(baseline, candidate, "equality"),
                 candidate.commands_ns - baseline.commands_ns,
@@ -400,6 +412,10 @@ def _timing_breakdowns(
         None if suite_issue is not None else math.fsum(cast(float, row.wall_delta_ns) for row in files),
         math.fsum(row.typecheck_delta_ns for row in files),
         math.fsum(row.frontend_delta_ns for row in files),
+        math.fsum(row.generated_construct_delta_ns for row in files),
+        math.fsum(row.generated_signatures_delta_ns for row in files),
+        math.fsum(row.generated_resolve_delta_ns for row in files),
+        math.fsum(row.generated_lower_delta_ns for row in files),
         _sum_ruleset_groups(row.program for row in files),
         _sum_ruleset_groups(row.equality for row in files),
         math.fsum(row.commands_delta_ns for row in files),
@@ -418,6 +434,10 @@ def _timing_means(
     for key, rows in observations.items():
         typecheck = 0.0
         frontend = 0.0
+        generated_construct = 0.0
+        generated_signatures = 0.0
+        generated_resolve = 0.0
+        generated_lower = 0.0
         commands = 0.0
         native_rebuild = 0.0
         rulesets: dict[tuple[RulesetMechanism, str], list[float]] = {}
@@ -429,7 +449,19 @@ def _timing_means(
             if summary is None:
                 raise ValueError("successful benchmark record is missing its timing summary")
             typecheck += summary["typecheck_ns"]
-            frontend += summary["frontend_parse_ns"] + summary["frontend_other_ns"] + summary["frontend_install_ns"]
+            generated_construct += summary["frontend_generated_construct_ns"]
+            generated_signatures += summary["frontend_generated_signatures_ns"]
+            generated_resolve += summary["frontend_generated_resolve_ns"]
+            generated_lower += summary["frontend_generated_lower_ns"]
+            frontend += (
+                summary["frontend_parse_ns"]
+                + summary["frontend_other_ns"]
+                + summary["frontend_install_ns"]
+                + summary["frontend_generated_construct_ns"]
+                + summary["frontend_generated_signatures_ns"]
+                + summary["frontend_generated_resolve_ns"]
+                + summary["frontend_generated_lower_ns"]
+            )
             commands += summary["commands_actions_ns"] + summary["commands_check_ns"] + summary["commands_other_ns"]
             native_rebuild += summary["native_rebuild_ns"]
             for timing in summary["rulesets"]:
@@ -446,6 +478,10 @@ def _timing_means(
         }
         typecheck /= denominator
         frontend /= denominator
+        generated_construct /= denominator
+        generated_signatures /= denominator
+        generated_resolve /= denominator
+        generated_lower /= denominator
         commands /= denominator
         native_rebuild /= denominator
         recorded = (
@@ -459,6 +495,10 @@ def _timing_means(
         result[key] = _TimingMean(
             typecheck,
             frontend,
+            generated_construct,
+            generated_signatures,
+            generated_resolve,
+            generated_lower,
             commands,
             ruleset_means,
             native_rebuild,

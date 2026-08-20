@@ -393,6 +393,10 @@ pub struct OverallReport {
     pub frontend_parse: Duration,
     pub frontend_other: Duration,
     pub frontend_install: Duration,
+    pub generated_construct: Duration,
+    pub generated_signatures: Duration,
+    pub generated_resolve: Duration,
+    pub generated_lower: Duration,
     pub commands_actions: Duration,
     pub commands_check: Duration,
     pub commands_other: Duration,
@@ -405,6 +409,10 @@ impl OverallReport {
             self.frontend_parse,
             self.frontend_other,
             self.frontend_install,
+            self.generated_construct,
+            self.generated_signatures,
+            self.generated_resolve,
+            self.generated_lower,
             self.commands_actions,
             self.commands_check,
             self.commands_other,
@@ -438,6 +446,10 @@ pub struct TimingSummary {
     pub frontend_parse_ns: u64,
     pub frontend_other_ns: u64,
     pub frontend_install_ns: u64,
+    pub frontend_generated_construct_ns: u64,
+    pub frontend_generated_signatures_ns: u64,
+    pub frontend_generated_resolve_ns: u64,
+    pub frontend_generated_lower_ns: u64,
     pub commands_actions_ns: u64,
     pub commands_check_ns: u64,
     pub commands_other_ns: u64,
@@ -469,7 +481,7 @@ impl Display for TimingSummaryError {
 impl std::error::Error for TimingSummaryError {}
 
 impl TimingSummary {
-    pub const SCHEMA_VERSION: u32 = 4;
+    pub const SCHEMA_VERSION: u32 = 5;
 
     pub fn from_report(report: &OverallReport) -> Result<Self, TimingSummaryError> {
         let (timings, native_rebuild) = report.run.aggregate_timings();
@@ -511,6 +523,10 @@ impl TimingSummary {
             frontend_parse_ns: duration_ns(report.frontend_parse),
             frontend_other_ns: duration_ns(report.frontend_other),
             frontend_install_ns: duration_ns(report.frontend_install),
+            frontend_generated_construct_ns: duration_ns(report.generated_construct),
+            frontend_generated_signatures_ns: duration_ns(report.generated_signatures),
+            frontend_generated_resolve_ns: duration_ns(report.generated_resolve),
+            frontend_generated_lower_ns: duration_ns(report.generated_lower),
             commands_actions_ns: duration_ns(report.commands_actions),
             commands_check_ns: duration_ns(report.commands_check),
             commands_other_ns: duration_ns(report.commands_other),
@@ -620,6 +636,10 @@ mod tests {
         let mut report = OverallReport {
             typecheck: Duration::from_nanos(2),
             frontend_parse: Duration::from_nanos(1),
+            generated_construct: Duration::from_nanos(14),
+            generated_signatures: Duration::from_nanos(15),
+            generated_resolve: Duration::from_nanos(16),
+            generated_lower: Duration::from_nanos(17),
             commands_check: Duration::from_nanos(6),
             ..OverallReport::default()
         };
@@ -642,7 +662,7 @@ mod tests {
 
         assert_eq!(
             serde_json::to_string(&summary).unwrap(),
-            r#"{"schema_version":4,"typecheck_ns":2,"frontend_parse_ns":1,"frontend_other_ns":0,"frontend_install_ns":0,"commands_actions_ns":0,"commands_check_ns":6,"commands_other_ns":0,"native_rebuild_ns":13,"rulesets":[{"name":"","role":"program","assembly_ns":0,"search_ns":0,"apply_ns":0,"execution_ns":0,"merge_ns":0},{"name":"rules/λ","role":"program","assembly_ns":0,"search_ns":1000000234,"apply_ns":3,"execution_ns":4,"merge_ns":5},{"name":"@parent","role":"equality","assembly_ns":8,"search_ns":9,"apply_ns":10,"execution_ns":11,"merge_ns":12}]}"#
+            r#"{"schema_version":5,"typecheck_ns":2,"frontend_parse_ns":1,"frontend_other_ns":0,"frontend_install_ns":0,"frontend_generated_construct_ns":14,"frontend_generated_signatures_ns":15,"frontend_generated_resolve_ns":16,"frontend_generated_lower_ns":17,"commands_actions_ns":0,"commands_check_ns":6,"commands_other_ns":0,"native_rebuild_ns":13,"rulesets":[{"name":"","role":"program","assembly_ns":0,"search_ns":0,"apply_ns":0,"execution_ns":0,"merge_ns":0},{"name":"rules/λ","role":"program","assembly_ns":0,"search_ns":1000000234,"apply_ns":3,"execution_ns":4,"merge_ns":5},{"name":"@parent","role":"equality","assembly_ns":8,"search_ns":9,"apply_ns":10,"execution_ns":11,"merge_ns":12}]}"#
         );
     }
 
@@ -651,8 +671,21 @@ mod tests {
         let summary = TimingSummary::from_report(&OverallReport::default()).unwrap();
         assert_eq!(
             serde_json::to_string(&summary).unwrap(),
-            r#"{"schema_version":4,"typecheck_ns":0,"frontend_parse_ns":0,"frontend_other_ns":0,"frontend_install_ns":0,"commands_actions_ns":0,"commands_check_ns":0,"commands_other_ns":0,"native_rebuild_ns":0,"rulesets":[]}"#
+            r#"{"schema_version":5,"typecheck_ns":0,"frontend_parse_ns":0,"frontend_other_ns":0,"frontend_install_ns":0,"frontend_generated_construct_ns":0,"frontend_generated_signatures_ns":0,"frontend_generated_resolve_ns":0,"frontend_generated_lower_ns":0,"commands_actions_ns":0,"commands_check_ns":0,"commands_other_ns":0,"native_rebuild_ns":0,"rulesets":[]}"#
         );
+    }
+
+    #[test]
+    fn generated_frontend_leaves_are_process_time() {
+        let report = OverallReport {
+            generated_construct: Duration::from_nanos(2),
+            generated_signatures: Duration::from_nanos(3),
+            generated_resolve: Duration::from_nanos(5),
+            generated_lower: Duration::from_nanos(7),
+            ..OverallReport::default()
+        };
+
+        assert_eq!(report.process_time(), Duration::from_nanos(17));
     }
 
     #[test]

@@ -69,6 +69,19 @@ fn checks_have_the_same_command_timing_path_with_and_without_term_encoding() {
             serde_json::from_slice(&std::fs::read(&summary_path).unwrap()).unwrap();
 
         assert!(summary["commands_check_ns"].as_u64().unwrap() > 0);
+        for field in [
+            "frontend_generated_construct_ns",
+            "frontend_generated_signatures_ns",
+            "frontend_generated_resolve_ns",
+            "frontend_generated_lower_ns",
+        ] {
+            let timing = summary[field].as_u64().unwrap();
+            if label == "term" {
+                assert!(timing > 0, "expected nonzero {field} in term mode");
+            } else {
+                assert_eq!(timing, 0, "expected zero {field} in off mode");
+            }
+        }
         assert!(
             !summary["rulesets"]
                 .as_array()
@@ -115,6 +128,17 @@ fn encoded_equality_rulesets_are_tagged_by_role_not_mixed_with_program_rules() {
     );
     let summary: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&summary_path).unwrap()).unwrap();
+    for field in [
+        "frontend_generated_construct_ns",
+        "frontend_generated_signatures_ns",
+        "frontend_generated_resolve_ns",
+        "frontend_generated_lower_ns",
+    ] {
+        assert!(
+            summary[field].as_u64().unwrap() > 0,
+            "expected nonzero {field}"
+        );
+    }
     let maintenance_names = summary["rulesets"]
         .as_array()
         .unwrap()
@@ -179,8 +203,8 @@ fn timing_summary_is_compact_and_works_with_every_report_level() {
         assert!(!bytes[..bytes.len() - 1].contains(&b'\n'));
 
         let summary: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(summary.as_object().unwrap().len(), 10);
-        assert_eq!(summary["schema_version"], 4);
+        assert_eq!(summary.as_object().unwrap().len(), 14);
+        assert_eq!(summary["schema_version"], 5);
         assert_eq!(summary["commands_check_ns"], 0);
         for field in [
             "frontend_parse_ns",
@@ -194,6 +218,14 @@ fn timing_summary_is_compact_and_works_with_every_report_level() {
                 summary[field].as_u64().unwrap() > 0,
                 "expected nonzero {field}"
             );
+        }
+        for field in [
+            "frontend_generated_construct_ns",
+            "frontend_generated_signatures_ns",
+            "frontend_generated_resolve_ns",
+            "frontend_generated_lower_ns",
+        ] {
+            assert_eq!(summary[field], 0, "expected zero {field} without encoding");
         }
         let rulesets = summary["rulesets"].as_array().unwrap();
         assert_eq!(rulesets.len(), 2);
@@ -322,7 +354,7 @@ fn stdin_program_writes_timing_summary() {
     let bytes = std::fs::read(&summary_path).unwrap();
     assert_eq!(bytes.last(), Some(&b'\n'));
     let summary: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(summary["schema_version"], 4);
+    assert_eq!(summary["schema_version"], 5);
     assert!(summary["rulesets"].is_array());
     std::fs::remove_dir_all(directory).unwrap();
 }

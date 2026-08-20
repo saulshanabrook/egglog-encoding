@@ -50,7 +50,26 @@
   | math.egg | -200 ms | 0%  0 ms | 0%  0 ms | ◆ +58.0%  -116 ms | 0%  0 ms | 0%  0 ms | +42.0%  -84.0 ms |
   | rewrite.egg | +400 ms | 0%  0 ms | 0%  0 ms | ◆ +58.0%  +232 ms | 0%  0 ms | 0%  0 ms | +42.0%  +168 ms |
   
-  *The Suite total row sums each selected file's candidate − baseline mean; file rows are per-file mean deltas. Each mechanism cell is its share of that row's wall-time change followed by its signed mean time change. Frontend includes parsing, other lowering, and declaration/install commands. Program rules includes every phase of source-origin rulesets except rebuild. Equality/rebuild combines encoded maintenance rulesets with native rebuild tails. Commands includes actions/input, checks, and other schedules. Shares may be negative or exceed 100% when mechanisms offset. ◆ and bold type mark each row's largest absolute share; contributions below 5% are dimmed and improvements are green in Rich and interactive reports. Signed values carry the same information without styling. Residual is wall time minus every recorded leaf; ! means an endpoint's mean residual is negative.*
+  *The Suite total row sums each selected file's candidate − baseline mean; file rows are per-file mean deltas. Each mechanism cell is its share of that row's wall-time change followed by its signed mean time change. Frontend includes parsing, residual source lowering, declaration/install commands, and the four exclusive typed-emission leaves detailed in the following table. Program rules includes every phase of source-origin rulesets except rebuild. Equality/rebuild combines encoded maintenance rulesets with native rebuild tails. Commands includes actions/input, checks, and other schedules. Shares may be negative or exceed 100% when mechanisms offset. ◆ and bold type mark each row's largest absolute share; contributions below 5% are dimmed and improvements are green in Rich and interactive reports. Signed values carry the same information without styling. Residual is wall time minus every recorded leaf; ! means an endpoint's mean residual is negative.*
+  
+  ### Generated frontend breakdown
+  
+  | File | Generated phase | Δ | Wall share |
+  | --- | --- | ---: | ---: |
+  | Suite total (2 files) | Construct | 0 ns | 0% |
+  |  | Signatures | 0 ns | 0% |
+  |  | Resolve/cache | 0 ns | 0% |
+  |  | Lower/materialize | 0 ns | 0% |
+  | math.egg | Construct | 0 ns | 0% |
+  |  | Signatures | 0 ns | 0% |
+  |  | Resolve/cache | 0 ns | 0% |
+  |  | Lower/materialize | 0 ns | 0% |
+  | rewrite.egg | Construct | 0 ns | 0% |
+  |  | Signatures | 0 ns | 0% |
+  |  | Resolve/cache | 0 ns | 0% |
+  |  | Lower/materialize | 0 ns | 0% |
+  
+  *For each file and the suite total, these four ordered, mutually exclusive leaves are the generated portion of Frontend above. Construct is typed producer work excluding signature catalog operations; Signatures is outermost catalog work. Resolve/cache is outermost generated sort/call resolution and receipt work; Lower/materialize is remaining generated batch work. Δ is the candidate − baseline mean with an adaptive unit; Wall share uses the same row's wall-time change.*
   
   ## Ruleset drivers
   
@@ -201,12 +220,50 @@
                                                                                                                           
   The Suite total row sums each selected file's candidate − baseline mean; file rows are per-file mean deltas. Each       
   mechanism cell is its share of that row's wall-time change followed by its signed mean time change. Frontend includes   
-  parsing, other lowering, and declaration/install commands. Program rules includes every phase of source-origin rulesets 
-  except rebuild. Equality/rebuild combines encoded maintenance rulesets with native rebuild tails. Commands includes     
-  actions/input, checks, and other schedules. Shares may be negative or exceed 100% when mechanisms offset. ◆ and bold    
-  type mark each row's largest absolute share; contributions below 5% are dimmed and improvements are green in Rich and   
-  interactive reports. Signed values carry the same information without styling. Residual is wall time minus every        
-  recorded leaf; ! means an endpoint's mean residual is negative.                                                         
+  parsing, residual source lowering, declaration/install commands, and the four exclusive typed-emission leaves detailed  
+  in the following table. Program rules includes every phase of source-origin rulesets except rebuild. Equality/rebuild   
+  combines encoded maintenance rulesets with native rebuild tails. Commands includes actions/input, checks, and other     
+  schedules. Shares may be negative or exceed 100% when mechanisms offset. ◆ and bold type mark each row's largest        
+  absolute share; contributions below 5% are dimmed and improvements are green in Rich and interactive reports. Signed    
+  values carry the same information without styling. Residual is wall time minus every recorded leaf; ! means an          
+  endpoint's mean residual is negative.                                                                                   
+                                                Generated frontend breakdown                                              
+                                                                                                                          
+    File                                                Generated phase                            Δ          Wall share  
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    Suite total (6 files)                               Construct                               0 ns                  0%  
+                                                        Signatures                              0 ns                  0%  
+                                                        Resolve/cache                           0 ns                  0%  
+                                                        Lower/materialize                       0 ns                  0%  
+    math.egg                                            Construct                               0 ns                  0%  
+                                                        Signatures                              0 ns                  0%  
+                                                        Resolve/cache                           0 ns                  0%  
+                                                        Lower/materialize                       0 ns                  0%  
+    eggcc-extract.egg                                   Construct                               0 ns                  0%  
+                                                        Signatures                              0 ns                  0%  
+                                                        Resolve/cache                           0 ns                  0%  
+                                                        Lower/materialize                       0 ns                  0%  
+    pointer-analysis-small.egg                          Construct                               0 ns                   —  
+                                                        Signatures                              0 ns                   —  
+                                                        Resolve/cache                           0 ns                   —  
+                                                        Lower/materialize                       0 ns                   —  
+    hardboiled.egg                                      Construct                               0 ns                  0%  
+                                                        Signatures                              0 ns                  0%  
+                                                        Resolve/cache                           0 ns                  0%  
+                                                        Lower/materialize                       0 ns                  0%  
+    luminal.egg                                         Construct                               0 ns                  0%  
+                                                        Signatures                              0 ns                  0%  
+                                                        Resolve/cache                           0 ns                  0%  
+                                                        Lower/materialize                       0 ns                  0%  
+    herbie.egg                                          Construct                               0 ns                  0%  
+                                                        Signatures                              0 ns                  0%  
+                                                        Resolve/cache                           0 ns                  0%  
+                                                        Lower/materialize                       0 ns                  0%  
+                                                                                                                          
+  For each file and the suite total, these four ordered, mutually exclusive leaves are the generated portion of Frontend  
+  above. Construct is typed producer work excluding signature catalog operations; Signatures is outermost catalog work.   
+  Resolve/cache is outermost generated sort/call resolution and receipt work; Lower/materialize is remaining generated    
+  batch work. Δ is the candidate − baseline mean with an adaptive unit; Wall share uses the same row's wall-time change.  
   ─────────────────────────────────────────────────── Per-file results ───────────────────────────────────────────────────
                                                          Wall time                                                        
                                                                                                                           

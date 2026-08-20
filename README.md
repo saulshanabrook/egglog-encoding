@@ -325,12 +325,15 @@ Every successful benchmark observation records timing from the same measured
 process. Timing collection is always enabled; requesting a detailed report does
 not rerun a diagnostic process or change the cache key.
 
-The versioned timing summary stores seven fixed process counters, one typed row
-per named ruleset with its Program or Equality role and five exclusive own-work
-phases, and one global native-Rebuild counter. Parent mechanisms, shares, and
-Residual are derived rather than stored; the same canonical per-file breakdown
-feeds both the decomposition and ruleset-driver views, so their parent totals
-match by construction.
+The versioned timing summary stores eleven fixed process counters, one typed
+row per named ruleset with its Program or Equality role and five exclusive
+own-work phases, and one global native-Rebuild counter. Four generated-frontend
+counters separate typed producer construction, signature-catalog operations,
+sort/call resolution, and remaining batch materialization. Each is an exclusive
+leaf; `frontend_other` is the residual source-lowering work outside them. Parent
+mechanisms, shares, and Residual are derived rather than stored; the same
+canonical per-file breakdown feeds both the decomposition and ruleset-driver
+views, so their parent totals match by construction.
 
 Checks are charged to the command counters in both modes. One known boundary is
 that a rebuild triggered by a top-level action such as `(union ...)` remains in
@@ -472,7 +475,7 @@ Each observation contains target and workload
 provenance, exact cache coordinates, status, wall time, peak RSS, and failure
 details. A top-level report schema version covers both the persisted shape and
 measurement semantics, so methodology changes cannot silently reuse stale
-measurements. Successful observations also contain the version-4 timing
+measurements. Successful observations also contain the version-5 timing
 summary: fixed process counters, a typed list of named ruleset timings, and one
 global native-Rebuild counter. Changes to timing coverage or meaning require a
 schema-version change so stale measurements cannot be reused silently.

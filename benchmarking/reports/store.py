@@ -23,11 +23,11 @@ from ..models import (
     Treatment,
 )
 
-type ReportSchemaVersion = Literal[4]
-REPORT_SCHEMA_VERSION: Final[ReportSchemaVersion] = 4
+type ReportSchemaVersion = Literal[5]
+REPORT_SCHEMA_VERSION: Final[ReportSchemaVersion] = 5
 
-type TimingSummarySchemaVersion = Literal[4]
-TIMING_SUMMARY_SCHEMA_VERSION: Final[TimingSummarySchemaVersion] = 4
+type TimingSummarySchemaVersion = Literal[5]
+TIMING_SUMMARY_SCHEMA_VERSION: Final[TimingSummarySchemaVersion] = 5
 
 
 type RulesetTimingRole = Literal["program", "equality"]
@@ -53,6 +53,10 @@ class TimingSummaryRecord(TypedDict):
     frontend_parse_ns: int
     frontend_other_ns: int
     frontend_install_ns: int
+    frontend_generated_construct_ns: int
+    frontend_generated_signatures_ns: int
+    frontend_generated_resolve_ns: int
+    frontend_generated_lower_ns: int
     commands_actions_ns: int
     commands_check_ns: int
     commands_other_ns: int

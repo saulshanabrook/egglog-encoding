@@ -320,6 +320,10 @@ def test_process_rulesets_and_global_rebuild_are_each_subtracted_from_residual(t
         typecheck_ns=13,
         frontend_other_ns=17,
         frontend_install_ns=19,
+        frontend_generated_construct_ns=2,
+        frontend_generated_signatures_ns=3,
+        frontend_generated_resolve_ns=5,
+        frontend_generated_lower_ns=7,
         commands_actions_ns=23,
         commands_check_ns=7,
         commands_other_ns=29,
@@ -357,7 +361,13 @@ def test_process_rulesets_and_global_rebuild_are_each_subtracted_from_residual(t
     file_row = views.timing[1]
 
     assert file_row.wall_delta_ns == pytest.approx(500.0)
-    assert file_row.mechanism_deltas == pytest.approx([13.0, 47.0, 199.0, 53.0, 59.0, 129.0])
+    assert (
+        file_row.generated_construct_delta_ns,
+        file_row.generated_signatures_delta_ns,
+        file_row.generated_resolve_delta_ns,
+        file_row.generated_lower_delta_ns,
+    ) == pytest.approx([2.0, 3.0, 5.0, 7.0])
+    assert file_row.mechanism_deltas == pytest.approx([13.0, 64.0, 199.0, 53.0, 59.0, 112.0])
     assert sum(delta or 0.0 for delta in file_row.mechanism_deltas) == pytest.approx(500.0)
     assert file_row.program.phases == pytest.approx((31, 37, 41, 43, 47, 0))
     assert file_row.equality.phases == pytest.approx((0, 0, 0, 0, 0, 53))

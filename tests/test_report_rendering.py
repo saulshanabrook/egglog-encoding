@@ -23,6 +23,7 @@ from benchmarking.reports.presentation import (
 )
 from benchmarking.reports.render import render_markdown_report_document, render_rich_report_document, render_rich_table
 from benchmarking.reports.store import ReportRecord, ReportStore
+from benchmarking.workloads import DEFAULT_WORKLOADS
 
 from .report_fixtures import (
     make_endpoint,
@@ -253,14 +254,14 @@ def test_all_rich_tables_use_one_compact_style(tmp_path: Path) -> None:
     assert all(table.box is box.SIMPLE_HEAVY and not table.show_lines for table in tables)
 
 
-def test_phase_detail_is_one_additive_decomposition_table(tmp_path: Path) -> None:
+def test_phase_detail_has_additive_parent_and_generated_breakdown_tables(tmp_path: Path) -> None:
     report_path, comparison = _pair_case(tmp_path)
     catalog = build_report_catalog(ReportStore(report_path), comparison, "phases")
 
     section = next(section for section in catalog.sections if section.id == "phases")
     tables = tuple(block for block in section.blocks if isinstance(block, ReportTable))
-    assert len(tables) == 1
-    (table,) = tables
+    assert len(tables) == 2
+    table, generated = tables
     assert tuple(column.id for column in table.columns) == (
         "file",
         "wall_delta",
@@ -277,6 +278,20 @@ def test_phase_detail_is_one_additive_decomposition_table(tmp_path: Path) -> Non
     assert table.columns[3].label == "Frontend"
     assert table.columns[4].label == "Program"
     assert table.columns[5].label == "Equality"
+    assert tuple(column.id for column in generated.columns) == (
+        "file",
+        "generated_phase",
+        "delta",
+        "wall_share",
+    )
+    assert len(generated.rows) == 4 * len(table.rows)
+    assert [row.cells[1].display for row in generated.rows[:4]] == [
+        "Construct",
+        "Signatures",
+        "Resolve/cache",
+        "Lower/materialize",
+    ]
+    assert generated.caption is not None and "generated portion of Frontend" in generated.caption
     assert table.caption is not None and "candidate − baseline" in table.caption
     assert all("%" in cell.display.partition("  ")[0] for cell in table.rows[0].cells[2:])
     assert all(sum("◆" in cell.display for cell in row.cells[2:]) == 1 for row in table.rows)
@@ -285,6 +300,109 @@ def test_phase_detail_is_one_additive_decomposition_table(tmp_path: Path) -> Non
     assert table.rows[1].cells[1].tone == "positive"
     assert table.rows[1].cells[4].tone == "emphasis"
     assert table.rows[1].cells[7].tone == "positive"
+
+
+def test_generated_breakdown_preserves_signed_submillisecond_deltas(tmp_path: Path) -> None:
+    report_path = tmp_path / "generated-units.jsonl"
+    file = models.FileSpec("file.egg", tmp_path / "file.egg", "sha256:file")
+    baseline = make_endpoint(binary_sha256="sha256:baseline", treatment="off")
+    candidate = make_endpoint(binary_sha256="sha256:candidate", treatment="proofs")
+    write_report(
+        report_path,
+        make_record(
+            0,
+            started_at="2026-07-17T12:00:00Z",
+            binary_sha256=baseline.target.binary_sha256,
+            treatment=baseline.treatment,
+            timing_summary=make_timing_summary(
+                frontend_generated_signatures_ns=3_000,
+                frontend_generated_lower_ns=5_000_000,
+            ),
+        ),
+        make_record(
+            1,
+            started_at="2026-07-17T12:00:01Z",
+            binary_sha256=candidate.target.binary_sha256,
+            treatment=candidate.treatment,
+            wall_sec=1.01,
+            timing_summary=make_timing_summary(
+                frontend_generated_construct_ns=125,
+                frontend_generated_signatures_ns=500,
+                frontend_generated_resolve_ns=1_250_000,
+            ),
+        ),
+    )
+    comparison = models.ComparisonSpec(baseline, candidate, (file,), 1, 120)
+
+    catalog = build_report_catalog(ReportStore(report_path), comparison, "phases")
+    section = next(section for section in catalog.sections if section.id == "phases")
+    generated = tuple(block for block in section.blocks if isinstance(block, ReportTable))[1]
+    file_rows = generated.rows[4:]
+
+    assert [row.cells[1].display for row in file_rows] == [
+        "Construct",
+        "Signatures",
+        "Resolve/cache",
+        "Lower/materialize",
+    ]
+    assert [row.cells[2].raw for row in file_rows] == [125.0, -2_500.0, 1_250_000.0, -5_000_000.0]
+    assert all(row.cells[2].raw != 0 for row in file_rows)
+    assert [row.cells[2].display for row in file_rows] == [
+        "+125 ns",
+        "-2.50 us",
+        "+1.25 ms",
+        "-5.00 ms",
+    ]
+
+
+def test_default_ten_file_markdown_and_rich_include_generated_breakdown(tmp_path: Path) -> None:
+    report_path = tmp_path / "default-ten.jsonl"
+    files = tuple(
+        models.FileSpec(workload.file, tmp_path / Path(workload.file).name, f"sha256:file-{index}")
+        for index, workload in enumerate(DEFAULT_WORKLOADS)
+    )
+    assert len(files) == 10
+    baseline = make_endpoint(binary_sha256="sha256:baseline", treatment="off")
+    candidate = make_endpoint(binary_sha256="sha256:candidate", treatment="proofs")
+    records: list[ReportRecord] = []
+    for endpoint_order, endpoint in enumerate((baseline, candidate)):
+        for file_order, file in enumerate(files):
+            records.append(
+                make_record(
+                    len(records),
+                    started_at=f"2026-07-17T12:{len(records):02d}:00Z",
+                    binary_sha256=endpoint.target.binary_sha256,
+                    file_sha256=file.sha256,
+                    treatment=endpoint.treatment,
+                    wall_sec=1.0 + endpoint_order * 0.01,
+                    timing_summary=make_timing_summary(
+                        frontend_generated_construct_ns=(endpoint_order + file_order) * 100,
+                        frontend_generated_signatures_ns=(endpoint_order + file_order) * 1_000,
+                        frontend_generated_resolve_ns=(endpoint_order + file_order) * 1_000_000,
+                        frontend_generated_lower_ns=(endpoint_order + file_order) * 10_000_000,
+                    ),
+                )
+            )
+    write_report(report_path, *records)
+    comparison = models.ComparisonSpec(baseline, candidate, files, 1, 120)
+
+    catalog = build_report_catalog(ReportStore(report_path), comparison, "phases")
+    section = next(section for section in catalog.sections if section.id == "phases")
+    generated = tuple(block for block in section.blocks if isinstance(block, ReportTable))[1]
+    markdown = render_markdown_report_document(catalog)
+    console = Console(record=True, width=120, color_system=None)
+    console.print(render_rich_report_document(catalog, 120))
+    rich = console.export_text()
+
+    assert len(generated.rows) == 44
+    assert [row.cells[1].display for row in generated.rows] == [
+        label for _ in range(11) for label in ("Construct", "Signatures", "Resolve/cache", "Lower/materialize")
+    ]
+    assert "### Generated frontend breakdown" in markdown
+    assert all(Path(workload.file).name in markdown for workload in DEFAULT_WORKLOADS)
+    assert "Generated frontend breakdown" in rich
+    assert "Warning: detailed Rich report" not in rich
+    assert max(cell_len(line) for line in rich.splitlines()) <= 120
 
 
 def test_ruleset_detail_unfolds_program_and_equality_with_explicit_children(tmp_path: Path) -> None:
@@ -534,9 +652,14 @@ def test_timed_out_file_has_missing_phase_cells_and_ruleset_status(tmp_path: Pat
 
     catalog = build_report_catalog(ReportStore(report_path), comparison, "rulesets")
     phase_section = next(section for section in catalog.sections if section.id == "phases")
-    phase_table = next(block for block in phase_section.blocks if isinstance(block, ReportTable))
+    phase_table, generated = tuple(block for block in phase_section.blocks if isinstance(block, ReportTable))
     assert len(phase_table.rows) == 2
     assert all(cell.display == "—" for row in phase_table.rows for cell in row.cells[1:])
+    assert len(generated.rows) == 8
+    assert [row.cells[1].display for row in generated.rows] == [
+        label for _ in range(2) for label in ("Construct", "Signatures", "Resolve/cache", "Lower/materialize")
+    ]
+    assert all(row.cells[2].display == row.cells[3].display == "—" for row in generated.rows)
     ruleset_section = next(section for section in catalog.sections if section.id == "rulesets")
     status = next(
         block
