@@ -4,7 +4,7 @@ use super::*;
 use crate::EGraph;
 use crate::ast::{GenericActions, GenericFact, GenericRule, ResolvedNCommand};
 use crate::proofs::generated_binder::{
-    GeneratedBatch, GeneratedEntry, GeneratedVar, GeneratedVarRole, LocalId,
+    GeneratedBatch, GeneratedEntry, GeneratedVar, GeneratedVarRole, LocalId, PrimitiveKey,
     resolve_generated_batch,
 };
 use crate::typechecking::TypeError;
@@ -1600,6 +1600,73 @@ fn failed_custom_merge_rolls_back_its_view_and_receipt_but_keeps_term_prefix() {
     assert_eq!(receipt.layout.source_name, "F");
 }
 
+fn ordered_union_expr_shape(expr: &GeneratedExpr, span: &Span) -> String {
+    match expr {
+        GenericExpr::Var(actual, variable) => {
+            assert_eq!(actual, span);
+            format!("v{}", variable.id.0)
+        }
+        GenericExpr::Lit(actual, literal) => {
+            assert_eq!(actual, span);
+            format!("{literal:?}")
+        }
+        GenericExpr::Call(actual, head, args) => {
+            assert_eq!(actual, span);
+            let head = match head {
+                CallKey::Function(function) => format!("fn:{}", function.name),
+                CallKey::Primitive(primitive) => primitive.name.clone(),
+                CallKey::Values(sorts) => format!(
+                    "values<{}>",
+                    sorts
+                        .iter()
+                        .map(|sort| format!("{}:{:?}", sort.name, sort.class))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                ),
+            };
+            let args = args
+                .iter()
+                .map(|arg| ordered_union_expr_shape(arg, span))
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("{head}({args})")
+        }
+    }
+}
+
+fn ordered_union_merge_shape(merge: &GeneratedMerge, span: &Span) -> (Vec<String>, String) {
+    let actions = merge
+        .actions
+        .0
+        .iter()
+        .map(|action| match action {
+            GenericAction::Let(actual, variable, value) => {
+                assert_eq!(actual, span);
+                format!(
+                    "let v{}={}",
+                    variable.id.0,
+                    ordered_union_expr_shape(value, span)
+                )
+            }
+            GenericAction::Set(actual, CallKey::Function(function), args, value) => {
+                assert_eq!(actual, span);
+                let args = args
+                    .iter()
+                    .map(|arg| ordered_union_expr_shape(arg, span))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!(
+                    "set fn:{}({args})={}",
+                    function.name,
+                    ordered_union_expr_shape(value, span)
+                )
+            }
+            action => panic!("unexpected ordered-union merge action: {action:?}"),
+        })
+        .collect();
+    (actions, ordered_union_expr_shape(&merge.result, span))
+}
+
 #[test]
 fn ordered_union_merge_has_exact_structure_ids_and_first_use_packed_group() {
     let mut egraph = EGraph::new_with_proofs();
@@ -1618,52 +1685,96 @@ fn ordered_union_merge_has_exact_structure_ids_and_first_use_packed_group() {
         name: "UF".to_owned(),
         subtype: FunctionSubtype::Custom,
         inputs: vec![value.clone()],
-        output: ValueShape::Tuple(vec![value.clone(), proof]),
+        output: ValueShape::Tuple(vec![value.clone(), proof.clone()]),
     };
+    let composition = Skeleton::Leaf(0).trans(Skeleton::Leaf(1).sym());
+    let spelling = composition.spelling();
+    let packed = instrumentor.proof_names().packed_proof(composition.width());
+    let mint = crate::proofs::proof_fresh::mint_prim_name(&packed);
+    let mut expected_symbols = instrumentor.egraph.parser.symbol_gen.clone();
+    let expected_displaced = expected_symbols.fresh("pv");
     let (pending, merge) = instrumentor.plan_ordered_union_merge_direct(
         &mut catalog,
         &span,
         value.clone(),
         uf.clone(),
-        Skeleton::Leaf(0).trans(Skeleton::Leaf(1).sym()),
+        composition.clone(),
     );
+    assert_eq!(instrumentor.egraph.parser.symbol_gen, expected_symbols);
+    assert_eq!(planned_names(&pending), [packed.as_str()]);
     pending.register_signatures(&mut catalog);
     assert_eq!(pending.declarations.len(), 1);
-    assert_eq!(merge.actions.0.len(), 4);
-    let GenericAction::Let(_, hi, GenericExpr::Call(_, _, hi_args)) = &merge.actions.0[0] else {
-        panic!("first merge action must select the displaced proof")
+    let [
+        GenericAction::Let(_, hi, _),
+        GenericAction::Let(_, lo, _),
+        GenericAction::Let(_, displaced, _),
+        GenericAction::Set(..),
+    ] = merge.actions.0.as_slice()
+    else {
+        panic!("proof merge action kinds changed: {:?}", merge.actions)
     };
-    assert_eq!(hi.id, LocalId(4));
-    let ids = hi_args
-        .iter()
-        .map(|expr| match expr {
-            GenericExpr::Var(_, variable) => variable.id,
-            _ => panic!("proof selector argument must be a variable"),
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(ids, [LocalId(0), LocalId(1), LocalId(2), LocalId(3)]);
-    let GenericAction::Let(_, lo, _) = &merge.actions.0[1] else {
-        panic!("second merge action must select the retained proof")
-    };
-    assert_eq!(lo.id, LocalId(5));
-    let GenericAction::Let(_, displaced, _) = &merge.actions.0[2] else {
-        panic!("third merge action must mint the packed proof")
-    };
-    assert_eq!(displaced.id, LocalId(6));
-    assert!(matches!(merge.actions.0[3], GenericAction::Set(..)));
-    assert!(matches!(
-        merge.result,
-        GenericExpr::Call(_, CallKey::Values(_), _)
-    ));
+    assert_eq!((hi.id, hi.name.as_str()), (LocalId(4), "hi_pf_"));
+    assert_eq!((lo.id, lo.name.as_str()), (LocalId(5), "lo_pf_"));
+    assert_eq!(
+        (displaced.id, &displaced.name),
+        (LocalId(6), &expected_displaced)
+    );
+    let (actions, result) = ordered_union_merge_shape(&merge, &span);
+    assert_eq!(
+        actions,
+        [
+            "let v4=proof-of-max(v0,v1,v2,v3)".to_owned(),
+            "let v5=proof-of-min(v0,v1,v2,v3)".to_owned(),
+            format!("let v6={mint}(String({:?}),v4,v5)", spelling),
+            format!(
+                "set fn:UF(ordering-max(v0,v2))=values<E:Eq,{}:Eq>(ordering-min(v0,v2),v6)",
+                proof.name
+            ),
+        ]
+    );
+    assert_eq!(
+        result,
+        format!("values<E:Eq,{}:Eq>(ordering-min(v0,v2),v5)", proof.name)
+    );
 
     let (repeat, _) = instrumentor.plan_ordered_union_merge_direct(
         &mut catalog,
         &span,
-        value,
+        value.clone(),
         uf,
-        Skeleton::Leaf(0).trans(Skeleton::Leaf(1).sym()),
+        composition,
     );
     assert!(repeat.declarations.is_empty());
+
+    drop(instrumentor);
+    let mut term_egraph = EGraph::new_with_term_encoding();
+    let mut term_instrumentor = ProofInstrumentor::new(&mut term_egraph);
+    let unit = SortKey {
+        name: "Unit".to_owned(),
+        class: SortSemanticClass::Value,
+    };
+    let term_uf = FunctionKey {
+        name: "UF".to_owned(),
+        subtype: FunctionSubtype::Custom,
+        inputs: vec![value.clone()],
+        output: ValueShape::Tuple(vec![value.clone(), unit]),
+    };
+    let before_symbols = term_instrumentor.egraph.parser.symbol_gen.clone();
+    let (pending, merge) = term_instrumentor.plan_ordered_union_merge_direct(
+        &mut GeneratedSignatureCatalog::default(),
+        &span,
+        value,
+        term_uf,
+        Skeleton::Leaf(0),
+    );
+    assert_eq!(term_instrumentor.egraph.parser.symbol_gen, before_symbols);
+    assert!(pending.declarations.is_empty());
+    let (actions, result) = ordered_union_merge_shape(&merge, &span);
+    assert_eq!(
+        actions,
+        ["set fn:UF(ordering-max(v0,v1))=values<E:Eq,Unit:Value>(ordering-min(v0,v1),Unit)"]
+    );
+    assert_eq!(result, "values<E:Eq,Unit:Value>(ordering-min(v0,v1),Unit)");
 }
 
 #[test]

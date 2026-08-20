@@ -645,14 +645,14 @@ impl GeneratedRuleBuilder {
     }
 }
 
-/// Construction boundary for generated rules and merges.
+/// Construction boundary for generated rules.
 ///
 /// Producers supply semantic signatures and variable names; this emitter owns
 /// their canonical catalog registration, one lexical local-ID namespace, the
 /// default generated span, and head-action order. Any failure here is a bug in
 /// a generated-code producer rather than a source-program diagnostic, so the
 /// boundary deliberately converts [`GeneratedBindError`] into one panic.
-pub(super) struct GeneratedSemanticEmitter<'a> {
+struct GeneratedSemanticEmitter<'a> {
     catalog: &'a mut GeneratedSignatureCatalog,
     span: Span,
     variables: GeneratedRuleBuilder,
@@ -660,7 +660,7 @@ pub(super) struct GeneratedSemanticEmitter<'a> {
 }
 
 impl<'a> GeneratedSemanticEmitter<'a> {
-    pub(super) fn new(catalog: &'a mut GeneratedSignatureCatalog, span: &Span) -> Self {
+    fn new(catalog: &'a mut GeneratedSignatureCatalog, span: &Span) -> Self {
         Self {
             catalog,
             span: span.clone(),
@@ -673,29 +673,11 @@ impl<'a> GeneratedSemanticEmitter<'a> {
         result.unwrap_or_else(|error| panic!("invalid generated semantic emission: {error}"))
     }
 
-    pub(super) fn sort(&mut self, key: SortKey) -> SortKey {
+    fn sort(&mut self, key: SortKey) -> SortKey {
         Self::producer_value(self.catalog.register_sort(key, &self.span))
     }
 
-    pub(super) fn function(&mut self, key: FunctionKey) -> CallKey {
-        let call = CallKey::Function(key);
-        Self::producer_value(self.catalog.register_call_key(&call, &self.span));
-        call
-    }
-
-    pub(super) fn primitive(&mut self, key: PrimitiveKey) -> CallKey {
-        let call = CallKey::Primitive(key);
-        Self::producer_value(self.catalog.register_call_key(&call, &self.span));
-        call
-    }
-
-    pub(super) fn values(&mut self, sorts: Vec<SortKey>) -> CallKey {
-        let call = CallKey::Values(sorts);
-        Self::producer_value(self.catalog.register_call_key(&call, &self.span));
-        call
-    }
-
-    pub(super) fn local(&mut self, name: impl Into<String>, sort: SortKey) -> GeneratedVar {
+    fn local(&mut self, name: impl Into<String>, sort: SortKey) -> GeneratedVar {
         Self::producer_value(self.variables.variable(
             name,
             sort,
@@ -704,44 +686,12 @@ impl<'a> GeneratedSemanticEmitter<'a> {
         ))
     }
 
-    /// Build a call at the generated span. Call keys passed here must come
-    /// from this emitter's signature constructors or from an earlier emitter
-    /// over the same batch catalog.
-    pub(super) fn call(&mut self, key: CallKey, args: Vec<GeneratedExpr>) -> GeneratedExpr {
-        GenericExpr::Call(self.span.clone(), key, args)
-    }
-
-    /// Allocate a local and append its defining call as the next head action.
-    /// Keeping those operations indivisible prevents local-ID order from
-    /// drifting away from lexical action order during emitter refactors.
-    pub(super) fn bind_call(
-        &mut self,
-        name: impl Into<String>,
-        sort: SortKey,
-        call: CallKey,
-        args: Vec<GeneratedExpr>,
-    ) -> GeneratedVar {
-        let value = self.call(call, args);
-        let variable = self.local(name, sort);
-        self.head.push(GenericAction::Let(
-            self.span.clone(),
-            variable.clone(),
-            value,
-        ));
-        variable
-    }
-
-    pub(super) fn set(
-        &mut self,
-        function: CallKey,
-        args: Vec<GeneratedExpr>,
-        value: GeneratedExpr,
-    ) {
+    fn set(&mut self, function: CallKey, args: Vec<GeneratedExpr>, value: GeneratedExpr) {
         self.head
             .push(GenericAction::Set(self.span.clone(), function, args, value));
     }
 
-    pub(super) fn change(&mut self, change: Change, function: CallKey, args: Vec<GeneratedExpr>) {
+    fn change(&mut self, change: Change, function: CallKey, args: Vec<GeneratedExpr>) {
         self.head.push(GenericAction::Change(
             self.span.clone(),
             change,
@@ -750,7 +700,7 @@ impl<'a> GeneratedSemanticEmitter<'a> {
         ));
     }
 
-    pub(super) fn finish_rule(
+    fn finish_rule(
         self,
         body: Vec<GeneratedFact>,
         name: String,
@@ -767,13 +717,6 @@ impl<'a> GeneratedSemanticEmitter<'a> {
             eval_mode,
             no_decomp: false,
             include_subsumed,
-        }
-    }
-
-    pub(super) fn finish_merge(self, result: GeneratedExpr) -> GeneratedMerge {
-        GenericMerge {
-            actions: GenericActions(self.head),
-            result,
         }
     }
 }
@@ -804,25 +747,53 @@ enum ExprNode {
     Call(usize, Vec<usize>),
 }
 
+pub(super) struct RuleMode;
+
+pub(super) struct MergeMode {
+    expected: [SortKey; 2],
+    inputs_declared: bool,
+}
+
+pub(super) trait CheckedMode {
+    fn check_action(&self, _: &str, _: &Span) {}
+}
+
+impl CheckedMode for RuleMode {}
+
+impl CheckedMode for MergeMode {
+    fn check_action(&self, name: &str, span: &Span) {
+        assert!(
+            self.inputs_declared
+                && (name.is_empty() || !matches!(name, "old0" | "old1" | "new0" | "new1")),
+            "invalid generated semantic emission: invalid checked merge action at {span}"
+        );
+    }
+}
+
 /// Closure-scoped adapter from branded append-only IDs to the current AST.
 /// Handle creation registers signatures; the boundary materializes the result.
-pub(super) struct CheckedRuleBuilder<'catalog, 'id> {
+pub(super) struct CheckedBuilder<'catalog, 'id, Mode> {
     emitter: GeneratedSemanticEmitter<'catalog>,
     sorts: Vec<SortKey>,
     calls: Vec<CallKey>,
     expressions: Vec<ExprNode>,
     body: Vec<GeneratedFact>,
+    mode: Mode,
     brand: PhantomData<fn(&'id ()) -> &'id ()>,
 }
 
-impl<'catalog, 'id> CheckedRuleBuilder<'catalog, 'id> {
-    fn new(catalog: &'catalog mut GeneratedSignatureCatalog, span: &Span) -> Self {
+pub(super) type CheckedRuleBuilder<'catalog, 'id> = CheckedBuilder<'catalog, 'id, RuleMode>;
+pub(super) type CheckedMergeBuilder<'catalog, 'id> = CheckedBuilder<'catalog, 'id, MergeMode>;
+
+impl<'catalog, 'id, Mode: CheckedMode> CheckedBuilder<'catalog, 'id, Mode> {
+    fn new(catalog: &'catalog mut GeneratedSignatureCatalog, span: &Span, mode: Mode) -> Self {
         Self {
             emitter: GeneratedSemanticEmitter::new(catalog, span),
             sorts: Vec::new(),
             calls: Vec::new(),
             expressions: Vec::new(),
             body: Vec::new(),
+            mode,
             brand: PhantomData,
         }
     }
@@ -929,11 +900,6 @@ impl<'catalog, 'id> CheckedRuleBuilder<'catalog, 'id> {
         }))
     }
 
-    pub(super) fn local(&mut self, name: impl Into<String>, sort: SortRef<'id>) -> ExprRef<'id> {
-        let variable = self.emitter.local(name, self.sorts[sort.0].clone());
-        self.push_expr(ExprNode::Var(variable))
-    }
-
     pub(super) fn lit(&mut self, literal: Literal) -> ExprRef<'id> {
         let sort = SortKey::from_sort(&crate::sort::literal_sort(&literal));
         GeneratedSemanticEmitter::producer_value(
@@ -959,7 +925,15 @@ impl<'catalog, 'id> CheckedRuleBuilder<'catalog, 'id> {
                 self.emitter.span,
             );
         };
+        let name = name.into();
+        self.mode.check_action(&name, &self.emitter.span);
+        let next = LocalId(self.emitter.variables.next_local_id);
         let variable = self.emitter.local(name, sort);
+        assert_eq!(
+            variable.id, next,
+            "invalid generated semantic emission: duplicate local `{}` at {}",
+            &variable.name, self.emitter.span
+        );
         self.emitter.head.push(GenericAction::Let(
             self.emitter.span.clone(),
             variable.clone(),
@@ -985,22 +959,11 @@ impl<'catalog, 'id> CheckedRuleBuilder<'catalog, 'id> {
         }
         let args = self.checked_args(function, args);
         self.check_shape(&self.expression_shape(value.0), &key.output);
+        self.mode.check_action("", &self.emitter.span);
         let args = args.into_iter().map(|arg| self.materialize(arg)).collect();
         let value = self.materialize(value.0);
         self.emitter
             .set(self.calls[function.0].clone(), args, value);
-    }
-
-    pub(super) fn change(
-        &mut self,
-        change: Change,
-        function: FunctionRef<'id>,
-        args: impl AsRef<[ExprRef<'id>]>,
-    ) {
-        let args = self.checked_args(function, args);
-        let args = args.into_iter().map(|arg| self.materialize(arg)).collect();
-        self.emitter
-            .change(change, self.calls[function.0].clone(), args);
     }
 
     fn materialize(&self, expression: usize) -> GeneratedExpr {
@@ -1015,6 +978,25 @@ impl<'catalog, 'id> CheckedRuleBuilder<'catalog, 'id> {
             ),
         }
     }
+}
+
+impl<'catalog, 'id> CheckedRuleBuilder<'catalog, 'id> {
+    pub(super) fn local(&mut self, name: impl Into<String>, sort: SortRef<'id>) -> ExprRef<'id> {
+        let variable = self.emitter.local(name, self.sorts[sort.0].clone());
+        self.push_expr(ExprNode::Var(variable))
+    }
+
+    pub(super) fn change(
+        &mut self,
+        change: Change,
+        function: FunctionRef<'id>,
+        args: impl AsRef<[ExprRef<'id>]>,
+    ) {
+        let args = self.checked_args(function, args);
+        let args = args.into_iter().map(|arg| self.materialize(arg)).collect();
+        self.emitter
+            .change(change, self.calls[function.0].clone(), args);
+    }
 
     pub(super) fn eq(&mut self, left: ExprRef<'id>, right: ExprRef<'id>) {
         let expected = self.expression_shape(left.0);
@@ -1028,6 +1010,35 @@ impl<'catalog, 'id> CheckedRuleBuilder<'catalog, 'id> {
 
     pub(super) fn fact(&mut self, expr: ExprRef<'id>) {
         self.body.push(GenericFact::Fact(self.materialize(expr.0)));
+    }
+}
+
+impl<'catalog, 'id> CheckedMergeBuilder<'catalog, 'id> {
+    pub(super) fn inputs<const N: usize>(
+        &mut self,
+        sorts: [SortRef<'id>; N],
+    ) -> ([ExprRef<'id>; N], [ExprRef<'id>; N]) {
+        assert!(
+            !self.mode.inputs_declared
+                && N > 0
+                && N <= self.mode.expected.len()
+                && sorts
+                    .iter()
+                    .enumerate()
+                    .all(|(index, sort)| self.sorts[sort.0] == self.mode.expected[index]),
+            "invalid generated semantic emission: invalid merge inputs at {}",
+            self.emitter.span
+        );
+        self.mode.inputs_declared = true;
+        let mut make = |names: [&str; 2]| -> [ExprRef<'id>; N] {
+            std::array::from_fn(|index| {
+                let variable = self
+                    .emitter
+                    .local(names[index], self.sorts[sorts[index].0].clone());
+                self.push_expr(ExprNode::Var(variable))
+            })
+        };
+        (make(["old0", "old1"]), make(["new0", "new1"]))
     }
 }
 
@@ -1078,13 +1089,39 @@ pub(super) fn build_checked_rule(
     metadata: (String, String, RuleEvalMode, bool),
     build: impl for<'id> FnOnce(&mut CheckedRuleBuilder<'_, 'id>),
 ) -> GeneratedRule {
-    let mut builder = CheckedRuleBuilder::new(catalog, span);
+    let mut builder = CheckedBuilder::new(catalog, span, RuleMode);
     build(&mut builder);
     validate_rule_scope(&builder.body, &builder.emitter.head, span);
     let (name, ruleset, eval_mode, include_subsumed) = metadata;
     builder
         .emitter
         .finish_rule(builder.body, name, ruleset, eval_mode, include_subsumed)
+}
+
+pub(super) fn build_checked_merge(
+    catalog: &mut GeneratedSignatureCatalog,
+    span: &Span,
+    expected: [SortKey; 2],
+    build: impl for<'id> FnOnce(&mut CheckedMergeBuilder<'_, 'id>) -> ExprRef<'id>,
+) -> GeneratedMerge {
+    let mode = MergeMode {
+        expected,
+        inputs_declared: false,
+    };
+    let mut builder = CheckedBuilder::new(catalog, span, mode);
+    let result = build(&mut builder);
+    assert!(
+        builder.mode.inputs_declared
+            && matches!(builder.expressions.get(result.0), Some(ExprNode::Call(call, _))
+                if matches!(&builder.calls[*call], CallKey::Values(sorts)
+                    if sorts == &builder.mode.expected)),
+        "invalid generated semantic emission: merge result values at {span}"
+    );
+    let result = builder.materialize(result.0);
+    GenericMerge {
+        actions: GenericActions(builder.emitter.head),
+        result,
+    }
 }
 
 #[derive(Debug, Error)]
@@ -3042,10 +3079,26 @@ mod checked_builder_tests {
 
     use super::*;
 
+    fn assert_rejected<T>(expected: &str, span: &Span, run: impl FnOnce() -> T) {
+        let panic = catch_unwind(AssertUnwindSafe(run))
+            .map(|_| ())
+            .expect_err("invalid checked construction must panic");
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .expect("checked builder panic must contain text");
+        assert!(message.contains(expected), "unexpected panic: {message}");
+        assert!(
+            message.contains(&span.to_string()),
+            "checked builder panic omitted its span: {message}"
+        );
+    }
+
     fn rejected(expected: &str, build: impl for<'id> FnOnce(&mut CheckedRuleBuilder<'_, 'id>)) {
         let span = crate::span!();
         let mut catalog = GeneratedSignatureCatalog::default();
-        let panic = catch_unwind(AssertUnwindSafe(|| {
+        assert_rejected(expected, &span, || {
             build_checked_rule(
                 &mut catalog,
                 &span,
@@ -3057,14 +3110,34 @@ mod checked_builder_tests {
                 ),
                 build,
             )
-        }))
-        .expect_err("invalid checked construction must panic");
-        let message = panic
-            .downcast_ref::<String>()
-            .map(String::as_str)
-            .or_else(|| panic.downcast_ref::<&str>().copied())
-            .expect("checked builder panic must contain text");
-        assert!(message.contains(expected), "unexpected panic: {message}");
+        });
+    }
+
+    fn rejected_merge(
+        expected: &str,
+        build: impl for<'id> FnOnce(
+            &mut CheckedMergeBuilder<'_, 'id>,
+            SortRef<'id>,
+            SortRef<'id>,
+        ) -> ExprRef<'id>,
+    ) {
+        let span = crate::span!();
+        let mut catalog = GeneratedSignatureCatalog::default();
+        let key = SortKey {
+            name: "i64".to_owned(),
+            class: SortSemanticClass::Value,
+        };
+        let expected_sorts = [key.clone(), key.clone()];
+        assert_rejected(expected, &span, || {
+            build_checked_merge(&mut catalog, &span, expected_sorts, move |builder| {
+                let sort = builder.sort(key);
+                let bool_sort = builder.sort(SortKey {
+                    name: "bool".to_owned(),
+                    class: SortSemanticClass::Value,
+                });
+                build(builder, sort, bool_sort)
+            })
+        });
     }
 
     #[test]
@@ -3226,6 +3299,71 @@ mod checked_builder_tests {
             });
             let x = builder.local("x", i64_sort);
             builder.fact(x);
+        });
+    }
+
+    #[test]
+    fn checked_merge_owns_its_values_result() {
+        let span = crate::span!();
+        let mut catalog = GeneratedSignatureCatalog::default();
+        let key = SortKey {
+            name: "i64".to_owned(),
+            class: SortSemanticClass::Value,
+        };
+        let expected = [key.clone(), key.clone()];
+        let merge = build_checked_merge(&mut catalog, &span, expected, move |builder| {
+            let sort = builder.sort(key);
+            let values = builder.values([sort, sort]);
+            let ([old], [new]) = builder.inputs([sort]);
+            let identity = builder.primitive("identity", [sort], sort);
+            let selected = builder.apply(identity, [old]);
+            let selected = builder.bind("selected", selected);
+            builder.apply(values, [selected, new])
+        });
+        let [GenericAction::Let(let_span, selected, _)] = merge.actions.0.as_slice() else {
+            panic!("checked merge action order changed: {:?}", merge.actions)
+        };
+        assert_eq!((let_span, selected.id), (&span, LocalId(2)));
+        assert!(matches!(
+            &merge.result,
+            GenericExpr::Call(actual, CallKey::Values(sorts), args)
+                if actual == &span && sorts.len() == 2 && args.len() == 2
+        ));
+    }
+
+    #[test]
+    fn checked_merge_rejects_input_bind_and_result_escapes() {
+        rejected_merge("merge result values", |builder, _, _| {
+            builder.lit(Literal::Int(0))
+        });
+        rejected_merge("invalid merge inputs", |builder, _, bool_sort| {
+            let ([old], _) = builder.inputs([bool_sort]);
+            old
+        });
+        rejected_merge("invalid merge inputs", |builder, sort, _| {
+            let ([old], _) = builder.inputs([sort]);
+            builder.inputs([sort]);
+            old
+        });
+        rejected_merge("cannot bind tuple", |builder, sort, _| {
+            let values = builder.values([sort, sort]);
+            let ([old], [new]) = builder.inputs([sort]);
+            let tuple = builder.apply(values, [old, new]);
+            builder.bind("old1", tuple)
+        });
+        rejected_merge("invalid checked merge action", |builder, sort, _| {
+            let ([old], _) = builder.inputs([sort]);
+            builder.bind("old1", old)
+        });
+        rejected_merge("merge result values", |builder, sort, bool_sort| {
+            let values = builder.values([sort, bool_sort]);
+            let ([old], _) = builder.inputs([sort]);
+            let flag = builder.lit(Literal::Bool(false));
+            builder.apply(values, [old, flag])
+        });
+        rejected_merge("merge result values", |builder, sort, _| {
+            let ([old], _) = builder.inputs([sort]);
+            old
         });
     }
 }

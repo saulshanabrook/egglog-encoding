@@ -19,8 +19,8 @@ use crate::proofs::generated_binder::SortSemanticClass::{Eq, Value};
 use crate::proofs::generated_binder::{
     CallKey, FunctionKey, GeneratedCommand, GeneratedExpr, GeneratedFunctionDecl,
     GeneratedIndexDecl, GeneratedMerge, GeneratedPresort, GeneratedPresortArg, GeneratedRule,
-    GeneratedSemanticEmitter, GeneratedSignatureCatalog, GeneratedSortDecl, PrimitiveKey, SortKey,
-    SortSemanticClass, ValueShape, build_checked_rule,
+    GeneratedSignatureCatalog, GeneratedSortDecl, SortKey, SortSemanticClass, ValueShape,
+    build_checked_merge, build_checked_rule,
 };
 use crate::proofs::proof_encoding_helpers::{Skeleton, recomputable_premises};
 use crate::typechecking::FuncType;
@@ -715,106 +715,66 @@ impl ProofInstrumentor<'_> {
         uf: FunctionKey,
         composition: Skeleton,
     ) -> (TypedHoistGroup, GeneratedMerge) {
-        let mut emitter = GeneratedSemanticEmitter::new(catalog, span);
-        let carried_sort = if self.proofs_enabled() {
-            SortKey {
-                name: self.proof_names().proof_datatype.clone(),
-                class: SortSemanticClass::Eq,
-            }
-        } else {
-            SortKey {
-                name: "Unit".to_owned(),
-                class: SortSemanticClass::Value,
-            }
-        };
-        let ordering_max = emitter.primitive(PrimitiveKey {
-            name: "ordering-max".to_owned(),
-            inputs: vec![value_sort.clone(), value_sort.clone()],
-            output: value_sort.clone(),
-        });
-        let ordering_min = emitter.primitive(PrimitiveKey {
-            name: "ordering-min".to_owned(),
-            inputs: vec![value_sort.clone(), value_sort.clone()],
-            output: value_sort.clone(),
-        });
-        let values = emitter.values(vec![value_sort.clone(), carried_sort.clone()]);
-
-        let var = |variable| GenericExpr::Var(span.clone(), variable);
-        let (pending, old0, new0, displaced, retained) = if self.proofs_enabled() {
-            // `proof-of-max` observes old0, old1, new0, new1 in that order.
-            // Preserve those local IDs even though `ordering-max` appears
-            // later in the action sequence.
-            let old0 = emitter.local("old0", value_sort.clone());
-            let old1 = emitter.local("old1", carried_sort.clone());
-            let new0 = emitter.local("new0", value_sort.clone());
-            let new1 = emitter.local("new1", carried_sort.clone());
-            let proof_selector = |name: &str| PrimitiveKey {
-                name: name.to_owned(),
-                inputs: vec![
-                    value_sort.clone(),
-                    carried_sort.clone(),
-                    value_sort.clone(),
-                    carried_sort.clone(),
-                ],
-                output: carried_sort.clone(),
-            };
-            let proof_of_max = emitter.primitive(proof_selector("proof-of-max"));
-            let proof_of_min = emitter.primitive(proof_selector("proof-of-min"));
-            let selector_args = vec![var(old0.clone()), var(old1), var(new0.clone()), var(new1)];
-            let hi = emitter.bind_call(
-                "hi_pf_",
-                carried_sort.clone(),
-                proof_of_max,
-                selector_args.clone(),
-            );
-            let lo = emitter.bind_call("lo_pf_", carried_sort.clone(), proof_of_min, selector_args);
-            let (packed, pending) = self.plan_packed_pending_direct(span, composition.width());
-            let displaced_name = self.fresh_var();
-            let mint = emitter.primitive(PrimitiveKey {
-                name: crate::proofs::proof_fresh::mint_prim_name(&packed),
-                inputs: vec![
-                    SortKey {
-                        name: "String".to_owned(),
-                        class: SortSemanticClass::Value,
-                    },
-                    carried_sort.clone(),
-                    carried_sort.clone(),
-                ],
-                output: carried_sort.clone(),
-            });
-            let displaced = emitter.bind_call(
-                displaced_name,
-                carried_sort.clone(),
-                mint,
-                vec![
-                    GenericExpr::Lit(span.clone(), Literal::String(composition.spelling())),
-                    var(hi),
-                    var(lo.clone()),
-                ],
-            );
-            (pending, old0, new0, var(displaced), var(lo))
-        } else {
-            let old0 = emitter.local("old0", value_sort.clone());
-            let new0 = emitter.local("new0", value_sort.clone());
-            (
-                TypedHoistGroup::default(),
-                old0,
-                new0,
-                GenericExpr::Lit(span.clone(), Literal::Unit),
-                GenericExpr::Lit(span.clone(), Literal::Unit),
-            )
-        };
-        let maximum = emitter.call(ordering_max, vec![var(old0.clone()), var(new0.clone())]);
-        let minimum = emitter.call(
-            ordering_min.clone(),
-            vec![var(old0.clone()), var(new0.clone())],
+        let proofs_enabled = self.proofs_enabled();
+        assert!(
+            !proofs_enabled || composition.width() == 2,
+            "invalid proof width at {span}"
         );
-        let replacement = emitter.call(values.clone(), vec![minimum, displaced]);
-        let uf = emitter.function(uf);
-        emitter.set(uf, vec![maximum], replacement);
-        let minimum = emitter.call(ordering_min, vec![var(old0), var(new0)]);
-        let result = emitter.call(values, vec![minimum, retained]);
-        (pending, emitter.finish_merge(result))
+        let carried_sort = SortKey {
+            name: self.proof_type_str().to_owned(),
+            class: if proofs_enabled { Eq } else { Value },
+        };
+        let mut pending = TypedHoistGroup::default();
+        let expected = [value_sort.clone(), carried_sort.clone()];
+        let merge = build_checked_merge(catalog, span, expected, |builder| {
+            let value_sort = builder.sort(value_sort);
+            let ordering_max =
+                builder.primitive("ordering-max", [value_sort, value_sort], value_sort);
+            let ordering_min =
+                builder.primitive("ordering-min", [value_sort, value_sort], value_sort);
+            let carried_sort = builder.sort(carried_sort);
+            let values = builder.values([value_sort, carried_sort]);
+            let (old0, new0, displaced, retained) = if proofs_enabled {
+                let ([old0, old1], [new0, new1]) = builder.inputs([value_sort, carried_sort]);
+                let selector_inputs = [value_sort, carried_sort, value_sort, carried_sort];
+                let proof_of_max = builder.primitive("proof-of-max", selector_inputs, carried_sort);
+                let proof_of_min = builder.primitive("proof-of-min", selector_inputs, carried_sort);
+                let selector_args = [old0, old1, new0, new1];
+                let hi = builder.apply(proof_of_max, selector_args);
+                let hi = builder.bind("hi_pf_", hi);
+                let lo = builder.apply(proof_of_min, selector_args);
+                let lo = builder.bind("lo_pf_", lo);
+                let (packed, first_use) =
+                    self.plan_packed_pending_direct(span, composition.width());
+                pending = first_use;
+                let displaced_name = self.fresh_var();
+                let string_sort = builder.sort(SortKey {
+                    name: "String".to_owned(),
+                    class: SortSemanticClass::Value,
+                });
+                let mint = builder.primitive(
+                    crate::proofs::proof_fresh::mint_prim_name(&packed),
+                    [string_sort, carried_sort, carried_sort],
+                    carried_sort,
+                );
+                let spelling = builder.lit(Literal::String(composition.spelling()));
+                let displaced = builder.apply(mint, [spelling, hi, lo]);
+                let displaced = builder.bind(displaced_name, displaced);
+                (old0, new0, displaced, lo)
+            } else {
+                let ([old0], [new0]) = builder.inputs([value_sort]);
+                let carried = builder.lit(Literal::Unit);
+                (old0, new0, carried, carried)
+            };
+            let maximum = builder.apply(ordering_max, [old0, new0]);
+            let minimum = builder.apply(ordering_min, [old0, new0]);
+            let replacement = builder.apply(values, [minimum, displaced]);
+            let uf = builder.function(uf);
+            builder.set(uf, [maximum], replacement);
+            let minimum = builder.apply(ordering_min, [old0, new0]);
+            builder.apply(values, [minimum, retained])
+        });
+        (pending, merge)
     }
 
     #[allow(clippy::too_many_arguments)]
