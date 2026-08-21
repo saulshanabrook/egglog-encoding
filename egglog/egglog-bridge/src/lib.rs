@@ -141,6 +141,11 @@ pub struct EGraph {
     // Avoid introducing another randomly seeded hash table: row iteration order
     // in proof extraction can depend on the seed sequence of existing maps.
     external_write_deps: BTreeMap<ExternalFunctionId, String>,
+    /// Lowering data for the encoding's write primitives, keyed by the runtime
+    /// id their call sites resolve to. See [`EGraph::mint_insert_plan`].
+    mint_specs: BTreeMap<ExternalFunctionId, MintSpec>,
+    set_if_empty_specs: BTreeMap<ExternalFunctionId, SetIfEmptySpec>,
+    view_col_specs: BTreeMap<ExternalFunctionId, ViewColSpec>,
     threads: usize,
     thread_pool: Option<Arc<ThreadPool>>,
 }
@@ -268,6 +273,9 @@ impl EGraph {
             report_level: Default::default(),
             action_registry,
             external_write_deps: Default::default(),
+            mint_specs: Default::default(),
+            set_if_empty_specs: Default::default(),
+            view_col_specs: Default::default(),
             threads,
             thread_pool,
         }
@@ -405,7 +413,8 @@ impl EGraph {
         out_arity: usize,
     ) -> ExternalFunctionId {
         let registry = self.action_registry.clone();
-        self.register_external_func(Box::new(make_external_func(
+        let spec_name = view_name.clone();
+        let id = self.register_external_func(Box::new(make_external_func(
             move |state: &mut ExecutionState, args: &[Value]| {
                 let registry = registry.read().unwrap();
                 let action = registry.lookup_table(&view_name)?.clone();
@@ -420,7 +429,15 @@ impl EGraph {
                 let keys = &args[..n_keys];
                 Some(action.lookup_or_insert_vals(state, keys, &args[n_keys..]))
             },
-        )))
+        )));
+        self.set_if_empty_specs.insert(
+            id,
+            SetIfEmptySpec {
+                view_name: spec_name,
+                n_keys,
+            },
+        );
+        id
     }
 
     /// Register a reader for output column `col_idx` of the FD view named
@@ -434,7 +451,8 @@ impl EGraph {
         col_idx: usize,
     ) -> ExternalFunctionId {
         let registry = self.action_registry.clone();
-        self.register_external_func(Box::new(make_external_func(
+        let spec_name = view_name.clone();
+        let id = self.register_external_func(Box::new(make_external_func(
             move |state: &mut ExecutionState, args: &[Value]| {
                 let registry = registry.read().unwrap();
                 let action = registry.lookup_table(&view_name)?.clone();
@@ -445,7 +463,16 @@ impl EGraph {
                         .unwrap_or(fallback),
                 )
             },
-        )))
+        )));
+        self.view_col_specs.insert(
+            id,
+            ViewColSpec {
+                view_name: spec_name,
+                n_keys,
+                col_idx,
+            },
+        );
+        id
     }
 
     /// Register the term encoder's mint op for the term-node relation named
@@ -464,6 +491,8 @@ impl EGraph {
         let registry = self.action_registry.clone();
         let counter = self.id_counter;
         let dep = table_name.clone();
+        let spec_name = table_name.clone();
+        let spec_vals = vals.clone();
         let id = self.register_external_func(Box::new(make_external_func(
             move |state: &mut ExecutionState, args: &[Value]| {
                 let action = registry.read().unwrap().lookup_table(&table_name)?.clone();
@@ -481,7 +510,77 @@ impl EGraph {
             },
         )));
         self.external_write_deps.insert(id, dep);
+        self.mint_specs.insert(
+            id,
+            MintSpec {
+                table_name: spec_name,
+                n_args,
+                vals: spec_vals,
+                counter,
+            },
+        );
         id
+    }
+
+    /// The batched-instruction lowering of a `mint-<Relation>!` primitive, or
+    /// `None` if `func` is not one, its table is not installed yet, or its row
+    /// shape is one the instruction does not cover.
+    pub(crate) fn mint_insert_plan(&self, func: ExternalFunctionId) -> Option<MintInsertPlan> {
+        let spec = self.mint_specs.get(&func)?;
+        let registry = self.action_registry.read().unwrap();
+        let action = registry.lookup_table(&spec.table_name)?;
+        let math = action.table_math;
+        // The instruction writes `args ++ [fresh] ++ vals` and pads to the
+        // physical width with the timestamp, exactly as `TableAction::insert`
+        // does through `write_table_row`. A subsumption column would need its
+        // own value, so leave those tables on the external path.
+        if math.subsume || spec.n_args + 1 + spec.vals.len() != math.func_cols {
+            return None;
+        }
+        Some(MintInsertPlan {
+            table: action.table,
+            tail: spec.vals.clone(),
+            n_cols: math.table_columns(),
+            ts_col: math.ts_col(),
+            counter: spec.counter,
+            ts_counter: self.timestamp_counter,
+        })
+    }
+
+    /// The instruction lowering of a `set-if-empty-<View>!` primitive, or `None`
+    /// if `func` is not one or its table is not installed yet.
+    pub(crate) fn set_if_empty_plan(&self, func: ExternalFunctionId) -> Option<SetIfEmptyPlan> {
+        let spec = self.set_if_empty_specs.get(&func)?;
+        let registry = self.action_registry.read().unwrap();
+        let action = registry.lookup_table(&spec.view_name)?;
+        let math = action.table_math;
+        if math.num_keys() != spec.n_keys {
+            return None;
+        }
+        Some(SetIfEmptyPlan {
+            table: action.table,
+            n_keys: spec.n_keys,
+            ret_val_col: ColumnId::from_usize(math.ret_val_col()),
+            subsume: math.subsume,
+            ts_counter: self.timestamp_counter,
+        })
+    }
+
+    /// The instruction lowering of a view-column read, or `None` if `func` is
+    /// not one or its table is not installed yet.
+    pub(crate) fn view_col_plan(&self, func: ExternalFunctionId) -> Option<ViewColPlan> {
+        let spec = self.view_col_specs.get(&func)?;
+        let registry = self.action_registry.read().unwrap();
+        let action = registry.lookup_table(&spec.view_name)?;
+        let math = action.table_math;
+        if math.num_keys() != spec.n_keys || spec.col_idx >= math.n_vals() {
+            return None;
+        }
+        Some(ViewColPlan {
+            table: action.table,
+            n_keys: spec.n_keys,
+            dst_col: ColumnId::from_usize(math.num_keys() + spec.col_idx),
+        })
     }
 
     /// The table an external function inserts into, for the merge dependency
@@ -500,6 +599,9 @@ impl EGraph {
 
     pub fn free_external_func(&mut self, func: ExternalFunctionId) {
         self.external_write_deps.remove(&func);
+        self.mint_specs.remove(&func);
+        self.set_if_empty_specs.remove(&func);
+        self.view_col_specs.remove(&func);
         self.db.free_external_function(func);
     }
 
@@ -2443,6 +2545,65 @@ struct SchemaMath {
     func_cols: usize,
     /// Opt-in identity-column guard (see [`FunctionConfig::n_identity_vals`]).
     n_identity_vals: Option<usize>,
+}
+
+/// What a `mint-<Relation>!` primitive would do, kept so the rule builder can
+/// lower a call site to a batched [`core_relations`] instruction instead of a
+/// per-row external call.
+#[derive(Clone)]
+struct MintSpec {
+    table_name: String,
+    n_args: usize,
+    vals: Vec<Value>,
+    counter: CounterId,
+}
+
+/// What a `set-if-empty-<View>!` primitive would do, kept so the rule builder
+/// can lower a call site to the existing `LookupOrInsertDefault` instruction.
+#[derive(Clone)]
+struct SetIfEmptySpec {
+    view_name: String,
+    n_keys: usize,
+}
+
+/// A lowered `set-if-empty`: the view table plus the layout its default row needs.
+#[derive(Clone)]
+pub(crate) struct SetIfEmptyPlan {
+    pub(crate) table: TableId,
+    pub(crate) n_keys: usize,
+    pub(crate) ret_val_col: ColumnId,
+    pub(crate) subsume: bool,
+    pub(crate) ts_counter: CounterId,
+}
+
+/// What a view-column read (`view-proof-<View>`, `@UF_<S>_canon`,
+/// `@UF_<S>_canon_proof`) would do, kept so the rule builder can lower a call
+/// site to the existing `LookupWithDefault` instruction.
+#[derive(Clone)]
+struct ViewColSpec {
+    view_name: String,
+    n_keys: usize,
+    col_idx: usize,
+}
+
+/// A lowered view-column read: which table and which physical column.
+#[derive(Clone)]
+pub(crate) struct ViewColPlan {
+    pub(crate) table: TableId,
+    pub(crate) n_keys: usize,
+    pub(crate) dst_col: ColumnId,
+}
+
+/// A lowered mint: everything [`core_relations`] needs to stage the row without
+/// consulting the action registry per row.
+#[derive(Clone)]
+pub(crate) struct MintInsertPlan {
+    pub(crate) table: TableId,
+    pub(crate) tail: Vec<Value>,
+    pub(crate) n_cols: usize,
+    pub(crate) ts_col: usize,
+    pub(crate) counter: CounterId,
+    pub(crate) ts_counter: CounterId,
 }
 
 /// A struct containing possible non-key portions of a table row. To be used with

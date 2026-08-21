@@ -395,6 +395,60 @@ impl RuleBuilder<'_> {
     ) -> Variable {
         let args = args.to_vec();
         let res = self.new_var(ret_ty);
+        // A mint cannot fail, so it needs no panic fallback and no per-row
+        // external dispatch: lower it to the batched instruction.
+        if let Some(mint) = self.egraph.mint_insert_plan(func) {
+            self.query.add_rule.push(Box::new(move |inner, rb| {
+                let args = inner.convert_all(&args);
+                let var = rb.mint_insert(
+                    mint.table,
+                    &args,
+                    mint.tail.clone(),
+                    mint.n_cols,
+                    mint.ts_col,
+                    mint.counter,
+                    mint.ts_counter,
+                )?;
+                inner.mapping.insert(res.id, var.into());
+                Ok(())
+            }));
+            return res;
+        }
+        // `set-if-empty` is exactly a lookup-or-insert on the view, and that
+        // instruction does one vectorized lookup per batch rather than one
+        // registry-mediated probe per row.
+        if let Some(plan) = self.egraph.set_if_empty_plan(func) {
+            self.query.add_rule.push(Box::new(move |inner, rb| {
+                let all = inner.convert_all(&args);
+                let (keys, vals) = all.split_at(plan.n_keys);
+                let ts = rb.read_counter(plan.ts_counter);
+                let mut default: Vec<WriteVal> =
+                    vals.iter().copied().map(WriteVal::QueryEntry).collect();
+                default.push(WriteVal::QueryEntry(ts.into()));
+                if plan.subsume {
+                    default.push(WriteVal::QueryEntry(core_relations::QueryEntry::Const(
+                        NOT_SUBSUMED,
+                    )));
+                }
+                let var = rb.lookup_or_insert(plan.table, keys, &default, plan.ret_val_col)?;
+                inner.mapping.insert(res.id, var.into());
+                Ok(())
+            }));
+            return res;
+        }
+        // A view-column read is a lookup with a per-row fallback and cannot
+        // fail, so it lowers to one vectorized instruction with no panic path.
+        if let Some(plan) = self.egraph.view_col_plan(func) {
+            self.query.add_rule.push(Box::new(move |inner, rb| {
+                let all = inner.convert_all(&args);
+                let (keys, rest) = all.split_at(plan.n_keys);
+                let default = rest[0];
+                let var = rb.lookup_with_default(plan.table, keys, default, plan.dst_col)?;
+                inner.mapping.insert(res.id, var.into());
+                Ok(())
+            }));
+            return res;
+        }
         // External functions that fail on the RHS of a rule should cause a panic.
         let panic_fn = self.egraph.new_panic_lazy(panic_msg);
         self.query.add_rule.push(Box::new(move |inner, rb| {

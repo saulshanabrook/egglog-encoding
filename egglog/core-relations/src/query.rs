@@ -943,6 +943,39 @@ impl RuleBuilder<'_, '_> {
         Ok(())
     }
 
+    /// Mint a fresh id from `counter` and stage `args ++ [fresh] ++ tail` into
+    /// `table`, binding the fresh id to the returned variable.
+    ///
+    /// `n_cols` is the table's physical width and `ts_col` the index of its
+    /// timestamp column; the row is padded to `n_cols` and stamped from
+    /// `ts_counter`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn mint_insert(
+        &mut self,
+        table: TableId,
+        args: &[QueryEntry],
+        tail: Vec<Value>,
+        n_cols: usize,
+        ts_col: usize,
+        counter: CounterId,
+        ts_counter: CounterId,
+    ) -> Result<Variable, QueryError> {
+        let res = self.qb.new_var();
+        self.qb.instrs.push(Instr::MintInsert {
+            table,
+            args: args.to_vec(),
+            tail,
+            n_cols,
+            ts_col,
+            counter,
+            ts_counter,
+            dst: res,
+        });
+        self.qb.mark_used(args);
+        self.qb.mark_defined(&res.into());
+        Ok(res)
+    }
+
     /// Apply the given external function to the specified arguments.
     pub fn call_external(
         &mut self,
