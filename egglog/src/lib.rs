@@ -2125,7 +2125,7 @@ impl EGraph {
                     // proofs when replaying an encoded program in a fresh e-graph.
                     names.fiat_prefix = pc.fiat;
                     names.proj_constructor = pc.proj;
-                    names.proj_all_prefix = pc.proj_all;
+                    names.proj_prim_prefix = pc.proj_prim;
                 }
                 log::info!("Declared sort {name}.")
             }

@@ -648,7 +648,7 @@ impl EGraph {
                     names.container_normalize_constructor = pc.normalize.clone();
                     names.fiat_prefix = pc.fiat.clone();
                     names.proj_constructor = pc.proj.clone();
-                    names.proj_all_prefix = pc.proj_all.clone();
+                    names.proj_prim_prefix = pc.proj_prim.clone();
                 }
                 // A container sort under the term/proof encoding carries a spec
                 // for its rebuild primitives; register them here so they are

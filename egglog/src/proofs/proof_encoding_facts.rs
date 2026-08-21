@@ -4,9 +4,22 @@
 
 use super::proof_checker::is_container_side_condition;
 use super::proof_encoding::{Anchor, ProofInstrumentor};
-use super::proof_encoding_helpers::{holds_sort, recomputable_premises};
+use super::proof_encoding_helpers::{body_expr_index, holds_sort, recomputable_premises};
 use crate::typechecking::FuncType;
 use crate::*;
+
+/// Where a fact being instrumented sits, for the anchors that have to name it.
+///
+/// A body call reading an element out of a container is recorded by its rule and
+/// its index in that rule's body, which is how proof conversion recovers the
+/// resolved primitive. Outside a rule body there is nothing to name — those
+/// contexts drop their anchors unread — so the rule is optional.
+#[derive(Clone, Copy)]
+pub(crate) struct BodyCtx<'a> {
+    /// The variable holding the rule's name.
+    rule_name: Option<&'a str>,
+    body: &'a [ResolvedFact],
+}
 
 impl ProofInstrumentor<'_> {
     /// Instrument fact replaces terms with looking up
@@ -18,6 +31,7 @@ impl ProofInstrumentor<'_> {
         fact: &ResolvedFact,
         res: &mut Vec<String>,
         action_lookups: &mut Vec<String>,
+        ctx: BodyCtx<'_>,
     ) -> String {
         // A container side condition: a fact a container-producing primitive
         // determines from bound variables (see `is_container_side_condition`).
@@ -50,7 +64,7 @@ impl ProofInstrumentor<'_> {
                 let mut new_args = vec![];
                 let mut arg_proofs = vec![];
                 for arg in args {
-                    let (var, proof) = self.instrument_fact_expr(arg, res);
+                    let (var, proof) = self.instrument_fact_expr(arg, res, ctx);
                     new_args.push(var);
                     arg_proofs.push(proof);
                 }
@@ -84,8 +98,8 @@ impl ProofInstrumentor<'_> {
                 }
             }
             ResolvedFact::Eq(_span, left_expr, right_expr) => {
-                let (v1, p1) = self.instrument_fact_expr(left_expr, res);
-                let (v2, p2) = self.instrument_fact_expr(right_expr, res);
+                let (v1, p1) = self.instrument_fact_expr(left_expr, res, ctx);
+                let (v2, p2) = self.instrument_fact_expr(right_expr, res, ctx);
                 res.push(format!("(= {v1} {v2})"));
                 self.alias_anchor(&v1, &v2);
                 if self.egraph.proof_state.proofs_enabled {
@@ -96,7 +110,7 @@ impl ProofInstrumentor<'_> {
                 }
             }
             ResolvedFact::Fact(generic_expr) => {
-                let (_, proof) = self.instrument_fact_expr(generic_expr, res);
+                let (_, proof) = self.instrument_fact_expr(generic_expr, res, ctx);
                 if self.proofs_enabled()
                     && matches!(
                         generic_expr,
@@ -121,6 +135,7 @@ impl ProofInstrumentor<'_> {
         &mut self,
         expr: &ResolvedExpr,
         res: &mut Vec<String>,
+        ctx: BodyCtx<'_>,
     ) -> (String, String) {
         match expr {
             ResolvedExpr::Lit(_, lit) => {
@@ -164,7 +179,7 @@ impl ProofInstrumentor<'_> {
                         new_args.push(arg.to_string());
                         arg_proofs.push(None);
                     } else {
-                        let (arg_str, proof) = self.instrument_fact_expr(arg, res);
+                        let (arg_str, proof) = self.instrument_fact_expr(arg, res, ctx);
                         new_args.push(arg_str);
                         arg_proofs.push(Some(proof));
                     }
@@ -231,17 +246,61 @@ impl ProofInstrumentor<'_> {
                         } else if specialized_primitive.output().is_eq_sort() {
                             // An eq-sort result is an element the primitive read
                             // out of a container — `vec-get`, `map-get`,
-                            // `pair-first` — so it is a child of whichever
-                            // argument can hold its sort.
+                            // `pair-first` — so it is a child of the argument
+                            // that can hold its sort.
                             let out = specialized_primitive.output();
-                            let containers = specialized_primitive
+                            let holders: Vec<usize> = specialized_primitive
                                 .input()
                                 .iter()
-                                .zip(&new_args)
-                                .filter(|(sort, _)| holds_sort(sort, out.name()))
-                                .map(|(_, arg)| arg.clone())
+                                .enumerate()
+                                .filter(|(_, sort)| holds_sort(sort, out.name()))
+                                .map(|(i, _)| i)
                                 .collect();
-                            self.request_element_anchor(&fv, out.name(), containers)
+                            // No container argument: the result is a value the
+                            // query computed rather than one it read out of a
+                            // term, so nothing anchors it. Leaving the request
+                            // unsupplied keeps that a hard error only if some
+                            // proof goes on to read it.
+                            let Some(&container_index) = holders.first() else {
+                                return (fv.clone(), self.request_anchor(&fv));
+                            };
+                            // Proof conversion projects the element out of one
+                            // container, so which one it is has to be unambiguous.
+                            assert_eq!(
+                                holders.len(),
+                                1,
+                                "`{}` reads an element of `{}` out of {} of its arguments; \
+                                 proofs need exactly one",
+                                specialized_primitive.name(),
+                                out.name(),
+                                holders.len(),
+                            );
+                            // Conversion runs the primitive's validator on the
+                            // argument terms, so every argument needs a proof —
+                            // including the ones the walk above skipped. The
+                            // container's own is the projection's base, filled in
+                            // once the anchor chain resolves it.
+                            let mut proofs: Vec<Option<String>> = vec![];
+                            for (i, arg) in args.iter().enumerate() {
+                                if i == container_index {
+                                    proofs.push(None);
+                                    continue;
+                                }
+                                let proof = match arg_proofs.get(i).and_then(|p| p.clone()) {
+                                    Some(proof) => proof,
+                                    None => self.instrument_fact_expr(arg, res, ctx).1,
+                                };
+                                proofs.push(Some(proof));
+                            }
+                            let body_index = body_expr_index(ctx.body, expr).unwrap_or_default();
+                            self.request_element_anchor(
+                                &fv,
+                                ctx.rule_name,
+                                body_index,
+                                container_index,
+                                vec![new_args[container_index].clone()],
+                                proofs,
+                            )
                         } else {
                             // Base primitives produce a literal result; a
                             // reflexive `Fiat` over a literal is checker-valid.
@@ -270,17 +329,22 @@ impl ProofInstrumentor<'_> {
     /// none of it, so none of it is emitted; callers that build no proof at all
     /// (`run :until`, `check`) discard the lookups and the premises, and must
     /// [`ProofInstrumentor::drop_pending_lookups`].
-    pub(super) fn instrument_facts(
+    pub(super) fn instrument_facts_in(
         &mut self,
         facts: &[ResolvedFact],
+        rule_name: Option<&str>,
     ) -> (Vec<String>, Vec<String>, Vec<String>) {
+        let ctx = BodyCtx {
+            rule_name,
+            body: facts,
+        };
         let mut res = vec![];
         let mut action_lookups = vec![];
         let mut premises = vec![];
 
         let recomputable = recomputable_premises(facts, &|_| false);
         for (fact, recomputable) in facts.iter().zip(recomputable) {
-            let f_proof = self.instrument_fact(fact, &mut res, &mut action_lookups);
+            let f_proof = self.instrument_fact(fact, &mut res, &mut action_lookups, ctx);
             // Nothing reads a dropped premise, so its proof is never written.
             if !recomputable {
                 premises.push(f_proof);
@@ -288,6 +352,15 @@ impl ProofInstrumentor<'_> {
         }
         self.bind_anchors();
         (res, action_lookups, premises)
+    }
+
+    /// [`Self::instrument_facts_in`] for a context that is not a rule body and
+    /// drops its anchors unread (`run :until`, `check`).
+    pub(super) fn instrument_facts(
+        &mut self,
+        facts: &[ResolvedFact],
+    ) -> (Vec<String>, Vec<String>, Vec<String>) {
+        self.instrument_facts_in(facts, None)
     }
 
     /// [`ProofInstrumentor::fiat_reflexive_proof`] for a term of `sort_name`,

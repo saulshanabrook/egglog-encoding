@@ -380,7 +380,7 @@ impl Parser {
                 // Parse sort - the :internal-* annotations and container sorts are mutually exclusive
                 // (sort <name>)
                 // (sort <name> :internal-uf <uf-function>)
-                // (sort <name> :internal-proof-names <congr> <congr-all> <trans> <sym> <normalize> <fiat> <proj> <proj-all>)
+                // (sort <name> :internal-proof-names <congr> <congr-all> <trans> <sym> <normalize> <fiat> <proj> <proj-prim>)
                 // (sort <name> (<container sort> <argument sort>*))
                 match tail {
                     [name] => vec![Command::Sort {
@@ -449,7 +449,7 @@ impl Parser {
                                         normalize,
                                         fiat,
                                         proj,
-                                        proj_all,
+                                        proj_prim,
                                     ],
                                 ) => {
                                     proof_constructors = Some(ProofConstructorNames {
@@ -462,13 +462,14 @@ impl Parser {
                                             .expect_atom("container-normalize constructor")?,
                                         fiat: fiat.expect_atom("fiat constructor")?,
                                         proj: proj.expect_atom("proj constructor")?,
-                                        proj_all: proj_all.expect_atom("proj-all constructor")?,
+                                        proj_prim: proj_prim
+                                            .expect_atom("proj-prim constructor")?,
                                     });
                                 }
                                 _ => {
                                     return error!(
                                         span,
-                                        "usages:\n(sort <name>)\n(sort <name> :internal-uf <uf-constructor> [<uf-index>])\n(sort <name> :internal-proof-names <congr> <congr-all> <trans> <sym> <normalize> <fiat> <proj> <proj-all>)\n(sort <name> (<container sort> <argument sort>*))"
+                                        "usages:\n(sort <name>)\n(sort <name> :internal-uf <uf-constructor> [<uf-index>])\n(sort <name> :internal-proof-names <congr> <congr-all> <trans> <sym> <normalize> <fiat> <proj> <proj-prim>)\n(sort <name> (<container sort> <argument sort>*))"
                                     );
                                 }
                             }

@@ -52,14 +52,14 @@ pub(crate) struct EncodingNames {
     pub(crate) congr_constructor: String,
     pub(crate) congr_all_constructor: String,
     pub(crate) proj_constructor: String,
-    /// Prefix of the element-matching projections, minted where the child's
-    /// position in the term is only known once the term is in hand (see
-    /// [`crate::proofs::proof_container_rebuild`]). The child is named by value,
-    /// so sort `S`'s constructor is [`Self::proj_all`]. Derived from one name for
-    /// the same reason as [`Self::rule_fused_prefix`].
-    pub(crate) proj_all_prefix: String,
-    /// The sorts [`ProofInstrumentor::proj_all_constructor`] has declared.
-    pub(crate) proj_all_declared: HashSet<String>,
+    /// Prefix of the primitive projections, minted where a rule body reads an
+    /// element out of a container and the child's position in the term is not
+    /// known at the site. The row names the reading call by where it sits in the
+    /// rule body, so a call taking `k` arguments uses [`Self::proj_prim`] of `k`.
+    /// Derived from one name for the same reason as [`Self::rule_fused_prefix`].
+    pub(crate) proj_prim_prefix: String,
+    /// The argument counts [`ProofInstrumentor::proj_prim_constructor`] has declared.
+    pub(crate) proj_prim_declared: HashSet<usize>,
     pub(crate) container_normalize_constructor: String,
     pub(crate) eval_constructor: String,
     pub(crate) fn_to_term_sort: HashMap<String, String>,
@@ -383,15 +383,18 @@ impl EncodingNames {
             .is_some_and(|sort| sort.starts_with('_'))
     }
 
-    /// The element-matching projection naming a child of `sort`.
-    pub(crate) fn proj_all(&self, sort: &str) -> String {
-        format!("{}_{sort}", self.proj_all_prefix)
+    /// The primitive projection for a body call taking `args` arguments.
+    pub(crate) fn proj_prim(&self, args: usize) -> String {
+        format!("{}_{args}", self.proj_prim_prefix)
     }
 
-    /// Whether `head` is one of [`Self::proj_all`]'s constructors.
-    pub(crate) fn is_proj_all(&self, head: &str) -> bool {
-        head.strip_prefix(&self.proj_all_prefix)
-            .is_some_and(|sort| sort.starts_with('_'))
+    /// The argument count `head` carries, when it is one of
+    /// [`Self::proj_prim`]'s constructors.
+    pub(crate) fn proj_prim_args(&self, head: &str) -> Option<usize> {
+        head.strip_prefix(&self.proj_prim_prefix)?
+            .strip_prefix('_')?
+            .parse()
+            .ok()
     }
 
     /// The rule proof constructor carrying `arity` premise proofs inline.
@@ -440,8 +443,8 @@ impl EncodingNames {
             congr_constructor: symbol_gen.fresh("Congr"),
             congr_all_constructor: symbol_gen.fresh("CongrAll"),
             proj_constructor: symbol_gen.fresh("Proj"),
-            proj_all_prefix: symbol_gen.fresh("ProjAll"),
-            proj_all_declared: HashSet::default(),
+            proj_prim_prefix: symbol_gen.fresh("ProjPrim"),
+            proj_prim_declared: HashSet::default(),
             container_normalize_constructor: symbol_gen.fresh("ContainerNormalize"),
             eval_constructor: symbol_gen.fresh("Eval"),
             fn_to_term_sort: HashMap::default(),
@@ -717,7 +720,7 @@ impl ProofInstrumentor<'_> {
             ref congr_constructor,
             ref congr_all_constructor,
             ref proj_constructor,
-            ref proj_all_prefix,
+            ref proj_prim_prefix,
             ref container_normalize_constructor,
             ref eval_constructor,
             ..
@@ -727,7 +730,7 @@ impl ProofInstrumentor<'_> {
             "
 ;; The proof datatype records the global proof constructor names so container
 ;; rebuild can recover them on re-parse (see ContainerRebuildSpec).
-(sort {proof_datatype} :internal-proof-names {congr_constructor} {congr_all_constructor} {eq_trans_constructor} {eq_sym_constructor} {container_normalize_constructor} {fiat_prefix} {proj_constructor} {proj_all_prefix})
+(sort {proof_datatype} :internal-proof-names {congr_constructor} {congr_all_constructor} {eq_trans_constructor} {eq_sym_constructor} {container_normalize_constructor} {fiat_prefix} {proj_constructor} {proj_prim_prefix})
 
 ;; Proof terms are relations, not constructors: the encoding mints a fresh id
 ;; and asserts the row (both in one `mint-<Relation>!` call), so congruent
@@ -793,12 +796,15 @@ impl ProofInstrumentor<'_> {
 ;; produces a justification that ci = ci
 (function {proj_constructor} ({proof_datatype} i64 {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
 
-;; element-matching projection: given a proof that t1 = c and a term a that is a
-;; child of c, produces a justification that a = a. Used where the child's
-;; position is only known once the term is in hand. The child is named by value,
-;; so there is a `ProjAll_<Sort>` per projected sort, declared with that sort (see
-;; `ProofInstrumentor::proj_all_constructor`):
-;;   (ProjAll_<Sort> <proof> <term> <proof>)
+;; primitive projection: given a proof per argument of a rule-body call that
+;; reads an element out of a container, produces a justification that the element
+;; equals itself. The call is named by its rule and its index in that rule's body
+;; rather than by the primitive's name, which would not pin down a validator
+;; since primitives are overloaded. Proof conversion runs that primitive's
+;; validator on the argument terms and projects the result out of the container
+;; argument, so the row stores no term. There is a `ProjPrim_<k>` per argument
+;; count (see `ProofInstrumentor::proj_prim_constructor`):
+;;   (ProjPrim_<k> <rule name> <body index> <one proof per argument> <proof>)
 
 ;; given a proof that t1 = c, where c is a container term, produces a proof that
 ;; t1 = normalize(c) (the container's canonicalization: sort/dedup for sets,
@@ -1820,4 +1826,41 @@ impl crate::constraint::TypeConstraint for DropReflexiveStepTypeConstraint {
         }
         constraints
     }
+}
+
+/// Every expression node of a rule body, in a canonical pre-order: the facts in
+/// written order, each `Eq` fact's two sides left to right, and each call's
+/// arguments after the call itself.
+///
+/// A body primitive that reads an element out of a container is named by its
+/// index into this list (see [`ProofInstrumentor::request_element_anchor`]), and
+/// proof conversion looks the resolved call back up the same way. Both sides go
+/// through this function, so their numbering cannot drift.
+pub(crate) fn body_exprs(body: &[ResolvedFact]) -> Vec<&ResolvedExpr> {
+    fn walk<'a>(expr: &'a ResolvedExpr, out: &mut Vec<&'a ResolvedExpr>) {
+        out.push(expr);
+        if let ResolvedExpr::Call(_, _, args) = expr {
+            for arg in args {
+                walk(arg, out);
+            }
+        }
+    }
+    let mut out = vec![];
+    for fact in body {
+        match fact {
+            ResolvedFact::Fact(expr) => walk(expr, &mut out),
+            ResolvedFact::Eq(_, lhs, rhs) => {
+                walk(lhs, &mut out);
+                walk(rhs, &mut out);
+            }
+        }
+    }
+    out
+}
+
+/// The index `expr` has in [`body_exprs`], by node identity.
+pub(crate) fn body_expr_index(body: &[ResolvedFact], expr: &ResolvedExpr) -> Option<usize> {
+    body_exprs(body)
+        .into_iter()
+        .position(|candidate| std::ptr::eq(candidate, expr))
 }

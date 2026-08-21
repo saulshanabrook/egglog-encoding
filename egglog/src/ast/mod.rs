@@ -55,8 +55,8 @@ pub struct ProofConstructorNames {
     pub fiat: String,
     /// The `Proj` justification constructor.
     pub proj: String,
-    /// Prefix of the per-sort element-matching `ProjAll` constructors.
-    pub proj_all: String,
+    /// Prefix of the per-arity primitive-projection `ProjPrim` constructors.
+    pub proj_prim: String,
 }
 
 #[derive(Clone, Debug)]
@@ -1157,7 +1157,7 @@ where
                         pc.normalize,
                         pc.fiat,
                         pc.proj,
-                        pc.proj_all
+                        pc.proj_prim
                     )?;
                 }
                 write!(f, ")")

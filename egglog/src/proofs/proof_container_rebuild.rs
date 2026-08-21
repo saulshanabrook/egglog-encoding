@@ -156,13 +156,9 @@ pub(crate) fn register_container_rebuild_from_spec(
     if let Some(proof_prim) = &spec.internal_rebuild_proof_prim {
         let id_counter = eg.backend.id_counter();
         // The global proof constructors, recovered from proof_state (repopulated
-        // from the `Proof` sort's `:internal-proof-names` on re-parse). A nested
-        // container is projected out by its own sort's `ProjAll_<CSort>`, derived
-        // from the same prefix.
+        // from the `Proof` sort's `:internal-proof-names` on re-parse).
         let names = &eg.proof_state.proof_names;
         let congr_all_name = names.congr_all_constructor.clone();
-        let mut proj_all_names = HashMap::default();
-        collect_container_proj_all_names(eg, &container_sort, &mut proj_all_names);
         let container_normalize_name = names.container_normalize_constructor.clone();
         let proof_sort: ArcSort = std::sync::Arc::new(EqSort {
             name: names.proof_datatype.clone(),
@@ -174,7 +170,6 @@ pub(crate) fn register_container_rebuild_from_spec(
                 proof_sort,
                 uf_names,
                 congr_all_name,
-                proj_all_names,
                 container_normalize_name,
                 id_counter,
             },
@@ -193,24 +188,6 @@ fn collect_element_uf_names(eg: &EGraph, sort: &ArcSort, out: &mut HashMap<Strin
             }
         } else if elem.is_eq_container_sort() {
             collect_element_uf_names(eg, &elem, out);
-        }
-    }
-}
-
-/// The `@ProjAll_<CSort>` projection of `sort` and every nested container sort,
-/// derived from the prefix `proof_state` recovers from `:internal-proof-names`.
-fn collect_container_proj_all_names(
-    eg: &EGraph,
-    sort: &ArcSort,
-    out: &mut HashMap<String, String>,
-) {
-    out.insert(
-        sort.name().to_string(),
-        eg.proof_state.proof_names.proj_all(sort.name()),
-    );
-    for elem in sort.inner_sorts() {
-        if elem.is_eq_container_sort() {
-            collect_container_proj_all_names(eg, &elem, out);
         }
     }
 }
@@ -344,8 +321,6 @@ struct ContainerRebuildProof {
     uf_names: HashMap<String, String>,
     /// `CongrAll` proof constructor name
     congr_all_name: String,
-    /// container-sort name -> `@ProjAll_<CSort>` name (all reachable containers)
-    proj_all_names: HashMap<String, String>,
     /// `ContainerNormalize` proof constructor name
     container_normalize_name: String,
     /// Counter for minting fresh proof ids (see [`mint_proof_row`]).
@@ -380,12 +355,16 @@ impl FullPrim for ContainerRebuildProof {
     }
 }
 
-/// Recursively rebuild `value` (of container sort `sort`) and produce a proof
-/// that `value = rebuilt`. Returns `(rebuilt_value, proof)`. `base` proves
-/// `value = value`. Uses the same per-child resolution as
-/// [`rebuild_container_value_rec`], folding a `CongrAll` step for every distinct
-/// changed child; a nested container's own base is the `ProjAll` naming it in
-/// this term.
+/// Rebuild `value` (of container sort `sort`) and produce a proof that
+/// `value = rebuilt`. Returns `(rebuilt_value, proof)`. `base` proves
+/// `value = value`.
+///
+/// The proof is one `CongrAll` step per distinct changed eq-sort element, at any
+/// depth, folded onto `base` and closed with the container normalization. Nested
+/// containers need no step of their own: `CongrAll` is expanded against the term
+/// during proof conversion, which follows containers to the same depth the value
+/// rebuild does and knows each child's position there — so nothing here has to
+/// name a nested container or its position.
 fn rebuild_container_proof_rec(
     state: &mut FullState,
     prim: &ContainerRebuildProof,
@@ -393,15 +372,56 @@ fn rebuild_container_proof_rec(
     value: Value,
     base: Value,
 ) -> Option<(Value, Value)> {
+    // One entry per distinct changed element, so a value reached twice folds one
+    // step. `CongrAll` replaces every occurrence at once, matching
+    // `rebuild_with_leaders`.
+    let mut changed: HashMap<Value, Value> = HashMap::default();
+    let mut child_proofs: Vec<Value> = vec![];
+    let rebuilt =
+        rebuild_leaves_with_proofs(state, prim, sort, value, &mut changed, &mut child_proofs)?;
+
+    let congr_all_action = state.registry().lookup_table(&prim.congr_all_name)?.clone();
+    let mut current = base;
+    for proof in child_proofs {
+        current = mint_proof_row(state, &congr_all_action, prim.id_counter, &[current, proof]);
+    }
+
+    // Bridge the (possibly non-canonical) `raw` term to the canonical `rebuilt`
+    // term with the container normalization: `ContainerNormalize(current)` proves
+    // `value = normalize(raw)`, which the checker recomputes to match
+    // `reconstruct_termdag(rebuilt)`. Conversion synthesizes the matching step for
+    // each nested container it rewrites inside. We mint this one unconditionally;
+    // for order/arity-preserving containers (Vec/Pair) the normalization is the
+    // identity, so it is a no-op the proof simplifier removes.
+    let normalize_action = state
+        .registry()
+        .lookup_table(&prim.container_normalize_name)?
+        .clone();
+    current = mint_proof_row(state, &normalize_action, prim.id_counter, &[current]);
+
+    Some((rebuilt, current))
+}
+
+/// Rebuild `value` as [`rebuild_container_value_rec`] does — eq-sort elements to
+/// their union-find leaders, container elements recursively — collecting the
+/// union-find proof of each distinct changed eq-sort element, at any depth, into
+/// `child_proofs`. `changed` dedupes those across the whole traversal.
+fn rebuild_leaves_with_proofs(
+    state: &mut FullState,
+    prim: &ContainerRebuildProof,
+    sort: &ArcSort,
+    value: Value,
+    changed: &mut HashMap<Value, Value>,
+    child_proofs: &mut Vec<Value>,
+) -> Option<Value> {
     let elements = {
         let cvs = state.container_values();
         sort.inner_values(cvs, value)
     };
 
-    // One entry per distinct changed element: `CongrAll` replaces every
-    // occurrence at once, matching `rebuild_with_leaders`.
+    // The leaders this level substitutes: its own elements' leaders, plus the
+    // rebuilt form of each nested container.
     let mut leaders: HashMap<Value, Value> = HashMap::default();
-    let mut child_proofs: Vec<Value> = vec![];
     for (esort, eval) in &elements {
         if leaders.contains_key(eval) {
             continue;
@@ -412,56 +432,22 @@ fn rebuild_container_proof_rec(
                 && leader != *eval
             {
                 leaders.insert(*eval, leader);
-                child_proofs.push(proof);
+                if changed.insert(*eval, leader).is_none() {
+                    child_proofs.push(proof);
+                }
             }
         } else if esort.is_eq_container_sort() {
-            // The nested container is a child of this term, so the base
-            // reaches it: project it out by its own sort's `ProjAll`.
-            let proj_all_action = state
-                .registry()
-                .lookup_table(prim.proj_all_names.get(esort.name())?)?
-                .clone();
-            let child_base =
-                mint_proof_row(state, &proj_all_action, prim.id_counter, &[base, *eval]);
-            let (rebuilt_child, child_proof) =
-                rebuild_container_proof_rec(state, prim, esort, *eval, child_base)?;
+            let rebuilt_child =
+                rebuild_leaves_with_proofs(state, prim, esort, *eval, changed, child_proofs)?;
             if rebuilt_child != *eval {
                 leaders.insert(*eval, rebuilt_child);
-                child_proofs.push(child_proof);
             }
         }
     }
 
-    // Rebuild the value against the collected leaders.
-    let rebuilt = {
-        let cvs = state.container_values();
-        let es = state.raw_exec_state();
-        rebuild_with_leaders(cvs, es, sort, value, &leaders)
-    };
-
-    // Fold a `CongrAll` step per changed child onto the reflexive base. This
-    // proves `value = raw`, where `raw` is the term with children replaced by
-    // their leaders (it may be in non-canonical order, or have duplicate/
-    // clobbering entries for collapsing containers).
-    let congr_all_action = state.registry().lookup_table(&prim.congr_all_name)?.clone();
-    let mut current = base;
-    for proof in child_proofs {
-        current = mint_proof_row(state, &congr_all_action, prim.id_counter, &[current, proof]);
-    }
-
-    // Bridge the (possibly non-canonical) `raw` term to the canonical `rebuilt`
-    // term with the container normalization: `ContainerNormalize(current)` proves
-    // `value = normalize(raw)`, which the checker recomputes to match
-    // `reconstruct_termdag(rebuilt)`. We mint it unconditionally; for
-    // order/arity-preserving containers (Vec/Pair) the normalization is the
-    // identity, so it is a no-op the proof simplifier removes.
-    let normalize_action = state
-        .registry()
-        .lookup_table(&prim.container_normalize_name)?
-        .clone();
-    current = mint_proof_row(state, &normalize_action, prim.id_counter, &[current]);
-
-    Some((rebuilt, current))
+    let cvs = state.container_values();
+    let es = state.raw_exec_state();
+    Some(rebuild_with_leaders(cvs, es, sort, value, &leaders))
 }
 
 impl ProofInstrumentor<'_> {

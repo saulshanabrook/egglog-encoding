@@ -194,13 +194,18 @@ enum RawProof {
     /// given a proof that t1 = f(..., ci, ...) and the child index i,
     /// produces a justification that ci = ci.
     Proj(RawProofId, usize),
-    /// Given a proof that `t1 = c` and a term `a`, produces a justification that
-    /// `a = a`, provided `a` is a child of `c`. Minted where the child's position
-    /// in the term is not known at the site — a container's elements come in
-    /// value order, and the term form orders them canonically. Desugared by
-    /// [`ProofStore::from_raw`] into the positional [`RawProof::Proj`] computed
-    /// against the actual term.
-    ProjAll(RawProofId, TermId),
+    /// A rule body read an element out of a container with a primitive: the rule
+    /// name, the reading call's index in that rule's body, and a proof per
+    /// argument of the call. Produces a justification that the element equals
+    /// itself.
+    ///
+    /// The call is named by where it sits rather than by the primitive's name,
+    /// which would not pin down a validator since primitives are overloaded.
+    /// Desugared by [`ProofStore::from_raw`] into the positional
+    /// [`RawProof::Proj`]: running the resolved primitive's validator on the
+    /// argument terms gives the element's term, which is a child of the
+    /// container argument's.
+    ProjPrim(String, usize, Vec<RawProofId>),
     /// Given a proof that `t1 = c` for a container term `c`, produces a proof of
     /// `t1 = normalize(c)` — the container's canonicalization (reorder/dedup/
     /// merge), which a structural `Congr` chain can't express.
@@ -460,6 +465,11 @@ impl RawProofStore {
         {
             return args[1..].to_vec();
         }
+        if let Some(arity) = names.proj_prim_args(head)
+            && args.len() == arity + 2
+        {
+            return args[2..].to_vec();
+        }
         self.shape(head)
             .filter(|shape| shape.arity == args.len())
             .map_or(vec![], |shape| {
@@ -507,8 +517,6 @@ impl RawProofStore {
             shape(2, &[0], |store, args, kids| {
                 RawProof::Proj(kids[0], store.parse_index(args[1]))
             })
-        } else if names.is_proj_all(head) {
-            shape(2, &[0], |_, args, kids| RawProof::ProjAll(kids[0], args[1]))
         } else if head == names.eval_constructor {
             shape(0, &[], |_, _, _| RawProof::Eval)
         } else {
@@ -623,6 +631,18 @@ impl RawProofStore {
             return self.instantiate(&skeleton, &args[1..]);
         }
 
+        if let Some(arity) = self.names.proj_prim_args(&head) {
+            assert!(
+                args.len() == arity + 2,
+                "{head} should have {} args",
+                arity + 2
+            );
+            let rule = self.parse_string(args[0]);
+            let index = self.parse_index(args[1]);
+            let arg_proofs = args[2..].iter().map(|arg| self.child_proof(*arg)).collect();
+            return self.add_proof(RawProof::ProjPrim(rule, index, arg_proofs));
+        }
+
         if self.names.fused_rule_arity(&head).is_some() || head == self.names.rule_link_constructor
         {
             let RuleColumns {
@@ -718,6 +738,51 @@ impl ProofStore {
             return term_id;
         };
         validator(&mut self.term_dag, &args).unwrap_or(term_id)
+    }
+
+    /// The term a rule body's element read produces: the resolved primitive at
+    /// `body_index` of `rule`'s body, run on `arg_terms` through its validator.
+    ///
+    /// The validator is the primitive's meaning on terms — the same one the
+    /// checker runs when it re-evaluates a body — so this is what the read means
+    /// here, without the proof having stored any term.
+    fn run_body_primitive(
+        &mut self,
+        prog: &[ResolvedNCommand],
+        rule: &str,
+        body_index: usize,
+        arg_terms: &[TermId],
+    ) -> TermId {
+        let at = self
+            .rule_at
+            .get(rule)
+            .copied()
+            .unwrap_or_else(|| panic!("primitive projection names the unknown rule {rule}"));
+        let ResolvedNCommand::NormRule { rule: resolved } = &prog[at] else {
+            panic!("{rule} is not a rule in the program being checked");
+        };
+        let body = crate::proofs::proof_encoding_helpers::body_exprs(&resolved.body);
+        let expr = body
+            .get(body_index)
+            .unwrap_or_else(|| panic!("rule {rule} has no body node {body_index}"));
+        let ResolvedExpr::Call(_, ResolvedCall::Primitive(prim), _) = expr else {
+            panic!("body node {body_index} of rule {rule} is not a primitive call");
+        };
+        let validator = prim
+            .validator()
+            .unwrap_or_else(|| {
+                panic!(
+                    "primitive {} has no validator; proof support gates this",
+                    prim.name()
+                )
+            })
+            .clone();
+        validator(&mut self.term_dag, arg_terms).unwrap_or_else(|| {
+            panic!(
+                "validator for {} rejected the argument terms of body node {body_index} in rule {rule}",
+                prim.name()
+            )
+        })
     }
 
     /// Get the [`Proof`] with the given id.
@@ -1027,29 +1092,46 @@ impl ProofStore {
                     },
                 }
             }
-            RawProof::ProjAll(inner_raw, child_term) => {
-                let inner_id = self.convert_raw_proof(prog, globals, raw_store, *inner_raw);
-                let rhs = self.id_to_proof[inner_id].rhs();
-                let Term::App(head, children) = self.term_dag.get(rhs) else {
-                    panic!("element projection requires an application term, got {rhs:?}");
-                };
-                let child_index = children
+            RawProof::ProjPrim(rule, body_index, arg_raws) => {
+                let arg_ids: Vec<ProofId> = arg_raws
                     .iter()
-                    .position(|child| child == child_term)
+                    .map(|arg| self.convert_raw_proof(prog, globals, raw_store, *arg))
+                    .collect();
+                let arg_terms: Vec<TermId> = arg_ids
+                    .iter()
+                    .map(|id| self.id_to_proof[*id].rhs())
+                    .collect();
+                // The resolved call, not just the primitive's name: egglog
+                // overloads names across sorts, and only the resolved call fixes
+                // which validator states what the read means on terms.
+                let element = self.run_body_primitive(prog, rule, *body_index, &arg_terms);
+                // The element is a child of the container the read took it out
+                // of, which is whichever argument's term holds it.
+                let (container_id, child_index) = arg_ids
+                    .iter()
+                    .zip(&arg_terms)
+                    .find_map(|(id, term)| {
+                        let Term::App(_, children) = self.term_dag.get(*term) else {
+                            return None;
+                        };
+                        let at = children.iter().position(|child| *child == element)?;
+                        Some((*id, at))
+                    })
                     .unwrap_or_else(|| {
                         panic!(
-                            "element projection: {} is no child of {head}",
-                            self.term_dag.to_string(*child_term)
+                            "primitive projection: body node {body_index} of rule {rule} read \
+                             {} out of no argument of its own",
+                            self.term_dag.to_string(element)
                         )
                     });
-                let positional = RawProof::Proj(*inner_raw, child_index);
+                let positional = RawProof::Proj(arg_raws[0], child_index);
                 let projected = match self.proof_id.get(&positional) {
                     Some(&id) => id,
                     None => {
                         let id = self.id_to_proof.push(Proof {
-                            proposition: Proposition::new(*child_term, *child_term),
+                            proposition: Proposition::new(element, element),
                             justification: Justification::Proj {
-                                proof: inner_id,
+                                proof: container_id,
                                 child_index,
                             },
                         });
@@ -1363,6 +1445,28 @@ impl ProofStore {
         if child_lhs == child_rhs {
             return current;
         }
+        current = self.congr_all_direct(current, child_id, child_lhs, child_rhs);
+        self.congr_all_nested(current, child_id)
+    }
+
+    /// Whether `term` is a container application, i.e. one whose head has a
+    /// normalizer. The same lookup answers both whether [`Self::expand_congr_all`]
+    /// recurses into it and how to canonicalize it afterwards.
+    fn is_container_term(&self, term: TermId) -> bool {
+        matches!(self.term_dag.get(term), Term::App(head, _)
+            if self.container_normalizers.contains_key(head))
+    }
+
+    /// Rewrite `child_lhs` to `child_rhs` at every direct child of `current`'s
+    /// right-hand side.
+    fn congr_all_direct(
+        &mut self,
+        base_id: ProofId,
+        child_id: ProofId,
+        child_lhs: TermId,
+        child_rhs: TermId,
+    ) -> ProofId {
+        let mut current = base_id;
         loop {
             let lhs = self.id_to_proof[current].lhs();
             let rhs = self.id_to_proof[current].rhs();
@@ -1383,6 +1487,73 @@ impl ProofStore {
             });
         }
         current
+    }
+
+    /// Rewrite inside every container child of `current`'s right-hand side, then
+    /// canonicalize that child and congruence it back into its parent.
+    ///
+    /// The value-level rebuild recurses through container elements and treats an
+    /// eq-sort element as atomic (see `rebuild_container_value_rec`), so the
+    /// proof follows containers to the same depth and stops where it does. A
+    /// child's canonical form fixes its parent's element order, so the child is
+    /// normalized before the step that puts it back.
+    fn congr_all_nested(&mut self, base_id: ProofId, child_id: ProofId) -> ProofId {
+        let mut current = base_id;
+        let mut child_index = 0;
+        loop {
+            let rhs = self.id_to_proof[current].rhs();
+            let Term::App(_, children) = self.term_dag.get(rhs) else {
+                return current;
+            };
+            let Some(nested) = children.get(child_index).copied() else {
+                return current;
+            };
+            child_index += 1;
+            if !self.is_container_term(nested) {
+                continue;
+            }
+            // The reflexive base the nested rewrite stands on. At conversion the
+            // term is in hand, so the child's position is known here — which is
+            // why the encoding needs to record none of this.
+            let nested_base = self.id_to_proof.push(Proof {
+                proposition: Proposition::new(nested, nested),
+                justification: Justification::Proj {
+                    proof: current,
+                    child_index: child_index - 1,
+                },
+            });
+            let rewritten = self.expand_congr_all(nested_base, child_id);
+            let rewritten = self.normalize_step(rewritten);
+            let new_nested = self.id_to_proof[rewritten].rhs();
+            if new_nested == nested {
+                continue;
+            }
+            let lhs = self.id_to_proof[current].lhs();
+            let new_rhs = self.replace_term_child(rhs, child_index - 1, new_nested);
+            current = self.id_to_proof.push(Proof {
+                proposition: Proposition::new(lhs, new_rhs),
+                justification: Justification::Congr {
+                    proof: current,
+                    child_index: child_index - 1,
+                    child_proof: rewritten,
+                },
+            });
+        }
+    }
+
+    /// `proof` followed by the canonicalization of its right-hand side, or
+    /// `proof` unchanged when that container is already canonical.
+    fn normalize_step(&mut self, proof: ProofId) -> ProofId {
+        let lhs = self.id_to_proof[proof].lhs();
+        let rhs = self.id_to_proof[proof].rhs();
+        let normalized = self.normalize_container(rhs);
+        if normalized == rhs {
+            return proof;
+        }
+        self.id_to_proof.push(Proof {
+            proposition: Proposition::new(lhs, normalized),
+            justification: Justification::ContainerNormalize { proof },
+        })
     }
 
     /// A congruence step's middle-term check, the counterpart of the one
@@ -2227,36 +2398,5 @@ mod tests {
         let chain = raw.add_proof(RawProof::Proj(row, 1));
         let expected = Proposition::new(children[1], children[1]);
         assert_agree(&raw, packed, chain, &expected);
-    }
-
-    /// A projection naming its child by term converts to the projection at the
-    /// position that term occupies, and the two share one proof.
-    #[test]
-    fn an_element_projection_is_the_positional_one_over_the_same_child() {
-        let mut raw = empty_store();
-        let children: Vec<TermId> = ["a", "b", "c"]
-            .iter()
-            .map(|name| raw.term_dag.app((*name).to_string(), vec![]))
-            .collect();
-        let app = raw.term_dag.app("f".to_string(), children.clone());
-        let row = fiat_term(&mut raw, app, app);
-        let row = raw.parse_proof(row);
-
-        let by_term = raw.add_proof(RawProof::ProjAll(row, children[1]));
-        let by_index = raw.add_proof(RawProof::Proj(row, 1));
-
-        let mut store =
-            ProofStore::new(raw.term_dag.clone(), HashMap::default(), HashSet::default());
-        let (prog, globals) = (vec![], HashMap::default());
-        let mut convert = |id| store.convert_raw_proof(&prog, &globals, &raw, id);
-        let (element, positional) = (convert(by_term), convert(by_index));
-        assert_eq!(
-            element, positional,
-            "the element projection should resolve to the positional one it desugars to"
-        );
-        assert_eq!(
-            store.get(element).proposition(),
-            &Proposition::new(children[1], children[1])
-        );
     }
 }

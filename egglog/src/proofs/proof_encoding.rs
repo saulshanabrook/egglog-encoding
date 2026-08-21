@@ -269,8 +269,19 @@ struct Element {
     containers: Vec<String>,
     /// The value variable the projection anchoring it names.
     value: String,
-    /// The `@ProjAll_<Sort>` relation projecting a value of the element's sort.
-    proj_all: String,
+    /// The variable holding the name of the rule whose body read the element.
+    rule_name: String,
+    /// The reading call's index in the rule body's
+    /// [`body_exprs`](crate::proofs::proof_encoding_helpers::body_exprs): how
+    /// proof conversion recovers the resolved primitive, which a name alone
+    /// could not, since primitives are overloaded.
+    body_index: usize,
+    /// One proof per argument of the reading call, in order, with the container
+    /// argument left empty — the anchor chain resolves that one, so it is only
+    /// known once the whole body is walked.
+    arg_proofs: Vec<Option<String>>,
+    /// Which argument the container is.
+    container_index: usize,
 }
 
 /// What a body variable's anchor is projected out of.
@@ -377,7 +388,13 @@ impl BodyAnchors {
 /// [`ProofInstrumentor::defer_lookup`]), or a composition the encoder can still
 /// rewrite into one row (see [`ProofInstrumentor::mint_sym`]).
 enum Deferred {
-    Stmts(Vec<String>),
+    /// Finished statements, together with the proof variables they read. Those
+    /// groups are emitted first, so a group may be held back before the ones it
+    /// stands on are.
+    Stmts {
+        stmts: Vec<String>,
+        reads: Vec<String>,
+    },
     Composed(Composition),
 }
 
@@ -700,17 +717,9 @@ impl<'a> ProofInstrumentor<'a> {
     /// Also, we have a rule that maintains the invariant that each term points to its
     /// canonical representative.
     fn declare_sort(&mut self, sort_name: &str, is_container: bool) -> Vec<Command> {
-        // Containers are canonicalized structurally, not unioned directly. In
-        // proof mode a container still needs its projection relation, which the
-        // rebuild primitive mints for a nested container without going through
-        // any statement the encoder writes.
+        // Containers are canonicalized structurally, not unioned directly, so
+        // they get no union-find.
         if is_container {
-            if self.egraph.proof_state.proofs_enabled {
-                // Emitted after the sort's own declaration rather than ahead of
-                // it, since the relation's column is of that sort.
-                let (_, decl) = self.proj_all_decl(sort_name);
-                return self.parse_program(&decl);
-            }
             return vec![];
         }
         self.declare_sort_eq(sort_name)
@@ -1288,19 +1297,32 @@ impl<'a> ProofInstrumentor<'a> {
 
     /// [`Self::request_anchor`] for a value a body primitive read out of a
     /// container: nothing in the query names it as a term, but it is a child of
-    /// whichever of `containers` it came out of, and the body anchors those.
+    /// the container it came out of, and the body anchors that.
+    ///
+    /// `rule_name` and `body_index` locate the reading call in its rule's body so
+    /// proof conversion can recover the resolved primitive and run its validator
+    /// on the argument terms. Outside a rule body there is no such locator, and
+    /// the anchor is left unsupplied — every such context drops its anchors
+    /// unread.
     pub(crate) fn request_element_anchor(
         &mut self,
         value: &str,
-        sort_name: &str,
+        rule_name: Option<&str>,
+        body_index: usize,
+        container_index: usize,
         containers: Vec<String>,
+        arg_proofs: Vec<Option<String>>,
     ) -> String {
-        let proj_all = self.proj_all_constructor(sort_name);
-        self.anchors.offer_element(Element {
-            containers,
-            value: value.to_string(),
-            proj_all,
-        });
+        if let Some(rule_name) = rule_name {
+            self.anchors.offer_element(Element {
+                containers,
+                value: value.to_string(),
+                rule_name: rule_name.to_string(),
+                body_index,
+                arg_proofs,
+                container_index,
+            });
+        }
         self.request_anchor(value)
     }
 
@@ -1336,18 +1358,41 @@ impl<'a> ProofInstrumentor<'a> {
             let mut group = vec![];
             self.emit_pending_group(&mut group, &derived);
             let mut base = derived;
+            let mut reads = vec![];
             for (depth, element) in chain.iter().enumerate() {
-                let mint = crate::proofs::proof_fresh::mint_prim_name(&element.proj_all);
+                let arity = element.arg_proofs.len();
+                let proj_prim = self.proj_prim_constructor(arity);
+                let mint = crate::proofs::proof_fresh::mint_prim_name(&proj_prim);
                 let projected = if depth + 1 == chain.len() {
                     proof.clone()
                 } else {
                     self.fresh_var()
                 };
-                let value = &element.value;
-                group.push(format!("(let {projected} ({mint} {base} {value}))"));
+                // The container's argument is the projection's base; the rest are
+                // whatever the body walk proved for them, and are emitted ahead of
+                // this group wherever it lands.
+                let args: Vec<String> = element
+                    .arg_proofs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, arg)| match arg {
+                        _ if i == element.container_index => base.clone(),
+                        Some(arg) => {
+                            reads.push(arg.clone());
+                            arg.clone()
+                        }
+                        None => panic!(
+                            "argument {i} of the body call reading `{}` has no proof",
+                            element.value
+                        ),
+                    })
+                    .collect();
+                let (rule, index) = (&element.rule_name, element.body_index);
+                let args = ListDisplay(&args, " ");
+                group.push(format!("(let {projected} ({mint} {rule} {index} {args}))"));
                 base = projected;
             }
-            self.defer_lookup(proof, group);
+            self.defer_lookup_reading(proof, group, reads);
         }
     }
 
@@ -1468,33 +1513,28 @@ impl<'a> ProofInstrumentor<'a> {
         name
     }
 
-    /// The name of the element-matching projection naming a child of `sort`,
-    /// together with its declaration — empty once some program has declared it.
-    fn proj_all_decl(&mut self, sort: &str) -> (String, String) {
-        let name = self.proof_names().proj_all(sort);
+    /// The name of the primitive projection for a body call taking `args`
+    /// arguments, with the declaration emitted ahead of the command using it.
+    ///
+    /// An argument count is a property of the call sites a program has, not of
+    /// the proof format, so the declaration is emitted with the first commands
+    /// using it — as [`Self::packed_proof_constructor`] does.
+    pub(crate) fn proj_prim_constructor(&mut self, args: usize) -> String {
+        let name = self.proof_names().proj_prim(args);
         if !self
             .egraph
             .proof_state
             .proof_names
-            .proj_all_declared
-            .insert(sort.to_string())
+            .proj_prim_declared
+            .insert(args)
         {
-            return (name, String::new());
+            return name;
         }
         let proof = self.proof_sort();
-        let decl = format!(
-            "(function {name} ({proof} {sort} {proof}) Unit :no-merge :internal-hidden :internal-term-node)\n"
-        );
-        (name, decl)
-    }
-
-    /// [`Self::proj_all_decl`], with the declaration emitted ahead of the command
-    /// using it.
-    pub(crate) fn proj_all_constructor(&mut self, sort: &str) -> String {
-        let (name, decl) = self.proj_all_decl(sort);
-        if !decl.is_empty() {
-            self.pending_decls.push(decl);
-        }
+        let columns: String = std::iter::repeat_n(format!("{proof} "), args).collect();
+        self.pending_decls.push(format!(
+            "(function {name} (String i64 {columns}{proof}) Unit :no-merge :internal-hidden :internal-term-node)\n"
+        ));
         name
     }
 
@@ -1522,8 +1562,19 @@ impl<'a> ProofInstrumentor<'a> {
     /// reads must be either bound within it or in scope there — a query
     /// variable, or a statement already emitted.
     pub(crate) fn defer_lookup(&mut self, proof: &str, group: Vec<String>) {
+        self.defer_lookup_reading(proof, group, vec![]);
+    }
+
+    /// [`Self::defer_lookup`] for a group standing on other held-back proofs,
+    /// which are emitted ahead of it wherever it lands.
+    pub(crate) fn defer_lookup_reading(
+        &mut self,
+        proof: &str,
+        stmts: Vec<String>,
+        reads: Vec<String>,
+    ) {
         self.deferred
-            .insert(proof.to_string(), Deferred::Stmts(group));
+            .insert(proof.to_string(), Deferred::Stmts { stmts, reads });
     }
 
     /// Discard everything still held back, whose proofs nothing read.
@@ -1551,7 +1602,15 @@ impl<'a> ProofInstrumentor<'a> {
     fn emit_pending_group(&mut self, stmts: &mut Vec<String>, var: &str) {
         match self.deferred.remove(var) {
             Some(Deferred::Composed(composition)) => self.emit_composition(stmts, var, composition),
-            Some(Deferred::Stmts(group)) => stmts.extend(group),
+            Some(Deferred::Stmts {
+                stmts: group,
+                reads,
+            }) => {
+                for read in reads {
+                    self.emit_pending_group(stmts, &read);
+                }
+                stmts.extend(group);
+            }
             None => {
                 assert!(
                     !self.unanchored.contains_key(var),
@@ -2074,12 +2133,19 @@ impl<'a> ProofInstrumentor<'a> {
         // The reflexive-proof names are globally fresh, so keeping earlier rules'
         // would be harmless but unbounded.
         self.reflexive.clear();
-        let (facts, action_lookups, premises) = self.instrument_facts(&rule.body);
+        // Named before the body is walked: an element anchor records the rule its
+        // reading call sits in.
         let rule_name_var = if self.egraph.proof_state.proofs_enabled {
             self.egraph.parser.symbol_gen.fresh("rule_name")
         } else {
             "()".to_string()
         };
+        let body_rule = self
+            .egraph
+            .proof_state
+            .proofs_enabled
+            .then_some(rule_name_var.as_str());
+        let (facts, action_lookups, premises) = self.instrument_facts_in(&rule.body, body_rule);
         // Every mint site replaces the placeholder with the column the walk is at.
         let proof = Justification::Rule(rule_name_var.clone(), premises, HeadColumn::Unnumbered);
         // A proof-mode head reads the database: it interns each subterm it builds
