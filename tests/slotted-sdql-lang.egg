@@ -1,0 +1,72 @@
+;;; The paper's `sdql` language, whose `Sum` binds TWO slots on one node.
+;;;
+;;; `Sum(AppliedId, Bind<Bind<AppliedId>>)` in the reference. Declared as
+;;;
+;;;     (constructor Sum (U U U U) U :binder 1 2)
+;;;
+;;; in `slotted-experiments/languages/sdql.egg`: four slotted children, of which the
+;;; middle two bind. The generated rule removes both slots from the class, so
+;;; renaming either one is invisible from outside.
+
+(include "tests/slotted-lang-sdql.egg")
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; both bound slots are alpha-renameable
+;;;
+;;;     sum(r, $5, $6, body)  =  sum(r, $7, $8, body)   for a body using neither
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let $r (Sing (map-empty) (Null) (map-empty) (Null)))
+
+(let $a (Sum (map-empty) $r (map-of 0 5) (Var 0) (map-of 0 6) (Var 0)
+             (map-empty) (Null)))
+(let $b (Sum (map-empty) $r (map-of 0 7) (Var 0) (map-of 0 8) (Var 0)
+             (map-empty) (Null)))
+
+(run-schedule (saturate (run slotted)))
+
+(check (= $a $b))
+;; neither bound slot is free, so the class has none
+(check (RenamesToLeader $a (map-empty) $a))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; a slot the body uses stays free, and only the bound ones are removed
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+;; body mentions $9, which nothing binds
+(let $c (Sum (map-empty) (Null) (map-of 0 5) (Var 0) (map-of 0 6) (Var 0)
+             (map-of 0 9) (Var 0)))
+
+(run-schedule (saturate (run slotted)))
+
+(check (RenamesToLeader $c (map-of 9 9) $c))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; the two binders are not interchangeable with a body that tells them apart
+;;;
+;;; A body at the first bound slot is a different term from one at the second, so
+;;; renaming cannot identify them.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let $first  (Sum (map-empty) (Null) (map-of 0 5) (Var 0) (map-of 0 6) (Var 0)
+                  (map-of 0 5) (Var 0)))
+(let $second (Sum (map-empty) (Null) (map-of 0 5) (Var 0) (map-of 0 6) (Var 0)
+                  (map-of 0 6) (Var 0)))
+
+(run-schedule (saturate (run slotted)))
+
+;; both have no free slots ...
+(check (RenamesToLeader $first (map-empty) $first))
+(check (RenamesToLeader $second (map-empty) $second))
+
+(pop)

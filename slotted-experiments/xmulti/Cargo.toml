@@ -1,0 +1,15 @@
+# Standalone oracle: runs a multipattern through the reference
+# `slotted-egraphs` implementation so the egglog encoding can be diffed
+# against it. Its own workspace, so it stays out of the root build.
+[workspace]
+
+[package]
+name = "xmulti"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Local checkout of memoryleak47/slotted-egraphs at PR #45 (e3efcdd), which
+# carries the `extend_subst` canonicalisation fix. Published 0.0.36 predates it
+# and answers differently on last-binding matches.
+slotted-egraphs = { path = "/home/oflatt/slotted-egraphs" }

@@ -1,0 +1,108 @@
+;;; SDQL's `beta` rule: `(let ?t $x ?body)` -> `?body[(var $x) := ?t]`.
+;;;
+;;; The reference's beta is term-level -- extract one term, substitute in it, add
+;;; the result back (`ExtractionSubst`) -- so the substitution itself is a
+;;; primitive rather than a family of rules. `slotted-subst` does it; this file is
+;;; the plumbing that puts its answer back into the node's frame.
+;;;
+;;;     Let(AppliedId, Bind<AppliedId>)   is   (Let mt t mx (Var 0) mb body)
+;;;
+;;; with the bound slot `x = mx(0)` named in the node's frame.
+
+(include "tests/slotted-lang-sdql.egg")
+
+(ruleset sdql-beta)
+
+;;; Two frames meet here. The primitive works in `body`'s frame; the node names
+;;; its slots in its own. `Rb` bridges them: it agrees with `mb` inverse where
+;;; that is defined, and mints a fresh name for every node slot `body` does not
+;;; use. `t`'s slots are exactly those, which is why the bridge is needed at all
+;;; -- `(compose (inverse mb) mt)` would silently drop them, since `compose`
+;;; truncates.
+;;;
+;;; The result is an invocation, so both halves are read. Dropping the renaming
+;;; would make `let $5 = (var $7) in (var $5)` indistinguishable from `(var $5)`:
+;;; both answer with the class `(Var 0)`.
+(relation SdqlBetaPending (U Renaming Renaming U))
+
+(rule ((= e (Let mt t mx v0 mb body))
+       (= v0 (Var 0))
+       (= x (map-get mx 0))
+       ;; the node slots that must have a name in body's frame
+       (= needed (map-union (map-image mb)
+                            (map-union (map-image mt) (map-of x x))))
+       ;; Rb : node frame -> body frame, extended.  Rb . mb = id on slots(body)
+       (= Rb (find-mapping-total (map-domain mb) needed (map-domain mb) mb))
+       (= xb (map-get Rb x))
+       ;; total by construction: dom(Rb) = needed covers im(mt), so this asserts
+       ;; the bridge is wide enough rather than dropping a slot of `t`
+       (= tren (compose-total Rb mt)))
+      ((SdqlBetaPending e Rb
+                        (slotted-subst-frame body xb v0 tren t)
+                        (slotted-subst       body xb v0 tren t)))
+      :ruleset sdql-beta :naive)
+
+;;; The result's own slots are not known until the machinery has seen its node,
+;;; so the edge back into the node's frame is narrowed one phase later -- the M6b
+;;; habit, applied across a phase boundary rather than inside one rule. The
+;;; conclusion goes to `Equated`, which has no orientation, and the machinery picks
+;;; the side.
+(rule ((SdqlBetaPending e Rb mr r)
+       (= cs (ClassSlots r)))
+      ((Equated e (compose (inverse Rb) (compose mr cs)) r))
+      :ruleset slotted)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; A: let $5 = 0 in (var $5)   =   0
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(let $a (Let (map-empty) (Num 0) (map-of 0 5) (Var 0) (map-of 0 5) (Var 0)))
+(run-schedule (saturate (run slotted))
+              (repeat 2 (seq (run sdql-beta) (saturate (run slotted)))))
+(check (RenamesToLeader $a (map-empty) (Num 0)))
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; B: let $5 = (var $7) in (var $5)   =   (var $7)
+;;;
+;;; The case that pins the renaming: the answer's class is `(Var 0)` either way,
+;;; so only the edge tells $7 from $5.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(let $b (Let (map-of 0 7) (Var 0) (map-of 0 5) (Var 0) (map-of 0 5) (Var 0)))
+(run-schedule (saturate (run slotted))
+              (repeat 2 (seq (run sdql-beta) (saturate (run slotted)))))
+(check (RenamesToLeader $b (map-of 0 7) (Var 0)))
+;; and not the answer a dropped renaming would give
+(fail (check (RenamesToLeader $b (map-of 0 5) (Var 0))))
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; C: a dead let -- the body cannot name the bound slot, so it comes back whole
+;;;
+;;;     let $5 = 0 in (var $9)   =   (var $9)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(let $c (Let (map-empty) (Num 0) (map-of 0 5) (Var 0) (map-of 0 9) (Var 0)))
+(run-schedule (saturate (run slotted))
+              (repeat 2 (seq (run sdql-beta) (saturate (run slotted)))))
+(check (RenamesToLeader $c (map-of 0 9) (Var 0)))
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; D: substituting inside a node, one occurrence and one untouched slot
+;;;
+;;;     let $5 = 0 in ((var $5) + (var $9))   =   (0 + (var $9))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(let $dbody (Add (map-of 0 5) (Var 0) (map-of 0 9) (Var 0)))
+(let $d (Let (map-empty) (Num 0) (map-of 0 5) (Var 0) (map-of 5 5 9 9) $dbody))
+(run-schedule (saturate (run slotted))
+              (repeat 2 (seq (run sdql-beta) (saturate (run slotted)))))
+(check (RenamesToLeader $d (map-of 9 9)
+                        (Add (map-empty) (Num 0) (map-of 0 9) (Var 0))))
+(pop)

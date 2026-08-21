@@ -1,0 +1,84 @@
+;;; The paper's `lambda` language with one constructor per operator.
+;;;
+;;; `tests/slotted-lang-lambda.egg` is generated from the LANGUAGES table in
+;;; `slotted-experiments/gen-node-rules.py`. Terms read as they do in the reference
+;;; crate -- `(Lam ...)`, `(App ...)`, `(Let ...)` -- with no operator string to
+;;; indirect through, and binders declared by their column rather than by name.
+;;;
+;;; A binder's slot still rides in an edge to `(Var 0)`: the bound slot has to be a
+;;; slot of the node so that renamings act on it, and a node's slots come only from
+;;; the images of its edges.
+
+(include "tests/slotted-lang-lambda.egg")
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; alpha-equivalence of the identity function
+;;;
+;;;     lam $5. $5   =   lam $6. $6
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let $id5 (Lam (map-of 0 5) (Var 0) (map-of 0 5) (Var 0)))
+(let $id6 (Lam (map-of 0 6) (Var 0) (map-of 0 6) (Var 0)))
+
+(run-schedule (saturate (run slotted)))
+
+(check (= $id5 $id6))
+;; the bound slot is not free, so the class has no slots
+(check (RenamesToLeader $id5 (map-empty) $id5))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; a binder is not vacuous: lam $5. $5 is not lam $5. $7
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let $id5   (Lam (map-of 0 5) (Var 0) (map-of 0 5) (Var 0)))
+(let $const (Lam (map-of 0 5) (Var 0) (map-of 0 7) (Var 0)))
+
+(run-schedule (saturate (run slotted)))
+
+(fail (check (= $id5 $const)))
+;; and the constant function keeps $7 free
+(check (RenamesToLeader $const (map-of 7 7) $const))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; `Let`, the arity-3 binder
+;;;
+;;;     let $5 = f in $5   =   let $6 = f in $6
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let $f (App (map-empty) (Null) (map-empty) (Null)))
+(let $l5 (Let (map-of 0 5) (Var 0) (map-of 0 5) (Var 0) (map-empty) $f))
+(let $l6 (Let (map-of 0 6) (Var 0) (map-of 0 6) (Var 0) (map-empty) $f))
+
+(run-schedule (saturate (run slotted)))
+
+(check (= $l5 $l6))
+(check (RenamesToLeader $l5 (map-empty) $l5))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; the operator is part of the identity: App and Lam over the same edges differ
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let $a (App (map-of 0 5) (Var 0) (map-of 0 5) (Var 0)))
+(let $l (Lam (map-of 0 5) (Var 0) (map-of 0 5) (Var 0)))
+
+(run-schedule (saturate (run slotted)))
+
+(fail (check (= $a $l)))
+;; App binds nothing, so $5 stays free
+(check (RenamesToLeader $a (map-of 5 5) $a))
+
+(pop)

@@ -1,0 +1,261 @@
+;;; The compiled `sdql` rewrite rules, checked.
+;;;
+;;; `tests/slotted-sdql-rules.egg` is generated from
+;;; `slotted-experiments/gen-sdql-rules.py`; this is what pins its behaviour. Each
+;;; section is its own `(push)`/`(pop)`, and each runs the phased schedule the
+;;; encoding requires: the machinery saturated, then finitely many `sdql` steps with
+;;; the machinery saturated between them.
+;;;
+;;; The step counts are deliberately small. The rules are not confluent -- `get-to-sum`
+;;; and `sum-to-get` alone loop -- so a section that needs N steps to reach its
+;;; conclusion asks for N and no more, which also keeps the negative checks sharp:
+;;; a `(fail (check ...))` over many steps only says the rules did not eventually
+;;; find another route.
+
+(include "tests/slotted-sdql-rules.egg")
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; A plain rule, and the `Symbol` payload leaf it builds.
+;;;
+;;;     mult-app1:  (* ?a ?b)  ->  (binop mult ?a ?b)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let $m (Mult (map-of 0 5) (Var 0) (map-of 0 6) (Var 0)))
+
+(run-schedule (saturate (run slotted))
+              (repeat 2 (seq (run sdql) (saturate (run slotted)))))
+
+;; the built node is `binop(mult, $5, $6)`, at the pattern's own slots
+(let $b (Binop (map-empty) (Symbol "mult") (map-of 0 5) (Var 0) (map-of 0 6) (Var 0)))
+(run-schedule (saturate (run slotted)))
+
+(check (RenamesToLeader $m m1 leader)
+       (RenamesToLeader $b m2 leader))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; A repeated variable, and the `Num` leaf: the Def. 6 check, positive and negative.
+;;;
+;;;     sub-identity:  (- ?e ?e)  ->  0
+;;;
+;;; `(- $5 $5)` is `0`; `(- $5 $6)` is two distinct renamed ids of one leader and
+;;; must not be. `(Num 0)` is created first so it is the class's leader, which is
+;;; what makes the edge point the way the checks read it.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let $zero (Num 0))
+(let $same (Sub (map-of 0 5) (Var 0) (map-of 0 5) (Var 0)))
+(let $diff (Sub (map-of 0 5) (Var 0) (map-of 0 6) (Var 0)))
+
+(run-schedule (saturate (run slotted))
+              (repeat 2 (seq (run sdql) (saturate (run slotted)))))
+
+;; `0` has no slots, so the class loses the one it had
+(check (RenamesToLeader $same (map-empty) $zero))
+
+;; two distinct slots are two distinct renamed ids: no match
+(fail (check (RenamesToLeader $diff m $zero)))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; A literal in a CHILD position, reached through `RenamesToLeader`.
+;;;
+;;;     add-zero:  (+ ?e 0)  ->  ?e
+;;;
+;;; A payload leaf is never deleted or migrated, so its row is a stable handle --
+;;; but its class's canonical value need not be that row, so the rule joins
+;;; `(RenamesToLeader (Num 0) _ C)` rather than writing the leaf into the child
+;;; column. Here the leaf's class does move: `(- ?e ?e)` above shows why.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let $zero (Num 0))
+(let $a (Add (map-of 0 5) (Var 0) (map-empty) $zero))
+
+(run-schedule (saturate (run slotted))
+              (repeat 2 (seq (run sdql) (saturate (run slotted)))))
+
+;; the sum is the variable at $5
+(check (RenamesToLeader $a (map-of 0 5) (Var 0)))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; A nested right-hand side over a payload leaf.
+;;;
+;;;     get-range:  (get (range ?st ?en) ?idx)  ->  (+ ?idx (- ?st 1))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let $rng (Range (map-of 0 3) (Var 0) (map-of 0 4) (Var 0)))
+(let $get (Get (map-of 3 3 4 4) $rng (map-of 0 7) (Var 0)))
+
+(run-schedule (saturate (run slotted))
+              (repeat 1 (seq (run sdql) (saturate (run slotted)))))
+
+;; `(+ $7 (- $3 1))`, built bottom-up: the outer edge to the inner node is the
+;; identity on the inner node's slots, not a renaming
+(let $inner (Sub (map-of 0 3) (Var 0) (map-empty) (Num 1)))
+(let $outer (Add (map-of 0 7) (Var 0) (map-of 3 3) $inner))
+(run-schedule (saturate (run slotted)))
+
+(check (RenamesToLeader $get m1 leader)
+       (RenamesToLeader $outer m2 leader))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; A slot literal in an ordinary child position -- `(var $k)`, not a binder column.
+;;;
+;;;     sum-sing:  (sum ?e1 $k $v (sing (var $k) (var $v)))  ->  ?e1
+;;;
+;;; Both of `sing`'s children are the class `(Var 0)`, told apart only by their
+;;; edges, and each edge is pinned to a slot an earlier atom named. That is the
+;;; case that has to be constrained INTO the renaming rather than checked after it.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let $sg  (Sing (map-of 0 5) (Var 0) (map-of 0 6) (Var 0)))
+(let $sum (Sum (map-of 0 9) (Var 0)
+               (map-of 0 5) (Var 0)
+               (map-of 0 6) (Var 0)
+               (map-of 5 5 6 6) $sg))
+
+(run-schedule (saturate (run slotted))
+              (repeat 2 (seq (run sdql) (saturate (run slotted)))))
+
+;; the whole sum is the variable at $9
+(check (RenamesToLeader $sum m (Var 0))
+       (= (map-get m 0) 9)
+       (= (map-length m) 1))
+
+;; and it does not fire when the two `sing` children are the same slot: that
+;; would need `$k` and `$v` to be one slot, which the binder columns forbid
+(let $sg2  (Sing (map-of 0 5) (Var 0) (map-of 0 5) (Var 0)))
+(let $sum2 (Sum (map-of 0 8) (Var 0)
+                (map-of 0 5) (Var 0)
+                (map-of 0 6) (Var 0)
+                (map-of 5 5) $sg2))
+(run-schedule (saturate (run slotted))
+              (repeat 2 (seq (run sdql) (saturate (run slotted)))))
+(fail (check (RenamesToLeader $sum2 m (Var 0))
+             (= (map-get m 0) 8)))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; The slot side condition, firing.
+;;;
+;;;     sum-fact-1:  (sum ?R $x $y (* ?e1 ?e2))  ->  (* ?e1 (sum ?R $x $y ?e2))
+;;;                  if $x, $y not in slots(?e1)
+;;;
+;;; `?e1` is the free variable `$7` and `?e2` is the bound `$5`, so the guard
+;;; passes and the factor comes out of the sum. One step, so the only rule that
+;;; can put a `Mult` in the sum's class is this one -- `sum-fact-2`'s guard fails
+;;; on `?e2 = $5`, and nothing else here produces one.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+;; body = $7 * $5, over sum(_, $5, $6, .)
+(let $body (Mult (map-of 0 7) (Var 0) (map-of 0 5) (Var 0)))
+(let $sum  (Sum (map-empty) (Null)
+                (map-of 0 5) (Var 0)
+                (map-of 0 6) (Var 0)
+                (map-of 5 5 7 7) $body))
+
+(run-schedule (saturate (run slotted))
+              (repeat 1 (seq (run sdql) (saturate (run slotted)))))
+
+;; the sum's class now holds a product
+(check (RenamesToLeader $sum m1 leader)
+       (RenamesToLeader n m2 leader)
+       (= n (Mult q1 q2 q3 q4)))
+
+;; and it is `$7 * sum(_, $5, $6, $5)` exactly: the factored sum binds both slots
+;; and its body is the first of them, so it has no free slots at all
+(let $inner (Sum (map-empty) (Null)
+                 (map-of 0 5) (Var 0)
+                 (map-of 0 6) (Var 0)
+                 (map-of 0 5) (Var 0)))
+(let $out   (Mult (map-of 0 7) (Var 0) (map-empty) $inner))
+(run-schedule (saturate (run slotted)))
+(check (RenamesToLeader $sum m1 leader)
+       (RenamesToLeader $out m2 leader))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; The same side condition, blocking.
+;;;
+;;; Same rule, same shape, and the only change is that `?e1` is now the BOUND
+;;; slot `$5`: pulling it out of the sum would let it escape its binder, so the
+;;; guard must refuse. `sum-fact-2` is refused symmetrically, since its `?e2` is
+;;; the other bound slot -- so no product may appear in the sum's class, which is
+;;; exactly the check the positive section above passes.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+;; body = $5 * $6, and $5, $6 are the sum's own binders
+(let $body (Mult (map-of 0 5) (Var 0) (map-of 0 6) (Var 0)))
+(let $sum  (Sum (map-empty) (Null)
+                (map-of 0 5) (Var 0)
+                (map-of 0 6) (Var 0)
+                (map-of 5 5 6 6) $body))
+
+(run-schedule (saturate (run slotted))
+              (repeat 1 (seq (run sdql) (saturate (run slotted)))))
+
+(fail (check (RenamesToLeader $sum m1 leader)
+             (RenamesToLeader n m2 leader)
+             (= n (Mult q1 q2 q3 q4))))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; One slot literal shared by two SIBLING atoms.
+;;;
+;;;     let-binop4:  (binop ?f (let ?e1 $x ?e2) (let ?e1 $x ?e3))
+;;;                    ->  (let ?e1 $x (binop ?f ?e2 ?e3))
+;;;
+;;; The hard case the top of `slotted-user-rules.egg` warns about: `$x` is a
+;;; binder of two independently-renamed atoms, so the two bound slots have to be
+;;; forced onto one pattern slot. Neither atom's bound slot is reachable through
+;;; its root's edge -- a `let`'s class does not have it -- so the first atom to
+;;; carry it MINTS a name, and the second is only made to agree because the
+;;; literal is passed INTO `find-mapping-total`. Checking it afterwards is too
+;;; late, and `SDQL_BUGS=slot-late` is that mutant: it loses this match.
+;;;
+;;; Only `let-binop4` can put a `let` in a `binop`'s class here, so a `Let` node
+;;; sharing the root's class is the rule having fired.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+;; let $5 = $2 in $5      -- class slots {2}
+(let $l1 (Let (map-of 0 2) (Var 0) (map-of 0 5) (Var 0) (map-of 0 5) (Var 0)))
+;; let $5 = $2 in $3      -- class slots {2,3}
+(let $l2 (Let (map-of 0 2) (Var 0) (map-of 0 5) (Var 0) (map-of 0 3) (Var 0)))
+
+(let $bop (Binop (map-of 0 1) (Var 0)
+                 (map-of 2 2) $l1
+                 (map-of 2 2 3 3) $l2))
+
+(run-schedule (saturate (run slotted))
+              (repeat 1 (seq (run sdql) (saturate (run slotted)))))
+
+(check (RenamesToLeader $bop m1 leader)
+       (RenamesToLeader n m2 leader)
+       (= n (Let a1 a2 a3 a4 a5 a6)))
+
+(pop)

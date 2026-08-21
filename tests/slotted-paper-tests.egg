@@ -1,0 +1,78 @@
+;;; Tests ported from the reference crate's own suites, run against this encoding.
+;;;
+;;; Source: `memoryleak47/slotted-egraphs` PR #45, `tests/<suite>/mod.rs`. Each
+;;; section names the test it came from so the two can be diffed by hand.
+;;;
+;;; These are the suites that need nothing the encoding does not have: every
+;;; operator takes two children, and a binder's slot rides in the first child's
+;;; edge. The paper's `lambda` and `arith` suites also use `let`, which binds a slot
+;;; *and* takes two children -- three positions where `App2` offers two -- so they
+;;; are not portable without an n-ary constructor.
+
+(include "tests/slotted-egraph-encoding-11.egg")
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; var::xy_eq_yz_causes_redundancy
+;;;
+;;;     f($0,$1) = f($1,$2)  =>  one class, and it has NO slots
+;;;
+;;; Equating two nodes that use different slots forces every slot redundant: the
+;;; class cannot depend on $0 (the right side does not mention it) nor on $1 or $2
+;;; by the same argument. The reference asserts `eg.slots(id).is_empty()`; here a
+;;; class's live slots are the domain of its narrowest identity self-loop, so the
+;;; assertion is that the empty map is one of its self-loops.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let $f01 (App2 "f" (map-of 0 0) (Var 0) (map-of 0 1) (Var 0)))
+(let $f12 (App2 "f" (map-of 0 1) (Var 0) (map-of 0 2) (Var 0)))
+(union $f01 $f12)
+
+(run-schedule (saturate (run slotted)))
+
+;; one class
+(check (= $f01 $f12))
+
+;; with no slots left
+(check (RenamesToLeader $f01 (map-empty) $f01))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; fgh::transitive_symmetry
+;;;
+;;;     f($1,$2) = g($2,$1),  g($1,$2) = h($1,$2)  =>  f($1,$2) = h($2,$1)
+;;;
+;;; The first equation is a *swap*, the second the identity, so composing them has
+;;; to carry the swap through. The reference asks for an explanation of
+;;; `f($1,$2) = h($2,$1)`; the encoding's version of that question is whether the
+;;; two sit in one class with the swap between them.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let $f12 (App2 "f" (map-of 0 1) (Var 0) (map-of 0 2) (Var 0)))
+(let $g21 (App2 "g" (map-of 0 2) (Var 0) (map-of 0 1) (Var 0)))
+(let $g12 (App2 "g" (map-of 0 1) (Var 0) (map-of 0 2) (Var 0)))
+(let $h12 (App2 "h" (map-of 0 1) (Var 0) (map-of 0 2) (Var 0)))
+(let $h21 (App2 "h" (map-of 0 2) (Var 0) (map-of 0 1) (Var 0)))
+
+(union $f12 $g21)
+(union $g12 $h12)
+
+(run-schedule (saturate (run slotted)))
+
+;; f($1,$2) and h($2,$1) are the same invocation, so the renaming carrying one to
+;; the other is the identity ...
+(check (RenamesToLeader $f12 mf l)
+       (RenamesToLeader $h21 mh l)
+       (= (compose mf (inverse mh)) (map-of 1 1 2 2)))
+
+;; ... while f($1,$2) and h($1,$2) differ by the swap, which is the content the
+;; first equation contributed
+(check (RenamesToLeader $f12 mf l)
+       (RenamesToLeader $h12 mh l)
+       (= (compose mf (inverse mh)) (map-of 1 2 2 1)))
+
+(pop)

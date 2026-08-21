@@ -1,0 +1,42 @@
+;;; A bound slot stays renameable even when it collides with a free one.
+;;;
+;;; `Bind<T>` in the reference SCOPES its slot, so renaming it is invisible. This
+;;; encoding flattens the binder into an ordinary child column, so the bound slot
+;;; shares a namespace with the ambient slots and two rules keep them apart:
+;;;
+;;;   * a binder covers ONE column -- the one after the binder slots, which is what
+;;;     `Bind<T>` wrapping a single child means -- so a slot free in an UNCOVERED
+;;;     column is not stripped. Without that, `let x = x in f1 x` lost the value's
+;;;     occurrence too and the class came out with no slots, merging terms the
+;;;     reference keeps apart.
+;;;
+;;;   * but then the collision blocks the strip, which would leave the bound slot in
+;;;     the class's slot set and stop it being renameable -- separating two terms the
+;;;     reference identifies, the opposite error. So a colliding bound slot is first
+;;;     renamed to a slot the node does not use, and the strip then applies. That
+;;;     fires at most once per collision: the slot it picks is by construction absent
+;;;     from the uncovered column's image.
+;;;
+;;; Both spellings below share one body class and differ only in their edges, so
+;;; each edge's domain is exactly the body's slot set. Written with two different
+;;; body classes instead, the edges violate Def. 4 and the case proves nothing.
+
+(include "tests/slotted-node-rules.egg")
+
+;; the body `f1 (var .)`, one class, slots {0}
+(let $b (App2 "app" (map-empty) (Sym "f1") (map-of 0 0) (Var 0)))
+
+;; let $0 = (var $0) in f1 (var $0) -- the bound slot collides with the value's
+(let $l0 (App3 "let" (map-of 0 0) (Var 0) (map-of 0 0) $b (map-of 0 0) (Var 0)))
+
+;; let $1 = (var $0) in f1 (var $1) -- the same term, bound slot renamed
+(let $l1 (App3 "let" (map-of 0 1) (Var 0) (map-of 0 1) $b (map-of 0 0) (Var 0)))
+
+(run-schedule (saturate (run slotted)))
+
+;; the value's occurrence keeps slot 0 free in both, and only that one
+(check (= (ClassSlots $l0) (map-of 0 0)))
+(check (= (ClassSlots $l1) (map-of 0 0)))
+
+;; and renaming a bound slot changes nothing, so the two are one class
+(check (RenamesToLeader $l0 m1 leader) (RenamesToLeader $l1 m2 leader))

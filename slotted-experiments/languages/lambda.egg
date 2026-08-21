@@ -1,0 +1,13 @@
+;;; The paper's `lambda` language, and the core of its `arith`, `rise` and `array`.
+;;;
+;;; Slotted source, in the syntax the encoder recognises: an ordinary egglog
+;;; constructor whose `U` columns are slotted children, plus `:binder <i>...` naming
+;;; the columns whose slot the node binds. The encoder expands each `U` column into
+;;; `Renaming U` and emits the maintenance rules; a base-sort column is a payload and
+;;; passes through untouched.
+;;;
+;;; Expand with: python3 slotted-experiments/gen-node-rules.py
+
+(constructor Lam (U U) U :binder 0)
+(constructor App (U U) U)
+(constructor Let (U U U) U :binder 0)

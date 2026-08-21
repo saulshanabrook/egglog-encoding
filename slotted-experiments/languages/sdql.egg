@@ -1,0 +1,34 @@
+;;; The paper's `sdql` language -- the reference crate's `define_language!` in
+;;; `slotted-egraphs/benches/sdql.rs`, column for column.
+;;;
+;;; Each `Bind<>` layer there becomes one extra `U` column here, named by `:binder`
+;;; and placed where the reference's surface syntax puts it: `Sum(A, Bind<Bind<A>>)`
+;;; is written `(sum ?R $x $y ?body)`, so the two bound slots are columns 1 and 2.
+;;; `Merge`'s three are columns 2, 3 and 4, and `Let`'s one is column 1.
+;;;
+;;; `Var(Slot)` is NOT declared: the encoding has the single variable class `(Var 0)`,
+;;; and the reference's `(var $x)` is that class reached by an edge `0 -> $x`.
+;;;
+;;; `Num` is declared here for the record but its rules come from the generic
+;;; encoding, which already has `(constructor Num (i64) U)` -- see the `provided`
+;;; note in `gen-node-rules.py`. `Symbol` has no generic counterpart (the generic
+;;; string leaf is called `Sym`) and is emitted normally.
+
+(constructor Lambda (U U) U :binder 0)            ; Lam(Bind<AppliedId>)          "lambda"
+(constructor Sing (U U) U)                        ; Sing(A, A)                    "sing"
+(constructor Add (U U) U)                         ; Add(A, A)                     "+"
+(constructor Mult (U U) U)                        ; Mult(A, A)                    "*"
+(constructor Sub (U U) U)                         ; Sub(A, A)                     "-"
+(constructor Equality (U U) U)                    ; Equality(A, A)                "eq"
+(constructor Get (U U) U)                         ; Get(A, A)                     "get"
+(constructor Range (U U) U)                       ; Range(A, A)                   "range"
+(constructor App (U U) U)                         ; App(A, A)                     "apply"
+(constructor IfThen (U U) U)                      ; IfThen(A, A)                  "ifthen"
+(constructor Binop (U U U) U)                     ; Binop(A, A, A)                "binop"
+(constructor SubArray (U U U) U)                  ; SubArray(A, A, A)             "subarray"
+(constructor Unique (U) U)                        ; Unique(A)                     "unique"
+(constructor Sum (U U U U) U :binder 1 2)         ; Sum(A, Bind<Bind<A>>)         "sum"
+(constructor Merge (U U U U U U) U :binder 2 3 4) ; Merge(A, A, Bind<Bind<Bind<A>>>) "merge"
+(constructor Let (U U U) U :binder 1)             ; Let(A, Bind<A>)               "let"
+(constructor Num (i64) U)                         ; Num(u32)
+(constructor Symbol (String) U)                   ; Symbol(Symbol)

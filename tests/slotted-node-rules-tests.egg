@@ -1,0 +1,107 @@
+;;; Cases for the arities the generator emits: `App3`, `Scale` and `Num`.
+;;;
+;;; `tests/slotted-egraph-encoding-11.egg` hand-writes arity 2 and works its 15 cases
+;;; through that one family. These are the cases for the rest of the generated
+;;; encoding, so they include the generated file, which includes the hand-written one.
+;;; They keep their numbering from there, since they carry on where its list stops.
+
+(include "tests/slotted-node-rules.egg")
+
+
+;;; Case 16- a ternary node, alpha-equivalent up to renaming.
+;;;
+;;; Nothing binder-specific: f3 over three distinct variables is the same node
+;;; whatever the three slots are called, so the alpha-finder identifies the two and
+;;; records the renaming between them. Exercises the generated arity-3 rules.
+(push)
+
+(let $f3a (App3 "f3" (map-of 0 0) (Var 0) (map-of 0 1) (Var 0) (map-of 0 2) (Var 0)))
+(let $f3b (App3 "f3" (map-of 0 3) (Var 0) (map-of 0 4) (Var 0) (map-of 0 5) (Var 0)))
+
+(run-schedule (saturate (run slotted)))
+
+(check (RenamesToLeader $f3a m1 leader)
+       (RenamesToLeader $f3b m2 leader))
+
+;; and three distinct slots may not collapse: f3($0,$1,$2) is not f3($0,$0,$2)
+(let $f3c (App3 "f3" (map-of 0 0) (Var 0) (map-of 0 0) (Var 0) (map-of 0 2) (Var 0)))
+(run-schedule (saturate (run slotted)))
+(fail (check (= $f3a $f3c)))
+
+(pop)
+
+;;; Case 17- `let` alpha-equivalence, the arity-3 binder.
+;;;
+;;; Case 10 at arity 3: `(let $5 (var $5) e)` and `(let $6 (var $6) e)` are the same
+;;; term, so the generated binder rule has to take the bound slot out of the class
+;;; and leave the two identified.
+(push)
+
+(let $let5 (App3 "let" (map-of 0 5) (Var 0) (map-of 0 5) (Var 0) (map-empty) (Null)))
+(let $let6 (App3 "let" (map-of 0 6) (Var 0) (map-of 0 6) (Var 0) (map-empty) (Null)))
+
+(run-schedule (saturate (run slotted)))
+
+(check (= $let5 $let6))
+
+;; the bound slot is not free: the class has no slots
+(check (RenamesToLeader $let5 (map-empty) $let5))
+
+(pop)
+
+;;; Case 18- leaves carrying a payload.
+;;;
+;;; `Number(u32)` and `Symbol` in the paper's arith, rise and array languages. A
+;;; payload leaf has no slots, so it behaves like `Null` except that there are
+;;; infinitely many, which is why its self-loop is a rule.
+(push)
+
+(let $one (Num 1))
+(let $two (Num 2))
+
+(run-schedule (saturate (run slotted)))
+
+;; slotless, like Null
+(check (RenamesToLeader $one (map-empty) $one))
+
+;; distinct payloads stay distinct
+(fail (check (= $one $two)))
+
+;; and they compose into nodes: f(1, $0) and f(1, $1) are alpha-equivalent
+(let $f1a (App2 "f" (map-empty) $one (map-of 0 0) (Var 0)))
+(let $f1b (App2 "f" (map-empty) $one (map-of 0 1) (Var 0)))
+(run-schedule (saturate (run slotted)))
+(check (RenamesToLeader $f1a m1 leader)
+       (RenamesToLeader $f1b m2 leader))
+
+;; but f(1, ...) and f(2, ...) are not
+(let $f2a (App2 "f" (map-empty) $two (map-of 0 0) (Var 0)))
+(run-schedule (saturate (run slotted)))
+(fail (check (= $f1a $f2a)))
+
+(pop)
+
+;;; Case 19- a payload column beside a slotted child.
+;;;
+;;; `Scale :: i64 child`. The payload is an ordinary column, so it takes part in the
+;;; node's identity; the child is the only source of slots. Nothing special is
+;;; needed for the mix -- a payload just never appears in a renaming.
+(push)
+
+(let $s2a (Scale 2 (map-of 0 0) (Var 0)))
+(let $s2b (Scale 2 (map-of 0 1) (Var 0)))
+(let $s3a (Scale 3 (map-of 0 0) (Var 0)))
+
+(run-schedule (saturate (run slotted)))
+
+;; same payload, child at a different slot: alpha-equivalent
+(check (RenamesToLeader $s2a m1 leader)
+       (RenamesToLeader $s2b m2 leader))
+
+;; different payload: a different node
+(fail (check (= $s2a $s3a)))
+
+;; the slots come from the child alone
+(check (RenamesToLeader $s2a (map-of 0 0) $s2a))
+
+(pop)

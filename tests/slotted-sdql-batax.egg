@@ -1,0 +1,140 @@
+;;; The `sdql` benchmark term, encoded.
+;;;
+;;; `batax_v7_csr_dense_unfused_esat` from `slotted-egraphs/benches/sdql.rs`: a
+;;; six-argument lambda over a CSR sparse-times-dense product, written there as
+;;;
+;;;   (lambda $1 .. (lambda $6
+;;;     (* $1 (sum $2 $7 $8
+;;;             (* (sum SUBARR $9 $10 (sing $10 (get $4 $9)))
+;;;                (sum SUBARR $9 $10 (* (get $4 $9) (get $5 $10))))))))
+;;;   SUBARR = (subarray $3 $8 (- (get $2 (+ $7 1)) 1))
+;;;
+;;; with `$n` for `(var $var_0n)`. Slot numbers here are those indices.
+;;;
+;;; Every edge is the identity on its child's slot set, which for a `sum` or a
+;;; `lambda` is the node's slots MINUS what it binds -- so the enclosing edge
+;;; narrows at each binder. That is Def. 4, and writing the term is where it has to
+;;; be got right by hand.
+;;;
+;;; The point of the file is that the MACHINERY saturates on this term with the
+;;; user rules stepped finitely, which is the schedule the encoding requires. The
+;;; rules themselves do not terminate -- `get-to-sum` and `sum-to-get` alone loop --
+;;; so this runs a small fixed number of steps, far short of the reference's 30
+;;; iterations, and prints table sizes at each one.
+;;;
+;;; Measured, e-nodes after N steps (debug build, whole file under a second):
+;;;
+;;;     0    21      1    44      2    62      3    90      4   132      5   187
+;;;
+;;; The machinery now saturates through ten user steps. E-nodes after N:
+;;;
+;;;     6   255      7   338      8   430     10   922
+;;;
+;;; It used to stop saturating at six. The cause was an orientation bug, now fixed:
+;;; `union` could leave a `RenamesToLeader` row naming the LARGER of its two values
+;;; as the leader, and a backwards row let transitivity and single parent disagree
+;;; forever -- the tables stationary at 648 rows while `saturate` reported progress,
+;;; four edges swapped every iteration, period two. Backwards rows by user step were
+;;; 0 0 0 0 2 7; they are 0 at every step now. `tests/slotted-orientation.egg` is the
+;;; regression test and `slotted-egraph-encoding-11.egg` has the fix: `Equated`, the
+;;; unoriented form of the relation, from which the oriented rows are derived.
+;;;
+;;; Twelve steps does not finish, and this file does not claim which it is: at ten
+;;; steps the graph is 922 e-nodes and growing steeply, so slow and stuck look alike
+;;; from outside. The user rules are not expected to terminate -- `get-to-sum` and
+;;; `sum-to-get` alone loop -- so a step count that runs forever is not by itself a
+;;; defect. Two steps is what this file runs.
+
+(include "tests/slotted-sdql-rules.egg")
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; the term, bottom up
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; (+ $7 1)                                              slots {7}
+(let $t1 (Add (map-of 0 7) (Var 0) (map-empty) (Num 1)))
+
+;; (get $2 (+ $7 1))                                     slots {2,7}
+(let $t2 (Get (map-of 0 2) (Var 0) (map-of 7 7) $t1))
+
+;; (- (get $2 (+ $7 1)) 1)                               slots {2,7}
+(let $t3 (Sub (map-of 2 2 7 7) $t2 (map-empty) (Num 1)))
+
+;; (subarray $3 $8 ...)                                  slots {2,3,7,8}
+(let $t4 (SubArray (map-of 0 3) (Var 0)
+                   (map-of 0 8) (Var 0)
+                   (map-of 2 2 7 7) $t3))
+
+;; (get $4 $9)                                           slots {4,9}
+(let $t5 (Get (map-of 0 4) (Var 0) (map-of 0 9) (Var 0)))
+
+;; (sing $10 (get $4 $9))                                slots {4,9,10}
+(let $t6 (Sing (map-of 0 10) (Var 0) (map-of 4 4 9 9) $t5))
+
+;; (sum SUBARR $9 $10 (sing ...))    binds 9, 10, so     slots {2,3,4,7,8}
+(let $t7 (Sum (map-of 2 2 3 3 7 7 8 8) $t4
+              (map-of 0 9) (Var 0)
+              (map-of 0 10) (Var 0)
+              (map-of 4 4 9 9 10 10) $t6))
+
+;; (get $5 $10)                                          slots {5,10}
+(let $t8 (Get (map-of 0 5) (Var 0) (map-of 0 10) (Var 0)))
+
+;; (* (get $4 $9) (get $5 $10))                           slots {4,5,9,10}
+(let $t9 (Mult (map-of 4 4 9 9) $t5 (map-of 5 5 10 10) $t8))
+
+;; (sum SUBARR $9 $10 (* ...))       binds 9, 10, so     slots {2,3,4,5,7,8}
+(let $t10 (Sum (map-of 2 2 3 3 7 7 8 8) $t4
+               (map-of 0 9) (Var 0)
+               (map-of 0 10) (Var 0)
+               (map-of 4 4 5 5 9 9 10 10) $t9))
+
+;; the product of the two inner sums                      slots {2,3,4,5,7,8}
+(let $t11 (Mult (map-of 2 2 3 3 4 4 7 7 8 8) $t7
+                (map-of 2 2 3 3 4 4 5 5 7 7 8 8) $t10))
+
+;; (sum $2 $7 $8 ...)                binds 7, 8, so      slots {2,3,4,5}
+(let $t12 (Sum (map-of 0 2) (Var 0)
+               (map-of 0 7) (Var 0)
+               (map-of 0 8) (Var 0)
+               (map-of 2 2 3 3 4 4 5 5 7 7 8 8) $t11))
+
+;; (* $1 ...)                                            slots {1,2,3,4,5}
+(let $t13 (Mult (map-of 0 1) (Var 0) (map-of 2 2 3 3 4 4 5 5) $t12))
+
+;; the six lambdas; each strips one more slot
+(let $t14 (Lambda (map-of 0 6) (Var 0) (map-of 1 1 2 2 3 3 4 4 5 5) $t13))
+(let $t15 (Lambda (map-of 0 5) (Var 0) (map-of 1 1 2 2 3 3 4 4 5 5) $t14))
+(let $t16 (Lambda (map-of 0 4) (Var 0) (map-of 1 1 2 2 3 3 4 4) $t15))
+(let $t17 (Lambda (map-of 0 3) (Var 0) (map-of 1 1 2 2 3 3) $t16))
+(let $t18 (Lambda (map-of 0 2) (Var 0) (map-of 1 1 2 2) $t17))
+(let $prog (Lambda (map-of 0 1) (Var 0) (map-of 1 1) $t18))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; the machinery alone: the term is already canonical, so this settles at once
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(run-schedule (saturate (run slotted)))
+
+;; a lambda over six binders has no free slots left
+(check (RenamesToLeader $prog (map-empty) $prog))
+;; and the two inner sums are distinct terms, sharing the subarray range
+(fail (check (= $t7 $t10)))
+
+(print-size)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; one user step, machinery saturated after it
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(run-schedule (repeat 1 (seq (run sdql) (saturate (run slotted)))))
+(print-size)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; a second
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(run-schedule (repeat 1 (seq (run sdql) (saturate (run slotted)))))
+(print-size)
+
+;; the program is still there, and still slotless
+(check (RenamesToLeader $prog (map-empty) $prog))

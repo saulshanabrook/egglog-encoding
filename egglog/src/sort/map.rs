@@ -1,11 +1,29 @@
 use super::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct MapContainer {
     do_rebuild_keys: bool,
     do_rebuild_vals: bool,
     pub data: BTreeMap<Value, Value>,
+}
+
+impl MapContainer {
+    /// A renaming: a map whose keys and values are slot names, so its contents
+    /// never need rebuilding.
+    pub(crate) fn renaming(data: BTreeMap<Value, Value>) -> Self {
+        MapContainer {
+            do_rebuild_keys: false,
+            do_rebuild_vals: false,
+            data,
+        }
+    }
+
+    /// Whether this map's keys or values are e-classes, and so are rebuilt when
+    /// the e-graph merges classes.
+    pub(crate) fn rebuilds_contents(&self) -> bool {
+        self.do_rebuild_keys || self.do_rebuild_vals
+    }
 }
 
 impl ContainerValue for MapContainer {
@@ -90,13 +108,57 @@ fn renaming_compose(
         .collect()
 }
 
-/// The inverse map. A renaming is a partial injection, so this is only
-/// meaningful on injective input; a repeated value keeps the last key, matching
-/// upstream. Unreachable in practice — every renaming the encoding builds comes
-/// from a literal, from `compose` of injectives, or from `find-mapping`, which
-/// checks injectivity.
-fn renaming_inverse(m: &BTreeMap<Value, Value>) -> BTreeMap<Value, Value> {
-    m.iter().map(|(k, v)| (*v, *k)).collect()
+/// `a ∘ b` where every key of `b` must survive; `None` if any is lost.
+///
+/// [`renaming_compose`] narrows silently when `b`'s image escapes `a`'s domain,
+/// which is correct for composing partial maps but wrong wherever the result
+/// becomes an *edge* of an e-node: an edge's domain must be its child's slot set,
+/// so a narrowed edge misstates which slots the child has. Use this there, and
+/// the rule declines instead of asserting something false.
+fn renaming_compose_total(
+    a: &BTreeMap<Value, Value>,
+    b: &BTreeMap<Value, Value>,
+) -> Option<BTreeMap<Value, Value>> {
+    let out = renaming_compose(a, b);
+    (out.len() == b.len()).then_some(out)
+}
+
+/// The inverse map; `None` unless the input is injective.
+///
+/// A renaming is a partial injection, so the inverse of a non-injective map is
+/// not meaningful. Rejecting it turns a silently wrong answer into a rule that
+/// does not fire.
+fn renaming_inverse(m: &BTreeMap<Value, Value>) -> Option<BTreeMap<Value, Value>> {
+    let out: BTreeMap<Value, Value> = m.iter().map(|(k, v)| (*v, *k)).collect();
+    (out.len() == m.len()).then_some(out)
+}
+
+/// The identity map on `im(m)`.
+///
+/// A set of slots is represented as an identity renaming, so this is how to name
+/// "the slots `m` maps onto" — the long way round being `(compose m (inverse m))`.
+fn renaming_image(m: &BTreeMap<Value, Value>) -> BTreeMap<Value, Value> {
+    m.values().map(|v| (*v, *v)).collect()
+}
+
+/// The identity map on `dom(m)`; the counterpart of [`renaming_image`], spelled
+/// the long way round as `(compose (inverse m) m)`.
+fn renaming_domain(m: &BTreeMap<Value, Value>) -> BTreeMap<Value, Value> {
+    m.keys().map(|k| (*k, *k)).collect()
+}
+
+/// The entries two maps agree on.
+///
+/// A slot set is an identity renaming, so this is how one narrows: intersecting two
+/// identity maps gives the identity on the intersection of their domains.
+fn renaming_intersect(
+    a: &BTreeMap<Value, Value>,
+    b: &BTreeMap<Value, Value>,
+) -> BTreeMap<Value, Value> {
+    a.iter()
+        .filter(|(k, v)| b.get(k) == Some(v))
+        .map(|(k, v)| (*k, *v))
+        .collect()
 }
 
 /// Union of partial maps; `None` if they disagree on a shared key.
@@ -122,7 +184,7 @@ fn renaming_union(
 ///
 /// `None` when the halves are unequal in length, when a pair's key sets
 /// differ, or when the constraints make `R` non-functional or non-injective.
-fn renaming_find_mapping(maps: &[BTreeMap<Value, Value>]) -> Option<BTreeMap<Value, Value>> {
+fn renaming_find_mapping<T: Copy + Ord>(maps: &[BTreeMap<T, T>]) -> Option<BTreeMap<T, T>> {
     if !maps.len().is_multiple_of(2) {
         return None;
     }
@@ -146,6 +208,44 @@ fn renaming_find_mapping(maps: &[BTreeMap<Value, Value>]) -> Option<BTreeMap<Val
     Some(mapping)
 }
 
+/// [`renaming_find_mapping`] extended to be *total* on a domain, minting a
+/// fresh slot for every domain key the constraints leave unnamed.
+///
+/// Arguments come flat as `[avoid, domain, first..., second...]`. The
+/// constraint part is solved exactly as in [`renaming_find_mapping`]; each
+/// remaining key of `domain` is then named with the *smallest* non-negative
+/// value not already spoken for, which keeps the result injective and disjoint
+/// from `avoid`.
+///
+/// `None` on the same conditions as [`renaming_find_mapping`], or on fewer than
+/// two leading maps.
+fn renaming_find_mapping_total(maps: &[BTreeMap<i64, i64>]) -> Option<BTreeMap<i64, i64>> {
+    let (head, pairs) = maps.split_at_checked(2)?;
+    let (avoid, domain) = (&head[0], &head[1]);
+
+    let mut mapping = renaming_find_mapping(pairs)?;
+
+    let mut used: BTreeSet<i64> = mapping
+        .values()
+        .chain(avoid.keys())
+        .chain(avoid.values())
+        .copied()
+        .collect();
+
+    let mut next = 0;
+    for k in domain.keys() {
+        if mapping.contains_key(k) {
+            continue;
+        }
+        while used.contains(&next) {
+            next += 1;
+        }
+        used.insert(next);
+        mapping.insert(*k, next);
+    }
+    Some(mapping)
+}
+
 /// A map from a key type to a value type supporting these primitives:
 /// - `map-empty`
 /// - `map-insert`
@@ -155,15 +255,23 @@ fn renaming_find_mapping(maps: &[BTreeMap<Value, Value>]) -> Option<BTreeMap<Val
 /// - `map-remove`
 /// - `map-length`
 /// - `map-union`
+/// - `map-intersect`
 ///
 /// When the key and value sorts coincide, a map also reads as a partial
 /// injection on a single space (a "renaming"), and these are registered too:
-/// - `compose`
+/// - `compose`, and `compose-total`, which refuses to drop a key
 /// - `inverse` (also spelled `map-inverse`)
+/// - `map-image` and `map-domain`, naming a renaming's two slot sets
 /// - `find-mapping`
 ///
-/// Those three are not in [`Presort::reserved_primitives`], so a program that
-/// never declares a `Map` sort may still use the names itself.
+/// With `i64` keys a renaming also names slots, and the slotted-e-graph
+/// primitives are registered:
+/// - `find-mapping-total`
+/// - `slotted-subst` and `slotted-subst-frame`, the two halves of one
+///   substitution's result (see [`crate::sort::SLOTTED_SUBST`])
+///
+/// These are not in [`Presort::reserved_primitives`], so a program that never
+/// declares a `Map` sort may still use the names itself.
 #[derive(Clone, Debug)]
 pub struct MapSort {
     name: String,
@@ -331,6 +439,11 @@ impl ContainerSort for MapSort {
         add_primitive_with_validator!(eg, "map-not-contains" = |xs: @MapContainer (arc), x: # (self.key())| -?> () { (!xs.data.contains_key(&x)).then_some(()) }, map_not_contains_validator);
 
         add_primitive!(eg, "map-union" = |xs: @MapContainer (arc), ys: @MapContainer (arc)| -?> @MapContainer (arc) { Some(MapContainer { data: renaming_union(&xs.data, &ys.data)?, ..xs }) });
+        add_primitive!(eg, "map-intersect" = |xs: @MapContainer (arc), ys: @MapContainer (arc)| -> @MapContainer (arc) { MapContainer { data: renaming_intersect(&xs.data, &ys.data), ..xs } });
+
+        // `map-contains` is a fact, so it cannot be combined with `or`/`and`; this
+        // is the same test as a value, for use inside a `guard`.
+        add_primitive!(eg, "bool-map-contains" = |xs: @MapContainer (arc), x: # (self.key())| -> bool { xs.data.contains_key(&x) });
 
         // With matching key and value sorts a map is a partial injection on one
         // space — a renaming, in the slotted-e-graph sense — so it composes and
@@ -338,8 +451,11 @@ impl ContainerSort for MapSort {
         // edges onto another; it is variadic, taking the two tuples flat.
         if self.key.name() == self.value.name() {
             add_primitive!(eg, "compose" = |a: @MapContainer (arc), b: @MapContainer (arc)| -> @MapContainer (arc) { MapContainer { data: renaming_compose(&a.data, &b.data), ..b } });
-            add_primitive!(eg, "inverse"     = |a: @MapContainer (arc)| -> @MapContainer (arc) { MapContainer { data: renaming_inverse(&a.data), ..a } });
-            add_primitive!(eg, "map-inverse" = |a: @MapContainer (arc)| -> @MapContainer (arc) { MapContainer { data: renaming_inverse(&a.data), ..a } });
+            add_primitive!(eg, "compose-total" = |a: @MapContainer (arc), b: @MapContainer (arc)| -?> @MapContainer (arc) { Some(MapContainer { data: renaming_compose_total(&a.data, &b.data)?, ..b }) });
+            add_primitive!(eg, "inverse"     = |a: @MapContainer (arc)| -?> @MapContainer (arc) { Some(MapContainer { data: renaming_inverse(&a.data)?, ..a }) });
+            add_primitive!(eg, "map-inverse" = |a: @MapContainer (arc)| -?> @MapContainer (arc) { Some(MapContainer { data: renaming_inverse(&a.data)?, ..a }) });
+            add_primitive!(eg, "map-image"   = |a: @MapContainer (arc)| -> @MapContainer (arc) { MapContainer { data: renaming_image(&a.data), ..a } });
+            add_primitive!(eg, "map-domain"  = |a: @MapContainer (arc)| -> @MapContainer (arc) { MapContainer { data: renaming_domain(&a.data), ..a } });
             add_primitive!(eg, "find-mapping" = {self.clone(): MapSort} [xs: @MapContainer (arc)] -?> @MapContainer (arc) {{
                 let maps: Vec<BTreeMap<Value, Value>> = xs.map(|m| m.data).collect();
                 Some(MapContainer {
@@ -348,6 +464,42 @@ impl ContainerSort for MapSort {
                     data: renaming_find_mapping(&maps)?,
                 })
             }});
+
+            // Minting a fresh slot means naming one that is not in use, which
+            // needs the slot space to be ordered and unbounded above.
+            if self.key.name() == "i64" {
+                add_primitive!(eg, "find-mapping-total" = {self.clone(): MapSort} [xs: @MapContainer (arc)] -?> @MapContainer (arc) {{
+                    let bv = state.base_values();
+                    let maps: Vec<BTreeMap<i64, i64>> = xs
+                        .map(|m| m.data.iter().map(|(k, v)| (bv.unwrap::<i64>(*k), bv.unwrap::<i64>(*v))).collect())
+                        .collect();
+                    let solved = renaming_find_mapping_total(&maps)?;
+                    Some(MapContainer {
+                        do_rebuild_keys: false,
+                        do_rebuild_vals: false,
+                        data: solved.into_iter().map(|(k, v)| (bv.get::<i64>(k), bv.get::<i64>(v))).collect(),
+                    })
+                }});
+
+                // Substitution needs both a read (to extract a term) and a
+                // write (to add the substituted one), so it is registered as a
+                // `FullPrim`: see `crate::sort::slotted_subst`. Its result is an
+                // invocation, so it takes two names to read one -- the class and
+                // the renaming placing it in `body`'s frame.
+                for half in [
+                    crate::sort::slotted_subst::Half::Class,
+                    crate::sort::slotted_subst::Half::Frame,
+                ] {
+                    eg.add_full_primitive(
+                        crate::sort::slotted_subst::SlottedSubst {
+                            half,
+                            renaming: arc.clone(),
+                            slot: self.key.clone(),
+                        },
+                        None,
+                    );
+                }
+            }
         }
     }
 

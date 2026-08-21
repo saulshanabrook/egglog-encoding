@@ -1,0 +1,52 @@
+;;; Regression test: `union` must not leave a backwards `RenamesToLeader` row.
+;;;
+;;; `(RenamesToLeader follower m leader)` stores the SMALLER of the two as the
+;;; leader. Orientation is therefore a function of value order, and `union`
+;;; rewrites a row's endpoints -- so a row that was oriented before a merge can be
+;;; backwards after it. This used to happen and nothing put it back, which is what
+;;; let transitivity and single parent disagree forever: `(saturate (run slotted))`
+;;; reported progress with the tables stationary.
+;;;
+;;; `Equated` is the fix. It holds the same fact with no orientation chosen, it is
+;;; the only thing the machinery derives `RenamesToLeader` from, and a stale row is
+;;; simply deleted and re-derived the right way round. Repairing `RenamesToLeader`
+;;; in place instead does NOT work -- transitivity keeps re-deriving the backwards
+;;; row and the repair keeps flipping it.
+;;;
+;;; Measured on SDQL batax, backwards rows by user step: 0 0 0 0 2 7 before, and
+;;; the machinery stopped saturating at step 6; none at any step after, and it
+;;; saturates through step 10.
+
+(include "tests/slotted-egraph-encoding-11.egg")
+
+;; Creation order fixes the value order, so $y is smallest and $f largest.
+(let $y (App2 "y" (map-of 0 1) (Var 0) (map-of 0 2) (Var 0)))
+(let $l (App2 "l" (map-of 0 3) (Var 0) (map-of 0 4) (Var 0)))
+(let $f (App2 "f" (map-of 0 5) (Var 0) (map-of 0 6) (Var 0)))
+
+;; the ordering this test relies on
+(check (= (ordering-max $l $y) $l))    ; y <= l
+(check (= (ordering-max $f $l) $f))    ; l <= f
+
+;; $f = m * $l, asserted with no orientation chosen
+(Equated $f (map-of 3 5 4 6) $l)
+
+;; now the value that was the follower merges with one below its leader
+(union $f $y)
+
+(run-schedule (saturate (run slotted)))
+
+;; a backwards row is one whose stored leader is the larger of the pair
+(relation Backwards (U Renaming U))
+(ruleset orientcheck)
+(rule ((RenamesToLeader fo mo lo)
+       (!= fo lo)
+       (= lo (ordering-max fo lo)))
+      ((Backwards fo mo lo)) :ruleset orientcheck)
+(run-schedule (run orientcheck))
+
+;; the invariant holds ...
+(fail (check (Backwards fo mo lo)))
+
+;; ... and the fact was not lost with the stale row: the two are still one class
+(check (RenamesToLeader $f mf leader) (RenamesToLeader $l ml leader))
