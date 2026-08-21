@@ -24,7 +24,6 @@ use crate::{
     core::ResolvedCall,
     proofs::{
         proof_checker::eval_expr_with_subst,
-        proof_encoding::ProofInstrumentor,
         proof_format::{Justification, Proof, ProofId, ProofStore, Proposition, SynthKey},
     },
     typechecking::FuncType,
@@ -233,12 +232,6 @@ impl Head {
             layout,
             next_position: 0,
         })
-    }
-
-    /// A block with no rule head to replay, whose proofs are composed on the
-    /// spot.
-    pub(crate) fn composed() -> Head {
-        Head::at(ProofSite::Composed)
     }
 
     fn at(site: ProofSite) -> Head {
@@ -1038,24 +1031,6 @@ impl ProofAlgebra for ProofStore {
 
     fn congr(&mut self, base: ProofId, child: usize, step: ProofId) -> ProofId {
         congr(self, base, child, step)
-    }
-}
-
-/// Applying the algebra emits the proof: each step is a row, named by the
-/// variable it binds.
-impl ProofAlgebra for ProofInstrumentor<'_> {
-    type Proof = String;
-
-    fn sym(&mut self, proof: String) -> String {
-        self.mint_sym(&proof)
-    }
-
-    fn trans(&mut self, left: String, right: String) -> String {
-        self.mint_trans(&left, &right)
-    }
-
-    fn congr(&mut self, base: String, child: usize, step: String) -> String {
-        self.mint_congr(&base, child, &step)
     }
 }
 

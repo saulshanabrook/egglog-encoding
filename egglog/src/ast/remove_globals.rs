@@ -46,6 +46,10 @@ pub(crate) fn remove_globals(
     prog: Vec<ResolvedNCommand>,
     fresh: &mut SymbolGen,
 ) -> Vec<ResolvedNCommand> {
+    #[cfg(test)]
+    crate::source_frontend_call_ledger::record(
+        crate::source_frontend_call_ledger::Stage::RemoveGlobals,
+    );
     let mut remover = GlobalRemover { fresh };
     prog.into_iter()
         .flat_map(|cmd| remover.remove_globals_cmd(cmd))
@@ -57,12 +61,7 @@ fn resolved_var_to_call(var: &ResolvedVar) -> ResolvedCall {
         var.is_global_ref,
         "resolved_var_to_call called on non-global var"
     );
-    ResolvedCall::Func(FuncType {
-        name: var.name.clone(),
-        subtype: FunctionSubtype::Custom,
-        input: vec![],
-        outputs: vec![var.sort.clone()],
-    })
+    ResolvedCall::global_ref(var.name.clone(), var.sort.clone())
 }
 
 /// TODO (yz) it would be better to implement replace_global_var
@@ -93,12 +92,12 @@ impl GlobalRemover<'_> {
                 GenericAction::Let(span, name, expr) => {
                     let ty = expr.output_type();
 
-                    let resolved_call = ResolvedCall::Func(FuncType {
+                    let resolved_call = ResolvedCall::Func(Arc::new(FuncType {
                         name: name.name.clone(),
                         subtype: FunctionSubtype::Custom,
                         input: vec![],
                         outputs: vec![ty.clone()],
-                    });
+                    }));
                     let func_decl = ResolvedFunctionDecl {
                         name: name.name,
                         subtype: FunctionSubtype::Custom,
@@ -144,12 +143,12 @@ impl GlobalRemover<'_> {
                     _ => panic!("`(let _ (begin ...))` must end with an expression"),
                 };
                 let ty = value.output_type();
-                let resolved_call = ResolvedCall::Func(FuncType {
+                let resolved_call = ResolvedCall::Func(Arc::new(FuncType {
                     name: name.name.clone(),
                     subtype: FunctionSubtype::Custom,
                     input: vec![],
                     outputs: vec![ty.clone()],
-                });
+                }));
                 let func_decl = ResolvedFunctionDecl {
                     name: name.name,
                     subtype: FunctionSubtype::Custom,

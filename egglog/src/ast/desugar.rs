@@ -9,6 +9,8 @@ pub(crate) fn desugar_command(
     parser: &mut Parser,
     proof_testing: bool,
 ) -> Result<Vec<NCommand>, Error> {
+    #[cfg(test)]
+    crate::source_frontend_call_ledger::record(crate::source_frontend_call_ledger::Stage::Desugar);
     let rule_name = rule_name(&command);
     let res = match command {
         Command::Function {
@@ -202,8 +204,8 @@ pub(crate) fn desugar_command(
         Command::Output { span, file, exprs } => {
             vec![NCommand::Output { span, file, exprs }]
         }
-        Command::Push(num) => {
-            vec![NCommand::Push(num)]
+        Command::Push(span, num) => {
+            vec![NCommand::Push(span, num)]
         }
         Command::Pop(span, num) => {
             vec![NCommand::Pop(span, num)]
