@@ -11,7 +11,7 @@ use crate::{
         proof_encoding_helpers::{EncodingNames, Skeleton, recomputable_premises},
         proof_head::{Firing, HeadPlan, HeadWalk, ProofAlgebra},
     },
-    typechecking::{FuncType, PrimitiveValidator},
+    typechecking::PrimitiveValidator,
     util::{HashMap, HashSet, IEntry, IndexMap, IndexSet, SymbolGen},
 };
 use egglog_ast::generic_ast::Literal;
@@ -1239,16 +1239,9 @@ impl ProofStore {
             // In proof normal form, this is the only way that function calls apppear.
             ResolvedFact::Eq(
                 _span,
-                ResolvedExpr::Call(
-                    _span2,
-                    head @ ResolvedCall::Func(FuncType {
-                        subtype: FunctionSubtype::Custom,
-                        ..
-                    }),
-                    args,
-                ),
+                ResolvedExpr::Call(_span2, head @ ResolvedCall::Func(func_type), args),
                 ResolvedExpr::Var(_span3, v),
-            ) => {
+            ) if func_type.subtype == FunctionSubtype::Custom => {
                 let term = proof.rhs();
                 let children = match self.term_dag.get(term) {
                     Term::App(head_name, children) if head_name == head.name() => children.clone(),

@@ -1,7 +1,7 @@
+pub(crate) mod generated_binder;
 pub(crate) mod proof_checker;
 pub(crate) mod proof_container_rebuild;
 pub(crate) mod proof_encoding;
-pub(crate) mod proof_encoding_facts;
 pub(crate) mod proof_encoding_helpers;
 pub(crate) mod proof_encoding_rebuild;
 pub(crate) mod proof_extraction;

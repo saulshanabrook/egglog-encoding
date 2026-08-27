@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 use crate::{
     ArcSort, EGraph, TypeInfo, Value,
     ast::{
-        Command, Expr, Fact, GenericCommand, ResolvedAction, ResolvedCommand, ResolvedExpr,
-        ResolvedExprExt, ResolvedFact, ResolvedNCommand, Schedule, Span,
+        GenericCommand, ResolvedAction, ResolvedCommand, ResolvedExpr, ResolvedExprExt,
+        ResolvedFact, Span,
     },
     core::ResolvedCall,
     proofs::{proof_checker::is_container_side_condition, proof_encoding::ProofInstrumentor},
@@ -25,14 +25,13 @@ pub(crate) struct EncodingNames {
     /// value: sort `S`'s constructor is [`Self::fiat`]. Derived from one name
     /// for the same reason as [`Self::rule_fused_prefix`].
     pub(crate) fiat_prefix: String,
-    /// The sorts [`ProofInstrumentor::fiat_constructor`] has declared.
+    /// The sorts whose Fiat relation has been declared.
     pub(crate) fiat_declared: HashSet<String>,
     /// Prefix of the rule proofs carrying their body premises inline: premise
     /// count `k`'s constructor is [`Self::fused_rule`]. One prefix rather than a
-    /// name per arity, so that re-parsing a desugared program recovers the same
-    /// names without having encoded its rules.
+    /// name per arity keeps proof decoding independent of declaration order.
     pub(crate) rule_fused_prefix: String,
-    /// The premise counts [`ProofInstrumentor::rule_arity_header`] has declared.
+    /// The premise counts whose fused proof relation has been declared.
     pub(crate) rule_fused_declared: HashSet<usize>,
     /// A later proof of the same head: the previous column's rule proof plus one
     /// canonicalization bridge.
@@ -42,8 +41,7 @@ pub(crate) struct EncodingNames {
     /// [`Self::packed_proof`]. Derived from one name for the same reason as
     /// [`Self::rule_fused_prefix`].
     pub(crate) packed_prefix: String,
-    /// The column counts [`ProofInstrumentor::packed_proof_constructor`] has
-    /// declared.
+    /// The column counts whose packed proof relation has been declared.
     pub(crate) packed_declared: HashSet<usize>,
     pub(crate) merge_fn_idx_constructor: String,
     pub(crate) merge_fn_row_constructor: String,
@@ -58,7 +56,7 @@ pub(crate) struct EncodingNames {
     /// so sort `S`'s constructor is [`Self::proj_all`]. Derived from one name for
     /// the same reason as [`Self::rule_fused_prefix`].
     pub(crate) proj_all_prefix: String,
-    /// The sorts [`ProofInstrumentor::proj_all_constructor`] has declared.
+    /// The sorts whose element-matching projection has been declared.
     pub(crate) proj_all_declared: HashSet<String>,
     pub(crate) container_normalize_constructor: String,
     pub(crate) eval_constructor: String,
@@ -305,72 +303,6 @@ impl Composition {
     }
 }
 
-/// Which proof of a rule head a row states: the column naming its position in
-/// the head's flat array of proofs (see [`crate::proofs::proof_head`]), as an
-/// `i64`-valued egglog expression.
-#[derive(Clone)]
-pub(crate) enum HeadColumn {
-    Numbered(String),
-    /// A rule row the walk gave no column: the placeholder before the encoder
-    /// fills one in, and a position inside a head that concludes nothing. It
-    /// renders as `-1`, which reading a proof back panics on.
-    Unnumbered,
-}
-
-impl HeadColumn {
-    /// The column value as an egglog expression.
-    fn expr(&self) -> String {
-        match self {
-            HeadColumn::Numbered(expr) => expr.clone(),
-            HeadColumn::Unnumbered => "-1".to_string(),
-        }
-    }
-}
-
-/// What justifies the proofs the encoder mints for an action. Which proof of the
-/// head a mint states is left as a [`HeadColumn`], filled in once the encoder's
-/// walk knows the column it is at. Internal to the encoder, not part of the proof
-/// format.
-#[derive(Clone)]
-pub(crate) enum Justification {
-    /// Rule-name expression, one premise-proof expression per body fact, and
-    /// which of the head's proofs is being stated.
-    Rule(String, Vec<String>, HeadColumn),
-    Fiat,
-    /// Term-free merge justification for a merge-body subexpression: function
-    /// name, the two premise (view) proof expressions, and the pre-order index of
-    /// this subexpression in the merge body (matches `subexpr_at_index` in proof
-    /// conversion). It names no term, so it needs neither the merged term nor
-    /// the function key/children — usable in a `:merge` action.
-    MergeIdx(String, String, String, usize),
-    /// Term-free merge justification for the whole view row (function name + two
-    /// premise proof expressions). The conclusion `f(children, merged)` is
-    /// reconstructed during proof conversion by running the whole merge body on
-    /// the premise outputs, so the row names no term.
-    MergeRow(String, String, String),
-}
-
-impl Justification {
-    /// The same justification about `column`. Only a rule justification names a
-    /// column; anything else is returned unchanged.
-    pub(crate) fn at(&self, column: HeadColumn) -> Justification {
-        match self {
-            Justification::Rule(name, proofs, _) => {
-                Justification::Rule(name.clone(), proofs.clone(), column)
-            }
-            other => other.clone(),
-        }
-    }
-
-    /// The egglog expression for the `Rule` row's column.
-    pub(crate) fn column_expr(&self) -> String {
-        match self {
-            Justification::Rule(_, _, column) => column.expr(),
-            _ => HeadColumn::Unnumbered.expr(),
-        }
-    }
-}
-
 impl EncodingNames {
     /// The fiat justification whose two endpoints are values of `sort`.
     pub(crate) fn fiat(&self, sort: &str) -> String {
@@ -470,167 +402,6 @@ impl ProofInstrumentor<'_> {
         }
     }
 
-    pub(crate) fn parse_program(&mut self, input: &str) -> Vec<Command> {
-        self.egraph.parser.ensure_no_reserved_symbols = false;
-        let res = self.egraph.parse_program_timed(None, input);
-        self.egraph.parser.ensure_no_reserved_symbols = true;
-
-        // This program is generated internally by term encoding, so a parse
-        // failure is an egglog bug rather than a user error.
-        res.expect("internally generated term-encoding program must parse")
-    }
-
-    /// Like [`Self::parse_program`], but groups each maximal run of consecutive
-    /// top-level actions into one [`Command::Actions`] block. Non-action commands
-    /// pass through in place, preserving order.
-    pub(crate) fn parse_program_as_local_actions(&mut self, input: &str) -> Vec<Command> {
-        use crate::ast::GenericActions;
-        let mut out: Vec<Command> = vec![];
-        let mut pending: Vec<crate::ast::Action> = vec![];
-        let flush = |pending: &mut Vec<crate::ast::Action>, out: &mut Vec<Command>| {
-            if !pending.is_empty() {
-                out.push(Command::Actions(GenericActions::new(std::mem::take(
-                    pending,
-                ))));
-            }
-        };
-        for command in self.parse_program(input) {
-            match command {
-                Command::Action(action) => pending.push(action),
-                other => {
-                    flush(&mut pending, &mut out);
-                    out.push(other);
-                }
-            }
-        }
-        flush(&mut pending, &mut out);
-        out
-    }
-
-    /// Declarations for the fused rule constructors `program`'s rules need but
-    /// that no earlier program declared. A rule's premise count is fixed by its
-    /// body (see [`recomputable_premises`]), so the arities a program uses are
-    /// known before it is encoded; these are emitted ahead of the program's own
-    /// commands.
-    pub(crate) fn rule_arity_header(&mut self, program: &[ResolvedNCommand]) -> Vec<Command> {
-        fn collect(commands: &[ResolvedNCommand], out: &mut Vec<usize>) {
-            for command in commands {
-                match command {
-                    ResolvedNCommand::NormRule { rule } => out.push(
-                        recomputable_premises(&rule.body, &|_| false)
-                            .iter()
-                            .filter(|recomputable| !**recomputable)
-                            .count(),
-                    ),
-                    ResolvedNCommand::Fail(_, nested) => collect(nested, out),
-                    _ => {}
-                }
-            }
-        }
-        let mut arities = vec![];
-        collect(program, &mut arities);
-        arities.sort_unstable();
-        arities.dedup();
-
-        let mut decls = vec![];
-        for arity in arities {
-            if !self
-                .egraph
-                .proof_state
-                .proof_names
-                .rule_fused_declared
-                .insert(arity)
-            {
-                continue;
-            }
-            let names = self.proof_names();
-            let name = names.fused_rule(arity);
-            let proof = names.proof_datatype.clone();
-            let premises = vec![proof.as_str(); arity].join(" ");
-            let sep = if arity == 0 { "" } else { " " };
-            decls.push(format!(
-                "(function {name} (String{sep}{premises} i64 {proof}) Unit :no-merge :internal-hidden :internal-term-node)"
-            ));
-        }
-        if decls.is_empty() {
-            return vec![];
-        }
-        let decls = decls.join("\n");
-        self.parse_program(&decls)
-    }
-
-    /// The packed proof constructor for a row of `columns` proof columns,
-    /// together with its declaration — empty once some program has declared it.
-    ///
-    /// A row's column count is a property of the site packing it, not of the
-    /// proof format, so the declaration is emitted with the first commands using
-    /// it.
-    pub(crate) fn packed_proof_constructor(&mut self, columns: usize) -> (String, String) {
-        let name = self.proof_names().packed_proof(columns);
-        if !self
-            .egraph
-            .proof_state
-            .proof_names
-            .packed_declared
-            .insert(columns)
-        {
-            return (name, String::new());
-        }
-        let proof = self.proof_names().proof_datatype.clone();
-        let columns: String = std::iter::repeat_n(format!("{proof} "), columns).collect();
-        let decl = format!(
-            "(function {name} (String {columns}{proof}) Unit :no-merge :internal-hidden :internal-term-node)\n"
-        );
-        (name, decl)
-    }
-
-    /// Header commands for term encoding, setting up rulesets.
-    pub(crate) fn term_header(&mut self) -> Vec<Command> {
-        let str = format!(
-            "(ruleset {})
-             (ruleset {})
-             (ruleset {})
-             (ruleset {})",
-            self.proof_names().path_compress_ruleset_name,
-            self.proof_names().rebuilding_ruleset_name,
-            self.proof_names().rebuilding_cleanup_ruleset_name,
-            self.proof_names().subsume_ruleset_name
-        );
-        self.parse_program(&str)
-    }
-
-    /// Internal parse helper for term encoding- parse and crash on failure.
-    pub(crate) fn parse_schedule(&mut self, input: String) -> Schedule {
-        self.egraph.parser.ensure_no_reserved_symbols = false;
-        let res = self.egraph.parser.get_schedule_from_string(None, &input);
-        self.egraph.parser.ensure_no_reserved_symbols = true;
-        res.expect("internally generated term-encoding schedule must parse")
-    }
-
-    /// Internal parse helper for term encoding- parse and crash on failure.
-    pub(crate) fn parse_facts(&mut self, input: &[String]) -> Vec<Fact> {
-        self.egraph.parser.ensure_no_reserved_symbols = false;
-        let res = input
-            .iter()
-            .map(|f| {
-                self.egraph
-                    .parser
-                    .get_fact_from_string(None, f)
-                    .expect("internally generated term-encoding fact must parse")
-            })
-            .collect();
-        self.egraph.parser.ensure_no_reserved_symbols = true;
-        res
-    }
-
-    /// Internal parse helper for term encoding- parse an expression and crash on failure.
-    pub(crate) fn parse_expr(&mut self, input: &str) -> Expr {
-        self.egraph.parser.ensure_no_reserved_symbols = false;
-        let res = self.egraph.parser.get_expr_from_string(None, input);
-        self.egraph.parser.ensure_no_reserved_symbols = true;
-        res.expect("internally generated term-encoding expression must parse")
-    }
-
     // Each function/constructor gets a view table, the canonicalized e-nodes to accelerate e-matching.
     pub(crate) fn view_name(&mut self, name: &str) -> String {
         if let Some(n) = self.egraph.proof_state.proof_names.view_name.get(name) {
@@ -672,17 +443,6 @@ impl ProofInstrumentor<'_> {
         self.egraph.proof_state.proofs_enabled
     }
 
-    /// The evaluation-mode option for a generated rule that reads the database
-    /// in its action: `:unsafe-seminaive`, or `:naive` (the safe whole-database
-    /// baseline) under the `force_proof_naive` test knob.
-    pub(crate) fn rhs_read_eval_opt(&self) -> &'static str {
-        if self.egraph.proof_state.force_proof_naive {
-            ":naive"
-        } else {
-            ":unsafe-seminaive"
-        }
-    }
-
     /// Returns the proof output type: `Proof` when proofs are enabled, `Unit` otherwise.
     pub(crate) fn proof_type_str(&self) -> &str {
         if self.proofs_enabled() {
@@ -701,115 +461,6 @@ impl ProofInstrumentor<'_> {
         // `substitution`, so minting one more proof node would rewrite unrelated
         // proof output.
         self.egraph.parser.symbol_gen.fresh("pv")
-    }
-
-    /// Header string for proof encoding, defining sorts and constructors.
-    /// Correspondings to `RawProof` in [`crate::proofs::proof_format`].
-    pub(crate) fn proof_header(&mut self) -> String {
-        let EncodingNames {
-            ref proof_datatype,
-            ref fiat_prefix,
-            ref rule_link_constructor,
-            ref merge_fn_idx_constructor,
-            ref merge_fn_row_constructor,
-            ref eq_trans_constructor,
-            ref eq_sym_constructor,
-            ref congr_constructor,
-            ref congr_all_constructor,
-            ref proj_constructor,
-            ref proj_all_prefix,
-            ref container_normalize_constructor,
-            ref eval_constructor,
-            ..
-        } = *self.proof_names();
-
-        format!(
-            "
-;; The proof datatype records the global proof constructor names so container
-;; rebuild can recover them on re-parse (see ContainerRebuildSpec).
-(sort {proof_datatype} :internal-proof-names {congr_constructor} {congr_all_constructor} {eq_trans_constructor} {eq_sym_constructor} {container_normalize_constructor} {fiat_prefix} {proj_constructor} {proj_all_prefix})
-
-;; Proof terms are relations, not constructors: the encoding mints a fresh id
-;; and asserts the row (both in one `mint-<Relation>!` call), so congruent
-;; duplicates are kept (never merged away) rather than relying on native
-;; congruence. The final column of each relation is the minted output id.
-
-;; Fiat justification for globals and primitives, gives two terms t1 = t2 for the
-;; proposition being justified. Its endpoints are values of one sort, so there is
-;; a `Fiat_<Sort>` per fiat-ed sort, declared on first use (see
-;; `ProofInstrumentor::fiat_constructor`):
-;;   (Fiat_<Sort> <term> <term> <proof>)
-;; A rule proof written before its head interns anything carries its premises
-;; inline, in a `Rule_<k>` declared per premise count (see `rule_arity_header`):
-;;   (Rule_<k> <rule name> <one proof per body fact> <column>)
-;; Every rule proof after that names an earlier column's proof — which carries
-;; the shared premises and the bridges recorded before it — plus the one *bridge*
-;; premise recorded since: the view-row proof of the subterm the head interned,
-;; saying which e-class it landed in. `<column>` says which proof of the head's
-;; lowering this is (see `proof_head`); proof conversion derives the proposition
-;; from it, so no term is stored. The rule name is not repeated either: it is
-;; read off the `Rule_<k>` row ending the chain.
-;;   (RuleLink <earlier column's proof> <bridge proof> <column>)
-(function {rule_link_constructor} ({proof_datatype} {proof_datatype} i64 {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
-
-;; A site with a fixed composition rather than a rule head — a top-level action,
-;; a merge body, a view rebuild, a merge collision — writes one packed row
-;; standing for the whole composition, in a `Packed_<k>` declared per proof-column
-;; count (see `packed_proof_constructor`). The first column spells the composition
-;; over the rest, in prefix order: `sym`, `trans`, `congr`, `p<n>` for the proof in
-;; column n, and a bare number for a congruence's child position. So
-;;   (Packed_2 \"trans_sym_p0_p1\" <hi proof> <lo proof>)
-;; is the `@UF` edge a merge collision displaces, where both carried proofs share
-;; their left-hand side, and
-;;   (Packed_2 \"congr_p0_3_p1\" <row proof> <step proof>)
-;; is a view rebuild that canonicalized child column 3.
-
-;; term-free merge justification for an FD custom-function view subexpression:
-;; name of function, two premise proofs, and the pre-order index of the merge-body
-;; subexpression whose conclusion is reconstructed during proof conversion
-(function {merge_fn_idx_constructor} (String {proof_datatype} {proof_datatype} i64 {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
-;; term-free merge justification for an FD custom-function view row:
-;; name of function and two premise proofs; the whole-row conclusion is
-;; reconstructed during proof conversion by running the whole merge body
-(function {merge_fn_row_constructor} (String {proof_datatype} {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
-
-;; transitivity of equality proofs
-(function {eq_trans_constructor} ({proof_datatype} {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
-
-;; symmetry of equality proofs
-(function {eq_sym_constructor} ({proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
-;; given a proof that t1 = f(..., ci, ...)
-;; and the child index i of ci in the term f(..., ci, ...)
-;; and a proof that ci = c2,
-;; produces a justification that t1 = f(..., c2, ...)
-(function {congr_constructor} ({proof_datatype} i64 {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
-
-;; element-matching congruence (used by container rebuilds): given a proof that
-;; t1 = c and a proof that a = b, produces a justification that t1 = c with
-;; every child of c equal to a replaced by b.
-(function {congr_all_constructor} ({proof_datatype} {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
-
-;; given a proof that t1 = f(..., ci, ...) and the child index i,
-;; produces a justification that ci = ci
-(function {proj_constructor} ({proof_datatype} i64 {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
-
-;; element-matching projection: given a proof that t1 = c and a term a that is a
-;; child of c, produces a justification that a = a. Used where the child's
-;; position is only known once the term is in hand. The child is named by value,
-;; so there is a `ProjAll_<Sort>` per projected sort, declared with that sort (see
-;; `ProofInstrumentor::proj_all_constructor`):
-;;   (ProjAll_<Sort> <proof> <term> <proof>)
-
-;; given a proof that t1 = c, where c is a container term, produces a proof that
-;; t1 = normalize(c) (the container's canonicalization: sort/dedup for sets,
-;; last-write-wins for maps, sort for multisets)
-(function {container_normalize_constructor} ({proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
-
-;; marks the proof of a container side condition. Carries nothing: the side
-;; condition is re-evaluated against the rule body when checked.
-(function {eval_constructor} ({proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
-                "
-        )
     }
 }
 
