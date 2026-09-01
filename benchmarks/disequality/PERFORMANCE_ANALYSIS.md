@@ -73,7 +73,8 @@ invocation was discarded.
 
 ## Typed host AST and opt-in recording follow-up
 
-The 2026-09-01 follow-up isolates the host adapter refactor. Frozen clean parent
+The 2026-09-01 follow-up isolates the host adapter refactor before the branch's
+later merge from `origin/main`. Frozen clean parent
 `6b3f7b8981be086fab768e79cc0cd23cca943748` prints and reparses each generated
 operation batch and retains operation history in ordinary graphs. Clean
 candidate `d5a463bf17f099f26965a72503f756185855711e` constructs `egglog::ast`
@@ -85,20 +86,25 @@ boundaries.
 Every workload was measured in opposite endpoint orders and every sample was
 retained. Combined medians and full ranges are:
 
-| Workload | Encoding | source-reparse parent | typed-AST candidate | Candidate delta |
+| Workload | Encoding | source-reparse parent | typed-AST candidate | Directional result |
 | --- | --- | ---: | ---: | ---: |
-| Propel `gset_comm` | DE | 207.7 ms (195.6-237.6) | 200.8 ms (185.5-236.0) | -3.3% |
-| Propel `gset_comm` | NEE | 195.7 ms (189.2-207.3) | 192.3 ms (183.8-322.5) | -1.7% |
-| Propel `tip_bin_plus_assoc` | DE | 7.400 s (7.062-8.236) | 7.163 s (6.988-7.793) | -3.2% |
-| Propel `tip_bin_plus_assoc` | NEE | 5.657 s (5.415-5.986) | 5.430 s (5.178-6.288) | -4.0% |
+| Propel `gset_comm` | DE | 207.7 ms (195.6-237.6) | 200.8 ms (185.5-236.0) | inconclusive: +0.8% forward, -4.2% reverse |
+| Propel `gset_comm` | NEE | 195.7 ms (189.2-207.3) | 192.3 ms (183.8-322.5) | inconclusive: +5.4% forward, -2.3% reverse |
+| Propel `tip_bin_plus_assoc` | DE | 7.400 s (7.062-8.236) | 7.163 s (6.988-7.793) | lower in both orders: -0.3% to -3.9% |
+| Propel `tip_bin_plus_assoc` | NEE | 5.657 s (5.415-5.986) | 5.430 s (5.178-6.288) | lower in both orders: -0.4% to -8.2% |
 
-The result is a modest improvement, not a change in the paper-level overhead.
-The candidate removes source rendering/parsing from the live path and avoids
+The small workload changes sign with endpoint order and is inconclusive. The
+medium workload is directionally lower in both orders, but the magnitude is
+order-sensitive. This is not a change in the paper-level overhead. The
+candidate removes source rendering/parsing from the live path and avoids
 retaining capture history in ordinary runs, but it deliberately preserves
 command-macro expansion, typechecking, proof instrumentation, atomic command
-semantics, database execution, and the existing graph lifecycle.
+semantics, database execution, and the existing graph lifecycle. These
+measurements characterize the isolated `d5a463bf` change, not the branch's
+later merged final head.
 
-The only locally available EUF input is the tiny `tests/sat.smt2` fixture. Its
+The only EUF input measured in this follow-up is the tiny `tests/sat.smt2`
+fixture. Its
 combined medians were 3.022 ms versus 2.961 ms for DE and 2.986 ms versus 2.867
 ms for NEE. Hyperfine warns that all four commands are below 5 ms, where shell
 startup resolution is material. These samples confirm there is no

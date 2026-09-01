@@ -2,11 +2,12 @@
 
 Run date: 2026-09-01 (America/Los_Angeles)
 
-These files compare the final typed-AST host adapter with its immediate clean
-parent. The parent renders and reparses mutation batches and retains operation
-history in every graph. The candidate constructs `egglog::ast` commands,
-submits them through `EGraph::run_program`, and records interactions only when
-source export is requested.
+These files compare the isolated typed-AST host adapter commit with its
+immediate clean parent. The parent renders and reparses mutation batches and
+retains operation history in every graph. The candidate constructs
+`egglog::ast` commands, submits them through `EGraph::run_program`, and records
+interactions only when source export is requested. The measurements predate and
+do not characterize the branch's later merge from `origin/main`.
 
 ## Revisions and hashes
 
@@ -22,8 +23,9 @@ source export is requested.
 | `tip_bin_plus_assoc.propel` | `680ef39351e0de07432b8d195178ed9af92ad5ab7dd2261e304c2501c837df3a` |
 | `tests/sat.smt2` | `f0cdba8a3ae11f943ff878897e7513013adc52d7b30623be9c0b5a5fd2990f61` |
 
-Both source trees were clean when their release executables were built. The
-complete machine-readable provenance is in `provenance.json`.
+Both source trees were clean when their release executables were built.
+Machine-readable revisions, hashes, platform, and tool versions are in
+`provenance.json`; the exact command bodies are below.
 
 ## Method
 
@@ -37,14 +39,19 @@ results are retained only as a regression smoke.
 
 Combined medians and full ranges:
 
-| Workload | Encoding | baseline | candidate | Candidate delta |
+| Workload | Encoding | baseline | candidate | Directional result |
 | --- | --- | ---: | ---: | ---: |
-| Propel `gset_comm` | DE | 207.7 ms (195.6-237.6) | 200.8 ms (185.5-236.0) | -3.3% |
-| Propel `gset_comm` | NEE | 195.7 ms (189.2-207.3) | 192.3 ms (183.8-322.5) | -1.7% |
-| Propel `tip_bin_plus_assoc` | DE | 7.400 s (7.062-8.236) | 7.163 s (6.988-7.793) | -3.2% |
-| Propel `tip_bin_plus_assoc` | NEE | 5.657 s (5.415-5.986) | 5.430 s (5.178-6.288) | -4.0% |
+| Propel `gset_comm` | DE | 207.7 ms (195.6-237.6) | 200.8 ms (185.5-236.0) | inconclusive: +0.8% forward, -4.2% reverse |
+| Propel `gset_comm` | NEE | 195.7 ms (189.2-207.3) | 192.3 ms (183.8-322.5) | inconclusive: +5.4% forward, -2.3% reverse |
+| Propel `tip_bin_plus_assoc` | DE | 7.400 s (7.062-8.236) | 7.163 s (6.988-7.793) | lower in both orders: -0.3% to -3.9% |
+| Propel `tip_bin_plus_assoc` | NEE | 5.657 s (5.415-5.986) | 5.430 s (5.178-6.288) | lower in both orders: -0.4% to -8.2% |
 | EUF `sat.smt2` | DE | 3.022 ms (2.566-5.043) | 2.961 ms (2.397-4.043) | below reliable resolution |
 | EUF `sat.smt2` | NEE | 2.986 ms (2.394-4.402) | 2.867 ms (2.303-4.181) | below reliable resolution |
+
+The pooled medians make `gset_comm` look lower overall, but each encoding
+changes sign when endpoint order is reversed. That workload is therefore
+inconclusive. Both `tip_bin_plus_assoc` comparisons are lower in each order,
+with an order-sensitive magnitude.
 
 On NEE `gset_comm`, recording disabled had a 177.6 ms median
 (174.1-207.3 ms). Recording plus source and desugared export had a 202.1 ms

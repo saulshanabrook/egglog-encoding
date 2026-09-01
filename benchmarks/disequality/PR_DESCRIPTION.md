@@ -171,8 +171,9 @@ parameter analysis uses three interleaved rounds. The direct-constructor
 follow-up instead uses ten samples for each small input and six for each larger
 input, again split across reversed orders. That accepted follow-up used clean
 candidate revision `b87057b`. The hash-identified pre-final set-backed follow-up
-is described below. The final typed-host-AST follow-up uses clean candidate
-`d5a463bf` against clean parent `6b3f7b89`, again in reversed endpoint orders:
+is described below. The typed-host-AST follow-up uses clean candidate
+`d5a463bf` against clean parent `6b3f7b89`, before the branch's later merge from
+`origin/main`, again in reversed endpoint orders:
 16 combined samples per small Propel endpoint, eight per medium endpoint, and
 60 per tiny EUF endpoint. These are descriptive measurements, not
 publication-quality confidence intervals.
@@ -183,18 +184,21 @@ The clean 2026-09-01 follow-up isolates direct `egglog::ast` submission and
 opt-in recording from the parent adapter that rendered and reparsed every
 mutation batch and retained operation history in every graph.
 
-| Workload | Encoding | source-reparse parent | typed-AST candidate | Delta |
+| Workload | Encoding | source-reparse parent | typed-AST candidate | Directional result |
 | --- | --- | ---: | ---: | ---: |
-| Propel `gset_comm` | DE | 207.7 ms | 200.8 ms | -3.3% |
-| Propel `gset_comm` | NEE | 195.7 ms | 192.3 ms | -1.7% |
-| Propel `tip_bin_plus_assoc` | DE | 7.400 s | 7.163 s | -3.2% |
-| Propel `tip_bin_plus_assoc` | NEE | 5.657 s | 5.430 s | -4.0% |
+| Propel `gset_comm` | DE | 207.7 ms | 200.8 ms | inconclusive: +0.8% forward, -4.2% reverse |
+| Propel `gset_comm` | NEE | 195.7 ms | 192.3 ms | inconclusive: +5.4% forward, -2.3% reverse |
+| Propel `tip_bin_plus_assoc` | DE | 7.400 s | 7.163 s | lower in both orders: -0.3% to -3.9% |
+| Propel `tip_bin_plus_assoc` | NEE | 5.657 s | 5.430 s | lower in both orders: -0.4% to -8.2% |
 
-The change is a modest improvement, not a resolution of the paper-level
-overhead: macro expansion, typechecking, proof instrumentation, atomic command
-semantics, database execution, and graph lifecycle remain. The available EUF
-fixture completes below 5 ms, so its apparent 2-4% decrease is below reliable
-measurement resolution and supports only a no-large-regression claim.
+The small workload is order-sensitive and inconclusive. The medium workload is
+directionally lower in both orders, but this remains a descriptive measurement,
+not a resolution of the paper-level overhead: macro expansion, typechecking,
+proof instrumentation, atomic command semantics, database execution, and graph
+lifecycle remain. The EUF fixture measured in this follow-up completes below 5
+ms, so its apparent 2-4% decrease is below reliable measurement resolution and
+supports only a no-large-regression claim. These timings characterize the
+isolated `d5a463bf` change, not the later merged final head.
 
 On NEE `gset_comm`, recording disabled had a 177.6 ms combined median;
 recording plus rendering, desugaring, and overwriting 104 files had a 202.1 ms

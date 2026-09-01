@@ -319,14 +319,17 @@ pair per enumerated SAT model.
 executable-hash-identified end-to-end measurements, diagnostic profiles,
 comparison with the artifact's precomputed timings, and prioritized
 optimization ideas. A clean 2026-09-01 follow-up isolates the typed host-AST
-change at `d5a463bf` against source-reparse parent `6b3f7b89`. Combined Propel
-medians improved by 1.7-3.3% on `gset_comm` and 3.2-4.0% on
-`tip_bin_plus_assoc`, depending on encoding. The only available EUF fixture
-completed below Hyperfine's reliable 5 ms resolution, so it supports only a
-no-large-regression claim. Opt-in recording plus rendering, desugaring, and 104
-file writes cost 1.138x the recording-disabled `gset_comm` median; ordinary
-benchmark runs disable recording. Raw samples, full ranges, hashes, and exact
-commands are retained under `reports/typed-host-ast/`.
+change at `d5a463bf` against source-reparse parent `6b3f7b89`, before the later
+merge from `origin/main`. The small `gset_comm` result changes sign with
+endpoint order and is inconclusive: candidate deltas are +0.8%/-4.2% for DE and
++5.4%/-2.3% for NEE in forward/reverse order. On `tip_bin_plus_assoc`, the
+candidate is lower in both orders for both encodings, although the magnitude is
+order-sensitive. The only EUF input measured in this follow-up completed below
+Hyperfine's reliable 5 ms resolution, so it supports only a no-large-regression
+claim. Opt-in recording plus rendering, desugaring, and 104 file writes cost
+1.138x the recording-disabled `gset_comm` pooled median; ordinary benchmark
+runs disable recording. Raw samples, full ranges, hashes, and exact commands
+are retained under `reports/typed-host-ast/`.
 
 The 2026-08-19 follow-up measures a hash-identified
 pre-final set-backed DE candidate in parameter analysis and two Propel programs.
