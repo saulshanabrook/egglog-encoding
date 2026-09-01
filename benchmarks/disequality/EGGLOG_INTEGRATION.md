@@ -318,7 +318,17 @@ pair per enumerated SAT model.
 [`PERFORMANCE_ANALYSIS.md`](PERFORMANCE_ANALYSIS.md) records revision-pinned and
 executable-hash-identified end-to-end measurements, diagnostic profiles,
 comparison with the artifact's precomputed timings, and prioritized
-optimization ideas. Its 2026-08-19 follow-up measures a hash-identified
+optimization ideas. A clean 2026-09-01 follow-up isolates the typed host-AST
+change at `d5a463bf` against source-reparse parent `6b3f7b89`. Combined Propel
+medians improved by 1.7-3.3% on `gset_comm` and 3.2-4.0% on
+`tip_bin_plus_assoc`, depending on encoding. The only available EUF fixture
+completed below Hyperfine's reliable 5 ms resolution, so it supports only a
+no-large-regression claim. Opt-in recording plus rendering, desugaring, and 104
+file writes cost 1.138x the recording-disabled `gset_comm` median; ordinary
+benchmark runs disable recording. Raw samples, full ranges, hashes, and exact
+commands are retained under `reports/typed-host-ast/`.
+
+The 2026-08-19 follow-up measures a hash-identified
 pre-final set-backed DE candidate in parameter analysis and two Propel programs.
 NEE has the lowest combined egglog median in all three; DE is 1.08x NEE on
 `gset_comm`, 1.44x on `tip_bin_plus_assoc`, and 1.10x on parameter analysis.

@@ -1,6 +1,6 @@
 # Disequality case-study performance analysis
 
-Run dates: 2026-08-12 through 2026-08-19 (America/New_York)
+Run dates: 2026-08-12 through 2026-09-01
 
 This report analyzes the egglog implementations of the three case studies from
 *Dis/Equality Graphs*: parameter analysis, Propel, and the EUF solver. It
@@ -11,7 +11,8 @@ attributing generic host/API overhead to the compiled disequality rules.
 
 - Apple M4, 16 GiB RAM, arm64 macOS (Darwin 25.6.0)
 - Rust 1.91.0 and Cargo 1.91.0; the older case-study tranches used uv 0.12.3,
-  while the 2026-08-19 set-backed follow-up used uv 0.12.5
+  the 2026-08-19 set-backed follow-up used uv 0.12.5, and the typed-host-AST
+  follow-up used uv 0.12.6
 - case-study timing base `origin/main` at
   `ffb8ae435bd6421077b1c15826f32a6aeecf5b1b`
 - final Propel and EUF measurements at code commit
@@ -28,21 +29,28 @@ attributing generic host/API overhead to the compiled disequality rules.
   exact measured executable hashes under `reports/set-de-follow-up/`; its dirty
   source diff was not retained, so this tranche is pre-final and not tied to a
   reproducible source revision
+- typed-host-AST follow-up from clean candidate `d5a463bf` against frozen clean
+  parent `6b3f7b89`, with binary/input hashes and every accepted sample under
+  `reports/typed-host-ast/`
 - release builds for timed Rust and Scala Native executables
-- six accepted samples per Propel and EUF endpoint: two three-run Hyperfine
-  invocations with endpoint order reversed, after one Propel warmup and two EUF
-  warmups
+- six accepted samples per historical Propel and EUF endpoint: two three-run
+  Hyperfine invocations with endpoint order reversed, after one Propel warmup
+  and two EUF warmups
 - three interleaved endpoint rounds for parameter analysis
 - hash-identified pre-final set-backed follow-up in two opposite endpoint
   orders: three samples per order for parameter analysis and medium Propel,
   five for small Propel
+- typed-host-AST follow-up in two opposite endpoint orders: eight samples per
+  order for small Propel, four for medium Propel, and 30 for the sub-5 ms EUF
+  fixture; the recording/export ablation uses eight samples per order
 
 The commands below regenerate the revision-pinned results. For the set-backed
 tranche, the retained commands reproduce the invocation shape, but its missing
 dirty source diff prevents reconstruction of the exact measured executables.
 Generated parameter TSV files and the large EUF corpus are intentionally not
-committed. Six samples are enough to identify the large cost centers here, but
-not for a publication-quality statistical claim. Ranges are descriptive.
+committed. These sample sizes are enough to identify the large cost centers
+here, but not for a publication-quality statistical claim. Ranges are
+descriptive.
 Complete timing attempts that overlapped Rust builds, the independent
 reviewer's validation, or another worktree's concurrent benchmark and compiler
 processes were rejected before analysis. No sample inside an accepted
@@ -52,6 +60,9 @@ invocation was discarded.
 
 | Case study | Comparison | Measured result | Observed costs and candidates |
 | --- | --- | ---: | --- |
+| Typed host AST, Propel small | candidate / source-reparse parent | 0.967x DE; 0.983x NEE wall | direct AST submission and no retained trace in ordinary runs produce a modest change |
+| Typed host AST, Propel medium | candidate / source-reparse parent | 0.968x DE; 0.960x NEE wall | frontend work is reduced, but graph lifecycle and database work remain |
+| Opt-in capture, Propel small | recording+export / recording off | 1.138x wall | includes persistent tracing, rendering, desugaring, and 104 file writes |
 | Set-backed candidate parameter analysis | set DE / NEE | 1.10x wall | 3.7M occurrence rows dominate; set DE private schedule was 13.1 ms in one diagnostic |
 | Set-backed candidate Propel, small | set DE / NEE; set DE / native DE | 1.08x; 3.99x wall | fixed graph lifecycle, host calls, and container work |
 | Set-backed candidate Propel, medium | set DE / NEE; set DE / native DE | 1.44x; 12.08x wall | repeated graph creation and set-valued adjacency merges |
@@ -59,6 +70,51 @@ invocation was discarded.
 | Historical Propel, medium | relational DE / native DE | 11.70x wall | repeated creation, frontend/database/query/stats work, and rollback snapshots |
 | Historical EUF, 627 models | relational DE / native DE | 12.66x wall | 403K operations across 628 atomic flushes, frontend work, and database execution |
 | Historical EUF, 627 models with stats | relational DE / native DE | 39.71x reported full time | 627 full graph scans and about 2M term lookups |
+
+## Typed host AST and opt-in recording follow-up
+
+The 2026-09-01 follow-up isolates the host adapter refactor. Frozen clean parent
+`6b3f7b8981be086fab768e79cc0cd23cca943748` prints and reparses each generated
+operation batch and retains operation history in ordinary graphs. Clean
+candidate `d5a463bf17f099f26965a72503f756185855711e` constructs `egglog::ast`
+actions and checks directly, submits them through `EGraph::run_program`, and
+retains a persistent trace only when source export is requested. Both use the
+paper-faithful Vec term language and the same inputs, encodings, and process
+boundaries.
+
+Every workload was measured in opposite endpoint orders and every sample was
+retained. Combined medians and full ranges are:
+
+| Workload | Encoding | source-reparse parent | typed-AST candidate | Candidate delta |
+| --- | --- | ---: | ---: | ---: |
+| Propel `gset_comm` | DE | 207.7 ms (195.6-237.6) | 200.8 ms (185.5-236.0) | -3.3% |
+| Propel `gset_comm` | NEE | 195.7 ms (189.2-207.3) | 192.3 ms (183.8-322.5) | -1.7% |
+| Propel `tip_bin_plus_assoc` | DE | 7.400 s (7.062-8.236) | 7.163 s (6.988-7.793) | -3.2% |
+| Propel `tip_bin_plus_assoc` | NEE | 5.657 s (5.415-5.986) | 5.430 s (5.178-6.288) | -4.0% |
+
+The result is a modest improvement, not a change in the paper-level overhead.
+The candidate removes source rendering/parsing from the live path and avoids
+retaining capture history in ordinary runs, but it deliberately preserves
+command-macro expansion, typechecking, proof instrumentation, atomic command
+semantics, database execution, and the existing graph lifecycle.
+
+The only locally available EUF input is the tiny `tests/sat.smt2` fixture. Its
+combined medians were 3.022 ms versus 2.961 ms for DE and 2.986 ms versus 2.867
+ms for NEE. Hyperfine warns that all four commands are below 5 ms, where shell
+startup resolution is material. These samples confirm there is no
+order-of-magnitude regression on the fixture; they are not evidence for a EUF
+speedup. The published large EUF corpus remains unavailable locally.
+
+Recording is opt-in. On NEE `gset_comm`, recording disabled had a 177.6 ms
+combined median (174.1-207.3 ms), while recording plus source and desugared
+export had a 202.1 ms median (195.5-223.1 ms), or 1.138x. This ablation includes
+persistent trace construction, rendering, desugaring, and overwriting 104
+files; it is not the cost of trace retention alone. Ordinary benchmark runs
+take the recording-disabled path.
+
+Raw Hyperfine JSON, exact commands, source revisions, executable/input hashes,
+and environment details are retained in
+[`reports/typed-host-ast/`](reports/typed-host-ast/).
 
 ## Set-backed DE follow-up
 
@@ -526,25 +582,28 @@ cases.
    and tuples from one FFI call. Cache term handles/class ids within a stable
    graph generation. This removes the clearest avoidable cost: about 10 seconds
    on the measured EUF stats run and hundreds of milliseconds in Propel.
-2. **Add a typed, proof-aware batch API with an explicit failure contract.**
-   Submit already structured host operations without reparsing generated source
-   on every flush, while still routing actions through command-macro expansion,
-   typechecking, and proof instrumentation. For callers that discard a graph
-   after failure, a trusted/poison-on-error batch can retain one compiled action
-   batch without cloning the full graph. A generally atomic API instead needs
-   backend transaction support. Parameter analysis needs the analogous bulk
-   relation/input path. The removed representation-specific writer is not the
-   right API.
+2. **Keep typed batches; add an explicit failure contract if snapshots remain
+   costly.** The host adapter now submits structured actions through
+   `EGraph::run_program` without rendering and reparsing source. The clean
+   follow-up improved the measured Propel medians by 1.7-4.0%, so frontend
+   parsing was real but not dominant. For callers that discard a graph after
+   failure, a trusted/poison-on-error batch could avoid retaining a full graph
+   snapshot. A generally atomic API instead needs backend transaction support.
+   Parameter analysis still needs the analogous bulk relation/input path. The
+   removed representation-specific writer is not the right API.
 3. **Keep initialized-schema reuse; reduce direct-schema lifecycle cost.**
    Template cloning is now implemented and improves cached Vec. Direct
    constructors expose a different cost: each operator adds a relation that
    every short-lived Propel graph must clone and rebuild. A future direct-mode
    optimization should measure a cache keyed by the operators actually used by
    a graph, or make empty relation schemas cheaper to instantiate.
-4. **Expose typed pair comparison.** Avoid constructing and parsing tiny check
-   programs for every `equal`/`unequal` query. A backend query over the generated
-   representation saved about 425 ms in the medium diagnostic, but the API must
-   remain generated from the selected compiler pass.
+4. **Keep typed pair comparison behind the selected compiler pass.** The host
+   adapter now constructs equality and pair-only disequality checks as typed
+   commands and shares their lowering with source programs. It still uses the
+   ordinary command-processing path. A lower-level backend query saved about
+   425 ms in the historical medium diagnostic, but any further shortcut must
+   preserve the representation selected by the compiler pass and proof-mode
+   behavior.
 5. **Reduce graph lifecycle churn.** Batch host operations more aggressively
    and investigate snapshot/push-pop semantics for branch exploration where
    they preserve host behavior. Propel created over 10,000 graphs and EUF cloned

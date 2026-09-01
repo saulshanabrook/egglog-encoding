@@ -171,8 +171,36 @@ parameter analysis uses three interleaved rounds. The direct-constructor
 follow-up instead uses ten samples for each small input and six for each larger
 input, again split across reversed orders. That accepted follow-up used clean
 candidate revision `b87057b`. The hash-identified pre-final set-backed follow-up
-is described next. These are descriptive measurements, not publication-quality
-confidence intervals.
+is described below. The final typed-host-AST follow-up uses clean candidate
+`d5a463bf` against clean parent `6b3f7b89`, again in reversed endpoint orders:
+16 combined samples per small Propel endpoint, eight per medium endpoint, and
+60 per tiny EUF endpoint. These are descriptive measurements, not
+publication-quality confidence intervals.
+
+### Typed host AST and recording follow-up
+
+The clean 2026-09-01 follow-up isolates direct `egglog::ast` submission and
+opt-in recording from the parent adapter that rendered and reparsed every
+mutation batch and retained operation history in every graph.
+
+| Workload | Encoding | source-reparse parent | typed-AST candidate | Delta |
+| --- | --- | ---: | ---: | ---: |
+| Propel `gset_comm` | DE | 207.7 ms | 200.8 ms | -3.3% |
+| Propel `gset_comm` | NEE | 195.7 ms | 192.3 ms | -1.7% |
+| Propel `tip_bin_plus_assoc` | DE | 7.400 s | 7.163 s | -3.2% |
+| Propel `tip_bin_plus_assoc` | NEE | 5.657 s | 5.430 s | -4.0% |
+
+The change is a modest improvement, not a resolution of the paper-level
+overhead: macro expansion, typechecking, proof instrumentation, atomic command
+semantics, database execution, and graph lifecycle remain. The available EUF
+fixture completes below 5 ms, so its apparent 2-4% decrease is below reliable
+measurement resolution and supports only a no-large-regression claim.
+
+On NEE `gset_comm`, recording disabled had a 177.6 ms combined median;
+recording plus rendering, desugaring, and overwriting 104 files had a 202.1 ms
+median, or 1.138x. Ordinary runs disable recording. Raw samples, complete
+ranges, exact commands, and binary/input hashes are retained under
+`benchmarks/disequality/reports/typed-host-ast/`.
 
 ### Set-backed DE follow-up
 
@@ -283,11 +311,11 @@ database execution; the extension schedule remains small. The exact stats pair
 is retained in `benchmarks/disequality/reports/euf-large-stats-summary.csv`.
 
 The detailed report records timing boundaries, hashes, ranges, comparison with
-artifact-precomputed numbers, diagnostic ablations, and fix ideas. The leading
-opportunities are one-pass/cached stats, a generic typed proof-aware batch API
-with an explicit failure contract, cheaper direct-schema instantiation, typed
-pair queries, and reduced graph lifecycle churn. Initialized-template reuse is
-now implemented.
+artifact-precomputed numbers, diagnostic ablations, and fix ideas. Typed host
+batches, typed pair checks, and initialized-template reuse are now implemented.
+The leading remaining opportunities are one-pass/cached stats, an explicit
+failure contract that can avoid unnecessary snapshots, cheaper direct-schema
+instantiation, and reduced graph lifecycle churn.
 It explicitly does not recommend restoring the removed representation-specific
 database writer.
 
@@ -358,6 +386,14 @@ body)` now preserves generated binders; clones from one template serialize
 database access while remaining logically isolated; uncached and failed
 templates are closed; clean Vec/direct corpus reports are committed; and the
 exact timing driver, raw samples, hashes, and provenance are retained.
+
+A final read-only review of the typed-host-AST change found no blockers and no
+worthwhile DRY reduction. It independently passed the focused disequality gate,
+the complete repository gate, and a non-selected Propel capture containing two
+pair queries under all four ordinary encodings and the three proof-compatible
+encodings. The committed final Propel graph has zero pair queries; its counters
+and fixture documentation preserve that absence rather than synthesizing
+coverage.
 
 Successful final gates include:
 
