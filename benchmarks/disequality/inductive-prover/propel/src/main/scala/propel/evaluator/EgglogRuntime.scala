@@ -22,7 +22,7 @@ case class EgglogLanguageSchema(
 )
 
 trait EgglogRuntimeTemplate extends AutoCloseable:
-  def newRuntime(): EgglogRuntime
+  def newRuntime(recordInteractions: Boolean): EgglogRuntime
 
 trait EgglogRuntime:
   def copyRuntime(): EgglogRuntime

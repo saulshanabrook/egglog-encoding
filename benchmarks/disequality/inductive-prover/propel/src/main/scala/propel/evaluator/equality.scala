@@ -45,6 +45,7 @@ object EGraphEqualities:
 
     def fromEqualities(eq: Equalities): EGraphStats =
       val rebuilded = eq.rebuild
+      val stats = rebuilded.underlying.egraph.stats
       emitSourceDirectory.foreach(directory =>
         val path = java.nio.file.Paths.get(directory)
         java.nio.file.Files.createDirectories(path)
@@ -55,7 +56,6 @@ object EGraphEqualities:
         )
         snapshotIndex += 1
       )
-      val stats = rebuilded.underlying.egraph.stats
       EGraphStats(stats.classes, stats.nodes)
 
     def reset(): Unit =

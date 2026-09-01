@@ -61,7 +61,9 @@ mod container_primitives;
 pub use container_primitives::*;
 mod disequality;
 pub use disequality::{
-    DisequalityComparison, DisequalityEncoding, compare_disequality, disequalities_are_consistent,
+    DisequalityComparison, DisequalityEncoding, check_disequalities_command,
+    check_known_disequal_command, compare_disequality, disequal_action,
+    disequalities_are_consistent,
 };
 
 const DE_TERM_ENCODING_UNSUPPORTED: &str =

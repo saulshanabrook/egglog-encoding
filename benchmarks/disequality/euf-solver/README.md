@@ -1,10 +1,10 @@
 # EUF Solver
 
 This copy also supports `egglog-ee`, `egglog-oee`, `egglog-nee`, and
-`egglog-de` through `--backend`, with optional executable source snapshots via
-`--emit-source-dir`. Egglog backends default to the generic Vec representation
-used by the paper's `SymbolLang` baseline. `--term-language direct` explicitly
-selects source-shaped SMT constructors.
+`egglog-de` through `--backend`, with optional outcome-preserving chronological
+host replays via `--emit-source-dir`. Egglog backends default to the generic Vec
+representation used by the paper's `SymbolLang` baseline. `--term-language
+direct` explicitly selects source-shaped SMT constructors.
 See [`../EGGLOG_INTEGRATION.md`](../EGGLOG_INTEGRATION.md)
 for architecture, validation scope, and reproduction commands. The remainder
 of this file is the artifact's original solver documentation.

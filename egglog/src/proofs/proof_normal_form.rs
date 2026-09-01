@@ -1,4 +1,5 @@
 use crate::ast::{FunctionSubtype, ResolvedNCommand};
+use crate::util::HashSet;
 use crate::*;
 use crate::{core::ResolvedCall, typechecking::FuncType};
 use egglog_ast::generic_ast::GenericExpr;
@@ -24,17 +25,22 @@ use egglog_ast::generic_ast::GenericExpr;
 pub(crate) fn proof_form(
     prog: Vec<ResolvedNCommand>,
     fresh: &mut SymbolGen,
+    globals: &HashSet<String>,
 ) -> Vec<ResolvedNCommand> {
     prog.into_iter()
-        .map(|cmd| proof_form_cmd(cmd, fresh))
+        .map(|cmd| proof_form_cmd(cmd, fresh, globals))
         .collect()
 }
 
-fn proof_form_cmd(cmd: ResolvedNCommand, fresh: &mut SymbolGen) -> ResolvedNCommand {
+fn proof_form_cmd(
+    cmd: ResolvedNCommand,
+    fresh: &mut SymbolGen,
+    globals: &HashSet<String>,
+) -> ResolvedNCommand {
     cmd.visit_queries(&mut |query| {
         let mut new_query = vec![];
         for fact in query {
-            let rewritten = proof_form_fact(fact, &mut new_query, fresh);
+            let rewritten = proof_form_fact(fact, &mut new_query, fresh, globals);
             new_query.push(rewritten);
         }
         new_query
@@ -45,6 +51,7 @@ fn proof_form_fact(
     fact: ResolvedFact,
     res: &mut Vec<ResolvedFact>,
     fresh: &mut SymbolGen,
+    globals: &HashSet<String>,
 ) -> ResolvedFact {
     match fact {
         ResolvedFact::Eq(
@@ -58,10 +65,10 @@ fn proof_form_fact(
                 args,
             ),
             ResolvedExpr::Var(span3, v),
-        ) => {
+        ) if !globals.contains(head.name()) => {
             let mut new_args = vec![];
             for arg in args {
-                new_args.push(proof_form_expr(arg, res, fresh));
+                new_args.push(proof_form_expr(arg, res, fresh, globals));
             }
             ResolvedFact::Eq(
                 span,
@@ -71,11 +78,11 @@ fn proof_form_fact(
         }
         GenericFact::Eq(span, generic_expr, generic_expr2) => GenericFact::Eq(
             span,
-            proof_form_expr(generic_expr, res, fresh),
-            proof_form_expr(generic_expr2, res, fresh),
+            proof_form_expr(generic_expr, res, fresh, globals),
+            proof_form_expr(generic_expr2, res, fresh, globals),
         ),
         GenericFact::Fact(generic_expr) => {
-            GenericFact::Fact(proof_form_expr(generic_expr, res, fresh))
+            GenericFact::Fact(proof_form_expr(generic_expr, res, fresh, globals))
         }
     }
 }
@@ -84,8 +91,21 @@ fn proof_form_expr(
     fact: ResolvedExpr,
     res: &mut Vec<ResolvedFact>,
     fresh: &mut SymbolGen,
+    globals: &HashSet<String>,
 ) -> ResolvedExpr {
     match fact {
+        ResolvedExpr::Call(span, ResolvedCall::Func(function), args)
+            if args.is_empty() && globals.contains(&function.name) =>
+        {
+            ResolvedExpr::Var(
+                span,
+                ResolvedVar {
+                    name: function.name.clone(),
+                    sort: function.output().clone(),
+                    is_global_ref: true,
+                },
+            )
+        }
         ref fact @ ResolvedExpr::Call(
             ref span,
             ref head @ ResolvedCall::Func(FuncType {
@@ -98,7 +118,7 @@ fn proof_form_expr(
             // bind this to a new variable
             let new_args = args
                 .iter()
-                .map(|expr| proof_form_expr(expr.clone(), res, fresh))
+                .map(|expr| proof_form_expr(expr.clone(), res, fresh, globals))
                 .collect();
             let resolved = GenericExpr::Var(
                 span.clone(),
@@ -141,7 +161,7 @@ fn proof_form_expr(
                         // First recursively normalize the inner arguments
                         let normalized_inner_args: Vec<_> = inner_args
                             .iter()
-                            .map(|e| proof_form_expr(e.clone(), res, fresh))
+                            .map(|e| proof_form_expr(e.clone(), res, fresh, globals))
                             .collect();
 
                         // Create a fresh variable for this constructor call
@@ -172,7 +192,7 @@ fn proof_form_expr(
                     }
                     // Otherwise just recursively normalize
                     other => {
-                        new_args.push(proof_form_expr(other, res, fresh));
+                        new_args.push(proof_form_expr(other, res, fresh, globals));
                     }
                 }
             }
@@ -186,7 +206,7 @@ fn proof_form_expr(
             // own side-condition binding `(= (prim ...) v)` and pass `v`.
             let mut new_args = vec![];
             for arg in args {
-                let normalized = proof_form_expr(arg, res, fresh);
+                let normalized = proof_form_expr(arg, res, fresh, globals);
                 let lift = matches!(
                     &normalized,
                     ResolvedExpr::Call(_, ResolvedCall::Primitive(p), _)

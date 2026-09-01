@@ -8,10 +8,10 @@
 //! The set of valid propositions includes reflexive equalities for all subterms.
 
 use crate::{
-    Term, TermDag, TermId,
+    ArcSort, Term, TermDag, TermId,
     ast::{
         FunctionSubtype, GenericAction, GenericNCommand, ResolvedExpr, ResolvedFact,
-        ResolvedNCommand,
+        ResolvedNCommand, ResolvedVar,
     },
     core::ResolvedCall,
     proofs::proof_format::{Justification, ProofId, ProofStore, Proposition},
@@ -49,18 +49,81 @@ pub(crate) struct ActionContext {
     pub propositions: HashSet<Proposition>,
 }
 
-/// Gathers all global CoreActions from a program.
-/// This extracts all actions that occur at the top level, filtering out NormRule and other commands.
-pub(crate) fn gather_global_actions(
-    prog: &[ResolvedNCommand],
-) -> impl Iterator<Item = &GenericAction<ResolvedCall, crate::ast::ResolvedVar>> {
-    prog.iter().filter_map(|cmd| {
-        if let GenericNCommand::CoreAction(action) = cmd {
-            Some(action)
-        } else {
-            None
+/// Recover top-level globals from either source `let` actions or their
+/// desugared `:internal-let` function-and-set representation.
+fn global_actions(prog: &[ResolvedNCommand]) -> Vec<GenericAction<ResolvedCall, ResolvedVar>> {
+    let internal_lets = prog
+        .iter()
+        .filter_map(|command| match command {
+            GenericNCommand::Function(declaration) if declaration.internal_let => Some((
+                declaration.name.clone(),
+                declaration.resolved_schema.output().clone(),
+            )),
+            _ => None,
+        })
+        .collect::<HashMap<_, _>>();
+
+    fn replace_global_call(
+        expression: ResolvedExpr,
+        internal_lets: &HashMap<String, ArcSort>,
+    ) -> ResolvedExpr {
+        match expression {
+            ResolvedExpr::Call(span, ResolvedCall::Func(function), arguments)
+                if arguments.is_empty() =>
+            {
+                match internal_lets.get(&function.name) {
+                    Some(sort) => ResolvedExpr::Var(
+                        span,
+                        ResolvedVar {
+                            name: function.name,
+                            sort: sort.clone(),
+                            is_global_ref: false,
+                        },
+                    ),
+                    None => ResolvedExpr::Call(span, ResolvedCall::Func(function), arguments),
+                }
+            }
+            expression => expression,
         }
-    })
+    }
+
+    prog.iter()
+        .filter_map(|command| {
+            let GenericNCommand::CoreAction(action) = command else {
+                return None;
+            };
+            let mut replace = |expression| replace_global_call(expression, &internal_lets);
+            Some(match action.clone() {
+                GenericAction::Set(span, call, arguments, result)
+                    if arguments.is_empty()
+                        && matches!(&call, ResolvedCall::Func(function) if internal_lets.contains_key(&function.name)) =>
+                {
+                    let ResolvedCall::Func(function) = &call else {
+                        unreachable!("the match guard requires a function")
+                    };
+                    GenericAction::Let(
+                        span,
+                        ResolvedVar {
+                            name: function.name.clone(),
+                            sort: function.output().clone(),
+                            is_global_ref: false,
+                        },
+                        result.visit_exprs(&mut replace),
+                    )
+                }
+                action => action.visit_exprs(&mut replace),
+            })
+        })
+        .collect()
+}
+
+fn process_global_actions(
+    prog: &[ResolvedNCommand],
+    term_dag: &mut TermDag,
+) -> Result<ActionContext, ProofCheckError> {
+    let actions = global_actions(prog);
+    let actions = actions.iter().collect::<Vec<_>>();
+    process_actions("global_actions", HashMap::default(), &actions, term_dag)
 }
 
 /// Run a merge function and return the resulting term, as well as a set of propositions learned.
@@ -265,9 +328,7 @@ pub(crate) fn gather_globals(
     prog: &[ResolvedNCommand],
     term_dag: &mut TermDag,
 ) -> Result<HashMap<String, TermId>, ProofCheckError> {
-    let actions: Vec<_> = gather_global_actions(prog).collect();
-    let ctx = process_actions("global_action", HashMap::default(), &actions, term_dag)?;
-    Ok(ctx.var_bindings)
+    Ok(process_global_actions(prog, term_dag)?.var_bindings)
 }
 
 /// Errors that can occur during proof checking.
@@ -566,9 +627,7 @@ impl ProofCheckContext {
             }
         }
 
-        // Use the new refactored functions
-        let actions: Vec<_> = gather_global_actions(prog).collect();
-        let action_ctx = process_actions("global_actions", HashMap::default(), &actions, term_dag)?;
+        let action_ctx = process_global_actions(prog, term_dag)?;
 
         Ok(ProofCheckContext {
             global_equalities: action_ctx.propositions,

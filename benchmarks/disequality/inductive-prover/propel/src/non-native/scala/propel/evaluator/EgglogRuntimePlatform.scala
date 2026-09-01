@@ -1,7 +1,7 @@
 package propel.evaluator
 
 object EgglogRuntimePlatform:
-  def create(encoding: EgglogEncoding): EgglogRuntime =
+  def create(encoding: EgglogEncoding, recordInteractions: Boolean): EgglogRuntime =
     throw UnsupportedOperationException(
       s"${encoding.toString} requires the Scala Native Propel executable",
     )

@@ -811,3 +811,22 @@ fn unordered_container_reshaped_element_collapse_proof() {
         .parse_and_run_program(None, program)
         .unwrap();
 }
+
+#[test]
+fn desugared_internal_let_globals_support_proof_testing() {
+    let program = r#"
+        (sort Term)
+        (constructor Node (String) Term)
+        (function $left () Term :no-merge :unextractable :internal-let)
+        (set ($left) (Node "left"))
+        (function $right () Term :no-merge :unextractable :internal-let)
+        (set ($right) (Node "right"))
+        (union ($left) ($right))
+        (check (= ($left) ($right)))
+    "#;
+
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(None, program)
+        .unwrap();
+}

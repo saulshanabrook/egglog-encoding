@@ -2957,7 +2957,17 @@ impl EGraph {
                 }
             }
 
-            Ok(proof_form(typechecked, &mut self.parser.symbol_gen))
+            let globals = original_typechecking
+                .type_info
+                .global_sorts
+                .keys()
+                .cloned()
+                .collect();
+            Ok(proof_form(
+                typechecked,
+                &mut self.parser.symbol_gen,
+                &globals,
+            ))
         } else {
             let typecheck_timer = Instant::now();
             let mut typechecked = self.typecheck_program(&desugared)?;

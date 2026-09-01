@@ -37,13 +37,18 @@ uint32_t egglog_disequality_template_register_operator(
     const char *preferred_name, size_t arity);
 int32_t egglog_disequality_template_finish(
     EgglogDisequalityTemplate *template_);
+/* Set record_interactions to nonzero only when executable trace export is
+ * required. Recording is disabled in normal benchmark runs. */
 EgglogDisequalityGraph *egglog_disequality_graph_new_from_template(
-    const EgglogDisequalityTemplate *template_);
+    const EgglogDisequalityTemplate *template_, int32_t record_interactions);
 void egglog_disequality_template_free(EgglogDisequalityTemplate *template_);
 const char *egglog_disequality_template_last_error(
     const EgglogDisequalityTemplate *template_);
 
-EgglogDisequalityGraph *egglog_disequality_graph_new(uint32_t encoding);
+/* Set record_interactions to nonzero only when executable trace export is
+ * required. */
+EgglogDisequalityGraph *egglog_disequality_graph_new(
+    uint32_t encoding, int32_t record_interactions);
 EgglogDisequalityGraph *egglog_disequality_graph_clone(
     const EgglogDisequalityGraph *graph);
 void egglog_disequality_graph_free(EgglogDisequalityGraph *graph);
@@ -72,6 +77,7 @@ uint64_t egglog_disequality_num_classes(EgglogDisequalityGraph *graph);
 uint64_t egglog_disequality_num_extension_rows(EgglogDisequalityGraph *graph);
 uint64_t egglog_disequality_num_tuples(EgglogDisequalityGraph *graph);
 
+/* Source export fails unless record_interactions was enabled at creation. */
 int32_t egglog_disequality_write_source(EgglogDisequalityGraph *graph,
                                         const char *path);
 int32_t egglog_disequality_write_desugared(EgglogDisequalityGraph *graph,

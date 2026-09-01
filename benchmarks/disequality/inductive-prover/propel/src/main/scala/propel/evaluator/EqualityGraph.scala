@@ -30,6 +30,7 @@ trait EqualityGraphBackend:
       termLanguage: EgglogTermLanguage,
       schema: EgglogLanguageSchema,
       cacheTemplate: Boolean,
+      recordInteractions: Boolean,
   ): EqualityGraphBackend = this
 
 object EqualityGraphBackend:
@@ -75,6 +76,7 @@ object EqualityGraphBackend:
       termLanguage: EgglogTermLanguage = EgglogTermLanguage.Vec,
       schema: EgglogLanguageSchema = EgglogLanguageSchema("BenchmarkTerm", Vector.empty),
       cacheTemplate: Boolean = false,
+      recordInteractions: Boolean = false,
   ) extends EqualityGraphBackend:
     override val isEgglog: Boolean = true
     private lazy val template = EgglogRuntimePlatform.createTemplate(encoding, termLanguage, schema)
@@ -82,18 +84,20 @@ object EqualityGraphBackend:
         termLanguage: EgglogTermLanguage,
         schema: EgglogLanguageSchema,
         cacheTemplate: Boolean,
+        recordInteractions: Boolean,
     ): EqualityGraphBackend = copy(
       termLanguage = termLanguage,
       schema = schema,
       cacheTemplate = cacheTemplate,
+      recordInteractions = recordInteractions,
     )
     override def empty: EqualityGraph = EgglogEqualityGraph(
       if termLanguage == EgglogTermLanguage.Vec && !cacheTemplate then
-        EgglogRuntimePlatform.create(encoding)
-      else if cacheTemplate then template.newRuntime()
+        EgglogRuntimePlatform.create(encoding, recordInteractions)
+      else if cacheTemplate then template.newRuntime(recordInteractions)
       else
         val uncachedTemplate = EgglogRuntimePlatform.createTemplate(encoding, termLanguage, schema)
-        try uncachedTemplate.newRuntime()
+        try uncachedTemplate.newRuntime(recordInteractions)
         finally uncachedTemplate.close(),
       mutable.Map.empty,
     )

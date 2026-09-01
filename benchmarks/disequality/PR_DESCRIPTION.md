@@ -39,6 +39,7 @@ snapshots.
 ```lisp
 (disequal lhs rhs)
 (check-disequal lhs rhs)
+(check-known-disequal lhs rhs)
 (check-disequalities)
 ```
 
@@ -64,16 +65,25 @@ set-valued function's keys and its outputs in the same rebuild.
 
 The shared in-process adapter under `benchmarks/disequality/egglog-backend/`
 provides typed add, union, disequality, clone, comparison, consistency, and
-stats operations. It can either use the original
-`BenchmarkNode(String, Vec)` language or compile a declared `(name, arity)`
+stats operations. Mutation batches and checks are constructed as `egglog::ast`
+and passed through `EGraph::run_program`; the live path no longer prints and
+reparses generated source or parses textual command output. It can either use
+the original `BenchmarkNode(String, Vec)` language or compile a declared `(name, arity)`
 schema into real egglog constructors, with `Atom(String)` only for dynamic
 names. Compiled templates avoid reparsing either schema for every graph.
-Committed capture batches use immutable shared slices, so graph clones do not
-copy the accumulated operation history. The EUF solver calls it through Rust.
+Opt-in chronological recording uses persistent immutable trace chunks, so graph
+clones share their history prefix; ordinary benchmark runs retain no trace.
+The exporter records actual mutation, rebuild, clone, pair-query, consistency,
+and stats interactions and never synthesizes a witness or final query. Its
+output is an outcome-preserving chronological replay: mutations and observed
+query outcomes are executable commands, while host-only rebuild, clone, and
+stats observations are retained as comments. The EUF solver calls it through
+Rust.
 Propel calls the same implementation through a panic-contained C ABI from
 Scala Native; no external egglog process participates in solving.
 
-Operations are submitted in `(begin ...)` batches. User-written blocks retain
+Operations are submitted in typed action batches. User-written `(begin ...)`
+blocks retain
 their local execution scope while their resolved actions are flattened in
 order for proof checking; `let`-`begin` additionally lowers its trailing value
 to the corresponding global binding in the proof-check program. This lets the
@@ -137,14 +147,17 @@ programs with provenance comments for:
 - one direct-constructor source capture for Propel's selected final graph.
 
 The nested `snapshots/` directory has EE, OEE, NEE, and DE expansions for every
-source: 28 inspectable `.desugared.egg` files plus a hash manifest. The snapshot
-generator reruns both host integrations and replays 224 source/snapshot
+source: 28 inspectable `.desugared.egg` files plus a hash manifest. The EUF and
+Propel sources are outcome-preserving chronological replays of host
+interactions, with operation counts that expose absent pair queries rather than
+filling them in.
+The snapshot generator reruns both host integrations and replays 224 source/snapshot
 treatments. A Rust regression independently enumerates all fixtures and
 compares every expansion byte-for-byte. EE, OEE, and NEE replay in ordinary,
 term, proofs, proof-testing, and proof-extraction modes; DE replays in ordinary
-mode only. The host captures' witness checks exercise their explicit unions in
-the supported proof modes. These are executable tests for manual inspection,
-not pseudocode.
+mode only. The supported proof modes exercise the recorded term bindings,
+explicit unions, disequalities, and observed query outcomes. These are
+executable tests for manual inspection, not pseudocode.
 
 ## Performance
 
@@ -305,9 +318,9 @@ ablations, exact clean revisions, commands, and intervals are recorded in
 - Propel timeout rows remain unknown.
 - `uf.815405` enumerates 245 current models versus 246 in the artifact result;
   this parity difference is retained as unresolved.
-- Proof testing validates an equality derived from the first explicit host
-  union in each captured program; Propel and EUF do not emit separate
-  host-level proof certificates.
+- The captures replay host operations and observed outcomes; they do not emit
+  separate host-level proof certificates, and rebuild, clone, and stats events
+  are comments rather than executable egglog commands.
 - The small performance sample establishes cost centers but not significance.
 
 ## Review and validation
@@ -352,7 +365,7 @@ Successful final gates include:
 make nits
 make check                                             # full repository gate
 make benchmark-smoke                                   # 20/20 off/proofs runs
-cargo test -p egglog --test proof_mode_regression       # 33/33
+cargo test -p egglog --test proof_mode_regression       # 34/34
 make -C benchmarks/disequality check                    # includes 224 supported replays
 cargo test -p egglog --test container_rebuild           # includes normal-mode set merge regression
 uv run pytest tests/test_disequality_parameter_analysis.py

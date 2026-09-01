@@ -14,6 +14,7 @@ use std::{fmt, str::FromStr};
 
 const PLACEHOLDER: &str = "@disequal";
 const CHECK_PLACEHOLDER: &str = "@check-disequal";
+const CHECK_KNOWN_PLACEHOLDER: &str = "@check-known-disequal";
 const CHECK_RULESET: &str = "@disequality";
 const SUPPORT_SORT: &str = "@disequality-support";
 const TRUTH_SORT: &str = "@disequality-truth";
@@ -75,10 +76,45 @@ pub(crate) fn add_disequality_support(egraph: &mut egglog::EGraph, encoding: Dis
     egraph.parser.add_command_macro(Arc::new(CheckDisequal));
     egraph
         .parser
+        .add_command_macro(Arc::new(CheckKnownDisequal));
+    egraph
+        .parser
         .add_command_macro(Arc::new(CheckDisequalities));
     egraph
         .command_macros_mut()
         .register(Arc::new(DisequalityMacro { encoding }));
+}
+
+/// Build an encoding-neutral disequality action for direct AST clients.
+///
+/// The action is lowered by the same compiler pass as parsed `(disequal ...)`
+/// syntax when it is submitted through [`egglog::EGraph::run_program`].
+pub fn disequal_action(lhs: Expr, rhs: Expr) -> Action {
+    let span = egglog::span!();
+    Action::Expr(span.clone(), call(&span, PLACEHOLDER, vec![lhs, rhs]))
+}
+
+/// Build the private propagation schedule exposed as `(check-disequalities)`.
+pub fn check_disequalities_command() -> Command {
+    Command::RunSchedule(disequality_schedule(egglog::span!()))
+}
+
+/// Build a pair-only disequality query for direct AST clients.
+///
+/// Unlike `(check-disequal lhs rhs)`, this command does not run the global
+/// propagation schedule first. It therefore remains usable after an unrelated
+/// pair has contradicted, matching host APIs that query one already-propagated
+/// pair at a time.
+pub fn check_known_disequal_command(lhs: Expr, rhs: Expr) -> Command {
+    let span = egglog::span!();
+    Command::Check(
+        span.clone(),
+        vec![Fact::Fact(call(
+            &span,
+            CHECK_KNOWN_PLACEHOLDER,
+            vec![lhs, rhs],
+        ))],
+    )
 }
 
 /// The relationship known between two terms in a consistent e-graph.
@@ -93,7 +129,6 @@ pub enum DisequalityComparison {
 /// generated functions or relations.
 pub fn compare_disequality(
     egraph: &mut egglog::EGraph,
-    encoding: DisequalityEncoding,
     lhs: Expr,
     rhs: Expr,
 ) -> Result<DisequalityComparison, Error> {
@@ -108,18 +143,10 @@ pub fn compare_disequality(
         Err(error) => return Err(error),
     }
 
-    let (sort, _) = egraph.eval_expr(&lhs)?;
-    let support = match encoding {
-        DisequalityEncoding::EqualityEmbedding
-        | DisequalityEncoding::OptimizedEqualityEmbedding => equality_symbol(sort.name()),
-        DisequalityEncoding::NegatedEqualityEmbedding => negated_equality_symbol(sort.name()),
-        DisequalityEncoding::DisequalityEdges => disequality_neighbors_symbol(sort.name()),
-    };
-    if egraph.get_function(&support).is_none() {
+    if egraph.get_sort_by_name(SUPPORT_SORT).is_none() {
         return Ok(DisequalityComparison::Indeterminate);
     }
-    let disequality = symmetric_disequality_check(span, lhs, rhs, sort.name(), encoding);
-    match egraph.run_program(vec![disequality]) {
+    match egraph.run_program(vec![check_known_disequal_command(lhs, rhs)]) {
         Ok(_) => Ok(DisequalityComparison::Unequal),
         Err(Error::ExpectFail(_)) => Ok(DisequalityComparison::Indeterminate),
         Err(error) => Err(error),
@@ -133,10 +160,9 @@ pub fn disequalities_are_consistent(egraph: &mut egglog::EGraph) -> Result<bool,
     if egraph.get_sort_by_name(SUPPORT_SORT).is_none() {
         return Ok(true);
     }
-    let span = egglog::span!();
     match egraph.run_program(vec![Command::Fail(
-        span.clone(),
-        vec![Command::RunSchedule(disequality_schedule(span))],
+        egglog::span!(),
+        vec![check_disequalities_command()],
     )]) {
         Ok(_) => Ok(false),
         Err(Error::ExpectFail(_)) => Ok(true),
@@ -194,6 +220,36 @@ impl Macro<Vec<Command>> for CheckDisequal {
     }
 }
 
+struct CheckKnownDisequal;
+
+impl Macro<Vec<Command>> for CheckKnownDisequal {
+    fn name(&self) -> &str {
+        "check-known-disequal"
+    }
+
+    fn parse(
+        &self,
+        args: &[Sexp],
+        span: Span,
+        parser: &mut Parser,
+    ) -> Result<Vec<Command>, ParseError> {
+        let [lhs, rhs] = args else {
+            return Err(ParseError(
+                span,
+                "usage: (check-known-disequal <expr> <expr>)".to_owned(),
+            ));
+        };
+        Ok(vec![Command::Check(
+            span.clone(),
+            vec![Fact::Fact(call(
+                &span,
+                CHECK_KNOWN_PLACEHOLDER,
+                vec![parser.parse_expr(lhs)?, parser.parse_expr(rhs)?],
+            ))],
+        )])
+    }
+}
+
 struct DisequalAction;
 
 impl Macro<Vec<Action>> for DisequalAction {
@@ -244,14 +300,24 @@ impl CommandMacro for DisequalityMacro {
                 let [Fact::Fact(Expr::Call(_, head, args))] = facts.as_slice() else {
                     return Ok(vec![Command::Check(span, facts)]);
                 };
-                if head != CHECK_PLACEHOLDER {
-                    return Ok(vec![Command::Check(span, facts)]);
-                }
-                let [lhs, rhs] = args.as_slice() else {
+                let run_propagation = match head.as_str() {
+                    CHECK_PLACEHOLDER => true,
+                    CHECK_KNOWN_PLACEHOLDER => false,
+                    _ => return Ok(vec![Command::Check(span, facts)]),
+                };
+                if args.len() != 2 {
+                    let command = if run_propagation {
+                        "check-disequal"
+                    } else {
+                        "check-known-disequal"
+                    };
                     return Err(Error::DesugarError(
                         span,
-                        "internal check-disequal command must have two operands".to_owned(),
+                        format!("internal {command} command must have two operands"),
                     ));
+                }
+                let [lhs, rhs] = args.as_slice() else {
+                    return Ok(vec![Command::Check(span, facts)]);
                 };
                 let sort = disequality_operand_sort(
                     type_info,
@@ -265,7 +331,9 @@ impl CommandMacro for DisequalityMacro {
                 let mut required_sorts = BTreeMap::new();
                 required_sorts.insert(sort.name().to_owned(), span.clone());
                 let mut commands = support_commands(type_info, required_sorts, self.encoding);
-                commands.push(Command::RunSchedule(disequality_schedule(span.clone())));
+                if run_propagation {
+                    commands.push(Command::RunSchedule(disequality_schedule(span.clone())));
+                }
                 commands.push(symmetric_disequality_check(
                     span,
                     lhs.clone(),
@@ -1368,7 +1436,7 @@ mod tests {
             let a = egraph.parser.get_expr_from_string(None, "(A)").unwrap();
             let b = egraph.parser.get_expr_from_string(None, "(B)").unwrap();
             assert_eq!(
-                compare_disequality(&mut egraph, encoding, a.clone(), b.clone()).unwrap(),
+                compare_disequality(&mut egraph, a.clone(), b.clone()).unwrap(),
                 DisequalityComparison::Indeterminate,
                 "{encoding:?} should allow queries before its first disequality"
             );
@@ -1383,17 +1451,17 @@ mod tests {
             let c = egraph.parser.get_expr_from_string(None, "(C)").unwrap();
 
             assert_eq!(
-                compare_disequality(&mut egraph, encoding, a.clone(), a.clone()).unwrap(),
+                compare_disequality(&mut egraph, a.clone(), a.clone()).unwrap(),
                 DisequalityComparison::Equal,
                 "{encoding:?} did not report reflexive equality"
             );
             assert_eq!(
-                compare_disequality(&mut egraph, encoding, a.clone(), b.clone()).unwrap(),
+                compare_disequality(&mut egraph, a.clone(), b.clone()).unwrap(),
                 DisequalityComparison::Unequal,
                 "{encoding:?} did not report the stored disequality"
             );
             assert_eq!(
-                compare_disequality(&mut egraph, encoding, a.clone(), c).unwrap(),
+                compare_disequality(&mut egraph, a.clone(), c).unwrap(),
                 DisequalityComparison::Indeterminate,
                 "{encoding:?} invented a relationship"
             );
@@ -1410,7 +1478,7 @@ mod tests {
                 "{encoding:?} missed a contradiction"
             );
             assert_eq!(
-                compare_disequality(&mut egraph, encoding, a.clone(), b.clone()).unwrap(),
+                compare_disequality(&mut egraph, a.clone(), b.clone()).unwrap(),
                 DisequalityComparison::Equal,
                 "{encoding:?} could not query an inconsistent graph"
             );
@@ -1428,6 +1496,7 @@ mod tests {
                     (datatype Math (A) (B))
                     (disequal (A) (B))
                     (check-disequal (A) (B))
+                    (check-known-disequal (A) (B))
                     "#,
                 )
                 .unwrap_or_else(|error| panic!("{encoding:?} failed to desugar: {error}"));
@@ -1441,9 +1510,35 @@ mod tests {
                 "{encoding:?} leaked the query placeholder:\n{rendered}"
             );
             assert!(
+                !rendered.contains(super::CHECK_KNOWN_PLACEHOLDER),
+                "{encoding:?} leaked the pair-only query placeholder:\n{rendered}"
+            );
+            assert!(
                 rendered.contains(super::CHECK_RULESET),
                 "{encoding:?} omitted the private propagation schedule"
             );
+        }
+    }
+
+    #[test]
+    fn pair_only_check_ignores_unrelated_global_contradictions() {
+        for encoding in ENCODINGS {
+            let mut egraph = new_experimental_egraph_with_disequality_encoding(encoding);
+            egraph
+                .parse_and_run_program(
+                    None,
+                    r#"
+                    (datatype Math (A) (B) (C) (D))
+                    (disequal (A) (B))
+                    (disequal (C) (D))
+                    (union (A) (B))
+                    (fail (check-disequalities))
+                    (check-known-disequal (C) (D))
+                    "#,
+                )
+                .unwrap_or_else(|error| {
+                    panic!("{encoding:?} coupled a pair query to another contradiction: {error}")
+                });
         }
     }
 

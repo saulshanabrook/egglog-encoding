@@ -278,6 +278,7 @@ def parseAndCheckSourceCode(
               egglogTermLanguage,
               evaluator.egraph.Language.PropelLanguage.egglogSchema(expr),
               cacheEgglogTemplate,
+              emitSourceDirectory.nonEmpty,
             )
           else egraphVariant
         evaluator.EGraphEqualities.emitSourceDirectory = emitSourceDirectory

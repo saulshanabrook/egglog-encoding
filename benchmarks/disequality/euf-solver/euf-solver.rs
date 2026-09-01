@@ -10,7 +10,6 @@ use std::time::{Duration, Instant};
 use clap::{Parser, ValueEnum};
 use egglog_disequality_backend::{
   BackendError, DisequalityGraph, GraphStats, LanguageSchemaBuilder, OperatorId, TermId,
-  desugar_source,
 };
 use egglog_experimental::DisequalityEncoding;
 use minisat;
@@ -1160,7 +1159,12 @@ enum EUFSolver {} impl EUFSolver {
     Option<HashMap<(String, usize), OperatorId>>,
   ), BackendError> {
     if config.term_language == EufTermLanguage::Vec {
-      return Ok((DisequalityGraph::new(encoding)?, None))
+      let graph = if config.emit_source_dir.is_some() {
+        DisequalityGraph::new_recording(encoding)?
+      } else {
+        DisequalityGraph::new(encoding)?
+      };
+      return Ok((graph, None))
     }
 
     let mut signatures = declarations.functions.clone();
@@ -1174,33 +1178,28 @@ enum EUFSolver {} impl EUFSolver {
       operator_ids.insert((name, arity), id);
     }
     let template = schema.compile(encoding)?;
-    Ok((template.new_graph(), Some(operator_ids)))
+    let graph = if config.emit_source_dir.is_some() {
+      template.new_recording_graph()
+    } else {
+      template.new_graph()
+    };
+    Ok((graph, Some(operator_ids)))
   }
 
   fn emit_egglog_model(
     config: &EUFSolverConfig,
-    encoding: DisequalityEncoding,
     egraph: &mut DisequalityGraph,
     solution_index: usize,
-    consistent: bool,
   ) -> Result<(), BackendError> {
     let Some(directory) = &config.emit_source_dir else {
       return Ok(())
     };
     std::fs::create_dir_all(directory)?;
 
-    let mut source = egraph.source()?;
-    source.push_str("\n; The command below records the expected model result.\n");
-    if consistent {
-      source.push_str("(check-disequalities)\n");
-    } else {
-      source.push_str("(fail (check-disequalities))\n");
-    }
     let stem = format!("{}-model-{solution_index:04}", config.backend.cli_name());
-    std::fs::write(directory.join(format!("{stem}.egg")), &source)?;
-    std::fs::write(
+    egraph.write_snapshot(
+      directory.join(format!("{stem}.egg")),
       directory.join(format!("{stem}.desugared.egg")),
-      desugar_source(encoding, &source)?,
     )?;
     Ok(())
   }
@@ -1336,13 +1335,6 @@ enum EUFSolver {} impl EUFSolver {
 
       let consistent = model.is_consistent()?;
       let graph_time = time_in_egraph.elapsed();
-      EUFSolver::emit_egglog_model(
-        config,
-        encoding,
-        &mut model,
-        solution_index,
-        consistent,
-      )?;
       if config.collect_stats {
         let GraphStats { nodes, classes, extension_rows, total_tuples } = model.stats()?;
         result.egraph_stats_per_solution.push(EGraphStat {
@@ -1354,6 +1346,11 @@ enum EUFSolver {} impl EUFSolver {
           time_in_egraph: graph_time,
         });
       }
+      EUFSolver::emit_egglog_model(
+        config,
+        &mut model,
+        solution_index,
+      )?;
 
       result.sat |= consistent;
       if result.sat && config.exit_on_first_sat {

@@ -2,7 +2,7 @@
 ;; benchmarks/disequality/inductive-prover/benchmarks/propel/gset_comm.propel,
 ;; imported from the Dis/Equality Graphs artifact. This is graph
 ;; 51 of the 52 graphs created by that run, rendered with
-;; direct constructors for inspection.
+;; direct constructors as an outcome-preserving chronological host replay.
 ; Direct host language generated from source declarations.
 (sort PropelTerm)
 (constructor Atom (String) PropelTerm)
@@ -26,23 +26,38 @@
 (constructor Top () PropelTerm)
 ; source operator "⊥"/0
 (constructor Bot () PropelTerm)
-(constructor HostWitness (i64) PropelTerm)
 
-(begin
-  (let term0 (Atom "x"))
-  (let term1 (Atom "n"))
-  (let term2 (Apply term0 term1))
-  (let term3 (Bot))
-  (union term2 term3)
-  (let term4 (Top))
-  (disequal term4 term3)
-  (disequal term2 term4)
-  (union term2 (HostWitness 0))
-  (union term3 (HostWitness 1))
-)
+; Outcome-preserving chronological host interaction replay.
+; host trace counts: mutation_batches=2, rebuilds=3, pair_comparisons=0, pair_comparisons_after_observed_contradiction=0, consistency_checks=2, stats_reads=2, clones=2.
 
-; Recheck one explicit host union as an equality proof witness.
-(check (= (HostWitness 0) (HostWitness 1)))
+; host graph clone
 
-; The command below records the expected graph consistency.
+; host mutation batch
+(let $term0 (Atom "x"))
+(let $term1 (Atom "n"))
+(let $term2 (Apply $term0 $term1))
+(let $term3 (Bot))
+(union $term2 $term3)
+
+; host rebuild (the preceding mutation batch was flushed)
+
+; host consistency check: consistent
 (check-disequalities)
+
+; host graph clone
+
+; host mutation batch
+(let $term4 (Top))
+(disequal $term4 $term3)
+(disequal $term2 $term4)
+
+; host rebuild (the preceding mutation batch was flushed)
+
+; host consistency check: consistent
+(check-disequalities)
+
+; host rebuild (the preceding mutation batch was flushed)
+
+; host stats read (numeric values are backend-specific and not replayable)
+
+; host stats read (numeric values are backend-specific and not replayable)

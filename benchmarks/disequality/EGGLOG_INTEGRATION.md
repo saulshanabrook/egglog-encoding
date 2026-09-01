@@ -1,6 +1,6 @@
 # Dis/Equality Graphs egglog integration
 
-Run dates: 2026-08-12 through 2026-08-19 (America/New_York)
+Run dates: 2026-08-12 through 2026-09-01
 
 This directory evaluates the four compiled disequality encodings in all three
 case studies from *Dis/Equality Graphs*:
@@ -15,10 +15,14 @@ case studies from *Dis/Equality Graphs*:
 These implementations do not modify union-find, e-class storage, or
 congruence closure. The `(disequal lhs rhs)`, `(check-disequal lhs rhs)`, and
 `(check-disequalities)` extensions compile to ordinary egglog declarations,
-actions, rules, and schedules. DE is therefore a container-backed encoding of
-the paper's adjacency-map interface, not the paper artifact's patched native
-edge data structure. Each insertion writes both orientations, key
-canonicalization merges sets, and container rebuild canonicalizes members.
+actions, rules, and schedules. The host adapter additionally uses
+`(check-known-disequal lhs rhs)`, a pair-only probe that deliberately does not
+run the global contradiction schedule. This lets Propel continue querying a
+specific pair after another part of a branch has contradicted. DE is therefore
+a container-backed encoding of the paper's adjacency-map interface, not the
+paper artifact's patched native edge data structure. Each insertion writes
+both orientations, key canonicalization merges sets, and container rebuild
+canonicalizes members.
 
 ## Provenance
 
@@ -66,8 +70,12 @@ small host interface:
 - report host node/class counts and extension support-table rows; and
 - emit executable source and fully desugared source.
 
-Operations accumulated by a host are submitted as one egglog `(begin ...)`
-batch. The adapter supports two term languages. `vec` retains the original
+Operations accumulated by a host are converted directly into `egglog::ast`
+actions and submitted as one `Command::Actions` through `EGraph::run_program`.
+The live path does not print and reparse generated egglog source. Equality,
+known-disequality, and consistency queries likewise use typed commands and
+match typed egglog errors rather than command output text. The adapter supports
+two term languages. `vec` retains the original
 single `BenchmarkNode(String, Vec)` constructor. `direct` generates one egglog
 constructor for each declared source `(name, arity)`. `Atom(String)` represents
 source variables plus generated identifiers and rendered type names that are
@@ -76,9 +84,8 @@ built-in sorts/functions/primitives, and invalid egglog identifiers are escaped
 with a source-name comment. Both modes use stable numeric host handles.
 
 A compiled graph template lets either representation clone an initialized
-schema instead of parsing declarations for each graph. Committed operation
-batches are stored behind immutable shared slices, so graph clones share their
-operation history. Template cloning is serialized per template because the
+schema instead of rebuilding declarations for each graph. Template cloning is
+serialized per template because the
 underlying cloned `EGraph` state is not safe to access concurrently. The
 resulting graphs remain logically isolated, while a shared per-template lock
 serializes their database access. Uncached templates are released immediately
@@ -88,12 +95,18 @@ separate: Propel can continue asking pairwise questions after a branch has
 become contradictory, matching its native graph interface. A regression covers
 an indeterminate pair query after an unrelated contradiction.
 
-For inspection, the backend also retains the typed host operations and emits a
-normalized standalone replay. The replay constructs every term and applies
-every union/disequality in one local `(begin ...)` block, without exposing the
-runtime handle-lookup function. This makes the committed captures concise and
-allows the exact EE, OEE, and NEE source programs to run under term and proof
-encodings. DE replays in ordinary mode only.
+Recording is opt-in and is enabled only for source export and focused tests.
+Recorded graphs append typed mutation, rebuild, clone, comparison, consistency,
+and stats events to persistent immutable trace chunks, so clones share their
+prefix rather than copying it. Normal benchmark runs do not retain this trace.
+The exporter renders an outcome-preserving chronological replay. Term
+definitions reuse readable `$termN` bindings, and later unions, disequalities,
+and query assertions refer to those bindings. Each comparison and consistency
+assertion records the result actually returned to the host; no witness or final
+check is fabricated during export. Rebuild, clone, and stats observations have
+no corresponding source command or output to parse, so the replay preserves
+them as comments. EE, OEE, and NEE replays run under term and proof encodings.
+DE replays in ordinary mode only.
 
 The Rust API is used directly by the EUF solver. A panic-contained C ABI in
 [`include/egglog_disequality.h`](egglog-backend/include/egglog_disequality.h)
@@ -255,11 +268,13 @@ single MiniSat model, and the final graph out of 52 produced by Propel's
 `gset_comm.propel` run. Each file names its source in opening comments.
 
 The nested `snapshots/` directory contains four actual desugared programs for
-every source, one for EE, OEE, NEE, and DE. The EUF and Propel captures attach
-two `HostWitness` terms to the first explicit host union and check that the
-witnesses are equal, so proof testing validates an equality derived from the
-captured union. The manifest records the direct term language, input hashes,
-graph/model selection, source hashes, output hashes, and replay treatments.
+every source, one for EE, OEE, NEE, and DE. The EUF and Propel source files are
+outcome-preserving chronological replays of their host interactions: mutation
+batches and observed query outcomes are executable, while rebuilds, clones,
+and stats reads are comments. Their opening counters make absent operations
+explicit. The manifest records the direct term
+language, input hashes, graph/model selection, chronological-recording format,
+source hashes, output hashes, and replay treatments.
 
 Generation replays all 7 source programs under 4 encodings and all 28
 desugared programs through the egglog CLI. EE, OEE, and NEE run under ordinary
@@ -268,10 +283,10 @@ extraction; DE runs under ordinary execution only. This is 224 source/snapshot
 treatments. The Rust regression independently desugars, byte-compares, and
 replays the same supported matrix.
 Top-level `begin` blocks are lowered to ordered actions for proof checking while
-execution retains the original local block scope. The emitted source uses the
-anonymous form and its equality witness forces proof testing and extraction to
-exercise the captured union for EE, OEE, and NEE. DE's set-valued custom merge
-is deliberately rejected by the term/proof pipeline.
+execution retains the original local block scope. The emitted host replays use
+ordinary top-level term bindings and assertions for observed query outcomes.
+DE's set-valued custom merge is deliberately rejected by the term/proof
+pipeline.
 
 ```sh
 uv run --locked python benchmarks/disequality/scripts/generate_snapshots.py \

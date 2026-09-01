@@ -8,7 +8,7 @@ import scala.scalanative.unsigned.*
 @extern
 @link("egglog_disequality_backend")
 private object EgglogApi:
-  def egglog_disequality_graph_new(encoding: CUnsignedInt): Ptr[Byte] = extern
+  def egglog_disequality_graph_new(encoding: CUnsignedInt, recordInteractions: CInt): Ptr[Byte] = extern
   def egglog_disequality_template_new(
       encoding: CUnsignedInt,
       termLanguage: CUnsignedInt,
@@ -21,7 +21,10 @@ private object EgglogApi:
       arity: CSize,
   ): CUnsignedInt = extern
   def egglog_disequality_template_finish(template: Ptr[Byte]): CInt = extern
-  def egglog_disequality_graph_new_from_template(template: Ptr[Byte]): Ptr[Byte] = extern
+  def egglog_disequality_graph_new_from_template(
+      template: Ptr[Byte],
+      recordInteractions: CInt,
+  ): Ptr[Byte] = extern
   def egglog_disequality_template_free(template: Ptr[Byte]): Unit = extern
   def egglog_disequality_template_last_error(template: Ptr[Byte]): CString = extern
   def egglog_disequality_graph_clone(graph: Ptr[Byte]): Ptr[Byte] = extern
@@ -57,9 +60,12 @@ private object EgglogApi:
   def egglog_disequality_last_error(graph: Ptr[Byte]): CString = extern
 
 object EgglogRuntimePlatform:
-  def create(encoding: EgglogEncoding): EgglogRuntime =
+  def create(encoding: EgglogEncoding, recordInteractions: Boolean): EgglogRuntime =
     NativeEgglogRuntime.checkedPointer(
-      EgglogApi.egglog_disequality_graph_new(encoding.abiValue.toUInt),
+      EgglogApi.egglog_disequality_graph_new(
+        encoding.abiValue.toUInt,
+        (if recordInteractions then 1 else 0),
+      ),
       EgglogTermLanguage.Vec,
       Map.empty,
       "create egglog graph",
@@ -137,9 +143,12 @@ private final class NativeEgglogRuntimeTemplate(
     termLanguage: EgglogTermLanguage,
     operatorIds: Map[(String, Int), Int],
 ) extends EgglogRuntimeTemplate:
-  override def newRuntime(): EgglogRuntime =
+  override def newRuntime(recordInteractions: Boolean): EgglogRuntime =
     if owner.isClosed then throw IllegalStateException("egglog graph template is closed")
-    val graph = EgglogApi.egglog_disequality_graph_new_from_template(owner.pointer)
+    val graph = EgglogApi.egglog_disequality_graph_new_from_template(
+      owner.pointer,
+      (if recordInteractions then 1 else 0),
+    )
     if graph.toLong == 0 then owner.fail("create egglog graph from template")
     NativeEgglogRuntime.checkedPointer(
       graph,
