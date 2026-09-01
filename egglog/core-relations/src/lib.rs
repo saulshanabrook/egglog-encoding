@@ -7,6 +7,7 @@ pub(crate) mod base_values;
 pub(crate) mod common;
 pub(crate) mod containers;
 pub(crate) mod dependency_graph;
+mod flat_table;
 pub(crate) mod free_join;
 pub(crate) mod hash_index;
 pub(crate) mod offsets;
@@ -27,6 +28,7 @@ pub use action::{ExecutionState, MergeVal, QueryEntry, WriteVal};
 pub use base_values::{BaseValue, BaseValueId, BaseValuePrinter, BaseValues, Boxed};
 pub use common::Value;
 pub use containers::{ContainerRebuildSummary, ContainerValue, ContainerValueId, ContainerValues};
+pub use flat_table::FlatTable;
 pub use free_join::{
     AtomId, CounterId, Database, ExternalFunction, ExternalFunctionId, TableId, Variable,
     make_external_func, plan::PlanStrategy,
@@ -42,8 +44,8 @@ pub use query::{
 pub use row_buffer::TaggedRowBuffer;
 pub use table::{MergeFn, SortedWritesTable};
 pub use table_spec::{
-    ColumnId, Constraint, MutationBuffer, Offset, Rebuilder, Row, Table, TableChange, TableSpec,
-    TableVersion, ValueRebuilder, WrappedTable,
+    ColumnId, Constraint, MutationBuffer, Offset, Rebuilder, Row, Table, TableChange, TableSchema,
+    TableSpec, TableVersion, ValueRebuilder, WrappedTable,
 };
 pub use uf::DisplacedTable;
 

@@ -1342,7 +1342,43 @@ impl EGraph {
                 None => MergeFn::AssertEq,
             },
         };
-        let backend_id = self.backend.add_table(egglog_bridge::FunctionConfig {
+        // Proof-node relations are write-once records identified by a freshly
+        // minted final id; extraction only scans them. Keep ordinary term-node
+        // relations keyed in this rollout to preserve their existing exact-row
+        // deduplication and public function compatibility.
+        let is_proof_node = decl.internal_term_node
+            && input
+                .last()
+                .is_some_and(|sort| sort.name() == self.proof_state.proof_names.proof_datatype);
+        if is_proof_node {
+            assert_eq!(
+                decl.subtype,
+                FunctionSubtype::Custom,
+                "proof-node relation `{}` must be a custom function",
+                decl.name
+            );
+            assert!(
+                decl.merge.is_none(),
+                "proof-node relation `{}` cannot declare merge behavior",
+                decl.name
+            );
+            assert!(
+                decl.term_constructor.is_none(),
+                "proof-node relation `{}` cannot be an FD view",
+                decl.name
+            );
+            assert!(
+                matches!(outputs.as_slice(), [output] if output.name() == "Unit"),
+                "proof-node relation `{}` must have exactly one Unit output",
+                decl.name
+            );
+            assert!(
+                input.last().is_some_and(|sort| sort.is_eq_sort()),
+                "proof-node relation `{}` must end in an eq-sort id",
+                decl.name
+            );
+        }
+        let config = egglog_bridge::FunctionConfig {
             schema: input
                 .iter()
                 .chain(outputs.iter())
@@ -1357,7 +1393,12 @@ impl EGraph {
             merge,
             name: decl.name.to_string(),
             can_subsume,
-        });
+        };
+        let backend_id = if is_proof_node {
+            self.backend.add_internal_flat_table(config)
+        } else {
+            self.backend.add_table(config)
+        };
         assert_eq!(backend_id, own_id);
 
         let function = Function {

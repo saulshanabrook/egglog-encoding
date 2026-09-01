@@ -263,6 +263,29 @@ corpus:
 | DialEgg | Generated NMM-40 scaling workload with `base.egg` materialized | An alternative matrix-chain association is checked |
 | SpEQ | Four artifact-preserved programs that still match the artifact's GEMV/histogram reference rules, recorded using egglog-python's native command log | Each input is checked equal to its extracted reference call (or enclosing expression) |
 
+### ParaBit proof-stress regression
+
+[`benchmarks/parabit-unsigned-rounding-v1-to-v2.egg`](benchmarks/parabit-unsigned-rounding-v1-to-v2.egg)
+comes from [*A Multi-width Parametric Bitvector Equivalence
+Solver*](https://link.springer.com/chapter/10.1007/978-3-032-32519-8_20) by
+Luigi Rinaldi, John Wickerson, and Samuel Coward (CAV 2026). It makes the
+`cadence/unsigned_rounding_v1_to_v2` example from the authors'
+[MIT-licensed ParaBit repository](https://github.com/luigirinaldi/parabit)
+standalone by inlining the complete translated rule set and replacing ParaBit's
+Rust analysis and e-graph callbacks with phased Egglog rules. Run it explicitly
+with:
+
+```bash
+./bench.py benchmarks/parabit-unsigned-rounding-v1-to-v2.egg \
+  --compare-treatment off --treatment proofs
+```
+
+This workload is intentionally not part of the default suite. In the initial
+one-round baseline, proof recording took 20.38 seconds and 11.4 GiB of peak RSS
+versus 0.77 seconds and 296.7 MiB without proofs. Keeping it opt-in avoids
+placing that memory requirement on benchmark-smoke CI and nightly hosts; allow
+substantial memory headroom when running it.
+
 The Math language, rewrites, and seeds come from
 `micro-benchmarks/src/math.rs` and `micro-benchmarks/src/eqlog/math_full.egg`
 in the [PLDI 2023 artifact](https://doi.org/10.5281/zenodo.7709794). The fixture

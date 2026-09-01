@@ -18,8 +18,8 @@ use crate::{
     pool::with_pool_set,
     row_buffer::RowBuffer,
     table_spec::{
-        ColumnId, Constraint, Generation, MutationBuffer, Offset, Rebuilder, Row, Table, TableSpec,
-        TableVersion, ValueRebuilder, WrappedTableRef,
+        ColumnId, Constraint, Generation, MutationBuffer, Offset, Rebuilder, Row, Table,
+        TableSchema, TableSpec, TableVersion, ValueRebuilder, WrappedTableRef,
     },
 };
 
@@ -264,8 +264,10 @@ impl Table for DisplacedTable {
         // The second column of this table is determined dynamically by the union-find.
         uncacheable_columns.insert(ColumnId::new(1), true);
         TableSpec {
-            n_keys: 1,
-            n_vals: 2,
+            schema: TableSchema::Fd {
+                n_keys: 1,
+                n_vals: 2,
+            },
             uncacheable_columns,
             allows_delete: false,
         }

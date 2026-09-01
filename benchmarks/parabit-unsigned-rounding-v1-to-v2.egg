@@ -1,0 +1,939 @@
+;; This example comes from “A Multi-width Parametric Bitvector Equivalence
+;; Solver” by Luigi Rinaldi, John Wickerson, and Samuel Coward (CAV 2026).
+;; Their ParaBit implementation is MIT licensed:
+;; https://github.com/luigirinaldi/parabit
+;;
+;; ParaBit uses custom Rust logic for constant folding (`ConstValue` /
+;; `PowValue`) and simple condition inference (see `NeedTrue` / `KnownTrue`),
+;; which are implemented here in native egglog. ParaBit also adds a check that
+;; looks for `Bw` nodes in a particular e-class before running the RHS of the
+;; rule. This is implemented as the non-monotone / phased `NotYetBw` relation
+;; and related demand, prune, and propagation rules.
+
+(datatype Expr
+  (Bw Expr Expr)
+  (Signed Expr Expr)
+  (Add Expr Expr)
+  (Sub Expr Expr)
+  (Neg Expr)
+  (Mul Expr Expr)
+  (Div Expr Expr)
+  (Pow Expr Expr)
+  (ShiftR Expr Expr)
+  (ShiftL Expr Expr)
+  (And Expr Expr)
+  (Or Expr Expr)
+  (Xor Expr Expr)
+  (Not Expr)
+  (Select Expr Expr Expr)
+  (Gt Expr Expr)
+  (Gte Expr Expr)
+  (Lt Expr Expr)
+  (Lte Expr Expr)
+  (Bool bool)
+  (Num i64)
+  (Var String))
+
+; Callers add theorem hypotheses directly to KnownTrue.  Inferred facts use
+; named rules, rather than ParaBit's proof-labelled union_trusted calls.
+(relation KnownTrue (Expr))
+(relation NeedTrue (Expr))
+; ParaBit's ModAnalysis rejects an e-class that acquires two distinct constant
+; values.  A no-merge function preserves that invariant during rebuild.
+(function ConstValue (Expr) i64 :no-merge)
+(relation NeedPow (i64 i64))
+(relation PowValue (i64 i64 i64))
+
+; Declarative equivalent of ModAnalysis. Checked i64 arithmetic makes overflow,
+; division by zero, and negative exponents fail to match rather than panic.
+(ruleset parabit-constant-fold)
+(rule ((= expr (Num value)))
+      ((set (ConstValue expr) value))
+      :ruleset parabit-constant-fold
+      :name "const-num")
+(rule ((= expr (Add a b))
+       (= (ConstValue a) a-value)
+       (= (ConstValue b) b-value)
+       (= value (+ a-value b-value)))
+      ((set (ConstValue expr) value))
+      :ruleset parabit-constant-fold
+      :name "const-add")
+(rule ((= expr (Sub a b))
+       (= (ConstValue a) a-value)
+       (= (ConstValue b) b-value)
+       (= value (- a-value b-value)))
+      ((set (ConstValue expr) value))
+      :ruleset parabit-constant-fold
+      :name "const-sub")
+(rule ((= expr (Mul a b))
+       (= (ConstValue a) a-value)
+       (= (ConstValue b) b-value)
+       (= value (* a-value b-value)))
+      ((set (ConstValue expr) value))
+      :ruleset parabit-constant-fold
+      :name "const-mul")
+(rule ((= expr (Div a b))
+       (= (ConstValue a) a-value)
+       (= (ConstValue b) b-value)
+       (= quotient (/ a-value b-value))
+       (= remainder (% a-value b-value))
+       (>= remainder 0))
+      ((set (ConstValue expr) quotient))
+      :ruleset parabit-constant-fold
+      :name "const-div-nonnegative-remainder")
+(rule ((= expr (Div a b))
+       (= (ConstValue a) a-value)
+       (= (ConstValue b) b-value)
+       (= quotient (/ a-value b-value))
+       (= remainder (% a-value b-value))
+       (< remainder 0)
+       (> b-value 0)
+       (= value (- quotient 1)))
+      ((set (ConstValue expr) value))
+      :ruleset parabit-constant-fold
+      :name "const-div-positive-divisor")
+(rule ((= expr (Div a b))
+       (= (ConstValue a) a-value)
+       (= (ConstValue b) b-value)
+       (= quotient (/ a-value b-value))
+       (= remainder (% a-value b-value))
+       (< remainder 0)
+       (< b-value 0)
+       (= value (+ quotient 1)))
+      ((set (ConstValue expr) value))
+      :ruleset parabit-constant-fold
+      :name "const-div-negative-divisor")
+
+(rule ((= expr (Pow a b))
+       (= (ConstValue a) base)
+       (= (ConstValue b) exponent)
+       (>= exponent 0))
+      ((NeedPow base exponent))
+      :ruleset parabit-constant-fold
+      :name "const-pow-request")
+(rule ((= expr (Bw width value-expr))
+       (= (ConstValue width) width-value)
+       (>= width-value 0))
+      ((NeedPow 2 width-value))
+      :ruleset parabit-constant-fold
+      :name "const-bw-modulus-request")
+(rule ((NeedPow base exponent)
+       (> exponent 0)
+       (= previous (- exponent 1)))
+      ((NeedPow base previous))
+      :ruleset parabit-constant-fold
+      :name "const-pow-request-predecessor")
+(rule ((NeedPow base 0))
+      ((PowValue base 0 1))
+      :ruleset parabit-constant-fold
+      :name "const-pow-zero")
+(rule ((NeedPow base exponent)
+       (> exponent 0)
+       (= previous (- exponent 1))
+       (PowValue base previous previous-value)
+       (= value (* base previous-value)))
+      ((PowValue base exponent value))
+      :ruleset parabit-constant-fold
+      :name "const-pow-successor")
+(rule ((= expr (Pow a b))
+       (= (ConstValue a) base)
+       (= (ConstValue b) exponent)
+       (PowValue base exponent value))
+      ((set (ConstValue expr) value))
+      :ruleset parabit-constant-fold
+      :name "const-pow")
+
+(rule ((= expr (Bw width value-expr))
+       (= (ConstValue width) width-value)
+       (= (ConstValue value-expr) input-value)
+       (PowValue 2 width-value modulus)
+       (= remainder (% input-value modulus))
+       (>= remainder 0))
+      ((set (ConstValue expr) remainder))
+      :ruleset parabit-constant-fold
+      :name "const-bw-nonnegative-remainder")
+(rule ((= expr (Bw width value-expr))
+       (= (ConstValue width) width-value)
+       (= (ConstValue value-expr) input-value)
+       (PowValue 2 width-value modulus)
+       (= remainder (% input-value modulus))
+       (< remainder 0)
+       (= value (+ remainder modulus)))
+      ((set (ConstValue expr) value))
+      :ruleset parabit-constant-fold
+      :name "const-bw-negative-remainder")
+(rule ((= expr (Neg a))
+       (= (ConstValue a) a-value)
+       (= value (- 0 a-value)))
+      ((set (ConstValue expr) value))
+      :ruleset parabit-constant-fold
+      :name "const-neg")
+(rule ((= expr (And a b))
+       (= (ConstValue a) a-value)
+       (= (ConstValue b) b-value)
+       (= value (& a-value b-value)))
+      ((set (ConstValue expr) value))
+      :ruleset parabit-constant-fold
+      :name "const-and")
+(rule ((= expr (Or a b))
+       (= (ConstValue a) a-value)
+       (= (ConstValue b) b-value)
+       (= value (| a-value b-value)))
+      ((set (ConstValue expr) value))
+      :ruleset parabit-constant-fold
+      :name "const-or")
+(rule ((= expr (Xor a b))
+       (= (ConstValue a) a-value)
+       (= (ConstValue b) b-value)
+       (= value (^ a-value b-value)))
+      ((set (ConstValue expr) value))
+      :ruleset parabit-constant-fold
+      :name "const-xor")
+(rule ((= expr (Not a))
+       (= (ConstValue a) a-value)
+       (= value (not-i64 a-value)))
+      ((set (ConstValue expr) value))
+      :ruleset parabit-constant-fold
+      :name "const-not")
+(rule ((= (ConstValue expr) value))
+      ((union expr (Num value)))
+      :ruleset parabit-constant-fold
+      :name "constant_prop")
+
+(ruleset parabit-condition-inference)
+(rule ((NeedTrue condition)
+       (= condition (Gt a b))
+       (= (ConstValue a) a-value)
+       (= (ConstValue b) b-value)
+       (> a-value b-value))
+      ((KnownTrue condition))
+      :ruleset parabit-condition-inference
+      :name "infer-gt-constants")
+(rule ((NeedTrue condition)
+       (= condition (Gte a b))
+       (= (ConstValue a) a-value)
+       (= (ConstValue b) b-value)
+       (>= a-value b-value))
+      ((KnownTrue condition))
+      :ruleset parabit-condition-inference
+      :name "infer-gte-constants")
+(rule ((NeedTrue condition)
+       (= condition (Lt a b))
+       (= (ConstValue a) a-value)
+       (= (ConstValue b) b-value)
+       (< a-value b-value))
+      ((KnownTrue condition))
+      :ruleset parabit-condition-inference
+      :name "infer-lt-constants")
+(rule ((NeedTrue condition)
+       (= condition (Lte a b))
+       (= (ConstValue a) a-value)
+       (= (ConstValue b) b-value)
+       (<= a-value b-value))
+      ((KnownTrue condition))
+      :ruleset parabit-condition-inference
+      :name "infer-lte-constants")
+; This mirrors ParaBit's broad syntactic simp case. Valid BWLang width powers
+; have base two; callers must preserve that input invariant.
+(rule ((NeedTrue condition)
+       (= condition (Gt (Pow base exponent) (Num 0))))
+      ((KnownTrue condition))
+      :ruleset parabit-condition-inference
+      :name "infer-pow-positive")
+
+; Rust's precondition callback constructs a substituted condition whenever its
+; rewrite LHS matches.  These demand rules make that hidden callback step an
+; explicit, named proof premise.  One rule covers each of the 23 conditional
+; declarations (26 requested conditions in total).
+(ruleset parabit-condition-demand)
+(rule ((= root (Div (Div a b) c)))
+      ((NeedTrue (Gt c (Num 0))))
+      :ruleset parabit-condition-demand
+      :name "div_pow_join-condition-demand")
+(rule ((= root (Div (Add a (Mul b c)) b)))
+      ((NeedTrue (Gt b (Num 0))))
+      :ruleset parabit-condition-demand
+      :name "div_mult_self-condition-demand")
+(rule ((= root (Div (Mul a b) a)))
+      ((NeedTrue (Gt a (Num 0))))
+      :ruleset parabit-condition-demand
+      :name "div_same-condition-demand")
+(rule ((= root (Bw p (Add (Bw q a) b))))
+      ((NeedTrue (Gte q p)))
+      :ruleset parabit-condition-demand
+      :name "add_remove_prec_left-condition-demand")
+(rule ((= root (Bw p (Add a (Bw q b)))))
+      ((NeedTrue (Gte q p)))
+      :ruleset parabit-condition-demand
+      :name "add_remove_prec_right-condition-demand")
+(rule ((= root (Bw p (Add (Bw q a) (Bw r b)))))
+      ((NeedTrue (Lt q p))
+       (NeedTrue (Lt r p)))
+      :ruleset parabit-condition-demand
+      :name "add_full_prec-condition-demand")
+(rule ((= root (Bw p (Sub (Bw q a) b))))
+      ((NeedTrue (Gte q p)))
+      :ruleset parabit-condition-demand
+      :name "diff_left_remove_prec-condition-demand")
+(rule ((= root (Bw p (Sub a (Bw q b)))))
+      ((NeedTrue (Gte q p)))
+      :ruleset parabit-condition-demand
+      :name "diff_right_remove_prec-condition-demand")
+(rule ((= root (Bw r (Mul (Bw q a) (Bw p b)))))
+      ((NeedTrue (Gte r (Add p q))))
+      :ruleset parabit-condition-demand
+      :name "mul_full_prec-condition-demand")
+(rule ((= root (Bw p (Mul (Bw q a) (Bw (Num 1) b)))))
+      ((NeedTrue (Gte p q)))
+      :ruleset parabit-condition-demand
+      :name "mul_by_bit-condition-demand")
+(rule ((= root (Bw q (Mul (Bw p a) b))))
+      ((NeedTrue (Gte p q)))
+      :ruleset parabit-condition-demand
+      :name "mul_remove_prec-condition-demand")
+(rule ((= root (Bw p (Div (Bw q a) b))))
+      ((NeedTrue (Gte p q)))
+      :ruleset parabit-condition-demand
+      :name "div_gte-condition-demand")
+(rule ((= root (Bw q (Bw p a))))
+      ((NeedTrue (Gt q p)))
+      :ruleset parabit-condition-demand
+      :name "reduce_mod-condition-demand")
+(rule ((= root (Bw q (Bw p a))))
+      ((NeedTrue (Gt p q)))
+      :ruleset parabit-condition-demand
+      :name "reduce_mod_bis-condition-demand")
+(rule ((= root (Bw s (Mul (Bw p a) (Pow (Num 2) (Bw q b))))))
+      ((NeedTrue (Gte s (Add p (Sub (Pow (Num 2) q) (Num 1))))))
+      :ruleset parabit-condition-demand
+      :name "mul_pow2-condition-demand")
+(rule ((= root (Bw p (And (Bw q a) b))))
+      ((NeedTrue (Gt q p)))
+      :ruleset parabit-condition-demand
+      :name "and_remove_inner-condition-demand")
+(rule ((= root (Bw p (Or (Bw q a) b))))
+      ((NeedTrue (Gt q p)))
+      :ruleset parabit-condition-demand
+      :name "or_remove_inner-condition-demand")
+(rule ((= root (Bw p (Xor (Bw q a) b))))
+      ((NeedTrue (Gt q p)))
+      :ruleset parabit-condition-demand
+      :name "xor_remove_inner-condition-demand")
+(rule ((= root (ShiftR a b)))
+      ((NeedTrue (Gt b (Num 0))))
+      :ruleset parabit-condition-demand
+      :name "shr_by_pos-condition-demand")
+(rule ((= root (Signed q (Bw q (Bw p a)))))
+      ((NeedTrue (Gt q p)))
+      :ruleset parabit-condition-demand
+      :name "signed_zext-condition-demand")
+(rule ((= root (Signed q (Bw q (Neg (Bw p a))))))
+      ((NeedTrue (Gt q p)))
+      :ruleset parabit-condition-demand
+      :name "signed_of_neg-condition-demand")
+(rule ((= root (Signed r (Bw r (Sub (Bw p a) (Bw q b))))))
+      ((NeedTrue (Gt r p))
+       (NeedTrue (Gt r q)))
+      :ruleset parabit-condition-demand
+      :name "signed_of_diff-condition-demand")
+(rule ((= root (Bw q (ShiftR (Bw p a) b))))
+      ((NeedTrue (Gte (Sub p q) b))
+       (NeedTrue (Gt b (Num 0))))
+      :ruleset parabit-condition-demand
+      :name "shift_mod-condition-demand")
+
+; The 80 non-propagation declarations below correspond one-for-one with
+; ParaBit's rewrite! calls.  Bidirectional declarations are expanded into a
+; forward rule and a source-compatible "-rev" rule name.
+(ruleset parabit)
+
+(rule ((= root (Add a b)))
+      ((union root (Add b a)))
+      :ruleset parabit
+      :name "isabelle-add.commute")
+(rule ((= root (Add (Add a b) c)))
+      ((union root (Add a (Add b c))))
+      :ruleset parabit
+      :name "isabelle-add.assoc")
+(rule ((= root (Mul a b)))
+      ((union root (Mul b a)))
+      :ruleset parabit
+      :name "isabelle-mult.commute")
+(rule ((= root (Mul (Mul a b) c)))
+      ((union root (Mul a (Mul b c))))
+      :ruleset parabit
+      :name "isabelle-mult.assoc")
+(rule ((= root (Sub a a)))
+      ((union root (Num 0)))
+      :ruleset parabit
+      :name "diff_self")
+(rule ((= root (Add (Num 0) a)))
+      ((union root a))
+      :ruleset parabit
+      :name "add_0")
+(rule ((= root (Mul (Num 0) a)))
+      ((union root (Num 0)))
+      :ruleset parabit
+      :name "mult_0")
+(rule ((= root (Mul (Num 1) a)))
+      ((union root a))
+      :ruleset parabit
+      :name "mult_1")
+(rule ((= root (Mul (Num 2) a)))
+      ((union root (Add a a)))
+      :ruleset parabit
+      :name "mult_2")
+(rule ((= root (Div a (Num 1))))
+      ((union root a))
+      :ruleset parabit
+      :name "div_1")
+(rule ((= root (Mul (Pow a (Bw p b)) (Pow a (Bw q c)))))
+      ((union root (Pow a (Add (Bw p b) (Bw q c)))))
+      :ruleset parabit
+      :name "bw_pow_sum")
+
+(rule ((= root (Div (Div a b) c))
+       (KnownTrue (Gt c (Num 0))))
+      ((union root (Div a (Mul b c))))
+      :ruleset parabit
+      :name "div_pow_join")
+(rule ((= root (Div (Add a (Mul b c)) b))
+       (KnownTrue (Gt b (Num 0))))
+      ((union root (Add (Div a b) c)))
+      :ruleset parabit
+      :name "div_mult_self")
+(rule ((= root (Div (Mul a b) a))
+       (KnownTrue (Gt a (Num 0))))
+      ((union root b))
+      :ruleset parabit
+      :name "div_same")
+
+(rule ((= root (Bw p (Num 1))))
+      ((union root (Num 1)))
+      :ruleset parabit
+      :name "bw_1")
+(rule ((= root (Bw p (Num 0))))
+      ((union root (Num 0)))
+      :ruleset parabit
+      :name "bw_0")
+(rule ((= root (Bw p (Add (Bw q a) b)))
+       (KnownTrue (Gte q p)))
+      ((union root (Bw p (Add a b))))
+      :ruleset parabit
+      :name "add_remove_prec_left")
+(rule ((= root (Bw p (Add a (Bw q b))))
+       (KnownTrue (Gte q p)))
+      ((union root (Bw p (Add a b))))
+      :ruleset parabit
+      :name "add_remove_prec_right")
+(rule ((= root (Bw p (Add (Bw p a) b))))
+      ((union root (Bw p (Add a b))))
+      :ruleset parabit
+      :name "add_eq_prec")
+(rule ((= root (Bw p (Add (Bw q a) (Bw r b))))
+       (KnownTrue (Lt q p))
+       (KnownTrue (Lt r p)))
+      ((union root (Add (Bw q a) (Bw r b))))
+      :ruleset parabit
+      :name "add_full_prec")
+(rule ((= root (Bw p (Sub (Bw q a) b)))
+       (KnownTrue (Gte q p)))
+      ((union root (Bw p (Sub a b))))
+      :ruleset parabit
+      :name "diff_left_remove_prec")
+(rule ((= root (Bw p (Sub (Bw p a) b))))
+      ((union root (Bw p (Sub a b))))
+      :ruleset parabit
+      :name "diff_left_eq_prec")
+(rule ((= root (Bw p (Sub a (Bw q b))))
+       (KnownTrue (Gte q p)))
+      ((union root (Bw p (Sub a b))))
+      :ruleset parabit
+      :name "diff_right_remove_prec")
+(rule ((= root (Bw p (Sub a (Bw p b)))))
+      ((union root (Bw p (Sub a b))))
+      :ruleset parabit
+      :name "diff_right_eq_prec")
+(rule ((= root (Bw r (Mul (Bw q a) (Bw p b))))
+       (KnownTrue (Gte r (Add p q))))
+      ((union root (Mul (Bw q a) (Bw p b))))
+      :ruleset parabit
+      :name "mul_full_prec")
+(rule ((= root (Bw p (Mul (Bw q a) (Bw (Num 1) b))))
+       (KnownTrue (Gte p q)))
+      ((union root (Mul (Bw q a) (Bw (Num 1) b))))
+      :ruleset parabit
+      :name "mul_by_bit")
+(rule ((= root (Bw p (Mul (Bw p a) (Bw (Num 1) b)))))
+      ((union root (Mul (Bw p a) (Bw (Num 1) b))))
+      :ruleset parabit
+      :name "mul_by_bit_eq")
+(rule ((= root (Bw q (Mul (Bw p a) b)))
+       (KnownTrue (Gte p q)))
+      ((union root (Bw q (Mul a b))))
+      :ruleset parabit
+      :name "mul_remove_prec")
+(rule ((= root (Bw q (Mul (Bw q a) b))))
+      ((union root (Bw q (Mul a b))))
+      :ruleset parabit
+      :name "mul_eq_prec")
+; Faithful to the Rust source, whose divisor is unrestricted here.  The
+; corresponding Isabelle lemma is narrower: it assumes a positive power-of-two
+; divisor.  Keep callers within ParaBit's validated BWLang input grammar.
+(rule ((= root (Bw p (Div (Bw q a) b)))
+       (KnownTrue (Gte p q)))
+      ((union root (Div (Bw q a) b)))
+      :ruleset parabit
+      :name "div_gte")
+(rule ((= root (Bw q (Bw p a)))
+       (KnownTrue (Gt q p)))
+      ((union root (Bw p a)))
+      :ruleset parabit
+      :name "reduce_mod")
+(rule ((= root (Bw q (Bw p a)))
+       (KnownTrue (Gt p q)))
+      ((union root (Bw q a)))
+      :ruleset parabit
+      :name "reduce_mod_bis")
+(rule ((= root (Bw p (Bw p a))))
+      ((union root (Bw p a)))
+      :ruleset parabit
+      :name "mod_eq")
+(rule ((= root (Bw s (Mul (Bw p a) (Pow (Num 2) (Bw q b)))))
+       (KnownTrue (Gte s (Add p (Sub (Pow (Num 2) q) (Num 1))))))
+      ((union root (Mul (Bw p a) (Pow (Num 2) (Bw q b)))))
+      :ruleset parabit
+      :name "mul_pow2")
+
+; ParaBit's not_already_bw is represented as a width-indexed, phased
+; candidate relation.  Seed and prune must complete before propagation runs.
+(relation NotYetBw (Expr Expr))
+(ruleset parabit-guard-seed)
+(ruleset parabit-guard-prune)
+(ruleset parabit-propagate)
+
+(rule ((= root (Bw p (Add a b))))
+      ((NotYetBw a p))
+      :ruleset parabit-guard-seed
+      :name "mod_prop_sum-candidate")
+(rule ((= root (Bw p (Mul a b))))
+      ((NotYetBw a p))
+      :ruleset parabit-guard-seed
+      :name "mod_prop_mul-candidate")
+(rule ((= root (Bw p (Sub a b))))
+      ((NotYetBw a p))
+      :ruleset parabit-guard-seed
+      :name "mod_prop_sub_left-candidate")
+; ParaBit v0.1.6 tests `a` here even though the rewrite wraps `b`. Preserve
+; that apparent source bug so the benchmark explores exactly the same matches.
+(rule ((= root (Bw p (Sub a b))))
+      ((NotYetBw a p))
+      :ruleset parabit-guard-seed
+      :name "mod_prop_sub_right-candidate")
+(rule ((= root (Bw p (Or a b))))
+      ((NotYetBw a p))
+      :ruleset parabit-guard-seed
+      :name "mod_prop_or-candidate")
+(rule ((= root (Bw p (And a b))))
+      ((NotYetBw a p))
+      :ruleset parabit-guard-seed
+      :name "mod_prop_and-candidate")
+(rule ((= root (Bw p (Xor a b))))
+      ((NotYetBw a p))
+      :ruleset parabit-guard-seed
+      :name "mod_prop_xor-candidate")
+(rule ((= root (Bw p (Not a))))
+      ((NotYetBw a p))
+      :ruleset parabit-guard-seed
+      :name "mod_prop_not-candidate")
+(rule ((= root (Bw p (Neg a))))
+      ((NotYetBw a p))
+      :ruleset parabit-guard-seed
+      :name "mod_prop_neg-candidate")
+
+(rule ((NotYetBw expr width)
+       (= expr (Bw width inner)))
+      ((delete (NotYetBw expr width)))
+      :ruleset parabit-guard-prune
+      :name "not_already_bw-prune")
+
+(rule ((= root (Bw p (Add a b)))
+       (NotYetBw a p))
+      ((union root (Bw p (Add (Bw p a) b))))
+      :ruleset parabit-propagate
+      :name "mod_prop_sum")
+(rule ((= root (Bw p (Mul a b)))
+       (NotYetBw a p))
+      ((union root (Bw p (Mul (Bw p a) b))))
+      :ruleset parabit-propagate
+      :name "mod_prop_mul")
+(rule ((= root (Bw p (Sub a b)))
+       (NotYetBw a p))
+      ((union root (Bw p (Sub (Bw p a) b))))
+      :ruleset parabit-propagate
+      :name "mod_prop_sub_left")
+(rule ((= root (Bw p (Sub a b)))
+       (NotYetBw a p))
+      ((union root (Bw p (Sub a (Bw p b)))))
+      :ruleset parabit-propagate
+      :name "mod_prop_sub_right")
+(rule ((= root (Bw p (Or a b)))
+       (NotYetBw a p))
+      ((union root (Bw p (Or (Bw p a) b))))
+      :ruleset parabit-propagate
+      :name "mod_prop_or")
+(rule ((= root (Bw p (And a b)))
+       (NotYetBw a p))
+      ((union root (Bw p (And (Bw p a) b))))
+      :ruleset parabit-propagate
+      :name "mod_prop_and")
+(rule ((= root (Bw p (Xor a b)))
+       (NotYetBw a p))
+      ((union root (Bw p (Xor (Bw p a) b))))
+      :ruleset parabit-propagate
+      :name "mod_prop_xor")
+(rule ((= root (Bw p (Not a)))
+       (NotYetBw a p))
+      ((union root (Bw p (Not (Bw p a)))))
+      :ruleset parabit-propagate
+      :name "mod_prop_not")
+(rule ((= root (Bw p (Neg a)))
+       (NotYetBw a p))
+      ((union root (Bw p (Neg (Bw p a)))))
+      :ruleset parabit-propagate
+      :name "mod_prop_neg")
+
+(rule ((= root (ShiftL (Bw p a) (Bw q b))))
+      ((union root (Mul (Bw p a) (Pow (Num 2) (Bw q b)))))
+      :ruleset parabit
+      :name "shl_def")
+(rule ((= root (ShiftR (Bw p a) (Bw q b))))
+      ((union root (Div (Bw p a) (Pow (Num 2) (Bw q b)))))
+      :ruleset parabit
+      :name "shr_def")
+(rule ((= root (Or a b)))
+      ((union root (Or b a)))
+      :ruleset parabit
+      :name "isabelle-or.commute")
+(rule ((= root (Or (Or a b) c)))
+      ((union root (Or a (Or b c))))
+      :ruleset parabit
+      :name "isabelle-or_assoc")
+(rule ((= root (And a b)))
+      ((union root (And b a)))
+      :ruleset parabit
+      :name "isabelle-and.commute")
+(rule ((= root (And (And a b) c)))
+      ((union root (And a (And b c))))
+      :ruleset parabit
+      :name "isabelle-and_assoc")
+(rule ((= root (And (Bw p a) (Bw p (Num -1)))))
+      ((union root (Bw p a)))
+      :ruleset parabit
+      :name "and_allones")
+(rule ((= root (And (Bw p a) (Num 1))))
+      ((union root (Bw (Num 1) a)))
+      :ruleset parabit
+      :name "and_one")
+(rule ((= root (Or (Bw p a) (Bw p (Num -1)))))
+      ((union root (Bw p (Num -1))))
+      :ruleset parabit
+      :name "or_allones")
+(rule ((= root (Bw p (Xor (Bw p a) (Bw p (Num -1))))))
+      ((union root (Bw p (Not (Bw p a)))))
+      :ruleset parabit
+      :name "xor_allones")
+(rule ((= root (And a a)))
+      ((union root a))
+      :ruleset parabit
+      :name "and_self")
+(rule ((= root (Or a a)))
+      ((union root a))
+      :ruleset parabit
+      :name "or_self")
+(rule ((= root (And (Bw p a) (Bw p (Not (Bw p a))))))
+      ((union root (Num 0)))
+      :ruleset parabit
+      :name "and_not_self")
+; Faithful to the Rust source.  Unlike the Isabelle lemma of the same name,
+; the source LHS has no outer Bw; see the translation audit for this anomaly.
+(rule ((= root (Or (Bw p a) (Not (Bw p a)))))
+      ((union root (Bw p (Num -1))))
+      :ruleset parabit
+      :name "or_not_self")
+(rule ((= root (And a (Num 0))))
+      ((union root (Num 0)))
+      :ruleset parabit
+      :name "and_zero")
+(rule ((= root (Or a (Num 0))))
+      ((union root a))
+      :ruleset parabit
+      :name "or_zero")
+(rule ((= root (Bw p (And (Bw p a) (Bw p b)))))
+      ((union root (And (Bw p a) (Bw p b))))
+      :ruleset parabit
+      :name "and_remove")
+(rule ((= root (Bw p (Or (Bw p a) (Bw p b)))))
+      ((union root (Or (Bw p a) (Bw p b))))
+      :ruleset parabit
+      :name "or_remove")
+(rule ((= root (Bw p (Xor (Bw p a) (Bw p b)))))
+      ((union root (Xor (Bw p a) (Bw p b))))
+      :ruleset parabit
+      :name "xor_remove")
+(rule ((= root (Bw p (And (Bw q a) b)))
+       (KnownTrue (Gt q p)))
+      ((union root (Bw p (And a b))))
+      :ruleset parabit
+      :name "and_remove_inner")
+(rule ((= root (Bw p (Or (Bw q a) b)))
+       (KnownTrue (Gt q p)))
+      ((union root (Bw p (Or a b))))
+      :ruleset parabit
+      :name "or_remove_inner")
+(rule ((= root (Bw p (Xor (Bw q a) b)))
+       (KnownTrue (Gt q p)))
+      ((union root (Bw p (Xor a b))))
+      :ruleset parabit
+      :name "xor_remove_inner")
+(rule ((= root (Bw p (Not (And (Bw p a) (Bw p b))))))
+      ((union root
+              (Bw p
+                  (Or (Bw p (Not (Bw p a)))
+                      (Bw p (Not (Bw p b)))))))
+      :ruleset parabit
+      :name "demorg_and")
+(rule ((= root (Bw p (Not (Or (Bw p a) (Bw p b))))))
+      ((union root
+              (Bw p
+                  (And (Bw p (Not (Bw p a)))
+                       (Bw p (Not (Bw p b)))))))
+      :ruleset parabit
+      :name "demorg_or")
+(rule ((= root (Bw p (Select cond a b))))
+      ((union root
+              (Bw p
+                  (Add (Mul a (Bw (Num 1) cond))
+                       (Mul b (Bw (Num 1) (Not (Bw (Num 1) cond))))))))
+      :ruleset parabit
+      :name "sel_def")
+(rule ((= root (Div (Bw (Num 1) a) (Num 2))))
+      ((union root (Num 0)))
+      :ruleset parabit
+      :name "div_by_more")
+(rule ((= root (Xor (Bw p a) (Num 1))))
+      ((union root
+              (Add (Mul (Div (Bw p a) (Num 2)) (Num 2))
+                   (Bw (Num 1) (Not (Bw (Num 1) a))))))
+      :ruleset parabit
+      :name "xor_one")
+(rule ((= root (ShiftR a b))
+       (KnownTrue (Gt b (Num 0))))
+      ((union root (Div a (Pow (Num 2) b))))
+      :ruleset parabit
+      :name "shr_by_pos")
+(rule ((= root (Signed p a)))
+      ((union root
+              (Sub (Bw p (Mul (Num 2) (Bw (Sub p (Num 1)) a)))
+                   (Bw p a))))
+      :ruleset parabit
+      :name "signed_def")
+(rule ((= root (Bw p (Signed p (Bw p a)))))
+      ((union root (Bw p a)))
+      :ruleset parabit
+      :name "redundant_signed")
+(rule ((= root (Signed q (Bw q (Bw p a))))
+       (KnownTrue (Gt q p)))
+      ((union root (Bw p a)))
+      :ruleset parabit
+      :name "signed_zext")
+(rule ((= root (Signed q (Bw q (Neg (Bw p a)))))
+       (KnownTrue (Gt q p)))
+      ((union root (Neg (Bw p a))))
+      :ruleset parabit
+      :name "signed_of_neg")
+(rule ((= root (Signed r (Bw r (Sub (Bw p a) (Bw q b)))))
+       (KnownTrue (Gt r p))
+       (KnownTrue (Gt r q)))
+      ((union root (Sub (Bw p a) (Bw q b))))
+      :ruleset parabit
+      :name "signed_of_diff")
+(rule ((= root (Bw q (ShiftR (Bw p a) b)))
+       (KnownTrue (Gte (Sub p q) b))
+       (KnownTrue (Gt b (Num 0))))
+      ((union root (Bw q (ShiftR a b))))
+      :ruleset parabit
+      :name "shift_mod")
+
+; Bidirectional ParaBit declarations, expanded with egg's "-rev" naming.
+(rule ((= root
+          (And (Or (Bw p a) (Bw p b))
+               (Or (Bw p (Not (Bw p a)))
+                   (Bw p (Not (Bw p b)))))))
+      ((union root (Xor (Bw p a) (Bw p b))))
+      :ruleset parabit
+      :name "xor_and_or")
+(rule ((= root (Xor (Bw p a) (Bw p b))))
+      ((union root
+              (And (Or (Bw p a) (Bw p b))
+                   (Or (Bw p (Not (Bw p a)))
+                       (Bw p (Not (Bw p b)))))))
+      :ruleset parabit
+      :name "xor_and_or-rev")
+(rule ((= root (Neg (Bw p a))))
+      ((union root (Add (Not (Bw p a)) (Num 1))))
+      :ruleset parabit
+      :name "neg_not")
+(rule ((= root (Add (Not (Bw p a)) (Num 1))))
+      ((union root (Neg (Bw p a))))
+      :ruleset parabit
+      :name "neg_not-rev")
+(rule ((= root (Add (Bw p a) (Bw q b))))
+      ((union root
+              (Add (Xor (Bw p a) (Bw q b))
+                   (Mul (Num 2) (And (Bw p a) (Bw q b))))))
+      :ruleset parabit
+      :name "add_as_xor_and")
+(rule ((= root
+          (Add (Xor (Bw p a) (Bw q b))
+               (Mul (Num 2) (And (Bw p a) (Bw q b))))))
+      ((union root (Add (Bw p a) (Bw q b))))
+      :ruleset parabit
+      :name "add_as_xor_and-rev")
+(rule ((= root (Xor (Bw p a) (Bw q b))))
+      ((union root
+              (Sub (Or (Bw p a) (Bw q b))
+                   (And (Bw p a) (Bw q b)))))
+      :ruleset parabit
+      :name "xor_as_or_and")
+(rule ((= root
+          (Sub (Or (Bw p a) (Bw q b))
+               (And (Bw p a) (Bw q b)))))
+      ((union root (Xor (Bw p a) (Bw q b))))
+      :ruleset parabit
+      :name "xor_as_or_and-rev")
+(rule ((= root (And a (Or b c))))
+      ((union root (Or (And a b) (And a c))))
+      :ruleset parabit
+      :name "and_distrib")
+(rule ((= root (Or (And a b) (And a c))))
+      ((union root (And a (Or b c))))
+      :ruleset parabit
+      :name "and_distrib-rev")
+(rule ((= root (Bw p (Not (Bw p (Not (Bw p a)))))))
+      ((union root (Bw p a)))
+      :ruleset parabit
+      :name "not_bw_not")
+(rule ((= root (Bw p a)))
+      ((union root (Bw p (Not (Bw p (Not (Bw p a)))))))
+      :ruleset parabit
+      :name "not_bw_not-rev")
+(rule ((= root (Bw p (Not (Bw p (Num 0))))))
+      ((union root (Bw p (Num -1))))
+      :ruleset parabit
+      :name "not_0_allones")
+(rule ((= root (Bw p (Num -1))))
+      ((union root (Bw p (Not (Bw p (Num 0))))))
+      :ruleset parabit
+      :name "not_0_allones-rev")
+(rule ((= root (Mul a (Add b c))))
+      ((union root (Add (Mul a b) (Mul a c))))
+      :ruleset parabit
+      :name "int_distrib")
+(rule ((= root (Add (Mul a b) (Mul a c))))
+      ((union root (Mul a (Add b c))))
+      :ruleset parabit
+      :name "int_distrib-rev")
+(rule ((= root (Neg b)))
+      ((union root (Mul (Num -1) b)))
+      :ruleset parabit
+      :name "isabelle-Num.ring_1_class.mult_minus1")
+(rule ((= root (Mul (Num -1) b)))
+      ((union root (Neg b)))
+      :ruleset parabit
+      :name "isabelle-Num.ring_1_class.mult_minus1-rev")
+(rule ((= root (Sub a b)))
+      ((union root (Add a (Mul (Num -1) b))))
+      :ruleset parabit
+      :name "sub_to_neg")
+(rule ((= root (Add a (Mul (Num -1) b))))
+      ((union root (Sub a b)))
+      :ruleset parabit
+      :name "sub_to_neg-rev")
+(rule ((= root (Gt a b)))
+      ((union root (Lt b a)))
+      :ruleset parabit
+      :name "gt-lt")
+(rule ((= root (Lt b a)))
+      ((union root (Gt a b)))
+      :ruleset parabit
+      :name "gt-lt-rev")
+(rule ((= root (Gte a b)))
+      ((union root (Lte b a)))
+      :ruleset parabit
+      :name "gte-lte")
+(rule ((= root (Lte b a)))
+      ((union root (Gte a b)))
+      :ruleset parabit
+      :name "gte-lte-rev")
+
+;; Workload query and phased driver.
+
+(let $parabit-lhs (Bw (Var "w2") (Add (Bw (Var "w2") (ShiftR (Bw (Add (Var "w2") (Num 1)) (Var "a")) (Bw (Num 1) (Num 1)))) (Bw (Var "w2") (Bw (Num 1) (Bw (Add (Var "w2") (Num 1)) (Var "a")))))))
+(let $parabit-rhs (Bw (Var "w2") (ShiftR (Bw (Add (Var "w2") (Num 1)) (Add (Bw (Add (Var "w2") (Num 1)) (Var "a")) (Bw (Num 1) (Num 1)))) (Bw (Num 1) (Num 1)))))
+(KnownTrue (Gt (Var "w2") (Num 1)))
+(KnownTrue (Gte (Sub (Add (Var "w2") (Num 1)) (Var "w2")) (Num 1)))
+
+(ruleset parabit-driver-stop)
+(ruleset parabit-driver-tick)
+(relation ParabitDriverEpoch (i64))
+(relation ParabitDriverStop ())
+(ParabitDriverEpoch 0)
+
+(rule ((= $parabit-lhs $parabit-rhs))
+      ((ParabitDriverStop))
+      :ruleset parabit-driver-stop
+      :name "parabit-driver-goal-reached")
+(rule ((ParabitDriverEpoch 2000))
+      ((ParabitDriverStop))
+      :ruleset parabit-driver-stop
+      :name "parabit-driver-epoch-limit-reached")
+(rule ((ParabitDriverEpoch epoch)
+       (< epoch 2000)
+       (= next (+ epoch 1)))
+      ((ParabitDriverEpoch next))
+      :ruleset parabit-driver-tick
+      :name "parabit-driver-next-epoch")
+
+; One epoch reifies ParaBit's callback work before its ordinary rewrites, then
+; performs the seed/prune/propagate replacement for not_already_bw. The outer
+; saturation is safe because ParabitDriverStop makes every phase quiescent.
+(run-schedule
+  (saturate
+    (seq
+      (run parabit-driver-stop)
+      (saturate
+        (run parabit-condition-demand :until (ParabitDriverStop))
+        (run parabit-driver-stop))
+      (saturate
+        (run parabit-constant-fold :until (ParabitDriverStop))
+        (run parabit-driver-stop))
+      (saturate
+        (run parabit-condition-inference :until (ParabitDriverStop))
+        (run parabit-driver-stop))
+      (run parabit :until (ParabitDriverStop))
+      (run parabit-driver-stop)
+      (saturate
+        (run parabit-guard-seed :until (ParabitDriverStop))
+        (run parabit-driver-stop))
+      (saturate
+        (run parabit-guard-prune :until (ParabitDriverStop))
+        (run parabit-driver-stop))
+      (run parabit-propagate :until (ParabitDriverStop))
+      (run parabit-driver-stop)
+      (run parabit-driver-tick :until (ParabitDriverStop))
+      (run parabit-driver-stop))))
+
+; Under --proof-testing this becomes the terminal proof query. Reaching only
+; the epoch cap deliberately fails here instead of reporting an equivalence.
+(check (= $parabit-lhs $parabit-rhs))

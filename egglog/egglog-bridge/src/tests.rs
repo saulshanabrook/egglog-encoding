@@ -23,6 +23,79 @@ use crate::{
     TableAction, add_expressions, define_rule,
 };
 
+fn valid_flat_config(name: &str) -> FunctionConfig {
+    FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::AssertEq,
+        name: name.into(),
+        can_subsume: false,
+    }
+}
+
+#[test]
+fn flat_storage_accepts_append_and_scan_semantics() {
+    let mut egraph = EGraph::default();
+    let table = egraph.add_internal_flat_table(valid_flat_config("flat"));
+    assert!(egraph.table_is_flat(table));
+    assert!(egraph.funcs[table].incremental_rebuild_rules.is_empty());
+    assert_ne!(
+        egraph.funcs[table].nonincremental_rebuild_rule,
+        crate::RuleId::new(!0)
+    );
+}
+
+#[test]
+#[should_panic(expected = "must have exactly one inert value column")]
+fn flat_storage_rejects_multiple_value_columns() {
+    let mut config = valid_flat_config("multiple-values");
+    config.n_vals = 2;
+    EGraph::default().add_internal_flat_table(config);
+}
+
+#[test]
+#[should_panic(expected = "cannot declare identity value columns")]
+fn flat_storage_rejects_identity_value_columns() {
+    let mut config = valid_flat_config("identity-values");
+    config.n_identity_vals = Some(1);
+    EGraph::default().add_internal_flat_table(config);
+}
+
+#[test]
+#[should_panic(expected = "cannot provide a lookup default")]
+fn flat_storage_rejects_lookup_defaults() {
+    let mut config = valid_flat_config("lookup-default");
+    config.default = DefaultVal::FreshId;
+    EGraph::default().add_internal_flat_table(config);
+}
+
+#[test]
+#[should_panic(expected = "cannot provide merge behavior")]
+fn flat_storage_rejects_merge_behavior() {
+    let mut config = valid_flat_config("merge");
+    config.merge = MergeFn::UnionId;
+    EGraph::default().add_internal_flat_table(config);
+}
+
+#[test]
+#[should_panic(expected = "cannot support subsumption")]
+fn flat_storage_rejects_subsumption() {
+    let mut config = valid_flat_config("subsumption");
+    config.can_subsume = true;
+    EGraph::default().add_internal_flat_table(config);
+}
+
+#[test]
+#[should_panic(expected = "unknown storage implementation")]
+fn flat_storage_introspection_rejects_unknown_table_types() {
+    let mut egraph = EGraph::default();
+    let table = egraph.add_table(valid_flat_config("displaced"));
+    egraph.funcs[table].table = egraph.uf_table;
+    egraph.table_is_flat(table);
+}
+
 /// Run a simple associativity/commutativity test.
 ///
 /// The `can_subsume` argument is only used to enable subsumption on the underlying tables created

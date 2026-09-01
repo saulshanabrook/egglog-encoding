@@ -20,7 +20,7 @@ use crate::{
     },
     offsets::Subset,
     pool::{Pooled, with_pool_set},
-    table_spec::{ColumnId, Constraint},
+    table_spec::{ColumnId, Constraint, TableSchema},
 };
 
 define_id!(pub RuleId, u32, "An identifier for a rule in a rule set");
@@ -452,20 +452,22 @@ impl<'outer, 'a> QueryBuilder<'outer, 'a> {
                 .push(subatom);
         }
 
-        // Add functional dependencies for this atom.
-        let get_var = |qe: &QueryEntry| match qe {
-            QueryEntry::Var(v) => Some(*v),
-            QueryEntry::Const(_) => None,
-        };
-        let antecedent = vars[..info.spec().n_keys]
-            .iter()
-            .filter_map(get_var)
-            .collect::<Vec<_>>();
-        let consequent = vars[info.spec().n_keys..]
-            .iter()
-            .filter_map(get_var)
-            .collect::<Vec<_>>();
-        self.query.fun_deps.add_dependency(antecedent, consequent);
+        if let TableSchema::Fd { n_keys, .. } = info.spec().schema {
+            // Add the functional dependency enforced by this keyed table.
+            let get_var = |qe: &QueryEntry| match qe {
+                QueryEntry::Var(v) => Some(*v),
+                QueryEntry::Const(_) => None,
+            };
+            let antecedent = vars[..n_keys]
+                .iter()
+                .filter_map(get_var)
+                .collect::<Vec<_>>();
+            let consequent = vars[n_keys..]
+                .iter()
+                .filter_map(get_var)
+                .collect::<Vec<_>>();
+            self.query.fun_deps.add_dependency(antecedent, consequent);
+        }
 
         Ok(self.query.atoms.push(atom))
     }
@@ -625,6 +627,9 @@ pub(crate) fn restrict_to_occurrences(
 
 #[derive(Debug, Error)]
 pub enum QueryError {
+    #[error("table {table:?} has a flat schema and does not support keyed operations")]
+    UnsupportedKeyedOperation { table: TableId },
+
     #[error("table {table:?} has {expected:?} keys but got {got:?}")]
     KeyArityMismatch {
         table: TableId,
@@ -818,8 +823,8 @@ impl RuleBuilder<'_, '_> {
         dst_col: ColumnId,
     ) -> Result<Variable, QueryError> {
         let table_info = self.table_info(table);
-        self.validate_keys(table, table_info, args)?;
-        self.validate_vals(table, table_info, default_vals.iter())?;
+        let n_keys = self.validate_keys(table, table_info, args)?;
+        self.validate_vals(table, table_info, n_keys, default_vals.iter())?;
         let res = self.qb.new_var();
         self.qb.instrs.push(Instr::LookupOrInsertDefault {
             table,
@@ -1062,15 +1067,18 @@ impl RuleBuilder<'_, '_> {
         table: TableId,
         info: &TableInfo,
         keys: &[QueryEntry],
-    ) -> Result<(), QueryError> {
-        if keys.len() != info.spec.n_keys {
+    ) -> Result<usize, QueryError> {
+        let TableSchema::Fd { n_keys, .. } = info.spec.schema else {
+            return Err(QueryError::UnsupportedKeyedOperation { table });
+        };
+        if keys.len() != n_keys {
             Err(QueryError::KeyArityMismatch {
                 table,
-                expected: info.spec.n_keys,
+                expected: n_keys,
                 got: keys.len(),
             })
         } else {
-            Ok(())
+            Ok(n_keys)
         }
     }
 
@@ -1078,10 +1086,11 @@ impl RuleBuilder<'_, '_> {
         &self,
         table: TableId,
         info: &TableInfo,
+        n_keys: usize,
         vals: impl Iterator<Item = &'b WriteVal>,
     ) -> Result<(), QueryError> {
         for (i, _) in vals.enumerate() {
-            let col = i + info.spec.n_keys;
+            let col = i + n_keys;
             if col >= info.spec.arity() {
                 return Err(QueryError::TableArityMismatch {
                     table,

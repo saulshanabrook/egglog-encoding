@@ -32,8 +32,8 @@ use crate::{
     pool::with_pool_set,
     row_buffer::{ParallelRowBufWriter, RowBuffer},
     table_spec::{
-        ColumnId, Constraint, Generation, MutationBuffer, Offset, Row, Table, TableSpec,
-        TableVersion,
+        ColumnId, Constraint, Generation, MutationBuffer, Offset, Row, Table, TableSchema,
+        TableSpec, TableVersion,
     },
 };
 
@@ -306,8 +306,10 @@ impl Table for SortedWritesTable {
 
     fn spec(&self) -> TableSpec {
         TableSpec {
-            n_keys: self.n_keys,
-            n_vals: self.n_columns - self.n_keys,
+            schema: TableSchema::Fd {
+                n_keys: self.n_keys,
+                n_vals: self.n_columns - self.n_keys,
+            },
             uncacheable_columns: Default::default(),
             allows_delete: true,
         }

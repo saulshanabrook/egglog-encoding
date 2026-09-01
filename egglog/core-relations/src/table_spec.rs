@@ -1,8 +1,8 @@
 //! High-level types for specifying the behavior and layout of tables.
 //!
-//! Tables are a mapping from some set of keys to another set of values. Tables
-//! can also be "sorted by" a columna dn "partitioned by" another. This can help
-//! speed up queries.
+//! Tables either map a set of keys to values or store flat rows without a
+//! primary key. Tables can also be "sorted by" a column and "partitioned by"
+//! another. This can help speed up queries.
 
 use std::{
     any::Any,
@@ -50,15 +50,38 @@ pub struct TableVersion {
     // NB: we may want to make `Offset` and `RowId` the same.
 }
 
+/// The logical schema and supported access pattern of a table.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TableSchema {
+    /// A keyed table that enforces the functional dependency from keys to
+    /// values and supports primary-key lookups.
+    Fd {
+        /// The number of key columns.
+        n_keys: usize,
+        /// The number of non-key (value) columns.
+        n_vals: usize,
+    },
+    /// A flat row store with no primary key or keyed operations.
+    Flat {
+        /// The total number of columns.
+        n_cols: usize,
+    },
+}
+
+impl TableSchema {
+    /// The total number of columns stored by the table.
+    pub fn arity(self) -> usize {
+        match self {
+            TableSchema::Fd { n_keys, n_vals } => n_keys + n_vals,
+            TableSchema::Flat { n_cols } => n_cols,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct TableSpec {
-    /// The number of key columns for the table.
-    pub n_keys: usize,
-
-    /// The number of non-key (i.e. value) columns in the table.
-    ///
-    /// The total "arity" of the table is `n_keys + n_vals`.
-    pub n_vals: usize,
+    /// The table's logical schema and access pattern.
+    pub schema: TableSchema,
 
     /// Columns that cannot be cached across generations.
     ///
@@ -76,7 +99,7 @@ pub struct TableSpec {
 impl TableSpec {
     /// The total number of columns stored by the table.
     pub fn arity(&self) -> usize {
-        self.n_keys + self.n_vals
+        self.schema.arity()
     }
 }
 
@@ -166,8 +189,9 @@ pub struct Row {
 
 /// An interface for a table.
 pub trait Table: Any + Send + Sync {
-    /// A variant of clone that returns a boxed trait object; this trait object
-    /// must contain all of the data associated with the current table.
+    /// A variant of clone that returns a boxed trait object containing the
+    /// table's committed data. Callers must merge pending mutation buffers
+    /// before cloning if those mutations should be included.
     fn dyn_clone(&self) -> Box<dyn Table>;
 
     /// If this table can perform a table-level rebuild, construct a [`Rebuilder`] for it.
@@ -377,8 +401,8 @@ pub trait Table: Any + Send + Sync {
 
     /// Look up a single row by the given key values, if it is in the table.
     ///
-    /// The number of values specified by `keys` should match the number of
-    /// primary keys for the table.
+    /// The table must have a [`TableSchema::Fd`] schema, and the number of
+    /// values specified by `keys` should match its number of primary keys.
     fn get_row(&self, key: &[Value]) -> Option<Row>;
 
     /// Look up the given column of single row by the given key values, if it is
