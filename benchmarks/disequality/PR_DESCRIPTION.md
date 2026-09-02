@@ -1,4 +1,31 @@
-## Summary
+## Feature
+
+This PR adds an encoding-neutral disequality surface to `egglog-experimental`:
+
+```lisp
+(disequal lhs rhs)              ; action, including rule heads and batches
+(check-disequal lhs rhs)        ; propagate, then require this pair to be unequal
+(check-known-disequal lhs rhs)  ; query this pair without propagation
+(check-disequalities)           ; propagate and reject any collapsed disequality
+```
+
+`--disequality-encoding` selects how those commands compile for each operand
+sort. No encoding adds fields or operations to union-find, e-class storage, or
+congruence closure.
+
+| Flag | Current compiled representation | Contradiction criterion | Supported execution modes |
+| --- | --- | --- | --- |
+| `ee` | Paper-style equality term equated with false, with the five EE rules | true and false become equal | ordinary, term, proofs, proof testing, proof extraction |
+| `oee` | Equality term equated with false, with the reduced OEE rules | a reflexive equality term becomes false | ordinary, term, proofs, proof testing, proof extraction |
+| `nee` | Private binary `ne(lhs, rhs)` relation | canonicalization produces `ne(x, x)` | ordinary, term, proofs, proof testing, proof extraction |
+| `de` | Symmetric per-e-class `Set` of disequal neighbors, merged with `set-union` | a canonical class occurs in its own neighbor set | ordinary only |
+
+NEE intentionally stores one oriented relation fact and needs no propagation
+or symmetry rule; its private schedule only runs the reflexive contradiction
+test. DE stores both orientations because its set-valued adjacency map is also
+used to answer pair queries directly.
+
+## What this PR includes
 
 - compile `(disequal lhs rhs)` and consistency checks into four selectable
   egglog encodings: EE, OEE, NEE, and set-backed DE
@@ -12,6 +39,12 @@
   OEE, and NEE under term, proofs, proof-testing, and proof-extraction modes
 - generate source-shaped EUF and Propel constructors for those captures, while
   retaining the generic Vec representation as a measured runtime control
+- route host integrations through typed `egglog::ast` command batches and
+  parse structured command outcomes, with chronological recording available
+  only when producing reviewable captures
+- add the narrowly required core fixes for source-ordered `fail` execution,
+  transactional proof-mode command handling, and container unions consumed by
+  custom function merges
 - document parity limits, provenance-qualified performance, diagnosed
   bottlenecks, and prioritized fixes in
   `benchmarks/disequality/PERFORMANCE_ANALYSIS.md`
@@ -19,13 +52,14 @@
 ## Motivation
 
 *Dis/Equality Graphs* presents three term encodings and a native e-graph
-extension. This PR tests the paper's design space as an instance of extension
-by compilation: each representation is generated from the same typed egglog
+extension. This PR tests that design space as an instance of extension by
+compilation: every representation is generated from the same typed egglog
 commands and private schedule, without adding disequality state to the
-union-find. NEE uses a binary egglog relation for the paper's private `ne`
-marker. This preserves its self-loop contradiction criterion while avoiding
-the paper encoding's otherwise-unused result e-class per `ne` e-node, so its
-storage accounting is an egglog-specific relational variant of NEE.
+union-find. EE and OEE retain the paper's equality-term shape. NEE uses a
+binary egglog relation for the paper's private `ne` marker. This preserves its
+self-loop contradiction criterion while avoiding the paper encoding's
+otherwise-unused result e-class per `ne` e-node, so its storage accounting is
+an egglog-specific relational variant of NEE.
 
 The `de` backend expresses the paper artifact's adjacency-map shape with
 ordinary egglog containers rather than patched e-class storage. A private
@@ -164,6 +198,34 @@ executable tests for manual inspection, not pseudocode.
 
 ## Performance
 
+### Current timing status
+
+The latest measurement isolates the final representation change in this PR:
+the current relation-backed NEE against its constructor-backed parent, with
+both endpoints using Propel's default Vec term language.
+
+| Workload | Constructor-backed NEE | Current relation-backed NEE | Relation / constructor |
+| --- | ---: | ---: | ---: |
+| Propel `gset_comm` | 176.8 ms | 177.2 ms | 1.002x |
+| Propel `tip_bin_plus_assoc` | 4.883 s | 4.940 s | 1.012x |
+
+Reversed endpoint orders give the same direction and show parity rather than a
+speedup: mean ratios span 1.003-1.008x for the small workload and 1.006-1.019x
+for the medium workload. The four raw Hyperfine reports, commands, hashes, and
+environment are committed under
+`benchmarks/disequality/reports/relational-nee-follow-up/`.
+
+The most recent all-encoding comparison predates the relation-backed NEE
+change. In that tranche, set-backed DE was 1.08x the constructor-backed NEE
+wall time on small Propel, 1.44x on medium Propel, and 1.10x on parameter
+analysis. The current relation A/B is small enough that it does not change
+those qualitative conclusions, but this PR does not claim a final-head
+all-encoding rerun. It also does not claim a final-head run over the full EUF
+corpus. Every older table below is labeled with the representation and revision
+it measured.
+
+### Measurement provenance
+
 Measurements were taken on an Apple M4. The historical relation-backed
 parameter analysis was measured at `88c40cf`; Propel and EUF were measured at
 `e7b7969` after merging base `ffb8ae4`; the later proof-regression analysis used
@@ -179,15 +241,10 @@ is described below. The typed-host-AST follow-up uses clean candidate
 `origin/main`, again in reversed endpoint orders:
 16 combined samples per small Propel endpoint, eight per medium endpoint, and
 60 per tiny EUF endpoint. These are descriptive measurements, not
-publication-quality confidence intervals.
-
-The 2026-09-02 relational-NEE follow-up compares the current relation against
-the clean constructor-backed parent `e11f3f57`. Pooled relation/constructor
-medians are 1.002x on `gset_comm` and 1.012x on `tip_bin_plus_assoc`; reversed
-endpoint orders likewise show parity rather than a speedup. Raw samples,
-commands, and hashes are retained under
-`benchmarks/disequality/reports/relational-nee-follow-up/`. Older NEE timings
-below measure the constructor-backed representation.
+publication-quality confidence intervals. The 2026-09-02 relational-NEE
+follow-up compares the current relation against clean constructor-backed parent
+`e11f3f57`; every earlier NEE result below measures that constructor-backed
+representation.
 
 ### Typed host AST and recording follow-up
 
@@ -198,9 +255,9 @@ mutation batch and retained operation history in every graph.
 | Workload | Encoding | source-reparse parent | typed-AST candidate | Directional result |
 | --- | --- | ---: | ---: | ---: |
 | Propel `gset_comm` | DE | 207.7 ms | 200.8 ms | inconclusive: +0.8% forward, -4.2% reverse |
-| Propel `gset_comm` | NEE | 195.7 ms | 192.3 ms | inconclusive: +5.4% forward, -2.3% reverse |
+| Propel `gset_comm` | NEE (constructor-backed) | 195.7 ms | 192.3 ms | inconclusive: +5.4% forward, -2.3% reverse |
 | Propel `tip_bin_plus_assoc` | DE | 7.400 s | 7.163 s | lower in both orders: -0.3% to -3.9% |
-| Propel `tip_bin_plus_assoc` | NEE | 5.657 s | 5.430 s | lower in both orders: -0.4% to -8.2% |
+| Propel `tip_bin_plus_assoc` | NEE (constructor-backed) | 5.657 s | 5.430 s | lower in both orders: -0.4% to -8.2% |
 
 The small workload is order-sensitive and inconclusive. The medium workload is
 directionally lower in both orders, but this remains a descriptive measurement,
@@ -222,17 +279,18 @@ ranges, exact commands, and binary/input hashes are retained under
 The set-backed DE candidate was measured on 2026-08-19 in two opposite endpoint
 orders, retaining every sample and full ranges. Parameter analysis used three
 runs per order, Propel `gset_comm` used five, and
-`tip_bin_plus_assoc` used three. NEE has the lowest combined egglog median on
-all three workloads:
+`tip_bin_plus_assoc` used three. Constructor-backed NEE had the lowest combined
+egglog median on all three workloads in this pre-relational tranche:
 
-| Workload | EE | OEE | NEE | set-backed DE | native DE |
+| Workload | EE | OEE | NEE (constructor-backed) | set-backed DE | native DE |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Parameter analysis | 5.701 s | 5.679 s | 5.524 s | 6.062 s | not rerun |
 | Propel `gset_comm` | 277.1 ms | 241.6 ms | 194.9 ms | 210.5 ms | 52.7 ms |
 | Propel `tip_bin_plus_assoc` | 8.137 s | 6.603 s | 5.366 s | 7.732 s | 640.0 ms |
 
-Set-backed DE is 1.08x NEE on small Propel, 1.44x on medium Propel, and 1.10x
-on parameter analysis. A separate single parameter timing-summary run put its
+Set-backed DE is 1.08x constructor-backed NEE on small Propel, 1.44x on medium
+Propel, and 1.10x on parameter analysis. A separate single parameter
+timing-summary run put its
 private schedule at 13.096 ms, versus 20.003 ms for EE, 1.378 ms for OEE, and
 0.227 ms for NEE. Container construction and rebuild outside the private
 schedule are not included in those rule timings. The parameter and medium
@@ -364,7 +422,9 @@ ablations, exact clean revisions, commands, and intervals are recorded in
 - The captures replay host operations and observed outcomes; they do not emit
   separate host-level proof certificates, and rebuild, clone, and stats events
   are comments rather than executable egglog commands.
-- The small performance sample establishes cost centers but not significance.
+- The current NEE A/B supports only a descriptive parity claim. The broader
+  all-encoding and native comparisons establish cost centers, not statistical
+  significance, and predate relation-backed NEE.
 
 ## Review and validation
 
@@ -409,6 +469,13 @@ pair queries under all four ordinary encodings and the three proof-compatible
 encodings. The committed final Propel graph has zero pair queries; its counters
 and fixture documentation preserve that absence rather than synthesizing
 coverage.
+
+After that review, NEE's private marker moved from a result-producing
+constructor to a binary relation. All seven NEE desugared fixtures and their
+manifest were regenerated, the complete 224-treatment replay matrix passed,
+and `make check` passed at the relation-backed head. A balanced follow-up found
+the relation and prior constructor at parity on one small and one medium Propel
+workload; those current measurements appear first in the Performance section.
 
 Successful final gates include:
 
