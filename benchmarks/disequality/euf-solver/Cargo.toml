@@ -1,0 +1,21 @@
+[package]
+name = "euf-solver"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+minisat = "0.4.4"
+egg = "0.9.5"
+disegg = { path = "../disegg" }
+egglog-disequality-backend = { path = "../egglog-backend" }
+egglog-experimental = { path = "../../../egglog-experimental" }
+clap = { version = "4.5.4", default-features = false, features = ["std", "help", "error-context", "usage", "suggestions", "derive"] }
+
+[[bin]]
+name = "euf-solver"
+path = "euf-solver.rs"
+
+[dev-dependencies]
+tempfile = "3"

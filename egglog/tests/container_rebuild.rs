@@ -1,6 +1,29 @@
-//! End-to-end tests for container support in the term/proof encoding.
+//! End-to-end tests for container rebuilds in normal and term/proof modes.
 
 use egglog::EGraph;
+
+/// Normal mode: when custom-function keys and their set outputs canonicalize
+/// together, the merge must receive live container ids.
+#[test]
+fn custom_set_output_key_collapse_normal_mode() {
+    let mut egraph = EGraph::default();
+    egraph
+        .parse_and_run_program(
+            None,
+            r#"
+            (sort Math)
+            (constructor A () Math)
+            (constructor B () Math)
+            (sort MathSet (Set Math))
+            (function neighbors (Math) MathSet :merge (set-union old new))
+            (set (neighbors (A)) (set-of (B)))
+            (set (neighbors (B)) (set-of (A)))
+            (union (A) (B))
+            (check (= (neighbors (A)) (set-of (A))))
+            "#,
+        )
+        .unwrap();
+}
 
 /// Term-only: a `(Vec Math)` column should canonicalize its elements during
 /// rebuilding. After unioning two Math terms, the two vecs `(vec-of A)` and

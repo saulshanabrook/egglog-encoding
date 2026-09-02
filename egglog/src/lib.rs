@@ -65,6 +65,7 @@ use scheduler::{SchedulerId, SchedulerRecord};
 pub use serialize::{SerializeConfig, SerializeOutput, SerializedNode};
 use sort::*;
 use std::any::{Any, TypeId};
+use std::collections::VecDeque;
 use std::fmt::{Debug, Display, Formatter};
 use std::fs::File;
 use std::hash::Hash;
@@ -335,8 +336,28 @@ pub struct EGraph {
     /// Registry for command-level macros
     command_macros: CommandMacroRegistry,
     proof_state: EncodingState,
+    /// Reason an installed extension cannot be translated by term/proof encoding.
+    term_encoding_unsupported: Option<&'static str>,
     /// In proof mode, this is the program before proof instrumentation and the version we use for proof checking.
     proof_check_program: Vec<ResolvedNCommand>,
+    /// Static pre-instrumentation commands addressed by generated execution
+    /// markers. This remains separate because a `fail` may execute only a prefix
+    /// of its body while preserving that prefix's side effects.
+    proof_check_source_program: VecDeque<ResolvedNCommand>,
+    proof_check_pending_top: Option<usize>,
+    proof_check_active_top: Option<usize>,
+}
+
+struct CommandSnapshot {
+    egraph: EGraph,
+    action_registry: egglog_bridge::ActionRegistry,
+}
+
+/// Distinguish a command error that satisfies an enclosing `fail` from an
+/// invalid `fail` context that must propagate through every enclosing `fail`.
+enum ExpectedFailureError {
+    Child(Error),
+    Fatal(Error),
 }
 
 /// A user-defined command allows users to inject custom command that can be called
@@ -347,6 +368,156 @@ pub struct EGraph {
 pub trait UserDefinedCommand: Send + Sync {
     /// Run the command with the given arguments.
     fn update(&self, egraph: &mut EGraph, args: &[Expr]) -> Result<Vec<CommandOutput>, Error>;
+}
+
+pub(crate) const RECORD_PROOF_COMMAND: &str = "@record-proof-command";
+
+struct RecordProofCommand;
+
+impl RecordProofCommand {
+    fn source_batch_len(egraph: &EGraph, count: &str) -> Result<usize, Error> {
+        let count = count.parse::<usize>().map_err(|_| {
+            Error::ProofCommandMarker(format!(
+                "invalid internal proof command batch size {count:?}"
+            ))
+        })?;
+        if count > egraph.proof_check_source_program.len() {
+            return Err(Error::ProofCommandMarker(format!(
+                "internal proof command batch 0..{count} is outside the source program"
+            )));
+        }
+        Ok(count)
+    }
+}
+
+impl UserDefinedCommand for RecordProofCommand {
+    fn update(&self, egraph: &mut EGraph, args: &[Expr]) -> Result<Vec<CommandOutput>, Error> {
+        let [Expr::Lit(_, Literal::String(location))] = args else {
+            return Err(Error::ProofCommandMarker(
+                "internal proof command marker requires one string argument".to_owned(),
+            ));
+        };
+
+        if let Some(count) = location.strip_prefix("top-enter:") {
+            if egraph.proof_check_pending_top.is_some() {
+                return Err(Error::ProofCommandMarker(
+                    "entered a proof command batch before committing the previous batch".to_owned(),
+                ));
+            }
+            let count = Self::source_batch_len(egraph, count)?;
+            egraph.proof_check_pending_top = Some(count);
+            egraph.proof_check_active_top = None;
+            for (offset, command) in egraph
+                .proof_check_source_program
+                .iter()
+                .take(count)
+                .enumerate()
+            {
+                if matches!(command, ResolvedNCommand::Fail(..))
+                    && egraph.proof_check_active_top.replace(offset).is_some()
+                {
+                    return Err(Error::ProofCommandMarker(
+                        "one proof command batch contains multiple fail scopes".to_owned(),
+                    ));
+                }
+            }
+            return Ok(vec![]);
+        }
+
+        if let Some(count) = location.strip_prefix("top-commit:") {
+            let count = Self::source_batch_len(egraph, count)?;
+            let pending = egraph.proof_check_pending_top.take().ok_or_else(|| {
+                Error::ProofCommandMarker(
+                    "committed a proof command batch without entering it".to_owned(),
+                )
+            })?;
+            if pending != count {
+                return Err(Error::ProofCommandMarker(format!(
+                    "proof command batch changed between enter and commit: {pending} != {count}"
+                )));
+            }
+            for command in egraph.proof_check_source_program.drain(..count) {
+                if !matches!(command, ResolvedNCommand::Fail(..)) {
+                    egraph.proof_check_program.push(command);
+                }
+            }
+            egraph.proof_check_active_top = None;
+            return Ok(vec![]);
+        }
+
+        let path = location.strip_prefix("nested:").ok_or_else(|| {
+            Error::ProofCommandMarker(format!(
+                "invalid internal proof command marker location {location:?}"
+            ))
+        })?;
+        let (path, count) = path.rsplit_once('+').ok_or_else(|| {
+            Error::ProofCommandMarker(format!(
+                "nested proof command marker has no batch size: {location:?}"
+            ))
+        })?;
+        let count = count.parse::<usize>().map_err(|_| {
+            Error::ProofCommandMarker(format!("invalid nested proof command batch size {count:?}"))
+        })?;
+        let top = egraph.proof_check_active_top.ok_or_else(|| {
+            Error::ProofCommandMarker(
+                "nested proof command marker has no active top-level command".to_owned(),
+            )
+        })?;
+        let mut command = egraph.proof_check_source_program.get(top).ok_or_else(|| {
+            Error::ProofCommandMarker(format!(
+                "active proof command marker {top} is outside the source program"
+            ))
+        })?;
+        let mut components = path.split('/').peekable();
+        let mut start = None;
+        while let Some(component) = components.next() {
+            let index = component.parse::<usize>().map_err(|_| {
+                Error::ProofCommandMarker(format!(
+                    "invalid internal proof command path component {component:?}"
+                ))
+            })?;
+            if components.peek().is_none() {
+                start = Some(index);
+                break;
+            }
+            let ResolvedNCommand::Fail(_, nested) = command else {
+                return Err(Error::ProofCommandMarker(format!(
+                    "internal proof command path {location:?} leaves a fail scope early"
+                )));
+            };
+            command = nested.get(index).ok_or_else(|| {
+                Error::ProofCommandMarker(format!(
+                    "internal proof command path {location:?} is outside a fail scope"
+                ))
+            })?;
+        }
+        let start = start.ok_or_else(|| {
+            Error::ProofCommandMarker(format!("internal proof command path {location:?} is empty"))
+        })?;
+        let ResolvedNCommand::Fail(_, nested) = command else {
+            return Err(Error::ProofCommandMarker(format!(
+                "internal proof command path {location:?} leaves a fail scope early"
+            )));
+        };
+        let end = start.checked_add(count).ok_or_else(|| {
+            Error::ProofCommandMarker("nested proof command batch size overflow".to_owned())
+        })?;
+        let commands = nested.get(start..end).ok_or_else(|| {
+            Error::ProofCommandMarker(format!(
+                "internal proof command batch {location:?} is outside a fail scope"
+            ))
+        })?;
+        if commands
+            .iter()
+            .any(|command| matches!(command, ResolvedNCommand::Fail(..)))
+        {
+            return Err(Error::ProofCommandMarker(format!(
+                "internal proof command batch {location:?} contains a fail scope"
+            )));
+        }
+        egraph.proof_check_program.extend(commands.iter().cloned());
+        Ok(vec![])
+    }
 }
 
 /// A function in the e-graph.
@@ -454,7 +625,11 @@ impl EGraph {
             warned_about_global_prefix: false,
             command_macros: Default::default(),
             proof_state,
+            term_encoding_unsupported: None,
             proof_check_program: vec![],
+            proof_check_source_program: VecDeque::new(),
+            proof_check_pending_top: None,
+            proof_check_active_top: None,
         };
         add_base_sort(&mut eg, UnitSort, span!()).unwrap();
         add_base_sort(&mut eg, StringSort, span!()).unwrap();
@@ -579,6 +754,11 @@ impl EGraph {
         // including when the already-desugared program is replayed in a plain
         // e-graph (e.g. the desugar proof-testing path).
         crate::proofs::proof_fresh::register_get_fresh(&mut eg);
+        eg.add_command(
+            RECORD_PROOF_COMMAND.to_owned(),
+            Arc::new(RecordProofCommand),
+        )
+        .expect("the internal proof command marker must have a reserved unique name");
 
         eg
     }
@@ -643,8 +823,25 @@ impl EGraph {
     /// This method is to support the current CLI implementation with egglog-experimental (https://github.com/egraphs-good/egglog/issues/768)
     #[doc(hidden)]
     pub fn with_term_encoding_enabled(mut self) -> Self {
+        if let Some(reason) = self.term_encoding_unsupported {
+            panic!("{reason}");
+        }
         let typechecker = self.clone();
         self.enable_term_encoding(typechecker);
+        self
+    }
+
+    /// Mark an e-graph extension as unsupported by term/proof encoding.
+    ///
+    /// This method exists for experimental constructors that install state the
+    /// term/proof compiler cannot yet translate.
+    #[doc(hidden)]
+    pub fn with_term_encoding_unsupported(mut self, reason: &'static str) -> Self {
+        assert!(
+            self.proof_state.original_typechecking.is_none(),
+            "term encoding was enabled before the incompatible extension: {reason}"
+        );
+        self.term_encoding_unsupported = Some(reason);
         self
     }
 
@@ -662,13 +859,17 @@ impl EGraph {
 
     /// Enable testing of getting proofs for all `check` commands.
     pub fn with_proof_testing(mut self) -> Self {
+        if let Some(reason) = self.term_encoding_unsupported {
+            panic!("{reason}");
+        }
         self.proof_state.proof_testing = true;
         self
     }
 
     /// Enable proof testing while skipping validation of the extracted proofs.
     #[cfg(any(feature = "bin", test))]
-    pub(crate) fn with_proof_extraction(mut self) -> Self {
+    #[doc(hidden)]
+    pub fn with_proof_extraction(mut self) -> Self {
         self = self.with_proofs_enabled().with_proof_testing();
         self.proof_state.verify_proofs = false;
         self
@@ -847,6 +1048,22 @@ impl EGraph {
     pub fn pop(&mut self) -> Result<(), Error> {
         match self.pushed_egraph.take() {
             Some(mut e) => {
+                // Source markers address the remaining execution stream, which
+                // does not roll back with e-graph state.
+                // The executed proof-check program does roll back to the pushed
+                // snapshot and is then advanced by the marker after this pop.
+                std::mem::swap(
+                    &mut self.proof_check_source_program,
+                    &mut e.proof_check_source_program,
+                );
+                std::mem::swap(
+                    &mut self.proof_check_pending_top,
+                    &mut e.proof_check_pending_top,
+                );
+                std::mem::swap(
+                    &mut self.proof_check_active_top,
+                    &mut e.proof_check_active_top,
+                );
                 // Work performed in the popped scope still belongs to this run.
                 std::mem::swap(&mut self.overall_report, &mut e.overall_report);
                 // Preserve the symbol generator so that fresh symbols
@@ -856,6 +1073,44 @@ impl EGraph {
                 Ok(())
             }
             None => Err(Error::Pop(span!())),
+        }
+    }
+
+    /// Snapshot one source command, including the live registry captured by
+    /// typed primitive callbacks. Ordinary `Clone` intentionally shares that
+    /// registry, so a rollback snapshot must retain its contents separately.
+    fn command_snapshot(&self) -> CommandSnapshot {
+        CommandSnapshot {
+            egraph: self.clone(),
+            action_registry: self.backend.action_registry().read().unwrap().clone(),
+        }
+    }
+
+    /// Restore database, compiler, and proof state after a command fails while
+    /// retaining monotonic diagnostics and fresh symbols. Restoring the
+    /// registry together with the backend prevents failed declarations from
+    /// leaving stale table handles behind.
+    fn restore_command_snapshot(&mut self, mut snapshot: CommandSnapshot) {
+        *self.backend.action_registry().write().unwrap() = snapshot.action_registry;
+        std::mem::swap(
+            &mut self.overall_report,
+            &mut snapshot.egraph.overall_report,
+        );
+        std::mem::swap(
+            &mut self.parser.symbol_gen,
+            &mut snapshot.egraph.parser.symbol_gen,
+        );
+        *self = snapshot.egraph;
+    }
+
+    /// Cancel the pending proof-history batch after an API error. Live proof
+    /// execution drains every committed source batch, so anything remaining
+    /// belongs to the failed command and must not affect the next API call.
+    fn abort_proof_command(&mut self) {
+        if self.are_proofs_enabled() {
+            self.proof_check_source_program.clear();
+            self.proof_check_pending_top = None;
+            self.proof_check_active_top = None;
         }
     }
 
@@ -1225,9 +1480,12 @@ impl EGraph {
         if proof_testing {
             proof_check_eg = proof_check_eg.with_proof_testing();
         }
-        let resolved = proof_check_eg.process_program_internal(prog, false)?;
+        let resolved = proof_check_eg.process_program_internal(prog, false, true, false)?;
 
-        self.proof_check_program = resolved.resolved_before_proofs;
+        self.proof_check_source_program = resolved.resolved_before_proofs.into();
+        self.proof_check_program.clear();
+        self.proof_check_pending_top = None;
+        self.proof_check_active_top = None;
         Ok(())
     }
 
@@ -1709,36 +1967,84 @@ impl EGraph {
 
     /// Evaluates an expression, returns the sort of the expression and the evaluation result.
     pub fn eval_expr(&mut self, expr: &Expr) -> Result<(ArcSort, Value), Error> {
-        let span = expr.span();
-        let command = Command::Action(Action::Expr(span.clone(), expr.clone()));
-        let resolved = self.resolve_command(command)?;
-        if self.are_proofs_enabled() {
-            self.proof_check_program
-                .extend(resolved.desugared_before_proofs);
-        }
-        let resolved_commands = resolved.desugared;
-
-        if resolved_commands.len() != 1 {
-            return Err(Error::BackendError(
-                "eval_expr expects a single resolved command".to_string(),
-            ));
-        }
-        let Some(resolved_command) = resolved_commands.into_iter().next() else {
-            return Err(Error::BackendError(
-                "eval_expr expects a single resolved command".to_string(),
-            ));
-        };
-        let resolved_expr = match resolved_command {
-            ResolvedNCommand::CoreAction(ResolvedAction::Expr(_, resolved_expr)) => resolved_expr,
-            cmd => {
-                return Err(Error::BackendError(format!(
-                    "eval_expr: unexpected resolved command: {cmd:?}"
-                )));
+        let snapshot = self
+            .proof_state
+            .original_typechecking
+            .is_some()
+            .then(|| self.command_snapshot());
+        let result = (|| -> Result<(ArcSort, Value), Error> {
+            let span = expr.span();
+            let command = Command::Action(Action::Expr(span.clone(), expr.clone()));
+            let resolved = self.resolve_command(command)?;
+            if self.are_proofs_enabled() {
+                self.proof_check_source_program
+                    .extend(resolved.desugared_before_proofs);
             }
-        };
-        let sort = resolved_expr.output_type();
-        let value = self.eval_resolved_expr(span, &resolved_expr)?;
-        Ok((sort, value))
+            let mut resolved_commands = resolved.desugared;
+            let commit_marker = if self.are_proofs_enabled() {
+                let Some(ResolvedNCommand::UserDefined(_, name, _)) = resolved_commands.first()
+                else {
+                    return Err(Error::ProofCommandMarker(
+                        "eval_expr proof encoding has no enter marker".to_owned(),
+                    ));
+                };
+                if name != RECORD_PROOF_COMMAND {
+                    return Err(Error::ProofCommandMarker(format!(
+                        "eval_expr proof encoding starts with unexpected command {name:?}"
+                    )));
+                }
+                self.run_command(resolved_commands.remove(0))?;
+                let Some(ResolvedNCommand::UserDefined(_, name, _)) = resolved_commands.last()
+                else {
+                    return Err(Error::ProofCommandMarker(
+                        "eval_expr proof encoding has no commit marker".to_owned(),
+                    ));
+                };
+                if name != RECORD_PROOF_COMMAND {
+                    return Err(Error::ProofCommandMarker(format!(
+                        "eval_expr proof encoding ends with unexpected command {name:?}"
+                    )));
+                }
+                resolved_commands.pop()
+            } else {
+                None
+            };
+
+            if resolved_commands.len() != 1 {
+                return Err(Error::BackendError(
+                    "eval_expr expects a single resolved command".to_string(),
+                ));
+            }
+            let Some(resolved_command) = resolved_commands.into_iter().next() else {
+                return Err(Error::BackendError(
+                    "eval_expr expects a single resolved command".to_string(),
+                ));
+            };
+            let resolved_expr = match resolved_command {
+                ResolvedNCommand::CoreAction(ResolvedAction::Expr(_, resolved_expr)) => {
+                    resolved_expr
+                }
+                cmd => {
+                    return Err(Error::BackendError(format!(
+                        "eval_expr: unexpected resolved command: {cmd:?}"
+                    )));
+                }
+            };
+            let sort = resolved_expr.output_type();
+            let value = self.eval_resolved_expr(span, &resolved_expr)?;
+            if let Some(commit_marker) = commit_marker {
+                self.run_command(commit_marker)?;
+            }
+            Ok((sort, value))
+        })();
+        if result.is_err() {
+            if let Some(snapshot) = snapshot {
+                self.restore_command_snapshot(snapshot);
+            } else {
+                self.abort_proof_command();
+            }
+        }
+        result
     }
 
     /// Typecheck an expression under explicit local bindings, an expected
@@ -2290,10 +2596,19 @@ impl EGraph {
             ResolvedNCommand::Fail(span, cmds) => {
                 let mut any_failed = false;
                 for c in cmds {
-                    if let Err(e) = self.run_command(c) {
-                        log::info!("Command failed as expected: {e}");
-                        any_failed = true;
-                        break;
+                    let snapshot = self.command_snapshot();
+                    match self.run_command(c) {
+                        Ok(_) => {}
+                        Err(e @ Error::ProofCommandMarker(_)) => {
+                            self.restore_command_snapshot(snapshot);
+                            return Err(e);
+                        }
+                        Err(e) => {
+                            self.restore_command_snapshot(snapshot);
+                            log::info!("Command failed as expected: {e}");
+                            any_failed = true;
+                            break;
+                        }
                     }
                 }
                 if !any_failed {
@@ -2683,7 +2998,17 @@ impl EGraph {
                 }
             }
 
-            Ok(proof_form(typechecked, &mut self.parser.symbol_gen))
+            let globals = original_typechecking
+                .type_info
+                .global_sorts
+                .keys()
+                .cloned()
+                .collect();
+            Ok(proof_form(
+                typechecked,
+                &mut self.parser.symbol_gen,
+                &globals,
+            ))
         } else {
             let typecheck_timer = Instant::now();
             let mut typechecked = self.typecheck_program(&desugared)?;
@@ -2722,20 +3047,26 @@ impl EGraph {
                 desugared_before_proofs: vec![],
             })
         } else {
-            // The proof checker consumes the per-row top-level fiat actions.
-            let per_row_before_proofs =
-                ProofInstrumentor::lower_inputs(self, resolved_before_proofs.clone())?;
+            // The proof checker consumes per-row input actions and the ordered
+            // actions from anonymous local blocks. Execution markers retain the
+            // exact source-command boundaries through global removal.
+            let (per_row_before_proofs, marked_before_proofs) = if self.are_proofs_enabled() {
+                ProofInstrumentor::prepare_for_proof_checker(self, resolved_before_proofs)?
+            } else {
+                (vec![], resolved_before_proofs)
+            };
             // Execution keeps every `(input …)` as an `Input` command, loaded
             // natively at run time by `EGraph::native_input` straight into the
             // encoded tables. Globals get the same function-style desugaring
             // (`remove_globals`) as the non-encoding path.
             let typechecked_no_globals =
-                remove_globals::remove_globals(resolved_before_proofs, &mut self.parser.symbol_gen);
+                remove_globals::remove_globals(marked_before_proofs, &mut self.parser.symbol_gen);
             // The term encoder runs before the encoded program is typechecked, so it
             // can't rely on the later typecheck to populate `global_sorts`. Register
             // the new global functions' sorts eagerly so `is_global` recognizes them
             // while encoding.
-            for command in &typechecked_no_globals {
+            let mut commands_to_register = typechecked_no_globals.iter().collect::<Vec<_>>();
+            while let Some(command) = commands_to_register.pop() {
                 if let GenericNCommand::Function(fdecl) = command
                     && fdecl.internal_let
                     && let Some(output_sort) = self.type_info.sorts.get(fdecl.schema.output())
@@ -2743,6 +3074,9 @@ impl EGraph {
                     self.type_info
                         .global_sorts
                         .insert(fdecl.name.clone(), output_sort.clone());
+                }
+                if let GenericNCommand::Fail(_, nested) = command {
+                    commands_to_register.extend(nested);
                 }
             }
             for command in &typechecked_no_globals {
@@ -2779,36 +3113,281 @@ impl EGraph {
         }
     }
 
+    fn apply_command_macros(&mut self, command: Command) -> Result<Vec<Command>, Error> {
+        let macro_type_info = self
+            .proof_state
+            .original_typechecking
+            .as_ref()
+            .map(|egraph| &egraph.type_info)
+            .unwrap_or(&self.type_info);
+        let macro_timer = Instant::now();
+        let expanded =
+            self.command_macros
+                .apply(command, &mut self.parser.symbol_gen, macro_type_info);
+        self.overall_report.frontend_other += macro_timer.elapsed();
+        expanded
+    }
+
+    fn validate_expected_failure_command(
+        &self,
+        span: &Span,
+        command: &Command,
+    ) -> Result<(), Error> {
+        match command {
+            Command::Input { .. } if self.are_proofs_enabled() => {
+                Err(Error::UnsupportedProofCommand {
+                    command: format!("{}", Command::Fail(span.clone(), vec![command.clone()])),
+                    reason: ProofEncodingUnsupportedReason::FailInputCommand,
+                })
+            }
+            Command::Include(..) => Err(Error::DesugarError(
+                span.clone(),
+                "include is not allowed inside (fail ...)".to_owned(),
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    /// Expand and execute one source child. Macro-generated commands share one
+    /// rollback boundary, and nested `fail` commands recursively retain their
+    /// own source-child boundaries.
+    fn process_expected_failure_child(
+        &mut self,
+        command: Command,
+        apply_command_macros: bool,
+        enclosing_span: &Span,
+    ) -> Result<ResolvedNCommandsWithOutput, ExpectedFailureError> {
+        self.validate_expected_failure_command(enclosing_span, &command)
+            .map_err(ExpectedFailureError::Fatal)?;
+
+        if apply_command_macros && let Command::Fail(span, commands) = command {
+            return self.process_expected_failure_internal(span, commands, true);
+        }
+
+        let expanded = if apply_command_macros {
+            self.apply_command_macros(command)
+                .map_err(ExpectedFailureError::Child)?
+        } else {
+            vec![command]
+        };
+
+        for command in &expanded {
+            self.validate_expected_failure_command(enclosing_span, command)
+                .map_err(ExpectedFailureError::Fatal)?;
+        }
+
+        let mut desugared_before_proofs = Vec::new();
+        let mut desugared = Vec::new();
+        let mut outputs = Vec::new();
+
+        for command in expanded {
+            let resolved = match command {
+                Command::Fail(span, commands) => {
+                    self.process_expected_failure_internal(span, commands, false)?
+                }
+                command => self
+                    .process_program_internal(vec![command], true, false, false)
+                    .map_err(|error| match error {
+                        error @ Error::ProofCommandMarker(_) => ExpectedFailureError::Fatal(error),
+                        error => ExpectedFailureError::Child(error),
+                    })?,
+            };
+            outputs.extend(resolved.outputs);
+            desugared_before_proofs.extend(resolved.resolved_before_proofs);
+            desugared.extend(resolved.resolved);
+        }
+
+        Ok(ResolvedNCommandsWithOutput {
+            outputs,
+            resolved: desugared,
+            resolved_before_proofs: desugared_before_proofs,
+        })
+    }
+
+    /// Expand and execute an expected-failure body one source child at a time.
+    /// A successful prefix remains committed, the failing child is rolled back
+    /// as a unit, and children after the first failure are never inspected.
+    fn process_expected_failure_internal(
+        &mut self,
+        span: Span,
+        commands: Vec<Command>,
+        apply_command_macros: bool,
+    ) -> Result<ResolvedNCommandsWithOutput, ExpectedFailureError> {
+        let mut desugared_before_proofs = Vec::new();
+        let mut desugared = Vec::new();
+
+        for command in commands {
+            let snapshot = self.command_snapshot();
+            match self.process_expected_failure_child(command, apply_command_macros, &span) {
+                Ok(resolved) => {
+                    desugared_before_proofs.extend(resolved.resolved_before_proofs);
+                    desugared.extend(resolved.resolved);
+                }
+                Err(ExpectedFailureError::Child(error)) => {
+                    self.restore_command_snapshot(snapshot);
+                    log::info!("Command failed as expected: {error}");
+                    return Ok(ResolvedNCommandsWithOutput {
+                        outputs: vec![],
+                        resolved: desugared,
+                        resolved_before_proofs: desugared_before_proofs,
+                    });
+                }
+                Err(ExpectedFailureError::Fatal(error)) => {
+                    self.restore_command_snapshot(snapshot);
+                    return Err(ExpectedFailureError::Fatal(error));
+                }
+            }
+        }
+
+        Err(ExpectedFailureError::Child(Error::ExpectFail(span)))
+    }
+
+    fn process_expected_failure(
+        &mut self,
+        span: Span,
+        commands: Vec<Command>,
+        apply_command_macros: bool,
+    ) -> Result<ResolvedNCommandsWithOutput, Error> {
+        self.process_expected_failure_internal(span, commands, apply_command_macros)
+            .map_err(|error| match error {
+                ExpectedFailureError::Child(error) | ExpectedFailureError::Fatal(error) => error,
+            })
+    }
+
+    /// Whether resolving a command may change compiler state in a way whose
+    /// survival depends on where an enclosing `fail` stops.
+    fn command_may_change_static_state(command: &Command) -> bool {
+        match command {
+            Command::Sort { .. }
+            | Command::Datatype { .. }
+            | Command::Datatypes { .. }
+            | Command::Constructor { .. }
+            | Command::Relation { .. }
+            | Command::Function { .. }
+            | Command::Index { .. }
+            | Command::AddRuleset(..)
+            | Command::UnstableCombinedRuleset(..)
+            | Command::Action(Action::Let(..))
+            | Command::LetBegin(..)
+            | Command::Push(..)
+            | Command::Pop(..)
+            | Command::UserDefined(..) => true,
+            Command::Fail(_, commands) => {
+                commands.iter().any(Self::command_may_change_static_state)
+            }
+            _ => false,
+        }
+    }
+
+    fn command_contains_extract(command: &Command) -> bool {
+        match command {
+            Command::Extract(..) => true,
+            Command::Fail(_, commands) => commands.iter().any(Self::command_contains_extract),
+            _ => false,
+        }
+    }
+
+    fn validate_static_expected_failure_body(
+        &self,
+        span: &Span,
+        commands: &[Command],
+    ) -> Result<(), Error> {
+        if commands.iter().any(Self::command_may_change_static_state) {
+            return Err(Error::DesugarError(
+                span.clone(),
+                "cannot statically desugar a `fail` body that may change compiler state: which changes survive depends on which command fails at runtime"
+                    .to_owned(),
+            ));
+        }
+        if self.proof_state.original_typechecking.is_some()
+            && commands.iter().any(Self::command_contains_extract)
+        {
+            return Err(Error::DesugarError(
+                span.clone(),
+                "cannot statically desugar this `fail` body with term encoding: an `extract` expands into multiple commands, so the source command's rollback boundary cannot be preserved"
+                    .to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Constructor trees cannot invoke partial primitives or custom function
+    /// lookups. Once typechecking succeeds, their proof encoding has no
+    /// expected runtime error path, so cloning the entire e-graph solely for
+    /// command-error recovery would be wasted work. Constructor-valued global
+    /// bindings use a smaller transaction over their eagerly registered sort;
+    /// shadowing can still reject them after typechecking.
+    fn proof_action_needs_full_rollback(&self, action: &Action) -> bool {
+        fn is_constructor_tree(type_info: &TypeInfo, expr: &Expr) -> bool {
+            match expr {
+                GenericExpr::Var(..) | GenericExpr::Lit(..) => true,
+                GenericExpr::Call(_, head, children) => {
+                    type_info.is_constructor(head)
+                        && children
+                            .iter()
+                            .all(|child| is_constructor_tree(type_info, child))
+                }
+            }
+        }
+
+        let type_info = self
+            .proof_state
+            .original_typechecking
+            .as_ref()
+            .map_or(&self.type_info, |egraph| &egraph.type_info);
+        match action {
+            Action::Let(_, _, value) => !is_constructor_tree(type_info, value),
+            Action::Union(_, lhs, rhs) => {
+                !is_constructor_tree(type_info, lhs) || !is_constructor_tree(type_info, rhs)
+            }
+            Action::Expr(_, expr) => !is_constructor_tree(type_info, expr),
+            Action::Set(..) | Action::Change(..) | Action::Panic(..) => true,
+        }
+    }
+
     /// Run a program, returning the desugared outputs as well as the CommandOutputs.
     /// Can optionally not run the commands, just adding type information.
     fn process_program_internal(
         &mut self,
         program: Vec<Command>,
         run_commands: bool,
+        apply_command_macros: bool,
+        rollback_commands_on_error: bool,
     ) -> Result<ResolvedNCommandsWithOutput, Error> {
         let mut outputs = Vec::new();
         let mut desugared_before_proofs = Vec::new();
         let mut desugared = Vec::new();
 
         for before_expanded_command in program {
-            // First do user-provided macro expansion for this command,
-            // which may rely on type information from previous commands.
-            let macro_type_info = self
-                .proof_state
-                .original_typechecking
-                .as_ref()
-                .map(|egraph| &egraph.type_info)
-                .unwrap_or(&self.type_info);
-            let macro_timer = Instant::now();
-            let macro_expanded = self.command_macros.apply(
-                before_expanded_command,
-                &mut self.parser.symbol_gen,
-                macro_type_info,
-            );
-            self.overall_report.frontend_other += macro_timer.elapsed();
-            let macro_expanded = macro_expanded?;
+            if run_commands && let Command::Fail(span, commands) = before_expanded_command {
+                let resolved = self.process_expected_failure(span, commands, true)?;
+                desugared.extend(resolved.resolved);
+                desugared_before_proofs.extend(resolved.resolved_before_proofs);
+                continue;
+            }
+
+            if !run_commands && let Command::Fail(span, commands) = &before_expanded_command {
+                self.validate_static_expected_failure_body(span, commands)?;
+            }
+
+            let macro_expanded = if apply_command_macros {
+                self.apply_command_macros(before_expanded_command)?
+            } else {
+                vec![before_expanded_command]
+            };
 
             for command in macro_expanded {
+                if run_commands && let Command::Fail(span, commands) = command {
+                    let resolved = self.process_expected_failure(span, commands, false)?;
+                    desugared.extend(resolved.resolved);
+                    desugared_before_proofs.extend(resolved.resolved_before_proofs);
+                    continue;
+                }
+
+                if !run_commands && let Command::Fail(span, commands) = &command {
+                    self.validate_static_expected_failure_body(span, commands)?;
+                }
+
                 // handle include specially- we keep them as-is for desugaring
                 if let Command::Include(span, file) = &command {
                     let include_timer = Instant::now();
@@ -2818,32 +3397,109 @@ impl EGraph {
                     let s = s?;
                     let included_program = self.parse_program_timed(Some(file.clone()), &s)?;
                     // run program internal on these include commands
-                    let resolved = self.process_program_internal(included_program, run_commands)?;
+                    let resolved = self.process_program_internal(
+                        included_program,
+                        run_commands,
+                        true,
+                        rollback_commands_on_error,
+                    )?;
                     outputs.extend(resolved.outputs);
                     desugared.extend(resolved.resolved);
                     desugared_before_proofs.extend(resolved.resolved_before_proofs);
                 } else {
-                    let resolved = self.resolve_command(command)?;
-                    if run_commands && self.are_proofs_enabled() {
-                        self.proof_check_program
-                            .extend(resolved.desugared_before_proofs.clone());
-                    }
-
-                    desugared_before_proofs.extend(resolved.desugared_before_proofs);
-                    desugared.extend(resolved.desugared.clone());
-
-                    for processed in resolved.desugared {
-                        // even in desugar mode we still run push and pop
-                        if run_commands
-                            || matches!(
-                                processed,
-                                ResolvedNCommand::Push(_) | ResolvedNCommand::Pop(_, _)
-                            )
+                    let needs_snapshot = rollback_commands_on_error
+                        && run_commands
+                        && (matches!(
+                            &command,
+                            Command::Action(Action::Let(..))
+                                if self.proof_state.original_typechecking.is_none()
+                        ) || matches!(&command, Command::Actions(_) | Command::LetBegin(..))
+                            || (self.proof_state.original_typechecking.is_some()
+                                && matches!(
+                                    &command,
+                                    Command::Action(action)
+                                        if self.proof_action_needs_full_rollback(action)
+                                )));
+                    // A later shadowing check can reject a constructor-valued
+                    // global after eagerly registering its sort. Retain just
+                    // the source and encoded entries rather than cloning the
+                    // complete e-graph.
+                    let global_sort_snapshot =
+                        if rollback_commands_on_error
+                            && run_commands
+                            && !needs_snapshot
+                            && let Command::Action(Action::Let(_, name, _)) = &command
                         {
-                            let result = self.run_command(processed)?;
-                            outputs.extend(result);
+                            Some((
+                                name.clone(),
+                                self.proof_state.original_typechecking.as_ref().and_then(
+                                    |egraph| egraph.type_info.global_sorts.get(name).cloned(),
+                                ),
+                                self.type_info.global_sorts.get(name).cloned(),
+                            ))
+                        } else {
+                            None
+                        };
+                    let snapshot = needs_snapshot.then(|| self.command_snapshot());
+                    let execution = (|| -> Result<_, Error> {
+                        let resolved = self.resolve_command(command)?;
+                        if run_commands && self.are_proofs_enabled() {
+                            self.proof_check_source_program
+                                .extend(resolved.desugared_before_proofs.clone());
                         }
-                    }
+
+                        let mut command_outputs = Vec::new();
+                        for processed in resolved.desugared.iter().cloned() {
+                            // even in desugar mode we still run push and pop
+                            if run_commands
+                                || matches!(
+                                    processed,
+                                    ResolvedNCommand::Push(_) | ResolvedNCommand::Pop(_, _)
+                                )
+                            {
+                                command_outputs.extend(self.run_command(processed)?);
+                            }
+                        }
+                        Ok((resolved, command_outputs))
+                    })();
+                    let (resolved, command_outputs) = match execution {
+                        Ok(result) => result,
+                        Err(error) => {
+                            if let Some(snapshot) = snapshot {
+                                self.restore_command_snapshot(snapshot);
+                            } else if let Some((name, source_sort, encoded_sort)) =
+                                global_sort_snapshot
+                            {
+                                if let Some(typechecking) =
+                                    self.proof_state.original_typechecking.as_mut()
+                                {
+                                    match source_sort {
+                                        Some(sort) => {
+                                            typechecking
+                                                .type_info
+                                                .global_sorts
+                                                .insert(name.clone(), sort);
+                                        }
+                                        None => {
+                                            typechecking.type_info.global_sorts.remove(&name);
+                                        }
+                                    }
+                                }
+                                match encoded_sort {
+                                    Some(sort) => {
+                                        self.type_info.global_sorts.insert(name, sort);
+                                    }
+                                    None => {
+                                        self.type_info.global_sorts.remove(&name);
+                                    }
+                                }
+                            }
+                            return Err(error);
+                        }
+                    };
+                    outputs.extend(command_outputs);
+                    desugared_before_proofs.extend(resolved.desugared_before_proofs);
+                    desugared.extend(resolved.desugared);
                 }
             }
         }
@@ -2858,20 +3514,27 @@ impl EGraph {
     /// Run a program, represented as an AST.
     /// Return a list of messages.
     pub fn run_program(&mut self, program: Vec<Command>) -> Result<Vec<CommandOutput>, Error> {
-        let res = self.process_program_internal(program, true)?;
-        Ok(res.outputs)
+        match self.process_program_internal(program, true, true, true) {
+            Ok(resolved) => Ok(resolved.outputs),
+            Err(error) => {
+                self.abort_proof_command();
+                Err(error)
+            }
+        }
     }
 
     /// Resolves an egglog program by parsing, typechecking, and desugaring each command.
     /// Outputs a new egglog program without any syntactic sugar, either user provided ([`CommandMacro`]) or built-in (e.g., `rewrite` commands).
     /// Also removes globals from the program by replacing with new constructors.
+    /// Returns [`Error::DesugarError`] when a `fail` body may change compiler
+    /// state in a way that resolved output cannot preserve across runtime failure.
     pub fn resolve_program(
         &mut self,
         filename: Option<String>,
         input: &str,
     ) -> Result<Vec<ResolvedCommand>, Error> {
         let parsed = self.parse_program_timed(filename, input)?;
-        let res = self.process_program_internal(parsed, false)?;
+        let res = self.process_program_internal(parsed, false, true, false)?;
         Ok(res.resolved.into_iter().map(|c| c.to_command()).collect())
     }
 
@@ -3768,6 +4431,8 @@ pub enum Error {
     CombinedRulesetError(String, Span),
     #[error("{0}")]
     BackendError(String),
+    #[error("internal proof command marker failed: {0}")]
+    ProofCommandMarker(String),
     #[error("{0}\nTried to pop too much")]
     Pop(Span),
     #[error("{0}\nCommand should have failed.")]

@@ -1,0 +1,7 @@
+(def nat_max (fun (rec X {(S X) Z}) (rec X {(S X) Z}) (rec X {(S X) Z}))
+  (lambda (x (rec X {(S X) Z})) (y (rec X {(S X) Z})) (cases (Tuple x y)
+    [(Tuple Z y) y]
+    [(Tuple x Z) x]
+    [(Tuple (S x) (S y)) (S (nat_max x y))])))
+
+(prop-for nat_max (forall (x (rec X {(S X) Z})) (== (nat_max Z x) x)))

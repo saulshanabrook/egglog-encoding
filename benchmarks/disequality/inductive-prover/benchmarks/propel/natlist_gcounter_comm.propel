@@ -1,0 +1,12 @@
+(def nat_max (fun (rec X {(S X) Z}) (rec X {(S X) Z}) (rec X {(S X) Z}))
+  (lambda (x (rec X {(S X) Z})) (y (rec X {(S X) Z})) (cases (Tuple x y)
+    [(Tuple Z y) y]
+    [(Tuple x Z) x]
+    [(Tuple (S x) (S y)) (S (nat_max x y))])))
+
+(def natlist_gcounter (fun (rec X {(Cons (rec X {(S X) Z}) X) Nil}) (rec X {(Cons (rec X {(S X) Z}) X) Nil}) (rec X {(Cons (rec X {(S X) Z}) X) Nil}))
+  (lambda [comm] (x (rec X {(Cons (rec X {(S X) Z}) X) Nil})) (y (rec X {(Cons (rec X {(S X) Z}) X) Nil})) (cases (Tuple x y)
+    [(Tuple Nil y) y]
+    [(Tuple x Nil) x]
+    [(Tuple (Cons x xs) (Cons y ys))
+      (Cons (nat_max x y) (natlist_gcounter xs ys))])))

@@ -1379,6 +1379,34 @@ impl TypeInfo {
         Ok(annotated_facts)
     }
 
+    /// Infer the output sort of an expression under explicit local bindings.
+    ///
+    /// Command macros use this before their generated actions enter the normal
+    /// typechecking pipeline. Global references are resolved from this
+    /// [`TypeInfo`], while `bindings` supplies variables introduced by a rule
+    /// query or by preceding actions in the same block.
+    pub fn infer_expr_sort(
+        &self,
+        symbol_gen: &mut SymbolGen,
+        expr: &Expr,
+        bindings: &[(String, Span, ArcSort)],
+        context: Context,
+    ) -> Result<ArcSort, TypeError> {
+        let mut binding_map = IndexMap::default();
+        binding_map.reserve(bindings.len());
+        for (name, span, sort) in bindings {
+            if binding_map
+                .insert(name.as_str(), (span.clone(), sort.clone()))
+                .is_some()
+            {
+                return Err(TypeError::AlreadyDefined(name.clone(), span.clone()));
+            }
+        }
+        Ok(self
+            .typecheck_standalone_expr(symbol_gen, expr, &binding_map, context)?
+            .output_type())
+    }
+
     // Standalone expressions/actions use action lowering. Top-level commands
     // pass `Full`; function `:merge` reuses this path with `Write` because
     // merge expressions run during table updates.

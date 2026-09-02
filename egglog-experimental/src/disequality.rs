@@ -1,0 +1,1974 @@
+use egglog::{
+    ArcSort, CommandMacro, Context, Error, TypeError, TypeInfo,
+    ast::{
+        Action, Actions, Command, Expr, Fact, Macro, Merge, ParseError, Parser, Rule, RuleEvalMode,
+        RunConfig, Schedule, Schema, Sexp, Span,
+    },
+    util::SymbolGen,
+};
+use std::{
+    collections::{BTreeMap, HashSet},
+    sync::Arc,
+};
+use std::{fmt, str::FromStr};
+
+const PLACEHOLDER: &str = "@disequal";
+const CHECK_PLACEHOLDER: &str = "@check-disequal";
+const CHECK_KNOWN_PLACEHOLDER: &str = "@check-known-disequal";
+const CHECK_RULESET: &str = "@disequality";
+const SUPPORT_SORT: &str = "@disequality-support";
+const TRUTH_SORT: &str = "@disequality-truth";
+const TRUE: &str = "@disequality-true";
+const FALSE: &str = "@disequality-false";
+
+/// Published encodings supported by the `(disequal lhs rhs)` action.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DisequalityEncoding {
+    /// The five-rule equality embedding (EE) from Zakhour et al.
+    #[default]
+    EqualityEmbedding,
+    /// Equality embedding with self-equality contradiction detection (OEE).
+    OptimizedEqualityEmbedding,
+    /// A private `ne` relation with self-loop contradiction detection (NEE).
+    NegatedEqualityEmbedding,
+    /// A symmetric per-e-class adjacency map (DE).
+    DisequalityEdges,
+}
+
+impl DisequalityEncoding {
+    pub const POSSIBLE_VALUES: &str = "ee, oee, nee, de";
+
+    pub const fn cli_name(self) -> &'static str {
+        match self {
+            Self::EqualityEmbedding => "ee",
+            Self::OptimizedEqualityEmbedding => "oee",
+            Self::NegatedEqualityEmbedding => "nee",
+            Self::DisequalityEdges => "de",
+        }
+    }
+}
+
+impl FromStr for DisequalityEncoding {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "ee" => Ok(Self::EqualityEmbedding),
+            "oee" => Ok(Self::OptimizedEqualityEmbedding),
+            "nee" => Ok(Self::NegatedEqualityEmbedding),
+            "de" => Ok(Self::DisequalityEdges),
+            _ => Err(format!(
+                "unknown disequality encoding `{value}`; expected one of: {}",
+                Self::POSSIBLE_VALUES
+            )),
+        }
+    }
+}
+
+impl fmt::Display for DisequalityEncoding {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.cli_name())
+    }
+}
+
+pub(crate) fn add_disequality_support(egraph: &mut egglog::EGraph, encoding: DisequalityEncoding) {
+    egraph.parser.add_action_macro(Arc::new(DisequalAction));
+    egraph.parser.add_command_macro(Arc::new(CheckDisequal));
+    egraph
+        .parser
+        .add_command_macro(Arc::new(CheckKnownDisequal));
+    egraph
+        .parser
+        .add_command_macro(Arc::new(CheckDisequalities));
+    egraph
+        .command_macros_mut()
+        .register(Arc::new(DisequalityMacro { encoding }));
+}
+
+/// Build an encoding-neutral disequality action for direct AST clients.
+///
+/// The action is lowered by the same compiler pass as parsed `(disequal ...)`
+/// syntax when it is submitted through [`egglog::EGraph::run_program`].
+pub fn disequal_action(lhs: Expr, rhs: Expr) -> Action {
+    let span = egglog::span!();
+    Action::Expr(span.clone(), call(&span, PLACEHOLDER, vec![lhs, rhs]))
+}
+
+/// Build the private propagation schedule exposed as `(check-disequalities)`.
+pub fn check_disequalities_command() -> Command {
+    Command::RunSchedule(disequality_schedule(egglog::span!()))
+}
+
+/// Build a pair-only disequality query for direct AST clients.
+///
+/// Unlike `(check-disequal lhs rhs)`, this command does not run the global
+/// propagation schedule first. It therefore remains usable after an unrelated
+/// pair has contradicted, matching host APIs that query one already-propagated
+/// pair at a time.
+pub fn check_known_disequal_command(lhs: Expr, rhs: Expr) -> Command {
+    let span = egglog::span!();
+    Command::Check(
+        span.clone(),
+        vec![Fact::Fact(call(
+            &span,
+            CHECK_KNOWN_PLACEHOLDER,
+            vec![lhs, rhs],
+        ))],
+    )
+}
+
+/// The relationship known between two terms in a consistent e-graph.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DisequalityComparison {
+    Equal,
+    Unequal,
+    Indeterminate,
+}
+
+/// Query equality and compiled disequality without exposing an encoding's
+/// generated functions or relations.
+pub fn compare_disequality(
+    egraph: &mut egglog::EGraph,
+    lhs: Expr,
+    rhs: Expr,
+) -> Result<DisequalityComparison, Error> {
+    let span = egglog::span!();
+    let equality = Command::Check(
+        span.clone(),
+        vec![Fact::Eq(span.clone(), lhs.clone(), rhs.clone())],
+    );
+    match egraph.run_program(vec![equality]) {
+        Ok(_) => return Ok(DisequalityComparison::Equal),
+        Err(Error::CheckError(_, _)) => {}
+        Err(error) => return Err(error),
+    }
+
+    if egraph.get_sort_by_name(SUPPORT_SORT).is_none() {
+        return Ok(DisequalityComparison::Indeterminate);
+    }
+    match egraph.run_program(vec![check_known_disequal_command(lhs, rhs)]) {
+        Ok(_) => Ok(DisequalityComparison::Unequal),
+        Err(Error::ExpectFail(_)) => Ok(DisequalityComparison::Indeterminate),
+        Err(error) => Err(error),
+    }
+}
+
+/// Run the private propagation schedule and report whether no disequality has
+/// collapsed to a self-edge. The outer `fail` converts the generated panic
+/// into a boolean result without inspecting backend diagnostic text.
+pub fn disequalities_are_consistent(egraph: &mut egglog::EGraph) -> Result<bool, Error> {
+    if egraph.get_sort_by_name(SUPPORT_SORT).is_none() {
+        return Ok(true);
+    }
+    match egraph.run_program(vec![Command::Fail(
+        egglog::span!(),
+        vec![check_disequalities_command()],
+    )]) {
+        Ok(_) => Ok(false),
+        Err(Error::ExpectFail(_)) => Ok(true),
+        Err(error) => Err(error),
+    }
+}
+
+struct CheckDisequalities;
+
+impl Macro<Vec<Command>> for CheckDisequalities {
+    fn name(&self) -> &str {
+        "check-disequalities"
+    }
+
+    fn parse(
+        &self,
+        args: &[Sexp],
+        span: Span,
+        _parser: &mut Parser,
+    ) -> Result<Vec<Command>, ParseError> {
+        if !args.is_empty() {
+            return Err(ParseError(span, "usage: (check-disequalities)".to_owned()));
+        }
+        Ok(vec![Command::RunSchedule(disequality_schedule(span))])
+    }
+}
+
+struct CheckDisequal;
+
+impl Macro<Vec<Command>> for CheckDisequal {
+    fn name(&self) -> &str {
+        "check-disequal"
+    }
+
+    fn parse(
+        &self,
+        args: &[Sexp],
+        span: Span,
+        parser: &mut Parser,
+    ) -> Result<Vec<Command>, ParseError> {
+        let [lhs, rhs] = args else {
+            return Err(ParseError(
+                span,
+                "usage: (check-disequal <expr> <expr>)".to_owned(),
+            ));
+        };
+        Ok(vec![Command::Check(
+            span.clone(),
+            vec![Fact::Fact(call(
+                &span,
+                CHECK_PLACEHOLDER,
+                vec![parser.parse_expr(lhs)?, parser.parse_expr(rhs)?],
+            ))],
+        )])
+    }
+}
+
+struct CheckKnownDisequal;
+
+impl Macro<Vec<Command>> for CheckKnownDisequal {
+    fn name(&self) -> &str {
+        "check-known-disequal"
+    }
+
+    fn parse(
+        &self,
+        args: &[Sexp],
+        span: Span,
+        parser: &mut Parser,
+    ) -> Result<Vec<Command>, ParseError> {
+        let [lhs, rhs] = args else {
+            return Err(ParseError(
+                span,
+                "usage: (check-known-disequal <expr> <expr>)".to_owned(),
+            ));
+        };
+        Ok(vec![Command::Check(
+            span.clone(),
+            vec![Fact::Fact(call(
+                &span,
+                CHECK_KNOWN_PLACEHOLDER,
+                vec![parser.parse_expr(lhs)?, parser.parse_expr(rhs)?],
+            ))],
+        )])
+    }
+}
+
+struct DisequalAction;
+
+impl Macro<Vec<Action>> for DisequalAction {
+    fn name(&self) -> &str {
+        "disequal"
+    }
+
+    fn parse(
+        &self,
+        args: &[Sexp],
+        span: Span,
+        parser: &mut Parser,
+    ) -> Result<Vec<Action>, ParseError> {
+        let [lhs, rhs] = args else {
+            return Err(ParseError(
+                span,
+                "usage: (disequal <expr> <expr>)".to_owned(),
+            ));
+        };
+        let lhs = parser.parse_expr(lhs)?;
+        let rhs = parser.parse_expr(rhs)?;
+        Ok(vec![Action::Expr(
+            span.clone(),
+            Expr::Call(span, PLACEHOLDER.to_owned(), vec![lhs, rhs]),
+        )])
+    }
+}
+
+struct DisequalityMacro {
+    encoding: DisequalityEncoding,
+}
+
+impl CommandMacro for DisequalityMacro {
+    fn transform(
+        &self,
+        command: Command,
+        symbol_gen: &mut SymbolGen,
+        type_info: &TypeInfo,
+    ) -> Result<Vec<Command>, Error> {
+        match command {
+            Command::RunSchedule(schedule)
+                if is_disequality_schedule(&schedule)
+                    && type_info.get_sort_by_name(SUPPORT_SORT).is_none() =>
+            {
+                Ok(Vec::new())
+            }
+            Command::Check(span, facts) => {
+                let [Fact::Fact(Expr::Call(_, head, args))] = facts.as_slice() else {
+                    return Ok(vec![Command::Check(span, facts)]);
+                };
+                let run_propagation = match head.as_str() {
+                    CHECK_PLACEHOLDER => true,
+                    CHECK_KNOWN_PLACEHOLDER => false,
+                    _ => return Ok(vec![Command::Check(span, facts)]),
+                };
+                if args.len() != 2 {
+                    let command = if run_propagation {
+                        "check-disequal"
+                    } else {
+                        "check-known-disequal"
+                    };
+                    return Err(Error::DesugarError(
+                        span,
+                        format!("internal {command} command must have two operands"),
+                    ));
+                }
+                let [lhs, rhs] = args.as_slice() else {
+                    return Ok(vec![Command::Check(span, facts)]);
+                };
+                let sort = disequality_operand_sort(
+                    type_info,
+                    symbol_gen,
+                    lhs,
+                    rhs,
+                    &[],
+                    Context::Full,
+                    &span,
+                )?;
+                let mut required_sorts = BTreeMap::new();
+                required_sorts.insert(sort.name().to_owned(), span.clone());
+                let mut commands = support_commands(type_info, required_sorts, self.encoding);
+                if run_propagation {
+                    commands.push(Command::RunSchedule(disequality_schedule(span.clone())));
+                }
+                commands.push(symmetric_disequality_check(
+                    span,
+                    lhs.clone(),
+                    rhs.clone(),
+                    sort.name(),
+                    self.encoding,
+                ));
+                Ok(commands)
+            }
+            Command::Rule { mut rule } if contains_disequality(&rule.head) => {
+                let mut bindings = Vec::new();
+                for fact in type_info.typecheck_facts(symbol_gen, &rule.body)? {
+                    fact.visit_vars(&mut |span, var| {
+                        if !bindings
+                            .iter()
+                            .any(|(name, _, _): &(String, Span, ArcSort)| name == &var.name)
+                        {
+                            bindings.push((var.name.clone(), span.clone(), var.sort.clone()));
+                        }
+                    });
+                }
+                let (head, required_sorts) = lower_actions(
+                    rule.head,
+                    bindings,
+                    Context::Full,
+                    symbol_gen,
+                    type_info,
+                    self.encoding,
+                )?;
+                rule.head = head;
+                let mut commands = support_commands(type_info, required_sorts, self.encoding);
+                commands.push(Command::Rule { rule });
+                Ok(commands)
+            }
+            Command::Action(action)
+                if contains_disequality(&Actions::singleton(action.clone())) =>
+            {
+                let (mut actions, required_sorts) = lower_actions(
+                    Actions::singleton(action),
+                    Vec::new(),
+                    Context::Full,
+                    symbol_gen,
+                    type_info,
+                    self.encoding,
+                )?;
+                let mut commands = support_commands(type_info, required_sorts, self.encoding);
+                if actions.0.len() == 1 {
+                    commands.push(Command::Action(actions.0.remove(0)));
+                } else {
+                    commands.push(Command::Actions(actions));
+                }
+                Ok(commands)
+            }
+            Command::Actions(actions) if contains_disequality(&actions) => {
+                let (actions, required_sorts) = lower_actions(
+                    actions,
+                    Vec::new(),
+                    Context::Full,
+                    symbol_gen,
+                    type_info,
+                    self.encoding,
+                )?;
+                let mut commands = support_commands(type_info, required_sorts, self.encoding);
+                commands.push(Command::Actions(actions));
+                Ok(commands)
+            }
+            Command::LetBegin(span, name, actions) if contains_disequality(&actions) => {
+                if let Some(Action::Expr(action_span, Expr::Call(_, head, _))) = actions.0.last()
+                    && head == PLACEHOLDER
+                {
+                    return Err(Error::DesugarError(
+                        action_span.clone(),
+                        "a let-begin block must end with a value expression, not `disequal`"
+                            .to_owned(),
+                    ));
+                }
+                let (actions, required_sorts) = lower_actions(
+                    actions,
+                    Vec::new(),
+                    Context::Full,
+                    symbol_gen,
+                    type_info,
+                    self.encoding,
+                )?;
+                let mut commands = support_commands(type_info, required_sorts, self.encoding);
+                commands.push(Command::LetBegin(span, name, actions));
+                Ok(commands)
+            }
+            Command::Fail(span, commands) => {
+                let mut support = Vec::new();
+                let mut support_keys = HashSet::new();
+                let mut semantic = Vec::new();
+                for command in commands {
+                    for lowered in self.transform(command, symbol_gen, type_info)? {
+                        let support_key = match &lowered {
+                            Command::Sort { name, .. } if name.starts_with("@disequality") => {
+                                Some(("sort", name.clone()))
+                            }
+                            Command::AddRuleset(_, name) if name.starts_with("@disequality") => {
+                                Some(("ruleset", name.clone()))
+                            }
+                            Command::Constructor { name, .. }
+                            | Command::Function { name, .. }
+                            | Command::Relation { name, .. }
+                                if name.starts_with("@disequality") =>
+                            {
+                                Some(("function", name.clone()))
+                            }
+                            Command::Rule { rule } if rule.name.starts_with("@disequality") => {
+                                Some(("rule", rule.name.clone()))
+                            }
+                            _ => None,
+                        };
+                        if let Some(key) = support_key {
+                            if support_keys.insert(key) {
+                                support.push(lowered);
+                            }
+                        } else {
+                            semantic.push(lowered);
+                        }
+                    }
+                }
+                support.push(Command::Fail(span, semantic));
+                Ok(support)
+            }
+            command => Ok(vec![command]),
+        }
+    }
+}
+
+fn contains_disequality(actions: &Actions) -> bool {
+    actions.0.iter().any(|action| {
+        matches!(
+            action,
+            Action::Expr(_, Expr::Call(_, head, _)) if head == PLACEHOLDER
+        )
+    })
+}
+
+fn lower_actions(
+    actions: Actions,
+    mut bindings: Vec<(String, Span, ArcSort)>,
+    context: Context,
+    symbol_gen: &mut SymbolGen,
+    type_info: &TypeInfo,
+    encoding: DisequalityEncoding,
+) -> Result<(Actions, BTreeMap<String, Span>), Error> {
+    let mut lowered = Vec::with_capacity(actions.0.len());
+    let mut required_sorts = BTreeMap::new();
+
+    for action in actions.0 {
+        match action {
+            Action::Expr(action_span, Expr::Call(_, head, args)) if head == PLACEHOLDER => {
+                let [lhs, rhs] = args.as_slice() else {
+                    return Err(Error::DesugarError(
+                        action_span,
+                        "internal disequal action must have two operands".to_owned(),
+                    ));
+                };
+                let lhs_sort = disequality_operand_sort(
+                    type_info,
+                    symbol_gen,
+                    lhs,
+                    rhs,
+                    &bindings,
+                    context,
+                    &action_span,
+                )?;
+
+                required_sorts
+                    .entry(lhs_sort.name().to_owned())
+                    .or_insert_with(|| action_span.clone());
+                lowered.extend(lower_disequality(
+                    action_span,
+                    lhs.clone(),
+                    rhs.clone(),
+                    lhs_sort.name(),
+                    encoding,
+                ));
+            }
+            Action::Let(span, name, value) => {
+                let sort = type_info.infer_expr_sort(symbol_gen, &value, &bindings, context)?;
+                if bindings.iter().any(|(bound, _, _)| bound == &name) {
+                    return Err(TypeError::AlreadyDefined(name, span).into());
+                }
+                bindings.push((name.clone(), span.clone(), sort));
+                lowered.push(Action::Let(span, name, value));
+            }
+            action => lowered.push(action),
+        }
+    }
+
+    Ok((Actions::new(lowered), required_sorts))
+}
+
+fn disequality_operand_sort(
+    type_info: &TypeInfo,
+    symbol_gen: &mut SymbolGen,
+    lhs: &Expr,
+    rhs: &Expr,
+    bindings: &[(String, Span, ArcSort)],
+    context: Context,
+    span: &Span,
+) -> Result<ArcSort, Error> {
+    let lhs_sort = operand_sort(type_info, symbol_gen, lhs, bindings, context)?;
+    let rhs_sort = operand_sort(type_info, symbol_gen, rhs, bindings, context)?;
+    if lhs_sort.name() != rhs_sort.name() {
+        return Err(TypeError::Mismatch {
+            expr: rhs.clone(),
+            expected: lhs_sort,
+            actual: rhs_sort,
+        }
+        .into());
+    }
+    if !lhs_sort.is_eq_sort() {
+        return Err(TypeError::NonEqsortUnion(lhs_sort, span.clone()).into());
+    }
+    if !type_info.is_sort_unionable(&lhs_sort) {
+        return Err(TypeError::NonUnionableSort(lhs_sort, span.clone()).into());
+    }
+    Ok(lhs_sort)
+}
+
+fn symmetric_disequality_check(
+    span: Span,
+    lhs: Expr,
+    rhs: Expr,
+    sort: &str,
+    encoding: DisequalityEncoding,
+) -> Command {
+    let forward = known_disequality_fact(&span, lhs.clone(), rhs.clone(), sort, encoding);
+    let reverse = known_disequality_fact(&span, rhs, lhs, sort, encoding);
+    Command::Fail(
+        span.clone(),
+        vec![
+            Command::Fail(
+                span.clone(),
+                vec![Command::Check(span.clone(), vec![forward])],
+            ),
+            Command::Fail(
+                span.clone(),
+                vec![Command::Check(span.clone(), vec![reverse])],
+            ),
+        ],
+    )
+}
+
+fn known_disequality_fact(
+    span: &Span,
+    lhs: Expr,
+    rhs: Expr,
+    sort: &str,
+    encoding: DisequalityEncoding,
+) -> Fact {
+    match encoding {
+        DisequalityEncoding::EqualityEmbedding
+        | DisequalityEncoding::OptimizedEqualityEmbedding => Fact::Eq(
+            span.clone(),
+            call(span, &equality_symbol(sort), vec![lhs, rhs]),
+            call(span, FALSE, vec![]),
+        ),
+        DisequalityEncoding::NegatedEqualityEmbedding => {
+            Fact::Fact(call(span, &negated_equality_symbol(sort), vec![lhs, rhs]))
+        }
+        DisequalityEncoding::DisequalityEdges => Fact::Fact(call(
+            span,
+            "set-contains",
+            vec![
+                call(span, &disequality_neighbors_symbol(sort), vec![lhs]),
+                rhs,
+            ],
+        )),
+    }
+}
+
+/// Select the sort-specific encoding before the generated action is typechecked.
+///
+/// A variable or declared function has a fixed output sort independent of its
+/// operands, so avoid invoking general constraint solving for these common
+/// cases. The generated action still goes through normal typechecking and
+/// validates the complete operand expressions.
+fn operand_sort(
+    type_info: &TypeInfo,
+    symbol_gen: &mut SymbolGen,
+    expr: &Expr,
+    bindings: &[(String, Span, ArcSort)],
+    context: Context,
+) -> Result<ArcSort, TypeError> {
+    let declared = match expr {
+        Expr::Var(_, name) => bindings
+            .iter()
+            .find_map(|(bound, _, sort)| (bound == name).then_some(sort))
+            .or_else(|| type_info.get_global_sort(name)),
+        Expr::Call(_, head, _) if !type_info.is_primitive(head) => type_info
+            .get_func_type(head)
+            .map(|function| function.output()),
+        _ => None,
+    };
+    match declared {
+        Some(sort) => Ok(sort.clone()),
+        None => type_info.infer_expr_sort(symbol_gen, expr, bindings, context),
+    }
+}
+
+fn lower_disequality(
+    span: Span,
+    lhs: Expr,
+    rhs: Expr,
+    sort: &str,
+    encoding: DisequalityEncoding,
+) -> Vec<Action> {
+    match encoding {
+        DisequalityEncoding::EqualityEmbedding => vec![Action::Union(
+            span.clone(),
+            call(&span, &equality_symbol(sort), vec![lhs, rhs]),
+            call(&span, FALSE, vec![]),
+        )],
+        DisequalityEncoding::OptimizedEqualityEmbedding => vec![Action::Union(
+            span.clone(),
+            call(&span, &equality_symbol(sort), vec![lhs, rhs]),
+            call(&span, FALSE, vec![]),
+        )],
+        DisequalityEncoding::NegatedEqualityEmbedding => vec![Action::Expr(
+            span.clone(),
+            call(&span, &negated_equality_symbol(sort), vec![lhs, rhs]),
+        )],
+        DisequalityEncoding::DisequalityEdges => {
+            let neighbors = disequality_neighbors_symbol(sort);
+            vec![
+                Action::Set(
+                    span.clone(),
+                    neighbors.clone(),
+                    vec![lhs.clone()],
+                    call(&span, "set-of", vec![rhs.clone()]),
+                ),
+                Action::Set(
+                    span.clone(),
+                    neighbors,
+                    vec![rhs],
+                    call(&span, "set-of", vec![lhs]),
+                ),
+            ]
+        }
+    }
+}
+
+fn support_commands(
+    type_info: &TypeInfo,
+    required_sorts: BTreeMap<String, Span>,
+    encoding: DisequalityEncoding,
+) -> Vec<Command> {
+    let Some(base_span) = required_sorts.values().next().cloned() else {
+        return Vec::new();
+    };
+    let mut commands = Vec::new();
+
+    if type_info.get_sort_by_name(SUPPORT_SORT).is_none() {
+        commands.push(Command::Sort {
+            span: base_span.clone(),
+            name: SUPPORT_SORT.to_owned(),
+            presort_and_args: None,
+            uf: None,
+            container_rebuild: None,
+            proof_constructors: None,
+            unionable: true,
+        });
+        commands.push(Command::AddRuleset(
+            base_span.clone(),
+            CHECK_RULESET.to_owned(),
+        ));
+    }
+
+    match encoding {
+        DisequalityEncoding::EqualityEmbedding
+        | DisequalityEncoding::OptimizedEqualityEmbedding => {
+            if type_info.get_sort_by_name(TRUTH_SORT).is_none() {
+                commands.push(Command::Sort {
+                    span: base_span.clone(),
+                    name: TRUTH_SORT.to_owned(),
+                    presort_and_args: None,
+                    uf: None,
+                    container_rebuild: None,
+                    proof_constructors: None,
+                    unionable: true,
+                });
+                commands.push(constructor(&base_span, TRUE, vec![], TRUTH_SORT));
+                commands.push(constructor(&base_span, FALSE, vec![], TRUTH_SORT));
+                if encoding == DisequalityEncoding::EqualityEmbedding {
+                    commands.push(equality_embedding_contradiction_rule(&base_span));
+                }
+            }
+
+            let truth_equality = equality_symbol(TRUTH_SORT);
+            if type_info.get_func_type(&truth_equality).is_none() {
+                commands.extend(equality_support(&base_span, TRUTH_SORT, encoding));
+            }
+
+            for (sort, span) in required_sorts {
+                let equality = equality_symbol(&sort);
+                if type_info.get_func_type(&equality).is_none() && sort != TRUTH_SORT {
+                    commands.extend(equality_support(&span, &sort, encoding));
+                }
+            }
+        }
+        DisequalityEncoding::NegatedEqualityEmbedding => {
+            for (sort, span) in required_sorts {
+                let negated_equality = negated_equality_symbol(&sort);
+                if type_info.get_func_type(&negated_equality).is_none() {
+                    commands.extend(negated_equality_support(&span, &sort));
+                }
+            }
+        }
+        DisequalityEncoding::DisequalityEdges => {
+            for (sort, span) in required_sorts {
+                let neighbors = disequality_neighbors_symbol(&sort);
+                if type_info.get_func_type(&neighbors).is_none() {
+                    commands.extend(disequality_edge_support(&span, &sort));
+                }
+            }
+        }
+    }
+
+    commands
+}
+
+fn equality_support(span: &Span, sort: &str, encoding: DisequalityEncoding) -> Vec<Command> {
+    match encoding {
+        DisequalityEncoding::EqualityEmbedding => equality_embedding_support(span, sort),
+        DisequalityEncoding::OptimizedEqualityEmbedding => {
+            optimized_equality_embedding_support(span, sort)
+        }
+        DisequalityEncoding::NegatedEqualityEmbedding | DisequalityEncoding::DisequalityEdges => {
+            unreachable!()
+        }
+    }
+}
+
+fn equality_embedding_support(span: &Span, sort: &str) -> Vec<Command> {
+    let equality = equality_symbol(sort);
+    let x = Expr::Var(span.clone(), "@disequality-x".to_owned());
+    let y = Expr::Var(span.clone(), "@disequality-y".to_owned());
+    let eq_xy = call(span, &equality, vec![x.clone(), y.clone()]);
+    let eq_yx = call(span, &equality, vec![y.clone(), x.clone()]);
+    let eq_xx = call(span, &equality, vec![x.clone(), x.clone()]);
+    let eq_yy = call(span, &equality, vec![y.clone(), y.clone()]);
+    let true_expr = call(span, TRUE, vec![]);
+    let false_expr = call(span, FALSE, vec![]);
+    let truth_equality = equality_symbol(TRUTH_SORT);
+
+    vec![
+        constructor(span, &equality, vec![sort, sort], TRUTH_SORT),
+        rule(
+            span,
+            format!("@disequality-ee-lift-{sort}"),
+            vec![Fact::Eq(span.clone(), eq_xy.clone(), true_expr.clone())],
+            vec![Action::Union(span.clone(), x.clone(), y.clone())],
+        ),
+        rule(
+            span,
+            format!("@disequality-ee-symmetry-{sort}"),
+            vec![Fact::Eq(span.clone(), eq_xy.clone(), false_expr.clone())],
+            vec![Action::Union(span.clone(), eq_yx, false_expr.clone())],
+        ),
+        rule(
+            span,
+            format!("@disequality-ee-double-negation-{sort}"),
+            vec![Fact::Eq(
+                span.clone(),
+                call(
+                    span,
+                    &truth_equality,
+                    vec![eq_xy.clone(), false_expr.clone()],
+                ),
+                false_expr.clone(),
+            )],
+            vec![Action::Union(span.clone(), x.clone(), y.clone())],
+        ),
+        rule(
+            span,
+            format!("@disequality-ee-reflexive-left-{sort}"),
+            vec![Fact::Eq(span.clone(), eq_xy.clone(), false_expr.clone())],
+            vec![Action::Union(span.clone(), eq_xx, true_expr.clone())],
+        ),
+        rule(
+            span,
+            format!("@disequality-ee-reflexive-right-{sort}"),
+            vec![Fact::Eq(span.clone(), eq_xy, false_expr)],
+            vec![Action::Union(span.clone(), eq_yy, true_expr)],
+        ),
+    ]
+}
+
+fn optimized_equality_embedding_support(span: &Span, sort: &str) -> Vec<Command> {
+    let equality = equality_symbol(sort);
+    let x = Expr::Var(span.clone(), "@disequality-x".to_owned());
+    let y = Expr::Var(span.clone(), "@disequality-y".to_owned());
+    let eq_xy = call(span, &equality, vec![x.clone(), y.clone()]);
+    let false_expr = call(span, FALSE, vec![]);
+    let truth_equality = equality_symbol(TRUTH_SORT);
+
+    vec![
+        constructor(span, &equality, vec![sort, sort], TRUTH_SORT),
+        rule(
+            span,
+            format!("@disequality-oee-lift-{sort}"),
+            vec![Fact::Eq(
+                span.clone(),
+                eq_xy.clone(),
+                call(span, TRUE, vec![]),
+            )],
+            vec![Action::Union(span.clone(), x.clone(), y.clone())],
+        ),
+        rule(
+            span,
+            format!("@disequality-oee-double-negation-{sort}"),
+            vec![Fact::Eq(
+                span.clone(),
+                call(
+                    span,
+                    &truth_equality,
+                    vec![eq_xy.clone(), false_expr.clone()],
+                ),
+                false_expr.clone(),
+            )],
+            vec![Action::Union(span.clone(), x.clone(), y.clone())],
+        ),
+        rule(
+            span,
+            format!("@disequality-oee-contradiction-{sort}"),
+            vec![Fact::Eq(
+                span.clone(),
+                call(span, &equality, vec![x.clone(), x]),
+                false_expr,
+            )],
+            vec![Action::Panic(
+                span.clone(),
+                "disequality constraint contradicted".to_owned(),
+            )],
+        ),
+    ]
+}
+
+fn negated_equality_support(span: &Span, sort: &str) -> Vec<Command> {
+    let negated_equality = negated_equality_symbol(sort);
+    let x = Expr::Var(span.clone(), "@disequality-x".to_owned());
+    vec![
+        Command::Relation {
+            span: span.clone(),
+            name: negated_equality.clone(),
+            inputs: vec![sort.to_owned(), sort.to_owned()],
+        },
+        rule(
+            span,
+            format!("@disequality-nee-contradiction-{sort}"),
+            vec![Fact::Fact(call(
+                span,
+                &negated_equality,
+                vec![x.clone(), x],
+            ))],
+            vec![Action::Panic(
+                span.clone(),
+                "disequality constraint contradicted".to_owned(),
+            )],
+        ),
+    ]
+}
+
+fn disequality_edge_support(span: &Span, sort: &str) -> Vec<Command> {
+    let neighbor_set = disequality_neighbor_set_sort(sort);
+    let neighbors = disequality_neighbors_symbol(sort);
+    let x = Expr::Var(span.clone(), "@disequality-x".to_owned());
+    vec![
+        Command::Sort {
+            span: span.clone(),
+            name: neighbor_set.clone(),
+            presort_and_args: Some((
+                "Set".to_owned(),
+                vec![Expr::Var(span.clone(), sort.to_owned())],
+            )),
+            uf: None,
+            container_rebuild: None,
+            proof_constructors: None,
+            unionable: true,
+        },
+        Command::Function {
+            span: span.clone(),
+            name: neighbors.clone(),
+            schema: Schema::new(vec![sort.to_owned()], neighbor_set),
+            merge: Some(Merge::result_only(call(
+                span,
+                "set-union",
+                vec![
+                    Expr::Var(span.clone(), "old".to_owned()),
+                    Expr::Var(span.clone(), "new".to_owned()),
+                ],
+            ))),
+            hidden: true,
+            let_binding: false,
+            term_constructor: None,
+            unextractable: true,
+            identity_vals: None,
+            cost: None,
+            term_node: false,
+        },
+        rule(
+            span,
+            format!("@disequality-de-contradiction-{sort}"),
+            vec![Fact::Fact(call(
+                span,
+                "set-contains",
+                vec![call(span, &neighbors, vec![x.clone()]), x],
+            ))],
+            vec![Action::Panic(
+                span.clone(),
+                "disequality constraint contradicted".to_owned(),
+            )],
+        ),
+    ]
+}
+
+fn equality_embedding_contradiction_rule(span: &Span) -> Command {
+    rule(
+        span,
+        "@disequality-contradiction".to_owned(),
+        vec![Fact::Eq(
+            span.clone(),
+            call(span, TRUE, vec![]),
+            call(span, FALSE, vec![]),
+        )],
+        vec![Action::Panic(
+            span.clone(),
+            "disequality constraint contradicted".to_owned(),
+        )],
+    )
+}
+
+fn constructor(span: &Span, name: &str, inputs: Vec<&str>, output: &str) -> Command {
+    Command::Constructor {
+        span: span.clone(),
+        name: name.to_owned(),
+        schema: Schema {
+            input: inputs.into_iter().map(str::to_owned).collect(),
+            outputs: vec![output.to_owned()],
+        },
+        cost: None,
+        unextractable: true,
+        hidden: true,
+        let_binding: false,
+        term_constructor: None,
+    }
+}
+
+fn rule(span: &Span, name: String, body: Vec<Fact>, head: Vec<Action>) -> Command {
+    Command::Rule {
+        rule: Rule {
+            span: span.clone(),
+            head: Actions::new(head),
+            body,
+            name,
+            ruleset: CHECK_RULESET.to_owned(),
+            eval_mode: RuleEvalMode::Seminaive,
+            no_decomp: false,
+            include_subsumed: false,
+        },
+    }
+}
+
+fn disequality_schedule(span: Span) -> Schedule {
+    Schedule::Saturate(
+        span.clone(),
+        Box::new(Schedule::Run(
+            span,
+            RunConfig {
+                ruleset: CHECK_RULESET.to_owned(),
+                until: None,
+            },
+        )),
+    )
+}
+
+fn is_disequality_schedule(schedule: &Schedule) -> bool {
+    matches!(
+        schedule,
+        Schedule::Saturate(
+            _,
+            inner
+        ) if matches!(
+            inner.as_ref(),
+            Schedule::Run(_, RunConfig { ruleset, until: None }) if ruleset == CHECK_RULESET
+        )
+    )
+}
+
+fn call(span: &Span, head: &str, args: Vec<Expr>) -> Expr {
+    Expr::Call(span.clone(), head.to_owned(), args)
+}
+
+fn equality_symbol(sort: &str) -> String {
+    if sort == TRUTH_SORT {
+        "@disequality-eq".to_owned()
+    } else {
+        format!("@disequality-eq-{sort}")
+    }
+}
+
+fn negated_equality_symbol(sort: &str) -> String {
+    format!("@disequality-ne-{sort}")
+}
+
+fn disequality_neighbor_set_sort(sort: &str) -> String {
+    format!("@disequality-neighbor-set-{sort}")
+}
+
+fn disequality_neighbors_symbol(sort: &str) -> String {
+    format!("@disequality-neighbors-{sort}")
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        DisequalityComparison, DisequalityEncoding, compare_disequality,
+        disequalities_are_consistent, new_experimental_egraph,
+        new_experimental_egraph_for_proofs_with_disequality_encoding,
+        new_experimental_egraph_with_disequality_encoding,
+    };
+    use egglog::ast::sanitize_internal_names;
+    use std::path::{Path, PathBuf};
+    use tempfile::TempDir;
+
+    const ENCODINGS: [DisequalityEncoding; 4] = [
+        DisequalityEncoding::EqualityEmbedding,
+        DisequalityEncoding::OptimizedEqualityEmbedding,
+        DisequalityEncoding::NegatedEqualityEmbedding,
+        DisequalityEncoding::DisequalityEdges,
+    ];
+
+    const PROOF_ENCODINGS: [DisequalityEncoding; 3] = [
+        DisequalityEncoding::EqualityEmbedding,
+        DisequalityEncoding::OptimizedEqualityEmbedding,
+        DisequalityEncoding::NegatedEqualityEmbedding,
+    ];
+
+    fn egraphs_for_supported_modes(
+        encoding: DisequalityEncoding,
+    ) -> Vec<(&'static str, egglog::EGraph)> {
+        let mut modes = vec![(
+            "ordinary",
+            new_experimental_egraph_with_disequality_encoding(encoding),
+        )];
+        if encoding != DisequalityEncoding::DisequalityEdges {
+            modes.extend([
+                (
+                    "term",
+                    new_experimental_egraph_for_proofs_with_disequality_encoding(encoding)
+                        .with_term_encoding_enabled(),
+                ),
+                (
+                    "proofs",
+                    new_experimental_egraph_for_proofs_with_disequality_encoding(encoding)
+                        .with_proofs_enabled(),
+                ),
+                (
+                    "proof-testing",
+                    new_experimental_egraph_for_proofs_with_disequality_encoding(encoding)
+                        .with_proofs_enabled()
+                        .with_proof_testing(),
+                ),
+            ]);
+            #[cfg(feature = "bin")]
+            modes.push((
+                "proof-extraction",
+                new_experimental_egraph_for_proofs_with_disequality_encoding(encoding)
+                    .with_proof_extraction(),
+            ));
+        }
+        modes
+    }
+
+    fn parameter_analysis_facts() -> TempDir {
+        let directory = tempfile::tempdir().unwrap();
+        for (name, contents) in [
+            ("config.tsv", "2\n"),
+            ("f.tsv", "3\t2\n5\t4\n"),
+            ("g.tsv", "8\t6\t7\n11\t9\t10\n"),
+            ("h.tsv", "15\t12\t13\t14\n19\t16\t17\t18\n"),
+            (
+                "numerals.tsv",
+                "0\t1\n1\t2\n2\t1\n4\t2\n6\t1\n7\t2\n9\t2\n10\t1\n12\t1\n13\t2\n14\t3\n16\t1\n17\t2\n18\t3\n",
+            ),
+            ("pairs.tsv", "0\t0\t1\n1\t3\t5\n2\t8\t11\n3\t15\t19\n"),
+        ] {
+            std::fs::write(directory.path().join(name), contents).unwrap();
+        }
+        directory
+    }
+
+    fn disequality_fixtures() -> Vec<PathBuf> {
+        let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/disequality");
+        let mut fixtures = std::fs::read_dir(fixture_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "egg"))
+            .collect::<Vec<_>>();
+        fixtures.sort();
+        assert!(!fixtures.is_empty());
+        fixtures
+    }
+
+    #[test]
+    fn disequality_support_names_are_readable() {
+        assert_eq!(super::equality_symbol("Term"), "@disequality-eq-Term");
+        assert_eq!(super::equality_symbol(super::TRUTH_SORT), "@disequality-eq");
+        assert_eq!(
+            super::negated_equality_symbol("Term"),
+            "@disequality-ne-Term"
+        );
+        assert_eq!(
+            super::disequality_neighbor_set_sort("Term"),
+            "@disequality-neighbor-set-Term"
+        );
+        assert_eq!(
+            super::disequality_neighbors_symbol("Term"),
+            "@disequality-neighbors-Term"
+        );
+    }
+
+    #[test]
+    fn equality_embedding_accepts_consistent_disequality() {
+        let mut egraph = new_experimental_egraph();
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (datatype Math (A) (B))
+                (disequal (A) (B))
+                (check-disequalities)
+                "#,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn equality_embedding_rejects_reflexive_disequality() {
+        let mut egraph = new_experimental_egraph();
+        let error = egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (datatype Math (A))
+                (disequal (A) (A))
+                (check-disequalities)
+                "#,
+            )
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("disequality constraint contradicted")
+        );
+    }
+
+    #[test]
+    fn equality_embedding_detects_congruence_after_union() {
+        let mut egraph = new_experimental_egraph();
+        let error = egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (datatype Math (A) (B) (F Math))
+                (disequal (F (A)) (F (B)))
+                (union (A) (B))
+                (check-disequalities)
+                "#,
+            )
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("disequality constraint contradicted")
+        );
+    }
+
+    #[test]
+    fn check_disequalities_is_explicit_and_noops_without_constraints() {
+        for encoding in ENCODINGS {
+            let mut empty = new_experimental_egraph_with_disequality_encoding(encoding);
+            empty
+                .parse_and_run_program(None, "(check-disequalities)")
+                .unwrap_or_else(|error| panic!("{encoding:?} rejected an empty check: {error}"));
+
+            let mut contradictory = new_experimental_egraph_with_disequality_encoding(encoding);
+            contradictory
+                .parse_and_run_program(
+                    None,
+                    r#"
+                    (datatype Math (A))
+                    (disequal (A) (A))
+                    (run 10)
+                    "#,
+                )
+                .unwrap_or_else(|error| {
+                    panic!("{encoding:?} ran private rules from the default ruleset: {error}")
+                });
+            let error = contradictory
+                .parse_and_run_program(None, "(check-disequalities)")
+                .expect_err("the explicit check must detect the stored contradiction");
+            assert!(
+                error
+                    .to_string()
+                    .contains("disequality constraint contradicted"),
+                "unexpected {encoding:?} error: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn check_disequalities_rejects_arguments() {
+        let mut egraph = new_experimental_egraph();
+        let error = egraph
+            .parse_program(None, "(check-disequalities 1)")
+            .unwrap_err();
+        assert!(error.to_string().contains("usage: (check-disequalities)"));
+    }
+
+    #[test]
+    fn all_encodings_query_known_disequalities_without_exposing_support_tables() {
+        let program = r#"
+            (datatype Math (A) (B) (C) (F Math))
+            (disequal (F (A)) (F (B)))
+            (check-disequal (F (A)) (F (B)))
+            (check-disequal (F (B)) (F (A)))
+            (union (A) (C))
+            (check-disequal (F (C)) (F (B)))
+        "#;
+
+        for encoding in ENCODINGS {
+            let mut egraph = new_experimental_egraph_with_disequality_encoding(encoding);
+            egraph
+                .parse_and_run_program(None, program)
+                .unwrap_or_else(|error| panic!("{encoding:?} failed per-pair queries: {error}"));
+            let unknown = egraph
+                .parse_and_run_program(None, "(check-disequal (A) (B))")
+                .expect_err("the query must fail when no relationship is known");
+            assert!(
+                matches!(unknown, egglog::Error::ExpectFail(_)),
+                "unexpected {encoding:?} unknown-query error: {unknown}"
+            );
+        }
+    }
+
+    #[test]
+    fn all_encodings_lower_pair_queries_inside_fail() {
+        let program = r#"
+            (datatype Math (A) (B) (C))
+            (fail (check-disequal (A) (C)))
+            (disequal (A) (B))
+            (check-disequal (A) (B))
+        "#;
+
+        for encoding in ENCODINGS {
+            let mut egraph = new_experimental_egraph_with_disequality_encoding(encoding);
+            egraph
+                .parse_and_run_program(None, program)
+                .unwrap_or_else(|error| panic!("{encoding:?} failed nested pair query: {error}"));
+
+            let mut first_use = new_experimental_egraph_with_disequality_encoding(encoding);
+            first_use
+                .parse_and_run_program(
+                    None,
+                    r#"
+                    (datatype Math (A) (B))
+                    (fail
+                      (fail
+                        (disequal (A) (B))
+                        (check-disequal (A) (B))))
+                    "#,
+                )
+                .unwrap_or_else(|error| {
+                    panic!("{encoding:?} duplicated first-use support inside fail: {error}")
+                });
+        }
+    }
+
+    #[test]
+    fn all_encodings_expand_fail_children_in_supported_modes() {
+        let programs = [
+            r#"
+            (datatype Math (A) (B))
+            (fail
+              (let $x (A))
+              (disequal $x (B))
+              (check (= (A) (B))))
+            (check (= $x (A)))
+            (check-disequal $x (B))
+            "#,
+            r#"
+            (fail
+              (datatype Math (A) (B))
+              (disequal (A) (B))
+              (check (= (A) (B))))
+            (check-disequal (A) (B))
+            "#,
+        ];
+
+        for encoding in ENCODINGS {
+            for program in programs {
+                for (mode, mut egraph) in egraphs_for_supported_modes(encoding) {
+                    egraph
+                        .parse_and_run_program(None, program)
+                        .unwrap_or_else(|error| {
+                            panic!(
+                                "{encoding:?} {mode} failed source-order fail expansion: {error}"
+                            )
+                        });
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn proof_encodings_support_pair_queries_under_proof_testing() {
+        let program = r#"
+            (datatype Math (A) (B) (C))
+            (disequal (A) (B))
+            (check-disequal (A) (B))
+            (fail (check-disequal (A) (C)))
+        "#;
+
+        for encoding in PROOF_ENCODINGS {
+            let mut egraph = new_experimental_egraph_for_proofs_with_disequality_encoding(encoding)
+                .with_proofs_enabled()
+                .with_proof_testing();
+            egraph
+                .parse_and_run_program(None, program)
+                .unwrap_or_else(|error| {
+                    panic!("{encoding:?} failed proof-tested pair queries: {error}")
+                });
+
+            let mut first_use =
+                new_experimental_egraph_for_proofs_with_disequality_encoding(encoding)
+                    .with_proofs_enabled()
+                    .with_proof_testing();
+            first_use
+                .parse_and_run_program(
+                    None,
+                    r#"
+                    (datatype Math (A) (B))
+                    (fail
+                      (fail
+                        (disequal (A) (B))
+                        (check-disequal (A) (B))))
+                    "#,
+                )
+                .unwrap_or_else(|error| {
+                    panic!("{encoding:?} failed proof-tested nested first use: {error}")
+                });
+        }
+    }
+
+    #[test]
+    fn let_begin_rejects_trailing_disequal_and_accepts_a_following_value() {
+        for encoding in ENCODINGS {
+            let mut invalid = new_experimental_egraph_with_disequality_encoding(encoding);
+            let error = invalid
+                .parse_and_run_program(
+                    None,
+                    r#"
+                    (datatype Math (A) (B))
+                    (let $result (begin (disequal (A) (B))))
+                    "#,
+                )
+                .expect_err("a disequality action cannot supply a let-begin value");
+            assert!(
+                error
+                    .to_string()
+                    .contains("must end with a value expression, not `disequal`"),
+                "unexpected {encoding:?} error: {error}"
+            );
+
+            let mut valid = new_experimental_egraph_with_disequality_encoding(encoding);
+            valid
+                .parse_and_run_program(
+                    None,
+                    r#"
+                    (datatype Math (A) (B))
+                    (let $result (begin (disequal (A) (B)) (A)))
+                    (check (= $result (A)))
+                    (check-disequalities)
+                    "#,
+                )
+                .unwrap_or_else(|error| {
+                    panic!("{encoding:?} rejected a valid let-begin block: {error}")
+                });
+        }
+    }
+
+    #[test]
+    fn all_encodings_support_typed_comparison_and_consistency_queries() {
+        for encoding in ENCODINGS {
+            let mut egraph = new_experimental_egraph_with_disequality_encoding(encoding);
+            egraph
+                .parse_and_run_program(None, "(datatype Math (A) (B) (C))")
+                .unwrap();
+            let a = egraph.parser.get_expr_from_string(None, "(A)").unwrap();
+            let b = egraph.parser.get_expr_from_string(None, "(B)").unwrap();
+            assert_eq!(
+                compare_disequality(&mut egraph, a.clone(), b.clone()).unwrap(),
+                DisequalityComparison::Indeterminate,
+                "{encoding:?} should allow queries before its first disequality"
+            );
+            egraph
+                .parse_and_run_program(
+                    None,
+                    r#"
+                    (disequal (A) (B))
+                    "#,
+                )
+                .unwrap();
+            let c = egraph.parser.get_expr_from_string(None, "(C)").unwrap();
+
+            assert_eq!(
+                compare_disequality(&mut egraph, a.clone(), a.clone()).unwrap(),
+                DisequalityComparison::Equal,
+                "{encoding:?} did not report reflexive equality"
+            );
+            assert_eq!(
+                compare_disequality(&mut egraph, a.clone(), b.clone()).unwrap(),
+                DisequalityComparison::Unequal,
+                "{encoding:?} did not report the stored disequality"
+            );
+            assert_eq!(
+                compare_disequality(&mut egraph, a.clone(), c).unwrap(),
+                DisequalityComparison::Indeterminate,
+                "{encoding:?} invented a relationship"
+            );
+            assert!(
+                disequalities_are_consistent(&mut egraph).unwrap(),
+                "{encoding:?} rejected a consistent graph"
+            );
+
+            egraph
+                .parse_and_run_program(None, "(union (A) (B))")
+                .unwrap();
+            assert!(
+                !disequalities_are_consistent(&mut egraph).unwrap(),
+                "{encoding:?} missed a contradiction"
+            );
+            assert_eq!(
+                compare_disequality(&mut egraph, a.clone(), b.clone()).unwrap(),
+                DisequalityComparison::Equal,
+                "{encoding:?} could not query an inconsistent graph"
+            );
+        }
+    }
+
+    #[test]
+    fn per_pair_query_placeholder_is_fully_desugared() {
+        for encoding in ENCODINGS {
+            let mut egraph = new_experimental_egraph_with_disequality_encoding(encoding);
+            let commands = egraph
+                .resolve_program(
+                    None,
+                    r#"
+                    (datatype Math (A) (B))
+                    (disequal (A) (B))
+                    (check-disequal (A) (B))
+                    (check-known-disequal (A) (B))
+                    "#,
+                )
+                .unwrap_or_else(|error| panic!("{encoding:?} failed to desugar: {error}"));
+            let rendered = commands
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                !rendered.contains(super::CHECK_PLACEHOLDER),
+                "{encoding:?} leaked the query placeholder:\n{rendered}"
+            );
+            assert!(
+                !rendered.contains(super::CHECK_KNOWN_PLACEHOLDER),
+                "{encoding:?} leaked the pair-only query placeholder:\n{rendered}"
+            );
+            assert!(
+                rendered.contains(super::CHECK_RULESET),
+                "{encoding:?} omitted the private propagation schedule"
+            );
+        }
+    }
+
+    #[test]
+    fn pair_only_check_ignores_unrelated_global_contradictions() {
+        for encoding in ENCODINGS {
+            let mut egraph = new_experimental_egraph_with_disequality_encoding(encoding);
+            egraph
+                .parse_and_run_program(
+                    None,
+                    r#"
+                    (datatype Math (A) (B) (C) (D))
+                    (disequal (A) (B))
+                    (disequal (C) (D))
+                    (union (A) (B))
+                    (fail (check-disequalities))
+                    (check-known-disequal (C) (D))
+                    "#,
+                )
+                .unwrap_or_else(|error| {
+                    panic!("{encoding:?} coupled a pair query to another contradiction: {error}")
+                });
+        }
+    }
+
+    #[test]
+    fn equality_embedding_works_in_rule_actions() {
+        let mut egraph = new_experimental_egraph();
+        let error = egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (datatype Math (A) (B))
+                (relation apart (Math Math))
+                (apart (A) (B))
+                (rule ((apart x y)) ((disequal x y)))
+                (run 10)
+                (check-disequalities)
+                (union (A) (B))
+                (check-disequalities)
+                "#,
+            )
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("disequality constraint contradicted")
+        );
+    }
+
+    #[test]
+    fn disequality_requires_matching_unionable_sorts() {
+        let mut egraph = new_experimental_egraph();
+        let mismatch = egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (datatype Left (L))
+                (datatype Right (R))
+                (disequal (L) (R))
+                "#,
+            )
+            .unwrap_err();
+        assert!(mismatch.to_string().contains("to have type Left"));
+
+        let mut egraph = new_experimental_egraph();
+        let primitive = egraph
+            .parse_and_run_program(None, "(disequal 1 2)")
+            .unwrap_err();
+        assert!(
+            primitive
+                .to_string()
+                .contains("Cannot union values of sort i64")
+        );
+
+        let mut egraph = new_experimental_egraph();
+        let malformed = egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (datatype Math (A) (F Math))
+                (disequal (F) (A))
+                "#,
+            )
+            .unwrap_err();
+        assert!(
+            malformed.to_string().contains("Arity mismatch"),
+            "unexpected malformed-operand error: {malformed}"
+        );
+    }
+
+    #[test]
+    fn all_encodings_detect_direct_and_congruence_contradictions() {
+        for encoding in ENCODINGS {
+            let mut egraph = new_experimental_egraph_with_disequality_encoding(encoding);
+            egraph
+                .parse_and_run_program(
+                    None,
+                    r#"
+                    (datatype Math (A) (B) (F Math))
+                    (disequal (A) (B))
+                    (check-disequalities)
+                    "#,
+                )
+                .unwrap_or_else(|error| {
+                    panic!("{encoding:?} rejected a consistent graph: {error}")
+                });
+
+            let mut egraph = new_experimental_egraph_with_disequality_encoding(encoding);
+            let direct = egraph
+                .parse_and_run_program(
+                    None,
+                    r#"
+                    (datatype Math (A))
+                    (disequal (A) (A))
+                    (check-disequalities)
+                    "#,
+                )
+                .expect_err("a reflexive disequality must be contradictory");
+            assert!(
+                direct
+                    .to_string()
+                    .contains("disequality constraint contradicted"),
+                "unexpected {encoding:?} error: {direct}"
+            );
+
+            let mut egraph = new_experimental_egraph_with_disequality_encoding(encoding);
+            let congruence = egraph
+                .parse_and_run_program(
+                    None,
+                    r#"
+                    (datatype Math (A) (B) (F Math))
+                    (disequal (F (A)) (F (B)))
+                    (union (A) (B))
+                    (check-disequalities)
+                    "#,
+                )
+                .expect_err("congruence must expose the disequality self-loop");
+            assert!(
+                congruence
+                    .to_string()
+                    .contains("disequality constraint contradicted"),
+                "unexpected {encoding:?} error: {congruence}"
+            );
+        }
+    }
+
+    #[test]
+    fn all_encodings_support_rule_and_action_local_bindings() {
+        let program = r#"
+            (datatype Math (A) (B) (F Math))
+            (relation apart (Math Math))
+            (apart (A) (B))
+            (rule ((apart x y))
+                  ((let fy (F y))
+                   (disequal (F x) fy)))
+            (begin
+              (let left (A))
+              (disequal left (B)))
+            (run 10)
+            (check-disequalities)
+            (union (A) (B))
+            (fail (check-disequalities))
+        "#;
+
+        for encoding in ENCODINGS {
+            let mut egraph = new_experimental_egraph_with_disequality_encoding(encoding);
+            egraph
+                .parse_and_run_program(None, program)
+                .unwrap_or_else(|error| panic!("{encoding:?} failed local bindings: {error}"));
+        }
+    }
+
+    #[test]
+    fn all_encodings_generate_independent_support_for_each_sort() {
+        let program = r#"
+            (datatype Left (L0) (L1))
+            (datatype Right (R0) (R1))
+            (disequal (L0) (L1))
+            (disequal (R0) (R1))
+            (check-disequalities)
+            (union (L0) (L1))
+            (fail (check-disequalities))
+        "#;
+
+        for encoding in ENCODINGS {
+            let mut egraph = new_experimental_egraph_with_disequality_encoding(encoding);
+            egraph
+                .parse_and_run_program(None, program)
+                .unwrap_or_else(|error| panic!("{encoding:?} failed multiple sorts: {error}"));
+        }
+    }
+
+    #[test]
+    fn all_encodings_regenerate_support_after_pop() {
+        let program = r#"
+            (datatype Math (A) (B))
+            (push)
+            (disequal (A) (B))
+            (pop)
+            (disequal (A) (B))
+            (check-disequalities)
+        "#;
+
+        for encoding in ENCODINGS {
+            let mut egraph = new_experimental_egraph_with_disequality_encoding(encoding);
+            egraph
+                .parse_and_run_program(None, program)
+                .unwrap_or_else(|error| panic!("{encoding:?} failed push/pop: {error}"));
+        }
+    }
+
+    #[test]
+    fn disequality_edges_are_stored_in_symmetric_adjacency_sets() {
+        let mut egraph = new_experimental_egraph_with_disequality_encoding(
+            DisequalityEncoding::DisequalityEdges,
+        );
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (datatype Math (A) (B))
+                (disequal (A) (B))
+                (check-disequalities)
+                "#,
+            )
+            .unwrap();
+
+        assert_eq!(
+            egraph.get_size(&super::disequality_neighbors_symbol("Math")),
+            2
+        );
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (check (set-contains (@disequality-neighbors-Math (A)) (B)))
+                (check (set-contains (@disequality-neighbors-Math (B)) (A)))
+                "#,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn disequality_adjacency_sets_merge_keys_and_rebuild_neighbors() {
+        let program = r#"
+            (datatype Math (A) (B) (C) (D) (E))
+            (disequal (A) (C))
+            (disequal (B) (D))
+            (union (A) (B))
+            (check-disequalities)
+            (check (set-contains (@disequality-neighbors-Math (A)) (C)))
+            (check (set-contains (@disequality-neighbors-Math (A)) (D)))
+            (union (C) (E))
+            (check-disequalities)
+            (check (set-contains (@disequality-neighbors-Math (A)) (E)))
+            (union (D) (E))
+            (check-disequalities)
+            (check (= (@disequality-neighbors-Math (A)) (set-of (E))))
+        "#;
+
+        for (mode, mut egraph) in egraphs_for_supported_modes(DisequalityEncoding::DisequalityEdges)
+        {
+            egraph
+                .parse_and_run_program(None, program)
+                .unwrap_or_else(|error| panic!("DE {mode} failed adjacency rebuild: {error}"));
+        }
+    }
+
+    #[test]
+    fn all_disequality_fixtures_compose_with_supported_modes() {
+        for fixture in disequality_fixtures() {
+            let program = std::fs::read_to_string(&fixture).unwrap();
+            let parameter_facts = (fixture.file_name().unwrap() == "parameter-analysis.egg")
+                .then(parameter_analysis_facts);
+            for encoding in ENCODINGS {
+                for (mode, mut egraph) in egraphs_for_supported_modes(encoding) {
+                    if let Some(facts) = &parameter_facts {
+                        egraph.fact_directory = Some(facts.path().to_owned());
+                    }
+                    egraph
+                        .parse_and_run_program(Some(fixture.display().to_string()), &program)
+                        .unwrap_or_else(|error| {
+                            panic!("{encoding:?} {mode} failed {}: {error}", fixture.display())
+                        });
+                    if parameter_facts.is_some() {
+                        egraph
+                            .parse_and_run_program(None, "(check (TermAt 3 (f (N1))))")
+                            .unwrap_or_else(|error| {
+                                panic!(
+                                    "{encoding:?} {mode} lost reconstructed terms in {}: {error}",
+                                    fixture.display()
+                                )
+                            });
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn disequality_fixture_desugared_snapshots_match_and_replay() {
+        let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let snapshot_dir = crate_dir.join("tests/disequality/snapshots");
+        let fixtures = disequality_fixtures();
+        let mut expected_snapshots = fixtures
+            .iter()
+            .flat_map(|fixture| {
+                ENCODINGS.map(|encoding| {
+                    snapshot_dir.join(format!(
+                        "{}.{}.desugared.egg",
+                        fixture.file_stem().unwrap().to_string_lossy(),
+                        encoding.cli_name()
+                    ))
+                })
+            })
+            .collect::<Vec<_>>();
+        expected_snapshots.sort();
+        let mut actual_snapshots = std::fs::read_dir(&snapshot_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "egg"))
+            .collect::<Vec<_>>();
+        actual_snapshots.sort();
+        assert_eq!(actual_snapshots, expected_snapshots);
+
+        for fixture in fixtures {
+            let program = std::fs::read_to_string(&fixture).unwrap();
+            let stem = fixture.file_stem().unwrap().to_string_lossy();
+            let parameter_facts = (fixture.file_name().unwrap() == "parameter-analysis.egg")
+                .then(parameter_analysis_facts);
+            for encoding in ENCODINGS {
+                let mut compiler = new_experimental_egraph_with_disequality_encoding(encoding);
+                let resolved = compiler
+                    .resolve_program(Some(fixture.display().to_string()), &program)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "{encoding:?} failed to desugar {}: {error}",
+                            fixture.display()
+                        )
+                    });
+                let rendered = sanitize_internal_names(&resolved)
+                    .into_iter()
+                    .map(|command| command.to_string() + "\n")
+                    .collect::<String>();
+                let snapshot_path =
+                    snapshot_dir.join(format!("{stem}.{}.desugared.egg", encoding.cli_name()));
+                let snapshot = std::fs::read_to_string(&snapshot_path).unwrap_or_else(|error| {
+                    panic!("missing snapshot {}: {error}", snapshot_path.display())
+                });
+                assert_eq!(
+                    rendered,
+                    snapshot,
+                    "stale {} snapshot for {}",
+                    encoding.cli_name(),
+                    fixture.display()
+                );
+
+                for (mode, mut replay) in egraphs_for_supported_modes(encoding) {
+                    if let Some(facts) = &parameter_facts {
+                        replay.fact_directory = Some(facts.path().to_owned());
+                    }
+                    replay
+                        .parse_and_run_program(Some(snapshot_path.display().to_string()), &snapshot)
+                        .unwrap_or_else(|error| {
+                            panic!(
+                                "{encoding:?} {mode} snapshot for {} failed to replay: {error}",
+                                fixture.display()
+                            )
+                        });
+                    if parameter_facts.is_some() {
+                        replay
+                            .parse_and_run_program(None, "(check (TermAt 3 (f (N1))))")
+                            .unwrap_or_else(|error| {
+                                panic!(
+                                    "{encoding:?} {mode} snapshot lost reconstructed terms: {error}"
+                                )
+                            });
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn proof_encodings_compose_with_term_and_proof_modes() {
+        let program = r#"
+            (datatype Math (A) (B) (C) (F Math))
+            (disequal (F (A)) (F (C)))
+            (union (A) (B))
+            (check-disequalities)
+            (check (= (A) (B)))
+            (union (B) (C))
+            (fail (check-disequalities))
+        "#;
+
+        for encoding in PROOF_ENCODINGS {
+            let mut term_egraph =
+                new_experimental_egraph_for_proofs_with_disequality_encoding(encoding)
+                    .with_term_encoding_enabled();
+            term_egraph
+                .parse_and_run_program(None, program)
+                .unwrap_or_else(|error| panic!("{encoding:?} failed term encoding: {error}"));
+
+            let mut proof_egraph =
+                new_experimental_egraph_for_proofs_with_disequality_encoding(encoding)
+                    .with_proofs_enabled()
+                    .with_proof_testing();
+            proof_egraph
+                .parse_and_run_program(None, program)
+                .unwrap_or_else(|error| panic!("{encoding:?} failed proof testing: {error}"));
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "DE disequality encoding is currently supported only in normal mode")]
+    fn proof_egraph_constructor_rejects_de() {
+        new_experimental_egraph_for_proofs_with_disequality_encoding(
+            DisequalityEncoding::DisequalityEdges,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "DE disequality encoding is currently supported only in normal mode")]
+    fn normal_de_egraph_rejects_late_term_encoding() {
+        new_experimental_egraph_with_disequality_encoding(DisequalityEncoding::DisequalityEdges)
+            .with_term_encoding_enabled();
+    }
+
+    #[test]
+    #[should_panic(expected = "DE disequality encoding is currently supported only in normal mode")]
+    fn normal_de_egraph_rejects_late_proofs() {
+        new_experimental_egraph_with_disequality_encoding(DisequalityEncoding::DisequalityEdges)
+            .with_proofs_enabled();
+    }
+
+    #[test]
+    #[should_panic(expected = "DE disequality encoding is currently supported only in normal mode")]
+    fn normal_de_egraph_rejects_late_proof_testing() {
+        new_experimental_egraph_with_disequality_encoding(DisequalityEncoding::DisequalityEdges)
+            .with_proof_testing();
+    }
+
+    #[cfg(feature = "bin")]
+    #[test]
+    #[should_panic(expected = "DE disequality encoding is currently supported only in normal mode")]
+    fn normal_de_egraph_rejects_late_proof_extraction() {
+        new_experimental_egraph_with_disequality_encoding(DisequalityEncoding::DisequalityEdges)
+            .with_proof_extraction();
+    }
+}

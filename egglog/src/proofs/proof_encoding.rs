@@ -411,23 +411,131 @@ impl<'a> ProofInstrumentor<'a> {
         Self::new(egraph).add_term_encoding_helper(program)
     }
 
-    pub(crate) fn lower_inputs(
+    pub(crate) fn prepare_for_proof_checker(
         egraph: &EGraph,
         program: Vec<ResolvedNCommand>,
-    ) -> Result<Vec<ResolvedNCommand>, Error> {
-        let mut lowered = Vec::with_capacity(program.len());
+    ) -> Result<(Vec<ResolvedNCommand>, Vec<ResolvedNCommand>), Error> {
+        let mut proof_program = Vec::with_capacity(program.len());
+        let mut marked_program = Vec::with_capacity(program.len() * 3);
         for command in program {
-            if let ResolvedNCommand::Input { span, name, file } = &command {
-                lowered.extend(
-                    Self::input_actions(egraph, span, name, file)?
-                        .into_iter()
-                        .map(ResolvedNCommand::CoreAction),
-                );
-            } else {
-                lowered.push(command);
+            let (lowered, marked) = match command {
+                ResolvedNCommand::Fail(span, commands) => {
+                    let (proof_commands, marked_commands) =
+                        Self::prepare_fail_for_proof_checker(egraph, commands, &mut Vec::new())?;
+                    (
+                        vec![ResolvedNCommand::Fail(span.clone(), proof_commands)],
+                        ResolvedNCommand::Fail(span, marked_commands),
+                    )
+                }
+                command => {
+                    let lowered = Self::lower_for_proof_checker(egraph, command.clone())?;
+                    (lowered, command)
+                }
+            };
+            let count = lowered.len();
+            marked_program.push(Self::resolved_proof_check_marker(format!(
+                "top-enter:{count}"
+            )));
+            if matches!(marked, ResolvedNCommand::Push(..)) {
+                marked_program.push(Self::resolved_proof_check_marker(format!(
+                    "top-commit:{count}"
+                )));
+            }
+            marked_program.push(marked);
+            if !matches!(marked_program.last(), Some(ResolvedNCommand::Push(..))) {
+                marked_program.push(Self::resolved_proof_check_marker(format!(
+                    "top-commit:{count}"
+                )));
+            }
+            proof_program.extend(lowered);
+        }
+        Ok((proof_program, marked_program))
+    }
+
+    fn lower_for_proof_checker(
+        egraph: &EGraph,
+        command: ResolvedNCommand,
+    ) -> Result<Vec<ResolvedNCommand>, Error> {
+        Ok(match command {
+            ResolvedNCommand::Input { span, name, file } => {
+                Self::input_actions(egraph, &span, &name, &file)?
+                    .into_iter()
+                    .map(ResolvedNCommand::CoreAction)
+                    .collect()
+            }
+            // Execution keeps the local block. The proof checker consumes the
+            // same resolved actions in order so local bindings remain available
+            // to later actions in the block.
+            ResolvedNCommand::CoreActions(actions) => actions
+                .0
+                .into_iter()
+                .map(ResolvedNCommand::CoreAction)
+                .collect(),
+            ResolvedNCommand::LetBegin(span, name, actions) => {
+                let mut actions = actions.0;
+                let Some(ResolvedAction::Expr(_, value)) = actions.pop() else {
+                    unreachable!("(let _ (begin ...)) must end with an expression")
+                };
+                let mut lowered = actions
+                    .into_iter()
+                    .map(ResolvedNCommand::CoreAction)
+                    .collect::<Vec<_>>();
+                lowered.push(ResolvedNCommand::CoreAction(GenericAction::Let(
+                    span, name, value,
+                )));
+                lowered
+            }
+            ResolvedNCommand::Fail(..) => {
+                unreachable!("fail commands are lowered with nested provenance")
+            }
+            command => vec![command],
+        })
+    }
+
+    fn prepare_fail_for_proof_checker(
+        egraph: &EGraph,
+        commands: Vec<ResolvedNCommand>,
+        fail_path: &mut Vec<usize>,
+    ) -> Result<(Vec<ResolvedNCommand>, Vec<ResolvedNCommand>), Error> {
+        let mut proof_commands = Vec::new();
+        let mut marked_commands = Vec::new();
+        for command in commands {
+            if let ResolvedNCommand::Fail(span, nested) = command {
+                fail_path.push(proof_commands.len());
+                let (proof_nested, marked_nested) =
+                    Self::prepare_fail_for_proof_checker(egraph, nested, fail_path)?;
+                fail_path.pop();
+                proof_commands.push(ResolvedNCommand::Fail(span.clone(), proof_nested));
+                marked_commands.push(ResolvedNCommand::Fail(span, marked_nested));
+                continue;
+            }
+
+            let commit_before = matches!(command, ResolvedNCommand::Push(..));
+            let lowered = Self::lower_for_proof_checker(egraph, command.clone())?;
+            let start = proof_commands.len();
+            let count = lowered.len();
+            proof_commands.extend(lowered);
+            let mut location = fail_path.iter().map(usize::to_string).collect::<Vec<_>>();
+            location.push(start.to_string());
+            let marker =
+                Self::resolved_proof_check_marker(format!("nested:{}+{count}", location.join("/")));
+            if commit_before {
+                marked_commands.push(marker.clone());
+            }
+            marked_commands.push(command);
+            if !commit_before {
+                marked_commands.push(marker);
             }
         }
-        Ok(lowered)
+        Ok((proof_commands, marked_commands))
+    }
+
+    fn resolved_proof_check_marker(location: String) -> ResolvedNCommand {
+        ResolvedNCommand::UserDefined(
+            span!(),
+            RECORD_PROOF_COMMAND.to_owned(),
+            vec![Expr::Lit(span!(), Literal::String(location))],
+        )
     }
 
     /// Mint a `Rule` or `Fiat` proof of the equality `a = b`, both values of
@@ -2413,8 +2521,16 @@ impl<'a> ProofInstrumentor<'a> {
             | ResolvedNCommand::ProveExists(..) => {
                 res.push(command.to_command().make_unresolved());
             }
-            ResolvedNCommand::UserDefined(..) => {
-                panic!("User defined commands unsupported in term encoding");
+            ResolvedNCommand::UserDefined(span, name, args) => {
+                assert_eq!(
+                    name, RECORD_PROOF_COMMAND,
+                    "user-defined commands are unsupported in term encoding"
+                );
+                res.push(Command::UserDefined(
+                    span.clone(),
+                    name.clone(),
+                    args.clone(),
+                ));
             }
         }
         Ok(())
@@ -2487,6 +2603,7 @@ fn command_skips_rebuild(command: &ResolvedNCommand) -> bool {
         ResolvedNCommand::Function(..)
         | ResolvedNCommand::NormRule { .. }
         | ResolvedNCommand::Sort { .. } => true,
+        ResolvedNCommand::UserDefined(_, name, _) if name == RECORD_PROOF_COMMAND => true,
         ResolvedNCommand::CoreAction(action) => action_skips_rebuild(action),
         ResolvedNCommand::CoreActions(actions) => actions.0.iter().all(action_skips_rebuild),
         _ => false,

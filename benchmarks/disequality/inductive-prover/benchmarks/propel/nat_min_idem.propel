@@ -1,0 +1,5 @@
+(def nat_min (fun (rec X {(S X) Z}) (rec X {(S X) Z}) (rec X {(S X) Z}))
+  (lambda [idem] (x (rec X {(S X) Z})) (y (rec X {(S X) Z})) (cases (Tuple x y)
+    [(Tuple Z y) Z]
+    [(Tuple x Z) Z]
+    [(Tuple (S x) (S y)) (S (nat_min x y))])))
