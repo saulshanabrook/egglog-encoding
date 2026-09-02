@@ -1,6 +1,6 @@
 # Disequality case-study performance analysis
 
-Run dates: 2026-08-12 through 2026-09-01
+Run dates: 2026-08-12 through 2026-09-02
 
 This report analyzes the egglog implementations of the three case studies from
 *Dis/Equality Graphs*: parameter analysis, Propel, and the EUF solver. It
@@ -32,6 +32,9 @@ attributing generic host/API overhead to the compiled disequality rules.
 - typed-host-AST follow-up from clean candidate `d5a463bf` against frozen clean
   parent `6b3f7b89`, with binary/input hashes and every accepted sample under
   `reports/typed-host-ast/`
+- relational-NEE follow-up against clean constructor-backed parent `e11f3f57`,
+  with binary/input hashes and every accepted sample under
+  `reports/relational-nee-follow-up/`
 - release builds for timed Rust and Scala Native executables
 - six accepted samples per historical Propel and EUF endpoint: two three-run
   Hyperfine invocations with endpoint order reversed, after one Propel warmup
@@ -60,6 +63,7 @@ invocation was discarded.
 
 | Case study | Comparison | Measured result | Observed costs and candidates |
 | --- | --- | ---: | --- |
+| Relational NEE, Propel small/medium | relation / prior constructor | 1.002x / 1.012x pooled median | removes the operand-sort result e-class without a measured end-to-end speedup |
 | Typed host AST, Propel small | candidate / source-reparse parent | 0.967x DE; 0.983x NEE wall | direct AST submission and no retained trace in ordinary runs produce a modest change |
 | Typed host AST, Propel medium | candidate / source-reparse parent | 0.968x DE; 0.960x NEE wall | frontend work is reduced, but graph lifecycle and database work remain |
 | Opt-in capture, Propel small | recording+export / recording off | 1.138x wall | includes persistent tracing, rendering, desugaring, and 104 file writes |
@@ -70,6 +74,33 @@ invocation was discarded.
 | Historical Propel, medium | relational DE / native DE | 11.70x wall | repeated creation, frontend/database/query/stats work, and rollback snapshots |
 | Historical EUF, 627 models | relational DE / native DE | 12.66x wall | 403K operations across 628 atomic flushes, frontend work, and database execution |
 | Historical EUF, 627 models with stats | relational DE / native DE | 39.71x reported full time | 627 full graph scans and about 2M term lookups |
+
+## Relational NEE follow-up
+
+As of 2026-09-02, the NEE compiler pass emits a binary egglog relation rather
+than a constructor returning the operand sort. This keeps the paper's private
+`ne(lhs, rhs)` marker and reflexive contradiction criterion, while avoiding an
+otherwise-unused result e-class for each marker. All NEE measurements in older
+sections below are constructor-backed unless stated otherwise.
+
+The focused follow-up compares the new relation against the clean
+constructor-backed parent `e11f3f57` in opposite endpoint orders. Pooled
+medians and full ranges are:
+
+| Workload | Prior constructor | Relation | Relation / constructor |
+| --- | ---: | ---: | ---: |
+| Propel `gset_comm` | 176.8 ms (173.8-179.1) | 177.2 ms (175.9-181.0) | 1.002x |
+| Propel `tip_bin_plus_assoc` | 4.883 s (4.832-4.942) | 4.940 s (4.884-4.997) | 1.012x |
+
+The directional mean ratios are 1.003x-1.008x on the small input and
+1.006x-1.019x on the medium input. At these sample counts, this establishes
+behavioral parity rather than a speedup. The NEE representation is a small
+part of Propel's end-to-end cost, so removing its operand-sort output e-class
+does not address the graph-lifecycle and host-query costs diagnosed below.
+
+Raw Hyperfine JSON, checksums, exact commands, and executable/input hashes are
+retained in
+[`reports/relational-nee-follow-up/`](reports/relational-nee-follow-up/).
 
 ## Typed host AST and opt-in recording follow-up
 

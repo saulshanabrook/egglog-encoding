@@ -22,7 +22,10 @@
 extension. This PR tests the paper's design space as an instance of extension
 by compilation: each representation is generated from the same typed egglog
 commands and private schedule, without adding disequality state to the
-union-find.
+union-find. NEE uses a binary egglog relation for the paper's private `ne`
+marker. This preserves its self-loop contradiction criterion while avoiding
+the paper encoding's otherwise-unused result e-class per `ne` e-node, so its
+storage accounting is an egglog-specific relational variant of NEE.
 
 The `de` backend expresses the paper artifact's adjacency-map shape with
 ordinary egglog containers rather than patched e-class storage. A private
@@ -177,6 +180,14 @@ is described below. The typed-host-AST follow-up uses clean candidate
 16 combined samples per small Propel endpoint, eight per medium endpoint, and
 60 per tiny EUF endpoint. These are descriptive measurements, not
 publication-quality confidence intervals.
+
+The 2026-09-02 relational-NEE follow-up compares the current relation against
+the clean constructor-backed parent `e11f3f57`. Pooled relation/constructor
+medians are 1.002x on `gset_comm` and 1.012x on `tip_bin_plus_assoc`; reversed
+endpoint orders likewise show parity rather than a speedup. Raw samples,
+commands, and hashes are retained under
+`benchmarks/disequality/reports/relational-nee-follow-up/`. Older NEE timings
+below measure the constructor-backed representation.
 
 ### Typed host AST and recording follow-up
 

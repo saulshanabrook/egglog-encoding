@@ -1,6 +1,6 @@
 # Dis/Equality Graphs egglog integration
 
-Run dates: 2026-08-12 through 2026-09-01
+Run dates: 2026-08-12 through 2026-09-02
 
 This directory evaluates the four compiled disequality encodings in all three
 case studies from *Dis/Equality Graphs*:
@@ -9,7 +9,7 @@ case studies from *Dis/Equality Graphs*:
 | --- | --- | --- |
 | `ee` | Equality embedding (EE) | A private equality term equated with false, plus the paper's propagation rules |
 | `oee` | Optimized equality embedding (OEE) | Equality terms with reduced propagation and a reflexive contradiction rule |
-| `nee` | Negated equality embedding (NEE) | A private `ne(lhs, rhs)` term and a reflexive contradiction rule |
+| `nee` | Negated equality embedding (NEE) | A private binary `ne(lhs, rhs)` relation and a reflexive contradiction rule |
 | `de` | Disequality edges (DE) | A function from each e-class to a merged `Set` of disequal neighbors |
 
 These implementations do not modify union-find, e-class storage, or
@@ -23,6 +23,16 @@ a container-backed encoding of the paper's adjacency-map interface, not the
 paper artifact's patched native edge data structure. Each insertion writes
 both orientations, key canonicalization merges sets, and container rebuild
 canonicalizes members.
+
+The paper presents NEE by adding each `ne(lhs, rhs)` as an e-node in its own
+e-class. This integration instead stores the same marker in an egglog relation:
+relation arguments follow e-class canonicalization, so a contradicted pair
+still becomes `ne(x, x)`, but no result e-class is added for the marker. The
+paper's NEE e-class-count theorem therefore does not describe this relational
+realization. The fully desugared snapshots show egglog's usual implementation
+of a relation as a constructor into a fresh non-unionable witness sort; unlike
+the prior NEE constructor, that generated constructor does not return the
+operand sort.
 
 ## Provenance
 
@@ -330,6 +340,13 @@ claim. Opt-in recording plus rendering, desugaring, and 104 file writes cost
 1.138x the recording-disabled `gset_comm` pooled median; ordinary benchmark
 runs disable recording. Raw samples, full ranges, hashes, and exact commands
 are retained under `reports/typed-host-ast/`.
+
+A 2026-09-02 follow-up directly compares the current relational NEE against
+its constructor-backed parent. Pooled relation/constructor medians are 1.002x
+on `gset_comm` and 1.012x on `tip_bin_plus_assoc`; the opposite endpoint
+orders likewise show parity rather than a speedup. Older NEE measurements in
+this report use the constructor-backed representation. The new raw samples and
+hashes are under `reports/relational-nee-follow-up/`.
 
 The 2026-08-19 follow-up measures a hash-identified
 pre-final set-backed DE candidate in parameter analysis and two Propel programs.

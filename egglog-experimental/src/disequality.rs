@@ -29,7 +29,7 @@ pub enum DisequalityEncoding {
     EqualityEmbedding,
     /// Equality embedding with self-equality contradiction detection (OEE).
     OptimizedEqualityEmbedding,
-    /// A private `ne` e-node with self-loop contradiction detection (NEE).
+    /// A private `ne` relation with self-loop contradiction detection (NEE).
     NegatedEqualityEmbedding,
     /// A symmetric per-e-class adjacency map (DE).
     DisequalityEdges,
@@ -880,7 +880,11 @@ fn negated_equality_support(span: &Span, sort: &str) -> Vec<Command> {
     let negated_equality = negated_equality_symbol(sort);
     let x = Expr::Var(span.clone(), "@disequality-x".to_owned());
     vec![
-        constructor(span, &negated_equality, vec![sort, sort], sort),
+        Command::Relation {
+            span: span.clone(),
+            name: negated_equality.clone(),
+            inputs: vec![sort.to_owned(), sort.to_owned()],
+        },
         rule(
             span,
             format!("@disequality-nee-contradiction-{sort}"),
