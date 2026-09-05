@@ -1,0 +1,43 @@
+;;; A rule over a node that binds two slots: sdql's `sum-sing`.
+;;;
+;;;     sum(?e1, $k, $v, sing((var $k), (var $v)))  =>  ?e1
+;;;
+;;; `benches/sdql.rs`. Summing a singleton keyed by the loop variables is the thing
+;;; summed, so this is the one rule where both bound slots are read back inside the
+;;; body -- a slot literal in a child column, twice over.
+;;;
+;;; Written in the SLOTTED language: `$k` in `Sum`'s binder column is the slot it
+;;; binds, and the same `$k` in `Sing`'s ordinary column is a variable occurrence that
+;;; the match has to solve to that same slot.
+
+(constructor Sing (U U) U)
+(constructor Sum (U U U U) U :binder 1 2)
+(constructor Null () U)
+
+(rewrite (Sum ?e1 $k $v (Sing $k $v)) ?e1)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; it fires, and on the body written with any slots
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let r (Sing Null Null))
+(let s (Sum r $5 $6 (Sing $5 $6)))
+(run 2)
+
+(check (= s r))
+
+(pop)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; and does NOT fire when the body swaps the two, which is a different term
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let r (Sing Null Null))
+(let swapped (Sum r $5 $6 (Sing $6 $5)))
+(run 2)
+
+(check (!= swapped r))
+
+(pop)

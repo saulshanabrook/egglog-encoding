@@ -1,0 +1,29 @@
+;;; The differential harness's neutral language.
+;;;
+;;; Slotted source, in the syntax the encoder recognises: an ordinary egglog
+;;; constructor whose `U` columns are slotted children, plus `:binder <i>...` naming
+;;; the columns whose slot the node binds.
+;;;
+;;; Nothing here means anything. `xdiff.py` compares the encoding against the reference
+;;; over generated terms, and a neutral language is the point: seven arity-2 operators
+;;; with no rewrite rules and no algebra, so a disagreement is about the ENCODING and
+;;; never about a rule being wrong. `Lam` is the one binder, and `Null` comes from
+;;; `slotted/encoding/egraph-encoding-11.egg` along with `Var`.
+;;;
+;;; `sub2` exists because `sub` is a reference tag in more than one of the oracle's
+;;; languages; see `toy.ref`.
+;;;
+;;; Expand with: python3 slotted/gen-node-rules.py
+
+(constructor Lam (U U) U :binder 0)              ; Lam(Bind<AppliedId>)      "lam"
+(constructor F (U U) U)                          ; F(AppliedId, AppliedId)   "f"
+(constructor G (U U) U)                          ; G(AppliedId, AppliedId)   "g"
+(constructor H (U U) U)                          ; H(AppliedId, AppliedId)   "h"
+(constructor K (U U) U)                          ; K(AppliedId, AppliedId)   "k"
+(constructor Sub (U U) U)                        ; Sub(AppliedId, AppliedId) "sub"
+(constructor Sub2 (U U) U)                       ; Sub2(AppliedId, AppliedId) "sub2"
+(constructor Add (U U) U)                        ; Add(AppliedId, AppliedId) "add"
+
+;;; Declared for the record, the way `lambda.egg` declares its leaves: `Null` already
+;;; exists in the hand-written half of the machinery, so `emit` skips its rules.
+(constructor Null () U)

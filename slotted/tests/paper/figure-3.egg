@@ -1,0 +1,30 @@
+;;; Figure 3
+;;;
+;;; Ported from `memoryleak47/slotted-egraphs`, `tests/arith/mod.rs`. One file per test
+;;; there, so the two can be diffed side by side, and standalone: the constructors
+;;; below are all it needs, and the compiler generates their machinery.
+;;;
+;;;     python3 slotted/slotted-egglog.py slotted/tests/paper/figure-3.egg
+;;;
+;;;     mul($7, 0) = 0   =>   mul($9, 0) = 0
+;;;
+;;; The equation does not mention $7 on the right, so $7 is redundant in the class and
+;;; the node stands for `mul($x, 0)` at every $x. `(Null)` is 0 here. `mul($9,$7)` is
+;;; a different node and must not come along.
+
+(constructor Mul (U U) U)
+(constructor Null () U)
+
+
+(let m7 (Mul $7 (Null)))
+(let zero (Null))
+(union m7 zero)
+
+(let m9 (Mul $9 (Null)))
+(let m97 (Mul $9 $7))
+
+(run 0)
+
+(check (= m9 zero))
+(check (= m7 m9))
+(check (!= m97 zero))

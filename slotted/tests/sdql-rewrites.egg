@@ -1,0 +1,184 @@
+;;; The `sdql` rewrite rules, checked -- at the level they are written.
+;;;
+;;; `(include "slotted/languages/sdql.egg")` brings the language and all 43 rules, so this
+;;; file adds only terms and claims. `gen-sdql-rules.py` compiles the same rules into
+;;; `target/slotted/slotted-sdql-rules.egg`, and `check-front-ends.py` holds
+;;; the two together, so pinning behaviour here pins that file's behaviour too.
+;;;
+;;; The step counts are deliberately small. The rules are not confluent --
+;;; `get-to-sum` and `sum-to-get` alone loop -- so a section that needs N steps asks
+;;; for N and no more, which also keeps the negative claims sharp: a `!=` over
+;;; many steps only says the rules did not eventually find another route.
+
+(include "slotted/languages/sdql.egg")
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; A plain rule, and the `Symbol` payload leaf it builds.
+;;;
+;;;     mult-app1:  (* ?a ?b)  ->  (binop mult ?a ?b)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let m (Mult $5 $6))
+(run 2)
+
+(let b (Binop (Symbol "mult") $5 $6))
+(run 0)
+(check (= m b))
+
+(pop)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; A repeated variable, and the `Num` leaf: the Def. 6 check, positive and negative.
+;;;
+;;;     sub-identity:  (- ?e ?e)  ->  0
+;;;
+;;; `(- $5 $5)` is `0`; `(- $5 $6)` is two DISTINCT renamed ids of one leader and must
+;;; not be.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let zero (Num 0))
+(let dup (Sub $5 $5))
+(let mixed (Sub $5 $6))
+(run 2)
+
+(check (= dup zero))
+;; `0` has no slots, so the class loses the one it had
+(check (slots dup))
+;; two distinct slots are two distinct renamed ids: no match
+(check (!= mixed zero))
+
+(pop)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; A literal in a CHILD position.
+;;;
+;;;     add-zero:  (+ ?e 0)  ->  ?e
+;;;
+;;; A payload leaf is never deleted or migrated, so its row is a stable handle -- but
+;;; its class's canonical value need not be that row, so the compiled rule joins
+;;; `(RenamesToLeader (Num 0) _ C)` rather than writing the leaf into the child column.
+;;; Here the leaf's class does move: the section above shows why.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let a (Add $5 (Num 0)))
+(run 2)
+
+;; the sum IS the variable at $5
+(check (= a $5))
+(check (slots a $5))
+
+(pop)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; A nested right-hand side over a payload leaf.
+;;;
+;;;     get-range:  (get (range ?st ?en) ?idx)  ->  (+ ?idx (- ?st 1))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let g (Get (Range $3 $4) $7))
+(run 1)
+
+(let built (Add $7 (Sub $3 (Num 1))))
+(run 0)
+(check (= g built))
+
+(pop)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; A slot literal in an ordinary child position, not a binder column.
+;;;
+;;;     sum-sing:  (sum ?e1 $k $v (sing (var $k) (var $v)))  ->  ?e1
+;;;
+;;; Both of `sing`'s children are the variable class, told apart only by their slots,
+;;; and each is pinned to one an earlier atom named. That is the case that has to be
+;;; constrained INTO the renaming rather than checked after it.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let s (Sum $9 $5 $6 (Sing $5 $6)))
+(run 2)
+
+;; the whole sum is the variable at $9
+(check (= s $9))
+(check (slots s $9))
+
+;; and it does not fire when the two `sing` children are the SAME slot: that would
+;; need `$k` and `$v` to be one slot, which the binder columns forbid
+(let s2 (Sum $8 $5 $6 (Sing $5 $5)))
+(run 2)
+(check (!= s2 $8))
+
+(pop)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; The slot side condition, firing.
+;;;
+;;;     sum-fact-1:  (sum ?R $x $y (* ?e1 ?e2))  ->  (* ?e1 (sum ?R $x $y ?e2))
+;;;                  if $x, $y not in slots(?e1)
+;;;
+;;; `?e1` is the free `$7` and `?e2` the bound `$5`, so the guard passes and the
+;;; factor comes out. One step, so the only rule that can put a product in the sum's
+;;; class is this one.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let s (Sum Null $5 $6 (Mult $7 $5)))
+(run 1)
+
+;; it is `$7 * sum(_, $5, $6, $5)` exactly: the factored sum binds both slots and its
+;; body is the first of them, so it has no free slots at all
+(let out (Mult $7 (Sum Null $5 $6 $5)))
+(run 0)
+(check (= s out))
+
+(pop)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; The same side condition, blocking.
+;;;
+;;; Same rule, same shape, and the only change is that `?e1` is now the BOUND slot
+;;; `$5`: pulling it out of the sum would let it escape its binder, so the guard must
+;;; refuse. `sum-fact-2` is refused symmetrically, since its `?e2` is the other bound
+;;; slot -- so NO product may appear in the sum's class, which is what the positive
+;;; section above relies on.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+;; body = $5 * $6, and both are the sum's own binders
+(let s (Sum Null $5 $6 (Mult $5 $6)))
+(run 1)
+
+(check (not-holds s Mult))
+
+(pop)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; One slot literal shared by two SIBLING atoms.
+;;;
+;;;     let-binop4:  (binop ?f (let ?e1 $x ?e2) (let ?e1 $x ?e3))
+;;;                    ->  (let ?e1 $x (binop ?f ?e2 ?e3))
+;;;
+;;; The hard case: `$x` is a binder of two independently-renamed atoms, so the two
+;;; bound slots have to be forced onto one pattern slot. Neither atom's bound slot is
+;;; reachable through its root's edge -- a `let`'s class does not have it -- so the
+;;; first atom to carry it MINTS a name, and the second is only made to agree because
+;;; the literal is passed INTO `find-mapping-total`. Checking it afterwards is too
+;;; late, and `SDQL_BUGS=slot-late` is that mutant: it loses this match.
+;;;
+;;; Only `let-binop4` can put a `let` in a `binop`'s class here, so a `Let` sharing
+;;; the root's class is the rule having fired. This is also the rule the reference's
+;;; nested matcher never fires -- see the two recorded divergences in xsdql.py.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+;; let $5 = $2 in $5, and let $5 = $2 in $3 -- the second keeps $3 free
+(let bop (Binop $1 (Let $2 $5 $5) (Let $2 $5 $3)))
+(run 1)
+
+(check (holds bop Let))
+
+(pop)

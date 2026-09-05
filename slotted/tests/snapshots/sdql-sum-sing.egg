@@ -1,0 +1,46 @@
+;;; COMPILED from slotted/tests/sdql-sum-sing.egg by slotted/slotted-egglog.py.
+;;;
+;;; Only the forms THIS file contributes. The machinery for its 3 constructors,
+;;; and anything an included library brought, are snapshotted by the generators
+;;; that emit them -- committing them again per test would be the same thousands
+;;; of lines over and over.
+
+(include "slotted/encoding/egraph-encoding-11.egg")
+
+(rule ((= V5 (Sum p1 C6 p2 (Var 0) p3 (Var 0) p4 C7))
+       (= dom8 (map-union (map-image p1) (map-union (map-image p2) (map-union (map-image p3) (map-image p4)))))
+       (= mp9 dom8)
+       (= idm10 (map-image mp9))
+       (= sk (map-get (compose mp9 p2) 0))
+       (= sv (map-get (compose mp9 p3) 0))
+       (= m11 (compose mp9 p1))
+       (= cs12 (ClassSlots C6))
+       (= m13 (compose mp9 p4))
+       (= cs14 (ClassSlots C7))
+       (= cs15 (ClassSlots V5))
+       (= C7 (Sing p16 (Var 0) p17 (Var 0)))
+       (= dom19 (map-union (map-image p16) (map-image p17)))
+       (RenamesToLeader C7 sym20 C7)
+       (= mp21 (find-mapping-total idm10 dom19 (compose (compose m13 cs14) sym20) (map-insert (map-empty) 0 sk) (map-insert (map-empty) 0 sv) (map-domain (compose m13 cs14)) p16 p17))
+       (= idm22 (map-image mp21))
+       (= av23 (map-union idm10 idm22))
+       (= sk (map-get (compose mp21 p16) 0))
+       (= sv (map-get (compose mp21 p17) 0))
+       (= alts24 (refine-namings av23 (map-of sk sk sv sv) idm10 idm22))
+       (Idx ix25)
+       (= mrg26 (vec-get alts24 ix25)))
+      ((Equated V5 (compose (inverse (compose mrg26 (compose mp9 cs15))) (compose mrg26 (compose m11 cs12))) C6)))
+(push)
+(let $r (Sing (map-empty) (Null) (map-empty) (Null)))
+(let $s (Sum (map-empty) $r (map-of 0 5) (Var 0) (map-of 0 6) (Var 0) (map-of 5 5 6 6) (Sing (map-of 0 5) (Var 0) (map-of 0 6) (Var 0))))
+(run-schedule (saturate (run slotted))
+              (repeat 2 (seq (run) (saturate (run slotted)))))
+(check (RenamesToLeader $s _m0 _l) (RenamesToLeader $r _m1 _l) (= _m0 _m1))
+(pop)
+(push)
+(let $r (Sing (map-empty) (Null) (map-empty) (Null)))
+(let $swapped (Sum (map-empty) $r (map-of 0 5) (Var 0) (map-of 0 6) (Var 0) (map-of 5 5 6 6) (Sing (map-of 0 6) (Var 0) (map-of 0 5) (Var 0))))
+(run-schedule (saturate (run slotted))
+              (repeat 2 (seq (run) (saturate (run slotted)))))
+(fail (check (RenamesToLeader $swapped _m0 _l) (RenamesToLeader $r _m1 _l) (= _m0 _m1)))
+(pop)

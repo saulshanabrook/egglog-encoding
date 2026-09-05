@@ -1,0 +1,82 @@
+;;; `Sum` binds TWO slots on one node.
+;;;
+;;; Written in the SLOTTED language and compiled by
+;;; `slotted/slotted-egglog.py`, so nothing below mentions a renaming, an
+;;; edge or `(Var 0)`: those are the encoding, and the point of a test at this level is
+;;; that it reads the way the paper does.
+;;;
+;;; `Sum(AppliedId, Bind<Bind<AppliedId>>)` in the reference is four slotted children of
+;;; which the middle two bind, which is what `:binder 1 2` says. Both bound slots are
+;;; taken out of the class's slot set, so renaming either is invisible from outside.
+
+(constructor Sing (U U) U)
+(constructor Sum (U U U U) U :binder 1 2)
+(constructor Null () U)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; both bound slots are alpha-renameable
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let r (Sing Null Null))
+(let a (Sum r $5 $6 Null))
+(let b (Sum r $7 $8 Null))
+(run 0)
+
+;; the body uses neither bound slot, so the two spellings are one class
+(check (= a b))
+;; and that class depends on nothing
+(check (slots a))
+
+(pop)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; the two bound slots are ORDERED, so swapping them is a different term
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let r (Sing Null Null))
+(let kv (Sum r $5 $6 (Sing $5 $6)))
+(let vk (Sum r $5 $6 (Sing $6 $5)))
+(run 0)
+
+(check (!= kv vk))
+;; both bound slots are consumed by the body, so neither escapes
+(check (slots kv))
+(check (slots vk))
+
+(pop)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; and the same with a body that names ONE of them
+;;;
+;;; A body at the first bound slot is a different term from one at the second, so no
+;;; renaming identifies them. The encoded test this replaces had this case and checked
+;;; only that both classes have no free slots, which is true of two identical terms
+;;; too -- it never asserted the distinctness its own title claims.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let first (Sum Null $5 $6 $5))
+(let second (Sum Null $5 $6 $6))
+(run 0)
+
+(check (!= first second))
+(check (slots first))
+(check (slots second))
+
+(pop)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; a free slot in the body stays free
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let r (Sing Null Null))
+(let free (Sum r $5 $6 (Sing $5 $9)))
+(run 0)
+
+;; $9 is neither bound slot, so the class depends on it and on nothing else
+(check (slots free $9))
+
+(pop)

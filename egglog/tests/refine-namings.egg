@@ -1,0 +1,87 @@
+;;; `refine-namings`: the reference's `final_refine` as a primitive, and the index
+;;; relation that reads its several answers.
+;;;
+;;; Matching a slotted pattern has to give a name to every slot of the matched node,
+;;; including ones the constraints never reach -- a redundant slot, or a binder's bound
+;;; slot over a class that does not carry it. Minting a fresh name for those decides,
+;;; silently, that they are apart from everything else, and nothing revisits it. The
+;;; other readings, where such a slot IS one already in use, are matches too, and they
+;;; build different e-nodes.
+;;;
+;;; So the match is fixed with minting, and this then returns every way its slots may
+;;; be merged. Two rules bound it:
+;;;
+;;;   * a slot the PATTERN writes may not be merged with another pattern slot. The
+;;;     pattern asked for two names; merging them lets a `not-free` side condition pass
+;;;     by renaming its two slots together, which is capture, not alpha-equivalence.
+;;;   * the slots of one matched e-node are pairwise apart, since a node's slots are
+;;;     distinct. That is what keeps a merge map composable with a renaming without
+;;;     collapsing two of its keys.
+;;;
+;;; Element 0 is the identity, so reading index 0 means "did not refine".
+
+(sort Renaming (Map i64 i64))
+(sort Merges (Vec Renaming))
+
+;; slots 0..2 in play; slot 0 is the pattern's; nothing is declared apart
+(let $all (map-of 0 0 1 1 2 2))
+(let $pattern (map-of 0 0))
+(let $nothing (map-empty))
+
+(let $alts (refine-namings $all $pattern $nothing))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; index 0 is the identity: reading it is not refining
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(check (= (vec-get $alts 0) (map-of 0 0 1 1 2 2)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; five answers, the partitions of three slots -- Bell(3). One pattern slot does
+;;; not reduce that, because merging a minted slot INTO it is allowed; only two
+;;; pattern slots would.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(check (= (vec-length $alts) 5))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; two PATTERN slots never merge, so the identity is the only answer
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(let $both-pattern (refine-namings (map-of 0 0 1 1) (map-of 0 0 1 1) (map-empty)))
+(check (= (vec-length $both-pattern) 1))
+(check (= (vec-get $both-pattern 0) (map-of 0 0 1 1)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; two slots of ONE NODE never merge either, which is what keeps the result
+;;; composable with a renaming
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(let $one-node (refine-namings (map-of 0 0 1 1) (map-empty) (map-of 0 0 1 1)))
+(check (= (vec-length $one-node) 1))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; a minted slot merged INTO a pattern slot: the pattern slot is what survives,
+;;; so the merge map is total and the pattern's name is the representative
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(let $into-pattern (refine-namings (map-of 0 0 7 7) (map-of 0 0) (map-empty)))
+(check (= (vec-length $into-pattern) 2))
+(check (= (vec-get $into-pattern 0) (map-of 0 0 7 7)))
+(check (= (vec-get $into-pattern 1) (map-of 0 0 7 0)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; `vec-get` is partial, so an index relation joins over exactly the answers that
+;;; exist without anything having to say how many there are
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(relation Idx (i64))
+(relation Reached (Renaming))
+(Idx 0) (Idx 1) (Idx 2) (Idx 3) (Idx 4) (Idx 5) (Idx 6) (Idx 7)
+
+(rule ((Idx i) (= m (vec-get $alts i))) ((Reached m)))
+(run 1)
+
+;; the identity is reached, and so is the total merge
+(check (Reached (map-of 0 0 1 1 2 2)))
+(check (Reached (map-of 0 0 1 0 2 0)))
+;; merging the two non-pattern slots leaves the pattern's alone. The survivor is 2,
+;; because `allows_directed_union` replaces the slot that is NOT the pattern's and
+;; either direction qualifies here, so the first one tried wins.
+(check (Reached (map-of 0 0 1 2 2 2)))
+;; and a minted slot merged into the pattern's keeps the pattern's name
+(check (Reached (map-of 0 0 1 0 2 2)))

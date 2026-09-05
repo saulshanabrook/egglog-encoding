@@ -1,0 +1,160 @@
+;;; Redundant slots: a class that does not depend on a slot its nodes carry.
+;;;
+;;; Def. 4 permits a node to carry slots its class does not, and 3.5 says a union
+;;; between two invocations with different slot sets is what establishes that. The
+;;; consequence is Def. 8: a slotless class stands for infinitely many e-nodes, so a
+;;; match against one has to pick slots for them rather than read them off.
+;;;
+;;; `paper-tests.egg` has the paper's own redundancy cases (Figure 3, 3.5 step 1,
+;;; Def. 8). This file is the awkward ones -- redundancy created by a rewrite instead
+;;; of a union, a match that only exists after one, and the shape that still does not
+;;; work, recorded at the bottom.
+;;;
+;;; Standalone: run it as it stands.
+;;;
+;;;     python3 slotted/slotted-egglog.py slotted/tests/redundancy-tests.egg
+
+(constructor F (U U) U)
+(constructor H (U U) U)
+(constructor K (U U) U)
+(constructor Sub (U U) U)
+(constructor Mul (U U) U)
+(constructor Add (U U) U)
+(constructor Null () U)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; a match that only exists AFTER a redundancy, established away from $0
+;;;
+;;; `sub($3,$3) = null` makes the slot redundant, so the class stands for
+;;; `sub($x,$x)` at every $x -- and only then does `f(sub($0,$0), sub($1,$1))`,
+;;; whose two children are invoked at DIFFERENT slots, match a pattern that
+;;; demands one `?x` for both.
+;;;
+;;; The slot the union happened to name must not matter. It used to: this is the
+;;; $3 version of a pair that disagreed, and the reference had the same split.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(rewrite (F (Sub ?x ?x) (Sub ?x ?x)) (H (Null) (Null)) :name both-sides)
+
+(union (Sub $3 $3) (Null))
+
+(let x (F (Sub $0 $0) (Sub $1 $1)))
+(let y (H (Null) (Null)))
+
+(run 10)
+
+(check (= x y))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; redundancy from a REWRITE rather than a union, propagated into a parent
+;;;
+;;; `mul($x, 0) -> 0` drops a slot the parent's edge still mentions, so the edge
+;;; has to shrink when the child narrows. The parent's OWN slot, $8, is untouched
+;;; by any of it, which is what the last claim checks.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(rewrite (Mul ?x (Null)) (Null) :name mul-zero)
+
+(let a (F (Mul $7 (Null)) $8))
+(let b (F (Mul $9 (Null)) $8))
+(let c (F (Null) $8))
+(let d (F (Mul $7 (Null)) $3))
+
+(run 10)
+
+(check (= a b))
+(check (= a c))
+(check (!= a d))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; every invocation of a slotless class is the SAME invocation
+;;;
+;;; Once `sub(v,v)` has lost its slot there is nothing left for two invocations of
+;;; it to differ on, so sub($0,$0) and sub($1,$1) are equal -- not merely one
+;;; class. That is what makes the rule above fire, and it must not depend on which
+;;; invocation was unioned in the first place.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(rewrite (F (Sub ?x ?x) (Sub ?x ?x)) (H (Null) (Null)) :name both-sides)
+
+(union (Sub $9 $9) (Null))
+
+(let s0 (Sub $0 $0))
+(let s1 (Sub $1 $1))
+(let z (Null))
+(let w (F (Sub $0 $0) (Sub $1 $1)))
+(let h (H (Null) (Null)))
+
+(run 10)
+
+(check (= s0 z))
+(check (= s0 s1))
+(check (= w h))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; scale: associativity and commutativity over four slots
+;;;
+;;; The standard e-graph stress test, and the case slotted e-graphs are meant to be
+;;; BETTER at, since every two-slot sum shares one class. Five slots does not finish
+;;; in eight steps.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(rewrite (Add ?x ?y) (Add ?y ?x) :name comm)
+(rewrite (Add ?x (Add ?y ?z)) (Add (Add ?x ?y) ?z) :name assoc-l)
+(rewrite (Add (Add ?x ?y) ?z) (Add ?x (Add ?y ?z)) :name assoc-r)
+
+(let a (Add (Add (Add $0 $1) $2) $3))
+(let b (Add (Add (Add $3 $2) $1) $0))
+
+(run 8)
+
+(check (= a b))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; KNOWN UNFIXED: a right-hand side that names a slot the match could not pin
+;;;
+;;; The program below is the one above with `?x` on the right instead of a closed
+;;; term, and it is not commented out because it is uninteresting -- it FAILS, in
+;;; both directions:
+;;;
+;;;     (rewrite (F (Sub ?x ?x) (Sub ?x ?x)) ?x)
+;;;     (union (Sub $0 $0) (Null))          ;; or (Sub $9 $9), same outcome
+;;;     (let w (F (Sub $0 $0) (Sub $1 $1)))
+;;;     (let k5 (K $5 (Null)))
+;;;     (let k6 (K $6 (Null)))
+;;;     (run 10)
+;;;     (check (!= k5 k6))            ;; fails: they come out equal
+;;;
+;;; `k5` and `k6` are unrelated to any of it, so the encoding is collapsing the
+;;; variable class: every slot becomes interchangeable. The cause is that the
+;;; slotless `sub` class pins nothing, so `?x` is not determined by the match --
+;;; and `?x` appears on the right, where something has to be built. The reference
+;;; declines to fire at all, because revisiting a redundant slot allocates a fresh
+;;; one and the two occurrences then fail to unify. Firing with a minted slot and
+;;; then USING it on the right is what goes wrong here.
+;;;
+;;; The `H (Null) (Null)` sections above are the same match with a right-hand side
+;;; that does not mention `?x`, and those pass -- so the match is not the problem,
+;;; the use of an unpinned variable in the action is.
+;;;
+;;; Both slot choices fail now. `$9` used to pass, which was an artifact of the
+;;; weaker `=`: the two were not egglog-equal but WERE the same invocation, and
+;;; only `=` sharing its renaming makes that visible.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

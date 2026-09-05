@@ -1,0 +1,207 @@
+;;; Binders: what binding a slot does to a class, and what a rule may do around one.
+;;;
+;;; `lambda-binders.egg` covers the language's own binder rules; this file is about
+;;; the harder half -- rules that reach UNDER a binder, rules whose pattern IS a
+;;; binder, and a rule that introduces one. Capture is the thing every section is
+;;; really testing, so most of them pair a firing with a shape that must not fire.
+;;;
+;;; Standalone: run it as it stands.
+;;;
+;;;     python3 slotted/slotted-egglog.py slotted/tests/binder-tests.egg
+
+(constructor Lam (U U) U :binder 0)
+(constructor App (U U) U)
+(constructor Pair (U U) U)
+(constructor F (U U) U)
+(constructor G (U U) U)
+(constructor Mul (U U) U)
+(constructor Null () U)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; a bound slot is not a free slot of the class
+;;;
+;;; Every identity lambda is one class; every constant lambda over the SAME free
+;;; slot is one class; a different free slot is only equal up to renaming, which
+;;; is the pair that `=` and `renaming-=` disagree about.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let i0 (Lam $0 $0))
+(let i5 (Lam $5 $5))
+
+(let k3a (Lam $0 $3))
+(let k3b (Lam $5 $3))
+(let k4 (Lam $0 $4))
+
+(run 0)
+
+(check (= i0 i5))
+(check (= k3a k3b))
+(check (!= k3a k4))
+(check (renaming-= k3a k4))
+(check (!= i0 k3a))
+
+;; the identity binds its only slot, the constant keeps $3 free
+(check (slots i0))
+(check (slots k3a $3))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; nested binders, and the renaming that would CAPTURE
+;;;
+;;; `a` and `b` are one closed term under different bound names; `c` swaps the two
+;;; bound occurrences and is a different term. `p` and `q` are alpha-variants with
+;;; the FREE slot renamed -- renaming q's binder to $0 would capture, so they are
+;;; not equal, only equal up to renaming.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let a (Lam $0 (Lam $1 (F $0 $1))))
+(let b (Lam $7 (Lam $8 (F $7 $8))))
+(let c (Lam $0 (Lam $1 (F $1 $0))))
+
+(let p (Lam $0 (F $0 $3)))
+(let q (Lam $3 (F $3 $0)))
+
+(run 0)
+
+(check (= a b))
+(check (!= a c))
+(check (!= p q))
+(check (renaming-= p q))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; a rule reaching UNDER a binder, by congruence
+;;;
+;;; Rewriting a lambda's body has to keep the binding, and the result is still
+;;; identified up to alpha. The second pair also DROPS the bound slot:
+;;; lam $x. mul($x, 0) becomes lam $x. 0, which is closed -- but not `0` itself.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(rewrite (F ?x ?y) (F ?y ?x) :name comm)
+(rewrite (Mul ?x (Null)) (Null) :name mul-zero)
+
+(let a (Lam $0 (F $0 $3)))
+(let b (Lam $0 (F $3 $0)))
+(let c (Lam $7 (F $3 $7)))
+
+(let m (Lam $0 (Mul $0 (Null))))
+(let z (Lam $0 (Null)))
+(let n (Null))
+
+(run 10)
+
+(check (= a b))
+(check (= a c))
+(check (= m z))
+(check (!= m n))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; a rule whose PATTERN is a binder, and whose action rebuilds two of them
+;;;
+;;; `lam $v. pair(a,b)` becomes `pair(lam $v. a, lam $v. b)`. On the right, $4 is
+;;; not under the binder, so `lam $5. $4` is the same term as `lam $0. $4` -- the
+;;; bound name is not observable, and the rebuilt binder must not capture $4.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(rewrite (Lam $v (Pair ?a ?b)) (Pair (Lam $v ?a) (Lam $v ?b)) :name pair-push)
+
+(let l (Lam $0 (Pair (F $0 $3) $4)))
+(let r (Pair (Lam $0 (F $0 $3)) (Lam $5 $4)))
+(let w (Pair (Lam $0 (F $3 $0)) (Lam $5 $4)))
+
+(run 10)
+
+(check (= l r))
+(check (!= l w))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; eta, whose pattern names the bound slot again inside the body
+;;;
+;;; The renaming reached through the body has to equal the one the binder
+;;; installed. `e` is the same shape with a DIFFERENT slot in argument position,
+;;; so the rule must not fire there.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(rewrite (Lam $v (App ?f $v)) ?f :name eta :when (not-free $v ?f))
+
+(let a (Lam $0 (App (Null) $0)))
+(let b (Null))
+
+(let c (Lam $7 (App (G $2 (Null)) $7)))
+(let d (G $2 (Null)))
+
+(let e (Lam $7 (App (Null) $2)))
+
+(run 10)
+
+(check (= a b))
+(check (= c d))
+(check (!= e b))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; a pattern that names a SLOT rather than a subterm
+;;;
+;;; `f($s,$t)` matches only where both children are variables, so this restricted
+;;; commutativity fires on f($1,$2) and not on f(g($1),$2). Slot patterns are what
+;;; the real rule sets are written with -- eta, let-var-same, map-fission.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(rewrite (F $s $t) (F $t $s) :name var-comm)
+
+(let a (F $1 $2))
+(let b (F $2 $1))
+
+(let c (F (G $1 (Null)) $2))
+(let d (F $2 (G $1 (Null))))
+
+(run 10)
+
+(check (= a b))
+(check (!= c d))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; eta-EXPANSION, whose action introduces a binder over a slot the match never
+;;; named
+;;;
+;;; 3.6 ends by saying such a slot may be any fresh one, which is what `:fresh`
+;;; is for. Since the slot is fresh, `lam $9. app(f, $9)` is the same term
+;;; whatever name it gets -- while `lam $9. app(f, $2)`, whose argument is a slot
+;;; the term already mentions, is a different one.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(rewrite (F ?x ?y) (Lam $s (App (F ?x ?y) $s)) :name eta-expand :fresh $s)
+
+(let a (F $1 $2))
+(let b (Lam $9 (App (F $1 $2) $9)))
+(let c (Lam $9 (App (F $1 $2) $2)))
+
+(run 1)
+
+(check (= a b))
+(check (!= a c))
+
+(pop)

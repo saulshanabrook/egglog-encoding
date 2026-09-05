@@ -1,0 +1,1029 @@
+;;; Cases for `slotted/encoding/user-rules.egg`.
+;;;
+;;; The tutorial states the encoding and holds the rules -- one per shape, the one a compiler
+;;; emits.  This file holds everything that exercises them: the e-graphs, the schedules, the
+;;; assertions, the well-formedness observers, and the counter-examples.  It INCLUDES the
+;;; tutorial rather than copying rules out of it, so what runs here is exactly what the
+;;; tutorial teaches and the two cannot drift.
+;;;
+;;; WHAT AN ASSERTION OBSERVES.  Every tutorial rule concludes for real -- an `Equated` over
+;;; renamed ids -- so every case here asks what the rule DID: that the two terms the rewrite
+;;; relates reach a common leader, or that the class gained the symmetry the rewrite implies,
+;;; or that the node the action built is well formed.  Nothing observes a witness relation;
+;;; the only relation declared here is `BadEdge`, which is not a rule's conclusion but a
+;;; well-formedness probe over arbitrary nodes.
+;;;
+;;; Layout: one outer (push)/(pop) per tutorial section, one inner (push)/(pop) per case, so
+;;; one case's terms never reach another's.  The rules, by contrast, are all live throughout
+;;; -- the tutorial's eleven and the fixtures below -- so a case has to be built so that no
+;;; other rule can reach its terms.  All eleven tutorial rules are real rewrites and so share
+;;; the source languages' operator names: `let` is in M7, M8 and M11, `app` in M5, M6, M9 and
+;;; M11, and `+` and `-` are written by M3's action and matched by M10 and M2.  Where two
+;;; could meet, the case keeps them apart by shape -- the terms of one section do not contain
+;;; the operator the other needs -- and a section masked by another rule firing would show up
+;;; as an assertion that still passes when flipped, which is checked.
+;;;
+;;; A COUNTER-EXAMPLE block sits at the end of the section it justifies, and concludes for
+;;; real too -- comparing a real conclusion against a witness would compare two different
+;;; things.  So where its rule would collide with the tutorial's it takes a further letter --
+;;; `-a`, `f3a`, `f3b`, `*a`, `f5a`, `f6a`, `f6b`, `f8a`, `+a` -- and builds its own copy of
+;;; the e-graph, so the rule it is being contrasted with sees none of its terms and cannot
+;;; mask the bug.  The exception is a mutant that only DROPS a side condition (M9, M11): the
+;;; real rule cannot fire on the e-graph at all, so the two share the operators and the case.
+;;;
+;;; The schedule saturates the invariant rules between user-rule steps, so a user rule only
+;;; ever matches nodes that are already canonical.
+
+(include "slotted/encoding/user-rules.egg")
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Fixtures: the shapes to build by hand.
+;;;
+;;; Every rule in the tutorial is now a real rewrite -- from `benches/sdql.rs` or
+;;; `tests/array/mod.rs` -- compiled by `slotted-encoder.py`, and
+;;; `slotted/check-tutorial.py` asserts exactly that, up to a renaming of the
+;;; variables.  What a real rule cannot do is guarantee a particular state on demand, so the
+;;; shapes below are built here instead, on plain operators `fN`/`gN`/`hN`/`kN`:
+;;;
+;;;   * a multi-rooted left-hand side -- a fresh root without choosing a
+;;;     non-default atom order, which no rewrite has (M3)
+;;;   * two ATOM mints in one match, so the accumulation shows without leaning on
+;;;     the right-hand side's mint (M5)
+;;;   * a join that enumerates TWO groups at once (M6)
+;;;   * the same composition as M7, on operators no other rule is watching
+;;;   * a CHILD wider than its class, which needs a merge and not a rule's shape (M8)
+;;;
+;;; Each is the encoder's own output for its atoms, so a fixture demonstrates the same
+;;; compilation the tutorial states -- it is the E-GRAPH that is hand-built, never the rule.
+;;; They live here and not in the tutorial because a reader learning the encoding should see
+;;; the rules people actually run.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; the M3 shape
+(rule ((= p (App2 "f3" p1 x q1 y))
+       (= dom1 (map-union (map-image p1) (map-image q1)))
+       (= mp1 dom1)
+       (= avoid1 (map-image mp1))
+       (= mx (compose mp1 p1))
+       (= csx (ClassSlots x))
+       (= my (compose mp1 q1))
+       (= csy (ClassSlots y))
+       (= csp (ClassSlots p))
+       ;; atom 2 -- its root is fresh, so `?x` is the only constraint, and `?z`'s slot is
+       ;; named by nothing.  `find-mapping-total` mints there rather than dropping it.
+       (= q (App2 "g3" p2 x q2 z))
+       (= dom2 (map-union (map-image p2) (map-image q2)))
+       (RenamesToLeader x symx x)
+       (= mp2 (find-mapping-total avoid1 dom2 (compose (compose mx csx) symx) p2))
+       (= im2 (map-image mp2))
+       (= avoid2 (map-union avoid1 im2))
+       (= mz (compose mp2 q2))
+       (= csz (ClassSlots z))
+       (= csq (ClassSlots q)))                 ; `?q`'s own narrowing; this action has no use
+      ((let rhs (App2 "h3" (compose my csy) y (compose mz csz) z))
+       (Equated rhs (compose mp1 csp) p)))
+
+;; the M5 shape
+(rule ((= p (App2 "f5" p1 a q1 b))
+       (= dom1 (map-union (map-image p1) (map-image q1)))
+       (= mp1 dom1)
+       (= avoid1 (map-image mp1))
+       (= ma (compose mp1 p1))
+       (= csa (ClassSlots a))
+       (= mb (compose mp1 q1))
+       (= csb (ClassSlots b))
+       (= csp (ClassSlots p))
+       ;; atom 2 -- chained under `?a`, and minting for whatever that leaves unnamed
+       (= a (App2 "g5" p2 u q2 u))
+       (= dom2 (map-union (map-image p2) (map-image q2)))
+       (RenamesToLeader a syma a)
+       (= mp2 (find-mapping-total avoid1 dom2 (compose (compose ma csa) syma)
+                                  (map-domain (compose ma csa))))
+       (= im2 (map-image mp2))
+       (= avoid2 (map-union avoid1 im2))       ; accumulate
+       (= mu (compose mp2 p2))
+       (= csu (ClassSlots u))
+       (RenamesToLeader u symu u)              ; Def. 6 for `?u`'s repeat, as in M2
+       (= (compose mp2 q2) (compose (compose mu csu) symu))
+       ;; atom 3 -- the same again, and it may not mint over anything atom 2 took
+       (= b (App2 "h5" p3 v q3 v))
+       (= dom3 (map-union (map-image p3) (map-image q3)))
+       (RenamesToLeader b symb b)
+       (= mp3 (find-mapping-total avoid2 dom3 (compose (compose mb csb) symb)
+                                  (map-domain (compose mb csb))))
+       (= im3 (map-image mp3))
+       (= avoid3 (map-union avoid2 im3))
+       (= mv (compose mp3 p3))
+       (= csv (ClassSlots v))
+       (RenamesToLeader v symv v)
+       (= (compose mp3 q3) (compose (compose mv csv) symv)))
+      ((let rhs (App2 "k5" (compose mu csu) u (compose mv csv) v))
+       (Equated rhs (compose mp1 csp) p)))
+
+;; the M6 shape
+(rule ((= p (App2 "f6" p1 x q1 y))
+       (= dom1 (map-union (map-image p1) (map-image q1)))
+       (= mp1 dom1)
+       (= avoid1 (map-image mp1))
+       (= mx (compose mp1 p1))
+       (= csx (ClassSlots x))
+       (= my (compose mp1 q1))
+       (= csy (ClassSlots y))
+       (= csp (ClassSlots p))
+       ;; atom 2 -- root fresh, so every shared child both constrains mp2 and contributes
+       ;; part of it, in one call
+       (= q (App2 "g6" p2 x q2 y))
+       (= dom2 (map-union (map-image p2) (map-image q2)))
+       (RenamesToLeader x symx x)
+       (RenamesToLeader y symy y)
+       (= mp2 (find-mapping-total avoid1 dom2
+                                  (compose (compose mx csx) symx)      ; firsts
+                                  (compose (compose my csy) symy)
+                                  p2 q2))                              ; seconds
+       (= im2 (map-image mp2))
+       (= avoid2 (map-union avoid1 im2))
+       (= csq (ClassSlots q)))
+      ((Equated p (compose (inverse (compose mp1 csp)) (compose mp2 csq)) q)))
+
+;; the M7 shape
+(rule ((= p (App2 "f7" p1 a q1 b))
+       (= dom1 (map-union (map-image p1) (map-image q1)))
+       (= mp1 dom1)
+       (= avoid1 (map-image mp1))
+       (= ma (compose mp1 p1))
+       (= csa (ClassSlots a))
+       (= mb (compose mp1 q1))
+       (= csb (ClassSlots b))
+       (= csp (ClassSlots p))
+       ;; atom 2 -- constrained by its root `?b`
+       (= b (App2 "g7" p2 c q2 d))
+       (= dom2 (map-union (map-image p2) (map-image q2)))
+       (RenamesToLeader b symb b)
+       (= mp2 (find-mapping-total avoid1 dom2 (compose (compose mb csb) symb)
+                                  (map-domain (compose mb csb))))
+       (= im2 (map-image mp2))
+       (= avoid2 (map-union avoid1 im2))       ; atom 3 may not mint over these
+       (= mc (compose mp2 p2))
+       (= csc (ClassSlots c))
+       (= md (compose mp2 q2))
+       (= csd (ClassSlots d))
+       ;; atom 3 -- root fresh, constrained through `?c` (depth 2) and `?a` (depth 1)
+       (= q (App2 "h7" p3 c q3 a))
+       (= dom3 (map-union (map-image p3) (map-image q3)))
+       (RenamesToLeader c symc c)
+       (RenamesToLeader a syma a)
+       (= mp3 (find-mapping-total avoid2 dom3
+                                  (compose (compose mc csc) symc)
+                                  (compose (compose ma csa) syma)
+                                  p3 q3))
+       (= im3 (map-image mp3))
+       (= avoid3 (map-union avoid2 im3))
+       (= csq (ClassSlots q)))
+      ((Equated p (compose (inverse (compose mp1 csp)) (compose mp3 csq)) q)))
+
+;; the M8 shape
+(rule ((= x3 (App2 "f8" p1 x1 q1 x2))
+       (= dom1 (map-union (map-image p1) (map-image q1)))
+       (= mp1 dom1)
+       (= avoid1 (map-image mp1))
+       (= mx1 (compose mp1 p1))
+       (= csx1 (ClassSlots x1))
+       (= mx2 (compose mp1 q1))
+       (= csx2 (ClassSlots x2))
+       (= csx3 (ClassSlots x3)))
+      ((let rhs (App2 "f8" (compose mx2 csx2) x2 (compose mx1 csx1) x1))
+       (Equated rhs (compose mx1 csx1) x1)))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; The edge observer, used by M3, M4 and M8.
+;;;
+;;; An edge `m : slots(c) -> slots(node)` must have dom(m) = slots(c) exactly (Def. 5 and
+;;; Def. 7); a node, by Def. 4, may be wider.  `(ClassSlots c)` is the class's own slot set,
+;;; so a row where the two lengths disagree is malformed -- too narrow (M3, M4: a dropped
+;;; slot) or too wide (M8: a renaming read off a node).
+;;;
+;;; It goes in its OWN ruleset and is run once at the end.  A relation is monotone, so a
+;;; probe sharing the default ruleset would also fire mid-repair and keep the fact after the
+;;; offending row is gone -- it would answer "was there ever a bad edge?", and the answer to
+;;; that is yes even when all is well.  `ClassSlots` only ever narrows, so the same applies
+;;; to it.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(ruleset obs)
+(relation BadEdge (String Renaming U))
+(rule ((= n (App2 f m1 c1 m2 c2))
+       (= cs1 (ClassSlots c1))
+       (!= (map-length m1) (map-length cs1)))
+      ((BadEdge f m1 c1)) :ruleset obs)
+(rule ((= n (App2 f m1 c1 m2 c2))
+       (= cs2 (ClassSlots c2))
+       (!= (map-length m2) (map-length cs2)))
+      ((BadEdge f m2 c2)) :ruleset obs)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; M1.  One atom, nothing shared -- sdql's `eq-comm`.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+;; (eq (var $0) (var $1))
+(let $eq1 (App2 "eq" (map-of 0 0) (Var 0)
+                     (map-of 1 1) (Var 1)))
+;; (eq (var $1) (var $0)) -- what the action builds
+(let $eq2 (App2 "eq" (map-of 1 1) (Var 1)
+                     (map-of 0 0) (Var 0)))
+(run-schedule (saturate (run slotted))
+              (repeat 15 (seq (run) (saturate (run slotted)))))
+
+;; the swapped term is in the same class ...
+(check (RenamesToLeader $eq1 m1 l)
+       (RenamesToLeader $eq2 m2 l))
+;; ... which for a commutativity rule is the same thing as the class gaining the swap
+;; symmetry, since the two terms differ by exactly that renaming
+(check (RenamesToLeader $eq1 m $eq1)
+       (= (map-get m 0) 1)
+       (= (map-get m 1) 0))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; M2.  A repeated variable -- the Def. 6 check -- sdql's `sub-identity`.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+;; COUNTER-EXAMPLE for M2: what a non-slotted encoding would write -- demand the two edges
+;; be *equal*, by naming them with one variable.  A strictly stronger condition than Def. 6,
+;; so the rule is incomplete, and (c) is where the difference shows.  On its own operator,
+;; so the tutorial's `-` rule cannot mask it.
+(rule ((= e (App2 "-a" p1 x p1 x))
+       (= dom1 (map-union (map-image p1) (map-image p1)))
+       (= mp1 dom1)
+       (= cse (ClassSlots e)))
+      ((Equated (Num 0) (compose mp1 cse) e)))
+
+;; (a) both occurrences at the same slot
+(push)
+(let $sub2 (App2 "-" (map-of 7 7) (Var 7)
+                     (map-of 7 7) (Var 7)))
+(run-schedule (saturate (run slotted))
+              (repeat 15 (seq (run) (saturate (run slotted)))))
+(check (RenamesToLeader $sub2 m1 l)
+       (RenamesToLeader (Num 0) m2 l))
+(pop)
+
+;; (b) negative: distinct slots, so distinct renamed ids, so no match.  This is where the
+;;     crate's disequality constraints land -- `same_node_redundant_slots_stay_distinct` and
+;;     `live_slots_of_one_class_stay_distinct`, both saying a node's two distinct slots may
+;;     not be identified.  Here the symmetry the equation asks for simply is not there.
+(push)
+(let $sub2 (App2 "-" (map-of 7 7) (Var 7)
+                     (map-of 8 8) (Var 8)))
+(run-schedule (saturate (run slotted))
+              (repeat 15 (seq (run) (saturate (run slotted)))))
+(fail (check (RenamesToLeader $sub2 m1 l)
+             (RenamesToLeader (Num 0) m2 l)))
+(pop)
+
+;; (c) (- a2[$0,$1] a2[$1,$0]) matches (- ?e ?e) *only* because `a2` is symmetric.  The
+;;     machinery never normalises the two edges to be equal, so the naive rule misses it
+;;     while the Def. 6 rule fires -- which is what makes the two observably different.
+(push)
+(let $a2     (App2 "a2" (map-of 0 0) (Var 0)
+                        (map-of 1 1) (Var 1)))
+(let $a2swap (App2 "a2" (map-of 1 1) (Var 1)
+                        (map-of 0 0) (Var 0)))
+(union $a2 $a2swap)
+(run-schedule (saturate (run slotted))
+              (repeat 20 (seq (run) (saturate (run slotted)))))
+
+(let $t2  (App2 "-"  (map-of 0 0 1 1) $a2
+                     (map-of 0 1 1 0) $a2))
+(let $t2a (App2 "-a" (map-of 0 0 1 1) $a2
+                     (map-of 0 1 1 0) $a2))
+(run-schedule (saturate (run slotted))
+              (repeat 20 (seq (run) (saturate (run slotted)))))
+
+(check (RenamesToLeader $t2 m1 l)
+       (RenamesToLeader (Num 0) m2 l))
+(fail (check (RenamesToLeader $t2a m1 l)
+             (RenamesToLeader (Num 0) m2 l)))
+(pop)
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; M3.  Why an atom's renaming has to be TOTAL.
+;;;
+;;; `f3(?x,?y) = h3(?y,?z)` genuinely says `f3` does not depend on `?x`, so `?p` losing `$0`
+;;; is the correct reading of the rule and happens in the fixed version too.  The
+;;; malformedness of `?z`'s edge, and not that, is what separates the counter-examples from
+;;; the tutorial's rule.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+;; (c) the tutorial's rule: total mp2 -- sound AND fires.  `?z`'s slot is minted, so its
+;;     name is not predictable; what is asserted is that the built `h3` is in `?p`'s class
+;;     and still has a slot for `?z`.  ((a) and (b) below are the counter-examples, which
+;;     `slotted-user-rules.md` cites by those letters.)
+(push)
+(let $P3 (App2 "f3" (map-of 0 0) (Var 0) (map-of 1 1) (Var 1)))
+(let $Q3 (App2 "g3" (map-of 0 0) (Var 0) (map-of 5 5) (Var 5)))
+(run-schedule (saturate (run slotted))
+              (repeat 20 (seq (run) (saturate (run slotted)))))
+(check (RenamesToLeader $P3 mp l)
+       (= h (App2 "h3" mh1 cy mh2 cz))
+       (RenamesToLeader h mh l)
+       (= (map-length mh2) 1))                       ; ?z keeps its slot
+(run obs 1)
+(fail (check (BadEdge f m c)))
+;; and the redundancy the rule really does imply is still derived -- which is why that
+;; cannot be used to tell the unsound spelling from this one
+(check (RenamesToLeader $P3 m $P3) (= (map-length m) 1))
+(pop)
+
+;; (d) the determined case: nothing is minted
+(push)
+(let $P3 (App2 "f3" (map-of 0 0) (Var 0) (map-of 1 1) (Var 1)))
+(let $Q3 (App2 "g3" (map-of 0 0) (Var 0) (map-of 0 0) (Var 0)))
+(run-schedule (saturate (run slotted))
+              (repeat 20 (seq (run) (saturate (run slotted)))))
+(check (RenamesToLeader $P3 m $P3) (= (map-length m) 2))
+(pop)
+
+;;;; COUNTER-EXAMPLES for M3.  Each is the tutorial's rule with `mp2` alone changed.
+
+;; (a) minimal mp2 -- unsound: ?z's edge comes out empty
+(push)
+(rule ((= p (App2 "f3a" p1 x q1 y))
+       (= dom1 (map-union (map-image p1) (map-image q1)))
+       (= mp1 dom1)
+       (= mx (compose mp1 p1))
+       (= csx (ClassSlots x))
+       (= my (compose mp1 q1))
+       (= csy (ClassSlots y))
+       (= csp (ClassSlots p))
+       (= q (App2 "g3a" p2 x q2 z))
+       (RenamesToLeader x symx x)
+       (= mp2 (compose (compose (compose mx csx) symx) (inverse p2)))   ; minimal, not total
+       (= mz (compose mp2 q2))
+       (= csz (ClassSlots z)))
+      ((let rhs (App2 "h3a" (compose my csy) y (compose mz csz) z))
+       (Equated rhs (compose mp1 csp) p)))
+
+(let $P3a (App2 "f3a" (map-of 0 0) (Var 0) (map-of 1 1) (Var 1)))
+(let $Q3a (App2 "g3a" (map-of 0 0) (Var 0) (map-of 5 5) (Var 5)))
+(run-schedule (saturate (run slotted))
+              (repeat 20 (seq (run) (saturate (run slotted)))))
+(run obs 1)
+(check (BadEdge "h3a" m c))                  ; the empty edge to ?z
+(pop)
+
+;; (b) guarded -- sound but incomplete: the rule simply declines to fire
+(push)
+(rule ((= p (App2 "f3b" p1 x q1 y))
+       (= dom1 (map-union (map-image p1) (map-image q1)))
+       (= mp1 dom1)
+       (= mx (compose mp1 p1))
+       (= csx (ClassSlots x))
+       (= my (compose mp1 q1))
+       (= csy (ClassSlots y))
+       (= csp (ClassSlots p))
+       (= q (App2 "g3b" p2 x q2 z))
+       (RenamesToLeader x symx x)
+       (= mp2 (compose (compose (compose mx csx) symx) (inverse p2)))
+       (= mz (compose-total mp2 q2))       ; declines rather than dropping ?z's slot
+       (= csz (ClassSlots z)))
+      ((let rhs (App2 "h3b" (compose my csy) y (compose mz csz) z))
+       (Equated rhs (compose mp1 csp) p)))
+
+(push)
+(let $P3b (App2 "f3b" (map-of 0 0) (Var 0) (map-of 1 1) (Var 1)))
+(let $Q3b (App2 "g3b" (map-of 0 0) (Var 0) (map-of 5 5) (Var 5)))
+(run-schedule (saturate (run slotted))
+              (repeat 20 (seq (run) (saturate (run slotted)))))
+(run obs 1)
+(fail (check (BadEdge f m c)))                          ; nothing malformed ...
+(fail (check (= h (App2 "h3b" mh1 cy mh2 cz))))         ; ... and nothing built either
+(pop)
+
+;; where ?z's slots are determined it still fires
+(push)
+(let $P3b (App2 "f3b" (map-of 0 0) (Var 0) (map-of 1 1) (Var 1)))
+(let $Q3b (App2 "g3b" (map-of 0 0) (Var 0) (map-of 0 0) (Var 0)))
+(run-schedule (saturate (run slotted))
+              (repeat 20 (seq (run) (saturate (run slotted)))))
+(check (= h (App2 "h3b" mh1 cy mh2 cz)))
+(pop)
+
+(pop)
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; M4.  Two atoms, chained -- sdql's `mult-assoc1`.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+;; (a) the rewrite itself: (* (* v0 v1) v2) and (* v0 (* v1 v2)) end up in one class
+(push)
+(let $ab4  (App2 "*" (map-of 0 0) (Var 0)
+                     (map-of 0 1) (Var 0)))               ; (* (var $0) (var $1))
+(let $p4   (App2 "*" (map-of 0 0 1 1) $ab4
+                     (map-of 0 2) (Var 0)))               ; (* that (var $2))
+(let $in4  (App2 "*" (map-of 0 1) (Var 0)
+                     (map-of 0 2) (Var 0)))               ; (* (var $1) (var $2))
+(let $rhs4 (App2 "*" (map-of 0 0) (Var 0)
+                     (map-of 1 1 2 2) $in4))              ; (* (var $0) that)
+(run-schedule (saturate (run slotted))
+              (repeat 20 (seq (run) (saturate (run slotted)))))
+(check (RenamesToLeader $p4 m1 l)
+       (RenamesToLeader $rhs4 m2 l))
+(run obs 1)
+(fail (check (BadEdge f m c)))
+(pop)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; COUNTER-EXAMPLE for M4: what the naive chain spelling does instead.
+;;;
+;;; M4 solves atom 2 with `find-mapping-total`.  Taking the root's stored edge composed with
+;;; a symmetry as atom 2's whole renaming -- `*a` below -- looks equivalent, and on (a)'s
+;;; e-graph it is: that is case (b).
+;;;
+;;; In (c) and (d) the inner `*` class is given a slot the parent's edge cannot name: `(* v0 v1)` is
+;;; unioned with a one-slot term, so `$1` becomes redundant and the parent holds it at an
+;;; edge whose domain is narrower than the node's own slots.  The short spelling then
+;;; computes an EMPTY renaming for `?b` -- a child with a slot reached by an edge with no
+;;; entries, which the edge condition forbids (M3) and which asserts the child is slotless.
+;;; `find-mapping-total` mints a name instead.  Which of the two happens is a property of
+;;; the data, so the recipe cannot take the short spelling anywhere.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; the short spelling, on its own operator
+(rule ((= p (App2 "*a" p1 ab q1 c))
+       (= dom1 (map-union (map-image p1) (map-image q1)))
+       (= mp1 dom1)
+       (= mab (compose mp1 p1))
+       (= csab (ClassSlots ab))
+       (= mc (compose mp1 q1))
+       (= csc (ClassSlots c))
+       (= csp (ClassSlots p))
+       (= ab (App2 "*a" p2 a q2 b))
+       (RenamesToLeader ab symab ab)
+       (= mp2 (compose (compose mab csab) symab))       ; the root's edge, and nothing else
+       (= ma (compose mp2 p2))
+       (= csa (ClassSlots a))
+       (= mb (compose mp2 q2))
+       (= csb (ClassSlots b)))
+      ((let inner (App2 "*a" (compose mb csb) b (compose mc csc) c))
+       (let outer (App2 "*a" (compose ma csa) a
+                             (map-union (map-image (compose mb csb))
+                                        (map-image (compose mc csc))) inner))
+       (Equated outer (compose mp1 csp) p)))
+
+;; (b) the short spelling on (a)'s e-graph, where nothing is redundant: it gets the right
+;;     answer, which is why it looks equivalent
+(push)
+(let $ab4a  (App2 "*a" (map-of 0 0) (Var 0) (map-of 0 1) (Var 0)))
+(let $p4a   (App2 "*a" (map-of 0 0 1 1) $ab4a (map-of 0 2) (Var 0)))
+(let $in4a  (App2 "*a" (map-of 0 1) (Var 0) (map-of 0 2) (Var 0)))
+(let $rhs4a (App2 "*a" (map-of 0 0) (Var 0) (map-of 1 1 2 2) $in4a))
+(run-schedule (saturate (run slotted))
+              (repeat 20 (seq (run) (saturate (run slotted)))))
+(check (RenamesToLeader $p4a m1 l)
+       (RenamesToLeader $rhs4a m2 l))
+(run obs 1)
+(fail (check (BadEdge f m c)))
+(pop)
+
+;; (c) the tutorial's rule on the redundant-slot e-graph: nothing malformed
+(push)
+(let $ab4 (App2 "*"   (map-of 0 0) (Var 0) (map-of 0 1) (Var 0)))
+(let $k4  (App2 "k4"  (map-of 0 0) (Var 0) (map-of 0 0) (Var 0)))
+(union $ab4 $k4)
+(let $p4  (App2 "*"   (map-of 0 0) $ab4 (map-of 0 2) (Var 0)))
+(run-schedule (saturate (run slotted))
+              (repeat 25 (seq (run) (saturate (run slotted)))))
+(run obs 1)
+(fail (check (BadEdge f m c)))
+(pop)
+
+;; (d) the short spelling on the same e-graph: an empty edge where a slot was minted
+(push)
+(let $ab4a (App2 "*a"  (map-of 0 0) (Var 0) (map-of 0 1) (Var 0)))
+(let $k4a  (App2 "k4a" (map-of 0 0) (Var 0) (map-of 0 0) (Var 0)))
+(union $ab4a $k4a)
+(let $p4a  (App2 "*a"  (map-of 0 0) $ab4a (map-of 0 2) (Var 0)))
+(run-schedule (saturate (run slotted))
+              (repeat 25 (seq (run) (saturate (run slotted)))))
+(run obs 1)
+(check (BadEdge "*a" m c))
+(pop)
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; M5.  The avoid-set, and why it accumulates.
+;;;
+;;; `g5($0,$0)` and `h5($1,$1)` are each unioned with `null`, so each has a slot its class
+;;; does not depend on.  The root `f5(null,null)` has no slots at all, so nothing pins `?u`
+;;; or `?v` and both atoms have to invent.  The rule's conclusion is `(k5 ?u ?v)`, so what
+;;; the two atoms invented is visible in the built node: two slots if the avoid-set
+;;; accumulated, one if it did not.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+;; COUNTER-EXAMPLE for M5: the tutorial's rule with the accumulation dropped, so atom 3
+;; avoids only atom 1's slots and re-invents what atom 2 already took.  Own operators, own
+;; copy of the e-graph.
+(rule ((= p (App2 "f5a" p1 a q1 b))
+       (= dom1 (map-union (map-image p1) (map-image q1)))
+       (= mp1 dom1)
+       (= avoid1 (map-image mp1))
+       (= ma (compose mp1 p1))
+       (= csa (ClassSlots a))
+       (= mb (compose mp1 q1))
+       (= csb (ClassSlots b))
+       (= csp (ClassSlots p))
+       (= a (App2 "g5a" p2 u q2 u))
+       (= dom2 (map-union (map-image p2) (map-image q2)))
+       (RenamesToLeader a syma a)
+       (= mp2 (find-mapping-total avoid1 dom2 (compose (compose ma csa) syma)
+                                  (map-domain (compose ma csa))))
+       (= mu (compose mp2 p2))
+       (= csu (ClassSlots u))
+       (RenamesToLeader u symu u)
+       (= (compose mp2 q2) (compose (compose mu csu) symu))
+       (= b (App2 "h5a" p3 v q3 v))
+       (= dom3 (map-union (map-image p3) (map-image q3)))
+       (RenamesToLeader b symb b)
+       (= mp3 (find-mapping-total avoid1 dom3 (compose (compose mb csb) symb)   ; not avoid2
+                                  (map-domain (compose mb csb))))
+       (= mv (compose mp3 p3))
+       (= csv (ClassSlots v))
+       (RenamesToLeader v symv v)
+       (= (compose mp3 q3) (compose (compose mv csv) symv)))
+      ((let rhs (App2 "k5a" (compose mu csu) u (compose mv csv) v))
+       (Equated rhs (compose mp1 csp) p)))
+
+;; the tutorial's rule
+(push)
+(let $g5 (App2 "g5" (map-of 0 0) (Var 0) (map-of 0 0) (Var 0)))
+(let $h5 (App2 "h5" (map-of 0 1) (Var 0) (map-of 0 1) (Var 0)))
+(union $g5 (Null))
+(union $h5 (Null))
+(let $p5 (App2 "f5" (map-empty) (Null) (map-empty) (Null)))
+;; the two possible conclusions: ?u and ?v on distinct slots, or collapsed onto one
+(let $k5two (App2 "k5" (map-of 0 0) (Var 0) (map-of 0 1) (Var 0)))
+(let $k5one (App2 "k5" (map-of 0 0) (Var 0) (map-of 0 0) (Var 0)))
+(run-schedule (saturate (run slotted))
+              (repeat 20 (seq (run) (saturate (run slotted)))))
+(check (RenamesToLeader $p5 m1 l) (RenamesToLeader $k5two m2 l))
+(fail (check (RenamesToLeader $p5 m1 l) (RenamesToLeader $k5one m2 l)))
+(pop)
+
+;; the same e-graph without the accumulation: the two variables collapse
+(push)
+(let $g5a (App2 "g5a" (map-of 0 0) (Var 0) (map-of 0 0) (Var 0)))
+(let $h5a (App2 "h5a" (map-of 0 1) (Var 0) (map-of 0 1) (Var 0)))
+(union $g5a (Null))
+(union $h5a (Null))
+(let $p5a (App2 "f5a" (map-empty) (Null) (map-empty) (Null)))
+(let $k5atwo (App2 "k5a" (map-of 0 0) (Var 0) (map-of 0 1) (Var 0)))
+(let $k5aone (App2 "k5a" (map-of 0 0) (Var 0) (map-of 0 0) (Var 0)))
+(run-schedule (saturate (run slotted))
+              (repeat 20 (seq (run) (saturate (run slotted)))))
+(check (RenamesToLeader $p5a m1 l) (RenamesToLeader $k5aone m2 l))
+(fail (check (RenamesToLeader $p5a m1 l) (RenamesToLeader $k5atwo m2 l)))
+(pop)
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; M6.  Two atoms, joined on a fresh root.
+;;;
+;;; Two counter-examples run beside the tutorial's rule in every case, each on its own
+;;; operators over the same shape:
+;;;
+;;;   f6a  solve `mp2` from `?x` alone, then require `?y` to agree with that.  `mp2` is
+;;;        then defined only on im(p2), so the agreement asked of `?y` is about a map that
+;;;        need not cover `?y`'s slots.  Whether im(p2) happens to cover the whole node is a
+;;;        property of the data: (a) loses a match, (c) happens to work.
+;;;   f6b  no `mp2` at all -- demand the two nodes carry the same edges.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(rule ((= p (App2 "f6a" p1 x q1 y))
+       (= dom1 (map-union (map-image p1) (map-image q1)))
+       (= mp1 dom1)
+       (= mx (compose mp1 p1))
+       (= csx (ClassSlots x))
+       (= my (compose mp1 q1))
+       (= csy (ClassSlots y))
+       (= csp (ClassSlots p))
+       (= q (App2 "g6a" p2 x q2 y))
+       (RenamesToLeader x symx x)
+       (= mp2 (compose (compose (compose mx csx) symx) (inverse p2)))   ; from ?x alone
+       (= symy (compose (inverse (compose my csy)) (compose mp2 q2)))   ; then probe ?y
+       (RenamesToLeader y symy y)
+       (= csq (ClassSlots q)))
+      ((Equated p (compose (inverse (compose mp1 csp)) (compose mp2 csq)) q)))
+
+(rule ((= p (App2 "f6b" p1 x q1 y))
+       (= q (App2 "g6b" p1 x q1 y))                       ; same edges, no mp2
+       (= dom1 (map-union (map-image p1) (map-image q1)))
+       (= mp1 dom1)
+       (= csp (ClassSlots p))
+       (= csq (ClassSlots q)))
+      ((Equated p (compose (inverse (compose mp1 csp)) (compose mp1 csq)) q)))
+
+;; (a) positive, mp2 = identity.  im(p2) is only {$0}, so it never reaches $1 and `f6a`
+;;     silently loses the match.
+(push)
+(let $P6  (App2 "f6"  (map-of 0 0) (Var 0) (map-of 1 1) (Var 1)))
+(let $Q6  (App2 "g6"  (map-of 0 0) (Var 0) (map-of 1 1) (Var 1)))
+(let $P6a (App2 "f6a" (map-of 0 0) (Var 0) (map-of 1 1) (Var 1)))
+(let $Q6a (App2 "g6a" (map-of 0 0) (Var 0) (map-of 1 1) (Var 1)))
+(let $P6b (App2 "f6b" (map-of 0 0) (Var 0) (map-of 1 1) (Var 1)))
+(let $Q6b (App2 "g6b" (map-of 0 0) (Var 0) (map-of 1 1) (Var 1)))
+(run-schedule (saturate (run slotted))
+              (repeat 20 (seq (run) (saturate (run slotted)))))
+(check (RenamesToLeader $P6 m1 l) (RenamesToLeader $Q6 m2 l))
+(fail (check (RenamesToLeader $P6a m1 l) (RenamesToLeader $Q6a m2 l)))
+(check (RenamesToLeader $P6b m1 l) (RenamesToLeader $Q6b m2 l))
+(pop)
+
+;; (b) negative: g6's two children are one renamed id where f6's are two, so no injective
+;;     mp2 exists.  This is find-mapping's injectivity check doing the job of the reference's
+;;     per-node disequality clique.
+(push)
+(let $P6 (App2 "f6" (map-of 0 0) (Var 0) (map-of 1 1) (Var 1)))
+(let $Q6 (App2 "g6" (map-of 0 0) (Var 0) (map-of 0 0) (Var 0)))
+(run-schedule (saturate (run slotted))
+              (repeat 20 (seq (run) (saturate (run slotted)))))
+(fail (check (RenamesToLeader $P6 m1 l) (RenamesToLeader $Q6 m2 l)))
+(pop)
+
+;; (c) f6(a6[$0,$1], v[$0]) vs g6(a6[$1,$0], v[$0]): `?y` pins mp2[$0] = $0, so symx must be
+;;     the real swap.  Here im(p2) happens to cover all of q's slots, so `f6a` works --
+;;     again a property of the data.  `f6b` cannot: the edges differ.
+(push)
+(let $a6     (App2 "a6" (map-of 0 0) (Var 0) (map-of 1 1) (Var 1)))
+(let $a6swap (App2 "a6" (map-of 1 1) (Var 1) (map-of 0 0) (Var 0)))
+(union $a6 $a6swap)
+(run-schedule (saturate (run slotted))
+              (repeat 20 (seq (run) (saturate (run slotted)))))
+
+(let $P6  (App2 "f6"  (map-of 0 0 1 1) $a6 (map-of 0 0) (Var 0)))
+(let $Q6  (App2 "g6"  (map-of 0 1 1 0) $a6 (map-of 0 0) (Var 0)))
+(let $P6a (App2 "f6a" (map-of 0 0 1 1) $a6 (map-of 0 0) (Var 0)))
+(let $Q6a (App2 "g6a" (map-of 0 1 1 0) $a6 (map-of 0 0) (Var 0)))
+(let $P6b (App2 "f6b" (map-of 0 0 1 1) $a6 (map-of 0 0) (Var 0)))
+(let $Q6b (App2 "g6b" (map-of 0 1 1 0) $a6 (map-of 0 0) (Var 0)))
+(run-schedule (saturate (run slotted))
+              (repeat 20 (seq (run) (saturate (run slotted)))))
+(check (RenamesToLeader $P6 m1 l) (RenamesToLeader $Q6 m2 l))
+(check (RenamesToLeader $P6a m1 l) (RenamesToLeader $Q6a m2 l))
+(fail (check (RenamesToLeader $P6b m1 l) (RenamesToLeader $Q6b m2 l)))
+(pop)
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; M7.  Three atoms -- the cases compose.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let $g7 (App2 "g7" (map-of 0 0) (Var 0)
+                    (map-of 0 1) (Var 0)))
+(let $f7 (App2 "f7" (map-of 0 0) (Var 0)
+                    (map-of 0 0 1 1) $g7))
+
+;; (a) positive.  ?a and ?c are both v[$0] in pattern slots, and h7's two children sit at
+;;     the same slot $5, so mp3 = {$5 -> $0} and the two roots are equated.
+(push)
+(let $h7 (App2 "h7" (map-of 0 5) (Var 0)
+                    (map-of 0 5) (Var 0)))
+(run-schedule (saturate (run slotted))
+              (repeat 25 (seq (run) (saturate (run slotted)))))
+(check (RenamesToLeader $f7 m1 l)
+       (RenamesToLeader $h7 m2 l))
+(pop)
+
+;; (b) negative.  h7's children sit at *different* slots, so mp3 would have to send both $5
+;;     and $6 to $0 -- not injective, no match.
+(push)
+(let $h7bad (App2 "h7" (map-of 0 5) (Var 0)
+                       (map-of 0 6) (Var 0)))
+(run-schedule (saturate (run slotted))
+              (repeat 25 (seq (run) (saturate (run slotted)))))
+(fail (check (RenamesToLeader $f7 m1 l)
+             (RenamesToLeader $h7bad m2 l)))
+(pop)
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; M8.  A variable wider than its class -- the ClassSlots narrowing.
+;;;
+;;; Both cases build the same e-graph, in their own operators: two unions through a shared
+;;; h8($0,$0) drive the f8 class's slot set down, so a renaming read off an f8 node names a
+;;; slot the class no longer has.  The rule's conclusion puts the built node in `?x1`'s
+;;; class, and `?x1` is `null`, so what the assertion asks is that some `f8` node reached
+;;; `null` and that no edge came out malformed.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+;; (a) the tutorial's rule: every variable narrowed to its class.
+(push)
+(let $n8  (App2 "f8" (map-empty) (Null) (map-of 0 0) (Var 0)))
+(let $g8  (App2 "g8" (map-empty) (Null) (map-of 0 2) (Var 0)))
+(let $s8  (App2 "h8" (map-of 0 0) (Var 0) (map-of 0 0) (Var 0)))
+(union $n8 $s8)
+(union $g8 $s8)
+(run-schedule (saturate (run slotted))
+              (repeat 20 (seq (run) (saturate (run slotted)))))
+(check (RenamesToLeader (Null) m1 l)          ; the conclusion: it reached ?x1's class
+       (= n (App2 "f8" a1 c1 a2 c2))
+       (RenamesToLeader n m2 l))
+(run obs 1)
+(fail (check (BadEdge "f8" m c)))             ; and nothing malformed
+(pop)
+
+;;;; COUNTER-EXAMPLE for M8.
+
+;; (b) stored renamings used as written -- the encoder's `wide-kids` mutant.  Under the
+;;     phased schedule the invariants are saturated before a user rule can match, so the
+;;     renamings an action reads off a node already have the child's slots for their domain:
+;;     this used to produce a malformed edge and no longer does, so the assertion is now the
+;;     negative.  `def4-edges.py` is what checks that precondition.  Kept as a record -- a
+;;     test that has stopped testing what it was written for is worse than no test.
+(push)
+(rule ((= x3 (App2 "f8a" p1 x1 q1 x2))
+       (= dom1 (map-union (map-image p1) (map-image q1)))
+       (= mp1 dom1)
+       (= mx1 (compose mp1 p1))
+       (= mx2 (compose mp1 q1)))
+      ((let rhs (App2 "f8a" mx2 x2 mx1 x1))
+       (Equated rhs mx1 x1)))
+(let $n8a (App2 "f8a" (map-empty) (Null) (map-of 0 0) (Var 0)))
+(let $g8a (App2 "g8a" (map-empty) (Null) (map-of 0 2) (Var 0)))
+(let $s8a (App2 "h8a" (map-of 0 0) (Var 0) (map-of 0 0) (Var 0)))
+(union $n8a $s8a)
+(union $g8a $s8a)
+(run-schedule (saturate (run slotted))
+              (repeat 20 (seq (run) (saturate (run slotted)))))
+(run obs 1)
+(fail (check (BadEdge "f8a" m c)))
+(pop)
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; M9.  A slot literal -- the array language's `eta`.
+;;;
+;;; The terms are `target/slotted/slotted-array-rules.egg`'s own `eta-fires` and `eta-blocked`.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+;; (a) fires: (lam $0 (app f1 (var $0))) = f1
+(push)
+(let $lam9 (App2 "lambda" (map-of 0 0) (Var 0)
+                          (map-of 0 0) (App2 "app" (map-empty) (Sym "f1")
+                                                   (map-of 0 0) (Var 0))))
+(let $f9 (Sym "f1"))
+(run-schedule (saturate (run slotted))
+              (repeat 30 (seq (run) (saturate (run slotted)))))
+(check (RenamesToLeader $lam9 m1 l)
+       (RenamesToLeader $f9 m2 l))
+(pop)
+
+;; (b) blocked: the bound slot is free in ?f -- (lam $0 (app (app f1 (var $0)) (var $0)))
+(push)
+(let $lam9 (App2 "lambda" (map-of 0 0) (Var 0)
+                          (map-of 0 0) (App2 "app"
+                                             (map-of 0 0) (App2 "app" (map-empty) (Sym "f1")
+                                                                      (map-of 0 0) (Var 0))
+                                             (map-of 0 0) (Var 0))))
+(let $f9 (App2 "app" (map-empty) (Sym "f1") (map-of 0 0) (Var 0)))
+(run-schedule (saturate (run slotted))
+              (repeat 30 (seq (run) (saturate (run slotted)))))
+(fail (check (RenamesToLeader $lam9 m1 l)
+             (RenamesToLeader $f9 m2 l)))
+(pop)
+
+;; (c) the same e-graph with the side condition deleted -- the encoder's `no-guard` mutant.
+;;     It fires, which is what makes (b) non-vacuous.  The tutorial's rule cannot fire here
+;;     at all, so this mutant shares the operators and needs no copy of the e-graph.
+(push)
+(rule ((= e (App2 "lambda" p1 (Var 0) q1 b))
+       (= dom1 (map-union (map-image p1) (map-image q1)))
+       (= mp1 dom1)
+       (= avoid1 (map-image mp1))
+       (= sx (map-get (compose mp1 p1) 0))
+       (= mb (compose mp1 q1))
+       (= csb (ClassSlots b))
+       (= cse (ClassSlots e))
+       (= b (App2 "app" p2 f q2 (Var 0)))
+       (= dom2 (map-union (map-image p2) (map-image q2)))
+       (RenamesToLeader b symb b)
+       (= mp2 (find-mapping-total avoid1 dom2
+                                  (compose (compose mb csb) symb)
+                                  (map-insert (map-empty) 0 sx)
+                                  (map-domain (compose mb csb))
+                                  q2))
+       (= sx (map-get (compose mp2 q2) 0))
+       (= mf (compose mp2 p2))
+       (= csf (ClassSlots f)))                      ; the side condition, deleted
+      ((Equated e (compose (inverse (compose mp1 cse)) (compose mf csf)) f)))
+(let $lam9 (App2 "lambda" (map-of 0 0) (Var 0)
+                          (map-of 0 0) (App2 "app"
+                                             (map-of 0 0) (App2 "app" (map-empty) (Sym "f1")
+                                                                      (map-of 0 0) (Var 0))
+                                             (map-of 0 0) (Var 0))))
+(let $f9 (App2 "app" (map-empty) (Sym "f1") (map-of 0 0) (Var 0)))
+(run-schedule (saturate (run slotted))
+              (repeat 30 (seq (run) (saturate (run slotted)))))
+(check (RenamesToLeader $lam9 m1 l)
+       (RenamesToLeader $f9 m2 l))
+(pop)
+
+;; (d) blocked: the argument is the wrong slot -- (lam $5 (app f1 (var $6)))
+(push)
+(let $lam9 (App2 "lambda" (map-of 0 5) (Var 0)
+                          (map-of 5 5 6 6) (App2 "app" (map-empty) (Sym "f1")
+                                                       (map-of 0 6) (Var 0))))
+(let $f9 (Sym "f1"))
+(run-schedule (saturate (run slotted))
+              (repeat 30 (seq (run) (saturate (run slotted)))))
+(fail (check (RenamesToLeader $lam9 m1 l)
+             (RenamesToLeader $f9 m2 l)))
+(pop)
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; M10.  Actions: concluding over renamed ids -- sdql's `add-zero`.
+;;;
+;;; `(+ (var $5) 0)` has one slot and `?e` -- the class of `(var $_)` -- has one slot too,
+;;; but they are not the same slot, so the fact to assert relates two renamed ids and
+;;; neither is at the identity.  `(union Root ?e)` would claim they are, and `ClassSlots`
+;;; narrows on merge, so the two slot sets get intersected and the variable class comes out
+;;; slotless.  That is the encoder's `union-id` mutant, here as `+a`.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+;; (a) the tutorial's rule: the two are equated and the variable class keeps its slot
+(push)
+(let $add10 (App2 "+" (map-of 0 5) (Var 0) (map-empty) (Num 0)))
+(run-schedule (saturate (run slotted))
+              (repeat 20 (seq (run) (saturate (run slotted)))))
+(check (RenamesToLeader $add10 m1 l)
+       (RenamesToLeader (Var 0) m2 l))
+(check (= cs (ClassSlots (Var 0))) (= (map-length cs) 1))
+(pop)
+
+;; (b) negative: the second child is not `0`, so nothing fires
+(push)
+(let $add10 (App2 "+" (map-of 0 5) (Var 0) (map-of 0 6) (Var 0)))
+(run-schedule (saturate (run slotted))
+              (repeat 20 (seq (run) (saturate (run slotted)))))
+(fail (check (RenamesToLeader $add10 m1 l)
+             (RenamesToLeader (Var 0) m2 l)))
+(pop)
+
+;;;; COUNTER-EXAMPLE for M10: `union` where the renamings are not the identity.
+(push)
+(rule ((= e (App2 "+a" p1 x q1 zero))
+       (RenamesToLeader (Num 0) mzero zero)
+       (= dom1 (map-union (map-image p1) (map-image q1)))
+       (= mp1 dom1)
+       (= mx (compose mp1 p1))
+       (= csx (ClassSlots x))
+       (= cse (ClassSlots e)))
+      ((union e x)))                          ; the `union-id` mutant
+(let $add10a (App2 "+a" (map-of 0 5) (Var 0) (map-empty) (Num 0)))
+(run-schedule (saturate (run slotted))
+              (repeat 20 (seq (run) (saturate (run slotted)))))
+;; the two classes did merge -- but at the cost of the variable class's slot, which is the
+;; spurious redundancy the mutant is known by
+(check (RenamesToLeader $add10a m1 l)
+       (RenamesToLeader (Var 0) m2 l))
+(check (= cs (ClassSlots (Var 0))) (= (map-length cs) 0))
+(pop)
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; M11.  A nested right-hand side -- the array language's `let-app`.
+;;;
+;;; The terms are `target/slotted/slotted-array-rules.egg`'s own `let-app-fires` and
+;;; `let-app-blocked`.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+;; (a) fires: (let $0 (app (var $0) cc) aa) = (app (let $0 (var $0) aa) (let $0 cc aa))
+(push)
+(let $let11 (App3 "let" (map-of 0 0) (Var 0)
+                        (map-of 0 0) (App2 "app" (map-of 0 0) (Var 0)
+                                                 (map-empty) (Sym "cc"))
+                        (map-empty) (Sym "aa")))
+(let $rhs11 (App2 "app"
+                  (map-empty) (App3 "let" (map-of 0 0) (Var 0)
+                                          (map-of 0 0) (Var 0)
+                                          (map-empty) (Sym "aa"))
+                  (map-empty) (App3 "let" (map-of 0 0) (Var 0)
+                                          (map-empty) (Sym "cc")
+                                          (map-empty) (Sym "aa"))))
+(run-schedule (saturate (run slotted))
+              (repeat 30 (seq (run) (saturate (run slotted)))))
+(check (RenamesToLeader $let11 m1 l)
+       (RenamesToLeader $rhs11 m2 l))
+(run obs 1)
+(fail (check (BadEdge f m c)))
+(pop)
+
+;; (b) blocked: `$0` is free in neither `?a` nor `?b`
+(push)
+(let $let11 (App3 "let" (map-of 0 0) (Var 0)
+                        (map-empty) (App2 "app" (map-empty) (Sym "dd")
+                                                (map-empty) (Sym "cc"))
+                        (map-empty) (Sym "aa")))
+(let $rhs11 (App2 "app"
+                  (map-empty) (App3 "let" (map-of 0 0) (Var 0)
+                                          (map-empty) (Sym "dd")
+                                          (map-empty) (Sym "aa"))
+                  (map-empty) (App3 "let" (map-of 0 0) (Var 0)
+                                          (map-empty) (Sym "cc")
+                                          (map-empty) (Sym "aa"))))
+(run-schedule (saturate (run slotted))
+              (repeat 30 (seq (run) (saturate (run slotted)))))
+(fail (check (RenamesToLeader $let11 m1 l)
+             (RenamesToLeader $rhs11 m2 l)))
+(pop)
+
+;; (c) the same e-graph with the side condition deleted: now it does fire, which is what
+;;     makes (b) non-vacuous.
+(push)
+(rule ((= p (App3 "let" p1 (Var 0) q1 ab r1 e))
+       (= dom1 (map-union (map-image p1) (map-union (map-image q1) (map-image r1))))
+       (= mp1 dom1)
+       (= avoid1 (map-image mp1))
+       (= sx (map-get (compose mp1 p1) 0))
+       (= mab (compose mp1 q1))
+       (= csab (ClassSlots ab))
+       (= me (compose mp1 r1))
+       (= cse (ClassSlots e))
+       (= csp (ClassSlots p))
+       (= ab (App2 "app" p2 a q2 b))
+       (= dom2 (map-union (map-image p2) (map-image q2)))
+       (RenamesToLeader ab symab ab)
+       (= mp2 (find-mapping-total avoid1 dom2 (compose (compose mab csab) symab)
+                                  (map-domain (compose mab csab))))
+       (= ma (compose mp2 p2))
+       (= csa (ClassSlots a))
+       (= mb (compose mp2 q2))
+       (= csb (ClassSlots b)))                     ; the side condition, deleted
+      ((let leta (App3 "let" (map-insert (map-empty) 0 sx) (Var 0)
+                             (compose ma csa) a (compose me cse) e))
+       (let letb (App3 "let" (map-insert (map-empty) 0 sx) (Var 0)
+                             (compose mb csb) b (compose me cse) e))
+       (let rhs (App2 "app"
+                      (map-remove (map-union (map-image (map-insert (map-empty) 0 sx))
+                                             (map-union (map-image (compose ma csa))
+                                                        (map-image (compose me cse)))) sx)
+                      leta
+                      (map-remove (map-union (map-image (map-insert (map-empty) 0 sx))
+                                             (map-union (map-image (compose mb csb))
+                                                        (map-image (compose me cse)))) sx)
+                      letb))
+       (Equated rhs (compose mp1 csp) p)))
+(let $let11 (App3 "let" (map-of 0 0) (Var 0)
+                        (map-empty) (App2 "app" (map-empty) (Sym "dd")
+                                                (map-empty) (Sym "cc"))
+                        (map-empty) (Sym "aa")))
+(let $rhs11 (App2 "app"
+                  (map-empty) (App3 "let" (map-of 0 0) (Var 0)
+                                          (map-empty) (Sym "dd")
+                                          (map-empty) (Sym "aa"))
+                  (map-empty) (App3 "let" (map-of 0 0) (Var 0)
+                                          (map-empty) (Sym "cc")
+                                          (map-empty) (Sym "aa"))))
+(run-schedule (saturate (run slotted))
+              (repeat 30 (seq (run) (saturate (run slotted)))))
+(check (RenamesToLeader $let11 m1 l)
+       (RenamesToLeader $rhs11 m2 l))
+(pop)
+
+(pop)

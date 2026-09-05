@@ -1,0 +1,84 @@
+;;; SDQL's `beta` rule: `(let ?t $x ?body)` -> `?body[(var $x) := ?t]`.
+;;;
+;;; `subst` is the only right-hand side head that is not a constructor. It is a CALL,
+;;; so there is nothing to build, and two things make it more than a call. Run
+;;; `--desugar` to see what the one line below turns into.
+;;;
+;;; TWO FRAMES MEET. The primitive works in `body`'s frame; the rule names its slots
+;;; in the pattern's. `rb` bridges them: it agrees with the inverse of `body`'s
+;;; renaming where that is defined, and MINTS a name for every pattern slot `body`
+;;; does not use. `t`'s slots are exactly those, which is why a bridge is needed at
+;;; all -- `(compose (inverse mb) mt)` would silently drop them, since `compose`
+;;; truncates. `compose-total` is used for `t`'s renaming so that a slot going missing
+;;; is refused rather than dropped.
+;;;
+;;; THE ANSWER IS AN INVOCATION, so both halves are read with identical arguments:
+;;; `slotted-subst` for the class and `slotted-subst-frame` for the renaming. Dropping
+;;; the renaming would make case B below -- `let $5 = (var $7) in (var $5)` --
+;;; indistinguishable from `(var $5)`, since both answer with the variable class.
+;;;
+;;; And it takes TWO RULES. The result's own slots are not known until the machinery
+;;; has seen its node, so the narrowing M8 does inside one rule happens one phase
+;;; later, through a relation the compiler emits alongside.
+;;;
+;;;     python3 slotted/slotted-egglog.py slotted/tests/sdql-beta.egg
+
+(constructor Let (U U U) U :binder 1)
+(constructor Add (U U) U)
+(constructor Num (i64) U)
+
+(rewrite (Let ?t $x ?body) (subst ?body $x ?t) :name beta)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; A: let $5 = 0 in (var $5)   =   0
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(let a (Let (Num 0) $5 $5))
+(run 2)
+(check (= a (Num 0)))
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; B: let $5 = (var $7) in (var $5)   =   (var $7)
+;;;
+;;; The case that pins the renaming: the answer's class is the variable class either
+;;; way, so only the edge tells $7 from $5. Drop the renaming half of the primitive's
+;;; answer and this is the case that notices.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(let b (Let $7 $5 $5))
+(run 2)
+(check (= b $7))
+;; and not the answer a dropped renaming would give
+(check (!= b $5))
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; C: a dead let -- the body cannot name the bound slot, so it comes back whole
+;;;
+;;;     let $5 = 0 in (var $9)   =   (var $9)
+;;;
+;;; This is the case the bridge exists for: $5 is not in the body's image, so
+;;; `(inverse mb)` has no name for it and the bridge has to mint one.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(let c (Let (Num 0) $5 $9))
+(run 2)
+(check (= c $9))
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; D: substituting inside a node, one occurrence and one untouched slot
+;;;
+;;;     let $5 = 0 in ((var $5) + (var $9))   =   (0 + (var $9))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(let d (Let (Num 0) $5 (Add $5 $9)))
+(let want (Add (Num 0) $9))
+(run 2)
+(check (= d want))
+(pop)

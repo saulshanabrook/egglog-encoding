@@ -1,0 +1,105 @@
+;;; `slotted-subst` against the full slotted encoding.
+;;;
+;;; `(slotted-subst body x var t_ren t)` extracts a smallest term rooted at
+;;; `body`, replaces the variable at slot `x` of `body`'s frame with the
+;;; invocation `t_ren * t`, and adds the result back. `var` is the class every
+;;; variable lives in -- `(Var 0)` here -- passed in so the primitive stays
+;;; language-agnostic.
+;;;
+;;; It reads tables (to extract) and writes them (to add the result), so it is
+;;; only callable from an action: a top-level one, or the head of a `:naive`
+;;; rule.
+;;;
+;;; It reads e-node rows, so it has to be handed a value that still holds the
+;;; node. Compression deletes a non-canonical node, so a rule should reach the
+;;; class's canonical member through `RenamesToLeader` first.
+
+(include "slotted/encoding/egraph-encoding-11.egg")
+
+
+;;; Case 1- a slot that occurs: h($0, $1)[$0 := null] = h(null, $1)
+(push)
+
+(let $body (App2 "h" (map-of 0 0) (Var 0) (map-of 0 1) (Var 0)))
+(run-schedule (saturate (run slotted)))
+
+(let $out (slotted-subst $body 0 (Var 0) (map-empty) (Null)))
+(check (= $out (App2 "h" (map-empty) (Null) (map-of 0 1) (Var 0))))
+(fail (check (= $out $body)))
+
+(pop)
+
+
+;;; Case 2- a slot the body does not name cannot occur in it, so the body comes
+;;; back as it is.
+(push)
+
+(let $body (App2 "h" (map-of 0 1) (Var 0) (map-of 0 2) (Var 0)))
+(run-schedule (saturate (run slotted)))
+
+(let $out (slotted-subst $body 0 (Var 0) (map-empty) (Null)))
+(check (= $out $body))
+
+(pop)
+
+
+;;; Case 3- a nested occurrence, and the subterm that cannot mention the slot
+;;; is shared rather than copied.
+(push)
+
+(let $inner (App2 "h" (map-of 0 0) (Var 0) (map-of 0 1) (Var 0)))
+(let $body (App2 "g" (map-of 0 0 1 1) $inner (map-of 0 2) (Var 0)))
+
+(let $out (slotted-subst $body 0 (Var 0) (map-empty) (Null)))
+(check (= $out (App2 "g"
+                     (map-of 1 1) (App2 "h" (map-empty) (Null) (map-of 0 1) (Var 0))
+                     (map-of 0 2) (Var 0))))
+
+(pop)
+
+
+;;; Case 4- a redundant node slot survives the frame change.
+;;;
+;;; `$c`'s node names slots {0, 7} while the edge reaching it says its class has
+;;; only slot 0, so 7 is redundant and outside the frame the substitution
+;;; carries in. `compose` would drop it, leaving an edge that misstates which
+;;; slots `(Var 0)` has.
+(push)
+
+(let $c (App2 "h" (map-of 0 0) (Var 0) (map-of 0 7) (Var 0)))
+(let $body (App2 "g" (map-of 0 5) $c (map-of 0 6) (Var 0)))
+
+(let $out (slotted-subst $body 5 (Var 0) (map-empty) (Null)))
+(check (= x (App2 "h" (map-empty) (Null) (map-of 0 7) (Var 0))))
+(fail (check (= x (App2 "h" (map-empty) (Null) (map-empty) (Var 0)))))
+
+(pop)
+
+
+;;; Case 5- a beta step from a `:naive` rule.
+;;;
+;;; The frames here are identities on the slots they cover, so the lambda's
+;;; frame, its body's frame and the application's frame agree and the result can
+;;; be unioned into the redex directly. A rule for arbitrary frames has to carry
+;;; `x`, `t` and the result through the surrounding renamings.
+(push)
+
+;; b = h($0, $1)
+(let $b (App2 "h" (map-of 0 0) (Var 0) (map-of 0 1) (Var 0)))
+;; lambda $0. b -- slots {1}, since 0 is bound
+(let $lam (App2 "lambda" (map-of 0 0) (Var 0) (map-of 0 0 1 1) $b))
+;; (lambda $0. b) null
+(let $redex (App2 "app" (map-of 1 1) $lam (map-empty) (Null)))
+
+(rule ((= e (App2 "app" ml l mt t))
+       (= l (App2 "lambda" mx (Var 0) mb bod))
+       (= x (map-get mx 0)))
+      ((union e (slotted-subst bod x (Var 0) mt t)))
+      :naive)
+
+(run 1)
+
+;; ((lambda $0. h($0, $1)) null) = h(null, $1)
+(check (= $redex (App2 "h" (map-empty) (Null) (map-of 0 1) (Var 0))))
+
+(pop)

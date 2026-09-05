@@ -1,0 +1,109 @@
+;;; Rewriting over slotted terms: the original hand-written tests, in the slotted
+;;; language and standalone.
+;;;
+;;; These were the project's first tests, written against the encoded level before
+;;; there was a compiler -- `(App2 "f" (map-of 0 17) (Var 0) ...)` and a preamble
+;;; concatenated in front. Here each is the same program written as a slotted one,
+;;; so the file runs as it stands:
+;;;
+;;;     python3 slotted/slotted-egglog.py slotted/tests/rewrite-tests.egg
+
+(constructor F (U U) U)
+(constructor G (U U) U)
+(constructor H (U U) U)
+(constructor Sub (U U) U)
+(constructor Null () U)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; a rule whose pattern repeats a term variable at two depths
+;;;
+;;;     f($x, f($x, null))  ->  g($x, null)
+;;;
+;;; The two occurrences of `?x` sit at different depths, so their edge renamings
+;;; have to be composed down the pattern before they can be compared.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(rewrite (F ?x (F ?x (Null))) (G ?x (Null)) :name fold)
+
+(let a (F $17 (F $17 (Null))))
+(let b (G $17 (Null)))
+
+(run 10)
+
+(check (= a b))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; commutativity, which is a rule that generates a SYMMETRY rather than a term
+;;;
+;;; Def. 6: two invocations of a class agree when the renaming between them is in
+;;; the class's symmetry group. Commutativity puts the swap in that group, so
+;;; f($12,$13) and f($13,$12) are not merely one class -- they are EQUAL.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(rewrite (F ?x ?y) (F ?y ?x) :name comm)
+
+(let a (F $12 $13))
+(let b (F $13 $12))
+
+(run 10)
+
+(check (= a b))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; a symmetry, supplied by a union, that a later match has to use
+;;;
+;;; `f` is made symmetric, so `h(f($7,$8), f($7,$8))` matches `h(f(x,y), f(y,x))`
+;;; -- the second child is the first one invoked through the swap. Matching on
+;;; e-class identity alone would fire too often; on edge equality, never.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(rewrite (H (F ?x ?y) (F ?y ?x)) (Null) :name collapse)
+
+(let a (F $1 $2))
+(let b (F $2 $1))
+(union a b)
+
+(let c (H (F $7 $8) (F $7 $8)))
+(let d (Null))
+
+(run 10)
+
+(check (= a b))
+(check (= c d))
+(check (!= a c))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; a match that only exists AFTER a redundancy
+;;;
+;;; `sub($0,$0) = null` makes the slot redundant, so the class stands for
+;;; `sub($x,$x)` at every $x. Only then does `f(sub($0,$0), sub($1,$1))` -- whose
+;;; two children are invoked at DIFFERENT slots -- match `f(sub(x,x), sub(x,x))`,
+;;; which demands one `?x` for both.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(rewrite (F (Sub ?x ?x) (Sub ?x ?x)) (H (Null) (Null)) :name both-sides)
+
+(union (Sub $0 $0) (Null))
+
+(let x (F (Sub $0 $0) (Sub $1 $1)))
+(let y (H (Null) (Null)))
+
+(run 10)
+
+(check (= x y))
+
+(pop)

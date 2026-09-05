@@ -1,0 +1,40 @@
+;;; COMPILED from slotted/tests/sdql-binders.egg by slotted/slotted-egglog.py.
+;;;
+;;; Only the forms THIS file contributes. The machinery for its 3 constructors,
+;;; and anything an included library brought, are snapshotted by the generators
+;;; that emit them -- committing them again per test would be the same thousands
+;;; of lines over and over.
+
+(include "slotted/encoding/egraph-encoding-11.egg")
+
+(push)
+(let $r (Sing (map-empty) (Null) (map-empty) (Null)))
+(let $a (Sum (map-empty) $r (map-of 0 5) (Var 0) (map-of 0 6) (Var 0) (map-empty) (Null)))
+(let $b (Sum (map-empty) $r (map-of 0 7) (Var 0) (map-of 0 8) (Var 0) (map-empty) (Null)))
+(run-schedule (saturate (run slotted)))
+(check (RenamesToLeader $a _m0 _l) (RenamesToLeader $b _m1 _l) (= _m0 _m1))
+(check (= (ClassSlots $a) (map-empty)))
+(pop)
+(push)
+(let $r (Sing (map-empty) (Null) (map-empty) (Null)))
+(let $kv (Sum (map-empty) $r (map-of 0 5) (Var 0) (map-of 0 6) (Var 0) (map-of 5 5 6 6) (Sing (map-of 0 5) (Var 0) (map-of 0 6) (Var 0))))
+(let $vk (Sum (map-empty) $r (map-of 0 5) (Var 0) (map-of 0 6) (Var 0) (map-of 5 5 6 6) (Sing (map-of 0 6) (Var 0) (map-of 0 5) (Var 0))))
+(run-schedule (saturate (run slotted)))
+(fail (check (RenamesToLeader $kv _m0 _l) (RenamesToLeader $vk _m1 _l) (= _m0 _m1)))
+(check (= (ClassSlots $kv) (map-empty)))
+(check (= (ClassSlots $vk) (map-empty)))
+(pop)
+(push)
+(let $first (Sum (map-empty) (Null) (map-of 0 5) (Var 0) (map-of 0 6) (Var 0) (map-of 0 5) (Var 0)))
+(let $second (Sum (map-empty) (Null) (map-of 0 5) (Var 0) (map-of 0 6) (Var 0) (map-of 0 6) (Var 0)))
+(run-schedule (saturate (run slotted)))
+(fail (check (RenamesToLeader $first _m0 _l) (RenamesToLeader $second _m1 _l) (= _m0 _m1)))
+(check (= (ClassSlots $first) (map-empty)))
+(check (= (ClassSlots $second) (map-empty)))
+(pop)
+(push)
+(let $r (Sing (map-empty) (Null) (map-empty) (Null)))
+(let $free (Sum (map-empty) $r (map-of 0 5) (Var 0) (map-of 0 6) (Var 0) (map-of 5 5 9 9) (Sing (map-of 0 5) (Var 0) (map-of 0 9) (Var 0))))
+(run-schedule (saturate (run slotted)))
+(check (= (ClassSlots $free) (map-of 9 9)))
+(pop)

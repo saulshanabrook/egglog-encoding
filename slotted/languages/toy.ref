@@ -1,0 +1,16 @@
+;;; How `toy.egg` corresponds to the reference crate.
+;;;
+;;; See `sdql.ref` for the format. Every tag here is the reference's own, and `lam` is
+;;; the only one spelled differently from the operator: the machinery's binder rule
+;;; names the literal string "lambda" in the generic encoding, and the terms this
+;;; harness writes say `lam`.
+
+lam         Lam     lam
+f           F       f
+g           G       g
+h           H       h
+k           K       k
+sub         Sub     sub
+sub2        Sub2    sub2
+add         Add     add
+null        Null    null

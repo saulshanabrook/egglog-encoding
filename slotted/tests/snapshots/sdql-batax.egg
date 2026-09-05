@@ -1,0 +1,21 @@
+;;; COMPILED from slotted/tests/sdql-batax.egg by slotted/slotted-egglog.py.
+;;;
+;;; Only the forms THIS file contributes. The machinery for its 19 constructors,
+;;; and anything an included library brought, are snapshotted by the generators
+;;; that emit them -- committing them again per test would be the same thousands
+;;; of lines over and over.
+
+(include "slotted/encoding/egraph-encoding-11.egg")
+
+(let $subarr (SubArray (map-of 0 3) (Var 0) (map-of 0 8) (Var 0) (map-of 2 2 7 7) (Sub (map-of 2 2 7 7) (Get (map-of 0 2) (Var 0) (map-of 7 7) (Add (map-of 0 7) (Var 0) (map-empty) (Num 1))) (map-empty) (Num 1))))
+(let $t7 (Sum (map-of 2 2 3 3 7 7 8 8) $subarr (map-of 0 9) (Var 0) (map-of 0 10) (Var 0) (map-of 4 4 9 9 10 10) (Sing (map-of 0 10) (Var 0) (map-of 4 4 9 9) (Get (map-of 0 4) (Var 0) (map-of 0 9) (Var 0)))))
+(let $t10 (Sum (map-of 2 2 3 3 7 7 8 8) $subarr (map-of 0 9) (Var 0) (map-of 0 10) (Var 0) (map-of 4 4 5 5 9 9 10 10) (Mult (map-of 4 4 9 9) (Get (map-of 0 4) (Var 0) (map-of 0 9) (Var 0)) (map-of 5 5 10 10) (Get (map-of 0 5) (Var 0) (map-of 0 10) (Var 0)))))
+(let $prog (Lambda (map-of 0 1) (Var 0) (map-of 1 1) (Lambda (map-of 0 2) (Var 0) (map-of 1 1 2 2) (Lambda (map-of 0 3) (Var 0) (map-of 1 1 2 2 3 3) (Lambda (map-of 0 4) (Var 0) (map-of 1 1 2 2 3 3 4 4) (Lambda (map-of 0 5) (Var 0) (map-of 1 1 2 2 3 3 4 4 5 5) (Lambda (map-of 0 6) (Var 0) (map-of 1 1 2 2 3 3 4 4 5 5) (Mult (map-of 0 1) (Var 0) (map-of 2 2 3 3 4 4 5 5) (Sum (map-of 0 2) (Var 0) (map-of 0 7) (Var 0) (map-of 0 8) (Var 0) (map-of 2 2 3 3 4 4 5 5 7 7 8 8) (Mult (map-of 2 2 3 3 4 4 7 7 8 8) $t7 (map-of 2 2 3 3 4 4 5 5 7 7 8 8) $t10))))))))))
+(run-schedule (saturate (run slotted)))
+(check (= (ClassSlots $prog) (map-empty)))
+(fail (check (RenamesToLeader $t7 _m0 _l) (RenamesToLeader $t10 _m1 _l) (= _m0 _m1)))
+(print-size)
+(run-schedule (saturate (run slotted))
+              (repeat 2 (seq (run) (saturate (run slotted)))))
+(check (= (ClassSlots $prog) (map-empty)))
+(print-size)

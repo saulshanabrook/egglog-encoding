@@ -1,0 +1,19 @@
+;;; COMPILED from slotted/tests/paper/fgh-transitive-symmetry.egg by slotted/slotted-egglog.py.
+;;;
+;;; Only the forms THIS file contributes. The machinery for its 3 constructors,
+;;; and anything an included library brought, are snapshotted by the generators
+;;; that emit them -- committing them again per test would be the same thousands
+;;; of lines over and over.
+
+(include "slotted/encoding/egraph-encoding-11.egg")
+
+(let $f12 (F (map-of 0 1) (Var 0) (map-of 0 2) (Var 0)))
+(let $g21 (G (map-of 0 2) (Var 0) (map-of 0 1) (Var 0)))
+(let $g12 (G (map-of 0 1) (Var 0) (map-of 0 2) (Var 0)))
+(let $h12 (H (map-of 0 1) (Var 0) (map-of 0 2) (Var 0)))
+(let $h21 (H (map-of 0 2) (Var 0) (map-of 0 1) (Var 0)))
+(union $f12 $g21)
+(union $g12 $h12)
+(run-schedule (saturate (run slotted)))
+(check (RenamesToLeader $f12 _m0 _l) (RenamesToLeader $h21 _m1 _l) (= _m0 _m1))
+(fail (check (RenamesToLeader $f12 _m0 _l) (RenamesToLeader $h12 _m1 _l) (= _m0 _m1)))

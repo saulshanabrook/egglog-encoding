@@ -12,6 +12,7 @@ eggcc-extraction.egg
 eqsat-basic-multiset.egg
 extract-vec-bench.egg
 factoring-multisets.egg
+find-mappings.egg
 fusion.egg
 hardboiled_conv1d_128.egg
 herbie-tutorial.egg
@@ -31,6 +32,7 @@ pair.egg
 prims.egg
 python_array_optimize.egg
 rat-pow-eval.egg
+renaming-primitives.egg
 repro-738-fn-sort.egg
 repro-herbie-vanilla.egg
 repro-new-backend-python-vec.egg

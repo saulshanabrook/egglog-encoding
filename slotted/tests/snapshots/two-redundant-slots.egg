@@ -1,0 +1,34 @@
+;;; COMPILED from slotted/tests/paper/two-redundant-slots.egg by slotted/slotted-egglog.py.
+;;;
+;;; Only the forms THIS file contributes. The machinery for its 4 constructors,
+;;; and anything an included library brought, are snapshotted by the generators
+;;; that emit them -- committing them again per test would be the same thousands
+;;; of lines over and over.
+
+(include "slotted/encoding/egraph-encoding-11.egg")
+
+(rule ((= V3 (Mul p1 C4 p2 C5))
+       (= dom6 (map-union (map-image p1) (map-image p2)))
+       (= mp7 dom6)
+       (= idm8 (map-image mp7))
+       (= m9 (compose mp7 p1))
+       (= cs10 (ClassSlots C4))
+       (= m11 (compose mp7 p2))
+       (= cs12 (ClassSlots C5))
+       (= cs13 (ClassSlots V3))
+       (= alts14 (refine-namings idm8 (map-empty) idm8))
+       (Idx ix15)
+       (= mrg16 (vec-get alts14 ix15)))
+      ((let _rhs17 (Swp (compose mrg16 (compose m11 cs12)) C5 (compose mrg16 (compose m9 cs10)) C4))
+       (Equated _rhs17 (compose mrg16 (compose mp7 cs13)) V3)))
+(let $m (Mul (map-of 0 7) (Var 0) (map-of 0 8) (Var 0)))
+(let $z (Null))
+(union $m $z)
+(let $s12 (Swp (map-of 0 1) (Var 0) (map-of 0 2) (Var 0)))
+(let $s21 (Swp (map-of 0 2) (Var 0) (map-of 0 1) (Var 0)))
+(let $k12 (K (map-of 0 1) (Var 0) (map-of 0 2) (Var 0)))
+(run-schedule (saturate (run slotted))
+              (repeat 10 (seq (run) (saturate (run slotted)))))
+(check (RenamesToLeader $s12 _m0 _l) (RenamesToLeader $z _m1 _l) (= _m0 _m1))
+(check (RenamesToLeader $s12 _m0 _l) (RenamesToLeader $s21 _m1 _l) (= _m0 _m1))
+(fail (check (RenamesToLeader $k12 _m0 _l) (RenamesToLeader $z _m1 _l) (= _m0 _m1)))

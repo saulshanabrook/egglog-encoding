@@ -1,0 +1,170 @@
+;;; Differential cases against the reference `multi_ematch`
+;;; (memoryleak47/slotted-egraphs, PR #45 @ e3efcdd).
+;;;
+;;; The oracle lives in `slotted/xmulti`; `cargo run` from that
+;;; directory reproduces the reference answers quoted below.  This file runs the
+;;; encoded form of the same patterns.
+;;;
+;;; ===========================================================================
+;;; FINDING: an atom's `mp` must be solved from EVERY already-bound thing that
+;;; constrains it -- its root AND every already-bound child -- not from one.
+;;; ===========================================================================
+;;;
+;;; `slotted-user-rules.md` splits atoms into three cases (initial / chain /
+;;; join) and gives the chain case `mp = (compose mb symB)`, derived from the
+;;; root alone.  That is under-constrained exactly when the node carries slots
+;;; the root's renaming does not cover -- i.e. redundant slots.  The atom then
+;;; names those slots on its own, independently of an earlier atom that already
+;;; named the same ones, and a repeated variable's Def. 6 check fails.
+;;;
+;;; The three cases are really one: `mp` is the least total renaming consistent
+;;; with everything already known about the atom.  Fold the root and the bound
+;;; children into a single `find-mapping-total` and the reference's answer comes
+;;; back.  R2 below runs both spellings side by side.
+;;;
+;;; This is a compilation defect, not a limit of egglog.  Solving for a renaming
+;;; IS construction, and constraints computed in earlier atoms thread into later
+;;; ones as ordinary values.
+
+(include "slotted/encoding/egraph-encoding-11.egg")
+
+(relation Mu (String Renaming))
+(relation Hit (String U))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; R1.  ONE node with a redundant slot, reached through two atoms.
+;;;
+;;;   e-graph:  sub($9,$9) = zero,  add(zero,zero)
+;;;   pattern:  ?p == (add ?a ?b), ?a == (sub ?u ?u), ?b == (sub ?u ?u)
+;;;   reference: 1 match
+;;;
+;;; Agrees even under the root-only spelling, but only by coincidence: both
+;;; atoms match the same node, so both hand `find-mapping-total` identical
+;;; arguments and it returns the same minted slot.  Determinism stands in for
+;;; unification here, which is why R1 alone would not have caught the defect.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(rule ((= p (App2 "add" pa a pb b))
+       (= a (App2 "sub" u1 u u2 u))
+       (= b (App2 "sub" v1 u v2 u))
+       (RenamesToLeader a syma a)
+       (RenamesToLeader b symb b)
+       (= pat  (map-union (map-image pa) (map-image pb)))
+       (= dom2 (map-union (map-image u1) (map-image u2)))
+       (= dom3 (map-union (map-image v1) (map-image v2)))
+       (= mp2 (find-mapping-total pat dom2 (compose pa syma) (map-empty)))
+       (= mp3 (find-mapping-total pat dom3 (compose pb symb) (map-empty)))
+       (= mu  (compose mp2 u1))
+       (= s3  (compose (inverse mu) (compose mp3 v1)))
+       (RenamesToLeader u s3 u))
+      ((Hit "R1" p)))
+
+(let $sub (App2 "sub" (map-of 0 9) (Var 0) (map-of 0 9) (Var 0)))
+(union $sub (Null))
+(let $add (App2 "add" (map-empty) (Null) (map-empty) (Null)))
+(run-schedule (saturate (run slotted))
+              (repeat 25 (seq (run) (saturate (run slotted)))))
+
+(check (Hit "R1" p))
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; R2.  TWO DIFFERENT nodes, redundant slots named $9 and $7, with `?u` in
+;;; both atoms so the two slots must be identified.
+;;;
+;;;   e-graph:  sub($9,$9) = zero,  sub2($7,$7) = zero,  add(zero,zero)
+;;;   pattern:  ?p == (add ?a ?b), ?a == (sub ?u ?u), ?b == (sub2 ?u ?u)
+;;;   reference: 1 match, the two slots MERGED
+;;;
+;;; NOTE: this no longer separates the two spellings. `find-mapping-total` now
+;;; mints the SMALLEST unused slot rather than one above the maximum, so both
+;;; atoms here mint the same name and the root-only rule fires too. The defect is
+;;; still real -- it is under-constrained whenever a node carries slots the root's
+;;; renaming does not cover -- and the coverage that still catches it is `C6` and
+;;; `C12` in `slotted/xdiff/xdiff.py`, which are checked against the
+;;; reference rather than against hand-written expectations. This file is kept as
+;;; a compact runnable illustration of the shape.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+;; (a) WRONG -- atom 3's mp from its root alone.  The root here is zero's class,
+;;     which has no slots, so nothing constrains atom 3 and it mints its own
+;;     name for a slot atom 2 already named.  The match is lost.
+(rule ((= p (App2 "add" pa a pb b))
+       (= a (App2 "sub"  u1 u u2 u))
+       (= b (App2 "sub2" v1 u v2 u))
+       (RenamesToLeader a syma a)
+       (RenamesToLeader b symb b)
+       (= pat  (map-union (map-image pa) (map-image pb)))
+       (= dom2 (map-union (map-image u1) (map-image u2)))
+       (= dom3 (map-union (map-image v1) (map-image v2)))
+       (= mp2 (find-mapping-total pat dom2 (compose pa syma) (map-empty)))
+       (= mp3 (find-mapping-total pat dom3 (compose pb symb) (map-empty)))
+       (= mu  (compose mp2 u1))
+       (= s3  (compose (inverse mu) (compose mp3 v1)))
+       (RenamesToLeader u s3 u))
+      ((Hit "R2-root-only" p)))
+
+;; the two minted renamings, witnessed without the Def. 6 check that (a) fails
+(rule ((= p (App2 "add" pa a pb b))
+       (= a (App2 "sub" u1 u u2 u))
+       (RenamesToLeader a syma a)
+       (= pat  (map-union (map-image pa) (map-image pb)))
+       (= dom2 (map-union (map-image u1) (map-image u2)))
+       (= mp2 (find-mapping-total pat dom2 (compose pa syma) (map-empty))))
+      ((Mu "R2-root-only-atom2" (compose mp2 u1))))
+
+(rule ((= p (App2 "add" pa a pb b))
+       (= b (App2 "sub2" v1 u v2 u))
+       (RenamesToLeader b symb b)
+       (= pat  (map-union (map-image pa) (map-image pb)))
+       (= dom3 (map-union (map-image v1) (map-image v2)))
+       (= mp3 (find-mapping-total pat dom3 (compose pb symb) (map-empty))))
+      ((Mu "R2-root-only-atom3" (compose mp3 v1))))
+
+;; (b) RIGHT -- atom 3's mp solved through the already-bound child ?u as well.
+;;     `?u`'s renaming is a constraint on atom 3, not just something to check
+;;     afterwards.
+(rule ((= p (App2 "add" pa a pb b))
+       (= a (App2 "sub"  u1 u u2 u))
+       (= b (App2 "sub2" v1 u v2 u))
+       (RenamesToLeader a syma a)
+       (RenamesToLeader b symb b)
+       (= pat  (map-union (map-image pa) (map-image pb)))
+       (= dom2 (map-union (map-image u1) (map-image u2)))
+       (= dom3 (map-union (map-image v1) (map-image v2)))
+       (= mp2 (find-mapping-total pat dom2 (compose pa syma) (map-empty)))
+       (= mu  (compose mp2 u1))
+       (= mp3 (find-mapping-total pat dom3 mu v1))     ; <-- constrained by ?u
+       (= s3  (compose (inverse mu) (compose mp3 v1)))
+       (RenamesToLeader u s3 u)
+       (= s4  (compose (inverse mu) (compose mp3 v2)))
+       (RenamesToLeader u s4 u))
+      ((Hit "R2-solved" p)
+       (Mu "R2-solved-atom2" mu)
+       (Mu "R2-solved-atom3" (compose mp3 v1))))
+
+(let $sub  (App2 "sub"  (map-of 0 9) (Var 0) (map-of 0 9) (Var 0)))
+(let $sub2 (App2 "sub2" (map-of 0 7) (Var 0) (map-of 0 7) (Var 0)))
+(union $sub  (Null))
+(union $sub2 (Null))
+(let $add  (App2 "add" (map-empty) (Null) (map-empty) (Null)))
+(run-schedule (saturate (run slotted))
+              (repeat 25 (seq (run) (saturate (run slotted)))))
+
+;; both spellings mint the same name under the current policy, so both fire
+(check (Mu "R2-root-only-atom2" m) (Mu "R2-root-only-atom3" m))
+(check (Hit "R2-root-only" p))
+
+;; solving through ?u pins atom 3 to atom 2's name -- correct by construction
+;; rather than by coincidence
+(check (Mu "R2-solved-atom2" m) (Mu "R2-solved-atom3" m))
+(check (Hit "R2-solved" p))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

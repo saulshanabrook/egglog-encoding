@@ -1,0 +1,34 @@
+;;; Definition 8: a class with TWO redundant slots
+;;;
+;;; Ported from `memoryleak47/slotted-egraphs`, `tests/arith/mod.rs`. One file per test
+;;; there, so the two can be diffed side by side, and standalone: the constructors
+;;; below are all it needs, and the compiler generates their machinery.
+;;;
+;;;     python3 slotted/slotted-egglog.py slotted/tests/paper/two-redundant-slots.egg
+;;;
+;;; A redundant slot stands for infinitely many e-nodes, so a match picks fresh slots
+;;; for them. After `mul($7,$8) = 0` the zero class also contains `mul($x,$y)` for
+;;; every pair, so commutativity has to yield `swp($y,$x) = 0` for every pair too --
+;;; while an unrelated `k($1,$2)` stays out.
+
+(constructor Mul (U U) U)
+(constructor Swp (U U) U)
+(constructor K (U U) U)
+(constructor Null () U)
+
+
+(rewrite (Mul ?x ?y) (Swp ?y ?x) :name comm)
+
+(let m (Mul $7 $8))
+(let z (Null))
+(union m z)
+
+(let s12 (Swp $1 $2))
+(let s21 (Swp $2 $1))
+(let k12 (K $1 $2))
+
+(run 10)
+
+(check (= s12 z))
+(check (= s12 s21))
+(check (!= k12 z))

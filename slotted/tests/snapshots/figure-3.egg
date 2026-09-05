@@ -1,0 +1,18 @@
+;;; COMPILED from slotted/tests/paper/figure-3.egg by slotted/slotted-egglog.py.
+;;;
+;;; Only the forms THIS file contributes. The machinery for its 2 constructors,
+;;; and anything an included library brought, are snapshotted by the generators
+;;; that emit them -- committing them again per test would be the same thousands
+;;; of lines over and over.
+
+(include "slotted/encoding/egraph-encoding-11.egg")
+
+(let $m7 (Mul (map-of 0 7) (Var 0) (map-empty) (Null)))
+(let $zero (Null))
+(union $m7 $zero)
+(let $m9 (Mul (map-of 0 9) (Var 0) (map-empty) (Null)))
+(let $m97 (Mul (map-of 0 9) (Var 0) (map-of 0 7) (Var 0)))
+(run-schedule (saturate (run slotted)))
+(check (RenamesToLeader $m9 _m0 _l) (RenamesToLeader $zero _m1 _l) (= _m0 _m1))
+(check (RenamesToLeader $m7 _m0 _l) (RenamesToLeader $m9 _m1 _l) (= _m0 _m1))
+(fail (check (RenamesToLeader $m97 _m0 _l) (RenamesToLeader $zero _m1 _l) (= _m0 _m1)))

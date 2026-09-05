@@ -1,0 +1,26 @@
+# Standalone oracle: runs a multipattern through the reference
+# `slotted-egraphs` implementation so the egglog encoding can be diffed
+# against it. Its own workspace, so it stays out of the root build.
+[workspace]
+
+[package]
+name = "xmulti"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Pinned to a REV rather than a local path, so a runner with no checkout of the
+# reference can build this and the differential half can run in CI.
+#
+# This is upstream `main` (b90adca, after PR #45 merged) PLUS the three fixes in
+# https://github.com/memoryleak47/slotted-egraphs/pull/46, which is why it points at a
+# fork. Three of the reference's OWN tests fail on `main` -- `lambda::redundancy_matching_bug`,
+# `fgh::shrink_with_symmetry`, and extraction with a redundant slot -- and comparing
+# against a reference known to be wrong attributes its bugs to this encoding: the deep
+# sweep reads 61 divergences against `main` and 21 against `main` + #46, and only the
+# second is about the encoding.
+#
+# Revert to an upstream rev when #46 merges. What `main` alone answers is still worth
+# keeping reachable: `XSDQL_FLAT=0` / `XARRAY_FLAT=0` drive the nested matcher, which is
+# where `let-binop4` shows the bug #46 fixes.
+slotted-egraphs = { git = "https://github.com/oflatt-claude/slotted-egraphs.git", rev = "e1bfe1b036ab74a9e1edfe2551200d408372ab46" }

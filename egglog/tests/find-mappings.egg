@@ -1,0 +1,67 @@
+;;; `find-mappings-total` and the index relation that reads it: how a primitive
+;;; with several answers is written when a primitive may only return one.
+;;;
+;;; `find-mapping-total` solves a renaming from constraint pairs and MINTS a fresh
+;;; name for every domain key they leave unnamed. A fresh name differs from
+;;; everything, so minting quietly decides that the unnamed key is not any slot
+;;; already in use -- one reading of a choice, and the other, where the key names a
+;;; slot the constraints already used, is an answer minting cannot express. The
+;;; plural form returns all of them, and `vec-get` picks one.
+;;;
+;;; The shape below: two slots already spoken for, a node with slots 0 and 2, and
+;;; node slot 0 pinned onto slot 0. Node slot 2 is what is left to choose.
+
+(sort Renaming (Map i64 i64))
+(sort Namings (Vec Renaming))
+
+(let $avoid (map-of 0 0 1 1))
+(let $domain (map-of 0 0 2 2))
+(let $first (map-of 0 0))
+(let $second (map-of 0 0))
+
+(let $alts (find-mappings-total $avoid $domain $first $second))
+
+;;; Two namings: mint a fresh slot for node slot 2, or reuse slot 1.
+(check (= (vec-length $alts) 2))
+(check (= (find-mappings-total-count $avoid $domain $first $second) 2))
+
+;;; Index 0 is what the single-valued primitive gives, so a program reaching only
+;;; index 0 answers exactly as it did before this existed.
+(check (= (vec-get $alts 0) (find-mapping-total $avoid $domain $first $second)))
+(check (= (vec-get $alts 0) (map-of 0 0 2 2)))
+
+;;; Index 1 is the identification.
+(check (= (vec-get $alts 1) (map-of 0 0 2 1)))
+
+;;; Past the end `vec-get` is undefined, which is what stops an index relation
+;;; without anything having to state how long the vector is.
+(fail (check (= (vec-get $alts 2) (map-of 0 0 2 2))))
+
+;;; Reading it from a rule. `Idx` starts at 0 and grows only while some vector is
+;;; longer, so it ends up exactly as large as the namings need.
+(relation Idx (i64))
+(relation Naming (i64 Renaming))
+(Idx 0)
+
+(rule ((Idx i) (< (+ i 1) (vec-length $alts)))
+      ((Idx (+ i 1))))
+
+(rule ((Idx i) (= m (vec-get $alts i)))
+      ((Naming i m)))
+
+(run 10)
+
+;;; Both namings reached, by the join alone.
+(check (Naming 0 (map-of 0 0 2 2)))
+(check (Naming 1 (map-of 0 0 2 1)))
+(fail (check (Idx 2)))
+
+;;; Unsatisfiable constraints name nothing, rather than naming something wrong:
+;;; one node slot forced onto two different slots.
+(let $bad (find-mappings-total (map-of 0 0) (map-of 0 0) (map-of 0 0 1 1) (map-of 0 5 1 5)))
+(check (= (vec-length $bad) 0))
+
+;;; Nothing left to choose: one naming, and it is the minting one.
+(let $pinned (find-mappings-total (map-of 0 0) (map-of 0 0) (map-of 0 0) (map-of 0 0)))
+(check (= (vec-length $pinned) 1))
+(check (= (vec-get $pinned 0) (find-mapping-total (map-of 0 0) (map-of 0 0) (map-of 0 0) (map-of 0 0))))

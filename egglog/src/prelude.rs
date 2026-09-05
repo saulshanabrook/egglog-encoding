@@ -946,6 +946,16 @@ pub trait ContainerSort: Any + Send + Sync + Debug {
     }
 }
 
+/// The concrete container sort behind an [`ArcSort`], when it is a `T`.
+///
+/// [`ContainerSort::to_arcsort`] wraps, so downcasting an [`ArcSort`] straight to
+/// the sort that made it never matches.
+pub(crate) fn container_sort_of<T: ContainerSort>(sort: &ArcSort) -> Option<&T> {
+    (sort.as_ref() as &dyn std::any::Any)
+        .downcast_ref::<ContainerSortImpl<T>>()
+        .map(|wrapped| &wrapped.0)
+}
+
 #[derive(Debug)]
 struct ContainerSortImpl<T: ContainerSort>(T);
 

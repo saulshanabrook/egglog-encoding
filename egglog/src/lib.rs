@@ -1608,6 +1608,50 @@ impl EGraph {
         Ok(())
     }
 
+    /// Call `f` on every [`Enode`] of `eclass`, across every table that reads as one.
+    /// [`Enode::name`] says which one each row came from. Top-level form of
+    /// [`Read::eclass_enodes`]; to stop early use [`EGraph::eclass_enodes_while`].
+    pub fn eclass_enodes(&self, eclass: Value, mut f: impl FnMut(Enode<'_>)) -> Result<(), Error> {
+        self.eclass_enodes_while(eclass, |enode| {
+            f(enode);
+            true
+        })
+    }
+
+    /// Like [`EGraph::eclass_enodes`], but stops when `f` returns `false`.
+    pub fn eclass_enodes_while(
+        &self,
+        eclass: Value,
+        mut f: impl FnMut(Enode<'_>) -> bool,
+    ) -> Result<(), Error> {
+        // Whatever `constructor_enodes` accepts, including a term relation under term
+        // encoding, so the two stay in step by construction. A scan per table; an
+        // output-column index would replace the loop below without changing this
+        // signature.
+        let names: Vec<String> = self
+            .functions
+            .iter()
+            .filter(|(_, function)| {
+                function.subtype() == FunctionSubtype::Constructor || function.is_relation_term()
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
+        for name in names {
+            let mut keep_going = true;
+            self.constructor_enodes_while(&name, |enode| {
+                if enode.eclass != eclass {
+                    return true;
+                }
+                keep_going = f(enode);
+                keep_going
+            })?;
+            if !keep_going {
+                break;
+            }
+        }
+        Ok(())
+    }
+
     /// Call `f` on each [`Enode`] of a constructor / relation table.
     /// Top-level form of [`Read::constructor_enodes`]; errors if `name`
     /// is a function or unregistered.
@@ -1651,6 +1695,7 @@ impl EGraph {
         let eclass_idx = function.extraction_output_index();
         self.backend.for_each_while(function.backend_id, |row| {
             f(Enode {
+                name,
                 children: &row.vals[..num_children],
                 eclass: row.vals[eclass_idx],
                 subsumed: row.subsumed,

@@ -1,0 +1,247 @@
+;;; The paper's `sdql` language and its rewrite rules, in the SLOTTED language.
+;;;
+;;; `slotted-egraphs/benches/sdql.rs` column for column: this is the suite the paper's
+;;; evaluation runs. Written at the slotted level, so a rule says what it rewrites and
+;;; nothing about renamings -- `slotted/slotted-egglog.py` turns it into egglog, and
+;;; `slotted/gen-sdql-rules.py` compiles these same rules into
+;;; `target/slotted/slotted-sdql-rules.egg` for the .egg tests and the differential
+;;; harness. Both read THIS file, so they cannot disagree.
+;;;
+;;; THE COUNT. The bench DEFINES 46 rules and RUNS 44; this file carries those 44, and
+;;; `slotted/check-reference-rules.py` compares the two name for name, so the claim is
+;;; no longer one anybody takes on trust.
+;;;
+;;; Counting definitions is the trap, and it caught this file twice: it once claimed
+;;; "rule for rule" while missing `beta`, and was then given `sum-range-2` to close a gap
+;;; that did not exist. `sum-range-2` and `get-sum-vert-fuse-1` are both defined and
+;;; never reached -- the second is even marked `#[allow(unused)]` -- so carrying either
+;;; would DIVERGE from the reference rather than match it. Both are expressible here if
+;;; the reference ever starts running them.
+;;;
+;;; `check-front-ends.py` is the cross-check that remains: `sdql-sum-sing.egg` writes
+;;; `sum-sing` by hand in the slotted language, and its compiled form has to match the
+;;; one generated from the copy here.
+;;;
+;;; Each `Bind<>` layer in the reference becomes one extra child column here, named by
+;;; `:binder` and placed where the reference's surface syntax puts it:
+;;; `Sum(A, Bind<Bind<A>>)` is `(Sum ?R $k $v ?body)`, so the two bound slots are
+;;; columns 1 and 2. `Merge`'s three are columns 2, 3 and 4, and `Let`'s one is column 1.
+;;;
+;;; `Var(Slot)` is not declared: the encoding has the single variable class, and a
+;;; variable occurrence is a `$s` in an ordinary child column.
+;;;
+;;; The rules are NOT confluent -- `get-to-sum` and `sum-to-get` alone loop -- so any
+;;; test over them asks for a bounded number of steps.
+
+(constructor Lambda (U U) U :binder 0)            ; Lam(Bind<AppliedId>)          "lambda"
+(constructor Sing (U U) U)                        ; Sing(A, A)                    "sing"
+(constructor Add (U U) U)                         ; Add(A, A)                     "+"
+(constructor Mult (U U) U)                        ; Mult(A, A)                    "*"
+(constructor Sub (U U) U)                         ; Sub(A, A)                     "-"
+(constructor Equality (U U) U)                    ; Equality(A, A)                "eq"
+(constructor Get (U U) U)                         ; Get(A, A)                     "get"
+(constructor Range (U U) U)                       ; Range(A, A)                   "range"
+(constructor App (U U) U)                         ; App(A, A)                     "apply"
+(constructor IfThen (U U) U)                      ; IfThen(A, A)                  "ifthen"
+(constructor Binop (U U U) U)                     ; Binop(A, A, A)                "binop"
+(constructor SubArray (U U U) U)                  ; SubArray(A, A, A)             "subarray"
+(constructor Unique (U) U)                        ; Unique(A)                     "unique"
+(constructor Sum (U U U U) U :binder 1 2)         ; Sum(A, Bind<Bind<A>>)         "sum"
+(constructor Merge (U U U U U U) U :binder 2 3 4) ; Merge(A, A, Bind<Bind<Bind<A>>>) "merge"
+(constructor Let (U U U) U :binder 1)             ; Let(A, Bind<A>)               "let"
+(constructor Num (i64) U)                         ; Num(u32)
+(constructor Symbol (String) U)                   ; Symbol(Symbol)
+
+;;; Declared for the record: `Null` already exists in the hand-written half of the
+;;; machinery, so `emit` skips its rules -- but a program in this language can contain
+;;; it, and this file names every constructor that can appear in one.
+(constructor Null () U)                           ; Null()                        "null"
+
+(rewrite (Mult (Mult ?a ?b) ?c)
+         (Mult ?a (Mult ?b ?c))
+         :name mult-assoc1)
+
+(rewrite (Mult ?a (Mult ?b ?c))
+         (Mult (Mult ?a ?b) ?c)
+         :name mult-assoc2)
+
+(rewrite (Sub ?e ?e)
+         (Num 0)
+         :name sub-identity)
+
+(rewrite (Add ?e (Num 0))
+         ?e
+         :name add-zero)
+
+(rewrite (Sub ?e (Num 0))
+         ?e
+         :name sub-zero)
+
+(rewrite (Equality ?a ?b)
+         (Equality ?b ?a)
+         :name eq-comm)
+
+(rewrite (Mult ?a ?b)
+         (Binop (Symbol "mult") ?a ?b)
+         :name mult-app1)
+
+(rewrite (Binop (Symbol "mult") ?a ?b)
+         (Mult ?a ?b)
+         :name mult-app2)
+
+(rewrite (Add ?a ?b)
+         (Binop (Symbol "add") ?a ?b)
+         :name add-app1)
+
+(rewrite (Binop (Symbol "add") ?a ?b)
+         (Add ?a ?b)
+         :name add-app2)
+
+(rewrite (Sub ?a ?b)
+         (Binop (Symbol "sub") ?a ?b)
+         :name sub-app1)
+
+(rewrite (Binop (Symbol "sub") ?a ?b)
+         (Sub ?a ?b)
+         :name sub-app2)
+
+(rewrite (Get ?a ?b)
+         (Binop (Symbol "getf") ?a ?b)
+         :name get-app1)
+
+(rewrite (Binop (Symbol "getf") ?a ?b)
+         (Get ?a ?b)
+         :name get-app2)
+
+(rewrite (Sing ?a ?b)
+         (Binop (Symbol "singf") ?a ?b)
+         :name sing-app1)
+
+(rewrite (Binop (Symbol "singf") ?a ?b)
+         (Sing ?a ?b)
+         :name sing-app2)
+
+(rewrite (Unique ?a)
+         (App (Symbol "uniquef") ?a)
+         :name unique-app1)
+
+(rewrite (App (Symbol "uniquef") ?a)
+         (Unique ?a)
+         :name unique-app2)
+
+;; `beta` is the bench's `(let ?t $x ?body)` -> `?body[(var $x) := ?t]`. It was left out
+;; while the compiler had no substitution; `subst` is that, and
+;; `slotted/tests/sdql-beta.egg` works through what it compiles to.
+(rewrite (Let ?t $x ?body)
+         (subst ?body $x ?t)
+         :name beta)
+
+(rewrite (Let ?e1 $x (Binop ?f ?e2 ?e3))
+         (Binop ?f (Let ?e1 $x ?e2) (Let ?e1 $x ?e3))
+         :name let-binop3)
+
+(rewrite (Binop ?f (Let ?e1 $x ?e2) (Let ?e1 $x ?e3))
+         (Let ?e1 $x (Binop ?f ?e2 ?e3))
+         :name let-binop4)
+
+(rewrite (Let ?e1 $x (App ?e2 ?e3))
+         (App ?e2 (Let ?e1 $x ?e3))
+         :name let-apply1)
+
+(rewrite (App ?e2 (Let ?e1 $x ?e3))
+         (Let ?e1 $x (App ?e2 ?e3))
+         :name let-apply2)
+
+(rewrite (Mult ?e1 (IfThen ?e2 ?e3))
+         (IfThen ?e2 (Mult ?e1 ?e3))
+         :name if-mult2)
+
+(rewrite (IfThen ?e1 ?e2)
+         (Mult ?e1 ?e2)
+         :name if-to-mult)
+
+(rewrite (Mult (Equality ?e1_1 ?e1_2) ?e2)
+         (IfThen (Equality ?e1_1 ?e1_2) ?e2)
+         :name mult-to-if)
+
+(rewrite (Sum ?R $x $y (Mult ?e1 ?e2))
+         (Mult ?e1 (Sum ?R $x $y ?e2))
+         :name sum-fact-1
+         :when (not-free $x ?e1)
+         :when (not-free $y ?e1))
+
+(rewrite (Sum ?R $x $y (Mult ?e1 ?e2))
+         (Mult (Sum ?R $x $y ?e1) ?e2)
+         :name sum-fact-2
+         :when (not-free $x ?e2)
+         :when (not-free $y ?e2))
+
+(rewrite (Sum ?R $x $y (Sing ?e1 ?e2))
+         (Sing ?e1 (Sum ?R $x $y ?e2))
+         :name sum-fact-3
+         :when (not-free $x ?e1)
+         :when (not-free $y ?e1))
+
+(rewrite (Sing ?e1 (Mult ?e2 ?e3))
+         (Mult (Sing ?e1 ?e2) ?e3)
+         :name sing-mult-1)
+
+(rewrite (Sing ?e1 (Mult ?e2 ?e3))
+         (Mult ?e2 (Sing ?e1 ?e3))
+         :name sing-mult-2)
+
+(rewrite (Mult (Sing ?e1 ?e2) ?e3)
+         (Sing ?e1 (Mult ?e2 ?e3))
+         :name sing-mult-3)
+
+(rewrite (Mult ?e2 (Sing ?e1 ?e3))
+         (Sing ?e1 (Mult ?e2 ?e3))
+         :name sing-mult-4)
+
+(rewrite (Mult ?e1 (Sum ?R $k $v ?e2))
+         (Sum ?R $k $v (Mult ?e1 ?e2))
+         :name sum-fact-inv-1)
+
+(rewrite (Sing ?e1 (Sum ?R $k $v ?e2))
+         (Sum ?R $k $v (Sing ?e1 ?e2))
+         :name sum-fact-inv-3)
+
+(rewrite (Sum (Sum ?R $k2 $v2 (Sing $k2 ?body1)) $k1 $v1 ?body2)
+         (Sum ?R $k2 $v2 (Let $k2 $k1 (Let ?body1 $v1 ?body2)))
+         :name sum-sum-vert-fuse-1)
+
+(rewrite (Sum (Sum ?R $k2 $v2 (Sing (Unique ?key) ?body1)) $k1 $v1 ?body2)
+         (Sum ?R $k2 $v2 (Let (Unique ?key) $k1 (Let ?body1 $v1 ?body2)))
+         :name sum-sum-vert-fuse-2)
+
+(rewrite (Sum (Range ?st ?en) $k $v (IfThen (Equality $v ?key) ?body))
+         (Sum (Range ?st ?en) $k $v (IfThen (Equality $k (Sub ?key (Sub ?st (Num 1)))) ?body))
+         :name sum-range-1)
+
+
+(rewrite (Sum ?R $k1 $v1 (Sum ?S $k2 $v2 (IfThen (Equality $v1 $v2) ?body)))
+         (Merge ?R ?S $k1 $k2 $v1 (Let $v1 $v2 ?body))
+         :name sum-merge)
+
+(rewrite (Get ?dict ?key)
+         (Sum ?dict $k $v (IfThen (Equality $k ?key) $v))
+         :name get-to-sum
+         :fresh $k $v)
+
+(rewrite (Sum ?dict $k $v (IfThen (Equality $k ?key) ?body))
+         (Let ?key $k (Let (Get ?dict $k) $v ?body))
+         :name sum-to-get
+         :when (not-free $k ?key)
+         :when (not-free $v ?key))
+
+(rewrite (Get (Range ?st ?en) ?idx)
+         (Add ?idx (Sub ?st (Num 1)))
+         :name get-range)
+
+(rewrite (Sum ?e1 $k $v (Sing $k $v))
+         ?e1
+         :name sum-sing)
+
+(rewrite (Unique ?e)
+         ?e
+         :name unique-rm)

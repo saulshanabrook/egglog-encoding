@@ -11,4 +11,22 @@
 /.ruff_cache/
 __pycache__/
 *.py[cod]
-slotted-experiments/output.egg
+slotted/output.egg
+xdiff-tmp-*.egg
+xdiff-tmp-*.json
+xarray-tmp-*.egg
+xarray-show-*.egg
+xdiff-run.log
+xdiff-show-*.egg
+# the rest of the harness scratch files. Every diagnostic in slotted/xdiff
+# writes its program next to the repo root so egglog's `include` paths resolve, and an
+# unignored one gets picked up by `git add -A` mid-run.
+xdiff-inv-*.egg
+xsdql-tmp-*.egg
+inv-*.egg
+inv2-*.egg
+fn-*.egg
+sat-*.egg
+nc-*.egg
+xdiff-big.log
+mut-*.log

@@ -1,0 +1,72 @@
+;;; The paper's S4.1 functional array language (Listing 1) and its rules.
+;;;
+;;; `slotted-egraphs/tests/array/mod.rs` and `tests/rise/rewrite.rs`, which share this
+;;; language. Written at the slotted level, so a rule says what it rewrites and nothing
+;;; about renamings -- `slotted/slotted-egglog.py` turns it into egglog,
+;;; and `slotted/xdiff/xarray.py` compiles these same rules for the
+;;; differential comparison against the reference. Both read THIS file.
+;;;
+;;; `Lam` and `Let` bind their column 0, so `(Lam $x ?b)` is `lam $x. b` and
+;;; `(Let $x ?b ?e)` is `let x = e in b` -- the reference's own column order, which its
+;;; `tests/rise` and `tests/array` use.
+;;;
+;;; `beta` IS HERE, under the name `let-intro`. This was recorded as a missing rule and
+;;; it never was one: the reference's is
+;;;
+;;;     pat    (app (lam $1 ?body) ?e)
+;;;     outpat (let $1 ?body ?e)
+;;;
+;;; (`tests/rise/rewrite.rs`), which is `let-intro` below, term for term. It does not
+;;; substitute -- the `let-*` rules do that afterwards, which is the let-based form
+;;; footnote 4 says the paper's own benchmarks use. The substituting `beta`,
+;;; `?body[(var $x) := ?e]`, is sdql's, and is in `slotted/languages/sdql.egg`.
+;;;
+;;; What the reference's `tests/rise` has and these 8 do not: `let-var-diff` and
+;;; `eta-expansion`, both portable and not yet written; the `-unopt` variants of rules
+;;; already here; and the slide, transpose and dot-product rules, which need
+;;; constructors this language does not declare.
+
+(constructor Lam (U U) U :binder 0)
+(constructor App (U U) U)
+(constructor Let (U U U) U :binder 0)
+(constructor Sym (String) U)
+(constructor Num (i64) U)
+
+(rewrite (Lam $x (App ?f $x))
+         ?f
+         :name eta
+         :when (not-free $x ?f))
+
+(rewrite (App (Lam $x ?body) ?e)
+         (Let $x ?body ?e)
+         :name let-intro)
+
+(rewrite (Let $x ?b ?e)
+         ?b
+         :name let-unused
+         :when (not-free $x ?b))
+
+(rewrite (Let $x $x ?e)
+         ?e
+         :name let-var-same)
+
+(rewrite (Let $x (App ?a ?b) ?e)
+         (App (Let $x ?a ?e) (Let $x ?b ?e))
+         :name let-app
+         :when (free $x ?a ?b))
+
+(rewrite (Let $x (Lam $y ?body) ?e)
+         (Lam $y (Let $x ?body ?e))
+         :name let-lam-diff
+         :when (free $x ?body))
+
+(rewrite (App (App (Sym "map") ?f) (App (App (Sym "map") ?g) ?arg))
+         (App (App (Sym "map") (Lam $fu (App ?f (App ?g $fu)))) ?arg)
+         :name map-fusion
+         :fresh $fu)
+
+(rewrite (App (Sym "map") (Lam $x (App ?f ?gx)))
+         (Lam $in (App (App (Sym "map") ?f) (App (App (Sym "map") (Lam $x ?gx)) $in)))
+         :name map-fission
+         :when (not-free $x ?f)
+         :fresh $in)
