@@ -289,10 +289,14 @@ pub(crate) struct ExtractedBinding {
     pub(crate) vals: Pooled<Vec<Value>>,
 }
 
+/// A predicted row, held inline. Entries live for the whole rule-set run, so a
+/// pooled `Vec` here could never be recycled and cost one allocation apiece.
+pub(crate) type PredictedRow = SmallVec<[Value; 8]>;
+
 #[derive(Default)]
 pub(crate) struct PredictedVals {
     #[allow(clippy::type_complexity)]
-    data: HashMap<(TableId, SmallVec<[Value; 3]>), Pooled<Vec<Value>>>,
+    data: HashMap<(TableId, SmallVec<[Value; 3]>), PredictedRow>,
 }
 
 impl Clear for PredictedVals {
@@ -305,7 +309,7 @@ impl Clear for PredictedVals {
     fn bytes(&self) -> usize {
         self.data.capacity()
             * (std::mem::size_of::<(TableId, SmallVec<[Value; 3]>)>()
-                + std::mem::size_of::<Pooled<Vec<Value>>>())
+                + std::mem::size_of::<PredictedRow>())
     }
 }
 
@@ -314,8 +318,8 @@ impl PredictedVals {
         &mut self,
         table: TableId,
         key: &[Value],
-        default: impl FnOnce() -> Pooled<Vec<Value>>,
-    ) -> impl Deref<Target = Pooled<Vec<Value>>> + '_ {
+        default: impl FnOnce() -> PredictedRow,
+    ) -> impl Deref<Target = PredictedRow> + '_ {
         self.data
             .entry((table, SmallVec::from_slice(key)))
             .or_insert_with(default)
@@ -525,20 +529,24 @@ impl<'a> ExecutionState<'a> {
         if let Some(row) = self.db.table_info[table].table.get_row(key) {
             return row.vals;
         }
-        Pooled::cloned(
-            self.predicted
-                .get_val(table, key, || {
-                    Self::construct_new_row(
-                        &self.db,
-                        &mut self.buffers,
-                        &mut self.changed,
-                        table,
-                        key,
-                        vals,
-                    )
-                })
-                .deref(),
-        )
+        let row: PredictedRow = self
+            .predicted
+            .get_val(table, key, || {
+                Self::construct_new_row(
+                    &self.db,
+                    &mut self.buffers,
+                    &mut self.changed,
+                    table,
+                    key,
+                    vals,
+                )
+            })
+            .clone();
+        with_pool_set(|ps| {
+            let mut out = ps.get::<Vec<Value>>();
+            out.extend_from_slice(&row);
+            out
+        })
     }
 
     fn construct_new_row(
@@ -548,9 +556,9 @@ impl<'a> ExecutionState<'a> {
         table: TableId,
         key: &[Value],
         vals: impl ExactSizeIterator<Item = MergeVal>,
-    ) -> Pooled<Vec<Value>> {
-        with_pool_set(|ps| {
-            let mut new = ps.get::<Vec<Value>>();
+    ) -> PredictedRow {
+        {
+            let mut new = PredictedRow::new();
             new.reserve(key.len() + vals.len());
             new.extend_from_slice(key);
             for val in vals {
@@ -563,7 +571,7 @@ impl<'a> ExecutionState<'a> {
             buffers.stage_insert(table, &new);
             *changed = true;
             new
-        })
+        }
     }
 
     /// A variant of [`ExecutionState::predict_val`] that avoids materializing the full row, and
@@ -685,7 +693,6 @@ impl ExecutionState<'_> {
                 dst_col,
                 dst_var,
             } => {
-                let pool = with_pool_set(|ps| ps.get_pool::<Vec<Value>>().clone());
                 self.buffers.lazy_init(*table_id, || {
                     self.db.table_info[*table_id].table.new_buffer()
                 });
@@ -718,13 +725,12 @@ impl ExecutionState<'_> {
                         // to or_insert_with is `move`.
                         let ctrs = &self.db.counters;
                         let bindings = &bindings;
-                        let pool = pool.clone();
                         let row =
                             self.predicted
                                 .data
                                 .entry(prediction_key)
                                 .or_insert_with(move || {
-                                    let mut row = pool.get();
+                                    let mut row = PredictedRow::new();
                                     row.extend_from_slice(key.as_slice());
                                     // Extend the key with the default values.
                                     row.reserve(default.len());
@@ -741,13 +747,15 @@ impl ExecutionState<'_> {
                                         };
                                         row.push(val)
                                     }
-                                    // Insert it into the table.
-                                    buffers.stage_insert(*table_id, &row);
+                                    // Insert it into the table. The table is
+                                    // notified once after the batch.
+                                    buffers.buffers[*table_id].stage_insert(&row);
                                     row
                                 });
                         row[dst_col.index()]
                     });
                 });
+                self.buffers.notify_list.notify(*table_id);
                 bindings.replace(out);
             }
             Instr::LookupWithDefault {
@@ -818,6 +826,41 @@ impl ExecutionState<'_> {
                         buf.stage_insert(&row);
                     }
                 });
+            }
+            Instr::MintInsert {
+                table,
+                args,
+                tail,
+                n_cols,
+                ts_col,
+                counter,
+                ts_counter,
+                dst,
+            } => {
+                let ts = Value::from_usize(self.read_counter(*ts_counter));
+                let mut out = with_pool_set(|ps| ps.get::<Vec<Value>>());
+                out.resize(bindings.matches, Value::stale());
+                let counter = *counter;
+                let counters = self.db.counters;
+                {
+                    let sources = row_sources(args, bindings);
+                    let mut row = RowScratch::new();
+                    self.stage_batch(*table, |buf| {
+                        for idx in mask.ones() {
+                            gather_row(&sources, idx, &mut row);
+                            let fresh = Value::from_usize(counters.inc(counter));
+                            row.push(fresh);
+                            row.extend_from_slice(tail);
+                            // Pad to the physical width and stamp the
+                            // timestamp, matching `write_table_row`.
+                            row.resize(*n_cols, ts);
+                            row[*ts_col] = ts;
+                            buf.stage_insert(&row);
+                            out[idx] = fresh;
+                        }
+                    });
+                }
+                bindings.insert(*dst, &out);
             }
             Instr::InsertIfEq { table, l, r, vals } => match (l, r) {
                 (QueryEntry::Var(v1), QueryEntry::Var(v2)) => {
@@ -1021,6 +1064,30 @@ pub(crate) enum Instr {
     AssertAnyNe {
         ops: Vec<QueryEntry>,
         divider: usize,
+    },
+
+    /// Mint a fresh id from `counter`, append it to `args` (followed by the
+    /// constant `tail`), stage the resulting row into `table`, and bind the
+    /// fresh id to `dst`.
+    ///
+    /// This is the batched form of the term encoding's `mint-<Relation>!`
+    /// primitive: the whole batch is gathered once and staged through a single
+    /// mutation buffer, rather than resolving the target table and staging one
+    /// row per call.
+    MintInsert {
+        table: TableId,
+        args: Vec<QueryEntry>,
+        /// Constant value columns written after the minted id.
+        tail: Vec<Value>,
+        /// Total physical column count of a row in `table`.
+        n_cols: usize,
+        /// Index of the timestamp column.
+        ts_col: usize,
+        /// Counter minting the fresh id.
+        counter: CounterId,
+        /// Counter holding the current timestamp.
+        ts_counter: CounterId,
+        dst: Variable,
     },
 
     /// Read the value of a counter and write it to the given variable.
