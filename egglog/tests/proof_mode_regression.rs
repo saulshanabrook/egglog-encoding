@@ -1,129 +1,18 @@
 use egglog::ast::{Command, Expr};
 use egglog::util::SymbolGen;
 use egglog::*;
-use std::{
-    panic::{AssertUnwindSafe, catch_unwind},
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 struct RecordFunctionInputArity {
     name: String,
     seen: Arc<Mutex<Vec<usize>>>,
 }
 
-struct CountCommandMacroCalls(Arc<Mutex<usize>>);
+struct DefineSort;
 
-struct ExpandPrintSizeToInput;
-
-struct BindThenFail;
-
-impl UserDefinedCommand for BindThenFail {
+impl UserDefinedCommand for DefineSort {
     fn update(&self, egraph: &mut EGraph, _args: &[Expr]) -> Result<Vec<CommandOutput>, Error> {
-        egraph.parse_and_run_program(None, "(relation Leaked ())")?;
-        Err(Error::BackendError("expected".to_owned()))
-    }
-}
-
-impl CommandMacro for CountCommandMacroCalls {
-    fn transform(
-        &self,
-        command: Command,
-        _symbol_gen: &mut SymbolGen,
-        _type_info: &TypeInfo,
-    ) -> Result<Vec<Command>, Error> {
-        *self.0.lock().unwrap() += 1;
-        Ok(vec![command])
-    }
-}
-
-impl CommandMacro for ExpandPrintSizeToInput {
-    fn transform(
-        &self,
-        command: Command,
-        _symbol_gen: &mut SymbolGen,
-        _type_info: &TypeInfo,
-    ) -> Result<Vec<Command>, Error> {
-        match command {
-            Command::PrintSize(span, _) => Ok(vec![Command::Input {
-                span,
-                name: "Edge".to_owned(),
-                file: "missing.tsv".to_owned(),
-            }]),
-            command => Ok(vec![command]),
-        }
-    }
-}
-
-fn egraphs_for_all_modes() -> [EGraph; 5] {
-    [
-        EGraph::default(),
-        EGraph::new_with_term_encoding(),
-        EGraph::new_with_proofs(),
-        EGraph::new_with_proofs().with_proof_testing(),
-        EGraph::new_with_proofs().with_proof_extraction(),
-    ]
-}
-
-#[test]
-fn fail_children_are_macro_expanded_once_in_source_order() {
-    let calls = Arc::new(Mutex::new(0));
-    let seen = Arc::new(Mutex::new(vec![]));
-    let mut egraph = EGraph::default();
-    egraph
-        .command_macros_mut()
-        .register(Arc::new(CountCommandMacroCalls(calls.clone())));
-    egraph
-        .command_macros_mut()
-        .register(Arc::new(RecordFunctionInputArity {
-            name: "score".to_string(),
-            seen: seen.clone(),
-        }));
-
-    egraph
-        .parse_and_run_program(
-            None,
-            r#"
-            (fail
-              (function score (i64) i64 :merge old)
-              (check (= 1 2)))
-            "#,
-        )
-        .unwrap();
-
-    assert_eq!(*calls.lock().unwrap(), 2);
-    assert_eq!(*seen.lock().unwrap(), vec![1]);
-}
-
-#[test]
-fn fail_stops_preparing_children_after_the_expected_failure() {
-    let programs = [
-        r#"
-        (fail
-          (check (= 1 2))
-          (check (= (missing) 1)))
-        "#,
-        r#"
-        (fail
-          (push)
-          (sort Scoped)
-          (pop)
-          (sort Scoped)
-          (check (= 1 2)))
-        "#,
-        r#"
-        (fail
-          (fail
-            (check (= 1 2))
-            (sort Hidden))
-          (sort Hidden)
-          (check (= 1 2)))
-        "#,
-    ];
-
-    for program in programs {
-        for mut egraph in egraphs_for_all_modes() {
-            egraph.parse_and_run_program(None, program).unwrap();
-        }
+        egraph.parse_and_run_program(None, "(sort Leaked)")
     }
 }
 
@@ -218,573 +107,200 @@ fn term_and_proof_modes_reject_eq_sort_no_merge_functions() {
 }
 
 #[test]
-fn proof_mode_rejects_fail_wrapped_input() {
-    let error = EGraph::new_with_proofs()
-        .parse_and_run_program(
-            None,
-            r#"
-            (relation Edge (String String))
-            (fail (input Edge "edges.tsv"))
-            "#,
-        )
-        .unwrap_err();
-
-    assert!(matches!(error, Error::UnsupportedProofCommand { .. }));
-    assert!(
-        error
-            .to_string()
-            .contains("`fail` wrapping an `input` command")
-    );
-}
-
-#[test]
-fn fail_rejects_include_before_reading_it() {
-    for mut egraph in egraphs_for_all_modes() {
-        let error = egraph
-            .parse_and_run_program(None, r#"(fail (include "missing.egg"))"#)
-            .unwrap_err();
-
-        assert!(matches!(error, Error::DesugarError(..)));
-        assert!(error.to_string().contains("include is not allowed"));
+fn fail_rejects_definitions_user_commands_and_scope_commands() {
+    let rejected = [
+        "(fail (sort S))",
+        "(fail (datatype D (D0)))",
+        "(fail (datatype* (Ds (Ds0))))",
+        "(fail (constructor C () S))",
+        "(fail (relation R (i64)))",
+        "(fail (function f () i64 :no-merge))",
+        "(fail (index I f (any 0)))",
+        "(fail (ruleset rs))",
+        "(fail (unstable-combined-ruleset both left right))",
+        "(fail (rule () ((panic \"unused\"))))",
+        "(fail (rewrite 1 2))",
+        "(fail (birewrite 1 2))",
+        "(fail (let value 1))",
+        "(fail (let value (begin (+ 1 1))))",
+        "(fail (push))",
+        "(fail (pop))",
+        "(fail (fail (sort Nested)))",
+        "(fail (define-sort) (panic \"stop\"))",
+    ];
+    let mut egraph = EGraph::default();
+    egraph
+        .add_command("define-sort".to_owned(), Arc::new(DefineSort))
+        .unwrap();
+    for source in rejected {
+        let error = egraph.parse_and_run_program(None, source).unwrap_err();
+        assert!(
+            matches!(&error, Error::DesugarError(..)),
+            "{source}: {error:?}"
+        );
     }
 }
 
 #[test]
-fn proof_mode_revalidates_command_macro_output_inside_fail() {
+fn fail_rejects_proof_commands_in_all_modes() {
     for mut egraph in [
+        EGraph::default(),
+        EGraph::new_with_term_encoding(),
         EGraph::new_with_proofs(),
-        EGraph::new_with_proofs().with_proof_testing(),
-        EGraph::new_with_proofs().with_proof_extraction(),
+    ] {
+        for source in ["(fail (prove (= 1 1)))", "(fail (prove-exists Missing))"] {
+            let error = egraph.parse_and_run_program(None, source).unwrap_err();
+            assert!(
+                matches!(&error, Error::DesugarError(..)),
+                "{source}: {error:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn proof_mode_fail_rolls_back_action_effects() {
+    for source in [
+        r#"
+        (function score () i64 :merge old)
+        (fail (set (score) 1) (panic "stop"))
+        (fail (check (= (score) 1)))
+        "#,
+        r#"
+        (datatype N (A) (B))
+        (let a (A))
+        (let b (B))
+        (fail (union a b) (panic "stop"))
+        (fail (check (= a b)))
+        "#,
+        r#"
+        (datatype N (A))
+        (fail (A) (panic "stop"))
+        (fail (check (A)))
+        "#,
+    ] {
+        EGraph::new_with_proofs()
+            .parse_and_run_program(None, source)
+            .unwrap_or_else(|error| panic!("{source}: {error:?}"));
+    }
+}
+
+#[test]
+fn proof_mode_fail_catches_input_errors() {
+    EGraph::new_with_proofs()
+        .parse_and_run_program(
+            None,
+            r#"
+            (relation R (i64))
+            (fail (input R "missing.tsv"))
+            "#,
+        )
+        .unwrap();
+}
+
+#[test]
+fn proof_mode_fail_rolls_back_input_rows() {
+    let directory =
+        std::env::temp_dir().join(format!("egglog_proof_fail_input_{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(directory.join("rows.tsv"), "1\n").unwrap();
+
+    let mut egraph = EGraph::new_with_proofs();
+    egraph.fact_directory = Some(directory.clone());
+    egraph
+        .parse_and_run_program(
+            None,
+            r#"
+            (relation R (i64))
+            (fail (input R "rows.tsv") (panic "stop"))
+            (fail (check (R 1)))
+            "#,
+        )
+        .unwrap();
+
+    std::fs::remove_dir_all(directory).ok();
+}
+
+#[test]
+fn proof_mode_fail_does_not_offset_later_fiats() {
+    EGraph::new_with_proofs()
+        .parse_and_run_program(
+            None,
+            r#"
+            (datatype N (A) (B))
+            (fail (check (= (A) (B))) (union (A) (B)))
+            (union (A) (B))
+            (prove (= (A) (B)))
+            "#,
+        )
+        .unwrap();
+}
+
+#[test]
+fn fail_with_term_building_extract_has_the_same_behavior_in_all_modes() {
+    for mut egraph in [
+        EGraph::default(),
+        EGraph::new_with_term_encoding(),
+        EGraph::new_with_proofs(),
     ] {
         egraph
-            .command_macros_mut()
-            .register(Arc::new(ExpandPrintSizeToInput));
+            .parse_and_run_program(None, "(datatype N (A))")
+            .unwrap();
         let error = egraph
+            .parse_and_run_program(None, "(fail (extract (A)))")
+            .unwrap_err();
+        assert!(matches!(error, Error::ExpectFail(_)));
+        egraph
+            .parse_and_run_program(None, "(fail (check (A)))")
+            .unwrap();
+    }
+}
+
+#[test]
+fn proof_mode_rejects_output_at_top_level_and_inside_fail() {
+    for source in ["(output \"term.txt\" 1)", "(fail (output \"term.txt\" 1))"] {
+        let error = EGraph::new_with_proofs()
+            .parse_and_run_program(None, source)
+            .unwrap_err();
+        assert!(matches!(error, Error::UnsupportedProofCommand { .. }));
+        assert!(error.to_string().contains("`output`"));
+    }
+}
+
+#[test]
+fn fail_rolls_back_successful_mutations_in_all_modes() {
+    for mut egraph in [
+        EGraph::default(),
+        EGraph::new_with_term_encoding(),
+        EGraph::new_with_proofs(),
+    ] {
+        egraph
             .parse_and_run_program(
                 None,
                 r#"
-                (relation Edge (String String))
-                (fail (print-size))
-                "#,
-            )
-            .unwrap_err();
-
-        assert!(matches!(error, Error::UnsupportedProofCommand { .. }));
-        assert!(
-            error
-                .to_string()
-                .contains("`fail` wrapping an `input` command")
-        );
-    }
-}
-
-#[test]
-fn proof_mode_allows_fail_wrapping_set() {
-    // A `(fail (set …))` is accepted by proof encoding (it used to be rejected as a
-    // non-atomic wrapped command). The set succeeds, so `fail` reports that its
-    // wrapped command did not fail.
-    let error = EGraph::new_with_proofs()
-        .parse_and_run_program(
-            None,
-            r#"
-            (function score () i64 :merge old)
-            (fail (set (score) 1))
-            "#,
-        )
-        .unwrap_err();
-
-    assert!(matches!(error, Error::ExpectFail(..)));
-}
-
-#[test]
-fn proof_mode_allows_fail_wrapping_multi_operation_encoding() {
-    // A wrapped command that encodes to several commands is now accepted;
-    // declaring the function succeeds, so `fail` reports it did not fail.
-    let error = EGraph::new_with_proofs()
-        .parse_and_run_program(None, "(fail (function score () i64 :merge old))")
-        .unwrap_err();
-
-    assert!(matches!(error, Error::ExpectFail(..)));
-}
-
-#[test]
-fn proof_mode_fail_catches_failure_among_wrapped_commands() {
-    // `fail` runs the wrapped commands in order and succeeds at the first failure:
-    // the set succeeds and the mismatched check fails, so the `fail` passes.
-    EGraph::new_with_proofs()
-        .parse_and_run_program(
-            None,
-            r#"
             (function score () i64 :merge old)
             (fail (set (score) 1) (check (= (score) 2)))
+            (fail (check (= (score) 1)))
             "#,
-        )
-        .unwrap();
-}
-
-#[test]
-fn proof_testing_uses_only_actions_before_the_nested_proof() {
-    let error = EGraph::new_with_proofs()
-        .with_proof_testing()
-        .parse_and_run_program(
-            None,
-            r#"
-            (datatype Math (A) (B))
-            (fail
-              (union (A) (B))
-              (check (= (A) (B))))
-            "#,
-        )
-        .unwrap_err();
-
-    assert!(matches!(error, Error::ExpectFail(..)));
-}
-
-#[test]
-fn proof_testing_ignores_rules_after_an_expected_failure() {
-    EGraph::new_with_proofs()
-        .with_proof_testing()
-        .parse_and_run_program(
-            None,
-            r#"
-            (datatype Math (A) (B))
-            (relation Seed ())
-            (Seed)
-            (fail
-              (check (= (A) (B)))
-              (rule ((Seed)) ((union (A) (B))) :name "same"))
-            (rule ((Seed)) ((union (A) (B))) :name "same")
-            (run 1)
-            (check (= (A) (B)))
-            "#,
-        )
-        .unwrap();
-}
-
-#[test]
-fn proof_testing_keeps_actions_before_an_expected_failure() {
-    EGraph::new_with_proofs()
-        .with_proof_testing()
-        .parse_and_run_program(
-            None,
-            r#"
-            (datatype Math (A) (B) (C))
-            (fail
-              (union (A) (B))
-              (check (= (A) (C))))
-            (check (= (A) (B)))
-            "#,
-        )
-        .unwrap();
-}
-
-#[test]
-fn proof_testing_keeps_begin_actions_before_an_expected_failure() {
-    EGraph::new_with_proofs()
-        .with_proof_testing()
-        .parse_and_run_program(
-            None,
-            r#"
-            (datatype Math (A) (B) (C))
-            (fail
-              (begin (union (A) (B)))
-              (check (= (A) (C))))
-            (check (= (A) (B)))
-            "#,
-        )
-        .unwrap();
-}
-
-#[test]
-fn failed_primitive_actions_do_not_enter_proof_history() {
-    EGraph::new_with_proofs()
-        .with_proof_testing()
-        .parse_and_run_program(
-            None,
-            r#"
-            (fail (log 0.0))
-            (check (= 1.0 1.0))
-            "#,
-        )
-        .unwrap();
-}
-
-#[test]
-fn encoded_fail_supports_global_let_forms() {
-    let programs = [
-        r#"
-        (datatype Math (A) (B))
-        (fail
-          (let $x (A))
-          (check (= (A) (B))))
-        (check (= $x (A)))
-        "#,
-        r#"
-        (datatype Math (A) (B))
-        (fail
-          (let $x (begin (let y (A)) (A)))
-          (check (= (A) (B))))
-        (check (= $x (A)))
-        "#,
-    ];
-
-    for program in programs {
-        for mut egraph in [
-            EGraph::default(),
-            EGraph::new_with_term_encoding(),
-            EGraph::new_with_proofs(),
-            EGraph::new_with_proofs().with_proof_testing(),
-        ] {
-            egraph.parse_and_run_program(None, program).unwrap();
-        }
-    }
-}
-
-#[test]
-fn fail_does_not_swallow_internal_proof_marker_errors() {
-    let error = EGraph::default()
-        .parse_and_run_program(None, r#"(fail (@record-proof-command "nested:0"))"#)
-        .unwrap_err();
-
-    assert!(matches!(error, Error::ProofCommandMarker(_)));
-}
-
-#[test]
-fn failed_encoded_action_blocks_are_atomic() {
-    let program = r#"
-        (function score () i64 :merge old)
-        (fail (begin (set (score) 1) (panic "expected")))
-        (fail (check (= (score) 1)))
-    "#;
-
-    for mut egraph in [
-        EGraph::default(),
-        EGraph::new_with_term_encoding(),
-        EGraph::new_with_proofs(),
-        EGraph::new_with_proofs().with_proof_testing(),
-    ] {
-        let result = catch_unwind(AssertUnwindSafe(|| {
-            egraph.parse_and_run_program(None, program)
-        }));
-        result
-            .expect("a failed action block must not panic proof testing")
-            .expect("the failed action block must leave no function value");
-    }
-}
-
-#[test]
-fn failed_schedule_rolls_back_the_entire_source_command() {
-    let program = r#"
-        (datatype Math (A) (B))
-        (relation Seed ())
-        (ruleset r)
-        (Seed)
-        (rule ((Seed)) ((union (A) (B))) :ruleset r :name "u")
-        (fail (run-schedule (seq (run r) (run missing))))
-        (fail (check (= (A) (B))))
-    "#;
-
-    for mut egraph in [
-        EGraph::default(),
-        EGraph::new_with_term_encoding(),
-        EGraph::new_with_proofs(),
-        EGraph::new_with_proofs().with_proof_testing(),
-    ] {
-        egraph.parse_and_run_program(None, program).unwrap();
-    }
-}
-
-#[test]
-fn failed_pop_rolls_back_the_entire_source_command() {
-    let program = r#"
-        (datatype Math (A))
-        (push)
-        (fail (pop 2))
-        (pop)
-    "#;
-
-    for mut egraph in [
-        EGraph::default(),
-        EGraph::new_with_term_encoding(),
-        EGraph::new_with_proofs(),
-        EGraph::new_with_proofs().with_proof_testing(),
-    ] {
-        egraph.parse_and_run_program(None, program).unwrap();
-    }
-}
-
-#[test]
-fn nested_fail_rolls_back_its_failing_child() {
-    let program = r#"
-        (datatype Math (A) (B))
-        (fail (fail (union (A) (B))))
-        (fail (check (= (A) (B))))
-    "#;
-
-    for mut egraph in [
-        EGraph::default(),
-        EGraph::new_with_term_encoding(),
-        EGraph::new_with_proofs(),
-        EGraph::new_with_proofs().with_proof_testing(),
-    ] {
-        egraph.parse_and_run_program(None, program).unwrap();
-    }
-}
-
-#[test]
-fn desugared_fail_children_preserve_the_source_command_rollback_boundary() {
-    let programs = [
-        r#"
-        (datatype Math (A) (B))
-        (relation Seed ())
-        (ruleset r)
-        (Seed)
-        (rule ((Seed)) ((union (A) (B))) :ruleset r :name "u")
-        (fail (run-schedule (seq (run r) (run missing))))
-        (fail (check (= (A) (B))))
-        "#,
-        r#"
-        (datatype Math (A) (B))
-        (fail (fail (union (A) (B))))
-        (fail (check (= (A) (B))))
-        "#,
-    ];
-
-    for program in programs {
-        let desugared = EGraph::default()
-            .resolve_program(None, program)
-            .unwrap()
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join("\n");
-        let mut replay = EGraph::default();
-        replay.ensure_no_reserved_symbols(false);
-        replay.parse_and_run_program(None, &desugared).unwrap();
-    }
-}
-
-#[test]
-fn static_term_desugaring_rejects_multi_command_fail_children() {
-    let program = r#"
-        (datatype Math (A))
-        (fail (extract (A) -1))
-        (print-size A)
-    "#;
-
-    for mut egraph in egraphs_for_all_modes() {
-        let outputs = egraph.parse_and_run_program(None, program).unwrap();
-        assert!(
-            outputs
-                .iter()
-                .any(|output| matches!(output, CommandOutput::PrintFunctionSize(0)))
-        );
-    }
-
-    assert!(EGraph::default().resolve_program(None, program).is_ok());
-
-    for mut encoder in [
-        EGraph::new_with_term_encoding(),
-        EGraph::new_with_proofs(),
-        EGraph::new_with_proofs().with_proof_testing(),
-        EGraph::new_with_proofs().with_proof_extraction(),
-    ] {
-        let error = encoder.resolve_program(None, program).unwrap_err();
-        assert!(matches!(error, Error::DesugarError(..)));
-        assert!(
-            error
-                .to_string()
-                .contains("the source command's rollback boundary cannot be preserved")
-        );
-    }
-}
-
-#[test]
-fn failed_user_defined_commands_roll_back_and_are_not_statically_desugared() {
-    let mut live = EGraph::default();
-    live.add_command("bind-then-fail".to_owned(), Arc::new(BindThenFail))
-        .unwrap();
-    live.parse_and_run_program(None, "(fail (bind-then-fail))")
-        .unwrap();
-    assert!(live.get_function("Leaked").is_none());
-    live.parse_and_run_program(None, "(relation Leaked ())")
-        .unwrap();
-
-    let mut encoder = EGraph::default();
-    encoder
-        .add_command("bind-then-fail".to_owned(), Arc::new(BindThenFail))
-        .unwrap();
-    let error = encoder
-        .resolve_program(None, "(fail (bind-then-fail))")
-        .unwrap_err();
-    assert!(matches!(error, Error::DesugarError(..)));
-    assert!(
-        error
-            .to_string()
-            .contains("cannot statically desugar a `fail` body that may change compiler state")
-    );
-}
-
-#[test]
-fn failed_top_level_action_block_rolls_back_before_the_next_api_call() {
-    for mut egraph in [
-        EGraph::default(),
-        EGraph::new_with_term_encoding(),
-        EGraph::new_with_proofs(),
-        EGraph::new_with_proofs().with_proof_testing(),
-    ] {
-        egraph
-            .parse_and_run_program(None, "(function score () i64 :merge old)")
-            .unwrap();
-        assert!(
-            egraph
-                .parse_and_run_program(None, r#"(begin (set (score) 1) (panic "expected"))"#,)
-                .is_err()
-        );
-        let check = catch_unwind(AssertUnwindSafe(|| {
-            egraph.parse_and_run_program(None, "(fail (check (= (score) 1)))")
-        }));
-        check
-            .expect("the next API call must not panic")
-            .expect("the failed action block must leave no function value");
-    }
-}
-
-#[test]
-fn failed_global_let_blocks_leave_no_declaration() {
-    let program = r#"
-        (datatype Math (A))
-        (fail (let $x (begin (panic "expected") (A))))
-        (let $x (A))
-        (check (= $x (A)))
-    "#;
-
-    for mut egraph in [
-        EGraph::default(),
-        EGraph::new_with_term_encoding(),
-        EGraph::new_with_proofs(),
-        EGraph::new_with_proofs().with_proof_testing(),
-    ] {
-        egraph.parse_and_run_program(None, program).unwrap();
-    }
-}
-
-#[test]
-fn desugaring_rejects_fail_bodies_that_change_static_scope() {
-    let programs = [
-        r#"
-        (datatype Math (A))
-        (fail (let $x (begin (panic "expected") (A))))
-        (let $x (A))
-        "#,
-        r#"
-        (datatype Math (A) (B))
-        (fail (let $x (A)) (check (= (A) (B))))
-        (let $y $x)
-        "#,
-        r#"
-        (datatype Math (A) (B))
-        (fail (push) (check (= (A) (B))) (pop))
-        "#,
-    ];
-
-    for program in programs {
-        for mut encoder in [
-            EGraph::default(),
-            EGraph::new_with_term_encoding(),
-            EGraph::new_with_proofs(),
-            EGraph::new_with_proofs().with_proof_testing(),
-        ] {
-            let error = encoder.resolve_program(None, program).unwrap_err();
-            assert!(matches!(error, Error::DesugarError(..)));
-            assert!(error.to_string().contains(
-                "cannot statically desugar a `fail` body that may change compiler state"
-            ));
-        }
-    }
-}
-
-#[test]
-fn failed_global_let_block_rolls_back_before_the_next_api_call() {
-    for mut egraph in [
-        EGraph::default(),
-        EGraph::new_with_term_encoding(),
-        EGraph::new_with_proofs(),
-        EGraph::new_with_proofs().with_proof_testing(),
-    ] {
-        egraph
-            .parse_and_run_program(None, "(datatype Math (A))")
-            .unwrap();
-        assert!(
-            egraph
-                .parse_and_run_program(None, r#"(let $x (begin (panic "expected") (A)))"#,)
-                .is_err()
-        );
-        egraph
-            .parse_and_run_program(None, "(let $x (A)) (check (= $x (A)))")
-            .unwrap();
-    }
-}
-
-#[test]
-fn proof_mode_recovers_after_a_command_error() {
-    let mut egraph = EGraph::new_with_proofs().with_proof_testing();
-    egraph
-        .parse_and_run_program(None, "(datatype Math (A) (B) (C)) (union (A) (B))")
-        .unwrap();
-    assert!(
-        egraph
-            .parse_and_run_program(None, "(check (= (A) (C)))")
-            .is_err()
-    );
-    egraph
-        .parse_and_run_program(None, "(check (= (A) (B)))")
-        .unwrap();
-}
-
-#[test]
-fn duplicate_constructor_global_does_not_corrupt_type_state() {
-    for mut egraph in egraphs_for_all_modes() {
-        egraph
-            .parse_and_run_program(
-                None,
-                "(datatype Left (A)) (datatype Right (B)) (let $x (A))",
             )
             .unwrap();
-        assert!(egraph.parse_and_run_program(None, "(let $x (B))").is_err());
-        egraph
-            .parse_and_run_program(None, "(check (= $x (A)))")
-            .unwrap();
     }
 }
 
 #[test]
-fn proof_mode_eval_expr_recovers_after_an_error() {
-    let mut parser = egglog::ast::Parser::default();
-    let failing_primitive = parser.get_expr_from_string(None, "(log 0.0)").unwrap();
-
+fn fail_rolls_back_when_every_wrapped_command_succeeds() {
     for mut egraph in [
+        EGraph::default(),
         EGraph::new_with_term_encoding(),
         EGraph::new_with_proofs(),
-        EGraph::new_with_proofs().with_proof_testing(),
     ] {
-        assert!(egraph.eval_expr(&failing_primitive).is_err());
+        let error = egraph
+            .parse_and_run_program(None, "(relation R (i64)) (fail (R 1))")
+            .unwrap_err();
+        assert!(matches!(error, Error::ExpectFail(_)));
         egraph
-            .parse_and_run_program(None, "(relation Recovered ())")
+            .parse_and_run_program(None, "(fail (check (R 1)))")
             .unwrap();
-    }
-
-    let failing_constructor = parser.get_expr_from_string(None, "(A)").unwrap();
-    for mut egraph in [
-        EGraph::new_with_term_encoding(),
-        EGraph::new_with_proofs(),
-        EGraph::new_with_proofs().with_proof_testing(),
-    ] {
-        egraph
-            .parse_and_run_program(None, "(datatype Math (A))")
-            .unwrap();
-        assert!(egraph.eval_expr(&failing_constructor).is_err());
-        egraph.parse_and_run_program(None, "(A)").unwrap();
     }
 }
 
@@ -806,25 +322,6 @@ fn unordered_container_reshaped_element_collapse_proof() {
 (run 8)
 (check (Holds (set-of (N 1) (N 2))))
 ";
-    EGraph::new_with_proofs()
-        .with_proof_testing()
-        .parse_and_run_program(None, program)
-        .unwrap();
-}
-
-#[test]
-fn desugared_internal_let_globals_support_proof_testing() {
-    let program = r#"
-        (sort Term)
-        (constructor Node (String) Term)
-        (function $left () Term :no-merge :unextractable :internal-let)
-        (set ($left) (Node "left"))
-        (function $right () Term :no-merge :unextractable :internal-let)
-        (set ($right) (Node "right"))
-        (union ($left) ($right))
-        (check (= ($left) ($right)))
-    "#;
-
     EGraph::new_with_proofs()
         .with_proof_testing()
         .parse_and_run_program(None, program)

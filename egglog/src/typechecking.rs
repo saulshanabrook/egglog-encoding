@@ -550,12 +550,12 @@ impl EGraph {
         let command: ResolvedNCommand = match command {
             NCommand::Function(fdecl) => {
                 let resolved = self.type_info.typecheck_function(symbol_gen, fdecl)?;
-                // An FD view (function carrying `term_constructor` with a tuple
+                // An FD view (a function marked `:internal-view`, with a tuple
                 // `(eclass, proof)` output) gets a `set-if-empty` primitive (+ a
                 // proof-column reader) so the encoding can canonicalize a term to
                 // the view's e-class at insertion time. Registered here so it
                 // survives re-parse of the desugared program.
-                if resolved.term_constructor.is_some()
+                if resolved.internal_view.is_some()
                     && let ResolvedCall::Func(ft) = &resolved.resolved_schema
                     && ft.outputs.len() >= 2
                 {
@@ -563,20 +563,20 @@ impl EGraph {
                         (resolved.name.clone(), ft.input.clone(), ft.outputs.clone());
                     crate::proofs::proof_fresh::register_set_if_empty(self, &name, input, outputs);
                 }
-                // A term-node relation (a term or proof node, whose last input is
-                // the minted id) gets a mint primitive, so the encoding writes a
-                // node in one statement. Registered here for the same reason as
-                // `set-if-empty` above.
+                // An internal proof-node relation (whose last input is the minted
+                // id) gets a mint primitive, so the encoding writes a node in one
+                // statement. Registered here for the same reason as `set-if-empty`
+                // above.
                 if resolved.internal_term_node
                     && let ResolvedCall::Func(ft) = &resolved.resolved_schema
                     && let Some((id_sort, arg_sorts)) = ft.input.split_last()
                     && id_sort.is_eq_sort()
                 {
-                    // `register_mint` stages one `Unit` value column, so a term-node
+                    // `register_mint` stages one `Unit` value column, so a proof-node
                     // relation must declare exactly that.
                     debug_assert!(
                         matches!(ft.outputs.as_slice(), [out] if out.name() == "Unit"),
-                        "term-node relation `{}` must declare one `Unit` value column, got {:?}",
+                        "proof-node relation `{}` must declare one `Unit` value column, got {:?}",
                         resolved.name,
                         ft.outputs.iter().map(|out| out.name()).collect::<Vec<_>>(),
                     );
@@ -648,7 +648,7 @@ impl EGraph {
                     names.container_normalize_constructor = pc.normalize.clone();
                     names.fiat_prefix = pc.fiat.clone();
                     names.proj_constructor = pc.proj.clone();
-                    names.proj_all_prefix = pc.proj_all.clone();
+                    names.proj_prim_prefix = pc.proj_prim.clone();
                 }
                 // A container sort under the term/proof encoding carries a spec
                 // for its rebuild primitives; register them here so they are
@@ -816,8 +816,8 @@ impl EGraph {
                 ResolvedNCommand::PrintSize(span.clone(), n.clone())
             }
             NCommand::ProveExists(span, constructor) => {
-                // prove-exists targets a table: a constructor, or its lowering to
-                // a term relation (a function) under the term/proof encoding.
+                // prove-exists targets a table: a constructor, or the view
+                // standing in for one under the term/proof encoding.
                 // `get_func_type` already rejects primitives/unbound names.
                 let func_type = self
                     .type_info
@@ -843,10 +843,16 @@ impl EGraph {
                     exprs,
                 }
             }
-            NCommand::Input { span, name, file } => ResolvedNCommand::Input {
+            NCommand::Input {
+                span,
+                name,
+                file,
+                proof_base,
+            } => ResolvedNCommand::Input {
                 span: span.clone(),
                 name: name.clone(),
                 file: file.clone(),
+                proof_base: *proof_base,
             },
             NCommand::UserDefined(span, name, exprs) => {
                 ResolvedNCommand::UserDefined(span.clone(), name.clone(), exprs.clone())
@@ -1025,14 +1031,14 @@ impl TypeInfo {
                 fdecl.span.clone(),
             ));
         }
-        // View tables (with term_constructor) must have at least one input (the e-class), except the
+        // View tables must have at least one input (the e-class), except the
         // proof-mode functional-dependency tuple view `(children) -> (eclass, proof)`, which keys on
         // children only (a 0-arg constructor's view then has no inputs).
-        if fdecl.term_constructor.is_some()
+        if fdecl.internal_view.is_some()
             && fdecl.schema.input.is_empty()
             && !fdecl.schema.is_tuple_output()
         {
-            return Err(TypeError::TermConstructorNoInputs(
+            return Err(TypeError::ViewTableNoInputs(
                 fdecl.name.clone(),
                 fdecl.span.clone(),
             ));
@@ -1054,9 +1060,8 @@ impl TypeInfo {
 
         // Tuple outputs are only meaningful for custom functions (which carry a functional
         // dependency from keys to a tuple of values). Constructors mint a single e-class id, so they
-        // may not be tuple-output. Term-constructor *views* may be tuple-output: the proof-mode
-        // encoder emits `(children) -> (eclass, proof)` views (an internal-only annotation, so this
-        // can't be reached by user input).
+        // may not be tuple-output. The proof encoder declares its internal views as functions with
+        // `(children) -> (source output, proof)`, so those views may be tuple-output.
         if is_tuple && fdecl.subtype == FunctionSubtype::Constructor {
             return Err(TypeError::TupleOutputNotAllowed(
                 fdecl.name.clone(),
@@ -1148,7 +1153,7 @@ impl TypeInfo {
             internal_hidden: fdecl.internal_hidden,
             internal_let: fdecl.internal_let,
             span: fdecl.span.clone(),
-            term_constructor: fdecl.term_constructor.clone(),
+            internal_view: fdecl.internal_view,
             identity_vals: fdecl.identity_vals,
             internal_term_node: fdecl.internal_term_node,
         })
@@ -1645,10 +1650,8 @@ pub enum TypeError {
     NonEqsortUnion(ArcSort, Span),
     #[error("{}\nCannot union values of sort {} because it is marked as non-unionable (e.g. from a relation)", .1, .0.name())]
     NonUnionableSort(ArcSort, Span),
-    #[error(
-        "{1}\nView table {0} with :internal-term-constructor must have at least one input (the e-class)."
-    )]
-    TermConstructorNoInputs(String, Span),
+    #[error("{1}\nView table {0} with :internal-view must have at least one input (the e-class).")]
+    ViewTableNoInputs(String, Span),
     #[error(
         "{span}\nNon-global variable `{name}` must not start with `{}`.",
         crate::GLOBAL_NAME_PREFIX

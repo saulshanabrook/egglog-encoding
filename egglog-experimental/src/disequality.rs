@@ -932,7 +932,7 @@ fn disequality_edge_support(span: &Span, sort: &str) -> Vec<Command> {
             ))),
             hidden: true,
             let_binding: false,
-            term_constructor: None,
+            internal_view: None,
             unextractable: true,
             identity_vals: None,
             cost: None,
@@ -982,7 +982,6 @@ fn constructor(span: &Span, name: &str, inputs: Vec<&str>, output: &str) -> Comm
         unextractable: true,
         hidden: true,
         let_binding: false,
-        term_constructor: None,
     }
 }
 

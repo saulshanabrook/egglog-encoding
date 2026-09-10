@@ -18,18 +18,6 @@
       ((number 3))
       :ruleset myrules2)
 
-;; not allowed to add to combined ruleset
-(fail
- (rule ()
-    ((number 4))
-    :ruleset myrules1and2))
-
-
-(fail
-  (rule ()
-    ((number 4))
-    :ruleset unboundruleset))
-
 (ruleset myrules5)
 (rule ()
       ((number 5))

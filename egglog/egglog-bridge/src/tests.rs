@@ -20,7 +20,7 @@ use once_cell::sync::Lazy;
 
 use crate::{
     ColumnTy, DefaultVal, EGraph, FunctionConfig, FunctionId, MergeAction, MergeFn, QueryEntry,
-    TableAction, add_expressions, define_rule,
+    TableAction, TableKind, add_expressions, define_rule,
 };
 
 fn valid_flat_config(name: &str) -> FunctionConfig {
@@ -44,6 +44,38 @@ fn flat_storage_accepts_append_and_scan_semantics() {
     assert_ne!(
         egraph.funcs[table].nonincremental_rebuild_rule,
         crate::RuleId::new(!0)
+    );
+}
+
+#[test]
+fn read_projection_is_part_of_table_construction() {
+    let mut egraph = EGraph::default();
+    let table = egraph.add_table_with_read_projection(
+        FunctionConfig {
+            schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
+            n_vals: 1,
+            n_identity_vals: None,
+            default: DefaultVal::Fail,
+            merge: MergeFn::AssertEq,
+            name: "encoded-view".into(),
+            can_subsume: false,
+        },
+        TableKind::Constructor,
+        1,
+        1,
+    );
+
+    let direct = TableAction::new(&egraph, table);
+    assert_eq!(
+        direct.validate_read_projection(Some(TableKind::Constructor), true),
+        Ok(1)
+    );
+
+    let registry = egraph.action_registry().read().unwrap();
+    let registered = registry.lookup_table("encoded-view").unwrap();
+    assert_eq!(
+        registered.validate_read_projection(Some(TableKind::Constructor), true),
+        Ok(1)
     );
 }
 

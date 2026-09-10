@@ -46,8 +46,9 @@ changes and downstream behavior in one reviewable unit.
 
 Proof-specific file tests use the `proofs/` filter: explicit `(prove ...)`
 fixtures under `tests/proofs` plus every proof-compatible file under
-proof-testing mode. Proof testing turns checks into proof queries and snapshots
-the generated proofs. Use `make proof-tests` for focused iteration and
+proof-testing mode. Proof testing turns checks outside `fail` into proof queries
+and snapshots the generated proofs; checks inside `fail` remain negative
+assertions. Use `make proof-tests` for focused iteration and
 `make rust-check` or `make check` for the final compatibility gate.
 
 ## Benchmarking

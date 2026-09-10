@@ -79,10 +79,12 @@ struct Args {
     /// Run with proof generation enabled
     #[clap(long)]
     proofs: bool,
-    /// Enable proof testing, turning all `check` statements into `prove` statements
+    /// Enable proof testing, turning every `check` outside `fail` into a `prove` statement.
+    /// Checks inside `fail` remain negative assertions.
     #[clap(long)]
     proof_testing: bool,
-    /// Extract proofs for all `check` statements without verifying them
+    /// Extract proofs for every `check` outside `fail` without verifying them.
+    /// Checks inside `fail` remain negative assertions.
     #[clap(long, conflicts_with_all = ["proofs", "proof_testing"])]
     proof_extraction: bool,
 }

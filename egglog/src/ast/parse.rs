@@ -380,7 +380,7 @@ impl Parser {
                 // Parse sort - the :internal-* annotations and container sorts are mutually exclusive
                 // (sort <name>)
                 // (sort <name> :internal-uf <uf-function>)
-                // (sort <name> :internal-proof-names <congr> <congr-all> <trans> <sym> <normalize> <fiat> <proj> <proj-all>)
+                // (sort <name> :internal-proof-names <congr> <congr-all> <trans> <sym> <normalize> <fiat> <proj> <proj-prim>)
                 // (sort <name> (<container sort> <argument sort>*))
                 match tail {
                     [name] => vec![Command::Sort {
@@ -449,7 +449,7 @@ impl Parser {
                                         normalize,
                                         fiat,
                                         proj,
-                                        proj_all,
+                                        proj_prim,
                                     ],
                                 ) => {
                                     proof_constructors = Some(ProofConstructorNames {
@@ -462,13 +462,14 @@ impl Parser {
                                             .expect_atom("container-normalize constructor")?,
                                         fiat: fiat.expect_atom("fiat constructor")?,
                                         proj: proj.expect_atom("proj constructor")?,
-                                        proj_all: proj_all.expect_atom("proj-all constructor")?,
+                                        proj_prim: proj_prim
+                                            .expect_atom("proj-prim constructor")?,
                                     });
                                 }
                                 _ => {
                                     return error!(
                                         span,
-                                        "usages:\n(sort <name>)\n(sort <name> :internal-uf <uf-constructor> [<uf-index>])\n(sort <name> :internal-proof-names <congr> <congr-all> <trans> <sym> <normalize> <fiat> <proj> <proj-all>)\n(sort <name> (<container sort> <argument sort>*))"
+                                        "usages:\n(sort <name>)\n(sort <name> :internal-uf <uf-constructor> [<uf-index>])\n(sort <name> :internal-proof-names <congr> <congr-all> <trans> <sym> <normalize> <fiat> <proj> <proj-prim>)\n(sort <name> (<container sort> <argument sort>*))"
                                     );
                                 }
                             }
@@ -508,7 +509,7 @@ impl Parser {
                     let mut merge = None;
                     let mut hidden = false;
                     let mut let_binding = false;
-                    let mut term_constructor = None;
+                    let mut internal_view = None;
                     let mut unextractable = false;
                     let mut identity_vals = None;
                     let mut cost = None;
@@ -566,8 +567,19 @@ impl Parser {
                             (":internal-hidden", []) => hidden = true,
                             (":internal-let", []) => let_binding = true,
                             (":unextractable", []) => unextractable = true,
-                            (":internal-term-constructor", [tc]) => {
-                                term_constructor = Some(tc.expect_atom("term constructor name")?)
+                            (":internal-view", [kind]) => {
+                                internal_view =
+                                    Some(match kind.expect_atom("view kind")?.as_str() {
+                                        "constructor" => ViewKind::Constructor,
+                                        "function" => ViewKind::Function,
+                                        other => {
+                                            return error!(
+                                                span,
+                                                "unknown :internal-view kind {other}, expected \
+                                             `constructor` or `function`"
+                                            );
+                                        }
+                                    })
                             }
                             (":internal-identity-vals", [k]) => {
                                 identity_vals =
@@ -593,7 +605,7 @@ impl Parser {
                         merge,
                         hidden,
                         let_binding,
-                        term_constructor,
+                        internal_view,
                         unextractable,
                         identity_vals,
                         cost,
@@ -613,7 +625,7 @@ impl Parser {
                 // (constructor <name> (<input sort>*) <output sort>)
                 // (constructor <name> (<input sort>*) <output sort> :cost <cost>)
                 // (constructor <name> (<input sort>*) <output sort> :unextractable)
-                // (constructor <name> (<input sort>*) <output sort> :internal-term-constructor <constructor name>)
+                // (constructor <name> (<input sort>*) <output sort>)
                 match tail {
                     [name, inputs, output, rest @ ..] => {
                         let mut cost = None;
@@ -638,7 +650,6 @@ impl Parser {
                             unextractable,
                             hidden,
                             let_binding,
-                            term_constructor: None,
                         }]
                     }
                     _ => {
@@ -982,7 +993,21 @@ impl Parser {
                     span,
                     name: name.expect_atom("table name")?,
                     file: file.expect_string("file name")?,
+                    proof_base: None,
                 }],
+                // `:internal-proof-base` survives a re-parse of the encoded
+                // program, which is where the loader reads it (see
+                // `EGraph::native_input`).
+                [name, file, base_kw, base]
+                    if base_kw.expect_atom("keyword")? == ":internal-proof-base" =>
+                {
+                    vec![Command::Input {
+                        span,
+                        name: name.expect_atom("table name")?,
+                        file: file.expect_string("file name")?,
+                        proof_base: Some(base.expect_uint("proof base")?),
+                    }]
+                }
                 _ => return error!(span, "usage: (input <table name> \"<file name>\")"),
             },
             "output" => match tail {
@@ -1538,6 +1563,17 @@ mod tests {
         let s = r#"(f (g a 3) 4.0 (H "hello"))"#;
         let e = Parser::default().get_expr_from_string(None, s).unwrap();
         assert_eq!(format!("{e}"), s);
+    }
+
+    /// The proof encoding declares its views with `:internal-view`, and
+    /// round-tripping a program through `Display` has to preserve them.
+    #[test]
+    fn a_view_declaration_round_trips_through_display() {
+        for kind in ["constructor", "function"] {
+            let s = format!("(function V (i64) i64 :no-merge :internal-view {kind})");
+            let parsed = Parser::default().get_program_from_string(None, &s).unwrap();
+            assert_eq!(format!("{}", parsed[0]), s);
+        }
     }
 
     #[test]

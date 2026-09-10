@@ -160,8 +160,8 @@ expression: proof_snapshot
 (let t0 (WrapVec (vec-of (Z) (Z))))
 (let t1 (OutWrap t0))
 (Rule
-  (= (@ExistsConstructor15) (@ExistsConstructor15))
-  (name "@prove_exists_rule15")
+  (= (@ExistsConstructor14) (@ExistsConstructor14))
+  (name "@prove_exists_rule14")
   (premises
     prf0
     prf0

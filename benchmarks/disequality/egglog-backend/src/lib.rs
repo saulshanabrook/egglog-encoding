@@ -243,7 +243,6 @@ fn language_declarations(
                 unextractable: false,
                 hidden: false,
                 let_binding: false,
-                term_constructor: None,
             }),
     );
     commands.push(Command::Function {
@@ -253,7 +252,7 @@ fn language_declarations(
         merge: Some(Merge::result_only(Expr::Var(span, "old".to_owned()))),
         hidden: false,
         let_binding: false,
-        term_constructor: None,
+        internal_view: None,
         unextractable: false,
         identity_vals: None,
         cost: None,

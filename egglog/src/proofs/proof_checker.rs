@@ -51,7 +51,9 @@ pub(crate) struct ActionContext {
 
 /// Recover top-level globals from either source `let` actions or their
 /// desugared `:internal-let` function-and-set representation.
-fn global_actions(prog: &[ResolvedNCommand]) -> Vec<GenericAction<ResolvedCall, ResolvedVar>> {
+pub(crate) fn gather_global_actions(
+    prog: &[ResolvedNCommand],
+) -> impl Iterator<Item = GenericAction<ResolvedCall, ResolvedVar>> {
     let internal_lets = prog
         .iter()
         .filter_map(|command| match command {
@@ -88,7 +90,7 @@ fn global_actions(prog: &[ResolvedNCommand]) -> Vec<GenericAction<ResolvedCall, 
     }
 
     prog.iter()
-        .filter_map(|command| {
+        .filter_map(move |command| {
             let GenericNCommand::CoreAction(action) = command else {
                 return None;
             };
@@ -114,14 +116,13 @@ fn global_actions(prog: &[ResolvedNCommand]) -> Vec<GenericAction<ResolvedCall, 
                 action => action.visit_exprs(&mut replace),
             })
         })
-        .collect()
 }
 
 fn process_global_actions(
     prog: &[ResolvedNCommand],
     term_dag: &mut TermDag,
 ) -> Result<ActionContext, ProofCheckError> {
-    let actions = global_actions(prog);
+    let actions = gather_global_actions(prog).collect::<Vec<_>>();
     let actions = actions.iter().collect::<Vec<_>>();
     process_actions("global_actions", HashMap::default(), &actions, term_dag)
 }

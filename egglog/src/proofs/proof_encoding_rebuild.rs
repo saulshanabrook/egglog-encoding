@@ -38,7 +38,7 @@ impl ProofInstrumentor<'_> {
         let children = children_vec.join(" ");
         let in_sorts = ListDisplay(input.iter().map(|s| s.name()).collect::<Vec<_>>(), " ");
         let subsumed_name = self.subsumed_name(name);
-        let view_name = self.view_name(name);
+        let view_name = name.to_string();
         let subsume_ruleset = self.proof_names().subsume_ruleset_name.clone();
         let rebuilding_ruleset = self.proof_names().rebuilding_ruleset_name.clone();
         let fresh_name = self.egraph.parser.symbol_gen.fresh("subsume_rule");
@@ -125,7 +125,7 @@ impl ProofInstrumentor<'_> {
         // Key columns of the view row: the children (the value tuple is unkeyed).
         let n_keys = n - 1;
         let key_vars: Vec<String> = (0..n_keys).map(child).collect();
-        let view_name = self.view_name(&fdecl.name);
+        let view_name = fdecl.name.to_string();
         let keys_str = format!("{}", ListDisplay(&key_vars, " "));
 
         let mut rules = String::new();
@@ -223,7 +223,7 @@ impl ProofInstrumentor<'_> {
             uf_canon_prim_name, uf_canon_proof_prim_name,
         };
         let proofs = self.proofs_enabled();
-        let view_name = self.view_name(&fdecl.name);
+        let view_name = fdecl.name.to_string();
         let keys_str = format!("{}", ListDisplay(key_vars, " "));
         let n_keys = key_vars.len();
 
@@ -379,7 +379,7 @@ impl ProofInstrumentor<'_> {
             (String::new(), "()".to_string())
         };
         let set_canon = self.update_fd_view(&fdecl.name, key_vars, &canon, &pf_arg);
-        let view_name = self.view_name(&fdecl.name);
+        let view_name = fdecl.name.to_string();
         let keys_str = ListDisplay(key_vars, " ").to_string();
         let actions = format!("{proof_lets}\n(delete ({view_name} {keys_str}))\n{set_canon}");
         let facts = format!(
@@ -440,7 +440,7 @@ impl ProofInstrumentor<'_> {
             (String::new(), "()".to_string())
         };
         let set_canon = self.update_fd_view(&fdecl.name, key_vars, &canon, &pf_arg);
-        let view_name = self.view_name(&fdecl.name);
+        let view_name = fdecl.name.to_string();
         let keys_str = ListDisplay(key_vars, " ").to_string();
         let facts = format!("{query_view}\n{canon_fact}\n(!= {value_var} {canon})");
         let actions = format!("{proof_lets}\n(delete ({view_name} {keys_str}))\n{set_canon}");

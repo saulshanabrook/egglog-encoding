@@ -736,16 +736,16 @@ fn test_cant_subsume_merge() {
 }
 
 #[test]
-fn constructor_term_constructor_is_rejected() {
+fn constructor_internal_view_is_rejected() {
     let mut egraph = EGraph::default();
-    // Proof-encoding view tables now use this as a function annotation,
-    // so constructor syntax should reject `:internal-term-constructor`.
+    // Proof-encoding views use a function annotation, so constructor syntax
+    // should reject `:internal-view`.
     let res = egraph.parse_and_run_program(
         None,
         r#"
         (sort Expr)
         (sort View)
-        (constructor ExprView (Expr Expr) View :internal-term-constructor Expr)
+        (constructor ExprView (Expr Expr) View :internal-view constructor)
         "#,
     );
 
@@ -902,6 +902,18 @@ fn test_print_function() {
     let s = "(function f () i64 :no-merge) (set (f) 2) (print-function f)";
     let outputs = EGraph::default().parse_and_run_program(None, s).unwrap();
     assert_eq!(outputs[0].to_string(), "(\n   (f) -> 2\n)\n");
+}
+
+#[test]
+fn function_to_dag_uses_logical_view_layout() {
+    let s = "(datatype N (n :cost 0))
+             (function f (i64 N) Unit :no-merge :internal-view constructor)
+             (set (f 1 (n)) ())";
+    let mut egraph = EGraph::default();
+    egraph.parse_and_run_program(None, s).unwrap();
+    let (inputs, outputs, termdag) = egraph.function_to_dag("f", 1, true).unwrap();
+    assert_eq!(termdag.to_string(inputs[0]), "(f 1)");
+    assert_eq!(termdag.to_string(outputs.unwrap()[0]), "(n)");
 }
 
 #[test]

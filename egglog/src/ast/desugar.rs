@@ -18,7 +18,7 @@ pub(crate) fn desugar_command(
             merge,
             hidden,
             let_binding,
-            term_constructor,
+            internal_view,
             unextractable,
             identity_vals,
             cost,
@@ -27,18 +27,17 @@ pub(crate) fn desugar_command(
             let mut fdecl = FunctionDecl::function(span, name, schema, merge);
             fdecl.internal_hidden = hidden;
             fdecl.internal_let = let_binding;
-            fdecl.term_constructor = term_constructor;
+            fdecl.internal_view = internal_view;
             fdecl.identity_vals = identity_vals;
             fdecl.cost = cost;
             fdecl.internal_term_node = term_node;
-            // Functions with term_constructor are view tables that should be
-            // extractable unless explicitly marked unextractable
-            if fdecl.term_constructor.is_some() {
+            // A view table is extractable unless explicitly marked unextractable
+            if fdecl.internal_view.is_some() {
                 fdecl.unextractable = unextractable;
             } else if unextractable {
                 fdecl.unextractable = true;
             }
-            // For regular functions without term_constructor, keep the default
+            // For regular functions, keep the default
             // unextractable=true from FunctionDecl::function()
             vec![NCommand::Function(fdecl)]
         }
@@ -50,12 +49,10 @@ pub(crate) fn desugar_command(
             unextractable,
             hidden,
             let_binding,
-            term_constructor,
         } => {
             let mut fdecl =
                 FunctionDecl::constructor(span, name, schema, cost, unextractable, hidden);
             fdecl.internal_let = let_binding;
-            fdecl.term_constructor = term_constructor;
             std::iter::once(NCommand::Function(fdecl)).collect()
         }
         Command::Relation { span, name, inputs } => desugar_relation(parser, span, name, inputs),
@@ -213,7 +210,7 @@ pub(crate) fn desugar_command(
             // one `fail`, so the assertion covers all of them.
             let mut desugared = vec![];
             for cmd in cmds {
-                if let Command::Include(..) = cmd {
+                if matches!(&cmd, Command::Include(..)) {
                     // `include` is expanded before desugaring, so it never reaches
                     // here from a top-level program; only a wrapped one can.
                     return Err(Error::DesugarError(
@@ -221,7 +218,45 @@ pub(crate) fn desugar_command(
                         "include is not allowed inside (fail ...)".to_string(),
                     ));
                 }
-                desugared.extend(desugar_command(cmd, parser, proof_testing)?);
+                // Term/proof encoding reparses its own generated bindings. They
+                // use the parser's reserved prefix, so they cannot be written by
+                // a user, and must stay inside the transaction with the command
+                // that consumes them.
+                let is_user_let = matches!(
+                    &cmd,
+                    Command::Action(Action::Let(_, name, _))
+                        if !parser.symbol_gen.is_reserved(name)
+                );
+                if is_user_let
+                    || matches!(
+                        &cmd,
+                        Command::Sort { .. }
+                            | Command::Datatype { .. }
+                            | Command::Datatypes { .. }
+                            | Command::Constructor { .. }
+                            | Command::Relation { .. }
+                            | Command::Function { .. }
+                            | Command::Index { .. }
+                            | Command::AddRuleset(..)
+                            | Command::UnstableCombinedRuleset(..)
+                            | Command::Rule { .. }
+                            | Command::Rewrite(..)
+                            | Command::BiRewrite(..)
+                            | Command::Prove(..)
+                            | Command::ProveExists(..)
+                            | Command::LetBegin(..)
+                            | Command::Push(..)
+                            | Command::Pop(..)
+                            | Command::UserDefined(..)
+                    )
+                {
+                    return Err(Error::DesugarError(
+                        span.clone(),
+                        "prove, prove-exists, definitions, user-defined commands, push, and pop are not allowed inside (fail ...)"
+                            .to_string(),
+                    ));
+                }
+                desugared.extend(desugar_command(cmd, parser, false)?);
             }
             if desugared.is_empty() {
                 return Err(Error::DesugarError(
@@ -231,8 +266,18 @@ pub(crate) fn desugar_command(
             }
             return Ok(vec![NCommand::Fail(span, desugared)]);
         }
-        Command::Input { span, name, file } => {
-            vec![NCommand::Input { span, name, file }]
+        Command::Input {
+            span,
+            name,
+            file,
+            proof_base,
+        } => {
+            vec![NCommand::Input {
+                span,
+                name,
+                file,
+                proof_base,
+            }]
         }
         Command::UserDefined(span, name, args) => {
             vec![NCommand::UserDefined(span, name, args)]

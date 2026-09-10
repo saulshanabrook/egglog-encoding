@@ -44,7 +44,7 @@ use crate::{
     sort::{F, S},
     typechecking::FuncType,
 };
-use egglog_bridge::{ActionRegistry, TableAction, TableKind};
+use egglog_bridge::{ActionRegistry, TableAction, TableKind, TableReadProjectionError};
 use smallvec::SmallVec;
 
 /// Inline scratch for a row of column values. Matches the
@@ -324,11 +324,15 @@ pub trait Read<'a, 'db: 'a>: Core<'a, 'db> + RegistrySealed<'a, 'db> {
     /// use [`Read::eclass_of`] for those.
     fn lookup<K: IntoValues>(&self, name: &str, key: K) -> Result<Option<Value>, Error> {
         let action = lookup_action(self.registry(), name)?;
-        check_subtype(name, &action, TableKind::Function, "function")?;
-        check_single_output(name, &action, "lookup")?;
+        let input_arity = check_read_projection(
+            name,
+            &action,
+            Some((TableKind::Function, "function")),
+            Some("lookup"),
+        )?;
         let key_values: ValueRow = key.into_values(self.base_values()).collect();
-        check_arity(name, &action, key_values.len())?;
-        Ok(action.lookup(self.es(), &key_values))
+        check_arity(name, input_arity, key_values.len())?;
+        Ok(action.lookup_visible(self.es(), &key_values))
     }
 
     /// Look up a constructor's eclass at the given inputs, without
@@ -338,19 +342,25 @@ pub trait Read<'a, 'db: 'a>: Core<'a, 'db> + RegistrySealed<'a, 'db> {
     /// use [`Read::lookup`] for those.
     fn eclass_of<K: IntoValues>(&self, name: &str, inputs: K) -> Result<Option<Value>, Error> {
         let action = lookup_action(self.registry(), name)?;
-        check_subtype(name, &action, TableKind::Constructor, "constructor")?;
+        let input_arity = check_read_projection(
+            name,
+            &action,
+            Some((TableKind::Constructor, "constructor")),
+            None,
+        )?;
         let key_values: ValueRow = inputs.into_values(self.base_values()).collect();
-        check_arity(name, &action, key_values.len())?;
-        Ok(action.lookup(self.es(), &key_values))
+        check_arity(name, input_arity, key_values.len())?;
+        Ok(action.lookup_visible(self.es(), &key_values))
     }
 
     /// True iff a row with the given key exists in the table. Works
     /// for any subtype — never mints.
     fn contains<K: IntoValues>(&self, name: &str, key: K) -> Result<bool, Error> {
         let action = lookup_action(self.registry(), name)?;
+        let input_arity = check_read_projection(name, &action, None, None)?;
         let key_values: ValueRow = key.into_values(self.base_values()).collect();
-        check_arity(name, &action, key_values.len())?;
-        Ok(action.lookup(self.es(), &key_values).is_some())
+        check_arity(name, input_arity, key_values.len())?;
+        Ok(action.lookup_visible(self.es(), &key_values).is_some())
     }
 
     /// Return the current row count for the named table, or `None` if no table
@@ -384,16 +394,17 @@ pub trait Read<'a, 'db: 'a>: Core<'a, 'db> + RegistrySealed<'a, 'db> {
         mut f: impl FnMut(Enode<'_>) -> bool,
     ) -> Result<(), Error> {
         let action = lookup_action(self.registry(), name)?;
-        check_subtype(name, &action, TableKind::Constructor, "constructor")?;
-        action.for_each_while(self.es(), |row| {
-            let (eclass, children) = row
-                .vals
-                .split_last()
-                .expect("constructor row has at least an eclass column");
+        check_read_projection(
+            name,
+            &action,
+            Some((TableKind::Constructor, "constructor")),
+            None,
+        )?;
+        action.for_each_visible_while(self.es(), |children, eclass, subsumed| {
             f(Enode {
                 children,
-                eclass: *eclass,
-                subsumed: row.subsumed,
+                eclass,
+                subsumed,
             })
         });
         Ok(())
@@ -421,17 +432,17 @@ pub trait Read<'a, 'db: 'a>: Core<'a, 'db> + RegistrySealed<'a, 'db> {
         mut f: impl FnMut(FunctionEntry<'_>) -> bool,
     ) -> Result<(), Error> {
         let action = lookup_action(self.registry(), name)?;
-        check_subtype(name, &action, TableKind::Function, "function")?;
-        check_single_output(name, &action, "function_entries")?;
-        action.for_each_while(self.es(), |row| {
-            let (output, inputs) = row
-                .vals
-                .split_last()
-                .expect("function row has at least an output column");
+        check_read_projection(
+            name,
+            &action,
+            Some((TableKind::Function, "function")),
+            Some("function_entries"),
+        )?;
+        action.for_each_visible_while(self.es(), |inputs, output, subsumed| {
             f(FunctionEntry {
                 inputs,
-                output: *output,
-                subsumed: row.subsumed,
+                output,
+                subsumed,
             })
         });
         Ok(())
@@ -487,7 +498,7 @@ pub trait Write<'a, 'db: 'a>: Core<'a, 'db> + RegistrySealed<'a, 'db> {
         check_single_output(name, &action, "set")?;
         let bv = self.base_values();
         let mut row: ValueRow = key.into_values(bv).collect();
-        check_arity(name, &action, row.len())?;
+        check_arity(name, action.input_arity(), row.len())?;
         row.push(value.into_value(bv));
         action.insert(self.es_mut(), row.into_iter());
         Ok(())
@@ -504,7 +515,7 @@ pub trait Write<'a, 'db: 'a>: Core<'a, 'db> + RegistrySealed<'a, 'db> {
         let action = lookup_action(self.registry(), name)?;
         check_subtype(name, &action, TableKind::Constructor, "constructor")?;
         let key: ValueRow = inputs.into_values(self.base_values()).collect();
-        check_arity(name, &action, key.len())?;
+        check_arity(name, action.input_arity(), key.len())?;
         let value = action
             .lookup_or_insert(self.es_mut(), &key)
             .expect("constructor lookup_or_insert returned None");
@@ -515,7 +526,7 @@ pub trait Write<'a, 'db: 'a>: Core<'a, 'db> + RegistrySealed<'a, 'db> {
     fn remove<K: IntoValues>(&mut self, name: &str, key: K) -> Result<(), Error> {
         let action = lookup_action(self.registry(), name)?;
         let key_values: ValueRow = key.into_values(self.base_values()).collect();
-        check_arity(name, &action, key_values.len())?;
+        check_arity(name, action.input_arity(), key_values.len())?;
         action.remove(self.es_mut(), &key_values);
         Ok(())
     }
@@ -524,7 +535,7 @@ pub trait Write<'a, 'db: 'a>: Core<'a, 'db> + RegistrySealed<'a, 'db> {
     fn subsume<K: IntoValues>(&mut self, name: &str, key: K) -> Result<(), Error> {
         let action = lookup_action(self.registry(), name)?;
         let key_values: ValueRow = key.into_values(self.base_values()).collect();
-        check_arity(name, &action, key_values.len())?;
+        check_arity(name, action.input_arity(), key_values.len())?;
         action.subsume(self.es_mut(), key_values.into_iter());
         Ok(())
     }
@@ -577,8 +588,7 @@ fn check_subtype(
     .into())
 }
 
-fn check_arity(table: &str, action: &TableAction, got: usize) -> Result<(), Error> {
-    let expected = action.input_arity();
+fn check_arity(table: &str, expected: usize, got: usize) -> Result<(), Error> {
     if got != expected {
         return Err(ApiError::WrongArity {
             table: table.to_string(),
@@ -588,6 +598,40 @@ fn check_arity(table: &str, action: &TableAction, got: usize) -> Result<(), Erro
         .into());
     }
     Ok(())
+}
+
+fn check_read_projection(
+    name: &str,
+    action: &TableAction,
+    expected_kind: Option<(TableKind, &'static str)>,
+    single_output_method: Option<&'static str>,
+) -> Result<usize, Error> {
+    match action.validate_read_projection(
+        expected_kind.map(|(kind, _)| kind),
+        single_output_method.is_some(),
+    ) {
+        Ok(input_arity) => Ok(input_arity),
+        Err(TableReadProjectionError::WrongKind { actual }) => {
+            let actual = match actual {
+                TableKind::Function => "function",
+                TableKind::Constructor => "constructor",
+            };
+            Err(ApiError::WrongSubtype {
+                name: name.to_string(),
+                expected: expected_kind
+                    .expect("kind validation only fails when an expected kind was supplied")
+                    .1,
+                actual,
+            }
+            .into())
+        }
+        Err(TableReadProjectionError::MultipleOutputs) => Err(ApiError::TupleOutputUnsupported {
+            name: name.to_string(),
+            method: single_output_method
+                .expect("output validation only runs when a method was supplied"),
+        }
+        .into()),
+    }
 }
 
 fn check_single_output(

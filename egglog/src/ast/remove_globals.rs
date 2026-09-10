@@ -113,7 +113,7 @@ impl GlobalRemover<'_> {
                         internal_hidden: false,
                         internal_let: true,
                         span: span.clone(),
-                        term_constructor: None,
+                        internal_view: None,
                         identity_vals: None,
                         internal_term_node: false,
                     };
@@ -164,7 +164,7 @@ impl GlobalRemover<'_> {
                     internal_hidden: false,
                     internal_let: true,
                     span: span.clone(),
-                    term_constructor: None,
+                    internal_view: None,
                     identity_vals: None,
                     internal_term_node: false,
                 };
@@ -237,9 +237,7 @@ impl GlobalRemover<'_> {
                 };
                 vec![GenericNCommand::NormRule { rule: new_rule }]
             }
-            // Handle the corner case where a global command is wrapped in (fail).
-            // Remove globals from every wrapped command and keep the whole flattened
-            // result inside the `fail`.
+            // Handle commands inside fail that reference existing globals.
             GenericNCommand::Fail(span, cmds) => {
                 let mut removed = vec![];
                 for cmd in cmds {

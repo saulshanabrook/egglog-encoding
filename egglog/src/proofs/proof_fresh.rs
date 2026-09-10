@@ -1,14 +1,16 @@
-//! The term/proof encoding's mint + canonicalize primitives.
+//! The term/proof encoding's fresh-id, view-interning, and proof-row primitives.
 //!
-//! With terms and proofs encoded as relations (rather than constructors), an
-//! e-node / proof-node id is no longer minted by a constructor call. The
-//! encoding mints one and writes the row in a single statement:
+//! User terms are stored directly in source-named FD views, rather than in
+//! separate term relations. In term-only mode, building a term takes a bare
+//! fresh e-class and interns it through the view (`()` is the proof-off payload):
 //!
 //! ```text
-//! (let fresh (mint-Add! a b))
+//! (let fresh (get-fresh! "Math"))
+//! (let canonical (set-if-empty-Add! a b fresh ()))
 //! ```
 //!
-//! `get-fresh!` remains for the few sites wanting an id no row mentions.
+//! Proof nodes remain append-only relations. Their `mint-<Relation>!` primitive
+//! mints a proof id and writes its row in one statement.
 //!
 //! These primitives carry only type constraints here. Their runtime entrypoints
 //! operate directly on the e-graph's relational storage.
@@ -18,9 +20,9 @@ use egglog_numeric_id::NumericId;
 
 /// Deterministic name of an FD view's `set-if-empty` primitive. The stable
 /// `set-if-empty-` prefix carries no internal-symbol marker, so a name-sanitizer
-/// leaves it alone; only the embedded `view_name` (a fresh internal symbol) is
-/// rewritten, and it is rewritten identically here and at the view's declaration,
-/// so the primitive stays resolvable when the desugared program is re-parsed.
+/// leaves it alone. Any internal-symbol marker already present in the embedded
+/// `view_name` is rewritten identically here and at the view's declaration, so
+/// the primitive stays resolvable when the desugared program is re-parsed.
 pub(crate) fn set_if_empty_prim_name(view_name: &str) -> String {
     format!("set-if-empty-{view_name}!")
 }
@@ -31,7 +33,7 @@ pub(crate) fn view_proof_prim_name(view_name: &str) -> String {
     format!("view-proof-{view_name}")
 }
 
-/// Deterministic name of a term-node relation's mint primitive. See
+/// Deterministic name of a proof-node relation's mint primitive. See
 /// [`set_if_empty_prim_name`] for why the prefix carries no internal marker.
 pub(crate) fn mint_prim_name(relation: &str) -> String {
     format!("mint-{relation}!")
@@ -43,7 +45,7 @@ pub(crate) fn mint_prim_relation(prim: &str) -> Option<&str> {
     prim.strip_prefix("mint-")?.strip_suffix('!')
 }
 
-/// Register a term-node relation's mint primitive. `arg_sorts` is the
+/// Register a proof-node relation's mint primitive. `arg_sorts` is the
 /// relation's input columns up to the minted id, whose sort is `id_sort`. The
 /// runtime entrypoint writes the e-graph's storage.
 pub(crate) fn register_mint(
@@ -60,7 +62,7 @@ pub(crate) fn register_mint(
     };
     let name = relation.to_string();
     eg.add_internal_primitive(mint, WriteState::valid_contexts(), move |egraph, _| {
-        // A term-node relation's one value column is `Unit`: the row says only
+        // A proof-node relation's one value column is `Unit`: the row says only
         // that the node exists.
         let unit = egraph.base_values().get(());
         egraph.register_mint_row(name.clone(), n_args, vec![unit])

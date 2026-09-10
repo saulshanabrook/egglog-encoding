@@ -60,15 +60,14 @@ impl ProofInstrumentor<'_> {
             }
         };
 
-        // The witness is a row of the constructor's view, whose proof column
-        // states `eclass = f(children)` — the constructor's existence. Every
-        // encoded function has such a view, so the two guards below only catch a
-        // name the encoding never rewrote: reject it rather than panic.
-        let view_name = self.view_name(&func.name);
-        let Some(view) = self.egraph.functions.get(&view_name) else {
+        // The witness is a row of the function's view, whose proof column states
+        // `eclass = f(children)` — the constructor's existence. The guards below
+        // only catch a name the encoding never rewrote.
+        let Some(view) = self.egraph.functions.get(&func.name) else {
             return Err(ProveExistsError::RequiresConstructor);
         };
         let view_id = view.backend_id;
+        let named = func.name.clone();
         let Some(proof_sort) = view.schema.outputs.last().cloned() else {
             return Err(ProveExistsError::RequiresConstructor);
         };
@@ -88,14 +87,12 @@ impl ProofInstrumentor<'_> {
         });
         let proof_value = best_row.map(|row| row[proof_index]).ok_or_else(|| {
             ProveExistsError::QueryDidNotMatch {
-                constructor: func.name.clone(),
+                constructor: named.clone(),
             }
         })?;
 
         let proof_term_id = extract_root(self.egraph, &mut termdag, proof_value, proof_sort)
-            .unwrap_or_else(|| {
-                panic!("failed to extract proof term for constructor {}", func.name)
-            });
+            .unwrap_or_else(|| panic!("failed to extract proof term for constructor {named}"));
 
         let container_normalizers = self
             .egraph

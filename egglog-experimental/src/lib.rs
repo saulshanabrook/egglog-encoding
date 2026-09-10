@@ -104,9 +104,6 @@ fn new_experimental_egraph_with_options(
 ) -> EGraph {
     let mut egraph = EGraph::default();
     add_experimental_extensions(&mut egraph, extended_run_schedule, disequality_encoding);
-    if disequality_encoding == DisequalityEncoding::DisequalityEdges {
-        egraph = egraph.with_term_encoding_unsupported(DE_TERM_ENCODING_UNSUPPORTED);
-    }
     egraph
 }
 
