@@ -195,6 +195,14 @@ fn generate_tests(glob: &str) -> Vec<Trial> {
 
     for entry in glob::glob(glob).unwrap() {
         let path = entry.unwrap();
+        // The disequality unit tests supply each encoding and parameter facts,
+        // then replay the committed desugared snapshots in ordinary mode.
+        if path
+            .components()
+            .any(|component| component.as_os_str() == "disequality")
+        {
+            continue;
+        }
         let is_fixture = path
             .components()
             .any(|component| component.as_os_str() == "fixtures");

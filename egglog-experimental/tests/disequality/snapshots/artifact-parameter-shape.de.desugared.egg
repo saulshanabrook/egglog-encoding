@@ -1,0 +1,33 @@
+(sort Expr)
+(constructor Num (i64) Expr)
+(constructor Add (Expr Expr) Expr)
+(constructor Mul (Expr Expr) Expr)
+(sort __disequality-support)
+(ruleset __disequality)
+(sort __disequality-neighbor-set-Expr (Set Expr))
+(function __disequality-neighbors-Expr (Expr) __disequality-neighbor-set-Expr :merge (set-union old new) :unextractable :internal-hidden)
+(rule ((set-contains (__disequality-neighbors-Expr __disequality-x) __disequality-x))
+      ((panic "disequality constraint contradicted"))
+        :ruleset __disequality :name "__disequality-de-contradiction-Expr")
+(begin
+   (set (__disequality-neighbors-Expr (Num 1)) (set-of (Num 2)))
+   (set (__disequality-neighbors-Expr (Num 2)) (set-of (Num 1)))
+)
+(begin
+   (set (__disequality-neighbors-Expr (Num 1)) (set-of (Num 3)))
+   (set (__disequality-neighbors-Expr (Num 3)) (set-of (Num 1)))
+)
+(begin
+   (set (__disequality-neighbors-Expr (Num 2)) (set-of (Num 3)))
+   (set (__disequality-neighbors-Expr (Num 3)) (set-of (Num 2)))
+)
+(begin
+   (set (__disequality-neighbors-Expr (Add (Num 1) (Num 2))) (set-of (Add (Num 2) (Num 1))))
+   (set (__disequality-neighbors-Expr (Add (Num 2) (Num 1))) (set-of (Add (Num 1) (Num 2))))
+)
+(begin
+   (set (__disequality-neighbors-Expr (Mul (Num 1) (Num 3))) (set-of (Mul (Num 2) (Num 3))))
+   (set (__disequality-neighbors-Expr (Mul (Num 2) (Num 3))) (set-of (Mul (Num 1) (Num 3))))
+)
+(union (Num 1) (Num 2))
+(fail (run-schedule (saturate (run __disequality))))
