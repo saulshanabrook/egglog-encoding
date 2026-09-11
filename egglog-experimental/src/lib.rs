@@ -59,6 +59,10 @@ mod either;
 pub use either::*;
 mod container_primitives;
 pub use container_primitives::*;
+mod disequality;
+pub use disequality::{
+    DisequalityEncoding, check_disequalities_command, check_known_disequal_command, disequal_action,
+};
 
 // Sugar modules using parse-time macros
 mod sugar;
@@ -68,7 +72,17 @@ mod keep_best;
 pub use keep_best::KeepBestCommand;
 
 pub fn new_experimental_egraph() -> EGraph {
-    new_experimental_egraph_with_options(true)
+    new_experimental_egraph_with_disequality_encoding(DisequalityEncoding::default())
+}
+
+/// Construct a normal-mode e-graph with the selected disequality encoding.
+///
+/// Disequality support is experimental and is not installed by the term or
+/// proof constructors in this release.
+pub fn new_experimental_egraph_with_disequality_encoding(encoding: DisequalityEncoding) -> EGraph {
+    let mut egraph = new_experimental_egraph_with_options(true);
+    disequality::add_disequality_support(&mut egraph, encoding);
+    egraph
 }
 
 pub fn new_experimental_egraph_for_proofs() -> EGraph {
