@@ -3,6 +3,16 @@
 
 Artifact for the paper #309 "Dis/Equality Graphs"
 
+This repository vendors the source portion of the published artifact and adds
+direct egglog backends for its three case studies. See
+[`ARTIFACT_IMPORT.md`](ARTIFACT_IMPORT.md) for the artifact provenance and
+two-stage review boundary. See
+[`EGGLOG_INTEGRATION.md`](EGGLOG_INTEGRATION.md) for architecture, provenance,
+validation results, generated snapshots, limitations, and reproduction
+commands. Current measurements and optimization ideas are in
+[`PERFORMANCE_ANALYSIS.md`](PERFORMANCE_ANALYSIS.md). The remainder of this
+file is the artifact's original README.
+
 
 
 # Claims Addressed By This Artifact

@@ -1,0 +1,8 @@
+---
+source: egglog-experimental/tests/files.rs
+assertion_line: 66
+expression: snapshot
+---
+((Add 1)
+ (Mul 1)
+ (Num 3))

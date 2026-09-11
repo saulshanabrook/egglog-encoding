@@ -1,5 +1,4 @@
 /target/
-/benchmarks/disequality/euf-solver/benchmarks/
 /benchmarks/disequality/euf-solver/target/
 /benchmarks/disequality/inductive-prover/propel/.js/
 /benchmarks/disequality/inductive-prover/propel/.jvm/
@@ -19,3 +18,7 @@
 /.ruff_cache/
 __pycache__/
 *.py[cod]
+
+# Generated from the pinned Dis/Equality Graphs artifact.
+/egglog-experimental/benchmarks/disequality/parameter-analysis-facts/
+/benchmarks/disequality/euf-solver/benchmarks/

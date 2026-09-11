@@ -4,41 +4,46 @@ use egglog::{file_supports_proofs, *};
 use hashbrown::HashSet;
 use libtest_mimic::Trial;
 
-struct ManualProofDisable {
+struct ManualDisable {
     file: &'static str,
     reason: &'static str,
 }
 
-const MANUAL_PROOF_DISABLED_FILES: &[ManualProofDisable] = &[
-    ManualProofDisable {
+const MANUAL_DESUGAR_DISABLED_FILES: &[ManualDisable] = &[ManualDisable {
+    file: "looking_up_global.egg",
+    reason: "the expected-failure body binds a global name; static desugaring cannot determine whether that binding survives without executing the command",
+}];
+
+const MANUAL_PROOF_DISABLED_FILES: &[ManualDisable] = &[
+    ManualDisable {
         file: "eggcc-2mm.egg",
         reason: "the full benchmark exceeds the routine proof harness resource budget; the bounded eggcc-2mm-pass1 fixture covers this workload in proof benchmarks",
     },
-    ManualProofDisable {
+    ManualDisable {
         file: "subsume.egg",
         reason: "proof-testing rewrites a check on a subsumed expression into a prove query that no longer matches",
     },
-    ManualProofDisable {
+    ManualDisable {
         file: "subsume-relation.egg",
         reason: "proof-testing rewrites a check on a subsumed relation row into a prove query that no longer matches",
     },
-    ManualProofDisable {
+    ManualDisable {
         file: "llama.egg",
         reason: "luminal transformer benchmark: too large to run in proof modes as part of the routine test suite",
     },
-    ManualProofDisable {
+    ManualDisable {
         file: "paged_llama.egg",
         reason: "luminal transformer benchmark: too large to run in proof modes as part of the routine test suite",
     },
-    ManualProofDisable {
+    ManualDisable {
         file: "qwen.egg",
         reason: "luminal transformer benchmark: too large to run in proof modes as part of the routine test suite",
     },
-    ManualProofDisable {
+    ManualDisable {
         file: "qwen3_moe.egg",
         reason: "luminal transformer benchmark: too large to run in proof modes as part of the routine test suite",
     },
-    ManualProofDisable {
+    ManualDisable {
         file: "whisper.egg",
         reason: "luminal transformer benchmark: too large to run in proof modes as part of the routine test suite",
     },
@@ -423,6 +428,9 @@ fn generate_tests(glob: &str) -> Vec<Trial> {
         let requires_proofs = run.requires_proofs();
         let proof_manually_disabled = manual_proof_disable_reason(&run.path).is_some();
         let supports_proofs = file_supports_proofs(&run.path) && !proof_manually_disabled;
+        let supports_desugaring = !MANUAL_DESUGAR_DISABLED_FILES
+            .iter()
+            .any(|disabled| run.path.ends_with(disabled.file));
 
         if !requires_proofs {
             push_trial(run.clone());
@@ -432,7 +440,7 @@ fn generate_tests(glob: &str) -> Vec<Trial> {
                 ..run.clone()
             });
         }
-        if !requires_proofs && !should_fail {
+        if !requires_proofs && !should_fail && supports_desugaring {
             push_trial(Run {
                 desugar: true,
                 ..run.clone()
@@ -454,11 +462,13 @@ fn generate_tests(glob: &str) -> Vec<Trial> {
 
             // Desugar under proof-testing, then replay the desugared program
             // while checking proofs against the original source program.
-            push_trial(Run {
-                proof_testing: true,
-                desugar: true,
-                ..run.clone()
-            });
+            if supports_desugaring {
+                push_trial(Run {
+                    proof_testing: true,
+                    desugar: true,
+                    ..run.clone()
+                });
+            }
         }
     }
 
@@ -473,6 +483,19 @@ fn generate_manual_proof_disable_snapshot_test() -> Trial {
             .collect::<Vec<_>>();
         snapshot.sort();
         insta::assert_snapshot!("proof_manual_disabled_files", snapshot.join("\n"));
+
+        Ok(())
+    })
+}
+
+fn generate_manual_desugar_disable_snapshot_test() -> Trial {
+    Trial::test("desugar_manual_disabled_files", || {
+        let mut snapshot = MANUAL_DESUGAR_DISABLED_FILES
+            .iter()
+            .map(|disabled| format!("{}: {}", disabled.file, disabled.reason))
+            .collect::<Vec<_>>();
+        snapshot.sort();
+        insta::assert_snapshot!("desugar_manual_disabled_files", snapshot.join("\n"));
 
         Ok(())
     })
@@ -513,6 +536,7 @@ fn main() {
     // Add the proof support snapshot test
     tests.push(generate_proof_support_snapshot_test());
     tests.push(generate_manual_proof_disable_snapshot_test());
+    tests.push(generate_manual_desugar_disable_snapshot_test());
 
     // ensure all the tests have unique names
     let mut names = HashSet::new();

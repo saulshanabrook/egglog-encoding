@@ -42,7 +42,12 @@ def test_pair_cli_defaults_to_current_main_off_vs_proofs() -> None:
     assert baseline == models.EndpointRequest(targets.parse_target("."), "off")
     assert candidate == models.EndpointRequest(targets.parse_target("."), "proofs")
     assert args.detail == "summary"
+    assert args.suite == "research"
     assert args.command == "benchmark"
+
+
+def test_pair_cli_selects_named_workload_suite() -> None:
+    assert benchmark.parse_benchmark_args(["--suite", "disequality"]).suite == "disequality"
 
 
 def test_compare_target_inherits_candidate_target() -> None:

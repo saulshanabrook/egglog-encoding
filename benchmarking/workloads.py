@@ -18,10 +18,11 @@ from .targets import sha256_directory, sha256_file
 
 @dataclass(frozen=True)
 class WorkloadConfig:
-    """One repository-default workload and its optional fact directory."""
+    """One named-suite workload and its optional fact directory."""
 
     file: str
     fact_directory: str | None = None
+    prepare_command: str | None = None
 
 
 DEFAULT_WORKLOADS = (
@@ -40,20 +41,40 @@ DEFAULT_WORKLOADS = (
     WorkloadConfig("egglog/tests/papers/speq-preserved-reference-suite.egg"),
 )
 
+DISEQUALITY_WORKLOADS = (
+    WorkloadConfig("egglog-experimental/benchmarks/disequality/euf-614981-model-0000.egg"),
+    WorkloadConfig(
+        file="egglog-experimental/tests/disequality/parameter-analysis.egg",
+        fact_directory="egglog-experimental/benchmarks/disequality/parameter-analysis-facts",
+        prepare_command="make disequality-parameter-facts",
+    ),
+)
+
+WORKLOAD_SUITES = {
+    "research": DEFAULT_WORKLOADS,
+    "disequality": DISEQUALITY_WORKLOADS,
+}
+
 
 def resolve_files(
     raw_files: Sequence[str],
     invocation_cwd: Path,
     fact_directory: str | None = None,
+    suite: str = "research",
 ) -> tuple[FileSpec, ...]:
     """Resolve selected or default workloads relative to the invocation directory."""
 
     if raw_files:
+        if suite != "research":
+            raise ValueError("--suite cannot be combined with explicit benchmark files")
         chosen = tuple(WorkloadConfig(file, fact_directory) for file in raw_files)
     else:
         if fact_directory is not None:
             raise ValueError("--fact-directory requires at least one explicit benchmark file")
-        chosen = DEFAULT_WORKLOADS
+        try:
+            chosen = WORKLOAD_SUITES[suite]
+        except KeyError as error:
+            raise ValueError(f"unknown benchmark suite: {suite}") from error
     files: list[FileSpec] = []
     for workload in chosen:
         display_path = workload.file
@@ -72,7 +93,8 @@ def resolve_files(
                 resolved_fact_directory = invocation_cwd / resolved_fact_directory
             resolved_fact_directory = resolved_fact_directory.resolve()
             if not resolved_fact_directory.is_dir():
-                raise FileNotFoundError(f"benchmark fact directory does not exist: {workload.fact_directory}")
+                hint = f"; prepare it with `{workload.prepare_command}`" if workload.prepare_command else ""
+                raise FileNotFoundError(f"benchmark fact directory does not exist: {workload.fact_directory}{hint}")
             fact_directory_sha256 = sha256_directory(resolved_fact_directory)
         files.append(
             FileSpec(

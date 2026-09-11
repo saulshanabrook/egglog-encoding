@@ -3,6 +3,8 @@ package propel.evaluator.egraph
 import propel.ast.Pattern.{Bind, Match}
 import propel.ast.Term.{Abs, App, Cases, Data, TypeAbs, TypeApp, Var}
 import propel.ast.{Pattern, Term, Type}
+import propel.evaluator.{EgglogLanguageSchema, EgglogOperatorSpec}
+import scala.collection.mutable
 
 /**
  * A language for writing terms interpretable by e-graphs.
@@ -46,6 +48,86 @@ object Language:
       def Match: Operator = op("match")
       def Case: Operator = op("case")
       private inline def op(name: String): Operator = Operator(s"@$name")
+
+    def egglogSchema(term: Term): EgglogLanguageSchema =
+      val operators = mutable.Map.empty[(String, Int), Option[String]]
+
+      def add(name: String, arity: Int, preferredName: Option[String] = None): Unit =
+        operators.get((name, arity)) match
+          case Some(Some(existing)) if preferredName.exists(_ != existing) =>
+            throw IllegalArgumentException(
+              s"operator $name/$arity has conflicting egglog names $existing and ${preferredName.get}",
+            )
+          case Some(existing) => operators((name, arity)) = existing.orElse(preferredName)
+          case None => operators((name, arity)) = preferredName
+
+      def addSourceOperator(name: String, arity: Int): Unit =
+        val preferredName = name match
+          case "⊤" => Some("Top")
+          case "⊥" => Some("Bot")
+          case _ => None
+        add(name, arity, preferredName)
+
+      def collectType(tpe: Type): Unit = tpe match
+        case Type.Function(arg, result) =>
+          collectType(arg)
+          collectType(result)
+        case Type.Universal(_, result) => collectType(result)
+        case Type.Recursive(_, result) => collectType(result)
+        case Type.TypeVar(_) => ()
+        case Type.Sum(sum) =>
+          sum.foreach((constructor, arguments) =>
+            addSourceOperator(constructor.ident.name, arguments.size)
+            arguments.foreach(collectType)
+          )
+
+      def collectPattern(pattern: Pattern): Unit = pattern match
+        case Pattern.Match(constructor, arguments) =>
+          addSourceOperator(constructor.ident.name, arguments.size)
+          arguments.foreach(collectPattern)
+        case Pattern.Bind(_) => ()
+
+      def collectTerm(current: Term): Unit = current match
+        case Term.Abs(_, _, tpe, expression) =>
+          add("@λ", 2, Some("Lambda"))
+          collectType(tpe)
+          collectTerm(expression)
+        case Term.TypeAbs(domain, expression) =>
+          add("@Λ", 2, Some("TypeLambda"))
+          collectTerm(expression)
+        case Term.App(_, expression, argument) =>
+          add("@apply", 2, Some("Apply"))
+          collectTerm(expression)
+          collectTerm(argument)
+        case Term.TypeApp(expression, tpe) =>
+          add("@applyType", 2, Some("ApplyType"))
+          collectTerm(expression)
+          collectType(tpe)
+        case Term.Data(constructor, arguments) =>
+          addSourceOperator(constructor.ident.name, arguments.size)
+          arguments.foreach(collectTerm)
+        case Term.Var(_) => ()
+        case Term.Cases(scrutinee, cases) =>
+          add("@match", cases.size + 1, Some("Match"))
+          add("@case", 2, Some("Case"))
+          collectTerm(scrutinee)
+          cases.foreach((pattern, expression) =>
+            collectPattern(pattern)
+            collectTerm(expression)
+          )
+
+      add("≟", 2)
+      add("≛", 1)
+      collectTerm(term)
+
+      EgglogLanguageSchema(
+        "PropelTerm",
+        operators.toVector
+          .sortBy((signature, _) => signature)
+          .map((signature, preferredName) =>
+            EgglogOperatorSpec(signature._1, preferredName, signature._2),
+          ),
+      )
 
   trait PropelLanguage extends Language[propel.ast.Term]:
     override def parse(term: Term)(using generator: EClassGenerator): ENode = term match

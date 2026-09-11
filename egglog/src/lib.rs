@@ -335,6 +335,8 @@ pub struct EGraph {
     /// Registry for command-level macros
     command_macros: CommandMacroRegistry,
     proof_state: EncodingState,
+    /// Reason an installed extension cannot be translated by term/proof encoding.
+    term_encoding_unsupported: Option<&'static str>,
     /// In proof mode, this is the program before proof instrumentation and the version we use for proof checking.
     proof_check_program: Vec<ResolvedNCommand>,
 }
@@ -478,6 +480,7 @@ impl EGraph {
             warned_about_global_prefix: false,
             command_macros: Default::default(),
             proof_state,
+            term_encoding_unsupported: None,
             proof_check_program: vec![],
         };
         add_base_sort(&mut eg, UnitSort, span!()).unwrap();
@@ -674,8 +677,25 @@ impl EGraph {
     /// This method is to support the current CLI implementation with egglog-experimental (https://github.com/egraphs-good/egglog/issues/768)
     #[doc(hidden)]
     pub fn with_term_encoding_enabled(mut self) -> Self {
+        if let Some(reason) = self.term_encoding_unsupported {
+            panic!("{reason}");
+        }
         let typechecker = self.clone();
         self.enable_term_encoding(typechecker);
+        self
+    }
+
+    /// Mark an e-graph extension as unsupported by term/proof encoding.
+    ///
+    /// This method exists for experimental constructors that install state the
+    /// term/proof compiler cannot yet translate.
+    #[doc(hidden)]
+    pub fn with_term_encoding_unsupported(mut self, reason: &'static str) -> Self {
+        assert!(
+            self.proof_state.original_typechecking.is_none(),
+            "term encoding was enabled before the incompatible extension: {reason}"
+        );
+        self.term_encoding_unsupported = Some(reason);
         self
     }
 
@@ -694,13 +714,17 @@ impl EGraph {
     /// Enable testing of getting proofs for every `check` outside `fail`.
     /// Checks inside `fail` remain negative assertions.
     pub fn with_proof_testing(mut self) -> Self {
+        if let Some(reason) = self.term_encoding_unsupported {
+            panic!("{reason}");
+        }
         self.proof_state.proof_testing = true;
         self
     }
 
     /// Enable proof testing while skipping validation of the extracted proofs.
     #[cfg(any(feature = "bin", test))]
-    pub(crate) fn with_proof_extraction(mut self) -> Self {
+    #[doc(hidden)]
+    pub fn with_proof_extraction(mut self) -> Self {
         self = self.with_proofs_enabled().with_proof_testing();
         self.proof_state.verify_proofs = false;
         self
@@ -2710,7 +2734,17 @@ impl EGraph {
                 }
             }
 
-            Ok(proof_form(typechecked, &mut self.parser.symbol_gen))
+            let globals = original_typechecking
+                .type_info
+                .global_sorts
+                .keys()
+                .cloned()
+                .collect();
+            Ok(proof_form(
+                typechecked,
+                &mut self.parser.symbol_gen,
+                &globals,
+            ))
         } else {
             let typecheck_timer = Instant::now();
             let mut typechecked = self.typecheck_program(&desugared)?;

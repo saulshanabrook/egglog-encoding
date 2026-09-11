@@ -1,0 +1,18 @@
+---
+source: egglog-experimental/tests/files.rs
+assertion_line: 66
+expression: snapshot
+---
+((Apply 9)
+ (Atom 7)
+ (Bot 1)
+ (Case 5)
+ (Escaped_Unit 0)
+ (Lambda 2)
+ (Match2 0)
+ (Match3 4)
+ (S 0)
+ (Top 1)
+ (Z 0)
+ (≛ 0)
+ (≟ 0))

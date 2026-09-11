@@ -40,7 +40,7 @@ from .reports.presentation import build_report_catalog
 from .reports.render import render_markdown_report_document, render_rich_report_document
 from .reports.store import ReportStore
 from .targets import git_root_for_path, parse_target
-from .workloads import resolve_files
+from .workloads import WORKLOAD_SUITES, resolve_files
 
 DEFAULT_REPORT = ".reports.jsonl"
 DEFAULT_ROUNDS = 6
@@ -52,6 +52,12 @@ def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
 
     parser = argparse.ArgumentParser(description="Collect or reuse one engine benchmark comparison.")
     parser.add_argument("files", nargs="*", help="workload files to benchmark")
+    parser.add_argument(
+        "--suite",
+        choices=tuple(WORKLOAD_SUITES),
+        default="research",
+        help="named workload suite used when no files are supplied (default: research)",
+    )
     parser.add_argument(
         "--fact-directory",
         default=None,
@@ -213,7 +219,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         # ReportStore validates the complete existing artifact before target
         # materialization can build or run anything.
         store = ReportStore(report_path)
-        files = resolve_files(args.files, invocation_cwd, args.fact_directory)
+        files = resolve_files(args.files, invocation_cwd, args.fact_directory, args.suite)
         for endpoint in (baseline_request, candidate_request):
             for file in files:
                 validate_engine_workload(file, endpoint.treatment)

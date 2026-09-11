@@ -1,0 +1,25 @@
+{
+  "baseline_source_revision": "6b3f7b8981be086fab768e79cc0cd23cca943748",
+  "baseline_source_status": [],
+  "binary_sha256": {
+    "baseline_euf": "8946fe21dc5303f88ce663c85669055f253a212976fe69279e4691f512f8ce6b",
+    "baseline_propel": "b2ed9fadf11a9c9bb99e02de712f2acc3cbcc686ba642b404fbae92104f20ac9",
+    "candidate_euf": "728d315e28c94aa9dfc51f8653eab90d6f00cacbd5ceaf5c8b1262b7c1d5b2ec",
+    "candidate_propel": "c3a6df9bb9431b4d19dd3b95a41d3903824d402e8c6cc012ce00b4e941ac2005"
+  },
+  "candidate_source_revision": "d5a463bf17f099f26965a72503f756185855711e",
+  "candidate_source_status": [],
+  "generated_at": "2026-09-01T20:16:15Z",
+  "input_sha256": {
+    "euf_sat": "f0cdba8a3ae11f943ff878897e7513013adc52d7b30623be9c0b5a5fd2990f61",
+    "propel_gset_comm": "e032fdc6c85c82c48993e06336deab5cd0cd2f2fa94aa2cbaf68373c64d8045e",
+    "propel_tip_bin_plus_assoc": "680ef39351e0de07432b8d195178ed9af92ad5ab7dd2261e304c2501c837df3a"
+  },
+  "platform": "macOS 26.6 (25G72), Apple M4, arm64",
+  "schema_version": 1,
+  "tool_versions": {
+    "hyperfine": "1.20.0",
+    "rustc": "1.91.0 (f8297e351 2025-10-28)",
+    "uv": "0.12.6"
+  }
+}

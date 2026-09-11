@@ -1,0 +1,8 @@
+---
+source: egglog-experimental/tests/files.rs
+assertion_line: 66
+expression: snapshot
+---
+((F 1)
+ (X 1)
+ (Y 1))

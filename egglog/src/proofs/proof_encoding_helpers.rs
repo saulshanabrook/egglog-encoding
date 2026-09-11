@@ -913,7 +913,7 @@ pub enum ProofEncodingUnsupportedReason {
     #[error("tuple-output functions are not supported by the term/proof encoding.")]
     TupleOutputFunction,
     #[error(
-        "a user-written `begin` block (or `(let <var> (begin ...))`) is not supported by the term/proof encoding, which models top-level actions individually. Write the actions at the top level instead."
+        "a top-level user-written `begin` block (or `(let <var> (begin ...))`) is not supported by the term/proof encoding, which models top-level actions individually. Write the actions at the top level instead; transactional action blocks inside `fail` are supported."
     )]
     UserWrittenBeginBlock,
     #[error(
@@ -945,7 +945,7 @@ pub fn program_supports_proofs(commands: &[ResolvedCommand], type_info: &TypeInf
         .collect();
     for command in commands {
         if let Err(reason) =
-            command_supports_proof_encoding_impl(command, type_info, &let_globals, true)
+            command_supports_proof_encoding_impl(command, type_info, &let_globals, true, false)
         {
             let cmd = command.to_string();
             log::debug!(
@@ -1406,7 +1406,13 @@ pub(crate) fn command_supports_proof_encoding(
     type_info: &TypeInfo,
     proofs_enabled: bool,
 ) -> Result<(), ProofEncodingUnsupportedReason> {
-    command_supports_proof_encoding_impl(command, type_info, &HashSet::default(), proofs_enabled)
+    command_supports_proof_encoding_impl(
+        command,
+        type_info,
+        &HashSet::default(),
+        proofs_enabled,
+        false,
+    )
 }
 
 /// [`command_supports_proof_encoding`] with `extra_globals`: let-bound names
@@ -1417,6 +1423,7 @@ fn command_supports_proof_encoding_impl(
     type_info: &TypeInfo,
     extra_globals: &HashSet<String>,
     proofs_enabled: bool,
+    inside_fail: bool,
 ) -> Result<(), ProofEncodingUnsupportedReason> {
     // `:unsafe-seminaive` rules perform arbitrary reads against the live
     // database; the term/proof encoding can't represent that.
@@ -1445,15 +1452,13 @@ fn command_supports_proof_encoding_impl(
         return Err(ProofEncodingUnsupportedReason::TupleOutputFunction);
     }
 
-    // A user-written `begin` block keeps its bindings local, but proof checking
-    // models top-level actions one at a time, so those locals have no checkable
-    // representation. The encoding's own generated blocks are unaffected: they are
-    // produced after this check, and proof checking runs against the pre-encoding
-    // program.
-    if matches!(
-        command,
-        crate::ast::GenericCommand::Actions(..) | crate::ast::GenericCommand::LetBegin(..)
-    ) {
+    // A top-level user-written `begin` keeps its bindings local, but proof
+    // checking models top-level actions one at a time, so those locals have no
+    // checkable representation. Inside `fail`, the complete action block is
+    // encoded and executed in the same transaction, whose state is rolled back.
+    if matches!(command, crate::ast::GenericCommand::LetBegin(..))
+        || (!inside_fail && matches!(command, crate::ast::GenericCommand::Actions(..)))
+    {
         return Err(ProofEncodingUnsupportedReason::UserWrittenBeginBlock);
     }
 
@@ -1589,6 +1594,7 @@ fn command_supports_proof_encoding_impl(
                     type_info,
                     extra_globals,
                     proofs_enabled,
+                    true,
                 )?;
             }
             Ok(())

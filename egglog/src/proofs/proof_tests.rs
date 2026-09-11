@@ -1719,10 +1719,6 @@ mod tests {
         insta::assert_snapshot!("doc_example_add_eqsort_children", snapshot);
     }
 
-    // A `fail`-wrapped action can leave a term behind when it errors part way,
-    // and a failed command is not one proof checking reads, so there is no
-    // global action for that term's fiat to name. Rejected up front rather than
-    // left to name whichever action comes next.
     /// Proof conversion projects an element out of exactly one container, so a
     /// primitive that could have read it out of either of two is rejected. No
     /// builtin takes two containers of its own output sort, so this registers one.
@@ -1804,6 +1800,24 @@ mod tests {
                 (sort VN (Vec N))
                 (fail (vec-get (vec-of (Z)) 5) (panic "stop"))
                 (fail (check (Z)))
+                "#,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn proof_mode_rolls_back_a_local_action_block_inside_fail() {
+        EGraph::new_with_proofs()
+            .parse_and_run_program(
+                None,
+                r#"
+                (datatype N (Z) (S N) (T))
+                (fail
+                  (begin
+                    (let x (Z))
+                    (union x (S x)))
+                  (check (= (Z) (T))))
+                (fail (check (= (Z) (S (Z)))))
                 "#,
             )
             .unwrap();

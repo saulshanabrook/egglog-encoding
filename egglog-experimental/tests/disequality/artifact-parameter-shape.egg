@@ -1,0 +1,17 @@
+;; Small port of parameter-analysis/ee from Zenodo artifact 13938878: numeral
+;; disequalities plus a mixture of disequality and equality constraints over
+;; generated expressions.
+(datatype Expr
+  (Num i64)
+  (Add Expr Expr)
+  (Mul Expr Expr))
+
+(disequal (Num 1) (Num 2))
+(disequal (Num 1) (Num 3))
+(disequal (Num 2) (Num 3))
+(disequal (Add (Num 1) (Num 2)) (Add (Num 2) (Num 1)))
+(disequal (Mul (Num 1) (Num 3)) (Mul (Num 2) (Num 3)))
+
+;; This equality also makes the two multiplication terms congruent.
+(union (Num 1) (Num 2))
+(fail (check-disequalities))

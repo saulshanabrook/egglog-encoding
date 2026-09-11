@@ -1,0 +1,8 @@
+---
+source: egglog-experimental/tests/files.rs
+expression: snapshot
+---
+((Atom 2)
+ (x 1)
+ (y 1)
+ (z 1))

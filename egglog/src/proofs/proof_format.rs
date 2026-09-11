@@ -229,7 +229,7 @@ enum RawProof {
 fn global_action_at(
     prog: &[ResolvedNCommand],
     at: usize,
-) -> &crate::GenericAction<ResolvedCall, crate::ast::ResolvedVar> {
+) -> crate::GenericAction<ResolvedCall, crate::ast::ResolvedVar> {
     crate::proofs::proof_checker::gather_global_actions(prog)
         .nth(at)
         .unwrap_or_else(|| {
@@ -838,8 +838,8 @@ impl ProofStore {
             panic!("a fiat names global action {at} as a union, but it is not one");
         };
         let (lhs, rhs) = (
-            self.eval_global(globals, at, lhs),
-            self.eval_global(globals, at, rhs),
+            self.eval_global(globals, at, &lhs),
+            self.eval_global(globals, at, &rhs),
         );
         if swapped { (rhs, lhs) } else { (lhs, rhs) }
     }
@@ -866,7 +866,7 @@ impl ProofStore {
             format!("@plan{next}")
         };
         let plan =
-            crate::proofs::proof_head::HeadPlan::new(std::slice::from_ref(action), &mut fresh);
+            crate::proofs::proof_head::HeadPlan::new(std::slice::from_ref(&action), &mut fresh);
         use crate::proofs::proof_encoding_helpers::{ActionNode, action_nodes};
         let nodes: Vec<ActionNode<'_>> = plan.actions.iter().flat_map(action_nodes).collect();
         match nodes.get(node) {

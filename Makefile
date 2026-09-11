@@ -1,6 +1,7 @@
 .PHONY: \
 	check nits test python-check python-nits rust-check rust-nits \
 	proof-tests benchmark-smoke nightly nightly-local nightly-uv nightly-rustup \
+	disequality-parameter-facts disequality-benchmark \
 	update-snapshots format \
 	python-lock python-format-check python-lint python-typecheck python-test \
 	rust-format-check rust-clippy rust-doc-links rust-test
@@ -67,6 +68,15 @@ rust-doc-links:
 # This is a name-filtered subset of rust-test, useful for proof iteration.
 proof-tests:
 	cargo test --workspace --test files 'proofs/'
+
+disequality-parameter-facts:
+	uv run --locked python -m scripts.paper_benchmarks.prepare_parameter_analysis \
+		--download --ratio 0.5 \
+		--output egglog-experimental/benchmarks/disequality/parameter-analysis-facts \
+		--force
+
+disequality-benchmark:
+	uv run --locked ./bench.py --suite disequality
 
 # Use a disposable report path, keeping the default report cache untouched.
 benchmark-smoke:
