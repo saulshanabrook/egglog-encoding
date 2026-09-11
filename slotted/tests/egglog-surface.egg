@@ -1,0 +1,226 @@
+;;; egglog's surface spelling: bare pattern variables, and `:when` as a list of facts.
+;;;
+;;; The corpus is written bare, and this file is the cover for a rewrite whose
+;;; multipattern comes from `:when`, for the two spellings of a variable naming one
+;;; variable, and for a global's scope. `own-sort.egg` covers a sort other than `U`.
+;;;
+;;; Every `:when` case asserts BOTH halves: that the rule fires where the condition
+;;; holds, and that it does NOT where the condition fails. Only the second has teeth --
+;;; a condition that is silently ignored passes the first on its own.
+;;;
+;;;     python3 slotted/slotted-egglog.py slotted/tests/egglog-surface.egg
+
+(constructor Null () U)
+(constructor Succ (U) U)
+(constructor Prev (U) U)
+(constructor Pair (U U) U)
+(constructor IConst () U)
+(constructor Mul (U U) U)
+(constructor Lam (U U) U :binder 0)
+(constructor G (U U) U)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Bare pattern variables, which is egglog's spelling -- its own tests have
+;;; `(rewrite (Id x) x)` and `(rewrite (C2 a b) (C2 b a))`.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(rewrite (Prev (Succ x)) x :name "bare")
+
+(let one (Prev (Succ (Null))))
+(run 5)
+(check (= one (Null)))
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; The two spellings name the SAME variable, so a rule may mix them: the sigil is
+;;; stripped, and `?x` and `x` are one variable rather than two.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(rewrite (Prev (Succ ?x)) x :name "mixed")
+
+(let two (Prev (Succ (Succ (Null)))))
+(run 5)
+(check (= two (Succ (Null))))
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; A nullary constructor written bare is a call, not a variable, which is what keeps a
+;;; paren-less `Null` from silently becoming a wildcard that matches everything.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(rewrite (Prev (Succ Null)) (Null) :name "bare-nullary")
+
+(let three (Prev (Succ (Null))))
+(let four (Prev (Succ (Succ (Null)))))
+(run 5)
+(check (= three (Null)))
+;; the pattern named a constructor, so it must not have matched the deeper term
+(fail (check (= four (Null))))
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; `:when (= v <call>)` contributes another rooted pattern, so the rule fires only
+;;; where that pattern also matches. One condition.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(rewrite (Prev (Succ x)) x :when ((= x (Succ (Succ y)))) :name "peel")
+
+(let deep (Prev (Succ (Succ (Succ (Null))))))
+(let want (Succ (Succ (Null))))
+(let shallow (Prev (Succ (Null))))
+(run 10)
+
+(check (= deep want))
+(fail (check (= shallow (Null))))
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; SEVERAL FACTS in the one `:when` list, each constraining a different variable.
+;;; This is the arbitrary multipattern: two rooted patterns beside the left-hand
+;;; side's, and one `:when` is where egglog puts them all.
+;;;
+;;; Reading only the first fact left the rule looking constrained and firing on `sn`,
+;;; so the negative claim is what this section is for.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(rewrite (Pair a b) (Null)
+         :when ((= a (Succ p))
+                (= b (Succ q)))
+         :name "several-facts")
+
+(let ss (Pair (Succ (Null)) (Succ (Null))))
+;; the second fact fails here, so the rule must not fire
+(let sn (Pair (Succ (Null)) (Null)))
+(run 5)
+
+(check (= ss (Null)))
+(fail (check (= sn (Null))))
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; A BARE FACT, without the list around it. egglog rejects this outright -- its
+;;; `:when` takes one argument and reads it as a list -- so it is a convenience of
+;;; this compiler and not a spelling to write. Covered because it is accepted, and
+;;; anything accepted can break.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(rewrite (Pair a b) (Null) :when (= a (Succ p)) :name "bare-fact")
+
+(let ss (Pair (Succ (Null)) (Null)))
+(let nn (Pair (Null) (Null)))
+(run 5)
+
+(check (= ss (Null)))
+;; `a` is not a `Succ` here, so the one fact still has to refuse it
+(fail (check (= nn (Null))))
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; A `:when` pattern nests arbitrarily deep, and the variables it introduces are
+;;; usable on the right -- `y` here appears nowhere in the left-hand side.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(rewrite (Prev x) y :when ((= x (Succ (Succ (Succ y))))) :name "reach-in")
+
+(let s3 (Prev (Succ (Succ (Succ (Null))))))
+(let s2 (Prev (Succ (Succ (Null)))))
+(run 10)
+
+(check (= s3 (Null)))
+(fail (check (= s2 (Null))))
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; A `let`-bound global used in a PATTERN. The encoder's atoms have no case for "the
+;;; value this name holds", so the term the name was bound to is inlined -- sound
+;;; because a ground term's shape determines its class by congruence.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(let i (IConst))
+(rewrite (Mul a i) a :name "id-right")
+
+(let mi (Mul (IConst) (IConst)))
+(run 5)
+(check (= mi (IConst)))
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; The same global, marked with `#`.
+;;;
+;;; egglog writes a global `$name`, and this language cannot borrow that spelling: `$0`
+;;; is a SLOT here. So globals wear `#` instead, at the binding and at the use, and a
+;;; global named with a `$` is refused rather than read two ways -- `$x` is a slot
+;;; wherever it appears.
+;;;
+;;; The sigil is optional, as it is in egglog, which only warns when a global lacks
+;;; one: the section above writes the same rule bare.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(let #j (IConst))
+(rewrite (Mul a #j) a :name "id-right-marked")
+
+(let mj (Mul (IConst) (IConst)))
+(run 5)
+(check (= mj (IConst)))
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; And `$x` is a slot even where a global of that name is bound, which is the whole
+;;; point of separating the two sigils. `k` is a global; `$k` is a slot the match
+;;; solves for, so this rule is the eta shape and not a rule about `k` at all.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(let k (IConst))
+(rewrite (Lam $k (Mul #k $k)) #k :name "slot-not-global")
+
+;; the bound slot is not free in the body's `k`, so this reduces
+(let ek (Lam $0 (Mul (IConst) $0)))
+(run 5)
+
+(check (= ek (IConst)))
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; A side condition about the term the rule MATCHED. `(rewrite lhs rhs)` gives that
+;;; term no name, and `free`/`not-free` take a variable, so the pattern is written
+;;; again -- a call is accepted where a variable goes, and names the same class.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(rewrite (Lam $s b) (Null) :when ((not-free $s (Lam $s b))) :name "shed")
+
+;; a binder never has its own bound slot free, so the condition holds and it fires
+(let shed-yes (Lam $0 (G $1 $1)))
+(run 5)
+(check (= shed-yes (Null)))
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; A global's scope ends with its region. `(pop)` undoes the `let`s a region made,
+;;; so a name bound inside a closed one is a plain pattern variable afterwards --
+;;; not the term it used to hold.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(let gone (Succ (Null)))
+(pop)
+
+(push)
+;; `gone` here is a variable, so this fires on any `Pair` with equal sides
+(rewrite (Pair gone gone) (Null) :name "any-pair")
+
+(let nn (Pair (Null) (Null)))
+(run 5)
+
+(check (= nn (Null)))
+(pop)

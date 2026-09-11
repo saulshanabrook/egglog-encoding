@@ -1,0 +1,75 @@
+;;; The `sdql` benchmark term, and the machinery saturating on it.
+;;;
+;;; `batax_v7_csr_dense_unfused_esat` from `slotted-egraphs/benches/sdql.rs`. Written in
+;;; the SLOTTED language, which is the point of this file being ported: the reference
+;;; states this term as
+;;;
+;;;   (lambda $1 .. (lambda $6
+;;;     (* $1 (sum $2 $7 $8
+;;;             (* (sum SUBARR $9 $10 (sing $10 (get $4 $9)))
+;;;                (sum SUBARR $9 $10 (* (get $4 $9) (get $5 $10))))))))
+;;;   SUBARR = (subarray $3 $8 (- (get $2 (+ $7 1)) 1))
+;;;
+;;; and the term below IS that, constructor for constructor. The encoded version this
+;;; replaces spelled every edge out by hand -- a hundred lines of `(map-of 2 2 3 3 7 7
+;;; 8 8)` -- because each edge is the identity on its child's slot set MINUS what the
+;;; node binds, and it narrows at every binder. Getting that right by hand was the
+;;; hard part of writing the file, and it is exactly what the compiler now does.
+;;;
+;;; A `$n` in a binder column is the slot the node binds; anywhere else it is a
+;;; variable occurrence, which is how `(sum $2 $7 $8 ...)` reads: sum over `$2`,
+;;; binding `$7` and `$8`.
+;;;
+;;; The point of the file is that the MACHINERY saturates on this term with the user
+;;; rules stepped finitely, which is the schedule the encoding requires. The rules
+;;; themselves do not terminate -- `get-to-sum` and `sum-to-get` alone loop -- so this
+;;; runs a small fixed number of steps and prints the table sizes at each.
+;;;
+;;; Measured, e-nodes after N user steps (debug build):
+;;;
+;;;     0    21      1    44      2    62      3    90      4   132      5   187
+;;;     6   255      7   338      8   430     10   922
+;;;
+;;; The table stops at ten because that is as far as it was MEASURED, not because
+;;; anything fails there -- the machinery saturated after every step listed. Extending
+;;; it is just slow: the count grows about 1.4x per step, and a debug build asked for
+;;; fourteen steps was still running after four minutes, so it was cut off rather than
+;;; reported. `(run N)` below is the knob.
+;;;
+;;; It used to stop saturating at six. The cause was an orientation bug, now fixed:
+;;; `union` could leave a `RenamesToLeader` row naming the LARGER of its two values as
+;;; the leader, and a backwards row let transitivity and single parent disagree forever
+;;; -- the tables stationary at 648 rows while `saturate` reported progress, four edges
+;;; swapped every iteration, period two. Backwards rows by user step were 0 0 0 0 2 7;
+;;; they are 0 at every step now. `slotted/encoding/orientation.egg` is the
+;;; regression test and `egraph-encoding-11.egg` has the fix: `Equated`, the
+;;; unoriented form of the relation, from which the oriented rows are derived.
+
+(include "slotted/languages/sdql.egg")
+
+;;; the CSR range, shared by both inner sums
+(let subarr (SubArray $3 $8 (Sub (Get $2 (Add $7 (Num 1))) (Num 1))))
+
+;;; the two inner sums over that range: a singleton, and a product
+(let t7 (Sum subarr $9 $10 (Sing $10 (Get $4 $9))))
+(let t10 (Sum subarr $9 $10 (Mult (Get $4 $9) (Get $5 $10))))
+
+(let prog
+  (Lambda $1 (Lambda $2 (Lambda $3 (Lambda $4 (Lambda $5 (Lambda $6
+    (Mult $1 (Sum $2 $7 $8 (Mult t7 t10))))))))))
+
+;;; the machinery alone: the term is already canonical, so this settles at once
+(run 0)
+
+;; a lambda over six binders has no free slots left
+(check (slots prog))
+;; and the two inner sums are distinct terms, sharing the subarray range
+(check (!= t7 t10))
+(print-size)
+
+;;; two user steps, the machinery saturated after each
+(run 2)
+
+;; the program is still there, and still slotless
+(check (slots prog))
+(print-size)

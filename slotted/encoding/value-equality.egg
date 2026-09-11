@@ -1,0 +1,79 @@
+;;; Two terms that are EQUAL end up as one egglog value.
+;;;
+;;; `slotted/LANGUAGE.md` says that the language's `=` and egglog's own coincide on
+;;; nodes, and leans on that to explain why nothing was lost when a slotted file stopped
+;;; being able to ask egglog's. This is where that is checked, at the level where both
+;;; questions can be asked at once.
+;;;
+;;; The rule doing the work is in `egraph-encoding-11.egg`: two values that reach their
+;;; leader by the same renaming -- up to a symmetry of the class -- are unioned. It has
+;;; no counterpart in the reference implementation, where an `AppliedId` IS a class
+;;; together with a renaming and there is no separate value layer to keep in step.
+;;;
+;;; Written at the ENCODED level, so these name shapes to emit machinery for rather than
+;;; constructors for slotted terms. `App2`, `Var` and `Null` come from the core.
+
+(include "slotted/encoding/egraph-encoding-11.egg")
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; alpha-variants, with no union to help
+;;;
+;;; `lam $0. $0` and `lam $5. $5` are written as two different nodes -- their stored
+;;; edges disagree -- and nothing says they are related. The machinery has to notice.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let $i0 (App2 "lambda" (map-of 0 0) (Var 0) (map-of 0 0) (Var 0)))
+(let $i5 (App2 "lambda" (map-of 0 5) (Var 0) (map-of 0 5) (Var 0)))
+
+(run-schedule (saturate (run slotted)))
+
+;; one slotted class ...
+(check (RenamesToLeader $i0 m1 l) (RenamesToLeader $i5 m2 l))
+;; ... and, because they are the same TERM, one egglog value too
+(check (= $i0 $i5))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; a symmetry: the swap makes two spellings one term
+;;;
+;;; `f($1,$2) = f($2,$1)` puts the swap in the class's group, and Definition 6 then
+;;; says the two invocations agree -- so the two nodes have to become one value.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let $f12 (App2 "f" (map-of 0 1) (Var 0) (map-of 0 2) (Var 0)))
+(let $f21 (App2 "f" (map-of 0 2) (Var 0) (map-of 0 1) (Var 0)))
+(union $f12 $f21)
+
+(run-schedule (saturate (run slotted)))
+
+(check (= $f12 $f21))
+
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; and the converse does NOT hold: one class, two invocations, two values
+;;;
+;;; `lam $0. $3` and `lam $0. $4` are the same class -- rename $3 to $4 and one becomes
+;;; the other -- but they are different terms, and the encoding keeps them as different
+;;; values. This is the case `renaming-=` exists for, and the reason `=` alone cannot
+;;; answer every question a slotted test asks.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let $p (App2 "lambda" (map-of 0 0) (Var 0) (map-of 0 3) (Var 0)))
+(let $q (App2 "lambda" (map-of 0 0) (Var 0) (map-of 0 4) (Var 0)))
+
+(run-schedule (saturate (run slotted)))
+
+;; one class
+(check (RenamesToLeader $p m1 l) (RenamesToLeader $q m2 l))
+;; two values
+(fail (check (= $p $q)))
+
+(pop)

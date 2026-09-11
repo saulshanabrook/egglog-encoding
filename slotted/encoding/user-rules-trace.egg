@@ -1,0 +1,128 @@
+;;; One match, every intermediate value asserted.
+;;;
+;;; The tutorial in `user-rules.egg` says what each scaffolding variable MEANS.
+;;; This file says what they HOLD, on one concrete e-graph, so the worked example quoted
+;;; at the top of the tutorial is executed rather than described. If a value changes, this
+;;; fails and the tutorial's numbers are known to be stale.
+;;;
+;;; THE SHAPE IS M5's, two atom mints in one match, because that is where the
+;;; accumulating avoid-set is the whole point. Operators are suffixed `t` so no other
+;;; rule in the tree is watching them.
+;;;
+;;; IT TRACES THE MINTING NAMING, which is what each atom really does: solve, and mint a
+;;; fresh name for any slot the constraints leave unreached. Every value below is that.
+;;;
+;;; What the compiler emits AFTER the atoms is a `refine-namings` read at an `(Idx i)` --
+;;; every way the match's slots may then be merged, the identity among them -- and that
+;;; is one row per index, which is not a worked example any more. The identity is element
+;;; 0, so these values are what index 0 gives; the other indices are where two of the
+;;; slots named below turn out to be one.
+;;;
+;;; THE E-GRAPH. `g5t` names slot 0, `h5t` names slot 1, and each is unioned with `Null`,
+;;; which is SLOTLESS -- so each node carries a slot its class does not, the redundancy of
+;;; Def. 4. The root `f5t` then reaches both through empty edges:
+;;;
+;;;     g5t = g5t(var[0->0], var[0->0])   union Null
+;;;     h5t = h5t(var[0->1], var[0->1])   union Null
+;;;     p   = f5t({}, Null, {}, Null)
+;;;
+;;; So nothing the root knows constrains either inner atom: `?a` and `?b` both land on a
+;;; class with no slots, and both inner atoms have to MINT. The accumulation is what keeps
+;;; the two mints apart, and `f5a` in `user-rules-tests.egg` is the same e-graph
+;;; against a rule that does not accumulate, where `?u` and `?v` collapse onto one slot.
+
+(include "target/slotted/slotted-node-rules.egg")
+
+(relation Step (String Renaming Renaming))
+(relation Child (String Renaming))
+
+(rule ((= p (App2 "f5t" p1 a q1 b))
+       (= dom1 (map-union (map-image p1) (map-image q1)))
+       (= mp1 dom1)
+       (= avoid1 (map-image mp1))
+       (= ma (compose mp1 p1))
+       (= csa (ClassSlots a))
+       (= mb (compose mp1 q1))
+       (= csb (ClassSlots b))
+       (= csp (ClassSlots p))
+       ;; atom 2 -- chained under `?a`, minting for whatever that leaves unnamed
+       (= a (App2 "g5t" p2 u q2 u))
+       (= dom2 (map-union (map-image p2) (map-image q2)))
+       (RenamesToLeader a syma a)
+       (= mp2 (find-mapping-total avoid1 dom2 (compose (compose ma csa) syma)
+                                  (map-domain (compose ma csa))))
+       (= im2 (map-image mp2))
+       (= avoid2 (map-union avoid1 im2))
+       (= mu (compose mp2 p2))
+       (= csu (ClassSlots u))
+       (RenamesToLeader u symu u)
+       (= (compose mp2 q2) (compose (compose mu csu) symu))
+       ;; atom 3 -- the same again, and it may not mint over anything atom 2 took
+       (= b (App2 "h5t" p3 v q3 v))
+       (= dom3 (map-union (map-image p3) (map-image q3)))
+       (RenamesToLeader b symb b)
+       (= mp3 (find-mapping-total avoid2 dom3 (compose (compose mb csb) symb)
+                                  (map-domain (compose mb csb))))
+       (= im3 (map-image mp3))
+       (= avoid3 (map-union avoid2 im3))
+       (= mv (compose mp3 p3))
+       (= csv (ClassSlots v))
+       (RenamesToLeader v symv v)
+       (= (compose mp3 q3) (compose (compose mv csv) symv)))
+      ((Step "a1-dom-mp" dom1 mp1)
+       (Step "a1-avoid" avoid1 avoid1)
+       (Step "a2-dom-mp" dom2 mp2)
+       (Step "a2-avoid" avoid2 im2)
+       (Step "a3-dom-mp" dom3 mp3)
+       (Step "a3-avoid" avoid3 im3)
+       (Child "a" (compose ma csa))
+       (Child "b" (compose mb csb))
+       (Child "u" (compose mu csu))
+       (Child "v" (compose mv csv))
+       (Child "conclusion" (compose mp1 csp))
+       (let rhs (App2 "k5t" (compose mu csu) u (compose mv csv) v))
+       (Equated rhs (compose mp1 csp) p)))
+
+(let $g5t (App2 "g5t" (map-of 0 0) (Var 0) (map-of 0 0) (Var 0)))
+(let $h5t (App2 "h5t" (map-of 0 1) (Var 0) (map-of 0 1) (Var 0)))
+(union $g5t (Null))
+(union $h5t (Null))
+(let $p5t (App2 "f5t" (map-empty) (Null) (map-empty) (Null)))
+
+;; the two possible conclusions: `?u` and `?v` on distinct slots, or collapsed onto one
+(let $k5two (App2 "k5t" (map-of 0 0) (Var 0) (map-of 0 1) (Var 0)))
+(let $k5one (App2 "k5t" (map-of 0 0) (Var 0) (map-of 0 0) (Var 0)))
+
+(run-schedule (saturate (run slotted))
+              (repeat 20 (seq (run) (saturate (run slotted)))))
+
+;;; THE ROOT KNOWS NOTHING. Its edges are empty, so its node names no slots and `mp1`,
+;;; the identity on them, is empty too. `?a` and `?b` reach a slotless class.
+(check (Step "a1-dom-mp" (map-empty) (map-empty)))
+(check (Step "a1-avoid" (map-empty) (map-empty)))
+(check (Child "a" (map-empty)))
+(check (Child "b" (map-empty)))
+
+;;; ATOM 2 MINTS. Its node names slot 0 and no constraint reaches it, so `find-mapping-total`
+;;; names it with the smallest slot nothing has taken -- 0, the avoid-set being empty.
+(check (Step "a2-dom-mp" (map-of 0 0) (map-of 0 0)))
+(check (Step "a2-avoid" (map-of 0 0) (map-of 0 0)))
+
+;;; ATOM 3 MINTS AROUND IT. Its node names slot 1, again unconstrained; the avoid-set now
+;;; holds 0, so the mint takes 1. THIS is the accumulation: with an empty avoid-set it
+;;; would have taken 0 as well.
+(check (Step "a3-dom-mp" (map-of 1 1) (map-of 1 1)))
+(check (Step "a3-avoid" (map-of 0 0 1 1) (map-of 1 1)))
+
+;;; SO THE TWO VARIABLES LAND ON DIFFERENT PATTERN SLOTS, which is the whole point.
+(check (Child "u" (map-of 0 0)))
+(check (Child "v" (map-of 0 1)))
+(fail (check (Child "v" (map-of 0 0))))
+
+;;; And the conclusion is built in the root's frame, which names nothing.
+(check (Child "conclusion" (map-empty)))
+
+;;; The rule's own conclusion, the same claim the M5 fixture makes: the two-slot form is
+;;; in the root's class and the collapsed form is not.
+(check (RenamesToLeader $p5t m1 l) (RenamesToLeader $k5two m2 l))
+(fail (check (RenamesToLeader $p5t m1 l) (RenamesToLeader $k5one m2 l)))

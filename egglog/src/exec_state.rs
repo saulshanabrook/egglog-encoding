@@ -307,8 +307,8 @@ pub trait Core<'a, 'db: 'a>: Internal<'a, 'db> {
 /// The single-entry methods (`lookup`, `eclass_of`, `contains`)
 /// return `None` if absent — never insert. The iteration /
 /// introspection methods (`function_entries`, `constructor_enodes`,
-/// `table_size`, `table_sizes`) walk the current contents of the
-/// database.
+/// `eclass_enodes`, `table_size`, `table_sizes`) walk the current
+/// contents of the database.
 ///
 /// Detectable misuse (wrong table subtype, wrong arity) is reported
 /// as [`crate::ApiError`] via the method's `Result`. Per-column sort
@@ -391,11 +391,63 @@ pub trait Read<'a, 'db: 'a>: Core<'a, 'db> + RegistrySealed<'a, 'db> {
                 .split_last()
                 .expect("constructor row has at least an eclass column");
             f(Enode {
+                name,
                 children,
                 eclass: *eclass,
                 subsumed: row.subsumed,
             })
         });
+        Ok(())
+    }
+
+    /// Call `f` on every [`Enode`] of `eclass`, across every constructor.
+    /// [`Enode::name`] says which one each row came from. To stop early, use
+    /// [`Read::eclass_enodes_while`].
+    ///
+    /// A row whose eclass column has since been merged into another is matched under
+    /// the id it stores, not its canonical one, so canonicalise `eclass` first if
+    /// that matters.
+    fn eclass_enodes(&self, eclass: Value, mut f: impl FnMut(Enode<'_>)) -> Result<(), Error> {
+        self.eclass_enodes_while(eclass, |enode| {
+            f(enode);
+            true
+        })
+    }
+
+    /// Like [`Read::eclass_enodes`], but stops as soon as `f` returns `false`.
+    fn eclass_enodes_while(
+        &self,
+        eclass: Value,
+        mut f: impl FnMut(Enode<'_>) -> bool,
+    ) -> Result<(), Error> {
+        // A scan per constructor table. An output-column index would replace this
+        // loop body without changing the signature.
+        for (name, _size) in self.table_sizes() {
+            let action = lookup_action(self.registry(), name)?;
+            if action.kind() != TableKind::Constructor {
+                continue;
+            }
+            let mut keep_going = true;
+            action.for_each_while(self.es(), |row| {
+                let (row_eclass, children) = row
+                    .vals
+                    .split_last()
+                    .expect("constructor row has at least an eclass column");
+                if *row_eclass != eclass {
+                    return true;
+                }
+                keep_going = f(Enode {
+                    name,
+                    children,
+                    eclass: *row_eclass,
+                    subsumed: row.subsumed,
+                });
+                keep_going
+            });
+            if !keep_going {
+                break;
+            }
+        }
         Ok(())
     }
 
@@ -442,6 +494,8 @@ pub trait Read<'a, 'db: 'a>: Core<'a, 'db> + RegistrySealed<'a, 'db> {
 /// [`Value`]s; convert with [`Core::value_to_base`] / [`Core::value_to_container`].
 #[derive(Clone, Copy, Debug)]
 pub struct Enode<'a> {
+    /// The constructor this row belongs to.
+    pub name: &'a str,
     /// The constructor's input columns.
     pub children: &'a [Value],
     /// The eclass id this enode belongs to.

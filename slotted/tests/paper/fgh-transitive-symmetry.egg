@@ -1,0 +1,36 @@
+;;; fgh::transitive_symmetry
+;;;
+;;; Ported from `memoryleak47/slotted-egraphs`, `tests/fgh/mod.rs`. One file per test
+;;; there, so the two can be diffed side by side, and standalone: the constructors
+;;; below are all it needs, and the compiler generates their machinery.
+;;;
+;;;     python3 slotted/slotted-egglog.py slotted/tests/paper/fgh-transitive-symmetry.egg
+;;;
+;;;     f($1,$2) = g($2,$1),  g($1,$2) = h($1,$2)  =>  f($1,$2) = h($2,$1)
+;;;
+;;; The first equation is a *swap*, the second the identity, so composing them has to
+;;; carry the swap through. The reference asks for an explanation of
+;;; `f($1,$2) = h($2,$1)`; here the claim is that equation itself, plus the one that
+;;; makes it content rather than bookkeeping -- f($1,$2) is NOT h($1,$2). Both terms
+;;; sit in the one class either way, and the swap is what tells them apart. This is
+;;; the test that separates `=` from `renaming-=`.
+
+(constructor F (U U) U)
+(constructor G (U U) U)
+(constructor H (U U) U)
+
+
+(let f12 (F $1 $2))
+(let g21 (G $2 $1))
+(let g12 (G $1 $2))
+(let h12 (H $1 $2))
+(let h21 (H $2 $1))
+(union f12 g21)
+(union g12 h12)
+
+(run 0)
+
+;; the swap carried through both equations
+(check (= f12 h21))
+;; and it really is the swap: the identity does not relate them
+(check (!= f12 h12))

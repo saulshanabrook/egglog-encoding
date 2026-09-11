@@ -1,0 +1,26 @@
+# Standalone oracle: runs a multipattern through the reference
+# `slotted-egraphs` implementation so the egglog encoding can be diffed
+# against it. Its own workspace, so it stays out of the root build.
+[workspace]
+
+[package]
+name = "xmulti"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Pinned to a REV rather than a local path, so a runner with no checkout of the
+# reference can build this and the differential half can run in CI.
+#
+# This is https://github.com/memoryleak47/slotted-egraphs/pull/46 plus the
+# independently stacked weak-shape fix at
+# https://github.com/oflatt-claude/slotted-egraphs/pull/1. The latter is required
+# for legal terms that reuse one printed name in bound and uncovered/free positions.
+# It changes add/lookup normalization, not either matcher.
+#
+# All registered differential and isomorphism checks use `MultiPattern`: that is the
+# pattern language the encoding implements. The helper binary retains a dormant
+# `nested` directive for the unregistered matcher-comparison diagnostic, but
+# `ematch_all` is not used as ground truth. The `checks` feature and explicit
+# `eg.check()` calls make malformed reference state a hard failure.
+slotted-egraphs = { git = "https://github.com/oflatt-claude/slotted-egraphs.git", rev = "e83e31c3b693395122bf3948ef8deef9d0c81059", features = ["checks"] }

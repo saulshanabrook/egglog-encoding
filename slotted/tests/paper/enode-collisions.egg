@@ -1,0 +1,38 @@
+;;; 3.4, "E-Node Collisions Within E-Classes"
+;;;
+;;; Ported from `memoryleak47/slotted-egraphs`, `tests/fgh/mod.rs`. One file per test
+;;; there, so the two can be diffed side by side, and standalone: the constructors
+;;; below are all it needs, and the compiler generates their machinery.
+;;;
+;;;     python3 slotted/slotted-egglog.py slotted/tests/paper/enode-collisions.egg
+;;;
+;;; A symmetry of a CHILD has to become a symmetry of the parent, which the hashcons
+;;; alone cannot find: `i(c($0,$1))` and `i(c($1,$0))` are two different rows and
+;;; nothing about them collides. One union supplies the symmetry, and `n`, which holds
+;;; the same child at both positions, has to pick it up at each position
+;;; independently.
+
+(constructor C (U U) U)
+(constructor I (U U) U)
+(constructor N (U U) U)
+(constructor Null () U)
+
+
+(let c01 (C $0 $1))
+(union c01 (C $1 $0))
+
+(let i01 (I (C $0 $1) (Null)))
+(let i10 (I (C $1 $0) (Null)))
+(let i02 (I (C $0 $2) (Null)))
+
+;; the same child at two positions, invoked differently at each
+(let n1 (N (C $0 $1) (C $0 $1)))
+(let n2 (N (C $0 $1) (C $1 $0)))
+(let n3 (N (C $1 $0) (C $0 $1)))
+
+(run 0)
+
+(check (= i01 i10))
+(check (!= i01 i02))
+(check (= n1 n2))
+(check (= n1 n3))

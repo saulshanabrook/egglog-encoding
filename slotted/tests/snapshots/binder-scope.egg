@@ -1,0 +1,36 @@
+;;; COMPILED from slotted/tests/binder-scope.egg by slotted/slotted-egglog.py.
+;;;
+;;; Only the forms THIS file contributes. The machinery for its 3 constructors,
+;;; and anything an included library brought, are snapshotted by the generators
+;;; that emit them -- committing them again per test would be the same thousands
+;;; of lines over and over.
+
+(include "slotted/encoding/egraph-encoding-11.egg")
+
+(let $l0 (Let (map-of 0 0) (Var 0) (map-of 0 0) (App (map-empty) (Sym "f1") (map-of 0 0) (Var 0)) (map-of 0 0) (Var 0)))
+(let $l1 (Let (map-of 0 1) (Var 0) (map-of 1 1) (App (map-empty) (Sym "f1") (map-of 0 1) (Var 0)) (map-of 0 0) (Var 0)))
+(run-schedule (saturate (run slotted)))
+(check (= (ClassSlots $l0) (map-of 0 0)))
+(check (= (ClassSlots $l1) (map-of 0 0)))
+(check (RenamesToLeader $l0 _m0 _l) (RenamesToLeader $l1 _m1 _l) (= _m0 _m1))
+(push)
+(rule ((= V3 (App p1 L4 p2 (Var 0)))
+       (RenamesToLeader (Sym "seed") ml5 L4)
+       (= dom6 (map-union (map-image p1) (map-image p2)))
+       (= mp7 dom6)
+       (= idm8 (map-image mp7))
+       (= sx (map-get (compose mp7 p2) 0))
+       (= cs9 (ClassSlots V3))
+       (= carr10 (map-union (map-of sx sx) (map-image (compose mp7 cs9))))
+       (= alts11 (refine-namings carr10 (map-of sx sx) idm8))
+       (Idx ix12)
+       (= mrg13 (vec-get alts11 ix12)))
+      ((let _rhs14 (Let (map-insert (map-empty) 0 (map-get mrg13 sx)) (Var 0) (map-empty) (Sym "body") (map-insert (map-empty) 0 (map-get mrg13 sx)) (Var 0)))
+       (let _rhs15 (App (map-union (map-remove (map-image (map-insert (map-empty) 0 (map-get mrg13 sx))) (map-get mrg13 sx)) (map-union (map-remove (map-image (map-empty)) (map-get mrg13 sx)) (map-union (map-image (map-insert (map-empty) 0 (map-get mrg13 sx))) (map-empty)))) _rhs14 (map-empty) (Sym "arg")))
+       (Equated _rhs15 (compose mrg13 (compose mp7 cs9)) V3)) :name "nested-rhs-binder-scope")
+(let $s0 (App (map-empty) (Sym "seed") (map-of 0 0) (Var 0)))
+(let $s1 (App (map-empty) (Sym "seed") (map-of 0 1) (Var 0)))
+(run-schedule (saturate (run slotted))
+              (repeat 1 (seq (run) (saturate (run slotted)))))
+(fail (check (RenamesToLeader $s0 _m0 _l) (RenamesToLeader $s1 _m1 _l) (= _m0 _m1)))
+(pop)

@@ -1,0 +1,467 @@
+;;; COMPILED from slotted/tests/multiple-sorts.egg by slotted/slotted-egglog.py.
+;;;
+;;; Only the forms THIS file contributes. The machinery for its 12 constructors,
+;;; and anything an included library brought, are snapshotted by the generators
+;;; that emit them -- committing them again per test would be the same thousands
+;;; of lines over and over.
+
+;;; A slotted e-graph in egglog, hand-written for one binary constructor so that the whole
+;;; machinery reads in one place. `slotted/gen-node-rules.py` emits the same
+;;; rules for the other arities and the payload leaves.
+;;; This file is deliberately the one-carrier, unsuffixed worked instance.  For a source
+;;; with several independent equality sorts, `slotted-egglog.py` emits the shared
+;;; `Renaming`/`Namings` prelude once and namespaces this carrier machinery as `_0`, `_1`,
+;;; ...; `slotted/tests/multiple-sorts.egg` snapshots that generated form.
+;;;
+;;; A class is a connected component of `RenamesToLeader`: `(RenamesToLeader a m b)` is
+;;; `a = m*b`, with `m` carrying b's slots to a's. A *self*-loop `(RenamesToLeader c p c)`
+;;; says `p` is a symmetry of c, so a rule wanting the class's symmetries joins on that
+;;; form. `Equated` is the same fact with no orientation picked, and is what an action
+;;; writes: `RenamesToLeader` is derived, and a row whose orientation a later `union`
+;;; invalidates is deleted as stale, taking the fact with it.
+;;;
+;;; A node may carry slots its class does not -- Def. 4 permits that for a node, while
+;;; requiring an *edge*'s domain to be exactly its child's slot set. `(ClassSlots c)` holds
+;;; a class's own slots and only ever narrows, which is what makes it safe to offer one from
+;;; a node. A node that is not canonical is deleted, so anything added needs an `Equated`
+;;; entry or a later query will not see it.
+;;;
+;;; `(compose a b)` is `a . b`, b first, and it TRUNCATES: keys b sends outside a's domain
+;;; are dropped. Correct for partial maps, wrong on an edge, where `compose-total` refuses.
+;;;
+;;; "The reference", below and throughout these files, is `memoryleak47/slotted-egraphs` --
+;;; the Rust implementation from Schneider et al., Slotted E-Graphs, PLDI 2025.  The
+;;; exact checked revision lives in `slotted/xmulti/Cargo.toml`: PR #46 plus the stacked
+;;; weak-shape fix.  Every registered oracle query uses `MultiPattern`; the known-broken
+;;; nested matcher is not used as ground truth.
+
+
+;; A renaming is a partial injection on slots.
+(sort Renaming (Map i64 i64))
+
+;; EVERY way a match's slots may be merged, and the indices to read one at.
+;;
+;; Solving an atom leaves some of its slots unnamed -- the constraints from the atoms
+;; before it do not reach them -- and `find-mapping-total` MINTS a fresh name there. A
+;; fresh name differs from everything, so minting quietly decides the slot is not any
+;; slot already in play. The other readings are matches too, and they build different
+;; e-nodes, so a compiled rule asks `refine-namings` for all of them ONCE, after every
+;; atom is solved, and reads one with `vec-get`. That is the reference's `final_refine`;
+;; `slotted/tests/sdql-beta.egg` and `slotted-user-rules.md` say why it happens there
+;; rather than per atom.
+;;
+;; `vec-get` is PARTIAL, so an index past a vector's end matches nothing and the join
+;; stops on its own -- no rule has to know how long the vector is. Seeding more indices
+;; than a rule needs costs join attempts and not correctness. Seeding FEWER loses the
+;; answers past the last one, and since element 0 is the identity, running out degrades
+;; to not refining: matches are missed, never invented.
+;;
+;; How many are there? The number of ways the match's slots can be partitioned, minus
+;; those two slots of one node or two slots the pattern writes rule out. That is
+;; Bell-numbered in the worst case, so it grows fast: three free slots give five, four
+;; give fifteen.
+;;
+;; EIGHT WAS NOT ENOUGH, and the way that was found is worth repeating. Eight was first
+;; kept because raising it to 64 changed no answer -- on the corpus known at the time.
+;; A symmetry-heavy sweep then reached past it: `XDIFF_SYM=0.95 isomorphism.py fuzz 1200
+;; 101` has a case whose class count is 9 against the reference's 6 at eight indices and
+;; 8 at sixty-four, so one union was being lost to truncation alone. 256 finds nothing
+;; more than 64.
+;;
+;; Truncation is silent and always in one direction: element 0 is the identity, so
+;; running out degrades to NOT REFINING, and the cost is a match missed rather than one
+;; invented. That is why it took a sweep to notice, and why "changing no answer" is weak
+;; evidence for a bound -- it only says the corpus did not reach it.
+(sort Namings (Vec Renaming))
+(relation Idx (i64))
+(Idx 0)
+(Idx 1)
+(Idx 2)
+(Idx 3)
+(Idx 4)
+(Idx 5)
+(Idx 6)
+(Idx 7)
+(Idx 8)
+(Idx 9)
+(Idx 10)
+(Idx 11)
+(Idx 12)
+(Idx 13)
+(Idx 14)
+(Idx 15)
+(Idx 16)
+(Idx 17)
+(Idx 18)
+(Idx 19)
+(Idx 20)
+(Idx 21)
+(Idx 22)
+(Idx 23)
+(Idx 24)
+(Idx 25)
+(Idx 26)
+(Idx 27)
+(Idx 28)
+(Idx 29)
+(Idx 30)
+(Idx 31)
+(Idx 32)
+(Idx 33)
+(Idx 34)
+(Idx 35)
+(Idx 36)
+(Idx 37)
+(Idx 38)
+(Idx 39)
+(Idx 40)
+(Idx 41)
+(Idx 42)
+(Idx 43)
+(Idx 44)
+(Idx 45)
+(Idx 46)
+(Idx 47)
+(Idx 48)
+(Idx 49)
+(Idx 50)
+(Idx 51)
+(Idx 52)
+(Idx 53)
+(Idx 54)
+(Idx 55)
+(Idx 56)
+(Idx 57)
+(Idx 58)
+(Idx 59)
+(Idx 60)
+(Idx 61)
+(Idx 62)
+(Idx 63)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; multi-sort slotted machinery
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(ruleset slotted)
+
+(function SlottedNodeLayout (String i64) Unit :no-merge :internal-hidden)
+(function SlottedEdgeLayout (String i64) Unit :no-merge :internal-hidden)
+(function SlottedBinderLayout (String i64 i64 i64 String) Unit :no-merge :internal-hidden)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; carrier Expr: RenamesToLeader_0, Equated_0, ClassSlots_0
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(sort Expr)
+(constructor SlottedVar_0 (i64) Expr)
+(relation RenamesToLeader_0 (Expr Renaming Expr))
+(relation Equated_0 (Expr Renaming Expr))
+(function ClassSlots_0 (Expr) Renaming :merge (map-intersect old new))
+(relation SubstPending_0 (Expr Renaming Renaming Expr))
+
+(set (SlottedNodeLayout "SlottedVar_0" 1) ())
+(set (ClassSlots_0 (SlottedVar_0 0)) (map-of 0 0))
+
+(rule ((Equated_0 a m b)
+       (!= a b)
+       (= a (ordering-max a b)))
+      ((RenamesToLeader_0 a m b)) :ruleset slotted)
+
+(rule ((Equated_0 a m b)
+       (!= a b)
+       (= b (ordering-max a b)))
+      ((RenamesToLeader_0 b (inverse m) a)) :ruleset slotted)
+
+(rule ((Equated_0 a m a))
+      ((RenamesToLeader_0 a m a)) :ruleset slotted)
+
+(rule ((RenamesToLeader_0 f m l)
+       (!= f l)
+       (= l (ordering-max f l)))
+      ((delete (RenamesToLeader_0 f m l))) :ruleset slotted)
+
+(rule ((RenamesToLeader_0 a m b) (= slots (ClassSlots_0 a)))
+      ((set (ClassSlots_0 b) (map-image (compose (inverse m) slots))))
+      :ruleset slotted)
+(rule ((RenamesToLeader_0 a m b) (= slots (ClassSlots_0 b)))
+      ((set (ClassSlots_0 a) (map-image (compose m slots))))
+      :ruleset slotted)
+
+(rule ((RenamesToLeader_0 e1 m12 e2)
+       (RenamesToLeader_0 e2 m23 e3)
+       (guard (or (bool-!= e2 e3)
+                  (bool= (compose m23 m23) m23)
+                  (bool= e1 e3))))
+      ((Equated_0 e1 (compose m12 m23) e3)) :ruleset slotted)
+
+(rule ((RenamesToLeader_0 a m1 b)
+       (RenamesToLeader_0 a m2 c)
+       (!= a c)
+       (!= a b)
+       (= (ordering-max b c) b)
+       (guard (or (bool-!= b c)
+                  (and (bool= b c)
+                       (bool-!= m1 m2)
+                       (bool= (ordering-max m1 m2) m1)))))
+      ((delete (RenamesToLeader_0 a m1 b))
+       (Equated_0 b (compose (inverse m1) m2) c)) :ruleset slotted)
+
+(rule ((RenamesToLeader_0 a m1 a)
+       (RenamesToLeader_0 a m a)
+       (= m (compose m m))
+       (= m2 (compose m (compose m1 m)))
+       (!= m1 m2))
+      ((delete (RenamesToLeader_0 a m1 a))
+       (RenamesToLeader_0 a m2 a)) :ruleset slotted)
+
+(rule ((= e (SlottedVar_0 v))
+       (!= v 0))
+      ((Equated_0 e (map-insert (map-empty) 0 v) (SlottedVar_0 0))
+       (delete (SlottedVar_0 v))) :ruleset slotted)
+
+(RenamesToLeader_0 (SlottedVar_0 0) (map-insert (map-empty) 0 0) (SlottedVar_0 0))
+
+(rule ((RenamesToLeader_0 a m1_o c)
+       (RenamesToLeader_0 b m2 c)
+       (RenamesToLeader_0 c sym c)
+       (= m1 (compose m1_o sym))
+       (= m (compose m1 (inverse m2)))
+       (= (compose m m) m))
+      ((union a b)) :ruleset slotted)
+
+(rule ((SubstPending_0 root q mr r)
+       (= cs (ClassSlots_0 r)))
+      ((Equated_0 root (compose q (compose mr cs)) r))
+      :ruleset slotted)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; carrier Ty: RenamesToLeader_1, Equated_1, ClassSlots_1
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(sort Ty)
+(constructor SlottedVar_1 (i64) Ty)
+(relation RenamesToLeader_1 (Ty Renaming Ty))
+(relation Equated_1 (Ty Renaming Ty))
+(function ClassSlots_1 (Ty) Renaming :merge (map-intersect old new))
+(relation SubstPending_1 (Ty Renaming Renaming Ty))
+
+(set (SlottedNodeLayout "SlottedVar_1" 1) ())
+(set (ClassSlots_1 (SlottedVar_1 0)) (map-of 0 0))
+
+(rule ((Equated_1 a m b)
+       (!= a b)
+       (= a (ordering-max a b)))
+      ((RenamesToLeader_1 a m b)) :ruleset slotted)
+
+(rule ((Equated_1 a m b)
+       (!= a b)
+       (= b (ordering-max a b)))
+      ((RenamesToLeader_1 b (inverse m) a)) :ruleset slotted)
+
+(rule ((Equated_1 a m a))
+      ((RenamesToLeader_1 a m a)) :ruleset slotted)
+
+(rule ((RenamesToLeader_1 f m l)
+       (!= f l)
+       (= l (ordering-max f l)))
+      ((delete (RenamesToLeader_1 f m l))) :ruleset slotted)
+
+(rule ((RenamesToLeader_1 a m b) (= slots (ClassSlots_1 a)))
+      ((set (ClassSlots_1 b) (map-image (compose (inverse m) slots))))
+      :ruleset slotted)
+(rule ((RenamesToLeader_1 a m b) (= slots (ClassSlots_1 b)))
+      ((set (ClassSlots_1 a) (map-image (compose m slots))))
+      :ruleset slotted)
+
+(rule ((RenamesToLeader_1 e1 m12 e2)
+       (RenamesToLeader_1 e2 m23 e3)
+       (guard (or (bool-!= e2 e3)
+                  (bool= (compose m23 m23) m23)
+                  (bool= e1 e3))))
+      ((Equated_1 e1 (compose m12 m23) e3)) :ruleset slotted)
+
+(rule ((RenamesToLeader_1 a m1 b)
+       (RenamesToLeader_1 a m2 c)
+       (!= a c)
+       (!= a b)
+       (= (ordering-max b c) b)
+       (guard (or (bool-!= b c)
+                  (and (bool= b c)
+                       (bool-!= m1 m2)
+                       (bool= (ordering-max m1 m2) m1)))))
+      ((delete (RenamesToLeader_1 a m1 b))
+       (Equated_1 b (compose (inverse m1) m2) c)) :ruleset slotted)
+
+(rule ((RenamesToLeader_1 a m1 a)
+       (RenamesToLeader_1 a m a)
+       (= m (compose m m))
+       (= m2 (compose m (compose m1 m)))
+       (!= m1 m2))
+      ((delete (RenamesToLeader_1 a m1 a))
+       (RenamesToLeader_1 a m2 a)) :ruleset slotted)
+
+(rule ((= e (SlottedVar_1 v))
+       (!= v 0))
+      ((Equated_1 e (map-insert (map-empty) 0 v) (SlottedVar_1 0))
+       (delete (SlottedVar_1 v))) :ruleset slotted)
+
+(RenamesToLeader_1 (SlottedVar_1 0) (map-insert (map-empty) 0 0) (SlottedVar_1 0))
+
+(rule ((RenamesToLeader_1 a m1_o c)
+       (RenamesToLeader_1 b m2 c)
+       (RenamesToLeader_1 c sym c)
+       (= m1 (compose m1_o sym))
+       (= m (compose m1 (inverse m2)))
+       (= (compose m m) m))
+      ((union a b)) :ruleset slotted)
+
+(rule ((SubstPending_1 root q mr r)
+       (= cs (ClassSlots_1 r)))
+      ((Equated_1 root (compose q (compose mr cs)) r))
+      :ruleset slotted)
+
+
+(push)
+(rule ((= V2 (EPrev p1 C3))
+       (= dom4 (map-image p1))
+       (= mp5 dom4)
+       (= idm6 (map-image mp5))
+       (= m7 (compose mp5 p1))
+       (= cs8 (ClassSlots_0 C3))
+       (= cs9 (ClassSlots_0 V2))
+       (= C3 (ESucc p10 C12))
+       (= dom13 (map-image p10))
+       (RenamesToLeader_0 C3 sym14 C3)
+       (= mp15 (find-mapping-total idm6 dom13 (compose (compose m7 cs8) sym14) (map-domain (compose m7 cs8))))
+       (= idm16 (map-image mp15))
+       (= av17 (map-union idm6 idm16))
+       (= m18 (compose mp15 p10))
+       (= cs19 (ClassSlots_0 C12))
+       (= carr20 (map-union (map-image (compose m18 cs19)) (map-union (map-image (compose mp5 cs9)) (map-image (compose m7 cs8)))))
+       (= alts21 (refine-namings carr20 (map-empty) idm6 idm16))
+       (Idx ix22)
+       (= mrg23 (vec-get alts21 ix22)))
+      ((Equated_0 V2 (compose (inverse (compose mrg23 (compose mp5 cs9))) (compose mrg23 (compose m18 cs19))) C12)) :name "expr-peel")
+(rule ((= V2 (TPrev p1 C3))
+       (= dom4 (map-image p1))
+       (= mp5 dom4)
+       (= idm6 (map-image mp5))
+       (= m7 (compose mp5 p1))
+       (= cs8 (ClassSlots_1 C3))
+       (= cs9 (ClassSlots_1 V2))
+       (= C3 (TSucc p10 C12))
+       (= dom13 (map-image p10))
+       (RenamesToLeader_1 C3 sym14 C3)
+       (= mp15 (find-mapping-total idm6 dom13 (compose (compose m7 cs8) sym14) (map-domain (compose m7 cs8))))
+       (= idm16 (map-image mp15))
+       (= av17 (map-union idm6 idm16))
+       (= m18 (compose mp15 p10))
+       (= cs19 (ClassSlots_1 C12))
+       (= carr20 (map-union (map-image (compose m18 cs19)) (map-union (map-image (compose mp5 cs9)) (map-image (compose m7 cs8)))))
+       (= alts21 (refine-namings carr20 (map-empty) idm6 idm16))
+       (Idx ix22)
+       (= mrg23 (vec-get alts21 ix22)))
+      ((Equated_1 V2 (compose (inverse (compose mrg23 (compose mp5 cs9))) (compose mrg23 (compose m18 cs19))) C12)) :name "ty-peel")
+(let $e (EPrev (map-empty) (ESucc (map-empty) (EZero))))
+(let $t (TPrev (map-empty) (TSucc (map-empty) (TZero))))
+(run-schedule (saturate (run slotted))
+              (repeat 4 (seq (run) (saturate (run slotted)))))
+(check (RenamesToLeader_0 $e _m0 _l) (RenamesToLeader_0 (EZero) _m1 _l) (= _m0 _m1))
+(check (RenamesToLeader_1 $t _m0 _l) (RenamesToLeader_1 (TZero) _m1 _l) (= _m0 _m1))
+(pop)
+(push)
+(rule ((= V3 (EPair p1 C4 p2 C5))
+       (= dom6 (map-union (map-image p1) (map-image p2)))
+       (= mp7 dom6)
+       (= idm8 (map-image mp7))
+       (= m9 (compose mp7 p1))
+       (= cs10 (ClassSlots_0 C4))
+       (= m11 (compose mp7 p2))
+       (= cs12 (ClassSlots_0 C5))
+       (= cs13 (ClassSlots_0 V3))
+       (= carr14 (map-union (map-image (compose mp7 cs13)) (map-union (map-image (compose m11 cs12)) (map-image (compose m9 cs10)))))
+       (= alts15 (refine-namings carr14 (map-empty) idm8))
+       (Idx ix16)
+       (= mrg17 (vec-get alts15 ix16)))
+      ((let _rhs18 (EPair (compose mrg17 (compose m11 cs12)) C5 (compose mrg17 (compose m9 cs10)) C4))
+       (Equated_0 _rhs18 (compose mrg17 (compose mp7 cs13)) V3)) :name "expr-comm")
+(let $e12 (EPair (map-of 0 1) (SlottedVar_0 0) (map-of 0 2) (SlottedVar_0 0)))
+(let $e21 (EPair (map-of 0 2) (SlottedVar_0 0) (map-of 0 1) (SlottedVar_0 0)))
+(let $t12 (TPair (map-of 0 1) (SlottedVar_1 0) (map-of 0 2) (SlottedVar_1 0)))
+(let $t21 (TPair (map-of 0 2) (SlottedVar_1 0) (map-of 0 1) (SlottedVar_1 0)))
+(run-schedule (saturate (run slotted))
+              (repeat 4 (seq (run) (saturate (run slotted)))))
+(check (RenamesToLeader_0 $e12 _m0 _l) (RenamesToLeader_0 $e21 _m1 _l) (= _m0 _m1))
+(fail (check (RenamesToLeader_1 $t12 _m0 _l) (RenamesToLeader_1 $t21 _m1 _l) (= _m0 _m1)))
+(check (RenamesToLeader_1 $t12 _m1 _l) (RenamesToLeader_1 $t21 _m2 _l))
+(pop)
+(push)
+(let $eid0 (ELam (map-of 0 0) (SlottedVar_0 0) (map-of 0 0) (SlottedVar_0 0)))
+(let $eid7 (ELam (map-of 0 7) (SlottedVar_0 0) (map-of 0 7) (SlottedVar_0 0)))
+(let $ek (ELam (map-of 0 0) (SlottedVar_0 0) (map-of 0 3) (SlottedVar_0 0)))
+(let $tid0 (TLam (map-of 0 0) (SlottedVar_1 0) (map-of 0 0) (SlottedVar_1 0)))
+(let $tid7 (TLam (map-of 0 7) (SlottedVar_1 0) (map-of 0 7) (SlottedVar_1 0)))
+(let $tk (TLam (map-of 0 0) (SlottedVar_1 0) (map-of 0 4) (SlottedVar_1 0)))
+(let $es (ESucc (map-empty) (EZero)))
+(let $ts (TSucc (map-empty) (TZero)))
+(run-schedule (saturate (run slotted)))
+(check (RenamesToLeader_0 $eid0 _m0 _l) (RenamesToLeader_0 $eid7 _m1 _l) (= _m0 _m1))
+(check (RenamesToLeader_1 $tid0 _m0 _l) (RenamesToLeader_1 $tid7 _m1 _l) (= _m0 _m1))
+(check (= (ClassSlots_0 $eid0) (map-empty)))
+(check (= (ClassSlots_1 $tid0) (map-empty)))
+(check (= (ClassSlots_0 $ek) (map-of 3 3)))
+(check (= (ClassSlots_1 $tk) (map-of 4 4)))
+(check (RenamesToLeader_0 $es _m1 _l) (RenamesToLeader_0 _n _m2 _l) (= _n (ESucc _c0 _c1)))
+(check (RenamesToLeader_1 $ts _m1 _l) (RenamesToLeader_1 _n _m2 _l) (= _n (TSucc _c0 _c1)))
+(fail (check (RenamesToLeader_0 $es _m1 _l) (RenamesToLeader_0 _n _m2 _l) (= _n (EPrev _c0 _c1))))
+(fail (check (RenamesToLeader_1 $ts _m1 _l) (RenamesToLeader_1 _n _m2 _l) (= _n (TPrev _c0 _c1))))
+(pop)
+(push)
+(rule ((= V4 (ELet p1 C5 p2 (SlottedVar_0 0) p3 C6))
+       (= dom7 (map-union (map-image p1) (map-union (map-image p2) (map-image p3))))
+       (= mp8 dom7)
+       (= idm9 (map-image mp8))
+       (= sx (map-get (compose mp8 p2) 0))
+       (= m10 (compose mp8 p1))
+       (= cs11 (ClassSlots_0 C5))
+       (= m12 (compose mp8 p3))
+       (= cs13 (ClassSlots_0 C6))
+       (= cs14 (ClassSlots_0 V4))
+       (= carr15 (map-union (map-image (compose mp8 cs14)) (map-union (map-image (compose m12 cs13)) (map-image (compose m10 cs11)))))
+       (= alts16 (refine-namings carr15 (map-of sx sx) idm9))
+       (Idx ix17)
+       (= mrg18 (vec-get alts16 ix17)))
+      ((let need19 (map-union (map-image (compose mrg18 (compose m12 cs13))) (map-union (map-image (compose mrg18 (compose m10 cs11))) (map-of (map-get mrg18 sx) (map-get mrg18 sx)))))
+       (let rb20 (find-mapping-total (map-domain (compose mrg18 (compose m12 cs13))) need19 (map-domain (compose mrg18 (compose m12 cs13))) (compose mrg18 (compose m12 cs13))))
+       (let xb21 (map-get rb20 (map-get mrg18 sx)))
+       (let tren22 (compose-total rb20 (compose mrg18 (compose m10 cs11))))
+       (let q23 (compose (inverse (compose mrg18 (compose mp8 cs14))) (inverse rb20)))
+       (SubstPending_0 V4 q23 (slotted-subst-frame C6 xb21 (SlottedVar_0 0) tren22 C5 "ClassSlots_0") (slotted-subst C6 xb21 (SlottedVar_0 0) tren22 C5 "ClassSlots_0"))) :naive :name "expr-beta")
+(rule ((= V4 (TLet p1 C5 p2 (SlottedVar_1 0) p3 C6))
+       (= dom7 (map-union (map-image p1) (map-union (map-image p2) (map-image p3))))
+       (= mp8 dom7)
+       (= idm9 (map-image mp8))
+       (= sx (map-get (compose mp8 p2) 0))
+       (= m10 (compose mp8 p1))
+       (= cs11 (ClassSlots_1 C5))
+       (= m12 (compose mp8 p3))
+       (= cs13 (ClassSlots_1 C6))
+       (= cs14 (ClassSlots_1 V4))
+       (= carr15 (map-union (map-image (compose mp8 cs14)) (map-union (map-image (compose m12 cs13)) (map-image (compose m10 cs11)))))
+       (= alts16 (refine-namings carr15 (map-of sx sx) idm9))
+       (Idx ix17)
+       (= mrg18 (vec-get alts16 ix17)))
+      ((let need19 (map-union (map-image (compose mrg18 (compose m12 cs13))) (map-union (map-image (compose mrg18 (compose m10 cs11))) (map-of (map-get mrg18 sx) (map-get mrg18 sx)))))
+       (let rb20 (find-mapping-total (map-domain (compose mrg18 (compose m12 cs13))) need19 (map-domain (compose mrg18 (compose m12 cs13))) (compose mrg18 (compose m12 cs13))))
+       (let xb21 (map-get rb20 (map-get mrg18 sx)))
+       (let tren22 (compose-total rb20 (compose mrg18 (compose m10 cs11))))
+       (let q23 (compose (inverse (compose mrg18 (compose mp8 cs14))) (inverse rb20)))
+       (SubstPending_1 V4 q23 (slotted-subst-frame C6 xb21 (SlottedVar_1 0) tren22 C5 "ClassSlots_1") (slotted-subst C6 xb21 (SlottedVar_1 0) tren22 C5 "ClassSlots_1"))) :naive :name "ty-beta")
+(let $ebeta (ELet (map-empty) (EZero) (map-of 0 0) (SlottedVar_0 0) (map-of 0 0) (SlottedVar_0 0)))
+(let $tbeta (TLet (map-empty) (TZero) (map-of 0 0) (SlottedVar_1 0) (map-of 0 0) (SlottedVar_1 0)))
+(run-schedule (saturate (run slotted))
+              (repeat 3 (seq (run) (saturate (run slotted)))))
+(check (RenamesToLeader_0 $ebeta _m0 _l) (RenamesToLeader_0 (EZero) _m1 _l) (= _m0 _m1))
+(check (RenamesToLeader_1 $tbeta _m0 _l) (RenamesToLeader_1 (TZero) _m1 _l) (= _m0 _m1))
+(pop)

@@ -1,0 +1,38 @@
+;;; COMPILED from slotted/tests/lambda-binders.egg by slotted/slotted-egglog.py.
+;;;
+;;; Only the forms THIS file contributes. The machinery for its 4 constructors,
+;;; and anything an included library brought, are snapshotted by the generators
+;;; that emit them -- committing them again per test would be the same thousands
+;;; of lines over and over.
+
+(include "slotted/encoding/egraph-encoding-11.egg")
+
+(push)
+(let $id5 (Lam (map-of 0 5) (Var 0) (map-of 0 5) (Var 0)))
+(let $id6 (Lam (map-of 0 6) (Var 0) (map-of 0 6) (Var 0)))
+(run-schedule (saturate (run slotted)))
+(check (RenamesToLeader $id5 _m0 _l) (RenamesToLeader $id6 _m1 _l) (= _m0 _m1))
+(check (= (ClassSlots $id5) (map-empty)))
+(pop)
+(push)
+(let $id5 (Lam (map-of 0 5) (Var 0) (map-of 0 5) (Var 0)))
+(let $const (Lam (map-of 0 5) (Var 0) (map-of 0 7) (Var 0)))
+(run-schedule (saturate (run slotted)))
+(fail (check (RenamesToLeader $id5 _m0 _l) (RenamesToLeader $const _m1 _l) (= _m0 _m1)))
+(check (= (ClassSlots $const) (map-of 7 7)))
+(pop)
+(push)
+(let $f (App (map-empty) (Null) (map-empty) (Null)))
+(let $l5 (Let (map-of 0 5) (Var 0) (map-of 0 5) (Var 0) (map-empty) $f))
+(let $l6 (Let (map-of 0 6) (Var 0) (map-of 0 6) (Var 0) (map-empty) $f))
+(run-schedule (saturate (run slotted)))
+(check (RenamesToLeader $l5 _m0 _l) (RenamesToLeader $l6 _m1 _l) (= _m0 _m1))
+(check (= (ClassSlots $l5) (map-empty)))
+(pop)
+(push)
+(let $a (App (map-of 0 5) (Var 0) (map-of 0 5) (Var 0)))
+(let $l (Lam (map-of 0 5) (Var 0) (map-of 0 5) (Var 0)))
+(run-schedule (saturate (run slotted)))
+(fail (check (RenamesToLeader $a _m0 _l) (RenamesToLeader $l _m1 _l) (= _m0 _m1)))
+(check (= (ClassSlots $a) (map-of 5 5)))
+(pop)

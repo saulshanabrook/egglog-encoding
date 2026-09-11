@@ -1,5 +1,6 @@
 use crate::Write;
 use std::any::TypeId;
+use std::collections::BTreeMap;
 use std::iter::zip;
 
 use super::*;
@@ -191,6 +192,73 @@ impl ContainerSort for VecSort {
         add_primitive_with_validator!(eg, "vec-get"    = |    xs: @VecContainer (arc), i: i64                       | -?> # (self.element()) { xs.data.get(i as usize).copied() }, vec_get_validator);
         add_primitive!(eg, "vec-set"    = |mut xs: @VecContainer (arc), i: i64, x: # (self.element())| -> @VecContainer (arc) {{ xs.data[i as usize] = x;    xs }});
         add_primitive!(eg, "vec-remove" = |mut xs: @VecContainer (arc), i: i64                       | -> @VecContainer (arc) {{ xs.data.remove(i as usize); xs }});
+
+        // A `Vec` of renamings is the shape of "every naming `find-mapping-total`
+        // could have chosen", so the plural form is registered here rather than on
+        // the map sort, which cannot name its own vector. Index it with `vec-get`:
+        // that is partial, so a rule joining an index relation against it stops at
+        // the end on its own.
+        if let Some(map) = crate::prelude::container_sort_of::<MapSort>(&self.element)
+            && map.key().name() == "i64"
+            && map.key().name() == map.value().name()
+        {
+            add_primitive!(eg, "find-mappings-total" = {self.clone(): VecSort} [xs: # (self.element())] -?> @VecContainer (arc) {{
+                let bv = state.base_values();
+                let cv = state.container_values();
+                let mut maps: Vec<BTreeMap<i64, i64>> = Vec::new();
+                for v in xs {
+                    let m = cv.get_val::<MapContainer>(v)?.clone();
+                    maps.push(
+                        m.data
+                            .iter()
+                            .map(|(k, val)| (bv.unwrap::<i64>(*k), bv.unwrap::<i64>(*val)))
+                            .collect(),
+                    );
+                }
+                let namings: Vec<BTreeMap<Value, Value>> =
+                    renaming_find_mappings_total(&maps, FIND_MAPPINGS_CAP)
+                        .into_iter()
+                        .map(|n| {
+                            n.into_iter()
+                                .map(|(k, v)| (bv.get::<i64>(k), bv.get::<i64>(v)))
+                                .collect()
+                        })
+                        .collect();
+                let data = namings
+                    .into_iter()
+                    .map(|n| state.register_container::<MapContainer>(MapContainer::renaming(n)))
+                    .collect();
+                Some(VecContainer { do_rebuild: false, data })
+            }});
+            add_primitive!(eg, "refine-namings" = {self.clone(): VecSort} [xs: # (self.element())] -?> @VecContainer (arc) {{
+                let bv = state.base_values();
+                let cv = state.container_values();
+                let mut maps: Vec<BTreeMap<i64, i64>> = Vec::new();
+                for v in xs {
+                    let m = cv.get_val::<MapContainer>(v)?.clone();
+                    maps.push(
+                        m.data
+                            .iter()
+                            .map(|(k, val)| (bv.unwrap::<i64>(*k), bv.unwrap::<i64>(*val)))
+                            .collect(),
+                    );
+                }
+                let merges: Vec<BTreeMap<Value, Value>> =
+                    renaming_refine_namings(&maps, FIND_MAPPINGS_CAP)
+                        .into_iter()
+                        .map(|n| {
+                            n.into_iter()
+                                .map(|(k, v)| (bv.get::<i64>(k), bv.get::<i64>(v)))
+                                .collect()
+                        })
+                        .collect();
+                let data = merges
+                    .into_iter()
+                    .map(|n| state.register_container::<MapContainer>(MapContainer::renaming(n)))
+                    .collect();
+                Some(VecContainer { do_rebuild: false, data })
+            }});
+        }
         if self.element.is_eq_sort() {
             eg.add_write_primitive(
                 Union {

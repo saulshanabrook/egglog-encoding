@@ -1,0 +1,27 @@
+;;; var::xy_eq_yz_causes_redundancy
+;;;
+;;; Ported from `memoryleak47/slotted-egraphs`, `tests/var/mod.rs`. One file per test
+;;; there, so the two can be diffed side by side, and standalone: the constructors
+;;; below are all it needs, and the compiler generates their machinery.
+;;;
+;;;     python3 slotted/slotted-egglog.py slotted/tests/paper/var-xy-eq-yz.egg
+;;;
+;;;     f($0,$1) = f($1,$2)  =>  one class, and it has NO slots
+;;;
+;;; Equating two nodes that use different slots forces every slot redundant: the
+;;; class cannot depend on $0 (the right side does not mention it) nor on $1 or $2
+;;; by the same argument. The reference asserts `eg.slots(id).is_empty()`.
+
+(constructor F (U U) U)
+
+
+(let f01 (F $0 $1))
+(let f12 (F $1 $2))
+(union f01 f12)
+
+(run 0)
+
+;; one class ...
+(check (= f01 f12))
+;; ... with no slots left
+(check (slots f01))

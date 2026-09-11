@@ -1,0 +1,116 @@
+;;; The paper artifact's BATAX second-pass input and published baseline extraction.
+;;;
+;;; Provenance (artifact commit 83f2e5bee2b3aa45bf97ef1e3a8abe953790c735):
+;;;   input:  sdql/slotted/progs/batax_2nd.sexp
+;;;   target: sdql/baseline/progs/batax_2nd_esat.sexp
+;;;
+;;; The artifact runs the fine-grained `sdql_rules()` with a 12-iteration limit for
+;;; this workload. Its surface order is `(sum $k $v range body)` and
+;;; `(let $x value body)`; this language declares the same nodes as
+;;; `(Sum range $k $v body)` and `(Let value $x body)`. Numeric slot names below are
+;;; the alpha-renaming `$var_01` ... `$var_12` to `$1` ... `$12`.
+
+;;; This is a goal/reachability regression, not a reproduction of Table 1's search-space
+;;; metrics: running all 44 rules is too costly for the ordinary test suite. It uses the
+;;; goal-directed subset of the artifact's fine-grained rules needed by this witness.
+;;; `slotted/check-paper-sdql.py` keeps these definitions semantically identical to the
+;;; corresponding rules in `languages/sdql.egg` and checks both fixture transcriptions.
+(constructor Lambda (U U) U :binder 0)
+(constructor Sing (U U) U)
+(constructor Add (U U) U)
+(constructor Mult (U U) U)
+(constructor Sub (U U) U)
+(constructor Equality (U U) U)
+(constructor Get (U U) U)
+(constructor Range (U U) U)
+(constructor IfThen (U U) U)
+(constructor SubArray (U U U) U)
+(constructor Unique (U) U)
+(constructor Sum (U U U U) U :binder 1 2)
+(constructor Let (U U U) U :binder 1)
+(constructor Num (i64) U)
+
+(rewrite (Let t $x body) (subst body $x t) :name "beta")
+(rewrite (Sub e e) (Num 0) :name "sub-identity")
+(rewrite (Add e (Num 0)) e :name "add-zero")
+(rewrite (Sub e (Num 0)) e :name "sub-zero")
+(rewrite (Equality a b) (Equality b a) :name "eq-comm")
+(rewrite (Sum (Sum R $k2 $v2 (Sing $k2 body1)) $k1 $v1 body2)
+         (Sum R $k2 $v2 (Let $k2 $k1 (Let body1 $v1 body2)))
+         :name "sum-sum-vert-fuse-1")
+(rewrite (Sum (Sum R $k2 $v2 (Sing (Unique key) body1)) $k1 $v1 body2)
+         (Sum R $k2 $v2 (Let (Unique key) $k1 (Let body1 $v1 body2)))
+         :name "sum-sum-vert-fuse-2")
+(rewrite (Sum (Range st en) $k $v (IfThen (Equality $v key) body))
+         (Sum (Range st en) $k $v
+           (IfThen (Equality $k (Sub key (Sub st (Num 1)))) body))
+         :name "sum-range-1")
+(rewrite (Get dict key)
+         (Sum dict $k $v (IfThen (Equality $k key) $v))
+         :name "get-to-sum")
+(rewrite (Sum dict $k $v (IfThen (Equality $k key) body))
+         (Let key $k (Let (Get dict $k) $v body))
+         :name "sum-to-get"
+         :when ((not-free $k key) (not-free $v key)))
+(rewrite (Get (Range st en) idx)
+         (Add idx (Sub st (Num 1)))
+         :name "get-range")
+(rewrite (Unique e) e :name "unique-rm")
+
+(let paper-input
+  (Lambda $1
+    (Lambda $2
+      (Lambda $3
+        (Lambda $4
+          (Lambda $5
+            (Lambda $6
+              (Mult $1
+                (Sum
+                  (Sum $2 $7 $8
+                    (Let
+                      (Get $2 (Add $7 (Num 1)))
+                      $9
+                      (Sing $7
+                        (Sum
+                          (SubArray $3 $8 (Sub $9 (Num 1)))
+                          $10 $11
+                          (Sing (Unique $11) (Get $4 $10))))))
+                  $7 $8
+                  (Mult $8
+                    (Sum $8 $9 $10
+                      (Mult $10
+                        (Get
+                          (Sum (Range (Num 1) $6) $11 $12
+                            (Sing (Unique $12) (Get $5 $12)))
+                          $9)))))))))))))
+
+;;; Saturate the input alone: declaring the target before this point would seed the
+;;; graph with the answer and test joinability rather than the artifact's reachability.
+(run 12)
+
+;;; The target is introduced only after the bounded user-rule phase. `(run 0)` below
+;;; installs/canonicalizes its nodes with machinery rules, without running SDQL rules
+;;; on the target.
+(let paper-target
+  (Lambda $1
+    (Lambda $2
+      (Lambda $3
+        (Lambda $4
+          (Lambda $5
+            (Lambda $6
+              (Mult $1
+                (Sum $2 $7 $8
+                  (Mult
+                    (Sum
+                      (SubArray $3 $8
+                        (Sub (Get $2 (Add $7 (Num 1))) (Num 1)))
+                      $9 $10
+                      (Sing $10 (Get $4 $9)))
+                    (Sum
+                      (SubArray $3 $8
+                        (Sub (Get $2 (Add $7 (Num 1))) (Num 1)))
+                      $9 $10
+                      (Mult (Get $4 $9) (Get $5 $10)))))))))))))
+
+(run 0)
+(check (= paper-input paper-target))

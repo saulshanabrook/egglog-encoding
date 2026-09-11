@@ -1,0 +1,22 @@
+;;; COMPILED from slotted/tests/paper/enode-collisions.egg by slotted/slotted-egglog.py.
+;;;
+;;; Only the forms THIS file contributes. The machinery for its 4 constructors,
+;;; and anything an included library brought, are snapshotted by the generators
+;;; that emit them -- committing them again per test would be the same thousands
+;;; of lines over and over.
+
+(include "slotted/encoding/egraph-encoding-11.egg")
+
+(let $c01 (C (map-of 0 0) (Var 0) (map-of 0 1) (Var 0)))
+(union $c01 (C (map-of 0 1) (Var 0) (map-of 0 0) (Var 0)))
+(let $i01 (I (map-of 0 0 1 1) (C (map-of 0 0) (Var 0) (map-of 0 1) (Var 0)) (map-empty) (Null)))
+(let $i10 (I (map-of 0 0 1 1) (C (map-of 0 1) (Var 0) (map-of 0 0) (Var 0)) (map-empty) (Null)))
+(let $i02 (I (map-of 0 0 2 2) (C (map-of 0 0) (Var 0) (map-of 0 2) (Var 0)) (map-empty) (Null)))
+(let $n1 (N (map-of 0 0 1 1) (C (map-of 0 0) (Var 0) (map-of 0 1) (Var 0)) (map-of 0 0 1 1) (C (map-of 0 0) (Var 0) (map-of 0 1) (Var 0))))
+(let $n2 (N (map-of 0 0 1 1) (C (map-of 0 0) (Var 0) (map-of 0 1) (Var 0)) (map-of 0 0 1 1) (C (map-of 0 1) (Var 0) (map-of 0 0) (Var 0))))
+(let $n3 (N (map-of 0 0 1 1) (C (map-of 0 1) (Var 0) (map-of 0 0) (Var 0)) (map-of 0 0 1 1) (C (map-of 0 0) (Var 0) (map-of 0 1) (Var 0))))
+(run-schedule (saturate (run slotted)))
+(check (RenamesToLeader $i01 _m0 _l) (RenamesToLeader $i10 _m1 _l) (= _m0 _m1))
+(fail (check (RenamesToLeader $i01 _m0 _l) (RenamesToLeader $i02 _m1 _l) (= _m0 _m1)))
+(check (RenamesToLeader $n1 _m0 _l) (RenamesToLeader $n2 _m1 _l) (= _m0 _m1))
+(check (RenamesToLeader $n1 _m0 _l) (RenamesToLeader $n3 _m1 _l) (= _m0 _m1))

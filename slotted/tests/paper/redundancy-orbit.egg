@@ -1,0 +1,35 @@
+;;; 3.5, step 1: redundancy is closed under the permutation group
+;;;
+;;; Ported from `memoryleak47/slotted-egraphs`, `tests/var/mod.rs`. One file per test
+;;; there, so the two can be diffed side by side, and standalone: the constructors
+;;; below are all it needs, and the compiler generates their machinery.
+;;;
+;;;     python3 slotted/slotted-egglog.py slotted/tests/paper/redundancy-orbit.egg
+;;;
+;;; "if you can swap $x with $y by a symmetry, then if $x is redundant so is $y". `f`
+;;; is made symmetric, then equated with a term over one slot: $1 goes redundant, the
+;;; orbit drags $0 along, and the merged class keeps no slots -- without ever becoming
+;;; `(Null)`.
+
+(constructor F (U U) U)
+(constructor G (U U) U)
+(constructor Null () U)
+
+
+(let f01 (F $0 $1))
+(let f10 (F $1 $0))
+(union f01 f10)
+
+(let g0 (G $0 (Null)))
+(union f01 g0)
+
+;; bound before the run, so the graph holds these invocations to be asked about
+(let g5 (G $5 (Null)))
+(let f78 (F $7 $8))
+
+(run 0)
+
+(check (= g0 g5))
+(check (= f01 f78))
+(check (slots f01))
+(check (!= f01 (Null)))

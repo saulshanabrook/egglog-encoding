@@ -494,9 +494,10 @@ impl<'a> ExecutionState<'a> {
         &self.db.table_info[table].table
     }
 
-    /// Get the human-readable name for a table, if one exists.
+    /// Get the human-readable name for a table, if the table is visible to
+    /// this execution state and has one.
     pub fn table_name(&self, table: TableId) -> Option<&'a str> {
-        self.db.table_info[table].name()
+        self.db.table_info.get(table)?.name()
     }
 
     pub fn base_values(&self) -> &'a BaseValues {

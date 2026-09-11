@@ -1,0 +1,21 @@
+;;; COMPILED from slotted/tests/paper/redundancy-orbit.egg by slotted/slotted-egglog.py.
+;;;
+;;; Only the forms THIS file contributes. The machinery for its 3 constructors,
+;;; and anything an included library brought, are snapshotted by the generators
+;;; that emit them -- committing them again per test would be the same thousands
+;;; of lines over and over.
+
+(include "slotted/encoding/egraph-encoding-11.egg")
+
+(let $f01 (F (map-of 0 0) (Var 0) (map-of 0 1) (Var 0)))
+(let $f10 (F (map-of 0 1) (Var 0) (map-of 0 0) (Var 0)))
+(union $f01 $f10)
+(let $g0 (G (map-of 0 0) (Var 0) (map-empty) (Null)))
+(union $f01 $g0)
+(let $g5 (G (map-of 0 5) (Var 0) (map-empty) (Null)))
+(let $f78 (F (map-of 0 7) (Var 0) (map-of 0 8) (Var 0)))
+(run-schedule (saturate (run slotted)))
+(check (RenamesToLeader $g0 _m0 _l) (RenamesToLeader $g5 _m1 _l) (= _m0 _m1))
+(check (RenamesToLeader $f01 _m0 _l) (RenamesToLeader $f78 _m1 _l) (= _m0 _m1))
+(check (= (ClassSlots $f01) (map-empty)))
+(fail (check (RenamesToLeader $f01 _m0 _l) (RenamesToLeader (Null) _m1 _l) (= _m0 _m1)))
