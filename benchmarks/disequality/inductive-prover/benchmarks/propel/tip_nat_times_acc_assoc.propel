@@ -1,0 +1,11 @@
+(def tip_nat_plus_acc (fun (rec X {(S X) Z}) (rec X {(S X) Z}) (rec X {(S X) Z}))
+  (lambda (x (rec X {(S X) Z})) (y (rec X {(S X) Z})) (cases x
+    [Z y]
+    [(S z) (tip_nat_plus_acc z (S y))])))
+
+(def tip_nat_times_acc (fun (rec X {(S X) Z}) (rec X {(S X) Z}) (rec X {(S X) Z}))
+  (lambda [assoc] (x (rec X {(S X) Z})) (y (rec X {(S X) Z})) (cases x
+    [Z Z]
+    [(S z) (cases y
+      [Z Z]
+      [(S x2) (tip_nat_plus_acc x (tip_nat_plus_acc x2 (tip_nat_times_acc z x2)))])])))

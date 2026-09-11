@@ -1,0 +1,22 @@
+(def bv_succ (fun (rec X {(B0 X) (B1 X) BZ}) (rec X {(B0 X) (B1 X) BZ}))
+  (lambda (x (rec X {(B0 X) (B1 X) BZ})) (cases x
+    [BZ BZ]
+    [(B0 x) (B1 x)]
+    [(B1 x) (B0 (bv_succ x))])))
+
+(def bv_addmod (fun (rec X {(B0 X) (B1 X) BZ}) (rec X {(B0 X) (B1 X) BZ}) (rec X {(B0 X) (B1 X) BZ}))
+  (lambda (x (rec X {(B0 X) (B1 X) BZ})) (y (rec X {(B0 X) (B1 X) BZ})) (cases (Tuple x y)
+    [(Tuple BZ _) BZ]
+    [(Tuple _ BZ) BZ]
+    [(Tuple (B0 x) (B0 y)) (B0 (bv_addmod x y))]
+    [(Tuple (B0 x) (B1 y)) (B1 (bv_addmod x y))]
+    [(Tuple (B1 x) (B0 y)) (B1 (bv_addmod x y))]
+    [(Tuple (B1 x) (B1 y)) (B0 (bv_succ (bv_addmod x y)))])))
+
+(def bv_multmod (fun (rec X {(B0 X) (B1 X) BZ}) (rec X {(B0 X) (B1 X) BZ}) (rec X {(B0 X) (B1 X) BZ}))
+  (lambda [comm] (x (rec X {(B0 X) (B1 X) BZ})) (y (rec X {(B0 X) (B1 X) BZ}))
+    (cases (Pair x y)
+      [(Pair _ BZ) BZ]
+      [(Pair BZ _) BZ]
+      [(Pair (B0 x) y) (B0 (bv_multmod x y))]
+      [(Pair (B1 x) y) (bv_addmod y (B0 (bv_multmod x y)))])))

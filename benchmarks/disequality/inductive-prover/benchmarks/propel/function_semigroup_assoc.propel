@@ -1,0 +1,11 @@
+(type nat {Z (S nat)})
+(type function (fun nat nat))
+
+(def nat_add (fun nat nat nat)
+  (lambda (x nat) (y nat) (cases x
+    [Z y]
+    [(S x) (S (nat_add x y))])))
+
+(def <> (fun function function function)
+  (lambda [assoc] (x function) (y function)
+    (lambda (v nat) (nat_add (x v) (y v)))))

@@ -1,0 +1,14 @@
+(type nat {Z (S nat)})
+(type maybe {Nothing (Just nat)})
+
+(def nat_add (fun nat nat nat)
+  (lambda (x nat) (y nat) (cases x
+    [Z y]
+    [(S x) (S (nat_add x y))])))
+
+(def <> (fun maybe maybe maybe)
+  (lambda [assoc] (x maybe) (y maybe)
+    (cases (Pair x y)
+      [(Pair Nothing y) y]
+      [(Pair x Nothing) x]
+      [(Pair (Just x) (Just y)) (Just (nat_add x y))])))

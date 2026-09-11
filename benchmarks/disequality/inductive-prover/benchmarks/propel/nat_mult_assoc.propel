@@ -1,0 +1,8 @@
+(def nat_add (fun (rec X {(S X) Z}) (rec X {(S X) Z}) (rec X {(S X) Z}))
+  (lambda (x (rec X {(S X) Z})) (y (rec X {(S X) Z})) (cases x
+    [Z y]
+    [(S x) (S (nat_add x y))])))
+(def nat_mult (fun (rec X {(S X) Z}) (rec X {(S X) Z}) (rec X {(S X) Z}))
+  (lambda [assoc] (x (rec X {(S X) Z})) (y (rec X {(S X) Z})) (cases x
+    [Z Z]
+    [(S x) (nat_add y (nat_mult x y))])))

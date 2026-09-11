@@ -1,0 +1,30 @@
+(def bv_eq (fun (rec X {(B0 X) (B1 X) BZ}) (rec X {(B0 X) (B1 X) BZ}) {True False})
+  (lambda (x (rec X {(B0 X) (B1 X) BZ})) (y (rec X {(B0 X) (B1 X) BZ})) (cases (Tuple x y)
+    [(Tuple BZ BZ) True]
+    [(Tuple (B0 x) (B0 y)) (bv_eq x y)]
+    [(Tuple (B1 x) (B1 y)) (bv_eq x y)]
+    [_ False])))
+
+(def bv_max (fun (rec X {(B0 X) (B1 X) BZ}) (rec X {(B0 X) (B1 X) BZ}) (rec X {(B0 X) (B1 X) BZ}))
+  (lambda (x (rec X {(B0 X) (B1 X) BZ})) (y (rec X {(B0 X) (B1 X) BZ})) (cases (Tuple x y)
+    [(Tuple BZ y) y]
+    [(Tuple x BZ) x]
+    [(Tuple (B0 x) (B0 y)) (B0 (bv_max x y))]
+    [(Tuple (B1 x) (B1 y)) (B1 (bv_max x y))]
+    [(Tuple (B0 x) (B1 y))
+      (if (bv_eq (bv_max x y) y)
+        (B1 y)
+        (B0 x))]
+    [(Tuple (B1 x) (B0 y))
+      (if (bv_eq (bv_max x y) x)
+        (B1 x)
+        (B0 y))])))
+
+(def bv_lwwreg
+  (lambda [assoc] (x {(LWWReg (rec X {(B0 X) (B1 X) BZ}) (rec X {(B0 X) (B1 X) BZ}))}) (y {(LWWReg (rec X {(B0 X) (B1 X) BZ}) (rec X {(B0 X) (B1 X) BZ}))})
+    (let (Tuple (LWWReg xd xt) (LWWReg yd yt)) (Tuple x y)
+      (if (bv_eq xt yt)
+          (LWWReg (bv_max xd yd) xt)
+          (if (bv_eq (bv_max xt yt) xt)
+              (LWWReg xd xt)
+              (LWWReg yd yt))))))
