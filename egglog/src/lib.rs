@@ -2863,6 +2863,8 @@ impl EGraph {
                     desugared_before_proofs.extend(resolved.resolved_before_proofs);
                 } else {
                     let resolved = self.resolve_command(command)?;
+                    // Execution callers discard resolved trees; retaining them here
+                    // duplicates large proof programs. Keep only the checker's history.
                     if run_commands {
                         if self.are_proofs_enabled() {
                             self.proof_check_program

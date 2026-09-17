@@ -370,7 +370,7 @@ def preflight_collection(plan: CollectionPlan, timeout_sec: int) -> None:
             raise ValueError(f"target {target.display_label} needs a fresh {engine} binary")
         required_outputs = ["--timing-summary"]
         if engine == "egglog":
-            if any(run.file.uses_disequality or run.disequality_encoding != "nee" for run in engine_runs):
+            if any(run.disequality_encoding != "nee" for run in engine_runs):
                 required_outputs.append("--disequality-encoding")
             required_outputs.extend(
                 flag for run in engine_runs for flag in TREATMENT_SPECS[run.treatment].flags if flag.startswith("--")
@@ -398,7 +398,7 @@ def collection_label(
     """Return a concise progress label for one measured observation."""
 
     filename = Path(file_spec.display_path).name
-    encoding = f"/{disequality_encoding}" if file_spec.uses_disequality or disequality_encoding != "nee" else ""
+    encoding = f"/{disequality_encoding}" if disequality_encoding != "nee" else ""
     return f"{filename} · {treatment}{encoding} · {round_index + 1}/{rounds}"
 
 

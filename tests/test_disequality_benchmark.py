@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from benchmarking import benchmark, collection, models, targets, workloads
+from benchmarking import benchmark, collection, models, targets
+from benchmarking.engines import MATH_WORKLOAD_PATH
 from benchmarking.reports.store import CacheKey, ReportStore
 from tests.report_fixtures import make_record, make_target
 
@@ -26,23 +27,21 @@ def test_encoding_endpoints_and_cached_results_are_distinct(tmp_path: Path) -> N
     assert [(run.disequality_encoding, run.missing_observations) for run in plan.runs] == [("nee", 0), ("ee", 1)]
 
 
-def test_encoding_flags_only_affect_relevant_egglog_workloads(tmp_path: Path) -> None:
-    path = tmp_path / "test.egg"
-    path.write_text("; disequal in a comment is not syntax\n(datatype T (A))\n")
-    plain = workloads.resolve_files([str(path)], tmp_path)[0]
-    assert not plain.uses_disequality
-    path.write_text("(datatype T (A))\n(disequal (A) (A))\n(check-contradiction)\n")
-    file = workloads.resolve_files([str(path)], tmp_path)[0]
-    assert file.uses_disequality
-    for encoding in ("nee", "ee"):
-        command = targets.workload_command(Path("binary"), file, "proofs", encoding)
-        index = command.index("--disequality-encoding")
-        assert command[index + 1] == encoding
-        assert "--proofs" in command
-    assert "--disequality-encoding" not in targets.workload_command(Path("binary"), plain, "off")
-    assert "--disequality-encoding" in targets.workload_command(Path("binary"), plain, "off", "ee")
+def test_encoding_flags_depend_only_on_endpoint_not_workload(tmp_path: Path) -> None:
+    file = models.FileSpec("test.egg", tmp_path / "test.egg", "sha256:file")
+    # Command construction does not need to read or classify the workload.
+    command = targets.workload_command(Path("binary"), file, "proofs")
+    assert "--disequality-encoding" not in command
+    assert "--proofs" in command
+    command = targets.workload_command(Path("binary"), file, "proofs", "ee")
+    assert command[command.index("--disequality-encoding") + 1] == "ee"
+    assert "--proofs" in command
     with pytest.raises(ValueError, match="only supported by egglog"):
         models.EndpointRequest(make_target().request, "egg", "ee")
+    native_file = replace(file, absolute_path=Path(__file__).resolve().parents[1] / MATH_WORKLOAD_PATH)
+    assert targets.workload_command(Path("binary"), native_file, "egg") == ["binary", "--proof-mode", "off"]
+    with pytest.raises(ValueError, match="only supported by egglog"):
+        targets.workload_command(Path("binary"), native_file, "egg", "ee")
 
 
 def test_encoding_is_persisted_and_reconstructed(tmp_path: Path) -> None:

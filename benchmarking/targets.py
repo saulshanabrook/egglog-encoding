@@ -298,6 +298,8 @@ def workload_command(
 ) -> list[str]:
     specification = TREATMENT_SPECS[treatment]
     if specification.engine == "egg":
+        if disequality_encoding != "nee":
+            raise ValueError("disequality encoding selection is only supported by egglog treatments")
         validate_engine_workload(file_spec, treatment)
         return [str(binary_path), *specification.flags]
     return [
@@ -306,11 +308,7 @@ def workload_command(
         "no-messages",
         "-j",
         "1",
-        *(
-            ["--disequality-encoding", disequality_encoding]
-            if file_spec.uses_disequality or disequality_encoding != "nee"
-            else []
-        ),
+        *(["--disequality-encoding", disequality_encoding] if disequality_encoding != "nee" else []),
         *(["--fact-directory", str(file_spec.fact_directory)] if file_spec.fact_directory is not None else []),
         *specification.flags,
         str(file_spec.absolute_path),

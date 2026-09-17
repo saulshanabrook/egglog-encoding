@@ -89,7 +89,19 @@ The full workload remains in the default `./bench.py` suite, but CI's
 `make benchmark-smoke` explicitly selects small Math and disequality fixtures.
 No large proof benchmark, extra swap, or longer timeout is added to CI.
 
-## Full-size measurements
+The review follow-up re-ran the full ordinary workload successfully: NE 32.835s
+and EE 31.905s, with executable SHA-256
+`fb45e02d3f32ae6d4255aebbb4c20f1f828131066f65df47ed506fbfe672eee8`.
+These are single observations, not evidence of an encoding ranking. Small
+fixtures passed all proof treatments; full proof timings were not repeated.
+
+## Pre-review full-size measurements
+
+These measurements precede the review change that checks EE's `true = false`
+directly instead of deriving an extra contradiction fact. They are retained
+with their original executable hash, not presented as timings of the revised
+EE implementation. The review follow-up revalidates the small proof fixtures;
+it does not repeat the long proof timing runs.
 
 Measured on 2026-09-17 (America/Los_Angeles), using the environment above and
 the validated executable SHA-256 `6059a6fdb61a0374bcae16e89e8834dc2a557fcea0693e4c680f6f2d87da8983`.
@@ -119,16 +131,16 @@ Reproduce the requested matrix with:
 ./bench.py benchmarks/disequality/parameter-analysis.egg --rounds 1 \
   --treatment proofs --compare-treatment off \
   --disequality-encoding nee --compare-disequality-encoding nee \
-  --report /tmp/disequality-final-timings.jsonl --format markdown
+  --format markdown
 ./bench.py benchmarks/disequality/parameter-analysis.egg --rounds 1 \
   --treatment off --compare-treatment off \
   --disequality-encoding ee --compare-disequality-encoding nee \
-  --report /tmp/disequality-final-timings.jsonl --format markdown
+  --format markdown
 ```
 
-The second command reuses the first command's NE ordinary observation. Use an
-empty report path or `--force-run` to collect fresh observations. Build, generation,
-and runner setup are outside the process timing; parsing and compilation of the
+The default cache reuses matching observations across both commands, including
+the shared NE ordinary endpoint. Use `--force-run` to collect fresh observations.
+Build, generation, and runner setup are outside the process timing; parsing and compilation of the
 complete `.egg` input are inside it. Raw JSONL and process logs are not committed.
 
 ### Where the NE proof time goes

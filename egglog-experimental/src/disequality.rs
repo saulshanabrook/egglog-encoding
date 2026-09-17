@@ -52,7 +52,7 @@ pub(crate) fn add_disequality_support(egraph: &mut EGraph, encoding: Disequality
     egraph.parser.add_action_macro(Arc::new(Disequal));
     egraph
         .parser
-        .add_command_macro(Arc::new(CheckContradiction));
+        .add_command_macro(Arc::new(CheckContradiction(encoding)));
     egraph
         .command_macros_mut()
         .register(Arc::new(LowerDisequality(encoding)));
@@ -85,7 +85,7 @@ impl Macro<Vec<Action>> for Disequal {
     }
 }
 
-struct CheckContradiction;
+struct CheckContradiction(DisequalityEncoding);
 
 impl Macro<Vec<Command>> for CheckContradiction {
     fn name(&self) -> &str {
@@ -114,7 +114,16 @@ impl Macro<Vec<Command>> for CheckContradiction {
             )),
             Command::Check(
                 span.clone(),
-                vec![Fact::Fact(Expr::Call(span, CONTRADICTION.into(), vec![]))],
+                vec![match self.0 {
+                    DisequalityEncoding::Nee => {
+                        Fact::Fact(Expr::Call(span, CONTRADICTION.into(), vec![]))
+                    }
+                    DisequalityEncoding::Ee => Fact::Eq(
+                        span.clone(),
+                        Expr::Call(span.clone(), TRUE.into(), vec![]),
+                        Expr::Call(span, FALSE.into(), vec![]),
+                    ),
+                }],
             ),
         ])
     }
@@ -184,7 +193,7 @@ impl LowerDisequality {
             return Ok(vec![command]);
         };
         let mut commands = Vec::new();
-        if types.get_func_type(CONTRADICTION).is_none() {
+        if self.0 == DisequalityEncoding::Nee && types.get_func_type(CONTRADICTION).is_none() {
             commands.push(Command::AddRuleset(span.clone(), RULESET.into()));
             commands.push(Command::Relation {
                 span: span.clone(),
@@ -192,10 +201,8 @@ impl LowerDisequality {
                 inputs: vec![],
             });
         }
-        if self.0 == DisequalityEncoding::Ee
-            && !sorts.is_empty()
-            && types.get_sort_by_name(TRUTH).is_none()
-        {
+        if self.0 == DisequalityEncoding::Ee && types.get_sort_by_name(TRUTH).is_none() {
+            commands.push(Command::AddRuleset(span.clone(), RULESET.into()));
             commands.push(Command::Sort {
                 span: span.clone(),
                 name: TRUTH.into(),
@@ -207,19 +214,6 @@ impl LowerDisequality {
             });
             commands.push(constructor(&span, TRUE.into(), vec![], TRUTH));
             commands.push(constructor(&span, FALSE.into(), vec![], TRUTH));
-            commands.push(rule(
-                &span,
-                "truth-conflict".into(),
-                vec![Fact::Eq(
-                    span.clone(),
-                    Expr::Call(span.clone(), TRUE.into(), vec![]),
-                    Expr::Call(span.clone(), FALSE.into(), vec![]),
-                )],
-                vec![Action::Expr(
-                    span.clone(),
-                    Expr::Call(span.clone(), CONTRADICTION.into(), vec![]),
-                )],
-            ));
             commands.extend(equality_rules(&span, TRUTH));
         }
         for (sort, span) in sorts {

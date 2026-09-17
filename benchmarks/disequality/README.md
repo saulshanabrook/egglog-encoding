@@ -17,10 +17,11 @@ No symmetry rule is needed for self-edge detection.
 `--disequality-encoding ee` uses the paper's five-rule equality embedding:
 inequality becomes `eq(a,b) = false`, with lifting, symmetry, double-negation,
 and left/right reflexivity rules. A separate equality embedding handles the
-private truth sort; equating its `true` and `false` derives contradiction.
+private truth sort; equating its `true` and `false` is the contradiction.
 
 `(disequal ...)` also works in rule heads. `(check-contradiction)` saturates the
-private encoding ruleset, then positively checks the contradiction relation.
+private encoding ruleset, then checks NE's contradiction relation or EE's
+`true = false` equality directly. EE needs no extra contradiction relation.
 Ordinary `(run ...)` does not run that private ruleset. Both encodings lower to
 ordinary egglog before term/proof encoding, without changing union-find.
 Existing core restrictions still apply: `begin` blocks are normal-mode only;
@@ -91,15 +92,15 @@ The full workload is included by default in `./bench.py`, but not in the CI
 
 ```sh
 # NE: proof recording versus ordinary execution.
-./bench.py benchmarks/disequality/parameter-analysis.egg --report /tmp/ne-proof-overhead.jsonl
+./bench.py benchmarks/disequality/parameter-analysis.egg
 
 # EE versus NE, both without proof recording.
 ./bench.py benchmarks/disequality/parameter-analysis.egg --treatment off --compare-treatment off \
-  --disequality-encoding ee --compare-disequality-encoding nee --report /tmp/ee-vs-ne.jsonl
+  --disequality-encoding ee --compare-disequality-encoding nee
 
 # Optional EE strict-proof run; not part of the recorded timing comparison.
 ./bench.py benchmarks/disequality/parameter-analysis.egg --treatment proof-testing \
-  --disequality-encoding ee --compare-disequality-encoding ee --report /tmp/ee-proof-checking.jsonl
+  --disequality-encoding ee --compare-disequality-encoding ee
 ```
 
 Existing native egg treatments remain limited to the Math workload. This PR

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Regenerate a contradiction-selected benchmark using the unchanged artifact generator.
+"""Find the first random parameter-analysis workload that proves a contradiction.
 
-Only the reviewed, hash-pinned generator member is extracted and executed. The
-archive's native engines are neither built nor run. Generation is untimed;
-benchmarking measures the committed egglog source, not this selection process.
+Download the paper's generator unchanged and try successive seeds. Accept a
+workload only when both NE and EE detect a contradiction and validate its proof,
+then save it as a runnable egglog benchmark. Consistent workloads permit another
+seed; errors stop the search. No expressions are filtered or constraints injected.
 """
 
 from __future__ import annotations
@@ -119,10 +120,14 @@ def check_candidate(binary: Path, candidate: Path, encoding: str, timeout: int, 
     result = subprocess.run([*command, str(candidate)], capture_output=True, text=True, timeout=timeout)
     if result.returncode == 0:
         return True
+    contradiction = {
+        "nee": "(@disequality-contradiction)",
+        "ee": "(= (@disequality-true) (@disequality-false))",
+    }[encoding]
     if (
         not proofs
         and result.returncode == 1
-        and result.stderr.rstrip().endswith("Check failed: \n    (@disequality-contradiction)")
+        and result.stderr.rstrip().endswith(f"Check failed: \n    {contradiction}")
     ):
         negative = candidate.with_name("consistent.egg")
         source = candidate.read_text()

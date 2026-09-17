@@ -143,6 +143,10 @@ fn desugared_snapshots_and_cli_modes() {
                 .collect::<Vec<_>>()
                 .join("\n")
                 + "\n";
+            if encoding == DisequalityEncoding::Ee {
+                assert!(!desugared.contains("disequality-contradiction"));
+                assert!(!desugared.contains("truth-conflict"));
+            }
             let snapshot = path
                 .parent()
                 .unwrap()

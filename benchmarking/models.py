@@ -36,7 +36,6 @@ class FileSpec:
     sha256: str
     fact_directory: Path | None = None
     fact_directory_sha256: str = ""
-    uses_disequality: bool = False
 
 
 def validate_unique_file_identities(files: Sequence[FileSpec]) -> None:

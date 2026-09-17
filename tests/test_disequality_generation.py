@@ -123,17 +123,20 @@ def test_errors_never_retry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, err
 
 
 @pytest.mark.parametrize(
-    "exit_code,stderr,expected",
+    "encoding,exit_code,stderr,expected",
     [
-        (0, "", True),
-        (1, "[ERROR] span\n    Check failed: \n    (@disequality-contradiction)\n", False),
-        (1, "[ERROR] Unbound function", None),
-        (-9, "", None),
-        (1, "Check failed: \n(other-relation)", None),
+        ("nee", 0, "", True),
+        ("ee", 0, "", True),
+        ("nee", 1, "[ERROR] span\n    Check failed: \n    (@disequality-contradiction)\n", False),
+        ("ee", 1, "[ERROR] span\n    Check failed: \n    (= (@disequality-true) (@disequality-false))\n", False),
+        ("ee", 1, "Check failed: \n    (@disequality-contradiction)", None),
+        ("nee", 1, "[ERROR] Unbound function", None),
+        ("nee", -9, "", None),
+        ("nee", 1, "Check failed: \n(other-relation)", None),
     ],
 )
 def test_cli_outcome_classification(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exit_code: int, stderr: str, expected: bool | None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, encoding: str, exit_code: int, stderr: str, expected: bool | None
 ) -> None:
     candidate = tmp_path / "candidate.egg"
     candidate.write_text(generate.CHECK)
@@ -141,6 +144,6 @@ def test_cli_outcome_classification(
     monkeypatch.setattr(generate.subprocess, "run", lambda *_a, **_k: next(results))
     if expected is None:
         with pytest.raises(RuntimeError, match="candidate failed"):
-            generate.check_candidate(Path("binary"), candidate, "nee", 10)
+            generate.check_candidate(Path("binary"), candidate, encoding, 10)
     else:
-        assert generate.check_candidate(Path("binary"), candidate, "nee", 10) is expected
+        assert generate.check_candidate(Path("binary"), candidate, encoding, 10) is expected
