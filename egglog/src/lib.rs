@@ -2818,8 +2818,8 @@ impl EGraph {
         }
     }
 
-    /// Run a program, returning the desugared outputs as well as the CommandOutputs.
-    /// Can optionally not run the commands, just adding type information.
+    /// Run a program and return its outputs, or resolve it without execution.
+    /// Only resolution retains the lowered commands in the returned value.
     fn process_program_internal(
         &mut self,
         program: Vec<Command>,
@@ -2863,13 +2863,15 @@ impl EGraph {
                     desugared_before_proofs.extend(resolved.resolved_before_proofs);
                 } else {
                     let resolved = self.resolve_command(command)?;
-                    if run_commands && self.are_proofs_enabled() {
-                        self.proof_check_program
-                            .extend(resolved.desugared_before_proofs.clone());
+                    if run_commands {
+                        if self.are_proofs_enabled() {
+                            self.proof_check_program
+                                .extend(resolved.desugared_before_proofs);
+                        }
+                    } else {
+                        desugared_before_proofs.extend(resolved.desugared_before_proofs);
+                        desugared.extend(resolved.desugared.clone());
                     }
-
-                    desugared_before_proofs.extend(resolved.desugared_before_proofs);
-                    desugared.extend(resolved.desugared.clone());
 
                     for processed in resolved.desugared {
                         // even in desugar mode we still run push and pop
@@ -3862,6 +3864,34 @@ mod tests {
     use crate::*;
 
     use crate::PureState;
+
+    #[test]
+    fn execution_drops_resolved_commands_but_keeps_proof_history() {
+        let source = "(datatype T (A) (B)) (union (A) (B)) (check (= (A) (B)))";
+        for proofs in [false, true] {
+            let mut graph = EGraph::default();
+            if proofs {
+                graph = graph.with_proofs_enabled().with_proof_testing();
+            }
+            let program = graph.parse_program(None, source).unwrap();
+            let result = graph.process_program_internal(program, true).unwrap();
+            assert!(result.resolved.is_empty());
+            assert!(result.resolved_before_proofs.is_empty());
+            assert_eq!(!graph.proof_check_program.is_empty(), proofs);
+
+            // Resolution still returns both representations for desugaring and
+            // the proof checker, without registering execution history.
+            let mut graph = EGraph::default();
+            if proofs {
+                graph = graph.with_proofs_enabled();
+            }
+            let program = graph.parse_program(None, source).unwrap();
+            let result = graph.process_program_internal(program, false).unwrap();
+            assert!(!result.resolved.is_empty());
+            assert_eq!(!result.resolved_before_proofs.is_empty(), proofs);
+            assert!(graph.proof_check_program.is_empty());
+        }
+    }
 
     #[test]
     fn encoded_source_typecheck_is_charged_to_the_outer_egraph() {
