@@ -86,6 +86,8 @@ The full-size proof runs take minutes and substantial memory. The benchmark
 and regeneration timeout defaults are 30 minutes per process, not an expected
 runtime. Use `--rounds 1` for an initial diagnostic; the runner normally collects
 six observations per endpoint. Missing or timed-out results are not speedups.
+The full workload is included by default in `./bench.py`, but not in the CI
+`make benchmark-smoke` target, which uses small fixtures.
 
 ```sh
 # NE: proof recording versus ordinary execution.
@@ -95,7 +97,7 @@ six observations per endpoint. Missing or timed-out results are not speedups.
 ./bench.py benchmarks/disequality/parameter-analysis.egg --treatment off --compare-treatment off \
   --disequality-encoding ee --compare-disequality-encoding nee --report /tmp/ee-vs-ne.jsonl
 
-# EE: strict proof checking versus ordinary execution.
+# Optional EE strict-proof run; not part of the recorded timing comparison.
 ./bench.py benchmarks/disequality/parameter-analysis.egg --treatment proof-testing \
   --disequality-encoding ee --compare-disequality-encoding ee --report /tmp/ee-proof-checking.jsonl
 ```

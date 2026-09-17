@@ -35,7 +35,8 @@ make update-snapshots
 make format         # apply Ruff and rustfmt formatting
 ```
 
-`make benchmark-smoke` uses a one-round comparison and writes its disposable
+`make benchmark-smoke` uses a one-round comparison on small Math and disequality
+fixtures, not the full benchmark suite, and writes its disposable
 JSONL report to `/tmp/egglog-encoding-bench-smoke.jsonl`. Override
 `BENCHMARK_SMOKE_REPORT` to choose another path. `make update-snapshots` is the
 explicit review action for accepting intentional Markdown report changes.
@@ -690,8 +691,9 @@ CI runs on pull requests, manual dispatches, and pushes to `main`:
 
 - `python`: `make python-nits`, then `make python-test`.
 - `rust`: `make rust-nits`, then `make rust-test`.
-- `benchmark-smoke`: a one-round `off`/`proofs` pair comparison across the
-  default six-file suite through `make benchmark-smoke`.
+- `benchmark-smoke`: a one-round `off`/`proofs` runner check on small Math and
+  disequality fixtures through `make benchmark-smoke`. The full parameter-analysis
+  benchmark is not included in this CI job.
 - `codspeed`: an in-process, proofs-only benchmark over a smaller workload set
   in simulation and memory modes. CodSpeed includes phase-clock execution but
   does not persist phase reports; `./bench.py` remains the source for

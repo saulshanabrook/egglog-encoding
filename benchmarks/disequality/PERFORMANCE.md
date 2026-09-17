@@ -32,7 +32,9 @@ measurement. Both binaries exited successfully in all four runs.
 
 Memory fell approximately 73% in both orders. Runtime changed substantially
 between baseline runs; two observations per endpoint on an interactive machine
-do not establish a precise speedup. The smaller probe does not establish that
+do not establish a precise speedup. The first baseline briefly overlapped focused
+validation work; the memory claim, not a timing speedup, is the result of this
+probe. The smaller probe does not establish that
 the full-size workload fits in memory.
 
 The experiment used macOS 26.6 (25G72), Apple M4, 16 GiB RAM, CPython 3.13.11,
@@ -71,4 +73,74 @@ observed at 22.3 GB peak physical footprint while still ingesting input; this
 is a lower bound, not its final peak. macOS compression makes maximum RSS
 different from physical footprint, so RSS alone understates memory demand.
 
-Single-round benchmark measurements: pending.
+Full-size term-only execution also passed under both encodings. Small fixtures
+separately exercise every CLI treatment, including standalone proof extraction.
+
+## Timing scope
+
+The requested comparison is NE ordinary execution, NE proof recording, and EE
+ordinary execution. EE proof timing is intentionally omitted. A later EE
+recording-only timing attempt was stopped on request after about 6m49s, with an
+observed lifetime physical-footprint maximum of 17.76 GB at that point. It was
+not a timeout, an out-of-memory failure, or a proof-correctness failure. Its
+partial duration is not included as a measurement.
+
+The full workload remains in the default `./bench.py` suite, but CI's
+`make benchmark-smoke` explicitly selects small Math and disequality fixtures.
+No large proof benchmark, extra swap, or longer timeout is added to CI.
+
+## Full-size measurements
+
+Measured on 2026-09-17 (America/Los_Angeles), using the environment above and
+the validated executable SHA-256 `6059a6fdb61a0374bcae16e89e8834dc2a557fcea0693e4c680f6f2d87da8983`.
+Source commit: `7e6b123e1c11df187a0e627e7835f28bea1370a6`; only documentation
+and CI smoke selection were dirty. Fixture SHA-256:
+`88ea961380031ea7cd46f805888bdba638d3a86cb8da67191938044abdae83f3`.
+The measurements ran sequentially in the order shown, without concurrent builds
+or tests. Each is one observation, with one engine thread and a 1,800s limit.
+
+| Encoding | Treatment | Wall seconds | Maximum RSS (decimal GB) |
+| --- | --- | ---: | ---: |
+| NE | Ordinary (`off`) | 32.855 | 5.804 |
+| NE | Proof recording (`proofs`) | 621.071 | 6.515 |
+| EE | Ordinary (`off`) | 32.413 | 6.775 |
+
+NE recording took 18.9 times ordinary execution in these observations. The two
+ordinary timings are close; one round on an interactive machine does not establish
+an encoding ranking or confidence interval. Maximum RSS is not total memory
+demand under macOS compression; see the larger observed physical footprint above.
+Proof extraction and strict checking are validated separately, not included in
+the recording-only timing. Initial smoke timings that overlapped validation
+are excluded from this table.
+
+Reproduce the requested matrix with:
+
+```sh
+./bench.py benchmarks/disequality/parameter-analysis.egg --rounds 1 \
+  --treatment proofs --compare-treatment off \
+  --disequality-encoding nee --compare-disequality-encoding nee \
+  --report /tmp/disequality-final-timings.jsonl --format markdown
+./bench.py benchmarks/disequality/parameter-analysis.egg --rounds 1 \
+  --treatment off --compare-treatment off \
+  --disequality-encoding ee --compare-disequality-encoding nee \
+  --report /tmp/disequality-final-timings.jsonl --format markdown
+```
+
+The second command reuses the first command's NE ordinary observation. Use an
+empty report path or `--force-run` to collect fresh observations. Build, generation,
+and runner setup are outside the process timing; parsing and compilation of the
+complete `.egg` input are inside it. Raw JSONL and process logs are not committed.
+
+### Where the NE proof time goes
+
+The measured phase counters attribute 283.755s to typechecking, 67.738s to
+frontend parsing, 128.322s to other frontend work, and 127.907s to action execution.
+Parsing includes frontend-generated program processing, not just reading the
+input file. The private NE ruleset's assembly/search/apply/execution/merge counters
+sum to less than 1ms. This does not include term-encoding equality maintenance
+or the earlier work of creating and unioning terms.
+
+The next performance investigation should target per-action typechecking,
+proof lowering, and command/history allocation, not optimize the tiny NE
+propagation rule first. The verified retention fix removes one avoidable cost;
+it does not solve the remaining proof frontend and memory overhead.
