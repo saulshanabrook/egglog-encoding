@@ -294,6 +294,7 @@ def workload_command(
     binary_path: Path,
     file_spec: FileSpec,
     treatment: Treatment,
+    disequality_encoding: str = "nee",
 ) -> list[str]:
     specification = TREATMENT_SPECS[treatment]
     if specification.engine == "egg":
@@ -305,6 +306,11 @@ def workload_command(
         "no-messages",
         "-j",
         "1",
+        *(
+            ["--disequality-encoding", disequality_encoding]
+            if file_spec.uses_disequality or disequality_encoding != "nee"
+            else []
+        ),
         *(["--fact-directory", str(file_spec.fact_directory)] if file_spec.fact_directory is not None else []),
         *specification.flags,
         str(file_spec.absolute_path),

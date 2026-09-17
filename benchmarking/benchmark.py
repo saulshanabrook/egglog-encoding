@@ -44,13 +44,15 @@ from .workloads import resolve_files
 
 DEFAULT_REPORT = ".reports.jsonl"
 DEFAULT_ROUNDS = 6
-DEFAULT_TIMEOUT_SEC = 120
+DEFAULT_TIMEOUT_SEC = 1800
 
 
 def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
     """Parse the public pair-only benchmark command."""
 
     parser = argparse.ArgumentParser(description="Collect or reuse one engine benchmark comparison.")
+    parser.add_argument("--disequality-encoding", choices=("nee", "ee"), default="nee")
+    parser.add_argument("--compare-disequality-encoding", choices=("nee", "ee"), default="nee")
     parser.add_argument("files", nargs="*", help="workload files to benchmark")
     parser.add_argument(
         "--fact-directory",
@@ -151,10 +153,12 @@ def endpoint_requests(args: argparse.Namespace) -> tuple[EndpointRequest, Endpoi
     baseline = EndpointRequest(
         baseline_target,
         cast(Treatment, str(args.compare_treatment)),
+        args.compare_disequality_encoding,
     )
     candidate = EndpointRequest(
         candidate_target,
         cast(Treatment, str(args.treatment)),
+        args.disequality_encoding,
     )
     if baseline == candidate:
         raise ValueError("baseline and candidate endpoints must be different")
@@ -232,10 +236,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             baseline=BenchmarkEndpoint(
                 resolved_targets[baseline_request.target],
                 baseline_request.treatment,
+                baseline_request.disequality_encoding,
             ),
             candidate=BenchmarkEndpoint(
                 resolved_targets[candidate_request.target],
                 candidate_request.treatment,
+                candidate_request.disequality_encoding,
             ),
             files=files,
             rounds=int(args.rounds),

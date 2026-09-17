@@ -1,0 +1,61 @@
+---
+source: egglog-experimental/tests/files.rs
+expression: snapshot
+---
+(let prf0
+  (Fiat
+                          (=
+                            (____disequality-eq-Other (X) (Y))
+                            (____disequality-false))))
+(let prf1
+  (Sym
+                    (=
+                      (____disequality-eq-Term (A) (A))
+                      (____disequality-eq-Other (X) (Y)))
+                    (Congr
+                      (=
+                        (____disequality-eq-Other (X) (Y))
+                        (____disequality-eq-Term (A) (A)))
+                      (Trans
+                        (=
+                          (____disequality-eq-Other (X) (Y))
+                          (____disequality-eq-Term (A) (B)))
+                        prf0
+                        (Sym
+                          (=
+                            (____disequality-false)
+                            (____disequality-eq-Term (A) (B)))
+                          (Rule
+                            (=
+                              (____disequality-eq-Term (A) (B))
+                              (____disequality-false))
+                            (name
+                              "(rule ((Pair a b))
+        ((union (____disequality-eq-Term a b) (____disequality-false)))
+           )")
+                            (premises (Fiat (= (Pair (A) (B)) (Pair (A) (B)))))
+                            (substitution (a (A)) (b (B))))))
+                      (Sym (= (B) (A)) (Fiat (= (A) (B))))
+                      1)))
+(Rule
+  (= (____disequality-contradiction) (____disequality-contradiction))
+  (name "________disequality-truth-conflict")
+  (premises
+    (Trans
+      (= (____disequality-true) (____disequality-false))
+      (Trans
+        (= (____disequality-true) (____disequality-eq-Other (X) (Y)))
+        (Sym
+          (= (____disequality-true) (____disequality-eq-Term (A) (A)))
+          (Rule
+            (= (____disequality-eq-Term (A) (A)) (____disequality-true))
+            (name "________disequality-ee-reflexive-left-Term")
+            (premises
+              (Trans
+                (= (____disequality-eq-Term (A) (A)) (____disequality-false))
+                prf1
+                prf0))
+            (substitution (x (A)) (y (A)))))
+        prf1)
+      prf0))
+  (substitution))

@@ -194,7 +194,14 @@ requires a new `label=SOURCE` request.
 
 The baseline and candidate may share a binary, as the default proof-overhead
 comparison does, but their complete cache identities—binary SHA-256 and
-treatment—must differ.
+treatment and disequality encoding—must differ.
+
+For disequality programs, `--disequality-encoding {nee,ee}` selects the candidate
+encoding and `--compare-disequality-encoding {nee,ee}` selects the baseline.
+Both default to `nee`. Encodings may be compared with the same binary and
+treatment. See the [parameter-analysis guide](benchmarks/disequality/README.md)
+for semantics, provenance, and comparison commands. Native egg treatments still
+support only the Math workload, not disequality benchmarks.
 
 ### Files
 
@@ -224,6 +231,7 @@ With no positional files, the representative suite is:
 - `egglog/tests/papers/churchroad-wide-multiply.egg`
 - `egglog-experimental/tests/papers/dialegg-nmm40.egg`
 - `egglog/tests/papers/speq-preserved-reference-suite.egg`
+- `benchmarks/disequality/parameter-analysis.egg`
 
 The workloads are intentionally bounded proxies rather than an undifferentiated
 corpus:
@@ -240,6 +248,12 @@ corpus:
 | Churchroad | The paper's 16-by-32-bit wide multiply with its prelude and driver mapping rules materialized; the saturating schedule is bounded to 17 cycles, calibrated as a roughly one-second normal-mode workload | The multiply expansion and its two-input and three-input DSP proposals are checked |
 | DialEgg | Generated NMM-40 scaling workload with `base.egg` materialized | An alternative matrix-chain association is checked |
 | SpEQ | Four artifact-preserved programs that still match the artifact's GEMV/histogram reference rules, recorded using egglog-python's native command log | Each input is checked equal to its extracted reference call (or enclosing expression) |
+| Disequality parameter analysis | Unchanged artifact generator, seed 2026, 100K equality pairs, 10K random disequality pairs, ten numeral constraints; contradiction-selected, not a native timing reproduction | The contradiction is derived and supports proof extraction/checking under NE and EE |
+
+The [disequality workload](benchmarks/disequality/README.md) uses NE by default.
+Its full-size proof runs require minutes and substantial memory, so the default
+suite is no longer a quick check. Use explicit file paths for a smaller subset
+or `--rounds 1` for an initial diagnostic.
 
 ### ParaBit proof-stress regression
 
@@ -334,7 +348,8 @@ The remaining collection options are:
   A filesystem path is required; `-` is not a streaming destination.
 - `--rounds N`: selected observations required for every endpoint/file;
   default `6`.
-- `--timeout-sec N`: per-process timeout; default `120`.
+- `--timeout-sec N`: per-process timeout; default `1800` to accommodate the
+  full-size disequality proof workload. Smaller workloads may use a lower limit.
 - `--force-run`: append `N` fresh rows for both endpoints before selecting the
   newest rows.
 - `--format rich|markdown`: final human report format.
@@ -472,7 +487,8 @@ Cache reuse is keyed by:
 - binary SHA-256;
 - file SHA-256;
 - fact-directory SHA-256;
-- treatment; and
+- treatment;
+- disequality encoding; and
 - timeout.
 
 Target source, path, git revision, dirty state, labels, and display paths are

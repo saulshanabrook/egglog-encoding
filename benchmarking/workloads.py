@@ -38,6 +38,7 @@ DEFAULT_WORKLOADS = (
     WorkloadConfig("egglog/tests/papers/churchroad-wide-multiply.egg"),
     WorkloadConfig("egglog-experimental/tests/papers/dialegg-nmm40.egg"),
     WorkloadConfig("egglog/tests/papers/speq-preserved-reference-suite.egg"),
+    WorkloadConfig("benchmarks/disequality/parameter-analysis.egg"),
 )
 
 
@@ -79,6 +80,9 @@ def resolve_files(
                 display_path=display_path,
                 absolute_path=absolute_path,
                 sha256=sha256_file(absolute_path),
+                uses_disequality=any(
+                    token in ("disequal", "check-contradiction") for token in _egglog_tokens(absolute_path.read_text())
+                ),
                 fact_directory=resolved_fact_directory,
                 fact_directory_sha256=fact_directory_sha256,
             )
