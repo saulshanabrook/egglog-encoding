@@ -1014,7 +1014,9 @@ impl TypeInfo {
         })
     }
 
-    fn typecheck_function(
+    /// Validate and register a function signature. Macros may use this on a
+    /// cloned environment to infer commands that depend on generated declarations.
+    pub fn typecheck_function(
         &mut self,
         symbol_gen: &mut SymbolGen,
         fdecl: &FunctionDecl,
@@ -1248,7 +1250,9 @@ impl TypeInfo {
         Result::Ok(schedule)
     }
 
-    fn typecheck_rule(
+    /// Infer a rule's body and head together. Command macros can use the resolved
+    /// expressions before emitting actions, which are typechecked again normally.
+    pub fn typecheck_rule(
         &self,
         symbol_gen: &mut SymbolGen,
         rule: &Rule,
@@ -1384,10 +1388,33 @@ impl TypeInfo {
         Ok(annotated_facts)
     }
 
-    // Standalone expressions/actions use action lowering. Top-level commands
-    // pass `Full`; function `:merge` reuses this path with `Write` because
-    // merge expressions run during table updates.
-    fn typecheck_standalone_actions(
+    /// Infer an expression's sort for a command macro, including rule-local bindings.
+    /// Generated actions still pass through ordinary typechecking afterwards.
+    pub fn infer_expr_sort(
+        &self,
+        symbol_gen: &mut SymbolGen,
+        expr: &Expr,
+        bindings: &[(String, Span, ArcSort)],
+        context: Context,
+    ) -> Result<ArcSort, TypeError> {
+        let mut binding_map = IndexMap::default();
+        for (name, span, sort) in bindings {
+            if binding_map
+                .insert(name.as_str(), (span.clone(), sort.clone()))
+                .is_some()
+            {
+                return Err(TypeError::AlreadyDefined(name.clone(), span.clone()));
+            }
+        }
+        Ok(self
+            .typecheck_standalone_expr(symbol_gen, expr, &binding_map, context)?
+            .output_type())
+    }
+
+    /// Infer a whole action block, including constraints on local bindings.
+    /// Top-level commands pass `Full`; function `:merge` uses `Write` because
+    /// merge expressions run during table updates.
+    pub fn typecheck_standalone_actions(
         &self,
         symbol_gen: &mut SymbolGen,
         actions: &Actions,

@@ -1,0 +1,19 @@
+---
+source: egglog-experimental/tests/files.rs
+expression: snapshot
+---
+(let t0 (___disequality-ne-Term (f (A)) (f (B))))
+(Rule
+  (= (___disequality-contradiction) (___disequality-contradiction))
+  (name "______disequality-ne-self-Term")
+  (premises
+    (Congr
+      (= t0 (___disequality-ne-Term (f (A)) (f (A))))
+      (Fiat (= t0 t0))
+      (Congr
+        (= (f (B)) (f (A)))
+        (Fiat (= (f (B)) (f (B))))
+        (Sym (= (B) (A)) (Fiat (= (A) (B))))
+        0)
+      1))
+  (substitution (x (f (A)))))

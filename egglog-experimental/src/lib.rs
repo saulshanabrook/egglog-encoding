@@ -41,7 +41,9 @@ pub mod rational;
 pub use rational::*;
 pub mod scheduling;
 pub use scheduling::*;
+mod disequality;
 mod fresh_macro;
+pub use disequality::DisequalityEncoding;
 
 mod set_cost;
 pub use set_cost::*;
@@ -68,16 +70,22 @@ mod keep_best;
 pub use keep_best::KeepBestCommand;
 
 pub fn new_experimental_egraph() -> EGraph {
-    new_experimental_egraph_with_options(true)
+    new_experimental_egraph_with_options(true, DisequalityEncoding::default())
 }
 
 pub fn new_experimental_egraph_for_proofs() -> EGraph {
-    new_experimental_egraph_with_options(false)
+    new_experimental_egraph_with_options(false, DisequalityEncoding::default())
 }
 
-fn new_experimental_egraph_with_options(extended_run_schedule: bool) -> EGraph {
+/// Construct a graph with the selected disequality encoding. Disable the extended
+/// schedule interpreter when enabling term/proof encoding, which lowers schedules.
+pub fn new_experimental_egraph_with_options(
+    extended_run_schedule: bool,
+    disequality_encoding: DisequalityEncoding,
+) -> EGraph {
     let mut egraph = EGraph::default();
     add_experimental_extensions(&mut egraph, extended_run_schedule);
+    disequality::add_disequality_support(&mut egraph, disequality_encoding);
     egraph
 }
 
@@ -112,11 +120,6 @@ fn add_experimental_extensions(egraph: &mut EGraph, extended_run_schedule: bool)
         .add_presort::<EitherSort>(span!())
         .unwrap();
     add_container_primitives(egraph);
-
-    // unstable-fresh! macro
-    egraph
-        .command_macros_mut()
-        .register(Arc::new(fresh_macro::FreshMacro::new()));
 
     // scheduler support
     if extended_run_schedule {

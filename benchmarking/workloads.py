@@ -38,6 +38,7 @@ DEFAULT_WORKLOADS = (
     WorkloadConfig("egglog/tests/papers/churchroad-wide-multiply.egg"),
     WorkloadConfig("egglog-experimental/tests/papers/dialegg-nmm40.egg"),
     WorkloadConfig("egglog/tests/papers/speq-preserved-reference-suite.egg"),
+    WorkloadConfig("benchmarks/disequality/parameter-analysis.egg"),
 )
 
 

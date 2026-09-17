@@ -29,6 +29,7 @@ from rich.text import Text
 from .engines import TREATMENT_SPECS
 from .models import (
     BenchmarkEndpoint,
+    DisequalityEncoding,
     EndpointRequest,
     EngineBinary,
     FileSpec,
@@ -66,6 +67,7 @@ class BenchmarkRunPlan:
     required_rows: int
     cached_statuses: tuple[Status, ...]
     missing_observations: int
+    disequality_encoding: DisequalityEncoding = "nee"
 
 
 @dataclass(frozen=True)
@@ -141,6 +143,7 @@ def build_collection_plan(
                 required_rows=rounds,
                 cached_statuses=cached,
                 missing_observations=missing,
+                disequality_encoding=cache_key.disequality_encoding,
             )
         )
     return CollectionPlan(target=target, runs=tuple(runs))
@@ -295,6 +298,7 @@ def label_has_enough_rows(
             endpoint.treatment,
             timeout_sec,
             file_spec.fact_directory_sha256,
+            endpoint.disequality_encoding,
         )
         for file_spec in files
         for endpoint in endpoint_requests
@@ -309,12 +313,13 @@ def run_process(
     file_spec: FileSpec,
     treatment: Treatment,
     timeout_sec: int,
+    disequality_encoding: DisequalityEncoding = "nee",
 ) -> ProcessObservation:
     """Run one measured workload and read the summary it emitted on success."""
 
     with tempfile.TemporaryDirectory(prefix="egglog-benchmark-") as directory:
         summary_path = Path(directory) / "timing-summary.json"
-        workload = workload_command(binary_path, file_spec, treatment)
+        workload = workload_command(binary_path, file_spec, treatment, disequality_encoding)
         command = [workload[0], "--timing-summary", str(summary_path), *workload[1:]]
         result = run_command(command, checkout_path, timeout_sec)
         require_workload_unchanged(file_spec)
@@ -365,6 +370,8 @@ def preflight_collection(plan: CollectionPlan, timeout_sec: int) -> None:
             raise ValueError(f"target {target.display_label} needs a fresh {engine} binary")
         required_outputs = ["--timing-summary"]
         if engine == "egglog":
+            if any(run.disequality_encoding != "nee" for run in engine_runs):
+                required_outputs.append("--disequality-encoding")
             required_outputs.extend(
                 flag for run in engine_runs for flag in TREATMENT_SPECS[run.treatment].flags if flag.startswith("--")
             )
@@ -386,11 +393,13 @@ def collection_label(
     treatment: Treatment,
     round_index: int,
     rounds: int,
+    disequality_encoding: DisequalityEncoding = "nee",
 ) -> str:
     """Return a concise progress label for one measured observation."""
 
     filename = Path(file_spec.display_path).name
-    return f"{filename} · {treatment} · {round_index + 1}/{rounds}"
+    encoding = f"/{disequality_encoding}" if disequality_encoding != "nee" else ""
+    return f"{filename} · {treatment}{encoding} · {round_index + 1}/{rounds}"
 
 
 def format_timing_result(result: TimingResult) -> str:
@@ -463,6 +472,7 @@ def flat_report_record(
         "fact_directory_path": (str(run.file.fact_directory) if run.file.fact_directory is not None else None),
         "fact_directory_sha256": run.file.fact_directory_sha256,
         "treatment": run.treatment,
+        "disequality_encoding": run.disequality_encoding,
         "timeout_sec": timeout_sec,
         "wall_sec": result.timing.wall_sec,
         "max_rss_bytes": result.timing.max_rss_bytes,
@@ -522,6 +532,7 @@ def collect_rows(
                     run.treatment,
                     round_index,
                     run.missing_observations,
+                    run.disequality_encoding,
                 )
                 progress.update(
                     process_task,
@@ -539,6 +550,7 @@ def collect_rows(
                     run.file,
                     run.treatment,
                     timeout_sec,
+                    run.disequality_encoding,
                 )
                 store.append(
                     flat_report_record(

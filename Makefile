@@ -68,10 +68,12 @@ rust-doc-links:
 proof-tests:
 	cargo test --workspace --test files 'proofs/'
 
-# Use a disposable report path, keeping the default report cache untouched.
+# Smoke the runner on small files, not the full local benchmark suite.
 benchmark-smoke:
 	rm -f -- "$(BENCHMARK_SMOKE_REPORT)"
-	uv run --locked ./bench.py --rounds 1 \
+	uv run --locked ./bench.py \
+		egglog-experimental/tests/math-microbenchmark-rational.egg \
+		egglog-experimental/tests/disequality/congruence.egg --rounds 1 \
 		--report "$(BENCHMARK_SMOKE_REPORT)" --format markdown > /dev/null
 	uv run --locked python -c \
 		'from pathlib import Path; import sys; from benchmarking.reports.store import ReportStore; assert ReportStore(Path(sys.argv[1])).row_count > 0' \
