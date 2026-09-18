@@ -71,7 +71,7 @@ fn read_projection_is_part_of_table_construction() {
         Ok(1)
     );
 
-    let registry = egraph.action_registry().read().unwrap();
+    let registry = egraph.action_registry().read();
     let registered = registry.lookup_table("encoded-view").unwrap();
     assert_eq!(
         registered.validate_read_projection(Some(TableKind::Constructor), true),
