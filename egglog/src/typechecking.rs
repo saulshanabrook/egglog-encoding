@@ -12,9 +12,9 @@ use ast::{
 };
 use core_relations::ExternalFunction;
 use egglog_ast::generic_ast::GenericAction;
-use egglog_bridge::ActionRegistry;
+use egglog_bridge::{ActionRegistry, SharedActionRegistry};
 use enum_map::EnumMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 // `ExternalFunction` wrapper for `PurePrim`. Holds the primitive
 // directly so the dispatch chain `external_funcs[id].invoke(...)` →
@@ -43,7 +43,7 @@ impl<T: PurePrim + Clone> ExternalFunction for PurePrimWrapper<T> {
 #[derive(Clone)]
 struct RegistryPrimWrapper<T, S> {
     prim: T,
-    registry: Arc<RwLock<ActionRegistry>>,
+    registry: SharedActionRegistry,
     /// Stamped onto the state wrapper.
     ctx: Context,
     _wrap: std::marker::PhantomData<fn() -> S>,
@@ -106,7 +106,7 @@ impl<T: Clone + Send + Sync + 'static, S: RegistryWrap<T> + 'static> ExternalFun
     for RegistryPrimWrapper<T, S>
 {
     fn invoke(&self, exec_state: &mut ExecutionState, args: &[Value]) -> Option<Value> {
-        let registry = self.registry.read().unwrap();
+        let registry = self.registry.read();
         S::invoke(&self.prim, exec_state, self.ctx, args, &registry)
     }
 }
