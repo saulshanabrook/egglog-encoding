@@ -1,0 +1,65 @@
+;;; The SDQL language family and its 44 active fine-grained rewrite rules, in the
+;;; SLOTTED language.
+;;;
+;;; These are checked column-for-column against the later locked-reference benchmark
+;;; `slotted-egraphs/benches/sdql.rs`.  That benchmark saturates an already-optimised
+;;; BATAX term; it is NOT the paper artifact's ten-input Table 1/2 evaluation runner.
+;;; `slotted/checks/check-paper-sdql.py` separately pins the artifact provenance of the
+;;; runnable raw-input BATAX regression.  Written at the slotted level, a rule says
+;;; what it rewrites and nothing about renamings -- `slotted/slotted-egglog.py` turns
+;;; it into egglog, and
+;;; `slotted/gen-sdql-rules.py` compiles these same rules into
+;;; `gen-sdql-rules.py` for the .egg tests and the differential
+;;; harness. Both read THIS file, so they cannot disagree.
+;;;
+;;; THE COUNT. The later bench DEFINES 46 rules and RUNS 44; this file carries those
+;;; 44, and `slotted/checks/check-reference-rules.py` compares their normalised LHS, RHS, and
+;;; guards, so the claim is no longer one anybody takes on trust.
+;;;
+;;; Counting definitions is the trap, and it caught this file twice: it once claimed
+;;; "rule for rule" while missing `beta`, and was then given `sum-range-2` to close a gap
+;;; that did not exist. `sum-range-2` and `get-sum-vert-fuse-1` are both defined and
+;;; never reached -- the second is even marked `#[allow(unused)]` -- so carrying either
+;;; would DIVERGE from the reference rather than match it. Both are expressible here if
+;;; the reference ever starts running them.
+;;;
+;;; `check-front-ends.py` is the cross-check that remains: `sdql-sum-sing.egg` writes
+;;; `sum-sing` by hand in the slotted language, and its compiled form has to match the
+;;; one generated from the copy here.
+;;;
+;;; Each `Bind<>` layer in the reference becomes one extra child column here, named by
+;;; `:binder` and placed where the reference's surface syntax puts it:
+;;; `Sum(A, Bind<Bind<A>>)` is `(Sum R $k $v body)`, so the two bound slots are
+;;; columns 1 and 2. `Merge`'s three are columns 2, 3 and 4, and `Let`'s one is column 1.
+;;;
+;;; `Var(Slot)` is not declared: the encoding has the single variable class, and a
+;;; variable occurrence is a `$s` in an ordinary child column.
+;;; This port also uses `Num(i64)` where the artifact uses `Num(u32)`, and adds `Null`
+;;; for encoding tests. Neither extension occurs in the pinned BATAX artifact terms.
+;;;
+;;; The rules are NOT confluent -- `get-to-sum` and `sum-to-get` alone loop -- so any
+;;; test over them asks for a bounded number of steps.
+(sort U)
+
+(constructor Lambda (U U) U :binder 0)            ; Lam(Bind<AppliedId>)          "lambda"
+(constructor Sing (U U) U)                        ; Sing(A, A)                    "sing"
+(constructor Add (U U) U)                         ; Add(A, A)                     "+"
+(constructor Mult (U U) U)                        ; Mult(A, A)                    "*"
+(constructor Sub (U U) U)                         ; Sub(A, A)                     "-"
+(constructor Equality (U U) U)                    ; Equality(A, A)                "eq"
+(constructor Get (U U) U)                         ; Get(A, A)                     "get"
+(constructor Range (U U) U)                       ; Range(A, A)                   "range"
+(constructor App (U U) U)                         ; App(A, A)                     "apply"
+(constructor IfThen (U U) U)                      ; IfThen(A, A)                  "ifthen"
+(constructor Binop (U U U) U)                     ; Binop(A, A, A)                "binop"
+(constructor SubArray (U U U) U)                  ; SubArray(A, A, A)             "subarray"
+(constructor Unique (U) U)                        ; Unique(A)                     "unique"
+(constructor Sum (U U U U) U :binder 1 2)         ; Sum(A, Bind<Bind<A>>)         "sum"
+(constructor Merge (U U U U U U) U :binder 2 3 4) ; Merge(A, A, Bind<Bind<Bind<A>>>) "merge"
+(constructor Let (U U U) U :binder 1)             ; Let(A, Bind<A>)               "let"
+(constructor Num (i64) U)                         ; Num(u32)
+(constructor Symbol (String) U)                   ; Symbol(Symbol)
+;;; Declared for the record: `Null` already exists in the hand-written half of the
+;;; machinery, so `emit` skips its rules -- but a program in this language can contain
+;;; it, and this file names every constructor that can appear in one.
+(constructor Null () U)                           ; Null()                        "null"

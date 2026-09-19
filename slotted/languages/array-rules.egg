@@ -1,0 +1,39 @@
+;;; The array language's rewrite rules.
+;;;
+;;; Split from `slotted/languages/array.egg`, which declares the constructors: a
+;;; program that wants the rules includes this, and one that wants only the
+;;; machinery compiles that.
+
+(include "slotted/languages/array.egg")
+
+(rewrite (Lam $x (App f $x))
+         f
+         :name "eta"
+         :when ((not-free $x f)))
+(rewrite (App (Lam $x body) e)
+         (Let $x body e)
+         :name "let-intro")
+(rewrite (Let $x b e)
+         b
+         :name "let-unused"
+         :when ((not-free $x b)))
+(rewrite (Let $x $x e)
+         e
+         :name "let-var-same")
+(rewrite (Let $x (App a b) e)
+         (App (Let $x a e) (Let $x b e))
+         :name "let-app"
+         :when ((free $x a b)))
+(rewrite (Let $x (Lam $y body) e)
+         (Lam $y (Let $x body e))
+         :name "let-lam-diff"
+         :when ((free $x body)))
+(rewrite (App (App (Sym "map") f) (App (App (Sym "map") g) arg))
+         (App (App (Sym "map") (Lam $fu (App f (App g $fu)))) arg)
+         :name "map-fusion"
+)
+(rewrite (App (Sym "map") (Lam $x (App f gx)))
+         (Lam $in (App (App (Sym "map") f) (App (App (Sym "map") (Lam $x gx)) $in)))
+         :name "map-fission"
+         :when ((not-free $x f))
+)

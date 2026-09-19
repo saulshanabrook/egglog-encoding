@@ -27,6 +27,9 @@ exclude = [
     "^egglog/",
     "^egglog-experimental/",
     "^generated/",
+    # Unannotated by design, like egglog/ above: these are differential-testing and
+    # code-generation scripts. ruff does cover them, so they are linted and formatted.
+    "^slotted/",
     "^target/",
 ]
 check_untyped_defs = true

@@ -1,0 +1,50 @@
+;; When a map's key and value sorts coincide it reads as a partial injection on
+;; one space -- a "renaming" -- and these primitives are registered for it.
+
+(sort R (Map i64 i64))
+
+;;; map-image / map-domain: a renaming's two slot sets, as identity maps.
+(check (= (map-image  (map-of 0 5 1 7)) (map-of 5 5 7 7)))
+(check (= (map-domain (map-of 0 5 1 7)) (map-of 0 0 1 1)))
+(check (= (map-image  (map-of)) (map-of)))
+(check (= (map-domain (map-of)) (map-of)))
+
+;;; compose applies its right argument first.
+(check (= (compose (map-of 5 9) (map-of 0 5)) (map-of 0 9)))
+
+;;; It narrows silently where the right map's image escapes the left's domain,
+;;; which is the correct composition of partial maps: key 1 has no image under
+;;; the left map, so the composite has no entry for it.
+(check (= (compose (map-of 5 9) (map-of 0 5 1 6)) (map-of 0 9)))
+
+;;; compose-total is the same composition, but refuses to drop a key. Use it
+;;; where the result must keep the right map's domain.
+(check (= (compose-total (map-of 5 9) (map-of 0 5)) (map-of 0 9)))
+(fail (check (= (compose-total (map-of 5 9) (map-of 0 5 1 6)) x)))
+
+;;; inverse is only meaningful on an injective map, and rejects anything else.
+(check (= (inverse (map-of 0 5 1 7)) (map-of 5 0 7 1)))
+(check (= (map-inverse (map-of 0 5 1 7)) (map-of 5 0 7 1)))
+(fail (check (= (inverse (map-of 0 5 1 5)) x)))
+
+;;; find-mapping solves for the least renaming carrying one tuple of maps onto
+;;; another, given the two halves flat as [first..., second...].
+(check (= (find-mapping (map-of 0 9) (map-of 0 5)) (map-of 5 9)))
+;;; Strict: a paired (first, second) must carry the same key set ...
+(fail (check (= (find-mapping (map-of 0 9 1 8) (map-of 0 5)) x)))
+;;; ... and the solution must be injective, which is what keeps two distinct
+;;; slots from being identified.
+(fail (check (= (find-mapping (map-of 0 9 1 9) (map-of 0 5 1 6)) x)))
+
+;;; find-mapping-total extends it to cover a domain, minting a name for each
+;;; slot the constraints leave unreached, avoiding those already spoken for.
+;;; Here `1` is unconstrained, and 0 is both avoided and taken, so it mints 1.
+(check (= (find-mapping-total (map-of 0 0) (map-of 0 0 1 1) (map-of 0 0) (map-of 0 0))
+          (map-of 0 0 1 1)))
+
+;;; bool-map-contains is the same test as map-contains, as a value, so it can go
+;;; inside a `guard` where a fact cannot be combined with `or`.
+(check (= (bool-map-contains (map-of 0 5 1 7) 0) true))
+(check (= (bool-map-contains (map-of 0 5 1 7) 9) false))
+(check (= (bool-map-contains (map-of) 0) false))
+

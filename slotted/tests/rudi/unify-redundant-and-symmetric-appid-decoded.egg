@@ -1,0 +1,28 @@
+(sort U)
+
+(constructor Lam (U U) U :binder 0)
+(constructor App (U U) U)
+(constructor Add (U U) U)
+
+(constructor Rel (U U) U)
+(constructor Truth () U)
+
+(let a01 (Add $0 $1))
+(let a10 (Add $1 $0))
+(union a01 a10)
+
+(let example (App (Lam $0 (Lam $1 a01))
+                  (Lam $0 (Lam $1 a01))))
+(let t (Truth))
+
+(rewrite 
+    (Truth)
+    (Rel x w)
+    :when ((App (Lam x (Lam y a))
+          (Lam w (Lam z a))))
+)
+
+(run 10)
+
+(check (= (Rel $0 $0) (Truth)))
+(check (= (Rel $0 $1) (Truth)))

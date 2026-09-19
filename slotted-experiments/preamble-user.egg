@@ -1,6 +1,0 @@
-(sort U)
-
-(constructor Var (i64) U)
-(constructor App1 (String U) U)
-(constructor App2 (String U U) U)
-(constructor Null () U)

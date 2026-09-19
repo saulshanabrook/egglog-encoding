@@ -1,0 +1,408 @@
+;;; Multipatterns: rules whose premise is several patterns joined by shared variables.
+;;;
+;;; `rewrite` has no separate premise list. One pattern is the left-hand side, and
+;;; `:when` carries a LIST of facts -- each `(= v <call>)` another pattern rooted at
+;;; `v`. So a rule joins as many patterns as it likes, and the variables they share are
+;;; the join.
+;;;
+;;; Every section asserts BOTH halves: that the rule fires where the join holds, and
+;;; that it does NOT where the join fails. Only the second half has teeth -- a
+;;; multipattern that quietly ignored its extra atoms would pass the first on its own.
+;;;
+;;; Every term a section asks about is built BEFORE its `(run)`. A term added after the
+;;; run has had no rule applied to it, so a `fail` claim about it would hold whatever
+;;; the rule does.
+;;;
+;;;     python3 slotted/slotted-egglog.py slotted/tests/multipattern.egg
+;;;
+;;; AGAINST THE REFERENCE. The claims here are this file's own, and a claim is not the
+;;; reference. So the shapes below have counterparts in the differential's curated
+;;; corpus, where they are asked of `memoryleak47/slotted-egraphs`:
+;;;
+;;;     python3 slotted/xdiff/isomorphism.py MP          -> 5/5 isomorphic
+;;;
+;;;     MP1  a premise joined on a bound child, the premise a binder
+;;;     MP2  a join on two variables at once
+;;;     MP3  a four-atom chain
+;;;     MP4  a body shared under two binders
+;;;     MP5  three atoms sharing nothing
+;;;
+;;; All five fire -- blocking the pattern changes the graph -- so the agreement is not
+;;; the trivial kind a rule that never matches would give.
+;;;
+;;; `abstract-constant` has no counterpart: its conclusion BUILDS a binder, and the
+;;; differential's actions are trees over binary operators with no binder among them,
+;;; so the shape cannot be put to the reference through that harness. Its claims are
+;;; this file's own, with the mutation in `check-multipattern-teeth.py` behind them.
+;;;
+;;; The generated sweep says the same, and says it of shapes no hand-written file
+;;; reaches: 800 of 800 at the default knobs, 800 of 800 with every pattern drawn as a
+;;; conjunctive query (`XDIFF_GENERAL=1`), 400 of 400 with unrelated atoms sampled hard
+;;; (`XDIFF_DISC=0.5`), and 1200 of 1200 with all of that plus symmetry-heavy unions.
+;;;
+;;; It did not always. The last two sections here -- patterns whose atoms share nothing
+;;; -- are the shape that found `K1`, where a side condition about a binder's bound slot
+;;; could be satisfied by renaming that slot onto an unrelated class's. `refine-namings`
+;;; is now offered only the slots the match's substitution carries, which is what the
+;;; reference offers, and `K1` is a regression test in the curated corpus.
+(sort U)
+
+(constructor Num (i64) U)
+(constructor Add (U U) U)
+(constructor Mul (U U) U)
+(constructor Lam (U U) U :binder 0)
+(constructor App (U U) U)
+(constructor Pair (U U) U)
+(constructor Root (U) U)
+(constructor Mem0 () U)
+(constructor Store (U U U) U)
+(constructor LoadFrom (U U) U)
+(constructor Same () U)
+(constructor Doubled () U)
+(constructor Fired () U)
+(constructor Crossed () U)
+(constructor Minted () U)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Beta, guarded by the shape of the function.
+;;;
+;;; Two patterns joined on `f`. The premise binds a slot and a body that the left-hand
+;;; side never mentions, and the right-hand side uses both -- so a `:when` pattern is a
+;;; premise the conclusion can read, not a filter run beside it.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(rewrite (App f x) (subst body $v x)
+         :when ((= f (Lam $v body)))
+         :name "beta-guarded")
+;; (fun y. y + y) 3   ->   3 + 3
+(let e (App (Lam $0 (Add $0 $0)) (Num 3)))
+(let want (Add (Num 3) (Num 3)))
+;; The function is not a lambda, so the premise fails and nothing fires. The claim
+;; names `want` rather than `(Num 3)` because that is what a MISFIRE would produce:
+;; a premise not joined to `f` is satisfied by the lambda above, and substituting into
+;; its body gives exactly `want`.
+(let stuck (App (Num 1) (Num 3)))
+(run 4)
+(check (= e want))
+(fail (check (= stuck want)))
+(pop)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; A join on TWO variables at once: load from the memory a store produced, at the
+;;; address it wrote.
+;;;
+;;; `m` and `p` both have to agree between the two patterns. The second claim changes
+;;; only the address, so it is `p`'s half of the join that has to refuse it.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(rewrite (LoadFrom m p) v
+         :when ((= m (Store m0 p v)))
+         :name "load-after-store")
+(let m1 (Store (Mem0) (Num 7) (Num 42)))
+(let got (LoadFrom m1 (Num 7)))
+(let other (LoadFrom m1 (Num 8)))
+(run 4)
+(check (= got (Num 42)))
+(fail (check (= other (Num 42))))
+(pop)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Four patterns, chained two deep: recognising `(a*b) + (a*b)`.
+;;;
+;;; `a` and `b` occur nowhere on the left-hand side -- they are introduced by the
+;;; premises and joined only to each other, which is the case a rule form would
+;;; normally be reached for.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(rewrite (Root e) (Doubled)
+         :when ((= e (Add l r))
+                (= l (Mul a b))
+                (= r (Mul a b)))
+         :name "double-product")
+(let yes (Root (Add (Mul (Num 2) (Num 3)) (Mul (Num 2) (Num 3)))))
+;; the factors differ, so the join across the two `Mul` patterns fails
+(let no (Root (Add (Mul (Num 2) (Num 3)) (Mul (Num 2) (Num 4)))))
+;; the shape is right below but the top is a `Mul`, so the first premise fails
+(let no2 (Root (Mul (Mul (Num 2) (Num 3)) (Mul (Num 2) (Num 3)))))
+(run 6)
+(check (= yes (Doubled)))
+(fail (check (= no (Doubled))))
+(fail (check (= no2 (Doubled))))
+(pop)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; A variable shared UNDER TWO BINDERS: two lambdas with the same body.
+;;;
+;;; `body` is reached through a different edge in each premise, so this join holds up
+;;; to renaming rather than by pointer -- which is the whole difference between a
+;;; slotted e-graph and an ordinary one.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(rewrite (Pair f g) (Same)
+         :when ((= f (Lam $v body))
+                (= g (Lam $w body)))
+         :name "same-body")
+;; the bound slots are spelled differently and the bodies ignore them: one class
+(let p (Pair (Lam $0 (Num 1)) (Lam $3 (Num 1))))
+;; different bodies, so `body` cannot join
+(let q (Pair (Lam $0 (Num 1)) (Lam $3 (Num 2))))
+(run 4)
+(check (= p (Same)))
+(fail (check (= q (Same))))
+(pop)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; A SLOT LITERAL shared between two binder columns joins NOTHING.
+;;;
+;;; The trap next to the section above. A shared *variable* is a join; a shared slot
+;;; name in a binder column is not. Each premise looks its own node up and gets its
+;;; own name for that node's bound slot, so writing `$x` in both constrains nothing
+;;; and the rule fires on two lambdas that have nothing to do with each other.
+;;;
+;;; To relate two binders, share the body -- as the section above does.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(rewrite (Pair f g) (Fired)
+         :when ((= f (Lam $x c))
+                (= g (Lam $x d)))
+         :name "shared-slot-literal")
+;; not alpha-equivalent, unrelated bodies -- and it still fires
+(let unrelated (Pair (Lam $0 (Num 1)) (Lam $0 (Num 2))))
+(run 4)
+(check (= unrelated (Fired)))
+(pop)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; A multipattern and a slot side condition on one rule: eta, but only where the
+;;; function is itself a lambda.
+;;;
+;;; The two kinds of fact do different work here, so each failing claim below fails
+;;; a different one: `(= f (Lam $w g))` constrains the match's SHAPE, `(not-free $v f)`
+;;; its SLOTS.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(rewrite (Lam $v (App f $v)) f
+         :when ((not-free $v f)
+                (= f (Lam $w g)))
+         :name "eta-lam")
+;; fun y. (fun z. z + z) y   ->   fun z. z + z
+(let eta (Lam $0 (App (Lam $1 (Add $1 $1)) $0)))
+(let reduced (Lam $1 (Add $1 $1)))
+;; the function is not a lambda: the shape premise fails
+(let notlam (Lam $0 (App (Num 5) $0)))
+;; the function IS a lambda but mentions the bound slot: the side condition fails
+(let held (Lam $0 (App (Lam $1 (Add $1 $0)) $0)))
+(let inner (Lam $1 (Add $1 $0)))
+(run 6)
+(check (= eta reduced))
+(fail (check (= notlam (Num 5))))
+(fail (check (= held inner)))
+(pop)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; FOUR PATTERNS SHARING NOTHING: a cross product.
+;;;
+;;; The left-hand side and all three premises are disconnected -- no variable occurs in
+;;; two of them. So the rule says "any Root, provided a Mul, an App and a Store exist
+;;; anywhere", and it fires once per combination rather than joining them.
+;;;
+;;; Worth its own case because every other section here is connected, and because
+;;; disconnected atoms are the ones that all MINT: nothing constrains their renamings
+;;; from elsewhere, so the accumulated avoid-set is what keeps three independent atoms
+;;; from naming the same slot.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(rewrite (Root e) (Crossed)
+         :when ((= p (Mul m1 m2))
+                (= q (App a1 a2))
+                (= r (Store s1 s2 s3)))
+         :name "cross-product")
+(let root (Root (Num 1)))
+(let a-mul (Mul (Num 2) (Num 3)))
+(let an-app (App (Num 4) (Num 5)))
+(let a-store (Store (Mem0) (Num 6) (Num 7)))
+(run 4)
+(check (= root (Crossed)))
+(pop)
+(push)
+;; the same, with no Store anywhere: the third premise has nothing to match, so a rule
+;; that ignored its disconnected atoms would fire here and this claim is what says it
+;; does not
+(rewrite (Root e) (Crossed)
+         :when ((= p (Mul m1 m2))
+                (= q (App a1 a2))
+                (= r (Store s1 s2 s3)))
+         :name "cross-product")
+(let root2 (Root (Num 1)))
+(let a-mul2 (Mul (Num 2) (Num 3)))
+(let an-app2 (App (Num 4) (Num 5)))
+(run 4)
+(fail (check (= root2 (Crossed))))
+(pop)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; The same shape, with every unrelated pattern carrying SLOTS.
+;;;
+;;; `(Mul $s $s)` asks for a node whose two children are one slot. Three such patterns,
+;;; sharing nothing, each solve their own slot -- so this is the case where three atoms
+;;; mint at once and must not collide.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(rewrite (Root e) (Minted)
+         :when ((= p (Mul $s $s))
+                (= q (App $t $t))
+                (= r (Add $u $u)))
+         :name "cross-slots")
+(let root3 (Root (Num 1)))
+;; each names a different slot, which is what the three atoms have to solve separately
+(let mss (Mul $0 $0))
+(let att (App $1 $1))
+(let auu (Add $2 $2))
+(run 4)
+(check (= root3 (Minted)))
+(pop)
+(push)
+;; the Add's children are DIFFERENT slots, so `(Add $u $u)` has nothing to match
+(rewrite (Root e) (Minted)
+         :when ((= p (Mul $s $s))
+                (= q (App $t $t))
+                (= r (Add $u $u)))
+         :name "cross-slots")
+(let root4 (Root (Num 1)))
+(let mss2 (Mul $0 $0))
+(let att2 (App $1 $1))
+(let a23 (Add $2 $3))
+(run 4)
+(fail (check (= root4 (Minted))))
+(pop)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; TWO LAMBDAS THAT DIFFER ONLY IN A CONSTANT, each rewritten to one general
+;;; lambda applied to its OWN constant.
+;;;
+;;;     fun x. x + 2   =   (fun n. fun x. x + n) 2
+;;;     fun x. x + 3   =   (fun n. fun x. x + n) 3
+;;;
+;;; Two things make this more than a one-pattern rule. The premise binds a SECOND
+;;; lambda of the same shape, so the match covers both at once. And the right-hand
+;;; side builds a NESTED binder over a slot the pattern never mentions, which is
+;;; minted with nothing to write -- so the conclusion introduces a binder rather
+;;; than taking one apart.
+;;;
+;;; RESPECTIVELY is the claim with teeth. Each lambda has to keep its own constant,
+;;; and nothing in the rule's shape enforces that except the join: `a` is the
+;;; left-hand side's constant and `b` is the other lambda's. Taking the right-hand
+;;; side's argument from `b` instead breaks the third claim below and nothing else.
+;;;
+;;; `(!= a b)` is what makes the premise GATE rather than widen: without it the second
+;;; pattern can bind the same lambda, since the left-hand side already requires one of
+;;; that shape. With it the rule abstracts only where two DIFFERENT constants exist,
+;;; which is when generalising is worth anything -- and a lone lambda is left alone.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(rewrite (Lam $x (Add $x a))
+         (App (Lam $n (Lam $x (Add $x $n))) a)
+         :when ((= other (Lam $y (Add $y b)))
+                (!= a b))
+         :name "abstract-constant")
+(let f2 (Lam $0 (Add $0 (Num 2))))
+(let f3 (Lam $0 (Add $0 (Num 3))))
+(let g  (Lam $1 (Lam $0 (Add $0 $1))))
+(let a2 (App g (Num 2)))
+(let a3 (App g (Num 3)))
+;; the body is not an `Add` over the bound slot, so the left-hand side refuses it
+(let k7 (Lam $0 (Num 7)))
+(let ak (App g (Num 7)))
+(run 3)
+(check (= f2 a2))
+(check (= f3 a3))
+(fail (check (= f2 a3)))
+(fail (check (= k7 ak)))
+(pop)
+
+(push)
+;; ONE lambda of that shape, so no second constant differs from it: nothing to
+;; generalise over, and `(!= a b)` refuses the match
+(rewrite (Lam $x (Add $x a))
+         (App (Lam $n (Lam $x (Add $x $n))) a)
+         :when ((= other (Lam $y (Add $y b)))
+                (!= a b))
+         :name "abstract-constant")
+
+;; Nothing else is built here on purpose. A general lambda would itself be a lambda of
+;; that shape over a different constant, which is the second match the rule wants -- so
+;; naming one to compare against would supply what the claim is asserting is absent.
+(let lone (Lam $0 (Add $0 (Num 2))))
+(run 3)
+
+(check (not-holds lone App))
+(pop)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; An ordinary-child slot literal participates in final slot refinement.
+;;;
+;;; All three inner nodes are in the slotless `n` class, so their child slots are
+;;; redundant.  The rule can satisfy `(free $x a2)` only by considering the `$x`
+;;; carried by the ordinary `Add` child and identifying `a2`'s redundant slot with
+;;; it.  Binder-marker literals are deliberately different: they are node data and
+;;; are not carried by the substitution merely because the pattern writes them.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(rewrite (Root r) (Fired)
+         :when ((= r (Add $x b0))
+                (= r (Mul a1 b1))
+                (= r (Pair a2 b2))
+                (free $x a2))
+         :name "carried-slot-refinement")
+(let n99 (Num 99))
+(let redundant-add (Add $0 $1))
+(let redundant-mul (Mul $2 $3))
+(let redundant-pair (Pair $4 $5))
+(union redundant-add n99)
+(union redundant-mul n99)
+(union redundant-pair n99)
+(let carried-slot-root (Root n99))
+(run 4)
+(check (= carried-slot-root (Fired)))
+(pop)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Every occurrence of a repeated pattern variable gets its own symmetry choice.
+;;;
+;;; The union gives the shared two-slot `Add` class a swap symmetry.  In the `Store`
+;;; row the three invocations of `x` need identity, swap, identity respectively.
+;;; Reusing one symmetry witness for all three occurrences makes the rule miss.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(rewrite (Store x x x) (Root x) :name "repeated-pvar-symmetry")
+(let add01 (Add $0 $1))
+(let add10 (Add $1 $0))
+(union (Add $2 $3) (Add $3 $2))
+(let repeated-symmetry (Store add01 add10 add01))
+(run 4)
+(check (= repeated-symmetry (Root add01)))
+(pop)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; A PAYLOAD COLUMN in a pattern -- a node argument carrying no slots, which is the
+;;; reference's word for it. egglog matches on one or binds it, and so does this:
+;;; a quoted or numeric token is a literal to match, a bare identifier is a variable,
+;;; and two patterns naming the same variable JOIN on it.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+;; a literal: only where the left operand is exactly 2
+(rewrite (Add x y) (Fired) :when ((= x (Num 2))) :name "payload-literal")
+(let lit2 (Add (Num 2) (Num 9)))
+(let lit5 (Add (Num 5) (Num 9)))
+(run 3)
+(check (= lit2 (Fired)))
+(fail (check (= lit5 (Fired))))
+(pop)
+(push)
+;; a payload VARIABLE shared between two patterns: both operands must carry the same
+;; number, which nothing but the join enforces
+(rewrite (Add x y) (Same) :when ((= x (Num i)) (= y (Num i))) :name "payload-join")
+(let both4 (Add (Num 4) (Num 4)))
+(let mixed (Add (Num 4) (Num 7)))
+(run 3)
+(check (= both4 (Same)))
+(fail (check (= mixed (Same))))
+(pop)
+(push)
+;; and a right-hand side may reuse a payload the pattern bound
+(rewrite (Add x y) (Num i) :when ((= x (Num i))) :name "payload-to-rhs")
+(let takes6 (Add (Num 6) (Num 9)))
+(run 3)
+(check (= takes6 (Num 6)))
+(pop)

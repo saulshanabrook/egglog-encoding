@@ -1,0 +1,65 @@
+;;; A program whose sort is its own, not the carrier the core happens to declare.
+;;;
+;;; `(constructor Succ (S) S)` compiles to `(constructor Succ (Renaming S) S)`, and the
+;;; machinery is renamed to `S` rather than a `U` being invented alongside it -- so the
+;;; sort name survives into terms, extraction and printing.
+;;;
+;;; With one sort these table names remain unsuffixed. A program declaring several
+;;; independent carriers gets one indexed table family per sort; see
+;;; `multiple-sorts.egg` for that case.
+;;;
+;;;     python3 slotted/slotted-egglog.py slotted/tests/own-sort.egg
+
+(sort S)
+
+(constructor Null () S)
+(constructor Succ (S) S)
+(constructor Prev (S) S)
+(constructor Lam (S S) S :binder 0)
+(constructor G (S S) S)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Rewriting over `S`, which is Rudi's original program with something asked of it.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(rewrite (Prev (Succ x)) x :name "wow")
+
+(let one (Prev (Succ (Null))))
+(let two (Prev (Succ (Succ (Null)))))
+(run 10)
+
+(check (= one (Null)))
+(check (= two (Succ (Null))))
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Slots and binders work the same over `S`: a bound slot is not one of the class's,
+;;; so the two spellings of the identity are one class.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(let id0 (Lam $0 $0))
+(let id7 (Lam $7 $7))
+(let k (Lam $0 $3))
+(run 0)
+
+(check (= id0 id7))          ; alpha-equivalent, so equal
+(check (slots id0))          ; the identity depends on no slot: its own is bound
+(check (slots k $3))         ; this one depends on the slot it returns
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; A multipattern over `S`, so `:when` patterns are not `U`-specific either.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(rewrite (G a b) (Null) :when ((= a (Succ p)) (= b (Succ q))) :name "both")
+
+(let ss (G (Succ (Null)) (Succ (Null))))
+(let sn (G (Succ (Null)) (Null)))
+(run 5)
+
+(check (= ss (Null)))
+(fail (check (= sn (Null))))
+(pop)

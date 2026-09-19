@@ -76,10 +76,16 @@ impl ActionRegistry {
         self.table_actions.get(name)
     }
 
-    /// Snapshot the registered table names and their current row counts.
+    /// Snapshot the registered table names and their current row counts,
+    /// leaving out entries whose table `state` no longer holds.
+    ///
+    /// The registry is shared by every snapshot an egglog `push` takes, so a
+    /// `pop` can leave behind an entry for a table its database no longer has —
+    /// and a later table can be given the id that entry still names.
     pub fn table_sizes(&self, state: &ExecutionState) -> Vec<(&str, usize)> {
         self.table_actions
             .iter()
+            .filter(|(name, action)| action.is_live(state, name))
             .map(|(name, action)| (name.as_str(), action.row_count(state)))
             .collect()
     }
@@ -1825,6 +1831,7 @@ pub struct TableAction {
     default: Option<MergeVal>,
     timestamp: CounterId,
     kind: TableKind,
+    schema: Arc<[ColumnTy]>,
 }
 
 impl TableAction {
@@ -1846,6 +1853,7 @@ impl TableAction {
             },
             timestamp: egraph.timestamp_counter,
             kind,
+            schema: func_info.schema.as_slice().into(),
         }
     }
 
@@ -1863,6 +1871,12 @@ impl TableAction {
     /// Number of output (value) columns.
     pub fn output_arity(&self) -> usize {
         self.table_math.n_vals()
+    }
+
+    /// The types of this table's columns: [`TableAction::input_arity`] key
+    /// columns followed by [`TableAction::output_arity`] value columns.
+    pub fn schema(&self) -> &[ColumnTy] {
+        &self.schema
     }
 
     /// Look up value column `col_idx` for `key`, or `None` if the key is absent.
@@ -1904,6 +1918,12 @@ impl TableAction {
     /// constructors, use [`TableAction::lookup_or_insert`].
     pub fn lookup(&self, state: &ExecutionState, key: &[Value]) -> Option<Value> {
         self.lookup_values(state, key).map(|values| values[0])
+    }
+
+    /// Whether `state` still holds this action's table under `name`. False for
+    /// an entry the database has outlived: see [`ActionRegistry::table_sizes`].
+    pub fn is_live(&self, state: &ExecutionState, name: &str) -> bool {
+        state.table_name(self.table) == Some(name)
     }
 
     /// Return the current number of rows in this table.
