@@ -118,5 +118,6 @@ UPDATE_DISEQUALITY_SNAPSHOTS=1 cargo test -p egglog-experimental --test disequal
 ```
 
 Negative tests separately ensure that consistent inputs do not prove a
-contradiction. Full-size timing and validation results belong in the performance
-[report](PERFORMANCE.md); raw output is kept outside git.
+contradiction. [What the disequality benchmark measures](PERFORMANCE.md) explains
+the comparison boundaries and proof guarantees, and links to the historical
+measurements. Raw output is kept outside git.

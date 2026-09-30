@@ -1,158 +1,84 @@
-# Disequality performance and validation
+# What the disequality benchmark measures
 
-These are diagnostic local measurements, not a reproduction of the paper's
-native timings. The native artifact is not built or timed. Generation and seed
-selection are outside the benchmark boundary; execution includes parsing and
-compilation.
+The parameter-analysis benchmark compares the cost of two disequality encodings
+in egglog and the additional cost of proof recording. It uses
+the expression generator from [Dis-Equality Graphs](https://doi.org/10.1145/3704913),
+but runs an egglog program, not the paper's native engines. Its timings therefore
+cannot establish performance parity with the paper.
 
-## Avoidable command retention
+The benchmark guide contains commands for [running comparisons](README.md#comparisons)
+and [regenerating the input](README.md#workload-and-regeneration). This document
+explains what those comparisons tell us.
 
-The first full-size strict-proof attempt reached a 50.3 GB physical footprint
-while still processing input and was stopped on this 16 GiB machine. It did
-not finish, so it provides neither a runtime nor proof-validation result.
+## Why select a contradictory input?
 
-`process_program_internal(run_commands=true)` retained both the pre-proof and
-instrumented resolved command trees in return fields that `run_program`
-discarded. Execution now retains only the history required by the proof
-checker; resolve-only callers still receive both representations. This does
-not alter command execution, proof numbering, union-find, or desugaring output.
+The [committed program](parameter-analysis.egg) asserts 100,000 equalities,
+10,000 randomly generated disequalities, and ten pairwise numeral disequalities.
+It finishes with `(check-contradiction)`. A consistent input could measure the
+cost of recording proof information, but would provide no contradiction proof
+to extract or check.
 
-The isolated change was measured in before/after/after/before order on seed
-2026 with 10,000 equalities and 1,000 random disequalities, plus ten numeral
-disequalities. This probe deliberately omits the final check to isolate
-ingestion under `--proofs`; it is not the full benchmark or a proof-extraction
-measurement. Both binaries exited successfully in all four runs.
+The [generator](generate.py) therefore tries whole workloads from successive
+seeds until both encodings detect a contradiction and validate its proof. It
+does not filter individual pairs or add a constraint to force a contradiction.
+The resulting input is fixed across comparisons, but selected for this outcome:
+it does not measure how often random workloads are contradictory or their
+average execution cost.
 
-| Order | Version | Wall seconds | Peak physical footprint (decimal GB) |
-| --- | --- | ---: | ---: |
-| 1 | Before | 74.96 | 10.861 |
-| 2 | After | 58.94 | 2.908 |
-| 3 | After | 59.96 | 2.908 |
-| 4 | Before | 61.81 | 10.864 |
+## Why encoding overhead differs from proof overhead
 
-Memory fell approximately 73% in both orders. Runtime changed substantially
-between baseline runs; two observations per endpoint on an interactive machine
-do not establish a precise speedup. The first baseline briefly overlapped focused
-validation work; the memory claim, not a timing speedup, is the result of this
-probe. The smaller probe does not establish that
-the full-size workload fits in memory.
+Both [compiler passes](../../egglog-experimental/src/disequality.rs) lower
+disequality to ordinary egglog before term or proof encoding, without changing
+union-find. NE stores a relation between terms and detects a self-edge after
+congruence. EE creates equality terms in a private truth sort; its propagation
+rules make `true` and `false` equal when a contradiction is found.
 
-The experiment used macOS 26.6 (25G72), Apple M4, 16 GiB RAM, CPython 3.13.11,
-release builds, and `/usr/bin/time -l`. The exact measured binaries at the
-memory-fix boundary (before the subsequent block-inference fix) were:
+The same source program exercises these different representations. An NE-versus-EE
+comparison holds the input, executable, and proof treatment fixed. A proof-overhead
+comparison instead holds the encoding fixed and changes the proof treatment.
+Changing both at once cannot attribute a difference to either one alone.
 
-- Before SHA-256: `fd82d3bc7a5f90fcc09c7f3083fb5f378cff7d9b354cfc15f7703d391de91602`.
-- After SHA-256: `f9da5604afe1f04b3eed3c1fc14deeddff80ad9fba66f7a57b0afd36cacf42de`.
-- Probe source SHA-256: `ccbce02846fd662db66ed3bd73d357f9b93d4e3d5bffb6a6f5ffd500e5e59c7e`.
-- Invocation: `/usr/bin/time -l BINARY --mode no-messages --proofs INPUT.egg`.
+The [runner](../../benchmarking/processes.py) measures the whole engine process.
+That includes reading and parsing the source, typechecking, compiler passes,
+inserting and unioning terms, and the final propagation and check. Builds,
+input generation, and seed selection are outside that boundary. The result is
+not an isolated measurement of a disequality lookup or propagation rule.
 
-Recreate the probe from the hash-verified generator using `expressions(generator,
-2026, 22000)`, followed by `source_program(terms, 2026, 10000, 1000)` with only its
-final `(check-contradiction)` line removed. Use CPython 3.13.11 to preserve the
-recorded source header and hash. Raw process output and diagnostic samples are
-kept under `/tmp`, not committed.
+This matters because the input contains over 100,000 top-level actions. Proof
+mode transforms those actions and records their derivations, not just the final
+contradiction. A cheap final check can coexist with expensive proof recording.
 
-## Full-size validation
+## What a successful proof run establishes
 
-On 2026-09-16 (America/Los_Angeles), both encodings completed normal execution
-and strict proof extraction/checking on the full seed-2026 fixture. The validated
-release executable SHA-256 was
-`6059a6fdb61a0374bcae16e89e8834dc2a557fcea0693e4c680f6f2d87da8983`.
-Seed 2025 was consistent in both normal modes; 2026 was the first contradictory
-candidate. Regeneration independently reproduced the complete file hash and
-100,000 equality/10,010 disequality counts. No pair was injected or filtered.
+The default `proofs` treatment records proof information without extracting or
+checking the final proof. `proof-extraction` also materializes and simplifies
+the proof; `proof-testing` additionally verifies it. A recording-only timing
+therefore does not measure the cost of returning a checked proof.
 
-The validation command was:
+Strict checking validates the contradiction's derivation against the lowered
+egglog program, including the encoding rules. It is not a separate proof that
+the disequality compiler pass implements the paper's semantics. The
+[small-fixture tests](../../egglog-experimental/tests/disequality.rs) cover
+consistent inputs, congruence, multiple sorts, and rule-generated disequalities
+under both encodings.
 
-```sh
-uv run --locked python benchmarks/disequality/generate.py --seed 2026 --max-attempts 1 --timeout 1800
-```
+## What the measurements do not establish
 
-Strict validation was not a controlled timing experiment. The NE run was
-observed at 22.3 GB peak physical footprint while still ingesting input; this
-is a lower bound, not its final peak. macOS compression makes maximum RSS
-different from physical footprint, so RSS alone understates memory demand.
+The [September 2026 measurement record](https://github.com/saulshanabrook/egglog-encoding/blob/3db715cd29159196118bd744248061ea4dedf8f0/benchmarks/disequality/PERFORMANCE.md)
+preserves the original timings, executable hashes, environment, and validation
+history. In its full-size NE proof-recording run, frontend work and action
+execution dominated; the private NE ruleset counters summed to less than 1 ms.
+That ruleset timing excludes the preceding term construction, unions, and
+term-encoding equality maintenance. It is not the cost of the whole encoding.
 
-Full-size term-only execution also passed under both encodings. Small fixtures
-separately exercise every CLI treatment, including standalone proof extraction.
+The same record documents a memory fix in
+[`process_program_internal`](../../egglog/src/lib.rs): execution no longer
+accumulates resolved command trees merely to return them to a caller that
+discards them. The proof-checking history is still retained. Removing those
+redundant copies does not remove the memory cost of that history or the proof
+database.
 
-## Timing scope
-
-The requested comparison is NE ordinary execution, NE proof recording, and EE
-ordinary execution. EE proof timing is intentionally omitted. A later EE
-recording-only timing attempt was stopped on request after about 6m49s, with an
-observed lifetime physical-footprint maximum of 17.76 GB at that point. It was
-not a timeout, an out-of-memory failure, or a proof-correctness failure. Its
-partial duration is not included as a measurement.
-
-The full workload remains in the default `./bench.py` suite, but CI's
-`make benchmark-smoke` explicitly selects small Math and disequality fixtures.
-No large proof benchmark, extra swap, or longer timeout is added to CI.
-
-The review follow-up re-ran the full ordinary workload successfully: NE 32.835s
-and EE 31.905s, with executable SHA-256
-`fb45e02d3f32ae6d4255aebbb4c20f1f828131066f65df47ed506fbfe672eee8`.
-These are single observations, not evidence of an encoding ranking. Small
-fixtures passed all proof treatments; full proof timings were not repeated.
-
-## Pre-review full-size measurements
-
-These measurements precede the review change that checks EE's `true = false`
-directly instead of deriving an extra contradiction fact. They are retained
-with their original executable hash, not presented as timings of the revised
-EE implementation. The review follow-up revalidates the small proof fixtures;
-it does not repeat the long proof timing runs.
-
-Measured on 2026-09-17 (America/Los_Angeles), using the environment above and
-the validated executable SHA-256 `6059a6fdb61a0374bcae16e89e8834dc2a557fcea0693e4c680f6f2d87da8983`.
-Source commit: `7e6b123e1c11df187a0e627e7835f28bea1370a6`; only documentation
-and CI smoke selection were dirty. Fixture SHA-256:
-`88ea961380031ea7cd46f805888bdba638d3a86cb8da67191938044abdae83f3`.
-The measurements ran sequentially in the order shown, without concurrent builds
-or tests. Each is one observation, with one engine thread and a 1,800s limit.
-
-| Encoding | Treatment | Wall seconds | Maximum RSS (decimal GB) |
-| --- | --- | ---: | ---: |
-| NE | Ordinary (`off`) | 32.855 | 5.804 |
-| NE | Proof recording (`proofs`) | 621.071 | 6.515 |
-| EE | Ordinary (`off`) | 32.413 | 6.775 |
-
-NE recording took 18.9 times ordinary execution in these observations. The two
-ordinary timings are close; one round on an interactive machine does not establish
-an encoding ranking or confidence interval. Maximum RSS is not total memory
-demand under macOS compression; see the larger observed physical footprint above.
-Proof extraction and strict checking are validated separately, not included in
-the recording-only timing. Initial smoke timings that overlapped validation
-are excluded from this table.
-
-Reproduce the requested matrix with:
-
-```sh
-./bench.py benchmarks/disequality/parameter-analysis.egg --rounds 1 \
-  --treatment proofs --compare-treatment off \
-  --disequality-encoding nee --compare-disequality-encoding nee \
-  --format markdown
-./bench.py benchmarks/disequality/parameter-analysis.egg --rounds 1 \
-  --treatment off --compare-treatment off \
-  --disequality-encoding ee --compare-disequality-encoding nee \
-  --format markdown
-```
-
-The default cache reuses matching observations across both commands, including
-the shared NE ordinary endpoint. Use `--force-run` to collect fresh observations.
-Build, generation, and runner setup are outside the process timing; parsing and compilation of the
-complete `.egg` input are inside it. Raw JSONL and process logs are not committed.
-
-### Where the NE proof time goes
-
-The measured phase counters attribute 283.755s to typechecking, 67.738s to
-frontend parsing, 128.322s to other frontend work, and 127.907s to action execution.
-Parsing includes frontend-generated program processing, not just reading the
-input file. The private NE ruleset's assembly/search/apply/execution/merge counters
-sum to less than 1ms. This does not include term-encoding equality maintenance
-or the earlier work of creating and unioning terms.
-
-The next performance investigation should target per-action typechecking,
-proof lowering, and command/history allocation, not optimize the tiny NE
-propagation rule first. The verified retention fix removes one avoidable cost;
-it does not solve the remaining proof frontend and memory overhead.
+Those measurements are historical observations, not expected runtimes or a
+ranking of NE and EE. In particular, the full-size EE proof timing was stopped
+before completion; it supplies neither a runtime comparison nor evidence that
+EE proof checking fails.
