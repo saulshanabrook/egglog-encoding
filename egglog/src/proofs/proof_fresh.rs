@@ -16,7 +16,6 @@
 //! operate directly on the e-graph's relational storage.
 
 use crate::*;
-use egglog_numeric_id::NumericId;
 
 /// Deterministic name of an FD view's `set-if-empty` primitive. The stable
 /// `set-if-empty-` prefix carries no internal-symbol marker, so a name-sanitizer
@@ -202,11 +201,7 @@ pub(crate) const GET_FRESH_PRIM_NAME: &str = "get-fresh!";
 pub(crate) fn register_get_fresh(eg: &mut EGraph) {
     eg.add_internal_primitive(GetFresh, WriteState::valid_contexts(), |egraph, _| {
         let counter = egraph.id_counter();
-        egraph.register_external_func(Box::new(core_relations::make_external_func(
-            move |state: &mut ExecutionState, _args: &[Value]| {
-                Some(Value::from_usize(state.inc_counter(counter)))
-            },
-        )))
+        egraph.register_id_minter(counter)
     });
 }
 

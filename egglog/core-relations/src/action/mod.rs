@@ -289,10 +289,20 @@ pub(crate) struct ExtractedBinding {
     pub(crate) vals: Pooled<Vec<Value>>,
 }
 
+/// The row an [`ExecutionState`] has staged for a key but not yet merged.
+//
+// Held inline rather than pooled. Nothing returns these to the pool during a
+// rule-set run -- the map lives as long as the `ExecutionState` -- so a pooled
+// `Vec` cost an allocation per miss, where inline a row this wide is free. The
+// pool would have recycled across runs, so a row past the inline capacity now
+// reaches the allocator instead; measured on three workloads that is under 1%
+// of predicted rows, the bulk of them six columns wide.
+pub(crate) type PredictedRow = SmallVec<[Value; 8]>;
+
 #[derive(Default)]
 pub(crate) struct PredictedVals {
     #[allow(clippy::type_complexity)]
-    data: HashMap<(TableId, SmallVec<[Value; 3]>), Pooled<Vec<Value>>>,
+    data: HashMap<(TableId, SmallVec<[Value; 3]>), PredictedRow>,
 }
 
 impl Clear for PredictedVals {
@@ -305,7 +315,7 @@ impl Clear for PredictedVals {
     fn bytes(&self) -> usize {
         self.data.capacity()
             * (std::mem::size_of::<(TableId, SmallVec<[Value; 3]>)>()
-                + std::mem::size_of::<Pooled<Vec<Value>>>())
+                + std::mem::size_of::<PredictedRow>())
     }
 }
 
@@ -314,8 +324,8 @@ impl PredictedVals {
         &mut self,
         table: TableId,
         key: &[Value],
-        default: impl FnOnce() -> Pooled<Vec<Value>>,
-    ) -> impl Deref<Target = Pooled<Vec<Value>>> + '_ {
+        default: impl FnOnce() -> PredictedRow,
+    ) -> impl Deref<Target = PredictedRow> + '_ {
         self.data
             .entry((table, SmallVec::from_slice(key)))
             .or_insert_with(default)
@@ -525,20 +535,21 @@ impl<'a> ExecutionState<'a> {
         if let Some(row) = self.db.table_info[table].table.get_row(key) {
             return row.vals;
         }
-        Pooled::cloned(
-            self.predicted
-                .get_val(table, key, || {
-                    Self::construct_new_row(
-                        &self.db,
-                        &mut self.buffers,
-                        &mut self.changed,
-                        table,
-                        key,
-                        vals,
-                    )
-                })
-                .deref(),
-        )
+        let row = self.predicted.get_val(table, key, || {
+            Self::construct_new_row(
+                &self.db,
+                &mut self.buffers,
+                &mut self.changed,
+                table,
+                key,
+                vals,
+            )
+        });
+        with_pool_set(|ps| {
+            let mut out = ps.get::<Vec<Value>>();
+            out.extend_from_slice(row.as_slice());
+            out
+        })
     }
 
     fn construct_new_row(
@@ -548,22 +559,20 @@ impl<'a> ExecutionState<'a> {
         table: TableId,
         key: &[Value],
         vals: impl ExactSizeIterator<Item = MergeVal>,
-    ) -> Pooled<Vec<Value>> {
-        with_pool_set(|ps| {
-            let mut new = ps.get::<Vec<Value>>();
-            new.reserve(key.len() + vals.len());
-            new.extend_from_slice(key);
-            for val in vals {
-                new.push(match val {
-                    MergeVal::Counter(ctr) => Value::from_usize(db.counters.inc(ctr)),
-                    MergeVal::Constant(c) => c,
-                })
-            }
-            buffers.lazy_init(table, || db.table_info[table].table.new_buffer());
-            buffers.stage_insert(table, &new);
-            *changed = true;
-            new
-        })
+    ) -> PredictedRow {
+        let mut new = PredictedRow::new();
+        new.reserve(key.len() + vals.len());
+        new.extend_from_slice(key);
+        for val in vals {
+            new.push(match val {
+                MergeVal::Counter(ctr) => Value::from_usize(db.counters.inc(ctr)),
+                MergeVal::Constant(c) => c,
+            })
+        }
+        buffers.lazy_init(table, || db.table_info[table].table.new_buffer());
+        buffers.stage_insert(table, &new);
+        *changed = true;
+        new
     }
 
     /// A variant of [`ExecutionState::predict_val`] that avoids materializing the full row, and
@@ -610,30 +619,148 @@ impl<'a> ExecutionState<'a> {
 /// instruction.
 type RowScratch = SmallVec<[Value; 12]>;
 
-/// Where each column of a row comes from: one entry per element of `args`, in
+/// Where each column of a row comes from: one entry per element of `vals`, in
 /// order.
 ///
 /// A variable's entry borrows its whole binding slice, so [`gather_row`] indexes
 /// it by lane. Every such slice must therefore be at least as long as the mask
 /// the lanes come from; a shorter one panics rather than silently truncating the
 /// batch.
+///
+/// Counter columns are reserved here, once for the whole batch of `n_rows`: a
+/// shared counter is one atomic, and incrementing it per row makes it a
+/// contended cache line under multiple threads.
 fn row_sources<'a>(
-    args: &[QueryEntry],
+    vals: impl IntoIterator<Item = WriteVal> + Clone,
     bindings: &'a Bindings,
-) -> SmallVec<[ValueSource<'a, Value>; 12]> {
-    args.iter()
-        .map(|entry| value_source(entry, bindings))
+    counters: &Counters,
+    n_rows: usize,
+) -> SmallVec<[WriteSource<'a>; 12]> {
+    // Incrementing per row hands a counter's values out in column order within
+    // a row and then row by row, so a counter used by `k` columns advances `k`
+    // times per row. Reserve that whole run and keep the same interleaving.
+    let mut reserved: SmallVec<[(CounterId, usize, usize); 2]> = SmallVec::new();
+    for val in vals.clone() {
+        if let WriteVal::IncCounter(ctr) = val {
+            match reserved.iter_mut().find(|(c, _, _)| *c == ctr) {
+                Some((_, _, stride)) => *stride += 1,
+                None => reserved.push((ctr, 0, 1)),
+            }
+        }
+    }
+    for (ctr, base, stride) in reserved.iter_mut() {
+        *base = counters.inc_by(*ctr, *stride * n_rows);
+    }
+    let mut seen: SmallVec<[(CounterId, usize); 2]> = SmallVec::new();
+    vals.into_iter()
+        .map(|val| match val {
+            WriteVal::QueryEntry(entry) => WriteSource::Value(value_source(&entry, bindings)),
+            WriteVal::IncCounter(ctr) => {
+                let (_, base, stride) = *reserved.iter().find(|(c, _, _)| *c == ctr).unwrap();
+                let offset = match seen.iter_mut().find(|(c, _)| *c == ctr) {
+                    Some((_, n)) => {
+                        *n += 1;
+                        *n - 1
+                    }
+                    None => {
+                        seen.push((ctr, 1));
+                        0
+                    }
+                };
+                WriteSource::Counter {
+                    base,
+                    stride,
+                    offset,
+                }
+            }
+            WriteVal::CurrentVal(col) => WriteSource::Current(col),
+        })
         .collect()
 }
 
-/// Overwrite `out` with lane `idx` of `sources`. Panics if any source slice is
-/// shorter than `idx + 1` (see [`row_sources`]).
-fn gather_row(sources: &[ValueSource<'_, Value>], idx: usize, out: &mut RowScratch) {
+/// One column's source within [`row_sources`].
+enum WriteSource<'a> {
+    Value(ValueSource<'a, Value>),
+    /// The `ord`th row of a counter column reserved by [`row_sources`].
+    Counter {
+        base: usize,
+        stride: usize,
+        offset: usize,
+    },
+    /// A column written earlier in the same row.
+    Current(usize),
+}
+
+/// Overwrite `out` with lane `idx` of `sources`, where `ord` counts rows from
+/// the start of the batch. Panics if any source slice is shorter than `idx + 1`
+/// (see [`row_sources`]).
+fn gather_row(sources: &[WriteSource<'_>], idx: usize, ord: usize, out: &mut RowScratch) {
     out.clear();
-    out.extend(sources.iter().map(|source| source.at(idx)));
+    for source in sources {
+        let val = match source {
+            WriteSource::Value(source) => source.at(idx),
+            WriteSource::Counter {
+                base,
+                stride,
+                offset,
+            } => Value::from_usize(base + ord * stride + offset),
+            WriteSource::Current(col) => out[*col],
+        };
+        out.push(val);
+    }
 }
 
 impl ExecutionState<'_> {
+    /// Stage one row per live lane into `table`.
+    fn stage_rows(&mut self, table: TableId, vals: &[WriteVal], mask: &Mask, bindings: &Bindings) {
+        let sources = row_sources(
+            vals.iter().copied(),
+            bindings,
+            self.db.counters,
+            mask.count_ones(),
+        );
+        let mut row = RowScratch::new();
+        self.stage_batch(table, |buf| {
+            for (ord, idx) in mask.ones().enumerate() {
+                gather_row(&sources, idx, ord, &mut row);
+                buf.stage_insert(&row);
+            }
+        });
+    }
+
+    /// [`ExecutionState::stage_rows`], also binding column `col` of each staged
+    /// row to `dst`. Kept separate so the common unbound insert stays a tight
+    /// gather-and-stage loop.
+    fn stage_rows_binding(
+        &mut self,
+        table: TableId,
+        vals: &[WriteVal],
+        col: ColumnId,
+        dst: Variable,
+        mask: &Mask,
+        bindings: &mut Bindings,
+    ) {
+        let mut out = with_pool_set(|ps| ps.get::<Vec<Value>>());
+        out.resize(bindings.matches, Value::stale());
+        {
+            let sources = row_sources(
+                vals.iter().copied(),
+                bindings,
+                self.db.counters,
+                mask.count_ones(),
+            );
+            let mut row = RowScratch::new();
+            self.stage_batch(table, |buf| {
+                for (ord, idx) in mask.ones().enumerate() {
+                    gather_row(&sources, idx, ord, &mut row);
+                    buf.stage_insert(&row);
+                    out[idx] = row[col.index()];
+                }
+            });
+        }
+        bindings.insert(dst, &out);
+    }
+
     /// Returns the number of matches that make it to the end of the instructions
     pub(crate) fn run_instrs(&mut self, instrs: &[Instr], bindings: &mut Bindings) -> usize {
         if bindings.var_offsets.next_id().rep() == 0 {
@@ -685,7 +812,6 @@ impl ExecutionState<'_> {
                 dst_col,
                 dst_var,
             } => {
-                let pool = with_pool_set(|ps| ps.get_pool::<Vec<Value>>().clone());
                 self.buffers.lazy_init(*table_id, || {
                     self.db.table_info[*table_id].table.new_buffer()
                 });
@@ -699,6 +825,9 @@ impl ExecutionState<'_> {
                     return;
                 }
                 let mut out = bindings.take(*dst_var).unwrap();
+                // Only a lane that adds a new prediction stages a row, so
+                // notify once for the batch, and only if one did.
+                let predicted_before = self.predicted.data.len();
                 for_each_binding_with_mask!(mask_copy, args.as_slice(), bindings, |iter| {
                     iter.assign_vec(&mut out.vals, |offset, key| {
                         // First, check if the entry is already in the table:
@@ -718,13 +847,12 @@ impl ExecutionState<'_> {
                         // to or_insert_with is `move`.
                         let ctrs = &self.db.counters;
                         let bindings = &bindings;
-                        let pool = pool.clone();
                         let row =
                             self.predicted
                                 .data
                                 .entry(prediction_key)
                                 .or_insert_with(move || {
-                                    let mut row = pool.get();
+                                    let mut row = PredictedRow::new();
                                     row.extend_from_slice(key.as_slice());
                                     // Extend the key with the default values.
                                     row.reserve(default.len());
@@ -741,13 +869,17 @@ impl ExecutionState<'_> {
                                         };
                                         row.push(val)
                                     }
-                                    // Insert it into the table.
-                                    buffers.stage_insert(*table_id, &row);
+                                    // Insert it into the table. Notification
+                                    // is batched, below.
+                                    buffers.buffers[*table_id].stage_insert(&row);
                                     row
                                 });
                         row[dst_col.index()]
                     });
                 });
+                if self.predicted.data.len() != predicted_before {
+                    self.buffers.notify_list.notify(*table_id);
+                }
                 bindings.replace(out);
             }
             Instr::LookupWithDefault {
@@ -809,16 +941,10 @@ impl ExecutionState<'_> {
                 lookup_result.union(&to_call_func);
                 *mask = lookup_result;
             }
-            Instr::Insert { table, vals } => {
-                let sources = row_sources(vals, bindings);
-                let mut row = RowScratch::new();
-                self.stage_batch(*table, |buf| {
-                    for idx in mask.ones() {
-                        gather_row(&sources, idx, &mut row);
-                        buf.stage_insert(&row);
-                    }
-                });
-            }
+            Instr::Insert { table, vals, bind } => match *bind {
+                None => self.stage_rows(*table, vals, mask, bindings),
+                Some((col, dst)) => self.stage_rows_binding(*table, vals, col, dst, mask, bindings),
+            },
             Instr::InsertIfEq { table, l, r, vals } => match (l, r) {
                 (QueryEntry::Var(v1), QueryEntry::Var(v2)) => {
                     for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| {
@@ -851,11 +977,16 @@ impl ExecutionState<'_> {
                 }
             },
             Instr::Remove { table, args } => {
-                let sources = row_sources(args, bindings);
+                let sources = row_sources(
+                    args.iter().copied().map(WriteVal::QueryEntry),
+                    bindings,
+                    self.db.counters,
+                    mask.count_ones(),
+                );
                 let mut row = RowScratch::new();
                 self.stage_batch(*table, |buf| {
-                    for idx in mask.ones() {
-                        gather_row(&sources, idx, &mut row);
+                    for (ord, idx) in mask.ones().enumerate() {
+                        gather_row(&sources, idx, ord, &mut row);
                         buf.stage_remove(&row);
                     }
                 });
@@ -916,6 +1047,17 @@ impl ExecutionState<'_> {
             }
             Instr::AssertEq(l, r) => assert_impl(bindings, mask, l, r, |l, r| l == r),
             Instr::AssertNe(l, r) => assert_impl(bindings, mask, l, r, |l, r| l != r),
+            Instr::IncCounter { counter, dst } => {
+                // One atomic for the batch. Lanes take consecutive values in
+                // mask order, exactly as one `inc` per lane would assign them.
+                let base = self.db.counters.inc_by(*counter, mask.count_ones());
+                let mut vals = with_pool_set(|ps| ps.get::<Vec<Value>>());
+                vals.resize(bindings.matches, Value::stale());
+                for (i, idx) in mask.ones().enumerate() {
+                    vals[idx] = Value::from_usize(base + i);
+                }
+                bindings.insert(*dst, &vals);
+            }
             Instr::ReadCounter { counter, dst } => {
                 let mut vals = with_pool_set(|ps| ps.get::<Vec<Value>>());
                 let ctr_val = Value::from_usize(self.read_counter(*counter));
@@ -970,11 +1112,16 @@ pub(crate) enum Instr {
         dst_var: Variable,
     },
 
-    /// Insert the given return value value with the provided arguments into the
-    /// table.
+    /// Stage one row per lane into `table`, one column per entry of `vals`.
+    ///
+    /// A [`WriteVal::IncCounter`] column mints a fresh value for every lane, so
+    /// this also covers the term encoding's `mint-<Relation>!`: `bind` names the
+    /// column holding the minted id and the variable to bind it to.
     Insert {
         table: TableId,
-        vals: Vec<QueryEntry>,
+        vals: Vec<WriteVal>,
+        /// Bind this column of each staged row to a variable.
+        bind: Option<(ColumnId, Variable)>,
     },
 
     /// Insert `vals` into `table` if `l` and `r` are equal.
@@ -1022,6 +1169,11 @@ pub(crate) enum Instr {
         ops: Vec<QueryEntry>,
         divider: usize,
     },
+
+    /// Mint a fresh value from a counter for each live lane and write it to the
+    /// given variable. Unlike [`Instr::ReadCounter`] the lanes differ: each one
+    /// advances the counter.
+    IncCounter { counter: CounterId, dst: Variable },
 
     /// Read the value of a counter and write it to the given variable.
     ReadCounter {
