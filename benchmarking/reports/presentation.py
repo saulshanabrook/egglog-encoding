@@ -129,14 +129,15 @@ def _selection_section(
                 _git_display(endpoint.target.row.git_sha, endpoint.target.row.is_dirty),
             ),
             endpoint.treatment,
+            endpoint.disequality_encoding if TREATMENT_SPECS[endpoint.treatment].engine == "egglog" else "n/a",
         )
         for role, endpoint in (("baseline", comparison.baseline), ("candidate", comparison.candidate))
     )
     endpoint_table = _table(
         report_id("table", "selection", "endpoints"),
         "Comparison",
-        ("role", "target", "git", "treatment"),
-        ("Role", "Target", "Git", "Treatment"),
+        ("role", "target", "git", "treatment", "disequality"),
+        ("Role", "Target", "Git", "Treatment", "Disequality"),
         endpoint_rows,
         caption=_comparison_caption(report_path, comparison, file_labels),
     )
@@ -156,14 +157,19 @@ def _selection_section(
         and comparison.baseline.target.binary_sha256_for(comparison.baseline.treatment)
         != comparison.candidate.target.binary_sha256_for(comparison.candidate.treatment)
     )
-    changed = (target_changed, comparison.baseline.treatment != comparison.candidate.treatment)
+    encoding_changed = comparison.baseline.disequality_encoding != comparison.candidate.disequality_encoding
+    changed = (target_changed, comparison.baseline.treatment != comparison.candidate.treatment, encoding_changed)
     if sum(changed) > 1:
         blocks.append(
             ReportMessage(
                 report_id("message", "selection", "joint-comparison"),
                 None,
-                "This comparison changes both target and treatment. Its ratios describe "
-                "the joint endpoint change and do not isolate one cause.",
+                (
+                    "This comparison changes the disequality encoding and another endpoint setting. "
+                    if encoding_changed
+                    else "This comparison changes both target and treatment. "
+                )
+                + "Its ratios describe the joint endpoint change and do not isolate one cause.",
                 tone="warning",
             )
         )
@@ -233,7 +239,8 @@ def _summary_section(
 
 
 def _endpoint_identity(endpoint: BenchmarkEndpoint) -> str:
-    return f"{endpoint.target.display_label} {endpoint.treatment}"
+    encoding = f"/{endpoint.disequality_encoding}" if TREATMENT_SPECS[endpoint.treatment].engine == "egglog" else ""
+    return f"{endpoint.target.display_label} {endpoint.treatment}{encoding}"
 
 
 def _deduplicate_summary_rows(

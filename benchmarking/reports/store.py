@@ -17,14 +17,15 @@ from typing import Final, Literal, TypedDict, cast
 from ..engines import TREATMENT_SPECS, Engine
 from ..models import (
     BenchmarkEndpoint,
+    DisequalityEncoding,
     FileSpec,
     Status,
     TargetRow,
     Treatment,
 )
 
-type ReportSchemaVersion = Literal[4]
-REPORT_SCHEMA_VERSION: Final[ReportSchemaVersion] = 4
+type ReportSchemaVersion = Literal[5]
+REPORT_SCHEMA_VERSION: Final[ReportSchemaVersion] = 5
 
 type TimingSummarySchemaVersion = Literal[4]
 TIMING_SUMMARY_SCHEMA_VERSION: Final[TimingSummarySchemaVersion] = 4
@@ -78,6 +79,7 @@ class ReportRecord(TypedDict):
     fact_directory_path: str | None
     fact_directory_sha256: str
     treatment: Treatment
+    disequality_encoding: DisequalityEncoding
     timeout_sec: int
     wall_sec: float | None
     max_rss_bytes: int | None
@@ -96,6 +98,7 @@ class CacheKey:
     treatment: Treatment
     timeout_sec: int
     fact_directory_sha256: str = ""
+    disequality_encoding: DisequalityEncoding = "nee"
 
     @classmethod
     def for_endpoint(
@@ -110,6 +113,7 @@ class CacheKey:
             binary_sha256=endpoint.target.binary_sha256_for(endpoint.treatment),
             file_sha256=file_spec.sha256,
             treatment=endpoint.treatment,
+            disequality_encoding=endpoint.disequality_encoding,
             timeout_sec=timeout_sec,
             fact_directory_sha256=file_spec.fact_directory_sha256,
         )
@@ -257,6 +261,7 @@ def _record_key(record: ReportRecord) -> CacheKey:
         binary_sha256=record["binary_sha256"],
         file_sha256=record["file_sha256"],
         treatment=record["treatment"],
+        disequality_encoding=record["disequality_encoding"],
         timeout_sec=record["timeout_sec"],
         fact_directory_sha256=record["fact_directory_sha256"],
     )

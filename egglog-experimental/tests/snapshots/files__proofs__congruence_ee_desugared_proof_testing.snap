@@ -1,0 +1,32 @@
+---
+source: egglog-experimental/tests/files.rs
+expression: snapshot
+---
+(let t0 (____disequality-eq-Term (f (A)) (f (B))))
+(let t1 (____disequality-eq-Term (f (A)) (f (A))))
+(let prf0
+  (Sym
+                (= t1 t0)
+                (Congr
+                  (= t0 t1)
+                  (Fiat (= t0 t0))
+                  (Congr
+                    (= (f (B)) (f (A)))
+                    (Fiat (= (f (B)) (f (B))))
+                    (Sym (= (B) (A)) (Fiat (= (A) (B))))
+                    0)
+                  1)))
+(let prf1 (Fiat (= t0 (____disequality-false))))
+(Trans
+  (= (____disequality-true) (____disequality-false))
+  (Trans
+    (= (____disequality-true) t0)
+    (Sym
+      (= (____disequality-true) t1)
+      (Rule
+        (= t1 (____disequality-true))
+        (name "________disequality-ee-reflexive-left-Term")
+        (premises (Trans (= t1 (____disequality-false)) prf0 prf1))
+        (substitution (x (f (A))) (y (f (A))))))
+    prf0)
+  prf1)

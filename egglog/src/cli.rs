@@ -4,6 +4,7 @@ use std::str::FromStr;
 
 use clap::Parser;
 use env_logger::Env;
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
@@ -93,14 +94,24 @@ struct Args {
 /// This is what vanilla egglog uses, and custom egglog builds (i.e., "egglog batteries included")
 /// should also call this function.
 #[allow(clippy::disallowed_macros)]
-pub fn cli(mut egraph: EGraph) {
+pub fn cli(egraph: EGraph) {
+    cli_from(egraph, std::env::args_os())
+}
+
+/// Run the standard CLI after an extension consumes its own arguments.
+#[allow(clippy::disallowed_macros)]
+pub fn cli_from<I, T>(mut egraph: EGraph, args: I)
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+{
     env_logger::Builder::from_env(Env::default().default_filter_or("warn"))
         .format_timestamp(None)
         .format_target(false)
         .parse_default_env()
         .init();
 
-    let args = Args::parse();
+    let args = Args::parse_from(args);
 
     if args.timing_summary.is_some() && args.threads != 1 {
         log::error!("--timing-summary requires --threads 1 for accurate phase timing");

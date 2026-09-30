@@ -5,16 +5,16 @@
   
   ## Comparison
   
-  | Role | Target | Git | Treatment |
-  | --- | --- | --- | --- |
-  | Baseline | baseline | abc123 | off |
-  | Candidate | candidate | abc123 | proofs |
+  | Role | Target | Git | Treatment | Disequality |
+  | --- | --- | --- | --- | --- |
+  | Baseline | baseline | abc123 | off | nee |
+  | Candidate | candidate | abc123 | proofs | nee |
   
   *2 file(s): math.egg, rewrite.egg · 2 round(s) per endpoint/file · 120 s timeout per run · Report: /tmp/benchmark-report.jsonl*
   
   *This comparison changes both target and treatment. Its ratios describe the joint endpoint change and do not isolate one cause.*
   
-  ## Summary — candidate proofs vs baseline off
+  ## Summary — candidate proofs/nee vs baseline off/nee
   
   | Metric | Scope | File(s) | Ratio (95% CI) | Result |
   | --- | --- | --- | ---: | --- |
@@ -232,16 +232,16 @@
                                                                                                                           
   ────────────────────────────────────────────────────── Comparison ──────────────────────────────────────────────────────
                                                                                                                           
-    Role                                 Target                  Git                     Treatment                        
+    Role                       Target            Git               Treatment                 Disequality                  
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
-    Baseline                             old                     abc123                  off                              
-    Candidate                            new                     abc123                  proofs                           
+    Baseline                   old               abc123            off                       nee                          
+    Candidate                  new               abc123            proofs                    nee                          
                                                                                                                           
   6 file(s): math.egg, eggcc-extract.egg, pointer-analysis-small.egg, hardboiled.egg, luminal.egg, herbie.egg · 2 round(s)
   per endpoint/file · 120 s timeout per run · Report: six-files.jsonl                                                     
   This comparison changes both target and treatment. Its ratios describe the joint endpoint change and do not isolate one 
   cause.
-  ─────────────────────────────────────────── Summary — new proofs vs old off ────────────────────────────────────────────
+  ─────────────────────────────────────── Summary — new proofs/nee vs old off/nee ────────────────────────────────────────
                                                                                                                           
     Metric             Scope                             File(s)                       Ratio (95% CI)  Result             
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 

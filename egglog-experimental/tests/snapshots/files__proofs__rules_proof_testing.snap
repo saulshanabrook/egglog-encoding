@@ -1,0 +1,21 @@
+---
+source: egglog-experimental/tests/files.rs
+expression: snapshot
+---
+(Rule
+  (= (@disequality-contradiction) (@disequality-contradiction))
+  (name "@@disequality-ne-self-Term")
+  (premises
+    (Congr
+      (= (@disequality-ne-Term (A) (B)) (@disequality-ne-Term (A) (A)))
+      (Rule
+        (= (@disequality-ne-Term (A) (B)) (@disequality-ne-Term (A) (B)))
+        (name
+          "(rule ((Pair a b))
+      ((@disequality-ne-Term a b))
+         )")
+        (premises (Fiat (= (Pair (A) (B)) (Pair (A) (B)))))
+        (substitution (a (A)) (b (B))))
+      (Sym (= (B) (A)) (Fiat (= (A) (B))))
+      1))
+  (substitution (x (A))))

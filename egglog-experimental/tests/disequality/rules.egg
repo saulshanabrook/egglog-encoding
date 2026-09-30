@@ -1,0 +1,10 @@
+; Rule-head disequalities and two sorts use independent encoding tables.
+(datatype Term (A) (B))
+(datatype Other (X) (Y))
+(relation Pair (Term Term))
+(rule ((Pair a b)) ((disequal a b)))
+(Pair (A) (B))
+(disequal (X) (Y))
+(run 1)
+(union (A) (B))
+(check-contradiction)

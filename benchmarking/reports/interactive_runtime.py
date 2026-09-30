@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TypedDict, cast
 
+from ..engines import TREATMENT_SPECS
 from ..models import BenchmarkEndpoint, ComparisonSpec, FileSpec, ResolvedTarget, TargetRequest, TargetRow
 from .catalog import CellTone, ReportCatalog, ReportCell, ReportMessage, report_id
 from .presentation import build_report_catalog, report_file_labels
@@ -368,7 +369,7 @@ def _endpoint_from_record(record: ReportRecord) -> BenchmarkEndpoint:
         record["binary_sha256"],
         None,
     )
-    return BenchmarkEndpoint(target, record["treatment"])
+    return BenchmarkEndpoint(target, record["treatment"], record["disequality_encoding"])
 
 
 def _file_from_record(record: ReportRecord) -> FileSpec:
@@ -387,7 +388,7 @@ def _endpoint_id(endpoint: BenchmarkEndpoint) -> str:
 
 
 def _record_endpoint_id(record: ReportRecord) -> str:
-    return report_id("endpoint", record["binary_sha256"], record["treatment"])
+    return report_id("endpoint", record["binary_sha256"], record["treatment"], record["disequality_encoding"])
 
 
 def _endpoint_label(endpoint: BenchmarkEndpoint) -> str:
@@ -396,7 +397,8 @@ def _endpoint_label(endpoint: BenchmarkEndpoint) -> str:
     target = endpoint.target.display_label
     git = f"{short_git_sha}{dirty}"
     target_and_git = git if target == short_git_sha else f"{target} · {git}"
-    return f"{target_and_git} · {endpoint.treatment}"
+    encoding = f"/{endpoint.disequality_encoding}" if TREATMENT_SPECS[endpoint.treatment].engine == "egglog" else ""
+    return f"{target_and_git} · {endpoint.treatment}{encoding}"
 
 
 def _file_id(file: FileSpec) -> str:

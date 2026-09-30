@@ -15,6 +15,7 @@ from typing import Literal
 from .engines import TREATMENT_SPECS, Engine, Treatment
 
 Status = Literal["success", "timed-out", "failure"]
+DisequalityEncoding = Literal["nee", "ee"]
 DetailLevel = Literal["summary", "files", "phases", "rulesets"]
 
 
@@ -114,6 +115,11 @@ class EndpointRequest:
 
     target: TargetRequest
     treatment: Treatment
+    disequality_encoding: DisequalityEncoding = "nee"
+
+    def __post_init__(self) -> None:
+        if TREATMENT_SPECS[self.treatment].engine == "egg" and self.disequality_encoding != "nee":
+            raise ValueError("disequality encoding selection is only supported by egglog treatments")
 
 
 @dataclass(frozen=True)
@@ -122,12 +128,13 @@ class BenchmarkEndpoint:
 
     target: ResolvedTarget
     treatment: Treatment
+    disequality_encoding: DisequalityEncoding = "nee"
 
     @property
-    def cache_identity(self) -> tuple[str, Treatment]:
+    def cache_identity(self) -> tuple[str, Treatment, DisequalityEncoding]:
         """Return the endpoint coordinates shared by all of its file keys."""
 
-        return (self.target.binary_sha256_for(self.treatment), self.treatment)
+        return (self.target.binary_sha256_for(self.treatment), self.treatment, self.disequality_encoding)
 
 
 @dataclass(frozen=True)
