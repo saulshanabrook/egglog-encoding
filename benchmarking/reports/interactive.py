@@ -38,6 +38,7 @@ class EvalLiveModule(Protocol):
 _PYTHON_MODULES = (
     "benchmarking/__init__.py",
     "benchmarking/engines.py",
+    "benchmarking/math_workloads.py",
     "benchmarking/models.py",
     "benchmarking/reports/__init__.py",
     "benchmarking/reports/store.py",

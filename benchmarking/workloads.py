@@ -2,7 +2,7 @@
 
 This module owns the default workload suite, invocation-relative file and fact
 directory resolution, content identities, and the rule that measured inputs do
-not execute ``(prove ...)``. CLI parsing and endpoint selection belong in their
+not execute ``prove`` or ``prove-extract``. CLI parsing and endpoint selection belong in their
 respective command modules.
 """
 
@@ -144,7 +144,7 @@ def _egglog_tokens(source: str) -> Iterator[str | None]:
 
 
 def file_contains_executable_prove_command(path: Path) -> bool:
-    """Return whether a workload contains a top-level ``prove`` command."""
+    """Return whether a workload explicitly requests a top-level proof."""
 
     depth = 0
     expecting_command = False
@@ -160,7 +160,7 @@ def file_contains_executable_prove_command(path: Path) -> bool:
                 expecting_command = False
             depth = max(0, depth - 1)
         elif depth == 1 and expecting_command:
-            if token == "prove":
+            if token in {"prove", "prove-extract"}:
                 return True
             expecting_command = False
     return False
@@ -190,6 +190,6 @@ def validate_workloads(files: Sequence[FileSpec]) -> None:
     for file_spec in files:
         if file_contains_executable_prove_command(file_spec.absolute_path):
             raise ValueError(
-                f"{file_spec.display_path} contains an explicit prove command; "
-                "benchmark files should use check so the selected treatment controls proof extraction"
+                f"{file_spec.display_path} contains an explicit prove command (prove or prove-extract); "
+                "benchmark files should use check or extract so the selected treatment controls proof extraction"
             )
