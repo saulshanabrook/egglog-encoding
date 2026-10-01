@@ -12,6 +12,68 @@ use super::{
 };
 
 #[test]
+fn external_batches_preserve_sparse_lanes_and_fallback_outputs() {
+    use crate::free_join::{invoke_batch, invoke_batch_assign};
+    use crate::{
+        Database, ExecutionState, ExternalFunction, ExternalFunctionBatch, QueryEntry, Variable,
+    };
+
+    #[derive(Clone)]
+    struct Batched;
+    impl ExternalFunction for Batched {
+        fn invoke(&self, _: &mut ExecutionState, _: &[Value]) -> Option<Value> {
+            panic!("the action instruction must dispatch the batch override")
+        }
+
+        fn invoke_batch(&self, _: &mut ExecutionState, batch: ExternalFunctionBatch<'_>) {
+            assert_eq!(batch.len(), 4);
+            batch.map(|args| {
+                let n = args[0].index();
+                (n != 5).then(|| Value::from_usize(n + args[1].index()))
+            });
+        }
+    }
+
+    let db = Database::default();
+    let ps = PoolSet::default();
+    let input = Variable::from_usize(0);
+    let output = Variable::from_usize(1);
+    let values: Vec<_> = (0..8).map(Value::from_usize).collect();
+    let mut bindings = super::Bindings::new(8);
+    bindings.insert(input, &values);
+    let args = [QueryEntry::Var(input), Value::from_usize(100).into()];
+    let mut mask = Mask::new(0..8, &ps);
+    mask.iter(&values).retain(|v| v.index() % 2 == 1);
+    db.with_execution_state(None, |state| {
+        invoke_batch(&Batched, state, &mut mask, &mut bindings, &args, output)
+    });
+    assert_eq!(mask.ones().collect::<Vec<_>>(), [1, 3, 7]);
+    for i in [1, 3, 7] {
+        assert_eq!(bindings[output][i], Value::from_usize(100 + i));
+    }
+
+    // A fallback must preserve results in lanes where the first call succeeded.
+    let fallback =
+        crate::make_external_func(|_: &mut ExecutionState, args: &[Value]| Some(args[0]));
+    let mut missing = Mask::new(0..8, &ps);
+    missing.iter(&values).retain(|v| v.index() == 5);
+    db.with_execution_state(None, |state| {
+        invoke_batch_assign(
+            &fallback,
+            state,
+            &mut missing,
+            &mut bindings,
+            &[Value::from_usize(999).into()],
+            output,
+        )
+    });
+    assert_eq!(bindings[output][5], Value::from_usize(999));
+    for i in [1, 3, 7] {
+        assert_eq!(bindings[output][i], Value::from_usize(100 + i));
+    }
+}
+
+#[test]
 fn predicted_vals_store_rows_contiguously() {
     let mut predicted = PredictedVals::default();
     let table = TableId::from_usize(3);
