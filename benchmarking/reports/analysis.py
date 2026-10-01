@@ -15,8 +15,9 @@ from typing import Literal, NamedTuple, cast
 
 from scipy import stats
 
+from ..engines import TREATMENT_SPECS
 from ..models import ComparisonSpec, DetailLevel
-from .store import CacheKey, IndexedRecord, ReportStore
+from .store import CacheKey, GroupedReport, IndexedRecord
 
 MetricName = Literal["wall_sec", "max_rss_bytes"]
 ResultClass = Literal["higher", "invalid", "lower", "point_only", "unclear"]
@@ -162,7 +163,7 @@ class _TimingMean(NamedTuple):
 
 
 def analyze_pair(
-    store: ReportStore,
+    store: GroupedReport,
     comparison: ComparisonSpec,
     detail: DetailLevel,
 ) -> PairReportViewData:
@@ -185,7 +186,7 @@ def analyze_pair(
 
 
 def _selected_observations(
-    store: ReportStore,
+    store: GroupedReport,
     comparison: ComparisonSpec,
 ) -> dict[_ObservationKey, tuple[IndexedRecord, ...]]:
     selected: dict[_ObservationKey, tuple[IndexedRecord, ...]] = {}
@@ -360,6 +361,11 @@ def _timing_breakdowns(
     issues: dict[_ObservationKey, str | None],
     metric_estimates: dict[_MetricKey, _MetricEstimate],
 ) -> tuple[FileTimingBreakdown, ...]:
+    if any(
+        not TREATMENT_SPECS[endpoint.treatment].timing_summary
+        for endpoint in (comparison.baseline, comparison.candidate)
+    ):
+        return ()
     means = _timing_means(observations, metric_estimates)
     files: list[FileTimingBreakdown] = []
     for file_order in range(len(comparison.files)):

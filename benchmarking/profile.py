@@ -23,7 +23,7 @@ from rich.console import Console
 from rich.text import Text
 
 from . import samply_analysis
-from .engines import TREATMENTS, Treatment, validate_engine_workload
+from .engines import TREATMENT_SPECS, TREATMENTS, Treatment, validate_engine_workload
 from .models import FileSpec, TargetRequest
 from .processes import run_command, terminate_process_group
 from .targets import git_root_for_path, parse_target, resolve_profile_target, workload_command
@@ -315,7 +315,8 @@ def open_samply_profile(artifact: Path, checkout_path: Path) -> None:
 def resolve_profile_request(args: argparse.Namespace, invocation_cwd: Path) -> ProfileRequest:
     files = resolve_files([str(args.file)], invocation_cwd, args.fact_directory)
     treatment = cast(Treatment, str(args.treatment))
-    validate_engine_workload(files[0], treatment)
+    file = files[0].for_engine(TREATMENT_SPECS[treatment].engine)
+    validate_engine_workload(file, treatment)
     if args.iterations is not None:
         mode = ProfileMode(iterations=args.iterations, profile_seconds=None)
     else:
@@ -325,7 +326,7 @@ def resolve_profile_request(args: argparse.Namespace, invocation_cwd: Path) -> P
     if not profiles_dir.is_absolute():
         profiles_dir = invocation_cwd / profiles_dir
     request = ProfileRequest(
-        file=files[0],
+        file=file,
         target_request=parse_target(str(args.target)),
         treatment=treatment,
         timeout_sec=int(args.timeout_sec),

@@ -20,13 +20,12 @@ from benchmarking.reports.store import (
 from .report_fixtures import make_record, make_ruleset_timing, make_timing_summary, write_report
 
 
-def test_missing_report_is_an_empty_store_without_sidecar_artifacts(tmp_path: Path) -> None:
+def test_missing_report_is_an_empty_store_without_creating_files(tmp_path: Path) -> None:
     report = tmp_path / "nested" / "report.jsonl"
 
     ReportStore(report)
 
-    assert report.read_text(encoding="utf-8") == ""
-    assert list(report.parent.iterdir()) == [report]
+    assert not report.parent.exists()
 
 
 def test_append_is_immediately_queryable(tmp_path: Path) -> None:

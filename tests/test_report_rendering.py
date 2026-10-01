@@ -44,7 +44,7 @@ def test_report_ids_encode_parts_unambiguously() -> None:
 
 def test_realistic_pair_report_markdown_snapshot(tmp_path: Path, snapshot: SnapshotAssertion) -> None:
     report_path, comparison = _pair_case(tmp_path)
-    catalog = build_report_catalog(ReportStore(report_path), comparison, "rulesets")
+    catalog = build_report_catalog(ReportStore(report_path).grouped_report(), comparison, "rulesets")
 
     markdown = render_markdown_report_document(catalog)
     stable = markdown.replace(str(report_path), "/tmp/benchmark-report.jsonl")
@@ -76,7 +76,9 @@ def test_selection_uses_treatment_from_the_comparison(tmp_path: Path) -> None:
         120,
     )
 
-    markdown = render_markdown_report_document(build_report_catalog(ReportStore(tmp_path / "report.jsonl"), comparison))
+    markdown = render_markdown_report_document(
+        build_report_catalog(ReportStore(tmp_path / "report.jsonl").grouped_report(), comparison)
+    )
 
     assert "| Baseline | off | abc123 | off |" in markdown
     assert "| Candidate | term | abc123 | term |" in markdown
@@ -91,7 +93,9 @@ def test_selection_warns_when_same_engine_binary_and_treatment_both_change(tmp_p
         120,
     )
 
-    markdown = render_markdown_report_document(build_report_catalog(ReportStore(tmp_path / "report.jsonl"), comparison))
+    markdown = render_markdown_report_document(
+        build_report_catalog(ReportStore(tmp_path / "report.jsonl").grouped_report(), comparison)
+    )
 
     assert "This comparison changes both target and treatment" in markdown
 
@@ -117,7 +121,9 @@ def test_selection_does_not_treat_cross_engine_binary_difference_as_target_chang
         120,
     )
 
-    markdown = render_markdown_report_document(build_report_catalog(ReportStore(tmp_path / "report.jsonl"), comparison))
+    markdown = render_markdown_report_document(
+        build_report_catalog(ReportStore(tmp_path / "report.jsonl").grouped_report(), comparison)
+    )
 
     assert "This comparison changes both target and treatment" not in markdown
 
@@ -139,7 +145,7 @@ def test_shared_formatters_keep_compact_units_and_unambiguous_paths() -> None:
 
 def test_rich_report_is_readable_at_realistic_widths(tmp_path: Path) -> None:
     report_path, comparison = _six_file_pair_case(tmp_path)
-    catalog = build_report_catalog(ReportStore(report_path), comparison, "rulesets")
+    catalog = build_report_catalog(ReportStore(report_path).grouped_report(), comparison, "rulesets")
     ellipsis_count: int | None = None
 
     for width in (80, 119, 120, 160, 200):
@@ -188,7 +194,7 @@ def test_realistic_six_file_rich_120_snapshot(
 ) -> None:
     report_path, comparison = _six_file_pair_case(tmp_path)
     monkeypatch.chdir(tmp_path)
-    catalog = build_report_catalog(ReportStore(Path(report_path.name)), comparison, "rulesets")
+    catalog = build_report_catalog(ReportStore(Path(report_path.name)).grouped_report(), comparison, "rulesets")
     console = Console(record=True, width=120, color_system=None)
 
     console.print(render_rich_report_document(catalog, 120))
@@ -203,7 +209,7 @@ def test_realistic_six_file_rich_120_snapshot(
 
 def test_repeated_rich_table_schemas_share_column_positions(tmp_path: Path) -> None:
     report_path, comparison = _six_file_pair_case(tmp_path)
-    catalog = build_report_catalog(ReportStore(report_path), comparison, "rulesets")
+    catalog = build_report_catalog(ReportStore(report_path).grouped_report(), comparison, "rulesets")
 
     for width in (120, 160, 200):
         console = Console(record=True, width=width, color_system=None)
@@ -232,7 +238,7 @@ def test_detail_level_is_cumulative(tmp_path: Path) -> None:
 
     for detail, section_ids in expected.items():
         catalog = build_report_catalog(
-            ReportStore(report_path),
+            ReportStore(report_path).grouped_report(),
             comparison,
             cast(models.DetailLevel, detail),
         )
@@ -241,7 +247,7 @@ def test_detail_level_is_cumulative(tmp_path: Path) -> None:
 
 def test_all_rich_tables_use_one_compact_style(tmp_path: Path) -> None:
     report_path, comparison = _pair_case(tmp_path)
-    catalog = build_report_catalog(ReportStore(report_path), comparison, "rulesets")
+    catalog = build_report_catalog(ReportStore(report_path).grouped_report(), comparison, "rulesets")
     tables = [
         render_rich_table(block)
         for section in catalog.sections
@@ -255,7 +261,7 @@ def test_all_rich_tables_use_one_compact_style(tmp_path: Path) -> None:
 
 def test_phase_detail_is_one_additive_decomposition_table(tmp_path: Path) -> None:
     report_path, comparison = _pair_case(tmp_path)
-    catalog = build_report_catalog(ReportStore(report_path), comparison, "phases")
+    catalog = build_report_catalog(ReportStore(report_path).grouped_report(), comparison, "phases")
 
     section = next(section for section in catalog.sections if section.id == "phases")
     tables = tuple(block for block in section.blocks if isinstance(block, ReportTable))
@@ -289,7 +295,7 @@ def test_phase_detail_is_one_additive_decomposition_table(tmp_path: Path) -> Non
 
 def test_ruleset_detail_unfolds_program_and_equality_with_explicit_children(tmp_path: Path) -> None:
     report_path, comparison = _pair_case(tmp_path)
-    catalog = build_report_catalog(ReportStore(report_path), comparison, "rulesets")
+    catalog = build_report_catalog(ReportStore(report_path).grouped_report(), comparison, "rulesets")
 
     section = next(section for section in catalog.sections if section.id == "rulesets")
     guide = section.blocks[0]
@@ -356,7 +362,7 @@ def test_ruleset_edges_label_empty_names_and_break_equal_deltas_by_name(tmp_path
     )
     comparison = models.ComparisonSpec(baseline, candidate, (file,), 1, 120)
 
-    catalog = build_report_catalog(ReportStore(report_path), comparison, "rulesets")
+    catalog = build_report_catalog(ReportStore(report_path).grouped_report(), comparison, "rulesets")
     section = next(section for section in catalog.sections if section.id == "rulesets")
     table = next(block for block in section.blocks if isinstance(block, ReportTable))
     default_ruleset = next(row for row in table.rows if row.cells[0].display == "↳ <default ruleset>")
@@ -377,7 +383,7 @@ def test_ruleset_edges_label_empty_names_and_break_equal_deltas_by_name(tmp_path
 
 def test_ratio_tones_use_green_for_improvements_and_dim_unclear_results(tmp_path: Path) -> None:
     report_path, comparison = _pair_case(tmp_path)
-    catalog = build_report_catalog(ReportStore(report_path), comparison)
+    catalog = build_report_catalog(ReportStore(report_path).grouped_report(), comparison)
     summary = next(section for section in catalog.sections if section.id == "summary")
     table = next(block for block in summary.blocks if isinstance(block, ReportTable))
     expected = {
@@ -435,7 +441,9 @@ def test_negative_residual_keeps_an_explicit_warning(tmp_path: Path) -> None:
     )
     comparison = models.ComparisonSpec(baseline, candidate, (file,), 1, 120)
 
-    markdown = render_markdown_report_document(build_report_catalog(ReportStore(report_path), comparison, "phases"))
+    markdown = render_markdown_report_document(
+        build_report_catalog(ReportStore(report_path).grouped_report(), comparison, "phases")
+    )
 
     assert "!◆ +150%  +300 ms" in markdown
     assert "! means an endpoint's mean residual is negative" in markdown
@@ -458,7 +466,7 @@ def test_one_file_summary_removes_redundant_wall_and_rss_tails(tmp_path: Path) -
         comparison.rounds,
         comparison.timeout_sec,
     )
-    catalog = build_report_catalog(ReportStore(report_path), one_file)
+    catalog = build_report_catalog(ReportStore(report_path).grouped_report(), one_file)
 
     markdown = render_markdown_report_document(catalog)
 
@@ -477,7 +485,7 @@ def test_one_round_report_keeps_point_estimates_without_ci_brackets(tmp_path: Pa
         1,
         comparison.timeout_sec,
     )
-    catalog = build_report_catalog(ReportStore(report_path), one_round)
+    catalog = build_report_catalog(ReportStore(report_path).grouped_report(), one_round)
 
     summary = render_markdown_report_document(catalog).partition("## Summary —")[2]
 
@@ -506,7 +514,7 @@ def test_missing_rss_is_one_explicit_unavailable_summary(tmp_path: Path) -> None
         ),
     )
     comparison = models.ComparisonSpec(baseline, candidate, (file,), 1, 120)
-    catalog = build_report_catalog(ReportStore(report_path), comparison)
+    catalog = build_report_catalog(ReportStore(report_path).grouped_report(), comparison)
 
     markdown = render_markdown_report_document(catalog)
 
@@ -532,7 +540,7 @@ def test_timed_out_file_has_missing_phase_cells_and_ruleset_status(tmp_path: Pat
     )
     comparison = models.ComparisonSpec(baseline, candidate, (file,), 1, 120)
 
-    catalog = build_report_catalog(ReportStore(report_path), comparison, "rulesets")
+    catalog = build_report_catalog(ReportStore(report_path).grouped_report(), comparison, "rulesets")
     phase_section = next(section for section in catalog.sections if section.id == "phases")
     phase_table = next(block for block in phase_section.blocks if isinstance(block, ReportTable))
     assert len(phase_table.rows) == 2

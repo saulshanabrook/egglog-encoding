@@ -100,9 +100,10 @@ Treatments map directly to engine modes:
 | `egg-proofs` | current egg with explanation recording enabled |
 | `egg-proof-extraction` | current egg with explanation recording and extraction |
 | `egg-proof-testing` | current egg with extraction and explanation checking |
+| `egg-de`, `egg-ee`, `egg-nee`, `egg-oee` | original parameter-analysis drivers with the named encoding, without proofs |
 
-The five egglog treatments run `egglog-experimental`. The four `egg*`
-treatments run the separate `egg-math-benchmark` executable and currently
+The five egglog treatments run `egglog-experimental`. The four Math treatments
+(`egg` and its proof variants) run the separate `egg-math-benchmark` executable and
 support only `egglog-experimental/tests/math-microbenchmark-rational.egg`.
 Results from either proof-extraction treatment are performance evidence only;
 the corresponding proof-testing treatment provides the strict validity check.
@@ -201,8 +202,9 @@ For disequality programs, `--disequality-encoding {nee,ee}` selects the candidat
 encoding and `--compare-disequality-encoding {nee,ee}` selects the baseline.
 Both default to `nee`. Encodings may be compared with the same binary and
 treatment. See the [parameter-analysis guide](benchmarks/disequality/README.md)
-for semantics, provenance, and comparison commands. Native egg treatments still
-support only the Math workload, not disequality benchmarks.
+for semantics, provenance, and comparison commands. The native `egg-de`,
+`egg-ee`, `egg-nee`, and `egg-oee` treatments use their corresponding `.in`
+input and fixed encoding; `--disequality-encoding` applies only to Egglog.
 
 ### Files
 
@@ -249,7 +251,7 @@ corpus:
 | Churchroad | The paper's 16-by-32-bit wide multiply with its prelude and driver mapping rules materialized; the saturating schedule is bounded to 17 cycles, calibrated as a roughly one-second normal-mode workload | The multiply expansion and its two-input and three-input DSP proposals are checked |
 | DialEgg | Generated NMM-40 scaling workload with `base.egg` materialized | An alternative matrix-chain association is checked |
 | SpEQ | Four artifact-preserved programs that still match the artifact's GEMV/histogram reference rules, recorded using egglog-python's native command log | Each input is checked equal to its extracted reference call (or enclosing expression) |
-| Disequality parameter analysis | Unchanged artifact generator, seed 2026, 100K equality pairs, 10K random disequality pairs, ten numeral constraints; contradiction-selected, not a native timing reproduction | The contradiction is derived and supports proof extraction/checking under NE and EE |
+| Disequality parameter analysis | Author-supplied native corpus converted to Egglog: 100K equality pairs, 10K disequality pairs, and six fixed numeral constraints in the original order | The contradiction is derived and supports proof extraction/checking under NE and EE |
 
 The [disequality workload](benchmarks/disequality/README.md) uses NE by default.
 Its full-size proof runs require minutes and substantial memory, so the default
@@ -479,9 +481,15 @@ Markdown, and `--no-summary` prints only the artifact path.
 
 `.reports.jsonl` is an append-only, disposable local cache. Each line is one
 measured process observation. The runner parses the file once into an indexed
-`ReportStore`; appends update both the JSONL and those indexes. Normal
-collection creates no database or second cache representation; `--open`
-separately exports an HTML snapshot.
+`ReportStore`; appends update both the JSONL and those indexes. After collection,
+the runner writes a typed `.reports-grouped.json` snapshot and computes its
+report from that same grouped data in memory. The JSONL remains the measurement
+cache; grouped JSON is replaceable output for reports and charts. `--open`
+exports the grouped snapshot in an HTML report.
+
+`./bench.py export --report .reports.jsonl` refreshes grouped JSON without building
+or collecting. Unchanged output keeps its modification time. For another report
+path, `.jsonl` becomes `-grouped.json`; other names gain `-grouped.json`.
 
 Cache reuse is keyed by:
 
@@ -501,20 +509,21 @@ newest rows.
 
 Before any measured row is appended, all targets needing collection are built.
 Fresh collection is serial; one untimed `<binary> --help` capability preflight
-per target verifies the required timing-summary interface. Each target prints
+per engine verifies the timing-summary interface when supported. Unmodified
+parameter-analysis drivers have no such interface or preflight. Each target prints
 one compact cached/required line and either `nothing to collect` or the fresh-run
 count; cached failures and timeouts are explicit. Fresh TTY runs use transient
 progress with elapsed time, redirected output logs each completed run, and both
 end with status counts. All operational output goes to stderr.
 
-`benchmarking/reports/store.py` defines the sole trusted `TypedDict` schema,
-standard-library JSON codec, cache key, and append/index/select operations.
+`benchmarking/reports/store.py` defines the trusted `TypedDict` schemas,
+standard-library JSON codecs, cache key, and append/index/select operations.
 Each observation contains target and workload
 provenance, exact cache coordinates, status, wall time, peak RSS, and failure
 details. A top-level report schema version covers both the persisted shape and
 measurement semantics, so methodology changes cannot silently reuse stale
-measurements. Successful observations also contain the version-4 timing
-summary: fixed process counters, a typed list of named ruleset timings, and one
+measurements. Successful observations from engines with timing-summary support
+also contain the version-4 timing summary: fixed process counters, a typed list of named ruleset timings, and one
 global native-Rebuild counter. Changes to timing coverage or meaning require a
 schema-version change so stale measurements cannot be reused silently.
 The experimental custom-scheduler API times its backend query and action
@@ -527,9 +536,9 @@ have no timing summary and retain whatever process measurements the operating
 system supplied. Either status makes a dependent statistical comparison
 incomplete instead of averaging only successful rows.
 
-This tool is the only supported reader and writer. The codec rejects old report
-and timing-summary schema versions and requires successful rows to contain
-timing data. It trusts the tool's typed writer rather than repeating the
+This tool writes the cache and grouped data; figures read the grouped data
+directly. The codec rejects old schema versions and requires successful rows
+from timing-summary-capable engines to contain timing data. It trusts the tool's typed writer rather than repeating the
 `TypedDict` as runtime field-by-field validation. A schema change intentionally
 invalidates existing caches: move or remove an incompatible report and
 recompute it.
@@ -621,8 +630,8 @@ Python ownership is layered so new code has one clear home:
   plans and records observations; `processes.py` measures children. Commands
   share one Rich stderr console directly.
 - Profile analysis: `samply_analysis.py` reads and presents Samply artifacts.
-- Report data: `reports/store.py` owns the JSONL schema, codec, cache key, and
-  append/index/select operations; `reports/analysis.py` computes
+- Report data: `reports/store.py` owns the JSONL and grouped schemas, codecs,
+  cache key, and append/index/select operations; `reports/analysis.py` computes
   renderer-independent statistics.
 - Report presentation: `reports/catalog.py` defines the document model;
   `reports/presentation.py` supplies wording and maps analysis into that model;

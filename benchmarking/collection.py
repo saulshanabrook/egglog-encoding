@@ -124,7 +124,7 @@ def build_collection_plan(
 
     requests = tuple(
         (
-            file_spec,
+            file_spec.for_engine(TREATMENT_SPECS[endpoint.treatment].engine),
             endpoint.treatment,
             CacheKey.for_endpoint(endpoint, file_spec, timeout_sec),
         )
@@ -300,8 +300,9 @@ def label_has_enough_rows(
             file_spec.fact_directory_sha256,
             endpoint.disequality_encoding,
         )
-        for file_spec in files
+        for logical_file in files
         for endpoint in endpoint_requests
+        for file_spec in (logical_file.for_engine(TREATMENT_SPECS[endpoint.treatment].engine),)
     )
     selected = store.selected_statuses_for_keys(keys, rounds)
     return all(len(selected[key]) >= rounds for key in keys)
@@ -320,6 +321,10 @@ def run_process(
     with tempfile.TemporaryDirectory(prefix="egglog-benchmark-") as directory:
         summary_path = Path(directory) / "timing-summary.json"
         workload = workload_command(binary_path, file_spec, treatment, disequality_encoding)
+        if not TREATMENT_SPECS[treatment].timing_summary:
+            result = run_command(workload, checkout_path, timeout_sec)
+            require_workload_unchanged(file_spec)
+            return ProcessObservation(result=result, timing_summary=None)
         command = [workload[0], "--timing-summary", str(summary_path), *workload[1:]]
         result = run_command(command, checkout_path, timeout_sec)
         require_workload_unchanged(file_spec)
@@ -368,6 +373,8 @@ def preflight_collection(plan: CollectionPlan, timeout_sec: int) -> None:
         binary_path = target.binary_path_for(engine_runs[0].treatment)
         if binary_path is None:
             raise ValueError(f"target {target.display_label} needs a fresh {engine} binary")
+        if engine not in ("egglog", "egg"):
+            continue
         required_outputs = ["--timing-summary"]
         if engine == "egglog":
             if any(run.disequality_encoding != "nee" for run in engine_runs):

@@ -161,8 +161,8 @@ async function initializeRuntime() {
     pyodide.FS.mkdirTree(path.slice(0, path.lastIndexOf("/")));
     pyodide.FS.writeFile(path, source, {encoding: "utf8"});
   }
-  const virtualReportPath = "/home/pyodide/benchmark-report.jsonl";
-  pyodide.FS.writeFile(virtualReportPath, bytesFromBase64(envelope.report_jsonl_base64));
+  const virtualReportPath = "/home/pyodide/benchmark-report-grouped.json";
+  pyodide.FS.writeFile(virtualReportPath, bytesFromBase64(envelope.report_grouped_base64));
   pyodide.globals.set("_egglog_report_path", virtualReportPath);
   pyodide.globals.set("_egglog_report_display_path", envelope.report_path);
   pyodide.globals.set("_egglog_initial_scope_json", JSON.stringify(envelope.initial_scope));

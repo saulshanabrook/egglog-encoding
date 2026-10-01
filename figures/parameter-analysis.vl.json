@@ -1,0 +1,150 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "description": "Read the generic grouped report once. For each expected endpoint, select the latest eligible exact cache identity, then retain all of that identity's samples. Empty and unsuccessful endpoints stay visible. Only wholly successful finite samples have a mean; no fixed sample count is assumed.",
+  "title": {
+    "text": "How long does parameter analysis take?",
+    "subtitle": [
+      "Proofs off · 100,000 equalities · 10,000 random disequalities + 6 fixed constraints",
+      "Dot = individual run; black tick = arithmetic mean."
+    ]
+  },
+  "data": {"url": "../.reports-grouped.json", "format": {"type": "json"}},
+  "params": [
+    {"name": "target_label", "value": "figures"},
+    {"name": "timeout_sec", "value": 300},
+    {"name": "endpoints", "value": [
+      {"condition": "DE · Disegg", "engine": "Disegg", "treatment": "egg-de", "encoding": "nee"},
+      {"condition": "EE · Egg", "engine": "Egg", "treatment": "egg-ee", "encoding": "nee"},
+      {"condition": "NEE · Egg", "engine": "Egg", "treatment": "egg-nee", "encoding": "nee"},
+      {"condition": "OEE · Egg", "engine": "Egg", "treatment": "egg-oee", "encoding": "nee"},
+      {"condition": "NE · Egglog", "engine": "Egglog", "treatment": "off", "encoding": "nee"},
+      {"condition": "EE · Egglog", "engine": "Egglog", "treatment": "off", "encoding": "ee"}
+    ]}
+  ],
+  "transform": [
+    {"calculate": "endpoints", "as": "expected"},
+    {"flatten": ["expected"], "as": ["endpoint"]},
+    {"calculate": "datum.endpoint.condition", "as": "condition"},
+    {"calculate": "datum.endpoint.engine", "as": "engine"},
+    {"calculate": "length(datum.groups) ? datum.groups : [null]", "as": "candidates"},
+    {"flatten": ["candidates"], "as": ["group"]},
+    {"calculate": "isValid(datum.group) && indexof(datum.group.labels, target_label) >= 0 && datum.group.key.timeout_sec === timeout_sec && datum.group.key.fact_directory_sha256 === '' && datum.group.key.treatment === datum.endpoint.treatment && datum.group.key.disequality_encoding === datum.endpoint.encoding", "as": "candidate_group"},
+    {"calculate": "datum.candidate_group ? datum.group.key.binary_sha256 + '/' + datum.group.key.file_sha256 : ''", "as": "identity"},
+    {"calculate": "datum.candidate_group && length(datum.group.samples) ? datum.group.samples : [null]", "as": "candidate_samples"},
+    {"flatten": ["candidate_samples"], "as": ["candidate"]},
+    {"calculate": "isValid(datum.candidate) && datum.candidate.file_path === (datum.engine === 'Egglog' ? 'benchmarks/disequality/parameter-analysis.egg' : 'benchmarks/disequality/parameter-analysis.in') ? 1 : 0", "as": "approved_input"},
+    {"joinaggregate": [{"op": "max", "field": "approved_input", "as": "approved_group"}], "groupby": ["condition", "identity"]},
+    {"calculate": "datum.candidate_group && datum.approved_group ? 1 : 0", "as": "eligible"},
+    {"calculate": "isValid(datum.candidate) ? toDate(datum.candidate.started_at) : 0", "as": "candidate_time"},
+    {"calculate": "isValid(datum.candidate) ? datum.candidate.row_index : -1", "as": "candidate_row"},
+    {"window": [{"op": "row_number", "as": "group_rank"}], "sort": [{"field": "eligible", "order": "descending"}, {"field": "candidate_time", "order": "descending"}, {"field": "candidate_row", "order": "descending"}], "groupby": ["condition"]},
+    {"filter": "datum.group_rank === 1"},
+    {"calculate": "datum.eligible ? datum.group.samples : []", "as": "samples"},
+    {"calculate": "length(datum.samples)", "as": "selected"},
+    {"calculate": "datum.selected ? datum.samples : [null]", "as": "runs"},
+    {"flatten": ["runs"], "as": ["run"]},
+    {"calculate": "isValid(datum.run) && datum.run.status === 'success' && isValid(datum.run.wall_sec) && isFinite(datum.run.wall_sec) && datum.run.wall_sec >= 0 ? datum.run.wall_sec : null", "as": "seconds"},
+    {"calculate": "isValid(datum.run) && datum.run.status === 'failure' ? 1 : 0", "as": "failed"},
+    {"calculate": "isValid(datum.run) && datum.run.status === 'timed-out' ? 1 : 0", "as": "timed_out"},
+    {"joinaggregate": [
+      {"op": "valid", "field": "seconds", "as": "successes"},
+      {"op": "mean", "field": "seconds", "as": "mean"},
+      {"op": "sum", "field": "failed", "as": "failures"},
+      {"op": "sum", "field": "timed_out", "as": "timeouts"}
+    ], "groupby": ["condition"]},
+    {"calculate": "isValid(datum.run) ? datum.run.row_index : -1", "as": "run_row"},
+    {"window": [{"op": "row_number", "as": "run_number"}], "sort": [{"field": "run_row", "order": "ascending"}], "groupby": ["condition"]},
+    {"calculate": "datum.selected > 0 && datum.successes === datum.selected", "as": "complete"},
+    {"calculate": "datum.complete ? 0 : 1", "as": "incomplete"},
+    {"joinaggregate": [{"op": "max", "field": "incomplete", "as": "has_incomplete"}]},
+    {"calculate": "datum.complete ? format(datum.mean, '.3~g') + ' s (' + datum.selected + ')' : !datum.selected ? 'No observations' : datum.successes + '/' + datum.selected + ' successful' + (datum.failures ? '; ' + datum.failures + ' failed' : '') + (datum.timeouts ? '; ' + datum.timeouts + ' timed out' : '') + '; no mean'", "as": "summary"},
+    {"joinaggregate": [{"op": "max", "field": "seconds", "as": "maximum"}]},
+    {"calculate": "isValid(datum.maximum) && datum.maximum > 0 ? datum.maximum : 1", "as": "domain_max"},
+    {"extent": "domain_max", "param": "time_extent"}
+  ],
+  "hconcat": [
+    {
+      "width": 430,
+      "height": 240,
+      "encoding": {
+        "x": {
+          "type": "quantitative",
+          "title": "Whole-process wall time (seconds)",
+          "scale": {"type": "linear", "domain": {"expr": "[0, time_extent[1] * 1.06]"}},
+          "axis": {"tickCount": 6, "format": "~f", "grid": true}
+        },
+        "y": {
+          "field": "condition",
+          "type": "nominal",
+          "title": null,
+          "scale": {"domain": ["DE · Disegg", "EE · Egg", "NEE · Egg", "OEE · Egg", "NE · Egglog", "EE · Egglog"]},
+          "axis": {"domain": false, "ticks": false, "labelPadding": 10}
+        }
+      },
+      "layer": [
+        {
+          "name": "parameter_notice",
+          "transform": [{"filter": "datum.has_incomplete && datum.condition === 'DE · Disegg' && datum.run_number === 1"}],
+          "mark": {"type": "text", "align": "left", "fontSize": 11, "color": "#4b5563"},
+          "encoding": {
+            "x": {"value": 0},
+            "y": {"value": -30},
+            "text": {"value": "Missing or unsuccessful endpoints have no mean"}
+          }
+        },
+        {
+          "name": "parameter_runs",
+          "transform": [{"filter": "isValid(datum.seconds)"}],
+          "mark": {
+            "type": "point", "filled": true, "size": 16, "opacity": 0.38,
+            "yOffset": {"expr": "sin(datum.run_number) * 6"}
+          },
+          "encoding": {
+            "x": {"field": "seconds"},
+            "color": {
+              "field": "engine", "type": "nominal", "legend": null,
+              "scale": {"domain": ["Disegg", "Egg", "Egglog"], "range": ["#586f3e", "#1f4e79", "#c9781c"]}
+            },
+            "tooltip": [
+              {"field": "condition", "type": "nominal", "title": "Endpoint"},
+              {"field": "seconds", "type": "quantitative", "title": "Wall time (s)", "format": ".4f"},
+              {"field": "run.started_at", "type": "nominal", "title": "Started"},
+              {"field": "run.row_index", "type": "quantitative", "title": "Cache row"}
+            ]
+          }
+        },
+        {
+          "name": "parameter_means",
+          "transform": [{"filter": "datum.run_number === 1 && datum.complete"}],
+          "mark": {"type": "tick", "orient": "vertical", "color": "#20262e", "opacity": 1, "thickness": 1.6, "size": 19},
+          "encoding": {"x": {"field": "mean"}}
+        }
+      ]
+    },
+    {
+      "name": "parameter_status",
+      "width": 195,
+      "height": 240,
+      "title": {"text": "Mean (runs)", "fontSize": 11, "fontWeight": "normal", "offset": 10},
+      "transform": [{"filter": "datum.run_number === 1"}],
+      "mark": {"type": "text", "align": "left", "fontSize": 11, "color": "#374151"},
+      "encoding": {
+        "x": {"value": 0},
+        "y": {
+          "field": "condition", "type": "nominal", "axis": null,
+          "scale": {"domain": ["DE · Disegg", "EE · Egg", "NEE · Egg", "OEE · Egg", "NE · Egglog", "EE · Egglog"]}
+        },
+        "text": {"field": "summary"}
+      }
+    }
+  ],
+  "spacing": 20,
+  "resolve": {"scale": {"y": "shared"}},
+  "config": {
+    "font": "Arial",
+    "background": "white",
+    "view": {"stroke": null},
+    "axis": {"labelFontSize": 12, "titleFontSize": 12, "titleFontWeight": "normal", "gridColor": "#e8eaed", "domainColor": "#a9adb3", "titlePadding": 10},
+    "title": {"fontSize": 16, "anchor": "start", "subtitleFontSize": 11, "subtitlePadding": 7, "offset": 13}
+  }
+}
