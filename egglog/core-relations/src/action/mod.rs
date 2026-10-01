@@ -571,7 +571,7 @@ impl<'a> ExecutionState<'a> {
     /// Stage a batch of mutations against a single table, `mutate` receiving the
     /// table's mutation buffer directly, and notify the table as changed once
     /// for the whole batch.
-    fn stage_batch(&mut self, table: TableId, mutate: impl FnOnce(&mut dyn MutationBuffer)) {
+    pub fn stage_batch(&mut self, table: TableId, mutate: impl FnOnce(&mut dyn MutationBuffer)) {
         self.buffers
             .lazy_init(table, || self.db.table_info[table].table.new_buffer());
         mutate(&mut *self.buffers.buffers[table]);
