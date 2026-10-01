@@ -88,7 +88,7 @@ impl Names {
                 }
                 Ok(())
             }
-            ResolvedNCommand::Extract(..) => Ok(()),
+            ResolvedNCommand::Extract(..) | ResolvedNCommand::ProveExtract(..) => Ok(()),
             ResolvedNCommand::RunSchedule(..) => Ok(()),
             ResolvedNCommand::PrintOverallStatistics(..) => Ok(()),
             ResolvedNCommand::ProveExists(..) => Ok(()),

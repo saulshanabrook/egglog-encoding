@@ -1,7 +1,20 @@
 ---
-source: tests/files.rs
+source: egglog/tests/files.rs
+assertion_line: 151
 expression: snapshot_content_across_treatments
 ---
+(extraction-costs 115)
+(extraction-costs 115)
+(extraction-costs 341)
+(extraction-costs 345)
+(extraction-costs 345)
+(extraction-costs 349)
+(extraction-costs 345)
+(extraction-costs 349)
+(extraction-costs 345)
+(extraction-costs 349)
+(extraction-costs 183)
+(extraction-costs 187)
 ((AMX 0)
  (AMX2Mem 0)
  (AMXAllocation 0)

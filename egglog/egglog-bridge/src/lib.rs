@@ -112,6 +112,13 @@ impl Timestamp {
     }
 }
 
+#[derive(Clone, Copy)]
+enum ExternalTableAccess {
+    Read,
+    Write,
+    ReadWrite,
+}
+
 /// The state associated with an egglog program.
 #[derive(Clone)]
 pub struct EGraph {
@@ -135,12 +142,12 @@ pub struct EGraph {
     /// `WriteState` / `FullState` can resolve table actions at
     /// invoke time. Mutated in place from [`add_table`](EGraph::add_table).
     action_registry: Arc<std::sync::RwLock<ActionRegistry>>,
-    /// Table each row-inserting external function writes, by name. A merge body
-    /// calling one declares the same write dependency an explicit `set` on that
-    /// table would (see [`MergeFn::fill_deps`]).
+    /// Table each built-in external function accesses, by name. Merge callbacks
+    /// must declare reads as well as writes so their tables remain available
+    /// and pending updates are merged before the callback runs.
     // Avoid introducing another randomly seeded hash table: row iteration order
     // in proof extraction can depend on the seed sequence of existing maps.
-    external_write_deps: BTreeMap<ExternalFunctionId, String>,
+    external_table_deps: BTreeMap<ExternalFunctionId, (String, ExternalTableAccess)>,
     threads: usize,
     thread_pool: Option<Arc<ThreadPool>>,
 }
@@ -267,7 +274,7 @@ impl EGraph {
             panic_funcs,
             report_level: Default::default(),
             action_registry,
-            external_write_deps: Default::default(),
+            external_table_deps: Default::default(),
             threads,
             thread_pool,
         }
@@ -405,7 +412,8 @@ impl EGraph {
         out_arity: usize,
     ) -> ExternalFunctionId {
         let registry = self.action_registry.clone();
-        self.register_external_func(Box::new(make_external_func(
+        let dep = view_name.clone();
+        let id = self.register_external_func(Box::new(make_external_func(
             move |state: &mut ExecutionState, args: &[Value]| {
                 let registry = registry.read().unwrap();
                 let action = registry.lookup_table(&view_name)?.clone();
@@ -420,7 +428,10 @@ impl EGraph {
                 let keys = &args[..n_keys];
                 Some(action.lookup_or_insert_vals(state, keys, &args[n_keys..]))
             },
-        )))
+        )));
+        self.external_table_deps
+            .insert(id, (dep, ExternalTableAccess::ReadWrite));
+        id
     }
 
     /// Register a reader for output column `col_idx` of the FD view named
@@ -434,7 +445,8 @@ impl EGraph {
         col_idx: usize,
     ) -> ExternalFunctionId {
         let registry = self.action_registry.clone();
-        self.register_external_func(Box::new(make_external_func(
+        let dep = view_name.clone();
+        let id = self.register_external_func(Box::new(make_external_func(
             move |state: &mut ExecutionState, args: &[Value]| {
                 let registry = registry.read().unwrap();
                 let action = registry.lookup_table(&view_name)?.clone();
@@ -445,7 +457,10 @@ impl EGraph {
                         .unwrap_or(fallback),
                 )
             },
-        )))
+        )));
+        self.external_table_deps
+            .insert(id, (dep, ExternalTableAccess::Read));
+        id
     }
 
     /// Register the term encoder's mint op for the term-node relation named
@@ -480,26 +495,13 @@ impl EGraph {
                 Some(fresh)
             },
         )));
-        self.external_write_deps.insert(id, dep);
+        self.external_table_deps
+            .insert(id, (dep, ExternalTableAccess::Write));
         id
     }
 
-    /// The table an external function inserts into, for the merge dependency
-    /// graph. `None` for a function that writes no table, or one whose table is
-    /// not declared yet.
-    fn external_write_table(&self, func: ExternalFunctionId) -> Option<TableId> {
-        let name = self.external_write_deps.get(&func)?;
-        Some(
-            self.action_registry
-                .read()
-                .unwrap()
-                .lookup_table(name)?
-                .table,
-        )
-    }
-
     pub fn free_external_func(&mut self, func: ExternalFunctionId) {
-        self.external_write_deps.remove(&func);
+        self.external_table_deps.remove(&func);
         self.db.free_external_function(func);
     }
 
@@ -1521,11 +1523,41 @@ impl MergeFn {
                 args.iter()
                     .for_each(|arg| arg.fill_deps(egraph, read_deps, write_deps));
                 write_deps.insert(egraph.uf_table);
-                // A primitive that inserts rows writes its table just as a
-                // `set` on it would, and the merge must be ordered and
-                // buffered against that table the same way.
-                if let Some(table) = egraph.external_write_table(*id) {
-                    write_deps.insert(table);
+                if let Some((name, access)) = egraph.external_table_deps.get(id) {
+                    // All targets, including write-only ones, must already
+                    // be declared or be the current declaration. Prefer the
+                    // reserved FunctionInfo over a shadowed registry entry so
+                    // add_table's self-read check also catches primitive reads.
+                    let table = egraph
+                        .funcs
+                        .raw()
+                        .last()
+                        .and_then(Option::as_ref)
+                        .filter(|info| info.name.as_ref() == name)
+                        .map(|info| info.table)
+                        .or_else(|| {
+                            egraph
+                                .action_registry
+                                .read()
+                                .unwrap()
+                                .lookup_table(name)
+                                .map(|action| action.table)
+                        })
+                        .unwrap_or_else(|| {
+                            panic!("merge primitive accesses undeclared table `{name}`")
+                        });
+                    if matches!(
+                        access,
+                        ExternalTableAccess::Read | ExternalTableAccess::ReadWrite
+                    ) {
+                        read_deps.insert(table);
+                    }
+                    if matches!(
+                        access,
+                        ExternalTableAccess::Write | ExternalTableAccess::ReadWrite
+                    ) {
+                        write_deps.insert(table);
+                    }
                 }
             }
             Function(func, args) => {

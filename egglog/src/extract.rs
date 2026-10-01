@@ -770,6 +770,38 @@ impl Function {
 }
 
 impl EGraph {
+    /// Run command extraction with a cost model, retaining the usual best or
+    /// variants output. A proof of the result establishes equality, not optimality.
+    pub fn extract_command_with_cost_model<CM: CostModel<DefaultCost> + 'static>(
+        &self,
+        sort: &ArcSort,
+        value: Value,
+        variants: usize,
+        cost_model: CM,
+    ) -> Result<CommandOutput, Error> {
+        let extractor =
+            Extractor::compute_costs_from_rootsorts(Some(vec![sort.clone()]), self, cost_model);
+        let mut dag = TermDag::default();
+        if variants == 0 {
+            let (cost, term) = extractor
+                .extract_best(self, &mut dag, value)
+                .ok_or_else(|| {
+                    Error::ExtractError(
+                        "Unable to find any valid extraction (likely due to subsume or delete)"
+                            .into(),
+                    )
+                })?;
+            Ok(CommandOutput::ExtractBest(dag, cost, term))
+        } else {
+            let terms = extractor
+                .extract_variants(self, &mut dag, value, variants)
+                .into_iter()
+                .map(|(_, term)| term)
+                .collect();
+            Ok(CommandOutput::ExtractVariants(dag, terms))
+        }
+    }
+
     /// Extract a value to a [`TermDag`] and [`TermId`] in the [`TermDag`] using the default cost model.
     /// See also [`EGraph::extract_value_with_cost_model`] for more control.
     pub fn extract_value(

@@ -1,5 +1,6 @@
 ---
 source: egglog/tests/files.rs
+assertion_line: 297
 expression: proof_snapshot
 ---
 (Rule
@@ -19,7 +20,7 @@ expression: proof_snapshot
   (= (@ExistsConstructor2) (@ExistsConstructor2))
   (name "@prove_exists_rule2")
   (premises (Fiat (= t0 t0)) (Fiat (= 3 3)))
-  (substitution (@n7 3) (x 3)))
+  (substitution (@n9 3) (x 3)))
 (let t0 (g 1 2 3))
 (let prf0 (Fiat (= 3 3)))
 (let t1 (g 2 3 3))
@@ -27,4 +28,4 @@ expression: proof_snapshot
   (= (@ExistsConstructor3) (@ExistsConstructor3))
   (name "@prove_exists_rule3")
   (premises (Fiat (= t0 t0)) prf0 (Fiat (= t1 t1)) prf0 prf0)
-  (substitution (@n9 3) (x 3) (@n10 3) (y 3)))
+  (substitution (@n11 3) (x 3) (@n12 3) (y 3)))

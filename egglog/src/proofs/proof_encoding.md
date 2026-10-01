@@ -366,6 +366,28 @@ See [`crate::proofs::proof_container_rebuild`] for the rebuild primitives, and
 
 # Proofs
 
+`(prove-extract expr)` runs ordinary extraction and emits both its result and
+a proof of `expr = result`. An optional variant count produces a proof for each
+returned term. It uses the same cost model as `extract`; the proof establishes
+equality, not optimality. Evaluating the input is recorded as a source action;
+the returned term is never added as an assumption.
+
+Proof extraction retains the result DAG instead of expanding it into a `prove`
+query. It visits each distinct typed term once, looks up constructor rows by their
+exact arguments, and composes their existing evidence with child and union-find
+proofs. Input globals retain their recorded evidence when an old constructor
+view was deleted. Containers use the same normalization rules as the proof
+checker. All proof roots share a reconstruction session before the resulting
+equality proofs are simplified and, when enabled, checked. An extraction callback
+that returns a term without matching evidence fails rather than inserting it.
+
+Proof-testing mode rewrites `check` and `extract` outside `fail` and validates
+the proofs. Commands inside `fail` retain their ordinary behavior; explicit
+proof commands, including `prove-extract`, are rejected there.
+Proof-extraction mode performs the same work without validation. Recording-only
+mode leaves ordinary checks and extracts in place. Strict validation therefore
+remains separate from performance measurements of these two proof modes.
+
 A proof in the e-graph is a *raw proof*: a justification, plus references to the
 proofs it is built from. It does not carry the equality it proves. Proof
 conversion turns each one into a

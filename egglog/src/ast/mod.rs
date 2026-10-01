@@ -140,6 +140,9 @@ where
     /// action must be an `Expr`.
     LetBegin(Span, Leaf, GenericActions<Head, Leaf>),
     Extract(Span, GenericExpr<Head, Leaf>, GenericExpr<Head, Leaf>),
+    /// Extract and prove equality to the returned term(s). Source expressions
+    /// remain unencoded until this command executes.
+    ProveExtract(Span, Expr, Expr, Option<String>),
     RunSchedule(GenericSchedule<Head, Leaf>),
     PrintOverallStatistics(Span, Option<String>),
     Check(Span, Vec<GenericFact<Head, Leaf>>),
@@ -254,6 +257,14 @@ where
             GenericNCommand::Extract(span, expr, variants) => {
                 GenericCommand::Extract(span.clone(), expr.clone(), variants.clone())
             }
+            GenericNCommand::ProveExtract(span, expr, variants, context) => {
+                GenericCommand::ProveExtract(
+                    span.clone(),
+                    expr.clone(),
+                    variants.clone(),
+                    context.clone(),
+                )
+            }
             GenericNCommand::Check(span, facts) => {
                 GenericCommand::Check(span.clone(), facts.clone())
             }
@@ -323,6 +334,7 @@ where
             | GenericNCommand::CoreActions(..)
             | GenericNCommand::LetBegin(..)
             | GenericNCommand::Extract(..)
+            | GenericNCommand::ProveExtract(..)
             | GenericNCommand::PrintOverallStatistics(..)
             | GenericNCommand::PrintFunction(..)
             | GenericNCommand::PrintSize(..)
@@ -394,6 +406,9 @@ where
             }
             GenericNCommand::Extract(span, expr, variants) => {
                 GenericNCommand::Extract(span, expr.visit_exprs(f), variants.visit_exprs(f))
+            }
+            GenericNCommand::ProveExtract(span, expr, variants, context) => {
+                GenericNCommand::ProveExtract(span, expr, variants, context)
             }
             GenericNCommand::Check(span, facts) => GenericNCommand::Check(
                 span,
@@ -1016,6 +1031,9 @@ where
     /// (common subexpressions are not shared in the cost
     /// model).
     Extract(Span, GenericExpr<Head, Leaf>, GenericExpr<Head, Leaf>),
+    /// Extract and prove equality to the returned term(s). Source expressions
+    /// remain unencoded until this command executes.
+    ProveExtract(Span, Expr, Expr, Option<String>),
     /// Runs a [`Schedule`], which specifies
     /// rulesets and the number of times to run them.
     ///
@@ -1149,6 +1167,13 @@ where
             }
             GenericCommand::Extract(_span, expr, variants) => {
                 write!(f, "(extract {expr} {variants})")
+            }
+            GenericCommand::ProveExtract(_, expr, variants, context) => {
+                write!(f, "(prove-extract {expr} {variants}")?;
+                if let Some(context) = context {
+                    write!(f, " :context {context}")?;
+                }
+                write!(f, ")")
             }
             GenericCommand::Sort {
                 name,
@@ -2166,6 +2191,9 @@ where
             GenericCommand::Extract(span, expr, variants) => {
                 GenericCommand::Extract(span, expr, variants)
             }
+            GenericCommand::ProveExtract(span, expr, variants, context) => {
+                GenericCommand::ProveExtract(span, expr, variants, context)
+            }
             GenericCommand::RunSchedule(schedule) => {
                 GenericCommand::RunSchedule(schedule.map_string_symbols(fun))
             }
@@ -2280,6 +2308,9 @@ where
             }
             GenericCommand::Extract(span, expr1, expr2) => {
                 GenericCommand::Extract(span, expr1.visit_exprs(f), expr2.visit_exprs(f))
+            }
+            GenericCommand::ProveExtract(span, expr, variants, context) => {
+                GenericCommand::ProveExtract(span, expr, variants, context)
             }
             GenericCommand::Check(span, facts) => GenericCommand::Check(
                 span,
@@ -2431,6 +2462,9 @@ where
                 expr.map_symbols(head, leaf),
                 variants.map_symbols(head, leaf),
             ),
+            GenericCommand::ProveExtract(span, expr, variants, context) => {
+                GenericCommand::ProveExtract(span, expr, variants, context)
+            }
             GenericCommand::RunSchedule(schedule) => {
                 GenericCommand::RunSchedule(schedule.map_symbols(head, leaf))
             }

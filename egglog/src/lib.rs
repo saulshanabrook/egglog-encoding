@@ -329,6 +329,9 @@ pub struct EGraph {
     overall_report: OverallReport,
     schedulers: DenseIdMap<SchedulerId, SchedulerRecord>,
     commands: IndexMap<String, Arc<dyn UserDefinedCommand>>,
+    /// Extractor used by `extract` and `prove-extract` after input evaluation.
+    /// Zero variants requests the best term; a positive count requests variants.
+    pub extract_command: fn(&EGraph, &ArcSort, Value, usize) -> Result<CommandOutput, Error>,
     extension_state: HashMap<TypeId, Box<dyn ExtensionStateValue>>,
     strict_mode: bool,
     warned_about_global_prefix: bool,
@@ -337,6 +340,9 @@ pub struct EGraph {
     proof_state: EncodingState,
     /// In proof mode, this is the program before proof instrumentation and the version we use for proof checking.
     proof_check_program: Vec<ResolvedNCommand>,
+    /// Source typing and encoding names for deferred extraction in desugared replay.
+    /// Filled only by resolve_program / set_proof_checking_program, never execution.
+    extract_contexts: HashMap<String, (Expr, Expr, EncodingState)>,
 }
 
 /// A user-defined command allows users to inject custom command that can be called
@@ -473,12 +479,21 @@ impl EGraph {
             type_info: Default::default(),
             schedulers: Default::default(),
             commands: Default::default(),
+            extract_command: |egraph, sort, value, variants| {
+                egraph.extract_command_with_cost_model(
+                    sort,
+                    value,
+                    variants,
+                    TreeAdditiveCostModel::default(),
+                )
+            },
             extension_state: Default::default(),
             strict_mode: false,
             warned_about_global_prefix: false,
             command_macros: Default::default(),
             proof_state,
             proof_check_program: vec![],
+            extract_contexts: HashMap::default(),
         };
         add_base_sort(&mut eg, UnitSort, span!()).unwrap();
         add_base_sort(&mut eg, StringSort, span!()).unwrap();
@@ -619,6 +634,8 @@ struct ResolvedNCommands {
     desugared: Vec<ResolvedNCommand>,
     /// In proof mode, populated with the desugared program before instrumented with proofs
     desugared_before_proofs: Vec<ResolvedNCommand>,
+    /// The typed source input, retained when lowering an extraction into views.
+    extraction_input: Option<ResolvedExpr>,
 }
 
 struct ResolvedNCommandsWithOutput {
@@ -691,7 +708,7 @@ impl EGraph {
         self
     }
 
-    /// Enable testing of getting proofs for every `check` outside `fail`.
+    /// Enable verified proofs for checks outside `fail` and extracted results.
     /// Checks inside `fail` remain negative assertions.
     pub fn with_proof_testing(mut self) -> Self {
         self.proof_state.proof_testing = true;
@@ -895,6 +912,9 @@ impl EGraph {
                 // ran is one proof checking has to know about, and dropping it
                 // would renumber everything a later fiat names.
                 std::mem::swap(&mut self.proof_check_program, &mut e.proof_check_program);
+                // Replay contexts belong to command occurrences, including scopes
+                // whose declarations have since been popped.
+                std::mem::swap(&mut self.extract_contexts, &mut e.extract_contexts);
                 *self = *e;
                 Ok(())
             }
@@ -1248,7 +1268,7 @@ impl EGraph {
 
     /// Provide a program for use in proof checking.
     /// This enables testing of a desugared egglog proof program outside of proof mode.
-    /// When proof_testing is true, turns every `check` outside `fail` into a `prove` command.
+    /// When proof_testing is true, proves checks outside `fail` and extracted results.
     /// Checks inside `fail` remain negative assertions.
     /// Not intended for general use but needed in files.rs, so public but hidden.
     #[doc(hidden)]
@@ -1268,6 +1288,7 @@ impl EGraph {
         let resolved = proof_check_eg.process_program_internal(prog, false)?;
 
         self.proof_check_program = resolved.resolved_before_proofs;
+        self.extract_contexts = proof_check_eg.extract_contexts;
         Ok(())
     }
 
@@ -1726,7 +1747,7 @@ impl EGraph {
     pub fn eval_expr(&mut self, expr: &Expr) -> Result<(ArcSort, Value), Error> {
         let span = expr.span();
         let command = Command::Action(Action::Expr(span.clone(), expr.clone()));
-        let resolved = self.resolve_command(command)?;
+        let resolved = self.resolve_command(command, self.proof_state.proof_testing)?;
         if self.are_proofs_enabled() {
             self.proof_check_program
                 .extend(resolved.desugared_before_proofs);
@@ -1885,6 +1906,44 @@ impl EGraph {
                 ))
             }
         }
+    }
+
+    /// Evaluate an extraction's input/count once and preserve the configured
+    /// extractor's result, including its cost model and variant order.
+    fn extract_resolved(
+        &mut self,
+        span: Span,
+        expr: &ResolvedExpr,
+        variants: &ResolvedExpr,
+    ) -> Result<(Value, CommandOutput), Error> {
+        let value = self.eval_resolved_expr(span.clone(), expr)?;
+        let count = self.eval_resolved_expr(span, variants)?;
+        let count: i64 = self.backend.base_values().unwrap(count);
+        if count < 0 {
+            return Err(Error::ExtractError(
+                "cannot extract a negative number of variants".into(),
+            ));
+        }
+        let output = (self.extract_command)(self, &expr.output_type(), value, count as usize)?;
+        if !matches!((&output, count), (CommandOutput::ExtractBest(..), 0))
+            && !matches!((&output, count), (CommandOutput::ExtractVariants(..), 1..))
+        {
+            return Err(Error::ExtractError(
+                "command extractor returned an incompatible result kind".into(),
+            ));
+        }
+        if log_enabled!(Level::Info) {
+            match &output {
+                CommandOutput::ExtractBest(dag, cost, _) => {
+                    log::info!("extracted with cost {cost} ({} DAG nodes)", dag.size());
+                }
+                CommandOutput::ExtractVariants(_, terms) => {
+                    log::info!("extracted {} variants for {expr}", terms.len());
+                }
+                _ => unreachable!("extractor result kind checked above"),
+            }
+        }
+        Ok((value, output))
     }
 
     fn eval_resolved_expr(&mut self, span: Span, expr: &ResolvedExpr) -> Result<Value, Error> {
@@ -2211,49 +2270,103 @@ impl EGraph {
                 unreachable!("LetBegin is removed by remove_globals")
             }
             ResolvedNCommand::Extract(span, expr, variants) => {
-                let sort = expr.output_type();
-
-                let x = self.eval_resolved_expr(span.clone(), &expr)?;
-                let n = self.eval_resolved_expr(span, &variants)?;
-                let n: i64 = self.backend.base_values().unwrap(n);
-
-                let mut termdag = TermDag::default();
-
-                let extractor = Extractor::compute_costs_from_rootsorts(
-                    Some(vec![sort]),
-                    self,
-                    TreeAdditiveCostModel::default(),
-                );
-                return if n == 0 {
-                    if let Some((cost, term)) = extractor.extract_best(self, &mut termdag, x) {
-                        // dont turn termdag into a string if we have messages disabled for performance reasons
-                        if log_enabled!(Level::Info) {
-                            log::info!("extracted with cost {cost}: {}", termdag.to_string(term));
-                        }
-                        Ok(vec![CommandOutput::ExtractBest(termdag, cost, term)])
-                    } else {
-                        Err(Error::ExtractError(
-                            "Unable to find any valid extraction (likely due to subsume or delete)"
-                                .to_string(),
-                        ))
+                let (_, output) = self.extract_resolved(span, &expr, &variants)?;
+                return Ok(vec![output]);
+            }
+            ResolvedNCommand::ProveExtract(span, expr, variants, context) => {
+                let saved = if !self.are_proofs_enabled() {
+                    let context = context.as_ref().ok_or_else(|| {
+                        Error::BackendError(
+                            "prove-extract requires proof generation or a replay context".into(),
+                        )
+                    })?;
+                    let (original, count, state) =
+                        self.extract_contexts.get(context).ok_or_else(|| {
+                            Error::BackendError(format!(
+                                "prove-extract requires proof generation; missing replay context {context}"
+                            ))
+                        })?;
+                    if original.to_string() != expr.to_string()
+                        || count.to_string() != variants.to_string()
+                    {
+                        return Err(Error::BackendError(format!(
+                            "mismatched prove-extract replay context {context}"
+                        )));
                     }
+                    let mut state = state.clone();
+                    // Replay's checker history already contains all statically
+                    // lowered actions. Deferred extraction inputs append after
+                    // that history, not at the captured source prefix.
+                    state.global_actions_numbered =
+                        proofs::proof_checker::gather_global_actions(&self.proof_check_program)
+                            .count();
+                    Some((
+                        std::mem::replace(&mut self.proof_state, state),
+                        std::mem::replace(
+                            &mut self.parser.symbol_gen,
+                            SymbolGen::new(format!("{context}-")),
+                        ),
+                        self.parser.ensure_no_reserved_symbols,
+                    ))
                 } else {
-                    if n < 0 {
-                        return Err(Error::ExtractError(
-                            "cannot extract a negative number of variants".to_string(),
-                        ));
-                    }
-                    let terms: Vec<TermId> = extractor
-                        .extract_variants(self, &mut termdag, x, n as usize)
-                        .iter()
-                        .map(|e| e.1)
-                        .collect();
-                    if log_enabled!(Level::Info) {
-                        let expr_str = expr.to_string();
-                        log::info!("extracted {} variants for {expr_str}", terms.len());
-                    }
-                    Ok(vec![CommandOutput::ExtractVariants(termdag, terms)])
+                    None
                 };
+                let result = (|| {
+                    // Lower ordinary extraction once, retaining the original input
+                    // for its certificate while extraction operates on views.
+                    let input_action = self.proof_state.global_actions_numbered;
+                    let resolved = self.resolve_command(
+                        Command::Extract(span.clone(), expr.clone(), variants),
+                        false,
+                    )?;
+                    self.proof_check_program
+                        .extend(resolved.desugared_before_proofs);
+                    let input = resolved.extraction_input.ok_or_else(|| {
+                        Error::ExtractError("proof extraction requires a typed source input".into())
+                    })?;
+                    let mut outputs = vec![];
+                    for command in resolved.desugared {
+                        if let ResolvedNCommand::Extract(span, expr, variants) = command {
+                            let (value, output) = self.extract_resolved(span, &expr, &variants)?;
+                            let proofs = match &output {
+                                CommandOutput::ExtractBest(dag, _, term) => {
+                                    proofs::proof_extract::prove_extracted(
+                                        self,
+                                        &input,
+                                        input_action,
+                                        value,
+                                        dag,
+                                        &[*term],
+                                    )?
+                                }
+                                CommandOutput::ExtractVariants(dag, terms) => {
+                                    proofs::proof_extract::prove_extracted(
+                                        self,
+                                        &input,
+                                        input_action,
+                                        value,
+                                        dag,
+                                        terms,
+                                    )?
+                                }
+                                _ => unreachable!("extractor result kind checked above"),
+                            };
+                            outputs.push(output);
+                            outputs.extend(proofs);
+                        } else {
+                            outputs.extend(self.run_command(command)?);
+                        }
+                    }
+                    Ok(outputs)
+                })();
+                // Restoring lowering state on failure keeps a surrounding fail
+                // command from changing how later encoded commands are interpreted.
+                if let Some((state, symbols, reserved_symbols)) = saved {
+                    self.proof_state = state;
+                    self.parser.symbol_gen = symbols;
+                    self.parser.ensure_no_reserved_symbols = reserved_symbols;
+                }
+                return result;
             }
             ResolvedNCommand::Push(n) => {
                 (0..n).for_each(|_| self.push());
@@ -2686,8 +2799,9 @@ impl EGraph {
     fn resolve_command_before_proofs(
         &mut self,
         command: Command,
+        proof_testing: bool,
     ) -> Result<Vec<ResolvedNCommand>, Error> {
-        let desugared = desugar_command(command, &mut self.parser, self.proof_state.proof_testing)?;
+        let desugared = desugar_command(command, &mut self.parser, proof_testing)?;
         let proofs_enabled = self.proof_state.proofs_enabled;
         if let Some(original_typechecking) = self.proof_state.original_typechecking.as_mut() {
             // Typecheck using the original egraph
@@ -2727,10 +2841,14 @@ impl EGraph {
     /// Desugars, typechecks, and removes globals from a single [`Command`].
     /// Leverages previous type information in the [`EGraph`] to do so, adding new type information.
     /// When will_run is true, adds to `desugared_commands_run_so_far`, which is used for proof checking.
-    fn resolve_command(&mut self, command: Command) -> Result<ResolvedNCommands, Error> {
+    fn resolve_command(
+        &mut self,
+        command: Command,
+        proof_testing: bool,
+    ) -> Result<ResolvedNCommands, Error> {
         let lowering_timer = Instant::now();
         let nested_before = self.overall_report.process_time();
-        let resolved = self.resolve_command_inner(command);
+        let resolved = self.resolve_command_inner(command, proof_testing);
         let nested = self
             .overall_report
             .process_time()
@@ -2739,14 +2857,19 @@ impl EGraph {
         resolved
     }
 
-    fn resolve_command_inner(&mut self, command: Command) -> Result<ResolvedNCommands, Error> {
-        let resolved_before_proofs = self.resolve_command_before_proofs(command)?;
+    fn resolve_command_inner(
+        &mut self,
+        command: Command,
+        proof_testing: bool,
+    ) -> Result<ResolvedNCommands, Error> {
+        let resolved_before_proofs = self.resolve_command_before_proofs(command, proof_testing)?;
 
         // Add term encoding when it is enabled
         if self.proof_state.original_typechecking.is_none() {
             Ok(ResolvedNCommands {
                 desugared: resolved_before_proofs,
                 desugared_before_proofs: vec![],
+                extraction_input: None,
             })
         } else {
             // The proof checker consumes the per-row top-level fiat actions.
@@ -2777,6 +2900,13 @@ impl EGraph {
             }
 
             let numbered_before = self.proof_state.global_actions_numbered;
+            let extraction_input = typechecked_no_globals.iter().find_map(|command| {
+                if let ResolvedNCommand::Extract(_, expr, _) = command {
+                    Some(expr.clone())
+                } else {
+                    None
+                }
+            });
             let term_encoding_added =
                 ProofInstrumentor::add_term_encoding(self, typechecked_no_globals)?;
             // A fiat names a global action by index, so the encoder's numbering
@@ -2792,8 +2922,9 @@ impl EGraph {
             );
             let mut new_typechecked = vec![];
             for new_cmd in term_encoding_added {
-                let desugared =
-                    desugar_command(new_cmd, &mut self.parser, self.proof_state.proof_testing)?;
+                // Automatic proof requests apply to source commands, not their
+                // encoded extraction/check operations.
+                let desugared = desugar_command(new_cmd, &mut self.parser, false)?;
                 for cmd in &desugared {
                     log::trace!("Desugared term encoding: {}", cmd.to_command());
                 }
@@ -2814,6 +2945,7 @@ impl EGraph {
             Ok(ResolvedNCommands {
                 desugared: new_typechecked,
                 desugared_before_proofs: per_row_before_proofs,
+                extraction_input,
             })
         }
     }
@@ -2862,7 +2994,37 @@ impl EGraph {
                     desugared.extend(resolved.resolved);
                     desugared_before_proofs.extend(resolved.resolved_before_proofs);
                 } else {
-                    let resolved = self.resolve_command(command)?;
+                    let resolved = self.resolve_command(command, self.proof_state.proof_testing)?;
+                    if !run_commands && self.are_proofs_enabled() {
+                        // A fail may contain several deferred requests. Retain each
+                        // occurrence's source scope; a queue would lose alignment
+                        // when a preceding wrapped command fails.
+                        fn capture(
+                            commands: &[ResolvedNCommand],
+                            state: &EncodingState,
+                            contexts: &mut HashMap<String, (Expr, Expr, EncodingState)>,
+                        ) {
+                            for command in commands {
+                                match command {
+                                    ResolvedNCommand::ProveExtract(_, expr, variants, Some(id)) => {
+                                        contexts.insert(
+                                            id.clone(),
+                                            (expr.clone(), variants.clone(), state.clone()),
+                                        );
+                                    }
+                                    ResolvedNCommand::Fail(_, commands) => {
+                                        capture(commands, state, contexts)
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        capture(
+                            &resolved.desugared,
+                            &self.proof_state,
+                            &mut self.extract_contexts,
+                        );
+                    }
                     // Execution callers discard resolved trees; retaining them here
                     // duplicates large proof programs. Keep only the checker's history.
                     if run_commands {

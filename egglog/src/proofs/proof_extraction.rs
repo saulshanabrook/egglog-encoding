@@ -1,6 +1,6 @@
 use crate::proofs::proof_encoding::ProofInstrumentor;
 use crate::proofs::proof_extractor::extract_root;
-use crate::proofs::proof_format::{Justification, ProofId, ProofStore, proof_store_from_term};
+use crate::proofs::proof_format::{Justification, ProofId, ProofStore, proof_store_from_terms};
 use crate::util::HashSet;
 use crate::{ResolvedCall, TermDag, Value};
 use thiserror::Error;
@@ -118,14 +118,15 @@ impl ProofInstrumentor<'_> {
                 prim_value_constructors.insert(head);
             }
         }
-        let (mut proof_store, proof_id) = proof_store_from_term(
+        let (mut proof_store, proof_ids) = proof_store_from_terms(
             &self.egraph.proof_state.proof_names,
             termdag,
-            proof_term_id,
+            &[proof_term_id],
             &self.egraph.proof_check_program,
             container_normalizers,
             prim_value_constructors,
         );
+        let proof_id = proof_ids[0];
 
         // Remove globals from the proof
         if let Result::Err(e) = proof_store.remove_globals(&self.egraph.proof_check_program) {

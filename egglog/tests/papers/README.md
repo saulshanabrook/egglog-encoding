@@ -2,7 +2,8 @@
 
 These are self-contained Egglog programs materialized from research artifacts.
 They live here except for DialEgg's dynamic-cost workload, which requires the
-experimental harness. Each file retains a correctness check and is expected to
+experimental harness. Each file retains its source extraction or an intentional
+correctness check and is expected to
 complete in less than one minute. The checked-in files are the test and
 benchmark inputs; external toolchains are needed only to reproduce them.
 
@@ -109,8 +110,9 @@ current-syntax conversion before checking it in.
 
 The materializer verifies the committed upstream inputs by SHA-256 and fails
 closed if they drift. Current-syntax changes are deliberately mechanical:
-explicit constructors, `$`-prefixed globals, materialized includes, and stable
-checks in place of extraction-only success.
+explicit constructors, `$`-prefixed globals, and materialized includes.
+Original extraction requests are retained. Proof-testing and proof-extraction
+modes also produce equality proofs for their actual returned results.
 
 ### SpEQ native recording
 
@@ -144,6 +146,6 @@ needed by egglog-python 13.2, and sets `save_egglog_string=True`. It registers
 the reference rules from `run_benchmark.py`, runs each original 5 transform / 1
 expand / 3 transform schedule, and reads `as_egglog_string`. No
 command-processing instrumentation is used. It deterministically inlines the
-recorder's temporary DAG lets. Native extractions are retained in the
-provenance header, while replay uses checks against the extracted reference
-calls so every benchmark treatment can run the file.
+recorder's temporary DAG lets. Replay retains native extractions in their
+original scopes; reference-kernel checks during acquisition remain separate
+from the timed workload.
