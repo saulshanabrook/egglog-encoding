@@ -36,7 +36,7 @@ REVISIONS = {
 RUST_VERSION = "1.88.0"
 MESON_VERSION = "1.2.0"
 NINJA_VERSION = "1.13.0"
-DISK_RESERVE = 10 * 1024**3
+DISK_RESERVE = 2 * 1024**3
 
 
 def tree_identity(directory: Path) -> dict[str, Any]:

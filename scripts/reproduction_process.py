@@ -21,7 +21,7 @@ from typing import Any
 
 from benchmarking.memory_guard import HEADROOM_BYTES, MemoryGuard
 
-DISK_RESERVE_BYTES = 10 * 1024**3
+DISK_RESERVE_BYTES = 2 * 1024**3
 CONTAINER_MEMORY_BYTES = 5 * 1024**3
 
 
@@ -74,7 +74,7 @@ def run_container(
         raise ValueError("require explicit supported platform and positive timeout/memory limits")
     output.mkdir(parents=True, exist_ok=True)
     if shutil.disk_usage(output).free < DISK_RESERVE_BYTES:
-        raise ValueError("disk guard refused to launch: fewer than 10 GiB free")
+        raise ValueError("disk guard refused to launch: fewer than 2 GiB free")
     guard = MemoryGuard(allow_warning_pressure=allow_warning_pressure)
     if reason := guard.check(0):
         raise ValueError(f"resource guard refused to launch: {reason}")
