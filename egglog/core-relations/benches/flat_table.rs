@@ -77,7 +77,7 @@ impl Store {
     }
 
     fn merge(&mut self, db: &Database) -> usize {
-        db.with_execution_state(|exec_state| match self {
+        db.with_execution_state(None, |exec_state| match self {
             Self::Flat(table) => {
                 table.merge(exec_state);
             }

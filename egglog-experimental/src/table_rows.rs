@@ -36,7 +36,7 @@ pub(crate) fn table_layout(egraph: &EGraph, name: &str, span: Span) -> Result<Ta
     let func = egraph
         .get_function(name)
         .ok_or_else(|| TypeError::UnboundFunction(name.to_owned(), span))?;
-    let schema = func.schema();
+    let schema = func.func_type();
     Ok(TableLayout {
         subtype: func.subtype(),
         input_sorts: schema.input.clone(),

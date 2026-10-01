@@ -68,11 +68,11 @@ impl ProofInstrumentor<'_> {
         };
         let view_id = view.backend_id;
         let named = func.name.clone();
-        let Some(proof_sort) = view.schema.outputs.last().cloned() else {
+        let Some(proof_sort) = view.func_type.outputs.last().cloned() else {
             return Err(ProveExistsError::RequiresConstructor);
         };
         // The view row is `[children…, value, proof]`; the proof is the last column.
-        let proof_index = view.schema.input.len() + view.schema.outputs.len() - 1;
+        let proof_index = view.func_type.input.len() + view.func_type.outputs.len() - 1;
 
         let mut termdag = TermDag::default();
 

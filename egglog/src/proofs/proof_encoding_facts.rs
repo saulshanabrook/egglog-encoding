@@ -5,7 +5,6 @@
 use super::proof_checker::is_container_side_condition;
 use super::proof_encoding::{Anchor, ProofInstrumentor};
 use super::proof_encoding_helpers::{body_expr_index, holds_sort, recomputable_premises};
-use crate::typechecking::FuncType;
 use crate::*;
 
 /// Where a fact being instrumented sits, for the anchors that have to name it.
@@ -50,17 +49,10 @@ impl ProofInstrumentor<'_> {
             // In proof normal form, this is the only way that function calls appear.
             ResolvedFact::Eq(
                 _span,
-                ResolvedExpr::Call(
-                    _span2,
-                    head @ ResolvedCall::Func(FuncType {
-                        subtype: FunctionSubtype::Custom,
-                        ..
-                    }),
-                    args,
-                ),
+                ResolvedExpr::Call(_span2, head @ ResolvedCall::Func(_), args),
                 // TODO this could actually be arbitrary pretty easily, it's just nested functions that are hard.
                 ResolvedExpr::Var(_span3, v),
-            ) => {
+            ) if head.is_custom_func() => {
                 let mut new_args = vec![];
                 let mut arg_proofs = vec![];
                 for arg in args {

@@ -20,7 +20,6 @@ use crate::{
         mask::{Mask, MaskIter},
     },
     common::Value,
-    hash_index::{IndexBase, TupleIndex},
     offsets::{RowId, Subset, SubsetRef},
     pool::{PoolSet, Pooled, with_pool_set},
     row_buffer::{RowBuffer, RowSink, TaggedRowBuffer},
@@ -279,6 +278,10 @@ pub trait Table: Any + Send + Sync {
     /// token if more rows remain. Only invoke `f` on rows that match the given
     /// constraints.
     ///
+    /// An implementation must not invoke `f` on a stale row, constrained or
+    /// not, so callers need not filter stale rows back out.
+    /// `tests/repro-stale-rows.egg` guards the constrained path.
+    ///
     /// This method is _not_ object safe, but it is used to define various
     /// "default" implementations of object-safe methods like `scan` and
     /// `pivot`.
@@ -467,33 +470,6 @@ impl<T: Table> TableWrapper for WrapperImpl<T> {
             out.add_row(row_id, row);
         })
     }
-    fn group_by_key(&self, table: &dyn Table, subset: SubsetRef, cols: &[ColumnId]) -> TupleIndex {
-        let table = table.as_any().downcast_ref::<T>().unwrap();
-        let mut res = TupleIndex::new(cols.len());
-        match cols {
-            [] => {}
-            [col] => table.scan_generic(subset, |row_id, row| {
-                res.add_row(&[row[col.index()]], row_id);
-            }),
-            [x, y] => table.scan_generic(subset, |row_id, row| {
-                res.add_row(&[row[x.index()], row[y.index()]], row_id);
-            }),
-            [x, y, z] => table.scan_generic(subset, |row_id, row| {
-                res.add_row(&[row[x.index()], row[y.index()], row[z.index()]], row_id);
-            }),
-            _ => {
-                let mut scratch = SmallVec::<[Value; 8]>::new();
-                table.scan_generic(subset, |row_id, row| {
-                    for col in cols {
-                        scratch.push(row[col.index()]);
-                    }
-                    res.add_row(&scratch, row_id);
-                    scratch.clear();
-                });
-            }
-        }
-        res
-    }
     fn for_each_col(
         &self,
         table: &dyn Table,
@@ -652,6 +628,8 @@ impl WrappedTable {
     /// Starting at the given [`Offset`] into `subset`, scan up to `n` rows and
     /// write them to `out`. Return the next starting offset. If no offset is
     /// returned then the subset has been scanned completely.
+    /// Rows written to `out` are never stale, so callers can take the buffer's
+    /// full contents.
     pub fn scan_bounded(
         &self,
         subset: SubsetRef,
@@ -662,13 +640,10 @@ impl WrappedTable {
         self.as_ref().scan_bounded(subset, start, n, out)
     }
 
-    /// Group the contents of the given subset by the given columns.
-    pub(crate) fn group_by_key(&self, subset: SubsetRef, cols: &[ColumnId]) -> TupleIndex {
-        self.as_ref().group_by_key(subset, cols)
-    }
-
     /// A variant fo [`WrappedTable::scan_bounded`] that projects a subset of
     /// columns and only appends rows that match the given constraints.
+    /// Rows written to `out` are never stale, so callers can take the buffer's
+    /// full contents.
     pub fn scan_project(
         &self,
         subset: SubsetRef,
@@ -747,8 +722,6 @@ pub(crate) trait TableWrapper: Send + Sync {
         n: usize,
         out: &mut TaggedRowBuffer,
     ) -> Option<Offset>;
-    fn group_by_key(&self, table: &dyn Table, subset: SubsetRef, cols: &[ColumnId]) -> TupleIndex;
-
     /// Scan each row in `subset`, calling `f(row_id, col_value)` for each.
     /// Unlike `scan_project`, this writes directly to the callback with no
     /// intermediate buffer.
@@ -850,11 +823,6 @@ impl WrappedTableRef<'_> {
         out: &mut TaggedRowBuffer,
     ) -> Option<Offset> {
         self.wrapper.scan_bounded(self.inner, subset, start, n, out)
-    }
-
-    /// Group the contents of the given subset by the given columns.
-    pub(crate) fn group_by_key(&self, subset: SubsetRef, cols: &[ColumnId]) -> TupleIndex {
-        self.wrapper.group_by_key(self.inner, subset, cols)
     }
 
     /// Scan each row in `subset` and call `f(row_id, col_value)` for each.
