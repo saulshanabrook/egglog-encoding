@@ -176,3 +176,32 @@ expanded-bench: expanded-bench-recording
 expanded-coverage:
 	uv run --locked python -m benchmarking.pilot --suite expanded --coverage-only \
 		--report .reports.jsonl --coverage-output benchmarks/local/coverage.json --timeout-sec $(EXPANDED_TIMEOUT_SEC)
+
+EXPANDED_SPECS := figures/expanded/math-cutoff-11.vl.json figures/expanded/proof-overhead-cdf.vl.json
+EXPANDED_IMAGES := $(EXPANDED_SPECS:.vl.json=.svg) $(EXPANDED_SPECS:.vl.json=.png)
+.PHONY: figures figures-bench figures-data figures-expanded figures-expanded-data figures-expanded-cached figures-expanded-test figure-inventory
+figures: figures-expanded
+figures-bench: expanded-bench
+figures-data figures-expanded-data: expanded-bench
+	$(MAKE) reports-grouped figure-inventory
+
+figures-expanded: expanded-bench
+	$(MAKE) figures-expanded-cached
+
+figure-inventory:
+	uv run --locked python -m benchmarking.figure_inventory --timeout-sec $(EXPANDED_TIMEOUT_SEC)
+
+# Refresh metadata first; a recursive Make sees its final write-if-changed mtime.
+figures-expanded-cached: reports-grouped
+	$(MAKE) figure-inventory
+	$(MAKE) $(EXPANDED_IMAGES)
+	@printf '%s\n' $(foreach image,$(EXPANDED_IMAGES),"$(abspath $(image))")
+
+figures/expanded/%.svg: figures/expanded/%.vl.json .reports-grouped.json benchmarks/local/figure-inventory.json Makefile
+	cd figures/expanded && $(VEGA) vl2svg $(notdir $<) $(notdir $@)
+
+figures/expanded/%.png: figures/expanded/%.vl.json .reports-grouped.json benchmarks/local/figure-inventory.json Makefile
+	cd figures/expanded && $(VEGA) vl2png $(notdir $<) $(notdir $@) -s 3
+
+figures-expanded-test:
+	cd figures && $(VEGA) node --test expanded.test.mjs

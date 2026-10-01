@@ -1,0 +1,221 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "description": "Math iteration 11: current catalog input hashes and latest figures label identities. Every selected run is a dot; wholly successful finite metric samples have a mean tick. Sample counts are not fixed.",
+  "title": {
+    "text": "How do Egg and Egglog compare after 11 Math iterations?",
+    "subtitle": [
+      "Rational Math: 7 seeds, 24 rules; simple schedules, no backoff or match caps.",
+      "On = proof recording + extraction of the same terminal equality.",
+      "Dot = run; black tick = mean of all successful observations (counts below)."
+    ]
+  },
+  "data": {"url": "../../.reports-grouped.json", "format": {"type": "json"}},
+  "transform": [
+    {"calculate": "1", "as": "inventory_id"},
+    {
+      "lookup": "inventory_id",
+      "from": {"data": {"url": "../../benchmarks/local/figure-inventory.json", "format": {"type": "json"}}, "key": "id"},
+      "as": "inventory"
+    },
+    {"calculate": "[datum.groups, [null]]", "as": "batches"},
+    {"flatten": ["batches"], "as": ["candidates"]},
+    {"flatten": ["candidates"], "as": ["group"]},
+    {
+      "filter": "!isValid(datum.group) || (indexof(datum.group.labels, target_label) >= 0 && datum.group.key.timeout_sec === datum.inventory.timeout_sec && datum.group.key.disequality_encoding === 'nee' && indexof([\"egg\", \"off\", \"egg-proof-extraction\", \"proof-extraction\"], datum.group.key.treatment) >= 0)"
+    },
+    {
+      "calculate": "isValid(datum.group) ? datum.group.key.file_sha256 + '/' + datum.group.key.fact_directory_sha256 + '/' + datum.group.key.treatment : ''",
+      "as": "identity"
+    },
+    {"aggregate": [{"op": "values", "as": "observed"}], "groupby": ["inventory"]},
+    {"calculate": "pluck(datum.observed, 'identity')", "as": "identities"},
+    {"calculate": "pluck(datum.observed, 'group')", "as": "groups"},
+    {"calculate": "datum.inventory.workloads", "as": "workloads"},
+    {"flatten": ["workloads"], "as": ["item"]},
+    {"filter": "datum.item.iteration === 11"},
+    {"calculate": "endpoints", "as": "endpoints"},
+    {"flatten": ["endpoints"], "as": ["endpoint"]},
+    {
+      "calculate": "indexof(datum.identities, datum.item.file_sha256 + '/' + datum.item.fact_directory_sha256 + '/' + datum.endpoint.treatment)",
+      "as": "group_index"
+    },
+    {"calculate": "datum.group_index >= 0 ? datum.groups[datum.group_index] : null", "as": "group"},
+    {"calculate": "isValid(datum.group) ? datum.group.samples : []", "as": "observations"},
+    {"calculate": "datum.item.id", "as": "workload_id"},
+    {"calculate": "datum.item.label", "as": "workload"},
+    {"calculate": "datum.item.family", "as": "family"},
+    {"calculate": "datum.item.file_sha256", "as": "file_sha256"},
+    {"calculate": "datum.endpoint.engine", "as": "engine"},
+    {"calculate": "datum.endpoint.proof_mode", "as": "proof_mode"},
+    {
+      "calculate": "datum.proof_mode === 'Off' ? '' : datum.item.unavailable_reason || (isValid(datum.group) ? datum.item.validation_failures[datum.group.key.binary_sha256 + '/' + datum.inventory.timeout_sec] : '') || ''",
+      "as": "unavailable_reason"
+    },
+    {"calculate": "length(datum.observations)", "as": "selected"},
+    {"calculate": "datum.selected ? datum.observations : [null]", "as": "runs"},
+    {"flatten": ["runs"], "as": ["run"]},
+    {
+      "calculate": "isValid(datum.run) && datum.run.status === 'success' && isValid(datum.run.wall_sec) && isFinite(datum.run.wall_sec) && datum.run.wall_sec >= 0 ? datum.run.wall_sec : null",
+      "as": "Time"
+    },
+    {
+      "calculate": "isValid(datum.run) && datum.run.status === 'success' && isValid(datum.run.max_rss_bytes) && isFinite(datum.run.max_rss_bytes) && datum.run.max_rss_bytes > 0 ? datum.run.max_rss_bytes / 1048576 : null",
+      "as": "Memory"
+    },
+    {"fold": ["Time", "Memory"], "as": ["metric", "value"]},
+    {"calculate": "(datum.proof_mode === 'Off' ? 'Off' : 'On') + ' · ' + datum.engine", "as": "condition"},
+    {"calculate": "isValid(datum.run) && datum.run.status === 'failure' ? 1 : 0", "as": "failed"},
+    {"calculate": "isValid(datum.run) && datum.run.status === 'timed-out' ? 1 : 0", "as": "timed_out"},
+    {
+      "calculate": "datum.failed && isValid(datum.run.error_message) && indexof(datum.run.error_message, 'host memory') >= 0 ? 1 : 0",
+      "as": "host_stop"
+    },
+    {
+      "calculate": "datum.failed && isValid(datum.run.error_message) && indexof(datum.run.error_message, 'resource guard') >= 0 ? 1 : 0",
+      "as": "memory_stop"
+    },
+    {
+      "joinaggregate": [
+        {"op": "valid", "field": "value", "as": "successes"},
+        {"op": "mean", "field": "value", "as": "mean"},
+        {"op": "sum", "field": "failed", "as": "failures"},
+        {"op": "sum", "field": "timed_out", "as": "timeouts"},
+        {"op": "max", "field": "host_stop", "as": "host_stop"},
+        {"op": "max", "field": "memory_stop", "as": "memory_stop"}
+      ],
+      "groupby": ["engine", "proof_mode", "metric"]
+    },
+    {
+      "window": [{"op": "row_number", "as": "run_number"}],
+      "sort": [{"field": "run.row_index", "order": "ascending"}],
+      "groupby": ["engine", "proof_mode", "metric"]
+    },
+    {"calculate": "datum.selected > 0 && datum.successes === datum.selected && !datum.unavailable_reason", "as": "complete"},
+    {
+      "calculate": "datum.complete ? '' : datum.unavailable_reason || (datum.host_stop ? 'host-memory interruption' : datum.memory_stop ? 'resource-guard interruption' : datum.failures ? 'execution failed' : datum.timeouts ? 'timed out' : !datum.selected ? 'no observations' : 'measurement unavailable')",
+      "as": "issue"
+    },
+    {"joinaggregate": [{"op": "max", "field": "value", "as": "metric_max"}], "groupby": ["metric"]},
+    {"calculate": "isValid(datum.metric_max) && datum.metric_max > 0 ? datum.metric_max : 1", "as": "domain_max"},
+    {"joinaggregate": [{"op": "min", "field": "selected", "as": "minimum_count"}, {"op": "max", "field": "selected", "as": "maximum_count"}]}
+  ],
+  "vconcat": [
+    {
+      "hconcat": [
+        {
+          "name": "time",
+          "width": 240,
+          "height": 156,
+          "transform": [{"filter": "datum.metric === 'Time'"}, {"extent": "domain_max", "param": "time_extent"}],
+          "encoding": {
+            "x": {
+              "type": "quantitative",
+              "title": "Whole-process wall time (seconds)",
+              "scale": {"domain": {"expr": "[0, time_extent[1] * 1.06]"}},
+              "axis": {"tickCount": 4, "format": "~g", "grid": true}
+            },
+            "y": {
+              "field": "condition",
+              "type": "nominal",
+              "title": null,
+              "scale": {"domain": ["Off · Egg", "Off · Egglog", "On · Egg", "On · Egglog"]},
+              "axis": {"domain": false, "ticks": false, "labelPadding": 9}
+            }
+          },
+          "layer": [
+            {
+              "transform": [{"filter": "isValid(datum.value) && !datum.unavailable_reason"}],
+              "mark": {"type": "point", "filled": true, "size": 11, "opacity": 0.32, "yOffset": {"expr": "sin(datum.run_number) * 6"}},
+              "encoding": {
+                "x": {"field": "value"},
+                "color": {"field": "engine", "type": "nominal", "legend": null, "scale": {"domain": ["Egg", "Egglog"], "range": ["#1f4e79", "#c9781c"]}}
+              },
+              "name": "time_runs"
+            },
+            {
+              "transform": [{"filter": "datum.run_number === 1 && datum.complete"}],
+              "mark": {"type": "tick", "orient": "vertical", "color": "#20262e", "opacity": 1, "thickness": 1.4, "size": 17},
+              "encoding": {"x": {"field": "mean"}},
+              "name": "time_means"
+            }
+          ]
+        },
+        {
+          "name": "memory",
+          "width": 240,
+          "height": 156,
+          "transform": [{"filter": "datum.metric === 'Memory'"}, {"extent": "domain_max", "param": "memory_extent"}],
+          "encoding": {
+            "x": {
+              "type": "quantitative",
+              "title": "Peak process RSS (MiB)",
+              "scale": {"domain": {"expr": "[0, memory_extent[1] * 1.06]"}},
+              "axis": {"tickCount": 4, "format": ",d", "grid": true}
+            },
+            "y": {
+              "field": "condition",
+              "type": "nominal",
+              "title": null,
+              "scale": {"domain": ["Off · Egg", "Off · Egglog", "On · Egg", "On · Egglog"]},
+              "axis": null
+            }
+          },
+          "layer": [
+            {
+              "transform": [{"filter": "isValid(datum.value) && !datum.unavailable_reason"}],
+              "mark": {"type": "point", "filled": true, "size": 11, "opacity": 0.32, "yOffset": {"expr": "sin(datum.run_number) * 6"}},
+              "encoding": {
+                "x": {"field": "value"},
+                "color": {"field": "engine", "type": "nominal", "legend": null, "scale": {"domain": ["Egg", "Egglog"], "range": ["#1f4e79", "#c9781c"]}}
+              },
+              "name": "memory_runs"
+            },
+            {
+              "transform": [{"filter": "datum.run_number === 1 && datum.complete"}],
+              "mark": {"type": "tick", "orient": "vertical", "color": "#20262e", "opacity": 1, "thickness": 1.4, "size": 17},
+              "encoding": {"x": {"field": "mean"}},
+              "name": "memory_means"
+            }
+          ]
+        }
+      ],
+      "resolve": {"scale": {"y": "shared", "x": "independent"}},
+      "spacing": 28
+    },
+    {
+      "width": 508,
+      "height": {"step": 14},
+      "transform": [
+        {
+          "filter": "datum.run_number === 1 && (!datum.complete || datum.metric === 'Time' && (datum.minimum_count !== datum.maximum_count || datum.condition === 'Off · Egg'))"
+        },
+        {
+          "calculate": "datum.complete ? (datum.minimum_count === datum.maximum_count ? datum.selected + ' runs per endpoint' : datum.condition + ': ' + datum.selected + ' runs') : datum.metric + ', ' + datum.condition + ': ' + datum.issue + '; no mean'",
+          "as": "issue_label"
+        }
+      ],
+      "mark": {"type": "text", "align": "left", "fontSize": 10, "color": "#4b5563"},
+      "encoding": {"x": {"value": 0}, "y": {"field": "issue_label", "type": "nominal", "axis": null}, "text": {"field": "issue_label"}}
+    }
+  ],
+  "spacing": 8,
+  "config": {
+    "font": "Arial",
+    "background": "white",
+    "view": {"stroke": null},
+    "axis": {"labelFontSize": 11, "titleFontSize": 11, "titleFontWeight": "normal", "gridColor": "#e8eaed", "domainColor": "#a9adb3", "titlePadding": 10},
+    "title": {"fontSize": 15, "anchor": "start", "subtitleFontSize": 10, "subtitlePadding": 6, "offset": 14}
+  },
+  "params": [
+    {"name": "target_label", "value": "figures"},
+    {
+      "name": "endpoints",
+      "value": [
+        {"engine": "Egg", "proof_mode": "Off", "treatment": "egg"},
+        {"engine": "Egglog", "proof_mode": "Off", "treatment": "off"},
+        {"engine": "Egg", "proof_mode": "Record + extract", "treatment": "egg-proof-extraction"},
+        {"engine": "Egglog", "proof_mode": "Record + extract", "treatment": "proof-extraction"}
+      ]
+    }
+  ]
+}

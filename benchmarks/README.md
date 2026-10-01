@@ -342,9 +342,9 @@ With `--suite`, the defaults are proof extraction versus proofs off, 10 rounds,
 and the ordinary 1800-second timeout. Expanded Make targets explicitly use
 300 seconds. Explicit options override these defaults.
 `--suite math-11` selects only iteration 11;
-`--suite math-growth` selects the eleven Math checkpoints. To collect the older
-growth figures as well, use `make figures-expanded FIGURE_MATH_SUITE=math-growth`
-followed by `make -C figures expanded-details`. Repeated `--suite`
+`--suite math-growth` selects the eleven Math checkpoints. Use
+`make expanded-bench FIGURE_MATH_SUITE=math-growth` to collect them; the final
+Math figure continues to show iteration 11. Repeated `--suite`
 arguments select a stable union and deduplicate identical workloads without
 losing source aliases. Suites cannot be combined with positional input files
 or a fact-directory override. Bare `./bench.py` still selects its existing

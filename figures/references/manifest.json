@@ -1,0 +1,332 @@
+{
+  "course": {
+    "title": "CSE 512: Data Visualization, Spring 2026",
+    "url": "https://courses.cs.washington.edu/courses/cse512/26sp/",
+    "retrieved_at_utc": "2026-09-21T03:35:01+00:00",
+    "page_sha256": "4f654187790b63e8d7921a84d9a974654c59af74e8a66198cb87a6cbb4efdc7f"
+  },
+  "decks": [
+    {
+      "title": "Introduction",
+      "url": "https://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-Introduction-26sp.pdf",
+      "course_link_url": "http://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-Introduction-26sp.pdf",
+      "source_term": "26sp",
+      "local_path": "slides/CSE512-Introduction-26sp.pdf",
+      "sessions": [
+        {
+          "date": "2026-03-31",
+          "title": "Introduction"
+        }
+      ],
+      "resolved_url": "https://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-Introduction-26sp.pdf",
+      "sha256": "0c789bc79e0f4475444585fe67fbb78ff8190135614a39474710afb4372cd8e2",
+      "bytes": 31062278,
+      "pages": 75
+    },
+    {
+      "title": "Visualization Tools, Part 1",
+      "url": "https://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-ToolsPart1-26sp.pdf",
+      "course_link_url": "http://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-ToolsPart1-26sp.pdf",
+      "source_term": "26sp",
+      "local_path": "slides/CSE512-ToolsPart1-26sp.pdf",
+      "sessions": [
+        {
+          "date": "2026-04-02",
+          "title": "Visualization Tools, Part 1"
+        }
+      ],
+      "resolved_url": "https://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-ToolsPart1-26sp.pdf",
+      "sha256": "250feb377654343db0939102930389fbfdb8170ddb29d4d8a7d8960f8826bce9",
+      "bytes": 8080590,
+      "pages": 46
+    },
+    {
+      "title": "Visual Encoding",
+      "url": "https://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-VisualEncoding-26sp.pdf",
+      "course_link_url": "http://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-VisualEncoding-26sp.pdf",
+      "source_term": "26sp",
+      "local_path": "slides/CSE512-VisualEncoding-26sp.pdf",
+      "sessions": [
+        {
+          "date": "2026-04-07",
+          "title": "Visual Encoding"
+        }
+      ],
+      "resolved_url": "https://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-VisualEncoding-26sp.pdf",
+      "sha256": "db4f8adad4e87042a465645ac49dfa8d5d95d46338d20cf5a4fe7f14d2e362dc",
+      "bytes": 10179444,
+      "pages": 90
+    },
+    {
+      "title": "Deceptive Visualization & A1 Review",
+      "url": "https://courses.cs.washington.edu/courses/cse512/25sp/lectures/CSE512-DeceptiveVisualization.pdf",
+      "course_link_url": "http://courses.cs.washington.edu/courses/cse512/25sp/lectures/CSE512-DeceptiveVisualization.pdf",
+      "source_term": "25sp",
+      "local_path": "slides/CSE512-DeceptiveVisualization.pdf",
+      "sessions": [
+        {
+          "date": "2026-04-09",
+          "title": "Deceptive Visualization & A1 Review"
+        }
+      ],
+      "resolved_url": "https://courses.cs.washington.edu/courses/cse512/25sp/lectures/CSE512-DeceptiveVisualization.pdf",
+      "sha256": "14900c485d5cb42ade4eebe85b446eba5e55be0d522fe34b006d08b560c71b06",
+      "bytes": 6861293,
+      "pages": 55
+    },
+    {
+      "title": "Data Transformation",
+      "url": "https://courses.cs.washington.edu/courses/cse512/25sp/lectures/CSE512-DataTransformation.pdf",
+      "course_link_url": "http://courses.cs.washington.edu/courses/cse512/25sp/lectures/CSE512-DataTransformation.pdf",
+      "source_term": "25sp",
+      "local_path": "slides/CSE512-DataTransformation.pdf",
+      "sessions": [
+        {
+          "date": "2026-04-14",
+          "title": "Data Transformation"
+        },
+        {
+          "date": "2026-04-16",
+          "title": "Dimensionality Reduction"
+        }
+      ],
+      "resolved_url": "https://courses.cs.washington.edu/courses/cse512/25sp/lectures/CSE512-DataTransformation.pdf",
+      "sha256": "35d0d85b9bdc2c8af2ddc036e8a120069ab21de7462c26b4d5896a411eae51d2",
+      "bytes": 18181018,
+      "pages": 124
+    },
+    {
+      "title": "Interaction",
+      "url": "https://courses.cs.washington.edu/courses/cse512/25sp/lectures/CSE512-Interaction.pdf",
+      "course_link_url": "http://courses.cs.washington.edu/courses/cse512/25sp/lectures/CSE512-Interaction.pdf",
+      "source_term": "25sp",
+      "local_path": "slides/CSE512-Interaction.pdf",
+      "sessions": [
+        {
+          "date": "2026-04-21",
+          "title": "Interaction"
+        }
+      ],
+      "resolved_url": "https://courses.cs.washington.edu/courses/cse512/25sp/lectures/CSE512-Interaction.pdf",
+      "sha256": "9f5874bbe8c326c68783807266916add3830c08445872f4cc0ea6a2ba267878b",
+      "bytes": 13867186,
+      "pages": 109
+    },
+    {
+      "title": "Maps",
+      "url": "https://courses.cs.washington.edu/courses/cse512/25sp/lectures/CSE512-Maps.pdf",
+      "course_link_url": "http://courses.cs.washington.edu/courses/cse512/25sp/lectures/CSE512-Maps.pdf",
+      "source_term": "25sp",
+      "local_path": "slides/CSE512-Maps.pdf",
+      "sessions": [
+        {
+          "date": "2026-04-23",
+          "title": "Maps"
+        }
+      ],
+      "resolved_url": "https://courses.cs.washington.edu/courses/cse512/25sp/lectures/CSE512-Maps.pdf",
+      "sha256": "83f5fcd89c83b23e25e0145443d227b9715447973248f8bf16e28c6876555d5d",
+      "bytes": 19557142,
+      "pages": 58
+    },
+    {
+      "title": "Visualization Tools, Part 2",
+      "url": "https://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-ToolsPart2-26sp.pdf",
+      "course_link_url": "http://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-ToolsPart2-26sp.pdf",
+      "source_term": "26sp",
+      "local_path": "slides/CSE512-ToolsPart2-26sp.pdf",
+      "sessions": [
+        {
+          "date": "2026-04-28",
+          "title": "Visualization Tools, Part 2"
+        }
+      ],
+      "resolved_url": "https://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-ToolsPart2-26sp.pdf",
+      "sha256": "aa65888bf4b73ace4593bda899ae43d4569678ede043c2ee5f90d197b9939c30",
+      "bytes": 12495609,
+      "pages": 79
+    },
+    {
+      "title": "Animation",
+      "url": "https://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-Animation-26sp.pdf",
+      "course_link_url": "http://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-Animation-26sp.pdf",
+      "source_term": "26sp",
+      "local_path": "slides/CSE512-Animation-26sp.pdf",
+      "sessions": [
+        {
+          "date": "2026-05-05",
+          "title": "Animation"
+        }
+      ],
+      "resolved_url": "https://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-Animation-26sp.pdf",
+      "sha256": "58da5ef800b32d65df3ab6e6a4da96db6eb9a873c7feddc8a5308d6ab89b20f7",
+      "bytes": 5539611,
+      "pages": 91
+    },
+    {
+      "title": "Color",
+      "url": "https://courses.cs.washington.edu/courses/cse512/25sp/lectures/CSE512-Color.pdf",
+      "course_link_url": "http://courses.cs.washington.edu/courses/cse512/25sp/lectures/CSE512-Color.pdf",
+      "source_term": "25sp",
+      "local_path": "slides/CSE512-Color.pdf",
+      "sessions": [
+        {
+          "date": "2026-05-07",
+          "title": "Color"
+        }
+      ],
+      "resolved_url": "https://courses.cs.washington.edu/courses/cse512/25sp/lectures/CSE512-Color.pdf",
+      "sha256": "8bbf08d8a6df02b04d2bfee4464d22447909b6a496b353f49f3bffd40741b9a8",
+      "bytes": 5302449,
+      "pages": 52
+    },
+    {
+      "title": "Graphical Perception",
+      "url": "https://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-Perception-26sp.pdf",
+      "course_link_url": "http://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-Perception-26sp.pdf",
+      "source_term": "26sp",
+      "local_path": "slides/CSE512-Perception-26sp.pdf",
+      "sessions": [
+        {
+          "date": "2026-05-12",
+          "title": "Graphical Perception"
+        }
+      ],
+      "resolved_url": "https://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-Perception-26sp.pdf",
+      "sha256": "635dec706a9238959be7fc45b5715409cfc34738a0d2aae70eff02cf72a8a9c8",
+      "bytes": 4939437,
+      "pages": 77
+    },
+    {
+      "title": "Final Project & Perception Exercise",
+      "url": "https://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-FinalProject-26sp.pdf",
+      "course_link_url": "http://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-FinalProject-26sp.pdf",
+      "source_term": "26sp",
+      "local_path": "slides/CSE512-FinalProject-26sp.pdf",
+      "sessions": [
+        {
+          "date": "2026-05-14",
+          "title": "Final Project & Perception Exercise"
+        }
+      ],
+      "resolved_url": "https://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-FinalProject-26sp.pdf",
+      "sha256": "2079a426e92219418f24821e496d7ef13ec21614a707d049bdfd42b6a5b0905f",
+      "bytes": 7578872,
+      "pages": 21
+    },
+    {
+      "title": "Networks",
+      "url": "https://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-Networks-26sp.pdf",
+      "course_link_url": "http://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-Networks-26sp.pdf",
+      "source_term": "26sp",
+      "local_path": "slides/CSE512-Networks-26sp.pdf",
+      "sessions": [
+        {
+          "date": "2026-05-19",
+          "title": "Networks"
+        }
+      ],
+      "resolved_url": "https://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-Networks-26sp.pdf",
+      "sha256": "dec6e7408b1e0c0d6413265ee66d789b04e5d23b761490832ce8ab961b93bdf2",
+      "bytes": 12523433,
+      "pages": 102
+    },
+    {
+      "title": "Uncertainty",
+      "url": "https://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-Uncertainty-26sp.pdf",
+      "course_link_url": "http://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-Uncertainty-26sp.pdf",
+      "source_term": "26sp",
+      "local_path": "slides/CSE512-Uncertainty-26sp.pdf",
+      "sessions": [
+        {
+          "date": "2026-05-21",
+          "title": "Uncertainty"
+        }
+      ],
+      "resolved_url": "https://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-Uncertainty-26sp.pdf",
+      "sha256": "e9015e355f634e7bba32ecbcbef9620d62b0f2e93a1bfcdfd19531ff560d0210",
+      "bytes": 7498445,
+      "pages": 63
+    },
+    {
+      "title": "Scalable Visualization",
+      "url": "https://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-Scalability-26sp.pdf",
+      "course_link_url": "http://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-Scalability-26sp.pdf",
+      "source_term": "26sp",
+      "local_path": "slides/CSE512-Scalability-26sp.pdf",
+      "sessions": [
+        {
+          "date": "2026-05-26",
+          "title": "Scalable Visualization"
+        }
+      ],
+      "resolved_url": "https://courses.cs.washington.edu/courses/cse512/26sp/lectures/CSE512-Scalability-26sp.pdf",
+      "sha256": "157eb6a7a0f690466d741127f1aaae22dca6fc296ee856ca1fc0043cccd1ce82",
+      "bytes": 20075474,
+      "pages": 130
+    },
+    {
+      "title": "Evaluation & Review",
+      "url": "https://courses.cs.washington.edu/courses/cse512/25sp/lectures/CSE512-Evaluation.pdf",
+      "course_link_url": "http://courses.cs.washington.edu/courses/cse512/25sp/lectures/CSE512-Evaluation.pdf",
+      "source_term": "25sp",
+      "local_path": "slides/CSE512-Evaluation.pdf",
+      "sessions": [
+        {
+          "date": "2026-06-02",
+          "title": "Evaluation & Review"
+        }
+      ],
+      "resolved_url": "https://courses.cs.washington.edu/courses/cse512/25sp/lectures/CSE512-Evaluation.pdf",
+      "sha256": "a07cd724e1e6bdf577815b779b10028b0fdf90b83d4e7fcb528df704d0b13463",
+      "bytes": 13728951,
+      "pages": 107
+    }
+  ],
+  "notebook_sessions": [
+    {
+      "date": "2026-04-14",
+      "title": "Data Transformation",
+      "url": "https://observablehq.com/@uwdata/data-transformation",
+      "status": "Supplementary notebook; the session also has an archived slide deck."
+    },
+    {
+      "date": "2026-04-28",
+      "title": "Visualization Tools, Part 2",
+      "url": "https://observablehq.com/@uwdata/introduction-to-d3-part-1/",
+      "status": "Supplementary notebook; the session also has an archived slide deck."
+    },
+    {
+      "date": "2026-04-30",
+      "title": "D3.js Deep Dive",
+      "url": "https://observablehq.com/@uwdata/introduction-to-d3-part-2/",
+      "status": "Notebook-based session with no active public slide link. A Google Slides link exists only in an HTML comment and is not counted as a public course deck."
+    }
+  ],
+  "recordings": {
+    "status": "not_publicly_linked",
+    "note": "The course policy says lectures are recorded, but the public schedule does not link course lecture recordings. None are archived; public external videos in assigned readings are separate resources."
+  },
+  "other_sessions_without_public_decks": [
+    {
+      "date": "2026-04-10",
+      "title": "Tableau Tutorial",
+      "note": "Optional Zoom tutorial; no public deck or recording linked."
+    },
+    {
+      "date": "2026-04-28",
+      "title": "Web Publishing Tutorial",
+      "note": "Optional Zoom tutorial; no public deck or recording linked."
+    },
+    {
+      "date": "2026-05-28",
+      "title": "Final Project Milestone Review",
+      "note": "No public deck linked."
+    },
+    {
+      "date": "2026-06-04",
+      "title": "Final Project Video Showcase",
+      "note": "No public deck linked."
+    }
+  ]
+}

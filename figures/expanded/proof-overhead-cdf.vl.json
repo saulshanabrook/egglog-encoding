@@ -1,0 +1,608 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "description": "Ratios of means from all observations of the latest figures label identities on current catalog inputs. Wholly successful proofs-off groups with 0.1 < mean wall seconds < 30 define the cohort, independently of proof/RSS outcomes. Missing ratios remain in the denominator.",
+  "usermeta": {
+    "distribution_unit": "One unique replay selected by proofs-off measurements alone; source programs may have multiple invocations or Math cutoffs. Families do not receive equal weights.",
+    "quantile": "For p = 0.5 and 0.9, a measured threshold exists only when at least ceil(p * selected cohort size) valid nonnegative ratios exist. Use that ordered valid ratio; incomplete proof outcomes remain in the denominator. Labels describe measured coverage, not exact quantiles of an eventually completed cohort.",
+    "ratio": "Arithmetic mean with the named proof treatment / arithmetic mean with proofs off. Each metric requires a nonempty wholly successful finite sample and no matching strict-validation failure.",
+    "uncertainty": "The CDF describes measured replay mean ratios; it is not a population confidence interval.",
+    "selection": "All proofs-off observations for the selected exact identity; wholly successful finite wall times and strictly 0.1 < mean seconds < 30. Memory and proof outcomes do not select membership."
+  },
+  "title": {
+    "text": "How much overhead do Egglog proofs add?",
+    "subtitle": [
+      "Proofs-off mean: 0.1–30 seconds; all observations for the latest figures identities.",
+      "Each dot is one replay; colors identify families. Both proof modes use the same cohort.",
+      "50%/90% labels show measured coverage; missing and failed ratios stay in the denominator."
+    ]
+  },
+  "data": {"url": "../../.reports-grouped.json", "format": {"type": "json"}},
+  "transform": [
+    {"calculate": "1", "as": "inventory_id"},
+    {
+      "lookup": "inventory_id",
+      "from": {"data": {"url": "../../benchmarks/local/figure-inventory.json", "format": {"type": "json"}}, "key": "id"},
+      "as": "inventory"
+    },
+    {"calculate": "[datum.groups, [null]]", "as": "batches"},
+    {"flatten": ["batches"], "as": ["candidates"]},
+    {"flatten": ["candidates"], "as": ["group"]},
+    {
+      "filter": "!isValid(datum.group) || (indexof(datum.group.labels, target_label) >= 0 && datum.group.key.timeout_sec === datum.inventory.timeout_sec && datum.group.key.disequality_encoding === 'nee' && indexof([\"off\", \"proofs\", \"proof-extraction\"], datum.group.key.treatment) >= 0)"
+    },
+    {
+      "calculate": "isValid(datum.group) ? datum.group.key.file_sha256 + '/' + datum.group.key.fact_directory_sha256 + '/' + datum.group.key.treatment : ''",
+      "as": "identity"
+    },
+    {"aggregate": [{"op": "values", "as": "observed"}], "groupby": ["inventory"]},
+    {"calculate": "pluck(datum.observed, 'identity')", "as": "identities"},
+    {"calculate": "pluck(datum.observed, 'group')", "as": "groups"},
+    {"calculate": "datum.inventory.workloads", "as": "workloads"},
+    {"flatten": ["workloads"], "as": ["item"]},
+    {"calculate": "endpoints", "as": "endpoints"},
+    {"flatten": ["endpoints"], "as": ["endpoint"]},
+    {
+      "calculate": "indexof(datum.identities, datum.item.file_sha256 + '/' + datum.item.fact_directory_sha256 + '/' + datum.endpoint.treatment)",
+      "as": "group_index"
+    },
+    {"calculate": "datum.group_index >= 0 ? datum.groups[datum.group_index] : null", "as": "group"},
+    {"calculate": "isValid(datum.group) ? datum.group.samples : []", "as": "observations"},
+    {"calculate": "datum.item.id", "as": "workload_id"},
+    {"calculate": "datum.item.label", "as": "workload"},
+    {"calculate": "datum.item.family", "as": "family"},
+    {"calculate": "datum.item.file_sha256", "as": "file_sha256"},
+    {"calculate": "datum.endpoint.engine", "as": "engine"},
+    {"calculate": "datum.endpoint.proof_mode", "as": "proof_mode"},
+    {
+      "calculate": "datum.proof_mode === 'Off' ? '' : datum.item.unavailable_reason || (isValid(datum.group) ? datum.item.validation_failures[datum.group.key.binary_sha256 + '/' + datum.inventory.timeout_sec] : '') || ''",
+      "as": "unavailable_reason"
+    },
+    {"calculate": "length(datum.observations)", "as": "selected_count"},
+    {"calculate": "datum.selected_count ? datum.observations : [null]", "as": "runs"},
+    {"flatten": ["runs"], "as": ["run"]},
+    {
+      "calculate": "isValid(datum.run) && datum.run.status === 'success' && isValid(datum.run.wall_sec) && isFinite(datum.run.wall_sec) && datum.run.wall_sec >= 0 ? datum.run.wall_sec : null",
+      "as": "Time"
+    },
+    {
+      "calculate": "isValid(datum.run) && datum.run.status === 'success' && isValid(datum.run.max_rss_bytes) && isFinite(datum.run.max_rss_bytes) && datum.run.max_rss_bytes > 0 ? datum.run.max_rss_bytes : null",
+      "as": "Memory"
+    },
+    {"calculate": "isValid(datum.run) && datum.run.status !== 'success' ? 1 : 0", "as": "failed"},
+    {"calculate": "isValid(datum.run) && datum.run.status === 'timed-out' ? 1 : 0", "as": "timed_out"},
+    {"calculate": "isValid(datum.run) && datum.run.error_message && indexof(datum.run.error_message, 'host memory') >= 0 ? 1 : 0", "as": "host_stop"},
+    {
+      "calculate": "isValid(datum.run) && datum.run.error_message && (indexof(datum.run.error_message, 'process-group RSS') >= 0 || indexof(datum.run.error_message, 'memory-limit') >= 0) ? 1 : 0",
+      "as": "rss_stop"
+    },
+    {
+      "aggregate": [
+        {"op": "valid", "field": "Time", "as": "time_count"},
+        {"op": "mean", "field": "Time", "as": "time_mean"},
+        {"op": "valid", "field": "Memory", "as": "memory_count"},
+        {"op": "mean", "field": "Memory", "as": "memory_mean"},
+        {"op": "sum", "field": "failed", "as": "failed"},
+        {"op": "sum", "field": "timed_out", "as": "timed_out"},
+        {"op": "sum", "field": "host_stop", "as": "host_stop"},
+        {"op": "sum", "field": "rss_stop", "as": "rss_stop"}
+      ],
+      "groupby": ["family", "workload_id", "workload", "file_sha256", "proof_mode", "selected_count", "unavailable_reason"]
+    },
+    {"pivot": "proof_mode", "value": "selected_count", "op": "argmax", "groupby": ["family", "workload_id", "workload", "file_sha256"]},
+    {
+      "calculate": "isValid(datum.Off) && datum.Off.selected_count > 0 && datum.Off.time_count === datum.Off.selected_count && !datum.Off.failed",
+      "as": "baseline_complete"
+    },
+    {
+      "calculate": "!datum.file_sha256 ? 'No replay' : !datum.baseline_complete ? 'Baseline unresolved' : datum.Off.time_mean <= 0.1 ? 'Too fast' : datum.Off.time_mean >= 30 ? 'Too slow' : 'Selected'",
+      "as": "cohort_status"
+    },
+    {"calculate": "datum.cohort_status === 'Selected' ? 1 : 0", "as": "selected"},
+    {"calculate": "datum.file_sha256 && isValid(datum.Off) && !datum.Off.failed && !datum.baseline_complete ? 1 : 0", "as": "baseline_pending"},
+    {"joinaggregate": [{"op": "sum", "field": "baseline_pending", "as": "pending_total"}]},
+    {"extent": "pending_total", "param": "baseline_pending_total"},
+    {"calculate": "['Record', 'Record + extract']", "as": "candidate_modes"},
+    {"calculate": "length(datum.candidate_modes)", "as": "candidate_count"},
+    {"flatten": ["candidate_modes"], "as": ["candidate_mode"]},
+    {"calculate": "datum[datum.candidate_mode]", "as": "candidate"},
+    {"calculate": "['Time', 'Memory']", "as": "metrics"},
+    {"flatten": ["metrics"], "as": ["metric"]},
+    {"calculate": "datum.metric === 'Time' ? 'time_count' : 'memory_count'", "as": "count_field"},
+    {"calculate": "datum.metric === 'Time' ? 'time_mean' : 'memory_mean'", "as": "mean_field"},
+    {
+      "calculate": "datum.selected && datum.Off[datum.count_field] === datum.Off.selected_count && isValid(datum.candidate) && datum.candidate.selected_count > 0 && datum.candidate[datum.count_field] === datum.candidate.selected_count && !datum.Off.unavailable_reason && !datum.candidate.unavailable_reason",
+      "as": "complete"
+    },
+    {"calculate": "datum.baseline_complete ? datum.Off[datum.mean_field] : null", "as": "baseline_mean"},
+    {"calculate": "datum.complete ? datum.candidate[datum.mean_field] : null", "as": "candidate_mean"},
+    {"calculate": "datum.complete && datum.baseline_mean > 0 ? datum.candidate_mean / datum.baseline_mean : null", "as": "ratio"},
+    {
+      "calculate": "!datum.selected ? '' : !datum.complete ? (datum.Off.unavailable_reason || (isValid(datum.candidate) && (datum.candidate.unavailable_reason || (datum.candidate.host_stop ? datum.candidate_mode + ': host memory stop' : datum.candidate.rss_stop ? datum.candidate_mode + ': memory limit' : datum.candidate.timed_out ? datum.candidate_mode + ': timeout' : datum.candidate.failed ? datum.candidate_mode + ': error' : null))) || (datum.Off[datum.count_field] !== datum.Off.selected_count ? 'Unavailable proofs-off ' + lower(datum.metric) + ' sample' : 'Missing or invalid proof observations')) : !isFinite(datum.ratio) ? 'Ratio is not finite' : ''",
+      "as": "issue"
+    },
+    {"calculate": "datum.complete && isFinite(datum.ratio) && datum.ratio >= 0", "as": "eligible"},
+    {"calculate": "datum.eligible ? 1 : 0", "as": "included"},
+    {
+      "joinaggregate": [{"op": "sum", "field": "selected", "as": "n"}, {"op": "sum", "field": "included", "as": "measured_n"}],
+      "groupby": ["metric", "candidate_mode"]
+    },
+    {"calculate": "datum.candidate_mode === 'Record + extract' && datum.metric === 'Time' ? datum.included : 0", "as": "time_included"},
+    {"calculate": "datum.candidate_mode === 'Record + extract' && datum.metric === 'Memory' ? datum.included : 0", "as": "memory_included"},
+    {"calculate": "datum.candidate_mode === 'Record + extract' && datum.metric === 'Time' ? 1 : 0", "as": "entry_count"},
+    {
+      "calculate": "{\"math-growth\": \"Math 1\\u201311\", \"eggcc\": \"Eggcc\", \"luminal\": \"Luminal\", \"hardboiled\": \"HardBoiled\", \"misaal\": \"MISAAL\", \"churchroad\": \"Churchroad\", \"dialegg\": \"DialEgg\", \"speq\": \"SpEQ\"}[datum.family] || datum.family",
+      "as": "family_name"
+    },
+    {"calculate": "datum.metric === 'Time' && datum.eligible ? datum.ratio : 1", "as": "time_extent"},
+    {"extent": "time_extent", "param": "time_extent"},
+    {"calculate": "datum.metric === 'Memory' && datum.eligible ? datum.ratio : 1", "as": "memory_extent"},
+    {"extent": "memory_extent", "param": "memory_extent"},
+    {
+      "calculate": "datum.candidate_mode === 'Record + extract' && datum.metric === 'Time' && datum.cohort_status === 'Selected' ? 1 : 0",
+      "as": "cohort_count"
+    },
+    {
+      "calculate": "datum.candidate_mode === 'Record + extract' && datum.metric === 'Time' && datum.cohort_status === 'Too fast' ? 1 : 0",
+      "as": "too_fast_count"
+    },
+    {
+      "calculate": "datum.candidate_mode === 'Record + extract' && datum.metric === 'Time' && datum.cohort_status === 'Too slow' ? 1 : 0",
+      "as": "too_slow_count"
+    },
+    {
+      "calculate": "datum.candidate_mode === 'Record + extract' && datum.metric === 'Time' && datum.cohort_status === 'Baseline unresolved' ? 1 : 0",
+      "as": "unresolved_count"
+    },
+    {
+      "calculate": "datum.candidate_mode === 'Record + extract' && datum.metric === 'Time' && datum.cohort_status === 'No replay' ? 1 : 0",
+      "as": "source_count"
+    },
+    {"calculate": "datum.candidate_mode === 'Record' && datum.metric === 'Time' ? datum.included : 0", "as": "time_record_included"},
+    {"calculate": "datum.candidate_mode === 'Record' && datum.metric === 'Memory' ? datum.included : 0", "as": "memory_record_included"}
+  ],
+  "vconcat": [
+    {
+      "facet": {
+        "row": {
+          "field": "metric",
+          "type": "nominal",
+          "sort": ["Time", "Memory"],
+          "header": {
+            "title": null,
+            "labelExpr": "datum.value === 'Time' ? 'Runtime overhead' : 'Peak memory overhead'",
+            "labelOrient": "top",
+            "labelAnchor": "start",
+            "labelAngle": 0,
+            "labelFontSize": 15,
+            "labelFontWeight": "bold"
+          }
+        },
+        "column": {
+          "field": "candidate_mode",
+          "type": "nominal",
+          "sort": ["Record", "Record + extract"],
+          "header": {"title": null, "labelFontSize": 13, "labelFontWeight": "bold"}
+        }
+      },
+      "spec": {
+        "width": 300,
+        "height": 185,
+        "layer": [
+          {
+            "mark": {"type": "rule", "color": "#999", "strokeWidth": 1},
+            "encoding": {
+              "x": {"datum": 1},
+              "y": {
+                "datum": 0,
+                "type": "quantitative",
+                "scale": {"domain": [0, 1]},
+                "axis": {
+                  "title": "Share of selected replays",
+                  "values": [0, 0.25, 0.5, 0.75, 0.9, 1],
+                  "format": ".0%",
+                  "grid": true,
+                  "labelOverlap": false,
+                  "tickCount": 10
+                }
+              },
+              "y2": {"datum": 1}
+            },
+            "transform": [{"aggregate": [{"op": "count", "as": "entries"}], "groupby": []}]
+          },
+          {
+            "mark": {"type": "rule", "color": "#b0b0b0", "strokeDash": [3, 3], "strokeWidth": 1},
+            "encoding": {"x": {"value": 0}, "x2": {"value": 300}, "y": {"field": "percentile", "type": "quantitative"}},
+            "transform": [
+              {"aggregate": [{"op": "count", "as": "entries"}], "groupby": []},
+              {"calculate": "[0.5, 0.9]", "as": "percentiles"},
+              {"flatten": ["percentiles"], "as": ["percentile"]}
+            ],
+            "name": "percentile_guides"
+          },
+          {
+            "name": "pooled_cdf",
+            "transform": [
+              {"filter": "datum.eligible"},
+              {
+                "joinaggregate": [
+                  {"op": "count", "as": "plotted_n"},
+                  {"op": "min", "field": "ratio", "as": "minimum"},
+                  {"op": "max", "field": "ratio", "as": "maximum"}
+                ],
+                "groupby": []
+              },
+              {
+                "window": [{"op": "count", "as": "cumulative_count"}, {"op": "row_number", "as": "rank"}],
+                "sort": [{"field": "ratio", "order": "ascending"}],
+                "groupby": [],
+                "frame": [null, 0],
+                "ignorePeers": false
+              },
+              {"calculate": "datum.cumulative_count / datum.n", "as": "cdf"},
+              {"calculate": "0", "as": "domain_min"},
+              {"calculate": "datum.metric === 'Time' ? time_extent[1] * 1.15 : memory_extent[1] * 1.15", "as": "domain_max"},
+              {
+                "calculate": "datum.plotted_n === 1 ? [datum.domain_min, datum.ratio, datum.domain_max] : datum.rank === 1 ? [datum.domain_min, datum.ratio] : datum.rank === datum.plotted_n ? [datum.ratio, datum.domain_max] : [datum.ratio]",
+                "as": "curve_ratios"
+              },
+              {
+                "calculate": "datum.plotted_n === 1 ? [0, datum.cdf, datum.cdf] : datum.rank === 1 ? [0, datum.cdf] : datum.rank === datum.plotted_n ? [datum.cdf, datum.cdf] : [datum.cdf]",
+                "as": "curve_cdf"
+              },
+              {"flatten": ["curve_ratios", "curve_cdf"], "as": ["curve_ratio", "curve_fraction"]}
+            ],
+            "mark": {"type": "line", "interpolate": "step-after", "color": "#555", "strokeWidth": 1.4},
+            "encoding": {
+              "x": {
+                "field": "curve_ratio",
+                "type": "quantitative",
+                "scale": {
+                  "type": "linear",
+                  "nice": false,
+                  "domain": {"expr": "parent.metric === 'Time' ? [0, time_extent[1] * 1.15] : [0, memory_extent[1] * 1.15]"}
+                },
+                "axis": {"title": "On / off", "labelExpr": "format(datum.value, ',') + '×'", "grid": false, "labelOverlap": "greedy", "tickCount": 5}
+              },
+              "y": {
+                "field": "curve_fraction",
+                "type": "quantitative",
+                "scale": {"domain": [0, 1]},
+                "axis": {
+                  "title": "Share of selected replays",
+                  "values": [0, 0.25, 0.5, 0.75, 0.9, 1],
+                  "format": ".0%",
+                  "grid": true,
+                  "labelOverlap": false,
+                  "tickCount": 10
+                }
+              }
+            }
+          },
+          {
+            "name": "pooled_points",
+            "transform": [
+              {"filter": "datum.eligible"},
+              {
+                "joinaggregate": [
+                  {"op": "count", "as": "plotted_n"},
+                  {"op": "min", "field": "ratio", "as": "minimum"},
+                  {"op": "max", "field": "ratio", "as": "maximum"}
+                ],
+                "groupby": []
+              },
+              {
+                "window": [{"op": "count", "as": "cumulative_count"}, {"op": "row_number", "as": "rank"}],
+                "sort": [{"field": "ratio", "order": "ascending"}],
+                "groupby": [],
+                "frame": [null, 0],
+                "ignorePeers": false
+              },
+              {"calculate": "datum.cumulative_count / datum.n", "as": "cdf"},
+              {"calculate": "0", "as": "domain_min"},
+              {"calculate": "datum.metric === 'Time' ? time_extent[1] * 1.15 : memory_extent[1] * 1.15", "as": "domain_max"}
+            ],
+            "mark": {"type": "point", "filled": true, "size": 17, "opacity": 0.75, "stroke": "white", "strokeWidth": 0.3},
+            "encoding": {
+              "color": {
+                "field": "family",
+                "type": "nominal",
+                "scale": {
+                  "domain": ["math-growth", "eggcc", "luminal", "hardboiled", "misaal", "churchroad", "dialegg", "speq"],
+                  "range": ["#4e79a7", "#f28e2b", "#e15759", "#59a14f", "#7f7f7f", "#76b7b2", "#9c755f", "#af7aa1"]
+                },
+                "legend": null
+              },
+              "tooltip": [
+                {"field": "family_name", "title": "Family"},
+                {"field": "workload", "title": "Replay"},
+                {"field": "ratio", "title": "Proofs on / off", "format": ".4g"},
+                {"field": "cdf", "title": "Cumulative share", "format": ".1%"}
+              ],
+              "x": {
+                "field": "ratio",
+                "type": "quantitative",
+                "scale": {
+                  "type": "linear",
+                  "nice": false,
+                  "domain": {"expr": "parent.metric === 'Time' ? [0, time_extent[1] * 1.15] : [0, memory_extent[1] * 1.15]"}
+                },
+                "axis": {"title": "On / off", "labelExpr": "format(datum.value, ',') + '×'", "grid": false, "labelOverlap": "greedy", "tickCount": 5}
+              },
+              "y": {
+                "field": "cdf",
+                "type": "quantitative",
+                "scale": {"domain": [0, 1]},
+                "axis": {
+                  "title": "Share of selected replays",
+                  "values": [0, 0.25, 0.5, 0.75, 0.9, 1],
+                  "format": ".0%",
+                  "grid": true,
+                  "labelOverlap": false,
+                  "tickCount": 10
+                }
+              }
+            }
+          },
+          {
+            "transform": [
+              {"filter": "datum.eligible"},
+              {
+                "joinaggregate": [
+                  {"op": "count", "as": "plotted_n"},
+                  {"op": "min", "field": "ratio", "as": "minimum"},
+                  {"op": "max", "field": "ratio", "as": "maximum"}
+                ],
+                "groupby": []
+              },
+              {
+                "window": [{"op": "count", "as": "cumulative_count"}, {"op": "row_number", "as": "rank"}],
+                "sort": [{"field": "ratio", "order": "ascending"}],
+                "groupby": [],
+                "frame": [null, 0],
+                "ignorePeers": false
+              },
+              {"calculate": "datum.cumulative_count / datum.n", "as": "cdf"},
+              {"calculate": "0", "as": "domain_min"},
+              {"calculate": "datum.metric === 'Time' ? time_extent[1] * 1.15 : memory_extent[1] * 1.15", "as": "domain_max"},
+              {"calculate": "[0.5, 0.9]", "as": "percentiles"},
+              {"flatten": ["percentiles"], "as": ["percentile"]},
+              {"filter": "datum.rank === ceil(datum.percentile * datum.n)"}
+            ],
+            "mark": {"type": "rule", "color": "#444", "strokeDash": [3, 3]},
+            "encoding": {
+              "y": {"field": "percentile", "type": "quantitative"},
+              "y2": {"datum": 0},
+              "x": {
+                "field": "ratio",
+                "type": "quantitative",
+                "scale": {
+                  "type": "linear",
+                  "nice": false,
+                  "domain": {"expr": "parent.metric === 'Time' ? [0, time_extent[1] * 1.15] : [0, memory_extent[1] * 1.15]"}
+                },
+                "axis": {"title": "On / off", "labelExpr": "format(datum.value, ',') + '×'", "grid": false, "labelOverlap": "greedy", "tickCount": 5}
+              }
+            },
+            "name": "percentile_thresholds"
+          },
+          {
+            "transform": [
+              {"filter": "datum.eligible"},
+              {
+                "joinaggregate": [
+                  {"op": "count", "as": "plotted_n"},
+                  {"op": "min", "field": "ratio", "as": "minimum"},
+                  {"op": "max", "field": "ratio", "as": "maximum"}
+                ],
+                "groupby": []
+              },
+              {
+                "window": [{"op": "count", "as": "cumulative_count"}, {"op": "row_number", "as": "rank"}],
+                "sort": [{"field": "ratio", "order": "ascending"}],
+                "groupby": [],
+                "frame": [null, 0],
+                "ignorePeers": false
+              },
+              {"calculate": "datum.cumulative_count / datum.n", "as": "cdf"},
+              {"calculate": "0", "as": "domain_min"},
+              {"calculate": "datum.metric === 'Time' ? time_extent[1] * 1.15 : memory_extent[1] * 1.15", "as": "domain_max"},
+              {"calculate": "[0.5, 0.9]", "as": "percentiles"},
+              {"flatten": ["percentiles"], "as": ["percentile"]},
+              {"filter": "datum.rank === ceil(datum.percentile * datum.n)"},
+              {"calculate": "format(datum.percentile, '.0%') + ' ≤ ' + format(datum.ratio, '.3g') + '×'", "as": "threshold_label"}
+            ],
+            "mark": {
+              "type": "text",
+              "align": {"expr": "datum.ratio > (datum.domain_min + datum.domain_max) / 2 ? 'right' : 'left'"},
+              "baseline": "bottom",
+              "dx": {"expr": "datum.ratio > (datum.domain_min + datum.domain_max) / 2 ? -5 : 5"},
+              "dy": -8,
+              "fontSize": 12,
+              "fontWeight": "bold",
+              "color": "#333"
+            },
+            "encoding": {
+              "y": {"field": "percentile", "type": "quantitative"},
+              "text": {"field": "threshold_label"},
+              "x": {
+                "field": "ratio",
+                "type": "quantitative",
+                "scale": {
+                  "type": "linear",
+                  "nice": false,
+                  "domain": {"expr": "parent.metric === 'Time' ? [0, time_extent[1] * 1.15] : [0, memory_extent[1] * 1.15]"}
+                },
+                "axis": {"title": "On / off", "labelExpr": "format(datum.value, ',') + '×'", "grid": false, "labelOverlap": "greedy", "tickCount": 5}
+              }
+            },
+            "name": "percentile_labels"
+          },
+          {
+            "transform": [
+              {"aggregate": [{"op": "max", "field": "n", "as": "n"}, {"op": "max", "field": "measured_n", "as": "measured_n"}]},
+              {
+                "calculate": "!datum.n ? 'No selected replays yet' : datum.measured_n + '/' + datum.n + ' valid' + (datum.measured_n < ceil(0.9 * datum.n) ? '; 90% not established' : '')",
+                "as": "count_label"
+              }
+            ],
+            "mark": {"type": "text", "align": "right", "baseline": "bottom", "fontSize": 11, "color": "#555"},
+            "encoding": {"x": {"value": 295}, "y": {"value": -7}, "text": {"field": "count_label"}}
+          }
+        ]
+      },
+      "resolve": {"scale": {"x": "independent"}},
+      "spacing": 24
+    },
+    {
+      "vconcat": [
+        {
+          "height": 10,
+          "width": 630,
+          "data": {"values": [{}]},
+          "layer": [
+            {
+              "mark": {"type": "text", "align": "right", "fontSize": 11, "fontWeight": "bold"},
+              "encoding": {"x": {"value": 175}, "text": {"value": "Selected"}}
+            },
+            {
+              "mark": {"type": "text", "align": "right", "fontSize": 11, "fontWeight": "bold"},
+              "encoding": {"x": {"value": 250}, "text": {"value": "Time"}}
+            },
+            {
+              "mark": {"type": "text", "align": "right", "fontSize": 11, "fontWeight": "bold"},
+              "encoding": {"x": {"value": 320}, "text": {"value": "Memory"}}
+            },
+            {
+              "mark": {"type": "text", "align": "right", "fontSize": 11, "fontWeight": "bold"},
+              "encoding": {"x": {"value": 385}, "text": {"value": "Too fast"}}
+            },
+            {
+              "mark": {"type": "text", "align": "right", "fontSize": 11, "fontWeight": "bold"},
+              "encoding": {"x": {"value": 450}, "text": {"value": "Too slow"}}
+            },
+            {
+              "mark": {"type": "text", "align": "right", "fontSize": 11, "fontWeight": "bold"},
+              "encoding": {"x": {"value": 545}, "text": {"value": "Unresolved"}}
+            },
+            {
+              "mark": {"type": "text", "align": "right", "fontSize": 11, "fontWeight": "bold"},
+              "encoding": {"x": {"value": 630}, "text": {"value": "No replay"}}
+            }
+          ],
+          "title": {
+            "text": "Coverage by family",
+            "subtitle": [
+              "Time / Memory: valid ratios, Record / Record + extract. Selected is shared.",
+              "Too fast: ≤0.1 s; too slow: ≥30 s. Unresolved: incomplete or failed baseline."
+            ],
+            "anchor": "start",
+            "fontSize": 13,
+            "subtitleFontSize": 11
+          }
+        },
+        {
+          "title": null,
+          "width": 630,
+          "height": {"step": 19},
+          "transform": [
+            {
+              "aggregate": [
+                {"op": "sum", "field": "time_included", "as": "time_n"},
+                {"op": "sum", "field": "memory_included", "as": "memory_n"},
+                {"op": "sum", "field": "entry_count", "as": "catalog_n"},
+                {"op": "sum", "field": "cohort_count", "as": "cohort_n"},
+                {"op": "sum", "field": "too_fast_count", "as": "too_fast_n"},
+                {"op": "sum", "field": "too_slow_count", "as": "too_slow_n"},
+                {"op": "sum", "field": "unresolved_count", "as": "unresolved_n"},
+                {"op": "sum", "field": "source_count", "as": "source_n"},
+                {"op": "sum", "field": "time_record_included", "as": "time_record_n"},
+                {"op": "sum", "field": "memory_record_included", "as": "memory_record_n"},
+                {"op": "max", "field": "candidate_count", "as": "candidate_count"}
+              ],
+              "groupby": ["family", "family_name"]
+            },
+            {"calculate": "datum.candidate_count === 1 ? '' + datum.time_n : datum.time_record_n + ' / ' + datum.time_n", "as": "time_label"},
+            {"calculate": "datum.candidate_count === 1 ? '' + datum.memory_n : datum.memory_record_n + ' / ' + datum.memory_n", "as": "memory_label"}
+          ],
+          "encoding": {
+            "y": {
+              "field": "family",
+              "type": "nominal",
+              "sort": ["math-growth", "eggcc", "luminal", "hardboiled", "misaal", "churchroad", "dialegg", "speq"],
+              "axis": null
+            }
+          },
+          "layer": [
+            {
+              "mark": {"type": "point", "filled": true, "size": 45},
+              "encoding": {
+                "x": {"value": 5},
+                "color": {
+                  "field": "family",
+                  "type": "nominal",
+                  "scale": {
+                    "domain": ["math-growth", "eggcc", "luminal", "hardboiled", "misaal", "churchroad", "dialegg", "speq"],
+                    "range": ["#4e79a7", "#f28e2b", "#e15759", "#59a14f", "#7f7f7f", "#76b7b2", "#9c755f", "#af7aa1"]
+                  },
+                  "legend": null
+                }
+              }
+            },
+            {"mark": {"type": "text", "align": "left", "fontSize": 12}, "encoding": {"x": {"value": 17}, "text": {"field": "family_name"}}},
+            {"mark": {"type": "text", "align": "right", "fontSize": 12}, "encoding": {"x": {"value": 175}, "text": {"field": "cohort_n"}}},
+            {"mark": {"type": "text", "align": "right", "fontSize": 12}, "encoding": {"x": {"value": 250}, "text": {"field": "time_label"}}},
+            {"mark": {"type": "text", "align": "right", "fontSize": 12}, "encoding": {"x": {"value": 320}, "text": {"field": "memory_label"}}},
+            {"mark": {"type": "text", "align": "right", "fontSize": 12}, "encoding": {"x": {"value": 385}, "text": {"field": "too_fast_n"}}},
+            {"mark": {"type": "text", "align": "right", "fontSize": 12}, "encoding": {"x": {"value": 450}, "text": {"field": "too_slow_n"}}},
+            {"mark": {"type": "text", "align": "right", "fontSize": 12}, "encoding": {"x": {"value": 545}, "text": {"field": "unresolved_n"}}},
+            {"mark": {"type": "text", "align": "right", "fontSize": 12}, "encoding": {"x": {"value": 630}, "text": {"field": "source_n"}}}
+          ]
+        }
+      ],
+      "spacing": 0
+    },
+    {
+      "width": 630,
+      "height": {"step": 17},
+      "transform": [
+        {"filter": "datum.selected && datum.issue"},
+        {"aggregate": [{"op": "count", "as": "count"}], "groupby": ["metric", "issue", "candidate_mode"]},
+        {
+          "calculate": "'Selected without valid ratio — ' + datum.candidate_mode + ', ' + datum.metric + ': ' + datum.count + ', ' + datum.issue",
+          "as": "outcome"
+        }
+      ],
+      "mark": {"type": "text", "align": "left", "fontSize": 11, "color": "#555"},
+      "encoding": {"x": {"value": 0}, "y": {"field": "outcome", "type": "nominal", "axis": null}, "text": {"field": "outcome"}}
+    }
+  ],
+  "spacing": 26,
+  "resolve": {"scale": {"x": "independent", "y": "independent", "color": "shared"}},
+  "config": {
+    "background": "white",
+    "font": "Arial",
+    "view": {"stroke": null},
+    "axis": {
+      "labelFontSize": 11,
+      "titleFontSize": 12,
+      "titleFontWeight": "normal",
+      "gridColor": "#ededed",
+      "domainColor": "#999",
+      "tickColor": "#999",
+      "labelPadding": 5,
+      "titlePadding": 9
+    },
+    "title": {"anchor": "start", "fontSize": 18, "subtitleFontSize": 11, "subtitlePadding": 7, "subtitleLineHeight": 15}
+  },
+  "params": [
+    {"name": "target_label", "value": "figures"},
+    {
+      "name": "endpoints",
+      "value": [
+        {"engine": "Egglog", "proof_mode": "Off", "treatment": "off"},
+        {"engine": "Egglog", "proof_mode": "Record", "treatment": "proofs"},
+        {"engine": "Egglog", "proof_mode": "Record + extract", "treatment": "proof-extraction"}
+      ]
+    }
+  ]
+}
