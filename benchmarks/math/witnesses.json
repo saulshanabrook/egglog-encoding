@@ -1,0 +1,57 @@
+[
+  {
+    "iterations": 1,
+    "left": "(i (+ x (cos x)) x)",
+    "right": "(+ (i x x) (i (cos x) x))"
+  },
+  {
+    "iterations": 2,
+    "left": "(i (* (d x (cos x)) (i x x)) x)",
+    "right": "(- (* (d x (cos x)) (i (i x x) x)) (i (* (d x (d x (cos x))) (i (i x x) x)) x))"
+  },
+  {
+    "iterations": 3,
+    "left": "(i (* (d x (d x (cos x))) (i (i x x) x)) x)",
+    "right": "(- (* (d x (d x (cos x))) (i (i (i x x) x) x)) (i (* (d x (d x (d x (cos x)))) (i (i (i x x) x) x)) x))"
+  },
+  {
+    "iterations": 4,
+    "left": "(i (* (d x (d x (d x (cos x)))) (i (i (i x x) x) x)) x)",
+    "right": "(- (* (d x (d x (d x (cos x)))) (i (i (i (i x x) x) x) x)) (i (* (d x (d x (d x (d x (cos x))))) (i (i (i (i x x) x) x) x)) x))"
+  },
+  {
+    "iterations": 5,
+    "left": "(i (* (d x (d x (d x (d x (cos x))))) (i (i (i (i x x) x) x) x)) x)",
+    "right": "(- (* (d x (d x (d x (d x (cos x))))) (i (i (i (i (i x x) x) x) x) x)) (i (* (d x (d x (d x (d x (d x (cos x)))))) (i (i (i (i (i x x) x) x) x) x)) x))"
+  },
+  {
+    "iterations": 6,
+    "left": "(i (* (d x (d x (d x (d x (d x (cos x)))))) (i (i (i (i (i x x) x) x) x) x)) x)",
+    "right": "(- (* (d x (d x (d x (d x (d x (cos x)))))) (i (i (i (i (i (i x x) x) x) x) x) x)) (i (* (d x (d x (d x (d x (d x (d x (cos x))))))) (i (i (i (i (i (i x x) x) x) x) x) x)) x))"
+  },
+  {
+    "iterations": 7,
+    "left": "(i (* (d x (d x (d x (d x (d x (d x (cos x))))))) (i (i (i (i (i (i x x) x) x) x) x) x)) x)",
+    "right": "(- (* (d x (d x (d x (d x (d x (d x (cos x))))))) (i (i (i (i (i (i (i x x) x) x) x) x) x) x)) (i (* (d x (d x (d x (d x (d x (d x (d x (cos x)))))))) (i (i (i (i (i (i (i x x) x) x) x) x) x) x)) x))"
+  },
+  {
+    "iterations": 8,
+    "left": "(i (* (d x (d x (d x (d x (d x (d x (d x (cos x)))))))) (i (i (i (i (i (i (i x x) x) x) x) x) x) x)) x)",
+    "right": "(- (* (d x (d x (d x (d x (d x (d x (d x (cos x)))))))) (i (i (i (i (i (i (i (i x x) x) x) x) x) x) x) x)) (i (* (d x (d x (d x (d x (d x (d x (d x (d x (cos x))))))))) (i (i (i (i (i (i (i (i x x) x) x) x) x) x) x) x)) x))"
+  },
+  {
+    "iterations": 9,
+    "left": "(i (* (d x (d x (d x (d x (d x (d x (d x (d x (cos x))))))))) (i (i (i (i (i (i (i (i x x) x) x) x) x) x) x) x)) x)",
+    "right": "(- (* (d x (d x (d x (d x (d x (d x (d x (d x (cos x))))))))) (i (i (i (i (i (i (i (i (i x x) x) x) x) x) x) x) x) x)) (i (* (d x (d x (d x (d x (d x (d x (d x (d x (d x (cos x)))))))))) (i (i (i (i (i (i (i (i (i x x) x) x) x) x) x) x) x) x)) x))"
+  },
+  {
+    "iterations": 10,
+    "left": "(i (* (d x (d x (d x (d x (d x (d x (d x (d x (d x (cos x)))))))))) (i (i (i (i (i (i (i (i (i x x) x) x) x) x) x) x) x) x)) x)",
+    "right": "(- (* (d x (d x (d x (d x (d x (d x (d x (d x (d x (cos x)))))))))) (i (i (i (i (i (i (i (i (i (i x x) x) x) x) x) x) x) x) x) x)) (i (* (d x (d x (d x (d x (d x (d x (d x (d x (d x (d x (cos x))))))))))) (i (i (i (i (i (i (i (i (i (i x x) x) x) x) x) x) x) x) x) x)) x))"
+  },
+  {
+    "iterations": 11,
+    "left": "(+ (cos x) (cos x))",
+    "right": "(d x (+ (sin x) (sin x)))"
+  }
+]

@@ -13,3 +13,9 @@
 /.ruff_cache/
 __pycache__/
 *.py[cod]
+/figures/**/*.data.json
+/figures/**/*.svg
+/figures/**/*.png
+/figures/node_modules/
+/figures/references/slides/
+/figures/review/

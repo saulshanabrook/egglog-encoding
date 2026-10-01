@@ -1,0 +1,337 @@
+std::vector<std::string> InstNames = {"llvm.hydride._mm512_srav_epi16_dsl",
+"llvm.hydride._mm_srav_epi16_dsl",
+"llvm.hydride._mm_srav_epi32_dsl",
+"llvm.hydride._mm512_srav_epi32_dsl",
+"llvm.hydride._mm512_srav_epi64_dsl",
+"llvm.hydride._mm256_srav_epi64_dsl",
+"llvm.hydride._mm_srav_epi64_dsl",
+"llvm.hydride._mm256_srav_epi16_dsl",
+"llvm.hydride._mm256_srav_epi32_dsl"};
+      if(isNameMatch(CI, InstNames)) { 
+        
+            if(isAMatch(CI, 1, 0)
+       && isAMatch(CI, 3, 65535)
+       && isAMatch(CI, 4, 177)
+       && isAMatch(CI, 5, 16)
+       && isAMatch(CI, 6, 512)
+       && isAMatch(CI, 7, 512)
+       && isAMatch(CI, 8, 0)
+       && isAMatch(CI, 9, 512)
+       && isAMatch(CI, 10, 16)
+       && isAMatch(CI, 11, 0)
+       && isAMatch(CI, 12, 16)
+       && isAMatch(CI, 13, 16)
+       && isAMatch(CI, 14, 1)
+       && isAMatch(CI, 15, 0)) {
+              auto *InstFunction = I->getModule()->getFunction("_mm512_srav_epi16_wrapper"); 
+              errs() << "INST FUNCTION NAME: " << "_mm512_srav_epi16_wrapper" << "\n"; 
+              std::vector<int> Permutation = {1,-1,0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1}; 
+              std::vector<Value *> Args = getArgsAfterPermutation(CI, InstFunction, Permutation, CI); 
+              if (Args.size() != 0) {
+                auto *NewCallInst = CallInst::Create(InstFunction, Args, "", CI); 
+                errs() << "NEW INSTUCTION:" << *NewCallInst << "\n"; 
+                InstToInstMap[CI] = NewCallInst; 
+                ToBeRemoved.insert(CI); 
+                return true; 
+              }
+            } 
+          
+            if(isAMatch(CI, 1, 0)
+       && isAMatch(CI, 3, 65535)
+       && isAMatch(CI, 4, 177)
+       && isAMatch(CI, 5, 16)
+       && isAMatch(CI, 6, 128)
+       && isAMatch(CI, 7, 128)
+       && isAMatch(CI, 8, 0)
+       && isAMatch(CI, 9, 128)
+       && isAMatch(CI, 10, 16)
+       && isAMatch(CI, 11, 0)
+       && isAMatch(CI, 12, 16)
+       && isAMatch(CI, 13, 16)
+       && isAMatch(CI, 14, 1)
+       && isAMatch(CI, 15, 0)) {
+              auto *InstFunction = I->getModule()->getFunction("_mm_srav_epi16_wrapper"); 
+              errs() << "INST FUNCTION NAME: " << "_mm_srav_epi16_wrapper" << "\n"; 
+              std::vector<int> Permutation = {1,-1,0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1}; 
+              std::vector<Value *> Args = getArgsAfterPermutation(CI, InstFunction, Permutation, CI); 
+              if (Args.size() != 0) {
+                auto *NewCallInst = CallInst::Create(InstFunction, Args, "", CI); 
+                errs() << "NEW INSTUCTION:" << *NewCallInst << "\n"; 
+                InstToInstMap[CI] = NewCallInst; 
+                ToBeRemoved.insert(CI); 
+                return true; 
+              }
+            } 
+          
+            if(isAMatch(CI, 1, 0)
+       && isAMatch(CI, 3, 4294967295)
+       && isAMatch(CI, 4, 177)
+       && isAMatch(CI, 5, 32)
+       && isAMatch(CI, 6, 128)
+       && isAMatch(CI, 7, 128)
+       && isAMatch(CI, 8, 0)
+       && isAMatch(CI, 9, 128)
+       && isAMatch(CI, 10, 32)
+       && isAMatch(CI, 11, 0)
+       && isAMatch(CI, 12, 32)
+       && isAMatch(CI, 13, 32)
+       && isAMatch(CI, 14, 1)
+       && isAMatch(CI, 15, 0)) {
+              auto *InstFunction = I->getModule()->getFunction("_mm_srav_epi32_wrapper"); 
+              errs() << "INST FUNCTION NAME: " << "_mm_srav_epi32_wrapper" << "\n"; 
+              std::vector<int> Permutation = {1,-1,0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1}; 
+              std::vector<Value *> Args = getArgsAfterPermutation(CI, InstFunction, Permutation, CI); 
+              if (Args.size() != 0) {
+                auto *NewCallInst = CallInst::Create(InstFunction, Args, "", CI); 
+                errs() << "NEW INSTUCTION:" << *NewCallInst << "\n"; 
+                InstToInstMap[CI] = NewCallInst; 
+                ToBeRemoved.insert(CI); 
+                return true; 
+              }
+            } 
+          
+            if(isAMatch(CI, 1, 0)
+       && isAMatch(CI, 3, 4294967295)
+       && isAMatch(CI, 4, 177)
+       && isAMatch(CI, 5, 32)
+       && isAMatch(CI, 6, 512)
+       && isAMatch(CI, 7, 512)
+       && isAMatch(CI, 8, 0)
+       && isAMatch(CI, 9, 512)
+       && isAMatch(CI, 10, 32)
+       && isAMatch(CI, 11, 0)
+       && isAMatch(CI, 12, 32)
+       && isAMatch(CI, 13, 32)
+       && isAMatch(CI, 14, 1)
+       && isAMatch(CI, 15, 0)) {
+              auto *InstFunction = I->getModule()->getFunction("_mm512_srav_epi32_wrapper"); 
+              errs() << "INST FUNCTION NAME: " << "_mm512_srav_epi32_wrapper" << "\n"; 
+              std::vector<int> Permutation = {1,-1,0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1}; 
+              std::vector<Value *> Args = getArgsAfterPermutation(CI, InstFunction, Permutation, CI); 
+              if (Args.size() != 0) {
+                auto *NewCallInst = CallInst::Create(InstFunction, Args, "", CI); 
+                errs() << "NEW INSTUCTION:" << *NewCallInst << "\n"; 
+                InstToInstMap[CI] = NewCallInst; 
+                ToBeRemoved.insert(CI); 
+                return true; 
+              }
+            } 
+          
+            if(isAMatch(CI, 1, 0)
+       && isAMatch(CI, 3, 18446744073709551615)
+       && isAMatch(CI, 4, 177)
+       && isAMatch(CI, 5, 64)
+       && isAMatch(CI, 6, 512)
+       && isAMatch(CI, 7, 512)
+       && isAMatch(CI, 8, 0)
+       && isAMatch(CI, 9, 512)
+       && isAMatch(CI, 10, 64)
+       && isAMatch(CI, 11, 0)
+       && isAMatch(CI, 12, 64)
+       && isAMatch(CI, 13, 64)
+       && isAMatch(CI, 14, 1)
+       && isAMatch(CI, 15, 0)) {
+              auto *InstFunction = I->getModule()->getFunction("_mm512_srav_epi64_wrapper"); 
+              errs() << "INST FUNCTION NAME: " << "_mm512_srav_epi64_wrapper" << "\n"; 
+              std::vector<int> Permutation = {1,-1,0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1}; 
+              std::vector<Value *> Args = getArgsAfterPermutation(CI, InstFunction, Permutation, CI); 
+              if (Args.size() != 0) {
+                auto *NewCallInst = CallInst::Create(InstFunction, Args, "", CI); 
+                errs() << "NEW INSTUCTION:" << *NewCallInst << "\n"; 
+                InstToInstMap[CI] = NewCallInst; 
+                ToBeRemoved.insert(CI); 
+                return true; 
+              }
+            } 
+          
+            if(isAMatch(CI, 1, 0)
+       && isAMatch(CI, 3, 18446744073709551615)
+       && isAMatch(CI, 4, 177)
+       && isAMatch(CI, 5, 64)
+       && isAMatch(CI, 6, 256)
+       && isAMatch(CI, 7, 256)
+       && isAMatch(CI, 8, 0)
+       && isAMatch(CI, 9, 256)
+       && isAMatch(CI, 10, 64)
+       && isAMatch(CI, 11, 0)
+       && isAMatch(CI, 12, 64)
+       && isAMatch(CI, 13, 64)
+       && isAMatch(CI, 14, 1)
+       && isAMatch(CI, 15, 0)) {
+              auto *InstFunction = I->getModule()->getFunction("_mm256_srav_epi64_wrapper"); 
+              errs() << "INST FUNCTION NAME: " << "_mm256_srav_epi64_wrapper" << "\n"; 
+              std::vector<int> Permutation = {1,-1,0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1}; 
+              std::vector<Value *> Args = getArgsAfterPermutation(CI, InstFunction, Permutation, CI); 
+              if (Args.size() != 0) {
+                auto *NewCallInst = CallInst::Create(InstFunction, Args, "", CI); 
+                errs() << "NEW INSTUCTION:" << *NewCallInst << "\n"; 
+                InstToInstMap[CI] = NewCallInst; 
+                ToBeRemoved.insert(CI); 
+                return true; 
+              }
+            } 
+          
+            if(isAMatch(CI, 1, 0)
+       && isAMatch(CI, 3, 18446744073709551615)
+       && isAMatch(CI, 4, 177)
+       && isAMatch(CI, 5, 64)
+       && isAMatch(CI, 6, 128)
+       && isAMatch(CI, 7, 128)
+       && isAMatch(CI, 8, 0)
+       && isAMatch(CI, 9, 128)
+       && isAMatch(CI, 10, 64)
+       && isAMatch(CI, 11, 0)
+       && isAMatch(CI, 12, 64)
+       && isAMatch(CI, 13, 64)
+       && isAMatch(CI, 14, 1)
+       && isAMatch(CI, 15, 0)) {
+              auto *InstFunction = I->getModule()->getFunction("_mm_srav_epi64_wrapper"); 
+              errs() << "INST FUNCTION NAME: " << "_mm_srav_epi64_wrapper" << "\n"; 
+              std::vector<int> Permutation = {1,-1,0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1}; 
+              std::vector<Value *> Args = getArgsAfterPermutation(CI, InstFunction, Permutation, CI); 
+              if (Args.size() != 0) {
+                auto *NewCallInst = CallInst::Create(InstFunction, Args, "", CI); 
+                errs() << "NEW INSTUCTION:" << *NewCallInst << "\n"; 
+                InstToInstMap[CI] = NewCallInst; 
+                ToBeRemoved.insert(CI); 
+                return true; 
+              }
+            } 
+          
+            if(isAMatch(CI, 1, 0)
+       && isAMatch(CI, 3, 65535)
+       && isAMatch(CI, 4, 177)
+       && isAMatch(CI, 5, 16)
+       && isAMatch(CI, 6, 256)
+       && isAMatch(CI, 7, 256)
+       && isAMatch(CI, 8, 0)
+       && isAMatch(CI, 9, 256)
+       && isAMatch(CI, 10, 16)
+       && isAMatch(CI, 11, 0)
+       && isAMatch(CI, 12, 16)
+       && isAMatch(CI, 13, 16)
+       && isAMatch(CI, 14, 1)
+       && isAMatch(CI, 15, 0)) {
+              auto *InstFunction = I->getModule()->getFunction("_mm256_srav_epi16_wrapper"); 
+              errs() << "INST FUNCTION NAME: " << "_mm256_srav_epi16_wrapper" << "\n"; 
+              std::vector<int> Permutation = {1,-1,0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1}; 
+              std::vector<Value *> Args = getArgsAfterPermutation(CI, InstFunction, Permutation, CI); 
+              if (Args.size() != 0) {
+                auto *NewCallInst = CallInst::Create(InstFunction, Args, "", CI); 
+                errs() << "NEW INSTUCTION:" << *NewCallInst << "\n"; 
+                InstToInstMap[CI] = NewCallInst; 
+                ToBeRemoved.insert(CI); 
+                return true; 
+              }
+            } 
+          
+            if(isAMatch(CI, 1, 0)
+       && isAMatch(CI, 3, 4294967295)
+       && isAMatch(CI, 4, 177)
+       && isAMatch(CI, 5, 32)
+       && isAMatch(CI, 6, 256)
+       && isAMatch(CI, 7, 256)
+       && isAMatch(CI, 8, 0)
+       && isAMatch(CI, 9, 256)
+       && isAMatch(CI, 10, 32)
+       && isAMatch(CI, 11, 0)
+       && isAMatch(CI, 12, 32)
+       && isAMatch(CI, 13, 32)
+       && isAMatch(CI, 14, 1)
+       && isAMatch(CI, 15, 0)) {
+              auto *InstFunction = I->getModule()->getFunction("_mm256_srav_epi32_wrapper"); 
+              errs() << "INST FUNCTION NAME: " << "_mm256_srav_epi32_wrapper" << "\n"; 
+              std::vector<int> Permutation = {1,-1,0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1}; 
+              std::vector<Value *> Args = getArgsAfterPermutation(CI, InstFunction, Permutation, CI); 
+              if (Args.size() != 0) {
+                auto *NewCallInst = CallInst::Create(InstFunction, Args, "", CI); 
+                errs() << "NEW INSTUCTION:" << *NewCallInst << "\n"; 
+                InstToInstMap[CI] = NewCallInst; 
+                ToBeRemoved.insert(CI); 
+                return true; 
+              }
+            } 
+           
+      } 
+    }
+    
+
+    {
+      
+std::vector<std::string> InstNames = {"llvm.hydride._mm512_extracti64x2_epi64_dsl",
+"llvm.hydride._mm512_extracti32x4_epi32_dsl"};
+      if(isNameMatch(CI, InstNames)) { 
+        
+            if(isAMatch(CI, 0, 2833)
+       && isAMatch(CI, 2, 2832)
+       && isAMatch(CI, 3, 2817)
+       && isAMatch(CI, 4, 2816)
+       && isAMatch(CI, 6, 128)
+       && isAMatch(CI, 7, 128)
+       && isAMatch(CI, 8, 0)
+       && isAMatch(CI, 9, 128)
+       && isAMatch(CI, 10, 128)
+       && isAMatch(CI, 11, 2)
+       && isAMatch(CI, 12, 0)
+       && isAMatch(CI, 13, 0)
+       && isAMatch(CI, 14, 0)
+       && isAMatch(CI, 15, 0)
+       && isAMatch(CI, 16, 128)
+       && isAMatch(CI, 17, 0)
+       && isAMatch(CI, 18, 256)
+       && isAMatch(CI, 19, 0)
+       && isAMatch(CI, 20, 384)
+       && isAMatch(CI, 21, 0)) {
+              auto *InstFunction = I->getModule()->getFunction("_mm512_extracti64x2_epi64_wrapper"); 
+              errs() << "INST FUNCTION NAME: " << "_mm512_extracti64x2_epi64_wrapper" << "\n"; 
+              std::vector<int> Permutation = {-1,1,-1,-1,-1,0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1}; 
+              std::vector<Value *> Args = getArgsAfterPermutation(CI, InstFunction, Permutation, CI); 
+              if (Args.size() != 0) {
+                auto *NewCallInst = CallInst::Create(InstFunction, Args, "", CI); 
+                errs() << "NEW INSTUCTION:" << *NewCallInst << "\n"; 
+                InstToInstMap[CI] = NewCallInst; 
+                ToBeRemoved.insert(CI); 
+                return true; 
+              }
+            } 
+          
+            if(isAMatch(CI, 0, 2833)
+       && isAMatch(CI, 2, 2832)
+       && isAMatch(CI, 3, 2817)
+       && isAMatch(CI, 4, 2816)
+       && isAMatch(CI, 6, 128)
+       && isAMatch(CI, 7, 128)
+       && isAMatch(CI, 8, 0)
+       && isAMatch(CI, 9, 128)
+       && isAMatch(CI, 10, 128)
+       && isAMatch(CI, 11, 2)
+       && isAMatch(CI, 12, 0)
+       && isAMatch(CI, 13, 0)
+       && isAMatch(CI, 14, 0)
+       && isAMatch(CI, 15, 0)
+       && isAMatch(CI, 16, 128)
+       && isAMatch(CI, 17, 0)
+       && isAMatch(CI, 18, 256)
+       && isAMatch(CI, 19, 0)
+       && isAMatch(CI, 20, 384)
+       && isAMatch(CI, 21, 0)) {
+              auto *InstFunction = I->getModule()->getFunction("_mm512_extracti32x4_epi32_wrapper"); 
+              errs() << "INST FUNCTION NAME: " << "_mm512_extracti32x4_epi32_wrapper" << "\n"; 
+              std::vector<int> Permutation = {-1,1,-1,-1,-1,0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1}; 
+              std::vector<Value *> Args = getArgsAfterPermutation(CI, InstFunction, Permutation, CI); 
+              if (Args.size() != 0) {
+                auto *NewCallInst = CallInst::Create(InstFunction, Args, "", CI); 
+                errs() << "NEW INSTUCTION:" << *NewCallInst << "\n"; 
+                InstToInstMap[CI] = NewCallInst; 
+                ToBeRemoved.insert(CI); 
+                return true; 
+              }
+            } 
+           
+      } 
+    }
+    
+
+    {
+      
+bool X86LegalizationPass::runOnFunction(Function &F) {}

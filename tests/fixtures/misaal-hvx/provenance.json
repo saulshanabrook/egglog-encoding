@@ -1,0 +1,13 @@
+{
+  "misaal_revision": "44ff893445d664cd87f52b08a138260ed2015ba8",
+  "hydride_revision": "beb825327fc946d65032e96f7cde9acf3d24c13e",
+  "semantics_source": "lib/sema/hexsemantics_new.py",
+  "semantics_sha256": "eef4d1fcb30db190dc1947a55040203c33aff16e7262d52b36e26fe1cc0c0b75",
+  "generator_source": "codegen-generator/tools/low-level-codegen/InstSelectors/hexagon/RoseHexLegalizerGen.py",
+  "generator_sha256": "659d800eef85fa85877e8181d0b75e804b144a829245aed28604a5a1b8034494",
+  "source_lowering_groups_source": "lib/sema/hexsemantics_new.py and lib/sema/hex_swizzles.py",
+  "swizzles_sha256": "e81a883661f83667f65e296decc7f0969d4046279facb0318afc8812771ed375",
+  "common_source": "codegen-generator/tools/low-level-codegen/InstSelectors/common/Legalizer.cpp",
+  "common_sha256": "cf595e9c1ff60c46234ba327a8ea10738b82e934b0a42f46c18fc5ab1ce79860",
+  "source_lowerings_fixture_sha256": "e35415f08467bd21b1269b6916215e0cc4e41a9a7714ed477809197309bbafa9"
+}
