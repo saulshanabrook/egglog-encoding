@@ -4,7 +4,7 @@
 ;; Source: https://github.com/RafaeNoor/MISAAL/tree/c098f0f289d03f0c58db1ef85d9b4ff7eef9dec4
 ;; Original: test/compiler/egg_compiler/test_hvx_dot_prod.egg
 ;; Original SHA-256: 158d265a52e1b82143f573748a0f600d3d4646c71c98df53bc4da33aa98d4864
-;; Adaptations: use current `$` global syntax and replace extraction-only success with an equality check.
+;; Adaptations: use current `$` global syntax; retain the original schedule and extraction.
 ;; Reproduce: uv run python scripts/paper_benchmarks/materialize.py misaal --checkout MISAAL --output OUT
 
 ; Declaring constructs for instructions
@@ -13956,4 +13956,4 @@ $reg_0
 2048
 ))
 (run 5)
-(check (= $srcexpr (typed_vec-add (hvx_swizzle_43 (hexagon_V6_vmpybv_128B (SYMBV 1) (SYMBV 2) 1024 1024 0 512 8 0 512 8 16 1 1 1 16 1024 1 1 8 2 0) 2048 32 0 32 16 64 2 0) (SYMBV 0) 16 2048)))
+(extract $srcexpr)

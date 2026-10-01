@@ -215,7 +215,7 @@ fn rebuild_with_leaders(
 /// a uniform per-child rule: an eq-sort element maps to its union-find leader
 /// (via the single `UF_<E>` row), a
 /// container element is recursively rebuilt, and anything else is unchanged.
-fn rebuild_container_value_rec(
+pub(super) fn rebuild_container_value_rec(
     state: &mut ReadState,
     sort: &ArcSort,
     value: Value,

@@ -1,0 +1,6 @@
+---
+source: egglog/tests/files.rs
+assertion_line: 297
+expression: proof_snapshot
+---
+(Fiat (= "@hello" "@hello"))

@@ -15,14 +15,6 @@ const MANUAL_PROOF_DISABLED_FILES: &[ManualProofDisable] = &[
         reason: "the full benchmark exceeds the routine proof harness resource budget; the bounded eggcc-2mm-pass1 fixture covers this workload in proof benchmarks",
     },
     ManualProofDisable {
-        file: "subsume.egg",
-        reason: "proof-testing rewrites a check on a subsumed expression into a prove query that no longer matches",
-    },
-    ManualProofDisable {
-        file: "subsume-relation.egg",
-        reason: "proof-testing rewrites a check on a subsumed relation row into a prove query that no longer matches",
-    },
-    ManualProofDisable {
         file: "llama.egg",
         reason: "luminal transformer benchmark: too large to run in proof modes as part of the routine test suite",
     },

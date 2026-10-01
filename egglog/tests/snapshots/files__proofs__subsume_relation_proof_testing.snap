@@ -1,0 +1,10 @@
+---
+source: egglog/tests/files.rs
+assertion_line: 289
+expression: proof_snapshot
+---
+(Congr
+  (= (R (A) (C)) (R (A) (B)))
+  (Fiat (= (R (A) (C)) (R (A) (C))))
+  (Sym (= (C) (B)) (Fiat (= (B) (C))))
+  1)
