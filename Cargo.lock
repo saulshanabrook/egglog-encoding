@@ -550,6 +550,7 @@ dependencies = [
  "egglog-add-primitive",
  "egglog-ast",
  "egglog-bridge",
+ "egglog-concurrency",
  "egglog-core-relations",
  "egglog-numeric-id",
  "egglog-reports",
