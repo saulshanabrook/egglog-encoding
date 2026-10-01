@@ -1,10 +1,11 @@
 # Disequality encodings and a proof benchmark
 
-This is an egglog encoding/proof-overhead experiment inspired by the parameter
-analysis in [Dis-Equality Graphs](https://doi.org/10.1145/3704913), not a
-reproduction of the paper's native performance results. Neither native artifact
-engine is built or measured here. The earlier artifact/integration PRs remain
-independent.
+This experiment compares two Egglog disequality encodings, their proof overhead,
+and the authors' four native implementations from
+[Dis-Equality Graphs](https://doi.org/10.1145/3704913). The author-supplied native
+input is canonical; the checked-in Egglog program is its deterministic
+translation. This is a fixed-workload comparison, not a reproduction of the
+paper's parameter sweep or published timings.
 
 ## Encodings
 
@@ -35,60 +36,34 @@ implements the paper's semantics.
 
 ## Workload and regeneration
 
-The regeneration script downloads [the pinned artifact](https://zenodo.org/records/13938878),
-verifies the complete archive and generator hashes, and extracts only
-`parameter-analysis/rand_exprs.py` into a local cache. It executes that file
-unchanged, retains its first 60,000 expressions, and calls its own `gen(5)` for
-the remainder using the same seeded random stream. No artifact source is
-vendored, no native engine is executed, and only the reviewed generator member
-is run.
+[parameter-analysis.in](parameter-analysis.in) is the complete, unchanged
+400,000-expression corpus supplied with the four author drivers. Native commands
+use `INPUT.in 100000 10000`: six fixed numeral disequalities, then 100,000 equality
+pairs, then 10,000 disequality pairs. The remaining 180,000 expressions are read
+but not asserted. The numeral initialization preserves the authors' exclusive
+upper bound, which constrains distinct pairs among `1` through `4`, excluding `5`.
 
-Adjacent expressions form pairs: the first 10,000 pairs are disequalities and
-the next 100,000 are equalities. The benchmark also asserts the ten distinct
-numeral pairs described by the paper; the archive driver's off-by-one loop
-asserts only six. Numerals become `N1` through `N5`, with `f`, `g`, and `h`
-retaining their original arities. Every assertion is a top-level action.
-
-Selection tries successive seeds, accepting the first contradiction confirmed
-by both encodings and checked in both encodings under `--proof-testing`. It neither filters pairs
-nor appends an artificial contradiction. An ordinary consistent result permits
-a retry; disagreement, timeout, crash, or proof failure stops selection.
-This conditioning makes the fixture suitable for measuring contradiction proofs,
-not for estimating the frequency of contradictions or unbiased random-input
-performance. Generation and selection are outside the timed benchmark.
+[parameter-analysis.egg](parameter-analysis.egg) mirrors these assertions and
+their order. Numerals become `N1` through `N5`; functions `f`, `g`, and `h` retain
+arities one, two, and three. Its final command is `(check-contradiction)`.
+Regenerate it without running any engine or generating new random expressions:
 
 ```sh
-cargo build --release -p egglog-experimental
-uv run --locked python benchmarks/disequality/generate.py
+python benchmarks/disequality/native/generate.py
 ```
 
-The accepted seed and Python version are recorded in the `.egg` header. To
-reproduce that exact fixture, use that Python version and the recorded seed
-with `--max-attempts 1`. The archive and original generator stay in the ignored
-user cache; the full `.egg` file is the reviewable, runnable benchmark artifact.
-
-The committed fixture uses seed **2026** and CPython **3.13.11**. Seed 2025 was
-consistent in both encodings; 2026 was the first contradictory candidate. Both
-encodings passed strict proof checking before the fixture was accepted.
-The 62,910,081-byte file has SHA-256
-`88ea961380031ea7cd46f805888bdba638d3a86cb8da67191938044abdae83f3`.
-
-```sh
-uv run --python 3.13.11 --locked python benchmarks/disequality/generate.py --seed 2026 --max-attempts 1
-```
+All four unchanged native implementations returned a contradiction in diagnostic
+runs on this corpus. That result does not establish Egglog proof validity;
+proof testing remains a separate operation. No seed selection or per-pair
+filtering is used. See [native provenance](native/README.md) for input/source
+hashes, DE reconstruction, and licensing.
 
 ## Comparisons
 
-The runner records both endpoint encodings in its cache and report. Old report
-caches require recomputation after the schema change. These comparisons include
-parsing, compilation, ingestion, propagation, and the selected proof work:
-
-The full-size proof runs take minutes and substantial memory. The benchmark
-and regeneration timeout defaults are 30 minutes per process, not an expected
-runtime. Use `--rounds 1` for an initial diagnostic; the runner normally collects
-six observations per endpoint. Missing or timed-out results are not speedups.
-The full workload is included by default in `./bench.py`, but not in the CI
-`make benchmark-smoke` target, which uses small fixtures.
+The runner records the actual physical input and executable for each endpoint.
+Old observations on the previous seed-selected fixture are not measurements of
+this corpus. Builds and conversion are outside the measured whole-process time;
+reading, parsing, graph execution, checking, and shutdown remain included.
 
 ```sh
 # NE: proof recording versus ordinary execution.
@@ -98,13 +73,16 @@ The full workload is included by default in `./bench.py`, but not in the CI
 ./bench.py benchmarks/disequality/parameter-analysis.egg --treatment off --compare-treatment off \
   --disequality-encoding ee --compare-disequality-encoding nee
 
-# Optional EE strict-proof run; not part of the recorded timing comparison.
+# Optional EE strict-proof run; not part of the native timing comparison.
 ./bench.py benchmarks/disequality/parameter-analysis.egg --treatment proof-testing \
   --disequality-encoding ee --compare-disequality-encoding ee
 ```
 
-Existing native egg treatments remain limited to the Math workload. This PR
-does not implement native disequality comparisons, OEE, DE, EUF, or Propel.
+The native treatments `egg-de`, `egg-ee`, `egg-nee`, and
+`egg-oee` use the corresponding `.in` file and run the unchanged authors'
+drivers without proofs. Their CSV output and exit behavior are preserved.
+They do not emit Egglog phase timings. See the
+[six-endpoint comparison](COMPARISON.md) for collection and the chart.
 
 ## Small examples and snapshots
 
@@ -119,5 +97,5 @@ UPDATE_DISEQUALITY_SNAPSHOTS=1 cargo test -p egglog-experimental --test disequal
 
 Negative tests separately ensure that consistent inputs do not prove a
 contradiction. [What the disequality benchmark measures](PERFORMANCE.md) explains
-the comparison boundaries and proof guarantees, and links to the historical
-measurements. Raw output is kept outside git.
+the comparison boundaries and proof guarantees, and links to historical
+measurements on the previous input.

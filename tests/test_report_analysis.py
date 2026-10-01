@@ -61,7 +61,7 @@ def test_analysis_computes_only_the_requested_detail_rows(tmp_path: Path) -> Non
         ),
     )
 
-    store = ReportStore(report)
+    store = ReportStore(report).grouped_report()
     summary = analyze_pair(store, comparison, "summary")
     files = analyze_pair(store, comparison, "files")
     phases = analyze_pair(store, comparison, "phases")
@@ -95,7 +95,7 @@ def test_pair_statistics_and_fieller_intervals(tmp_path: Path) -> None:
             )
     write_report(report, *records)
 
-    views = analyze_pair(ReportStore(report), comparison, "files")
+    views = analyze_pair(ReportStore(report).grouped_report(), comparison, "files")
 
     wall = next(row for row in views.files if row.metric == "wall_sec")
     expected_half_width = t_critical * math.sqrt(0.01 / 3)
@@ -142,7 +142,7 @@ def test_summary_has_wall_suite_and_metric_tails_with_stable_ties(tmp_path: Path
         )
     write_report(report, *records)
 
-    summary = analyze_pair(ReportStore(report), comparison, "summary").summary
+    summary = analyze_pair(ReportStore(report).grouped_report(), comparison, "summary").summary
 
     assert [(row.metric, row.summary_kind) for row in summary] == [
         ("wall_sec", "suite"),
@@ -197,7 +197,7 @@ def test_invalid_file_breaks_suite_but_not_valid_file_tails(tmp_path: Path) -> N
         ),
     )
 
-    summary = analyze_pair(ReportStore(report), comparison, "summary").summary
+    summary = analyze_pair(ReportStore(report).grouped_report(), comparison, "summary").summary
 
     suite, *tails = summary
     assert suite.ratio.result_class == "invalid"
@@ -248,7 +248,7 @@ def test_valid_tail_does_not_inherit_an_unrelated_invalid_file_issue(tmp_path: P
             )
     write_report(report, *records)
 
-    suite, *tails = analyze_pair(ReportStore(report), comparison, "summary").summary
+    suite, *tails = analyze_pair(ReportStore(report).grouped_report(), comparison, "summary").summary
 
     assert suite.ratio.issue == "failure row selected"
     assert all(row.file_order == 0 for row in tails)
@@ -294,7 +294,7 @@ def test_mechanism_buckets_are_additive_and_residual_closes_to_wall(tmp_path: Pa
         ),
     )
 
-    suite, file_row = analyze_pair(ReportStore(report), comparison, "phases").timing
+    suite, file_row = analyze_pair(ReportStore(report).grouped_report(), comparison, "phases").timing
 
     assert suite.file_order is None
     assert file_row.file_order == 0
@@ -353,7 +353,7 @@ def test_process_rulesets_and_global_rebuild_are_each_subtracted_from_residual(t
         ),
     )
 
-    views = analyze_pair(ReportStore(report), comparison, "rulesets")
+    views = analyze_pair(ReportStore(report).grouped_report(), comparison, "rulesets")
     file_row = views.timing[1]
 
     assert file_row.wall_delta_ns == pytest.approx(500.0)
@@ -387,7 +387,7 @@ def test_mechanism_decomposition_uses_endpoint_means_and_wall_context(tmp_path: 
             )
     write_report(report, *records)
 
-    file_row = analyze_pair(ReportStore(report), comparison, "phases").timing[1]
+    file_row = analyze_pair(ReportStore(report).grouped_report(), comparison, "phases").timing[1]
 
     assert file_row.wall_delta_ns == pytest.approx(500.0)
     assert file_row.program.phases.total == 100
@@ -463,7 +463,7 @@ def test_ruleset_union_aligns_absence_with_zero_and_aggregates_iterations(tmp_pa
         ),
     )
 
-    views = analyze_pair(ReportStore(report), comparison, "rulesets")
+    views = analyze_pair(ReportStore(report).grouped_report(), comparison, "rulesets")
     file_row = views.timing[1]
     rows = {row.name: row for row in file_row.program.rulesets}
 
@@ -504,7 +504,7 @@ def test_role_changes_are_separate_ruleset_changes_and_rebuild_is_global(tmp_pat
         ),
     )
 
-    file_row = analyze_pair(ReportStore(report), comparison, "rulesets").timing[1]
+    file_row = analyze_pair(ReportStore(report).grouped_report(), comparison, "rulesets").timing[1]
     assert file_row.program.rulesets[0].phases.search == -10
     assert file_row.equality.rulesets[0].phases.search == 12
     assert file_row.equality.native_rebuild_delta_ns == -4
@@ -554,7 +554,7 @@ def test_ruleset_parent_groups_equal_program_and_equality_mechanisms(tmp_path: P
         ),
     )
 
-    views = analyze_pair(ReportStore(report), comparison, "rulesets")
+    views = analyze_pair(ReportStore(report).grouped_report(), comparison, "rulesets")
     file_row = views.timing[1]
     maintenance = file_row.equality.rulesets[0]
     assert file_row.program.phases.total == file_row.mechanism_deltas[2] == 28
@@ -618,7 +618,7 @@ def test_all_maintenance_children_are_shown_and_zero_native_rebuild_is_hidden(tm
         ),
     )
 
-    file_row = analyze_pair(ReportStore(report), comparison, "rulesets").timing[1]
+    file_row = analyze_pair(ReportStore(report).grouped_report(), comparison, "rulesets").timing[1]
     assert len(file_row.equality.rulesets) == 7
     assert [row.name for row in file_row.equality.rulesets] == list(names)
     assert file_row.equality.phases.total == sum(range(1, 8))
@@ -650,7 +650,7 @@ def test_negative_residual_is_preserved_as_an_attribution_warning(tmp_path: Path
         ),
     )
 
-    file_row = analyze_pair(ReportStore(report), comparison, "phases").timing[1]
+    file_row = analyze_pair(ReportStore(report).grouped_report(), comparison, "phases").timing[1]
     assert file_row.residual_warning
     assert file_row.residual_delta_ns == pytest.approx(1)
 

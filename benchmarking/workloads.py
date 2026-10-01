@@ -9,9 +9,10 @@ respective command modules.
 from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
+from .engines import PARAMETER_WORKLOAD_PATH, TREATMENT_SPECS
 from .models import FileSpec, validate_unique_file_identities
 from .targets import sha256_directory, sha256_file
 
@@ -84,6 +85,23 @@ def resolve_files(
                 fact_directory_sha256=fact_directory_sha256,
             )
         )
+    registered = Path(__file__).resolve().parents[1] / PARAMETER_WORKLOAD_PATH
+    for index, file in enumerate(files):
+        if file.absolute_path == registered.resolve():
+            native_path = file.absolute_path.with_suffix(".in")
+            native = FileSpec(
+                display_path=str(Path(file.display_path).with_suffix(".in")),
+                absolute_path=native_path,
+                sha256=sha256_file(native_path),
+                fact_directory=file.fact_directory,
+                fact_directory_sha256=file.fact_directory_sha256,
+            )
+            files[index] = replace(
+                file,
+                engine_inputs=tuple(
+                    (spec.engine, native) for spec in TREATMENT_SPECS.values() if spec.engine not in ("egglog", "egg")
+                ),
+            )
     resolved = tuple(files)
     validate_workloads(resolved)
     return resolved
