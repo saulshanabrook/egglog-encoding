@@ -6,6 +6,8 @@
 	rust-format-check rust-clippy rust-doc-links rust-test
 
 BENCHMARK_SMOKE_REPORT ?= /tmp/egglog-encoding-bench-smoke.jsonl
+REPRODUCE_ARGS ?=
+RUST_TEST_ARGS ?=
 
 # No Ubuntu release packages uv, so `make nightly` installs a pinned copy into
 # the checkout when uv is missing from PATH. uv then downloads its own CPython,
@@ -53,7 +55,7 @@ rust-format-check:
 	cargo fmt --all -- --check
 
 rust-test:
-	cargo test --workspace
+	cargo test --workspace -- $(RUST_TEST_ARGS)
 
 rust-clippy:
 	cargo clippy --workspace --all-targets -- -D warnings
@@ -141,3 +143,36 @@ figures/parameter-analysis.png: figures/parameter-analysis.vl.json .reports-grou
 
 figures-parameter-test:
 	cd figures && $(VEGA) node --test parameter.test.mjs
+
+# Source generation and correctness diagnostics are separate from timing.
+.PHONY: reproduce-benchmarks expanded-pilot expanded-bench-recording expanded-bench expanded-coverage
+reproduce-benchmarks:
+	uv run --locked python scripts/suite_acquisition.py reproduce $(REPRODUCE_ARGS)
+
+EXPANDED_ROUNDS ?= 10
+EXPANDED_TIMEOUT_SEC ?= 300
+FIGURE_MATH_SUITE ?= math-11
+EXPANDED_ARGS = --target figures=. --rounds $(EXPANDED_ROUNDS) --timeout-sec $(EXPANDED_TIMEOUT_SEC)
+
+expanded-pilot expanded-bench-recording expanded-bench expanded-coverage: export EGGLOG_BENCH_MEMORY_GUARD = 1
+expanded-pilot:
+	./bench.py --suite expanded --baseline-window --baseline-only $(EXPANDED_ARGS) \
+		--treatment proof-extraction --compare-treatment off
+
+# One sequential plan per comparison, including missing baselines. Order an
+# explicitly requested pilot first, and keep collectors serial under make -j.
+expanded-bench-recording: $(filter expanded-pilot,$(MAKECMDGOALS))
+	./bench.py --suite expanded --baseline-window $(EXPANDED_ARGS) \
+		--treatment proofs --compare-treatment off
+
+expanded-bench: expanded-bench-recording
+	./bench.py --suite expanded --baseline-window $(EXPANDED_ARGS) \
+		--treatment proof-extraction --compare-treatment off
+	./bench.py --suite $(FIGURE_MATH_SUITE) $(EXPANDED_ARGS) \
+		--treatment proof-extraction --compare-treatment off
+	./bench.py --suite $(FIGURE_MATH_SUITE) $(EXPANDED_ARGS) \
+		--treatment egg-proof-extraction --compare-treatment egg
+
+expanded-coverage:
+	uv run --locked python -m benchmarking.pilot --suite expanded --coverage-only \
+		--report .reports.jsonl --coverage-output benchmarks/local/coverage.json --timeout-sec $(EXPANDED_TIMEOUT_SEC)

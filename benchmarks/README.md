@@ -106,8 +106,8 @@ stops above 10 GiB of sampled process-group RSS, non-normal macOS memory pressur
 or less than 2 GiB of estimated available headroom. It checks before launching,
 kills only the owned process group, and fails closed on monitoring errors.
 Polling cannot prevent every instantaneous allocation spike. The process
-timeout is 300 seconds for expanded Make targets; the suite CLI default
-remains 120 seconds. No timeout limit is reported as a measured time.
+timeout is 300 seconds for expanded Make targets; the ordinary CLI default is
+1800 seconds; Make supplies its shorter campaign timeout explicitly. No timeout limit is reported as a measured time.
 
 Explicitly authorized acquisition and correctness diagnostics can opt into
 warning-level host pressure through `run_bounded_command(allow_warning_pressure=True)`.
@@ -339,7 +339,8 @@ collection independently of their proof-query or proof-validation status.
 
 Omitting `--baseline-window` collects the full selected suite without the time window.
 With `--suite`, the defaults are proof extraction versus proofs off, 10 rounds,
-and a 120-second timeout. Explicit options override these defaults.
+and the ordinary 1800-second timeout. Expanded Make targets explicitly use
+300 seconds. Explicit options override these defaults.
 `--suite math-11` selects only iteration 11;
 `--suite math-growth` selects the eleven Math checkpoints. To collect the older
 growth figures as well, use `make figures-expanded FIGURE_MATH_SUITE=math-growth`
