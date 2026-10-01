@@ -26,53 +26,141 @@ from .report_fixtures import make_record
 ROOT = Path(__file__).resolve().parents[1]
 
 
-@pytest.mark.parametrize("timeout_sec", [300, 480])
-def test_cached_figures_project_then_render_without_collection(tmp_path: Path, timeout_sec: int) -> None:
+EXPANDED_FIGURES = ("math-cutoff-11", "proof-overhead-cdf")
+
+
+@pytest.fixture
+def pipeline_env(tmp_path: Path) -> dict[str, str]:
+    """Run the real Make graph, isolating every external executable and artifact."""
     shutil.copyfile(ROOT / "Makefile", tmp_path / "Makefile")
-    (tmp_path / "bin").mkdir()
-    (tmp_path / "figures").mkdir()
-    cache = tmp_path / ".reports.jsonl"
-    cache.write_text("retained observations\n")
+    for relative in ("bin", "figures/expanded", "benchmarks/local", "benchmarking/reports"):
+        (tmp_path / relative).mkdir(parents=True, exist_ok=True)
+    for name in (*EXPANDED_FIGURES, "unselected"):
+        (tmp_path / f"figures/expanded/{name}.vl.json").write_text("{}\n")
+    (tmp_path / ".reports.jsonl").write_text("retained observations\n")
+    (tmp_path / "benchmarking/reports/grouped.py").write_text("# exporter dependency\n")
+    (tmp_path / "inventory-source.json").write_text("{}\n")
     stub = tmp_path / "stage.py"
     stub.write_text(
         f"#!{sys.executable}\n"
         + textwrap.dedent(
-            """\
-            import json, os, pathlib, sys
+            r"""
+            import json, os, pathlib, sys, tempfile, time
             root = pathlib.Path(os.environ['PIPELINE_TEST_ROOT'])
             name, args = pathlib.Path(sys.argv[0]).name, sys.argv[1:]
-            assert name in ('uv', 'render'), 'Unexpected build or collection'
-            if name == 'uv':
-                assert args[:5] == ['run', '--locked', 'python', '-m', 'figures.prepare_expanded']
-            with (root / 'events.jsonl').open('a') as output:
-                output.write(json.dumps([name, *args]) + '\\n')
+            lock = root / 'collecting'
+            if name == 'bench.py' and args[0] == 'export':
+                stage = 'export'
+                assert args[args.index('--report') + 1] == '.reports.jsonl'
+            elif name == 'bench.py':
+                stage = 'pilot' if '--baseline-only' in args else 'collect'
+                assert os.environ['EGGLOG_BENCH_MEMORY_GUARD'] == '1'
+            elif name == 'uv' and 'benchmarking.figure_inventory' in args:
+                stage = 'inventory'
+                assert {'run', '--locked', 'python', '-m'} <= set(args)
+            elif name == 'npx':
+                stage = 'render'
+                assert not lock.exists()
+                assert (root / '.reports-grouped.json').exists()
+                assert (root / 'benchmarks/local/figure-inventory.json').exists()
+            else:
+                raise AssertionError(('Unexpected build or collection command', name, args))
+
+            def record(event):
+                with (root / 'events.jsonl').open('a') as output:
+                    output.write(json.dumps([event, *args]) + '\n')
+
+            def write_changed(path, content):
+                if path.exists() and path.read_text() == content:
+                    return
+                with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, delete=False) as output:
+                    output.write(content)
+                os.replace(output.name, path)
+
+            if stage == 'collect':
+                if os.environ.get('PIPELINE_TEST_EXPLICIT_PILOT') == '1':
+                    assert (root / 'pilot-finished').exists()
+                lock.mkdir()  # Fail concurrent collectors; do not serialize them in this stub.
+                record('collect-start')
+            else:
+                assert not lock.exists(), stage
+                record(stage)
+            if os.environ.get('PIPELINE_TEST_FAILURE') == stage:
+                raise SystemExit(7)
+            if stage == 'collect':
+                time.sleep(0.05)
+                with (root / '.reports.jsonl').open('a') as output:
+                    output.write(json.dumps(args) + '\n')
+                record('collect-end')
+                lock.rmdir()
+            elif stage == 'pilot':
+                time.sleep(0.05)
+                (root / 'pilot-finished').touch()
+                raise SystemExit(int(os.environ.get('PIPELINE_TEST_PILOT_EXIT', '0')))
+            elif stage == 'export':
+                write_changed(root / '.reports-grouped.json', (root / '.reports.jsonl').read_text())
+            elif stage == 'inventory':
+                inventory = json.loads((root / 'inventory-source.json').read_text())
+                inventory['timeout_sec'] = int(args[args.index('--timeout-sec') + 1])
+                write_changed(root / 'benchmarks/local/figure-inventory.json', json.dumps(inventory))
+            elif stage == 'render':
+                command = 'vl2svg' if 'vl2svg' in args else 'vl2png'
+                index = args.index(command)
+                assert pathlib.Path(args[index + 1]).exists()
+                pathlib.Path(args[index + 2]).write_text('rendered\n')
             """
         )
     )
     stub.chmod(0o755)
-    for name in ("uv", "render", "cargo"):
+    for name in ("uv", "npx", "cargo", "npm"):
         (tmp_path / "bin" / name).symlink_to(stub)
     (tmp_path / "bench.py").symlink_to(stub)
-    (tmp_path / "figures/Makefile").write_text(".PHONY: expanded\nexpanded:\n\t../bin/render\n")
+    return {
+        **os.environ,
+        "PATH": f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}",
+        "MAKEFLAGS": "",
+        "PIPELINE_TEST_ROOT": str(tmp_path),
+    }
+
+
+@pytest.mark.parametrize("timeout_sec", [300, 480])
+def test_cached_figures_export_metadata_then_render_without_collection(
+    tmp_path: Path, pipeline_env: dict[str, str], timeout_sec: int
+) -> None:
+    cache = tmp_path / ".reports.jsonl"
+    cache_mtime = cache.stat().st_mtime_ns
     result = subprocess.run(
         ["make", "-j8", "figures-expanded-cached", f"EXPANDED_TIMEOUT_SEC={timeout_sec}"],
         cwd=tmp_path,
-        env={
-            **os.environ,
-            "PATH": f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}",
-            "MAKEFLAGS": "",
-            "PIPELINE_TEST_ROOT": str(tmp_path),
-        },
+        env=pipeline_env,
         capture_output=True,
         text=True,
         timeout=15,
     )
     assert result.returncode == 0, result.stderr
-    assert [json.loads(line) for line in (tmp_path / "events.jsonl").read_text().splitlines()] == [
-        ["uv", "run", "--locked", "python", "-m", "figures.prepare_expanded", "--timeout-sec", str(timeout_sec)],
-        ["render"],
-    ]
+    events = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text().splitlines()]
+    assert [event[0] for event in events] == ["export", "inventory", *(["render"] * 4)]
+    assert json.loads((tmp_path / "benchmarks/local/figure-inventory.json").read_text())["timeout_sec"] == timeout_sec
+    rendered = set()
+    for _stage, *args in events[2:]:
+        assert "--yes" in args
+        assert {arg for arg in args if arg.startswith("--package=")} == {
+            "--package=vega@6.4.0",
+            "--package=vega-lite@6.4.3",
+            "--package=vega-cli@6.4.0",
+            "--package=canvas@3.2.3",
+        }
+        command = "vl2svg" if "vl2svg" in args else "vl2png"
+        index = args.index(command)
+        spec, image = args[index + 1 : index + 3]
+        assert spec.removesuffix(".vl.json") == Path(image).stem
+        assert Path(image).suffix == (".svg" if command == "vl2svg" else ".png")
+        if command == "vl2png":
+            assert args[args.index("-s") + 1] == "3"
+        rendered.add(image)
+    assert rendered == {f"{name}.{extension}" for name in EXPANDED_FIGURES for extension in ("svg", "png")}
     assert cache.read_text() == "retained observations\n"
+    assert cache.stat().st_mtime_ns == cache_mtime
 
 
 @pytest.mark.parametrize("pilot_exit", [0, 1, 2])
@@ -80,69 +168,13 @@ def test_cached_figures_project_then_render_without_collection(tmp_path: Path, t
 @pytest.mark.parametrize("explicit_pilot", [False, True])
 @pytest.mark.parametrize("recording_only", [False, True])
 def test_parallel_expanded_pipeline_orders_baselines_proofs_and_figures(
-    tmp_path: Path, pilot_exit: int, timeout_override: int | None, explicit_pilot: bool, recording_only: bool
+    tmp_path: Path,
+    pipeline_env: dict[str, str],
+    pilot_exit: int,
+    timeout_override: int | None,
+    explicit_pilot: bool,
+    recording_only: bool,
 ) -> None:
-    timeout_sec = str(timeout_override or 300)
-    shutil.copyfile(ROOT / "Makefile", tmp_path / "Makefile")
-    (tmp_path / "bin").mkdir()
-    (tmp_path / "figures").mkdir()
-    stub = tmp_path / "stage.py"
-    stub.write_text(
-        f"#!{sys.executable}\n"
-        + textwrap.dedent(
-            """\
-            import json, os, pathlib, sys, time
-            root = pathlib.Path(os.environ['PIPELINE_TEST_ROOT'])
-            name, args = pathlib.Path(sys.argv[0]).name, sys.argv[1:]
-            lock = root / 'collecting'
-            if name == 'cargo':
-                stage = 'build'
-            elif name == 'bench.py':
-                stage = 'pilot' if '--baseline-only' in args else 'collect'
-                suite = args[args.index('--suite') + 1]
-                assert ('--baseline-window' in args) == (suite == 'expanded')
-                assert suite in ('expanded', 'math-11')
-                assert os.environ['EGGLOG_BENCH_MEMORY_GUARD'] == '1'
-            elif name == 'render':
-                stage = 'render'
-            elif name == 'uv' and 'figures.prepare_expanded' in args:
-                stage = 'project'
-            elif name == 'uv' and 'benchmarking.pilot' in args:
-                assert '--coverage-only' in args  # No correctness/screening runs during benchmarking.
-                stage = 'coverage'
-            else:
-                raise AssertionError((name, args))
-            def record(event):
-                with (root / 'events.jsonl').open('a') as output:
-                    output.write(json.dumps([event, *args]) + '\\n')
-            if stage == 'pilot':
-                assert '--baseline-only' in args
-            if stage == 'collect':
-                if os.environ['PIPELINE_TEST_EXPLICIT_PILOT'] == '1':
-                    assert (root / 'pilot-finished').exists()
-                lock.mkdir()  # Concurrent collectors must fail, rather than serialize in the stub.
-                record('collect-start')
-                time.sleep(0.1)
-                record('collect-end')
-                lock.rmdir()
-            else:
-                assert not lock.exists(), stage
-                record(stage)
-            if stage == 'build':
-                time.sleep(0.05)
-                (root / 'built').touch()
-            if stage == 'pilot':
-                time.sleep(0.05)
-                (root / 'pilot-finished').touch()
-                raise SystemExit(int(os.environ['PIPELINE_TEST_PILOT_EXIT']))
-            """
-        )
-    )
-    stub.chmod(0o755)
-    for name in ("cargo", "uv", "render"):
-        (tmp_path / "bin" / name).symlink_to(stub)
-    (tmp_path / "bench.py").symlink_to(stub)
-    (tmp_path / "figures/Makefile").write_text(".PHONY: expanded\nexpanded:\n\t../bin/render\n")
     result = subprocess.run(
         [
             "make",
@@ -154,10 +186,7 @@ def test_parallel_expanded_pipeline_orders_baselines_proofs_and_figures(
         ],
         cwd=tmp_path,
         env={
-            **os.environ,
-            "PATH": f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}",
-            "MAKEFLAGS": "",
-            "PIPELINE_TEST_ROOT": str(tmp_path),
+            **pipeline_env,
             "PIPELINE_TEST_PILOT_EXIT": str(pilot_exit),
             "PIPELINE_TEST_EXPLICIT_PILOT": str(int(explicit_pilot)),
         },
@@ -166,93 +195,63 @@ def test_parallel_expanded_pipeline_orders_baselines_proofs_and_figures(
         timeout=15,
     )
     events = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text().splitlines()]
-    baseline_event = [
-        "pilot",
-        "--suite",
-        "expanded",
-        "--baseline-window",
-        "--baseline-only",
-        "--target",
-        "figures=.",
-        "--treatment",
-        "proof-extraction",
-        "--compare-treatment",
-        "off",
-        "--rounds",
-        "10",
-        "--timeout-sec",
-        timeout_sec,
-    ]
     if explicit_pilot:
-        assert events[0] == baseline_event
+        assert events[0][0] == "pilot"
+        args = parse_benchmark_args(events[0][1:])
+        assert args.baseline_only and args.baseline_window
+        assert args.suite == ["expanded"] and args.treatment == "proof-extraction" and args.compare_treatment == "off"
+        assert args.target == "figures=." and args.rounds == 10 and args.timeout_sec == (timeout_override or 300)
         if pilot_exit != 0:
             assert result.returncode != 0
             assert len(events) == 1
             return
         events = events[1:]
-    treatments = ("proofs",) if recording_only else ("proofs", "proof-extraction")
-    for index, treatment in enumerate(treatments):
-        arguments = [
-            "--suite",
-            "expanded",
-            "--baseline-window",
-            "--target",
-            "figures=.",
-            "--treatment",
-            treatment,
-            "--compare-treatment",
-            "off",
-            "--rounds",
-            "10",
-            "--timeout-sec",
-            timeout_sec,
-        ]
-        assert events[2 * index] == ["collect-start", *arguments]
-        assert events[1 + 2 * index] == ["collect-end", *arguments]
     assert result.returncode == 0, result.stderr
-    if recording_only:
-        assert len(events) == 2
-        return
-    for index, (candidate, baseline) in enumerate((("proof-extraction", "off"), ("egg-proof-extraction", "egg"))):
-        arguments = [
-            "--suite",
-            "math-11",
-            "--target",
-            "figures=.",
-            "--treatment",
-            candidate,
-            "--compare-treatment",
-            baseline,
-            "--rounds",
-            "10",
-            "--timeout-sec",
-            timeout_sec,
+    comparisons = [("expanded", "proofs", "off")]
+    if not recording_only:
+        comparisons += [
+            ("expanded", "proof-extraction", "off"),
+            ("math-11", "proof-extraction", "off"),
+            ("math-11", "egg-proof-extraction", "egg"),
         ]
-        assert events[4 + 2 * index] == ["collect-start", *arguments]
-        assert events[5 + 2 * index] == ["collect-end", *arguments]
-    assert events[8:] == [
-        ["project", *["run", "--locked", "python", "-m", "figures.prepare_expanded", "--timeout-sec", timeout_sec]],
-        [
-            "coverage",
-            *[
-                "run",
-                "--locked",
-                "python",
-                "-m",
-                "benchmarking.pilot",
-                "--suite",
-                "expanded",
-                "--coverage-only",
-                "--report",
-                ".reports.jsonl",
-                "--coverage-output",
-                "benchmarks/local/coverage.json",
-                "--timeout-sec",
-                timeout_sec,
-            ],
-        ],
-        ["render"],
-    ]
+    for index, (suite, candidate, baseline) in enumerate(comparisons):
+        start, end = events[2 * index : 2 * index + 2]
+        assert start[0] == "collect-start" and end[0] == "collect-end" and start[1:] == end[1:]
+        args = parse_benchmark_args(start[1:])
+        assert args.suite == [suite] and args.treatment == candidate and args.compare_treatment == baseline
+        assert args.baseline_window == (suite == "expanded") and not args.baseline_only
+        assert args.target == "figures=." and args.rounds == 10 and args.timeout_sec == (timeout_override or 300)
+    remaining = events[2 * len(comparisons) :]
+    if recording_only:
+        assert not remaining
+        return
+    assert {event[0] for event in remaining} == {"export", "inventory", "render"}
+    assert sum(event[0] == "render" for event in remaining) == 4
+    inventory = json.loads((tmp_path / "benchmarks/local/figure-inventory.json").read_text())
+    assert inventory["timeout_sec"] == (timeout_override or 300)
+
+
+@pytest.mark.parametrize("failure", ["collect", "export", "inventory"])
+def test_failed_pipeline_stage_blocks_downstream_work(
+    tmp_path: Path, pipeline_env: dict[str, str], failure: str
+) -> None:
+    result = subprocess.run(
+        ["make", "-j8", "figures-expanded" if failure == "collect" else "figures-expanded-cached"],
+        cwd=tmp_path,
+        env={**pipeline_env, "PIPELINE_TEST_FAILURE": failure},
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode != 0
+    events = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text().splitlines()]
+    assert [event[0] for event in events] == {
+        "collect": ["collect-start"],
+        "export": ["export"],
+        "inventory": ["export", "inventory"],
+    }[failure]
+    assert not list((tmp_path / "figures/expanded").glob("*.svg"))
+    assert not list((tmp_path / "figures/expanded").glob("*.png"))
 
 
 @pytest.mark.parametrize(("suite_name", "file_count"), [("math-growth", 11), ("math-11", 1)])
@@ -335,208 +334,57 @@ def test_math_suite_admits_and_plans_all_four_endpoints_at_requested_timeout(
                 assert command[1:3] == ["--proof-mode", "off" if run.treatment == "egg" else "extract"]
 
 
-def test_figure_make_discovers_specs_and_rebuilds_only_affected_images(tmp_path: Path) -> None:
-    shutil.copyfile(ROOT / "figures/Makefile", tmp_path / "Makefile")
-    specs = (
-        "egg-vs-egglog.vl.json",
-        "proof-overhead.vl.json",
-        "proof-context.vl.json",
-        "extra.vl.json",
-        "alternatives/egg-vs-egglog-ecdf.vl.json",
-        "alternatives/egg-vs-egglog-boxplot.vl.json",
-        "alternatives/proof-overhead-suite-order.vl.json",
-        "alternatives/math-growth-overlay.vl.json",
-        "alternatives/math-growth-ratios.vl.json",
-        "alternatives/math-memory-overlay.vl.json",
-        "alternatives/math-memory-ratios.vl.json",
-        "expanded/math-growth.vl.json",
-        "expanded/math-memory.vl.json",
-        "expanded/math-comparison.vl.json",
-        "expanded/math-cutoff-11.vl.json",
-        "expanded/proof-overhead-cdf.vl.json",
-    )
-    families = ("eggcc", "luminal")
-    atlas_pages = ("eggcc", "other")
-    inputs = [
-        *specs,
-        "package.json",
-        "package-lock.json",
-        "egg-vs-egglog.data.json",
-        "proof-overhead.data.json",
-        "expanded/math-growth.data.json",
-        "expanded/overview.data.json",
-        "expanded/proof-overhead-atlas.vl.json",
-        *(f"expanded/atlas/{page}/atlas.data.json" for page in atlas_pages),
-        *(f"expanded/{family}/proof-overhead.data.json" for family in families),
-        "unrelated.data.json",
-        "metadata.json",
-        "alternatives/not-a-spec.data.json",
-        "expanded/not-a-spec.data.json",
-    ]
-    for relative in inputs:
-        path = tmp_path / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("{}\n")
-    (tmp_path / "bin").mkdir()
-    renderers = tmp_path / "node_modules/.bin"
-    renderers.mkdir(parents=True)
-    stub = tmp_path / "tool.py"
-    stub.write_text(
-        f"#!{sys.executable}\n"
-        + textwrap.dedent(
-            """\
-            import json, os, pathlib, sys
-            root = pathlib.Path(os.environ['FIGURE_TEST_ROOT'])
-            name, args = pathlib.Path(sys.argv[0]).name, sys.argv[1:]
-            if name == 'npm':
-                assert args == ['ci', '--no-audit', '--no-fund']
-                event = ['install']
-            else:
-                assert name in ('vl2svg', 'vl2png')
-                assert (root / 'node_modules/.installed').exists()
-                if name == 'vl2png':
-                    assert args[-2:] == ['-s', '3']
-                source, output = pathlib.Path(args[0]), pathlib.Path(args[1])
-                assert source.name.endswith('.vl.json'), source
-                assert source.is_file()
-                assert output.suffix == ('.svg' if name == 'vl2svg' else '.png')
-                output.write_text('rendered ' + source.name)
-                event = [
-                    'render', str(output.resolve().relative_to(root)),
-                    str(source.resolve().relative_to(root)), args,
-                ]
-            with (root / 'events.jsonl').open('a') as output:
-                output.write(json.dumps(event) + '\\n')
-            """
-        )
-    )
-    stub.chmod(0o755)
-    (tmp_path / "bin/npm").symlink_to(stub)
-    for name in ("vl2svg", "vl2png"):
-        (renderers / name).symlink_to(stub)
-    environment = {
-        **os.environ,
-        "PATH": f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}",
-        "MAKEFLAGS": "",
-        "FIGURE_TEST_ROOT": str(tmp_path),
-    }
-    command = ["make", "-j8", "all", "alternatives", "expanded-details"]
-    # Default rendering builds only the final Math and combined overhead charts.
-    subprocess.run(
-        ["make", "-j8", "expanded"],
-        cwd=tmp_path,
-        env=environment,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=15,
-    )
-    assert {
-        str(path.relative_to(tmp_path)) for extension in ("svg", "png") for path in tmp_path.rglob(f"*.{extension}")
-    } == {
-        f"expanded/{chart}.{extension}"
-        for chart in ("math-cutoff-11", "proof-overhead-cdf")
-        for extension in ("svg", "png")
-    }
-    expected = (
-        {f"{name.removesuffix('.vl.json')}.{extension}" for name in specs for extension in ("png", "svg")}
-        | {
-            f"expanded/{family}/{chart}.{extension}"
-            for family in families
-            for chart in ("proof-overhead", "proof-context")
-            for extension in ("png", "svg")
-        }
-        | {f"expanded/atlas/{page}/proof-overhead.{extension}" for page in atlas_pages for extension in ("png", "svg")}
-    )
-    subprocess.run(command, cwd=tmp_path, env=environment, check=True, capture_output=True, text=True, timeout=15)
-    log = tmp_path / "events.jsonl"
-    events = [json.loads(line) for line in log.read_text().splitlines()]
-    assert sum(event[0] == "install" for event in events) == 1
-    assert len(events) == len(expected) + 1
-    assert {event[1] for event in events if event[0] == "render"} == expected
-    assert {
-        str(path.relative_to(tmp_path)) for extension in ("svg", "png") for path in tmp_path.rglob(f"*.{extension}")
-    } == expected
-    for event in events:
-        if event[0] == "render" and event[1].startswith(tuple(f"expanded/{family}/" for family in families)):
-            assert event[2] == Path(event[1]).stem + ".vl.json"
-            assert event[3][2:4] == ["-b", str(Path(event[1]).parent) + "/"]
-        if event[0] == "render" and event[1].startswith("expanded/atlas/"):
-            assert event[2] == "expanded/proof-overhead-atlas.vl.json"
-            assert event[3][2:4] == ["-b", str(Path(event[1]).parent) + "/"]
-
-    # An unchanged invocation must neither reinstall dependencies nor render.
-    unchanged_log = log.read_bytes()
-    unchanged_mtimes = {name: (tmp_path / name).stat().st_mtime_ns for name in expected}
-    subprocess.run(command, cwd=tmp_path, env=environment, check=True, capture_output=True, text=True, timeout=15)
-    assert log.read_bytes() == unchanged_log
-    assert {name: (tmp_path / name).stat().st_mtime_ns for name in expected} == unchanged_mtimes
-
-    for changed, rebuilt, installs in (
-        (
-            "expanded/luminal/proof-overhead.data.json",
-            {
-                f"expanded/luminal/{chart}.{ext}"
-                for chart in ("proof-overhead", "proof-context")
-                for ext in ("png", "svg")
-            },
-            0,
-        ),
-        ("expanded/math-growth.vl.json", {f"expanded/math-growth.{ext}" for ext in ("png", "svg")}, 0),
-        (
-            "expanded/math-growth.data.json",
-            {name for name in expected if name.startswith(("expanded/math-", "alternatives/math-"))},
-            0,
-        ),
-        (
-            "expanded/overview.data.json",
-            {f"expanded/proof-overhead-cdf.{ext}" for ext in ("png", "svg")},
-            0,
-        ),
-        (
-            "expanded/atlas/eggcc/atlas.data.json",
-            {f"expanded/atlas/eggcc/proof-overhead.{ext}" for ext in ("png", "svg")},
-            0,
-        ),
-        (
-            "expanded/proof-overhead-atlas.vl.json",
-            {name for name in expected if name.startswith("expanded/atlas/")},
-            0,
-        ),
-        (
-            "proof-overhead.vl.json",
-            {
-                name
-                for name in expected
-                if name.startswith(tuple(f"expanded/{family}/proof-overhead." for family in families))
-            }
-            | {"proof-overhead.png", "proof-overhead.svg"},
-            0,
-        ),
-        (
-            "proof-context.vl.json",
-            {
-                name
-                for name in expected
-                if name.startswith(tuple(f"expanded/{family}/proof-context." for family in families))
-            }
-            | {"proof-context.png", "proof-context.svg"},
-            0,
-        ),
-        ("package-lock.json", expected, 1),
-    ):
-        # Deterministic, past timestamps avoid sleeps and coarse-clock races:
-        # inputs < installed dependencies < images < the one touched input.
-        base = 1_600_000_000
-        for name in inputs:
-            os.utime(tmp_path / name, (base, base))
-        os.utime(tmp_path / "node_modules/.installed", (base + 1, base + 1))
-        for name in expected:
-            os.utime(tmp_path / name, (base + 2, base + 2))
-        os.utime(tmp_path / changed, (base + 3, base + 3))
-        log.write_text("")
-        subprocess.run(command, cwd=tmp_path, env=environment, check=True, capture_output=True, text=True, timeout=15)
-        events = [json.loads(line) for line in log.read_text().splitlines()]
-        assert sum(event[0] == "install" for event in events) == installs, changed
-        assert len(events) == len(rebuilt) + installs, changed
-        assert {event[1] for event in events if event[0] == "render"} == rebuilt, changed
+@pytest.mark.parametrize(
+    ("changed", "expected_figures", "exported"),
+    [
+        (None, (), False),
+        ("figures/expanded/math-cutoff-11.vl.json", ("math-cutoff-11",), False),
+        ("figures/expanded/proof-overhead-cdf.vl.json", ("proof-overhead-cdf",), False),
+        ("figures/expanded/unselected.vl.json", (), False),
+        (".reports-grouped.json", EXPANDED_FIGURES, False),
+        (".reports.jsonl", EXPANDED_FIGURES, True),
+        ("inventory-source.json", EXPANDED_FIGURES, False),
+        ("Makefile", EXPANDED_FIGURES, False),
+        ("benchmarking/reports/grouped.py", (), True),
+    ],
+)
+def test_cached_figures_rebuild_only_changed_dependencies(
+    tmp_path: Path,
+    pipeline_env: dict[str, str],
+    changed: str | None,
+    expected_figures: tuple[str, ...],
+    exported: bool,
+) -> None:
+    command = ["make", "-j8", "figures-expanded-cached"]
+    initial = subprocess.run(command, cwd=tmp_path, env=pipeline_env, capture_output=True, text=True, timeout=15)
+    assert initial.returncode == 0, initial.stderr
+    images = [tmp_path / f"figures/expanded/{name}.{ext}" for name in EXPANDED_FIGURES for ext in ("svg", "png")]
+    # Establish deterministic dependency ordering without filesystem-resolution sleeps.
+    for path in tmp_path.rglob("*"):
+        if path.is_file():
+            timestamp = 1_600_000_002 if path in images else 1_600_000_000
+            if path.name in (".reports-grouped.json", "figure-inventory.json"):
+                timestamp = 1_600_000_001
+            os.utime(path, (timestamp, timestamp))
+    if changed is not None:
+        path = tmp_path / changed
+        if changed == "inventory-source.json":
+            path.write_text('{"revision": 2}\n')
+        elif changed == ".reports.jsonl":
+            path.write_text("retained observations\nnew observation\n")
+        os.utime(path, (1_600_000_003, 1_600_000_003))
+    (tmp_path / "events.jsonl").write_text("")
+    result = subprocess.run(command, cwd=tmp_path, env=pipeline_env, capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    events = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text().splitlines()]
+    assert {event[0] for event in events} <= {"export", "inventory", "render"}
+    assert any(event[0] == "export" for event in events) == exported
+    assert sum(event[0] == "inventory" for event in events) == 1
+    rendered = set()
+    for stage, *args in events:
+        if stage == "render":
+            command_name = "vl2svg" if "vl2svg" in args else "vl2png"
+            rendered.add(args[args.index(command_name) + 2])
+    assert rendered == {f"{name}.{extension}" for name in expected_figures for extension in ("svg", "png")}
+    for path in images:
+        assert (path.stat().st_mtime == 1_600_000_002) == (path.stem not in expected_figures)
