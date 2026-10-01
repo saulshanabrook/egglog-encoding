@@ -8,6 +8,11 @@ keywords = ["e-graphs", "egglog", "datalog", "compiler", "equality"]
 license = "MIT"
 readme = "README.md"
 
+[[bin]]
+name = "egglog-experimental"
+path = "src/main.rs"
+required-features = ["bin"]
+
 [[test]]
 harness = false
 name = "files"

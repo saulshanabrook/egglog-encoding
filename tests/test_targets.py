@@ -156,6 +156,7 @@ def test_path_targets_retain_dirty_checkout(use_absolute_path: bool, tmp_path: P
 
 def test_build_target_builds_release_binary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     commands: list[list[str]] = []
+    monkeypatch.delenv("CARGO_TARGET_DIR", raising=False)
     binary = tmp_path / "target" / "release" / "egglog-experimental"
     binary.parent.mkdir(parents=True)
     binary.write_text("binary", encoding="utf-8")
@@ -167,8 +168,46 @@ def test_build_target_builds_release_binary(monkeypatch: pytest.MonkeyPatch, tmp
 
     targets.build_target(row, Console(file=stream, color_system=None))
 
-    assert commands == [["cargo", "build", "--release", "-p", "egglog-experimental"]]
+    assert commands == [
+        [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "-p",
+            "egglog-experimental",
+            "--no-default-features",
+            "--features",
+            "bin",
+            "--bin",
+            "egglog-experimental",
+        ]
+    ]
     assert stream.getvalue().strip() == f"Building {label}"
+
+
+@pytest.mark.parametrize("target_dir_is_absolute", [False, True])
+def test_build_target_uses_cargo_target_dir(
+    target_dir_is_absolute: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    target_dir = tmp_path / "shared-target" if target_dir_is_absolute else Path("shared-target")
+    binary_root = target_dir if target_dir_is_absolute else checkout / target_dir
+    binary = binary_root / "release" / "egglog-experimental"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("binary", encoding="utf-8")
+    monkeypatch.setenv("CARGO_TARGET_DIR", str(target_dir))
+    monkeypatch.setattr(targets.subprocess, "run", lambda *args, **kwargs: None)
+    monkeypatch.setattr(targets, "sha256_file", lambda path: "sha256:bin")
+    row = models.TargetRow(".", str(checkout), "HEAD", "abc123", False, None)
+
+    path, digest = targets.build_target(row, Console(file=io.StringIO(), color_system=None))
+
+    assert path == binary
+    assert digest == "sha256:bin"
 
 
 def test_legacy_resolved_target_only_falls_back_to_egglog_binary() -> None:
