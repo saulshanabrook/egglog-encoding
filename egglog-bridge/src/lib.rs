@@ -18,9 +18,9 @@ use std::{
 
 use crate::core_relations::{
     BaseValue, BaseValueId, BaseValues, ColumnId, Constraint, ContainerValue, ContainerValues,
-    CounterId, Database, DisplacedTable, ExecutionState, ExternalFunction, ExternalFunctionId,
-    MergeVal, Offset, PlanStrategy, SortedWritesTable, TableId, TaggedRowBuffer, Value,
-    WrappedTable,
+    CounterId, Database, DisplacedTable, ExecutionState, ExternalContext, ExternalFunction,
+    ExternalFunctionId, MergeVal, Offset, PlanStrategy, SortedWritesTable, TableId, TableIdentity,
+    TaggedRowBuffer, Value, WrappedTable,
 };
 use crate::numeric_id::{DenseIdMap, DenseIdMapWithReuse, NumericId, define_id};
 use egglog_concurrency::ThreadPool;
@@ -33,6 +33,8 @@ use log::info;
 use once_cell::sync::Lazy;
 use smallvec::SmallVec;
 use web_time::{Duration, Instant};
+
+const FRESH_ID_RESERVATION_SIZE: usize = 256;
 
 pub mod macros;
 pub(crate) mod rule;
@@ -71,15 +73,20 @@ impl ActionRegistry {
     }
 
     /// Look up the [`TableAction`] for a table by name, or `None` if
-    /// no table with that name has been registered.
+    /// no table with that name has been registered. The registry may become
+    /// obsolete because of `push`/`pop`, so a hit may name a table a given
+    /// execution state no longer has; check it with [`TableAction::is_live`]
+    /// before use.
     pub fn lookup_table(&self, name: &str) -> Option<&TableAction> {
         self.table_actions.get(name)
     }
 
-    /// Snapshot the registered table names and their current row counts.
+    /// Snapshot the names and row counts of the registered tables that exist
+    /// in `state`.
     pub fn table_sizes(&self, state: &ExecutionState) -> Vec<(&str, usize)> {
         self.table_actions
             .iter()
+            .filter(|(_, action)| action.is_live(state))
             .map(|(name, action)| (name.as_str(), action.row_count(state)))
             .collect()
     }
@@ -204,7 +211,7 @@ impl EGraph {
                     iter::empty(),
                     iter::empty(),
                 );
-                let id_counter = db.add_counter();
+                let id_counter = db.add_reservable_counter(FRESH_ID_RESERVATION_SIZE);
                 let ts_counter = db.add_counter();
                 // Start the timestamp counter at 1.
                 db.inc_counter(ts_counter);
@@ -301,8 +308,9 @@ impl EGraph {
     /// Intern the given container value into the EGraph.
     pub fn get_container_value<C: ContainerValue>(&mut self, val: C) -> Value {
         self.register_container_ty::<C>();
-        self.db
-            .with_execution_state(|state| state.clone().container_values().register_val(val, state))
+        self.db.with_execution_state(None, |state| {
+            state.clone().container_values().register_val(val, state)
+        })
     }
 
     /// Register the given [`ContainerValue`] type with this EGraph.
@@ -522,7 +530,7 @@ impl EGraph {
         // `dyn`-compatibility on `Table` or dynamic dispatch per row.
         macro_rules! drain_buf {
             ($buf:expr) => {
-                for (_, row) in $buf.non_stale() {
+                for (_, row) in $buf.iter() {
                     let subsumed =
                         schema_math.subsume && row[schema_math.subsume_col()] == SUBSUMED;
                     if !f(ScanEntry {
@@ -566,11 +574,11 @@ impl EGraph {
         let mut cur = Offset::new(0);
         let mut out = TaggedRowBuffer::new(table.spec().arity());
         while let Some(next) = table.scan_bounded(all.as_ref(), cur, BATCH_SIZE, &mut out) {
-            out.non_stale().for_each(|(_, row)| f(row));
+            out.iter().for_each(|(_, row)| f(row));
             out.clear();
             cur = next;
         }
-        out.non_stale().for_each(|(_, row)| f(row));
+        out.iter().for_each(|(_, row)| f(row));
     }
 
     /// Register a function in this EGraph.
@@ -653,22 +661,125 @@ impl EGraph {
         &self.action_registry
     }
 
-    /// Run the given rules, returning whether the database changed.
+    /// Run the given rules for one iteration and return its report.
+    ///
+    /// `context` is visible to any external function the rules reach; pass
+    /// `None` if there is nothing to share.
+    ///
+    /// If a rule action raises an egglog-level panic, actions completed before
+    /// it remain applied. A successful recovery rebuild leaves the e-graph
+    /// canonical and reusable; it does not roll effects back or guarantee that
+    /// the failed action will be retried. If rebuilding also fails, the returned
+    /// error reports both failures and the e-graph has no reuse guarantee.
     ///
     /// If the given rules are malformed, this method can return an error.
-    pub fn run_rules(&mut self, rules: &[RuleId]) -> Result<IterationReport> {
+    pub fn run_rules(
+        &mut self,
+        rules: &[RuleId],
+        context: ExternalContext<'_>,
+    ) -> Result<IterationReport> {
         let thread_pool = self.thread_pool();
-        install_thread_pool(thread_pool, || self.run_rules_inner(rules))
+        install_thread_pool(thread_pool, || self.run_rules_inner(rules, context))
     }
 
-    fn run_rules_inner(&mut self, rules: &[RuleId]) -> Result<IterationReport> {
+    /// Run `rules` for one iteration like [`EGraph::run_rules`], but without
+    /// rebuilding afterwards. Unions made by the rules are recorded in the
+    /// union-find but ids in the tables are not canonicalized until
+    /// [`EGraph::rebuild_now`] is called; until then, rebuilding may increase
+    /// or decrease table sizes. This lets a runner apply rules one at a time
+    /// and rebuild at most once per iteration, as egg does.
+    ///
+    /// Completed actions are not rolled back on error, and this method does not
+    /// rebuild on either success or error; the caller retains responsibility
+    /// for calling [`EGraph::rebuild_now`].
+    pub fn run_rules_no_rebuild(
+        &mut self,
+        rules: &[RuleId],
+        context: ExternalContext<'_>,
+    ) -> Result<IterationReport> {
+        let thread_pool = self.thread_pool();
+        install_thread_pool(thread_pool, || {
+            let ts = self.next_ts();
+            let rule_set_report = run_rules_impl(
+                &mut self.db,
+                &mut self.rules,
+                rules,
+                ts,
+                self.report_level,
+                context,
+            )?;
+            if let Some(message) = self.panic_message.lock().unwrap().take() {
+                return Err(PanicError(message).into());
+            }
+            self.inc_ts();
+            Ok(IterationReport {
+                rule_set_report,
+                rebuild_time: Duration::ZERO,
+            })
+        })
+    }
+
+    /// Flush the pending update buffers without rebuilding, for use with
+    /// [`EGraph::run_rules_no_rebuild`]. Returns `true` if the database is
+    /// updated.
+    pub fn flush_updates_no_rebuild(&mut self) -> bool {
+        let thread_pool = self.thread_pool();
+        install_thread_pool(thread_pool, || {
+            let updated = self.db.merge_all();
+            self.inc_ts();
+            updated
+        })
+    }
+
+    /// Canonicalize the database after deferred-rebuild runs. Returns the time
+    /// spent rebuilding.
+    pub fn rebuild_now(&mut self) -> Result<Duration> {
+        let thread_pool = self.thread_pool();
+        install_thread_pool(thread_pool, || {
+            let timer = Instant::now();
+            self.rebuild()?;
+            if let Some(message) = self.panic_message.lock().unwrap().take() {
+                return Err(PanicError(message).into());
+            }
+            Ok(timer.elapsed())
+        })
+    }
+
+    fn run_rules_inner(
+        &mut self,
+        rules: &[RuleId],
+        context: ExternalContext<'_>,
+    ) -> Result<IterationReport> {
         let ts = self.next_ts();
 
         let uf_size_before = self.db.get_table(self.uf_table).len();
-        let rule_set_report =
-            run_rules_impl(&mut self.db, &mut self.rules, rules, ts, self.report_level)?;
-        if let Some(message) = self.panic_message.lock().unwrap().take() {
-            return Err(PanicError(message).into());
+        let rule_set_report = run_rules_impl(
+            &mut self.db,
+            &mut self.rules,
+            rules,
+            ts,
+            self.report_level,
+            context,
+        )?;
+        let panic_message = self.panic_message.lock().unwrap().take();
+        if let Some(message) = panic_message {
+            let action_error = PanicError(message);
+
+            // Some actions may already have changed the database. Canonicalize
+            // those effects before surfacing the catchable egglog error.
+            let rebuild_error = self.rebuild().err();
+            let rebuild_panic = self.panic_message.lock().unwrap().take();
+            let recovery_error = match (rebuild_error, rebuild_panic) {
+                (None, None) => return Err(action_error.into()),
+                (Some(error), None) => error.to_string(),
+                (None, Some(message)) => PanicError(message).to_string(),
+                (Some(error), Some(message)) => {
+                    format!("{error}; {}", PanicError(message))
+                }
+            };
+            return Err(anyhow::anyhow!(
+                "{action_error}; rebuilding after the failed rule action also failed: {recovery_error}"
+            ));
         }
 
         let mut iteration_report = IterationReport {
@@ -789,6 +900,7 @@ impl EGraph {
                                 &[*rule],
                                 ts,
                                 ReportLevel::TimeOnly,
+                                None,
                             )?
                             .changed;
                         }
@@ -804,6 +916,7 @@ impl EGraph {
                             &[info.nonincremental_rebuild_rule],
                             ts,
                             ReportLevel::TimeOnly,
+                            None,
                         )?
                         .changed;
                         for rule in &info.incremental_rebuild_rules {
@@ -877,6 +990,7 @@ impl EGraph {
                 &scratch,
                 ts,
                 ReportLevel::TimeOnly,
+                None,
             )?
             .changed;
             scratch.clear();
@@ -893,6 +1007,7 @@ impl EGraph {
                     &scratch,
                     ts,
                     ReportLevel::TimeOnly,
+                    None,
                 )?
                 .changed;
                 scratch.clear();
@@ -1004,6 +1119,9 @@ impl EGraph {
     /// The staged updates are not immediately reflected in the EGraph, so you may want to
     /// manually flush the updates using [`EGraph::flush_updates`].
     ///
+    /// `context` is visible to any external function the closure reaches; pass
+    /// `None` if there is nothing to share.
+    ///
     /// # Seminaive-safety trust boundary
     ///
     /// This method hands out a raw `&mut ExecutionState`, which bypasses
@@ -1013,9 +1131,13 @@ impl EGraph {
     /// / global-action context: appropriate for one-shot database
     /// manipulation from outside any rule, not for use inside
     /// primitive implementations.
-    pub fn with_execution_state<R>(&self, f: impl FnOnce(&mut ExecutionState<'_>) -> R) -> R {
+    pub fn with_execution_state<R>(
+        &self,
+        context: ExternalContext<'_>,
+        f: impl FnOnce(&mut ExecutionState<'_>) -> R,
+    ) -> R {
         let thread_pool = self.thread_pool();
-        install_thread_pool(thread_pool, || self.db.with_execution_state(f))
+        install_thread_pool(thread_pool, || self.db.with_execution_state(context, f))
     }
 
     /// Like [`EGraph::with_execution_state`], but also reports whether `f`
@@ -1024,9 +1146,10 @@ impl EGraph {
     /// no-op merge plus a spurious timestamp bump.
     pub fn with_execution_state_tracked<R>(
         &self,
+        context: ExternalContext<'_>,
         f: impl FnOnce(&mut ExecutionState<'_>) -> R,
     ) -> (R, bool) {
-        self.db.with_execution_state_tracked(f)
+        self.db.with_execution_state_tracked(context, f)
     }
 
     /// Flush the pending update buffers to the EGraph.
@@ -1346,12 +1469,24 @@ pub enum TableKind {
     Constructor,
 }
 
+impl TableKind {
+    /// How this kind of table is spelled in a program, and in diagnostics.
+    pub fn label(self) -> &'static str {
+        match self {
+            TableKind::Function => "function",
+            TableKind::Constructor => "constructor",
+        }
+    }
+}
+
 /// This is an intern-able struct that holds all the data needed
 /// to do table operations with an [`ExecutionState`], assuming
 /// that the [`FunctionId`] for the table is known ahead of time.
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct TableAction {
     table: TableId,
+    identity: TableIdentity,
+    name: Arc<str>,
     table_math: SchemaMath,
     default: Option<MergeVal>,
     timestamp: CounterId,
@@ -1369,6 +1504,8 @@ impl TableAction {
         };
         TableAction {
             table: func_info.table,
+            identity: egraph.db.get_table_info(func_info.table).identity(),
+            name: Arc::clone(&func_info.name),
             table_math: SchemaMath {
                 func_cols: func_info.schema.len(),
                 subsume: func_info.can_subsume,
@@ -1381,6 +1518,16 @@ impl TableAction {
             timestamp: egraph.timestamp_counter,
             kind,
         }
+    }
+
+    /// Whether this still names the same table allocation in `state`.
+    ///
+    /// A table declared inside a `push` is dropped by the corresponding `pop`.
+    /// Its [`TableId`] may then be reused by a different table, while handles
+    /// handed out before the pop still hold the old id.
+    pub fn is_live(&self, state: &ExecutionState) -> bool {
+        state.table_identity(self.table) == Some(self.identity)
+            && state.table_name(self.table) == Some(self.name.as_ref())
     }
 
     /// Whether this table is a `Function` (no auto-insert) or a
@@ -1434,7 +1581,7 @@ impl TableAction {
         let mut buf = TaggedRowBuffer::new(imp.spec().arity());
         macro_rules! drain_buf {
             ($buf:expr) => {
-                for (_, row) in $buf.non_stale() {
+                for (_, row) in $buf.iter() {
                     let subsumed =
                         schema_math.subsume && row[schema_math.subsume_col()] == SUBSUMED;
                     if !f(ScanEntry {
@@ -1452,6 +1599,24 @@ impl TableAction {
             cur = next;
         }
         drain_buf!(buf);
+    }
+
+    /// Call `f` on each row whose output column is `value`.
+    pub fn for_each_output_value(
+        &self,
+        state: &ExecutionState,
+        value: Value,
+        mut f: impl FnMut(ScanEntry<'_>),
+    ) {
+        let schema_math = self.table_math;
+        let output_col = ColumnId::from_usize(self.input_arity());
+        state.for_each_matching_col(self.table, output_col, value, |row| {
+            let subsumed = schema_math.subsume && row[schema_math.subsume_col()] == SUBSUMED;
+            f(ScanEntry {
+                vals: &row[0..schema_math.func_cols],
+                subsumed,
+            });
+        });
     }
 
     /// Look up a row, inserting the configured default value if absent.
@@ -1511,12 +1676,16 @@ impl TableAction {
         state.stage_remove(self.table, key);
     }
 
-    /// Subsume a row in this table.
+    /// Subsume a row in a table with subsumption enabled. For a constructor,
+    /// the configured default is inserted if the key is absent. Rows predicted
+    /// earlier in the same action are reused.
     pub fn subsume(&self, state: &mut ExecutionState, key: impl Iterator<Item = Value>) {
         let ts = Value::from_usize(state.read_counter(self.timestamp));
         let mut scratch = key.collect::<SmallVec<[_; 8]>>();
 
-        let ret_val = self.lookup(state, &scratch).expect("subsume lookup failed");
+        let ret_val = self
+            .lookup_or_insert(state, &scratch)
+            .expect("subsume lookup failed");
 
         self.table_math.write_table_row(
             &mut scratch,
@@ -1560,6 +1729,7 @@ fn run_rules_impl(
     rules: &[RuleId],
     next_ts: Timestamp,
     report_level: ReportLevel,
+    context: ExternalContext<'_>,
 ) -> Result<RuleSetReport> {
     for rule in rules {
         let info = &mut rule_info[*rule];
@@ -1576,7 +1746,7 @@ fn run_rules_impl(
         info.last_run_at = next_ts;
     }
     let ruleset = rsb.build();
-    Ok(db.run_rule_set(&ruleset, report_level))
+    Ok(db.run_rule_set(&ruleset, report_level, context))
 }
 
 // These markers are just used to make it easy to distinguish time spent in

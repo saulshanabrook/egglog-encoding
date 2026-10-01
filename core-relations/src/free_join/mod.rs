@@ -12,6 +12,7 @@ use crate::{
     hash_index::IndexCatalog,
     numeric_id::{DenseIdMap, DenseIdMapWithReuse, NumericId, define_id},
 };
+use crossbeam_queue::SegQueue;
 use egglog_concurrency::{NotificationList, ResettableOnceLock};
 use smallvec::SmallVec;
 
@@ -34,10 +35,18 @@ use crate::{
 };
 
 use self::plan::Plan;
-use crate::action::ExecutionState;
+use crate::action::{ExecutionState, ExternalContext};
 
 pub(crate) mod execute;
 pub(crate) mod frame_update;
+mod join_tail;
+mod packed_cache;
+mod prepared_index;
+mod probe;
+mod residual_index;
+// The packed trie is exercised independently before it is wired into execution.
+#[allow(dead_code)]
+pub(crate) mod packed_trie;
 pub(crate) mod plan;
 
 define_id!(
@@ -103,10 +112,15 @@ impl ProcessedConstraints {
     }
 }
 
+/// Ordered column identifiers shared by join planning, probing, and index caches.
+/// The inline capacity is kept consistent across these paths; longer keys spill
+/// to the heap.
+pub(crate) type ColumnIds = SmallVec<[ColumnId; 4]>;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SubAtom {
     pub(crate) atom: AtomId,
-    pub(crate) vars: SmallVec<[ColumnId; 2]>,
+    pub(crate) vars: ColumnIds,
 }
 
 impl SubAtom {
@@ -131,15 +145,38 @@ pub(crate) struct VarInfo {
 pub(crate) type HashIndex = Arc<ResettableOnceLock<Index<TupleIndex>>>;
 pub(crate) type HashColumnIndex = Arc<ResettableOnceLock<Index<ColumnIndex>>>;
 
+static NEXT_TABLE_IDENTITY: AtomicUsize = AtomicUsize::new(0);
+
+/// An opaque identity for one table allocation.
+///
+/// Unlike [`TableId`], identities are not reused after a database snapshot is
+/// restored. This is exposed for workspace crates that retain table handles
+/// across snapshots; most users should use [`TableId`] instead.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct TableIdentity(usize);
+
+impl TableIdentity {
+    fn fresh() -> Self {
+        Self(NEXT_TABLE_IDENTITY.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
 pub struct TableInfo {
+    identity: TableIdentity,
     pub(crate) name: Option<Arc<str>>,
     pub(crate) spec: TableSpec,
     pub(crate) table: WrappedTable,
-    pub(crate) indexes: IndexCatalog<SmallVec<[ColumnId; 4]>, HashIndex>,
+    pub(crate) indexes: IndexCatalog<ColumnIds, HashIndex>,
     pub(crate) column_indexes: IndexCatalog<ColumnId, HashColumnIndex>,
 }
 
 impl TableInfo {
+    #[doc(hidden)]
+    pub fn identity(&self) -> TableIdentity {
+        self.identity
+    }
+
     pub fn table(&self) -> &WrappedTable {
         &self.table
     }
@@ -170,6 +207,7 @@ impl Clone for TableInfo {
             })
         }
         TableInfo {
+            identity: self.identity,
             name: self.name.clone(),
             spec: self.spec.clone(),
             table: self.table.dyn_clone(),
@@ -258,15 +296,88 @@ dyn_clone::clone_trait_object!(ExternalFunction);
 pub(crate) type ExternalFunctions =
     DenseIdMapWithReuse<ExternalFunctionId, Box<dyn ExternalFunction>>;
 
+// Reservable counters give each execution state a disjoint range of values.
+// Values are then handed out by advancing the state's local `range`, avoiding
+// a shared atomic operation per value. Dropping the reservation returns its
+// unused suffix to `recycled`, and future states reuse those suffixes before
+// advancing the atomic high-water mark. A reservation size of one retains the
+// exact increment/read behavior needed by observable counters.
+struct Counter {
+    next: AtomicUsize,
+    reservation_size: usize,
+    recycled: SegQueue<std::ops::Range<usize>>,
+}
+
+impl Counter {
+    fn new(reservation_size: usize) -> Self {
+        assert!(reservation_size > 0);
+        Self {
+            next: AtomicUsize::new(0),
+            reservation_size,
+            recycled: SegQueue::new(),
+        }
+    }
+
+    fn take_reservation(&self) -> std::ops::Range<usize> {
+        if self.reservation_size == 1 {
+            let start = self.next.fetch_add(1, Ordering::Release);
+            return start..start + 1;
+        }
+        self.recycled.pop().unwrap_or_else(|| {
+            let start = self
+                .next
+                .fetch_add(self.reservation_size, Ordering::Release);
+            start..start + self.reservation_size
+        })
+    }
+}
+
+pub(crate) struct CounterReservation {
+    counter: Arc<Counter>,
+    range: std::ops::Range<usize>,
+}
+
+impl CounterReservation {
+    fn new(counter: Arc<Counter>) -> Self {
+        let range = counter.take_reservation();
+        Self { counter, range }
+    }
+
+    pub(crate) fn next(&mut self) -> usize {
+        if self.range.start == self.range.end {
+            self.range = self.counter.take_reservation();
+        }
+        let result = self.range.start;
+        self.range.start += 1;
+        result
+    }
+}
+
+impl Drop for CounterReservation {
+    fn drop(&mut self) {
+        if !self.range.is_empty() {
+            self.counter.recycled.push(self.range.clone());
+        }
+    }
+}
+
 #[derive(Default)]
-pub(crate) struct Counters(DenseIdMap<CounterId, AtomicUsize>);
+pub(crate) struct Counters(DenseIdMap<CounterId, Arc<Counter>>);
 
 impl Clone for Counters {
     fn clone(&self) -> Counters {
         let mut map = DenseIdMap::new();
         for (k, v) in self.0.iter() {
             // NB: we may want to experiment with Ordering::Relaxed here.
-            map.insert(k, AtomicUsize::new(v.load(Ordering::SeqCst)));
+            let cloned = Counter {
+                next: AtomicUsize::new(v.next.load(Ordering::SeqCst)),
+                reservation_size: v.reservation_size,
+                // The high-water mark already includes every recycled range,
+                // so omitting the free list is safe and avoids sharing
+                // reservations between independent database snapshots.
+                recycled: SegQueue::new(),
+            };
+            map.insert(k, Arc::new(cloned));
         }
         Counters(map)
     }
@@ -274,12 +385,15 @@ impl Clone for Counters {
 
 impl Counters {
     pub(crate) fn read(&self, ctr: CounterId) -> usize {
-        self.0[ctr].load(Ordering::Acquire)
+        self.0[ctr].next.load(Ordering::Acquire)
     }
     pub(crate) fn inc(&self, ctr: CounterId) -> usize {
         // We synchronize with `read_counter` but not with other increments.
         // NB: we may want to experiment with Ordering::Relaxed here.
-        self.0[ctr].fetch_add(1, Ordering::Release)
+        self.0[ctr].next.fetch_add(1, Ordering::Release)
+    }
+    pub(crate) fn take_reservation(&self, ctr: CounterId) -> CounterReservation {
+        CounterReservation::new(Arc::clone(&self.0[ctr]))
     }
 }
 
@@ -291,10 +405,8 @@ pub struct Database {
     // NB: some fields are pub(crate) to allow some internal modules to avoid
     // borrowing the whole table.
     pub(crate) tables: DenseIdMap<TableId, TableInfo>,
-    // TODO: having a single AtomicUsize per counter can lead to contention. We
-    // should look into prefetching counters when creating a new ExecutionState
-    // and incrementing locally. Note that the batch size shouldn't be too big
-    // because we keep an array per id in the UF.
+    // Reservable counters amortize shared atomic increments across an
+    // ExecutionState. Exact counters retain one atomic increment per value.
     pub(crate) counters: Counters,
     pub(crate) external_functions: ExternalFunctions,
     container_values: ContainerValues,
@@ -357,7 +469,8 @@ impl Database {
     pub fn rebuild_containers(&mut self, table_id: TableId) -> ContainerRebuildSummary {
         let mut containers = mem::take(&mut self.container_values);
         let table = &self.tables[table_id].table;
-        let res = self.with_execution_state(|state| containers.rebuild_all(table_id, table, state));
+        let res =
+            self.with_execution_state(None, |state| containers.rebuild_all(table_id, table, state));
         self.container_values = containers;
         res
     }
@@ -444,25 +557,41 @@ impl Database {
     }
 
     /// Run `f` with access to an `ExecutionState` mapped to this database.
-    pub fn with_execution_state<R>(&self, f: impl FnOnce(&mut ExecutionState) -> R) -> R {
-        let mut state = ExecutionState::new(self.read_only_view(), Default::default());
+    ///
+    /// `context` is visible to any external function the closure reaches; pass
+    /// `None` if there is nothing to share.
+    pub fn with_execution_state<R>(
+        &self,
+        context: ExternalContext<'_>,
+        f: impl FnOnce(&mut ExecutionState) -> R,
+    ) -> R {
+        let mut state = ExecutionState::new(self.read_only_view_with(context), Default::default());
         f(&mut state)
     }
 
-    /// Like [`Database::with_execution_state`], but also reports whether `f`
-    /// staged any mutation through the execution state. Callers can use the
-    /// flag to skip a subsequent `merge_all` when the closure was read-only.
+    /// Like [`Database::with_execution_state`], including its `context`, but
+    /// also reports whether `f` staged any mutation through the execution
+    /// state. Callers can use the flag to skip a subsequent `merge_all` when
+    /// the closure was read-only.
     pub fn with_execution_state_tracked<R>(
         &self,
+        context: ExternalContext<'_>,
         f: impl FnOnce(&mut ExecutionState) -> R,
     ) -> (R, bool) {
-        let mut state = ExecutionState::new(self.read_only_view(), Default::default());
+        let mut state = ExecutionState::new(self.read_only_view_with(context), Default::default());
         let result = f(&mut state);
         (result, state.changed)
     }
 
     pub(crate) fn read_only_view(&self) -> DbView<'_> {
+        self.read_only_view_with(None)
+    }
+
+    /// Like [`Database::read_only_view`], but with an [`ExternalContext`] that
+    /// every [`ExecutionState`] built from the view will expose.
+    pub(crate) fn read_only_view_with<'a>(&'a self, context: ExternalContext<'a>) -> DbView<'a> {
         DbView {
+            external_context: context,
             table_info: &self.tables,
             counters: &self.counters,
             external_funcs: &self.external_functions,
@@ -497,7 +626,24 @@ impl Database {
     ///
     /// These counters can be used to generate unique ids as part of an action.
     pub fn add_counter(&mut self) -> CounterId {
-        self.counters.0.push(AtomicUsize::new(0))
+        self.counters.0.push(Arc::new(Counter::new(1)))
+    }
+
+    /// Create a counter whose increments from one [`ExecutionState`] are
+    /// allocated in local reservations.
+    ///
+    /// This is intended for fresh identifiers, where uniqueness matters but a
+    /// concurrent read need not equal the number of identifiers already
+    /// returned. Ordinary counters created by [`Database::add_counter`] retain
+    /// exact increment/read behavior.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `reservation_size` is zero.
+    pub fn add_reservable_counter(&mut self, reservation_size: usize) -> CounterId {
+        self.counters
+            .0
+            .push(Arc::new(Counter::new(reservation_size)))
     }
 
     /// Increment the given counter and return its previous value.
@@ -520,11 +666,15 @@ impl Database {
         let mut ever_changed = false;
         let do_parallel = parallelize_db_level_op(self.total_size_estimate);
         let mut to_merge = IndexSet::default();
+        // Tables modified during this `merge_all` call. Only these need their cached indexes reset
+        // at the end so future reads refresh them.
+        let mut touched: IndexSet<TableId> = IndexSet::default();
         loop {
             to_merge.clear();
             let to_merge_vec = self.notification_list.reset();
+            touched.extend(to_merge_vec.iter().copied());
             if to_merge_vec.len() < 4 {
-                ever_changed |= self.merge_simple(to_merge_vec);
+                ever_changed |= self.merge_simple(to_merge_vec, &mut touched);
                 break;
             }
             for table in to_merge_vec {
@@ -556,7 +706,13 @@ impl Database {
                 // Then initialize read dependencies (this two-phase structure is why we have an
                 // Option in the tables_merging map).
                 for table in stratum.intersection(&to_merge).copied() {
-                    tables_merging[table].0 = Some(self.tables.unwrap_val(table));
+                    let val = self.tables.unwrap_val(table);
+                    // Maintain `total_size_estimate` incrementally (subtract now, add
+                    // the post-merge length on drain below) so the reset loop no
+                    // longer re-sums every table.
+                    self.total_size_estimate =
+                        self.total_size_estimate.wrapping_sub(val.table.len());
+                    tables_merging[table].0 = Some(val);
                 }
                 let db = self.read_only_view();
                 changed |= if do_parallel {
@@ -577,39 +733,58 @@ impl Database {
                         .unwrap_or(false)
                 };
                 for (id, (table, _)) in tables_merging.drain() {
-                    self.tables.insert(id, table.unwrap());
+                    let val = table.unwrap();
+                    self.total_size_estimate =
+                        self.total_size_estimate.wrapping_add(val.table.len());
+                    self.tables.insert(id, val);
                 }
             }
             ever_changed |= changed;
         }
-        // Reset all indexes to force an update on the next access.
-        let mut size_estimate = 0;
-        for (_, info) in self.tables.iter_mut() {
-            info.column_indexes.update(|_, ti| {
-                Arc::get_mut(ti).unwrap().reset();
-            });
-            info.indexes.update(|_, ti| {
-                Arc::get_mut(ti).unwrap().reset();
-            });
-            size_estimate += info.table.len();
+        // Reset the cached indexes of only the tables modified during this call so
+        // they refresh on next access; unmodified tables keep their still-valid
+        // cached indexes. `touched` must contain *every* table whose version bumped
+        // this call: `ResettableOnceLock::get_or_update` runs the index `refresh`
+        // only after a `reset()`, so a modified-but-unreset table would keep serving
+        // a stale cached index. It does — every merged table comes from
+        // `notification_list.reset()`, which is exactly what `touched` accumulates.
+        // `total_size_estimate` was maintained incrementally at each merge (above and
+        // in `merge_simple`), so we no longer re-sum every table here.
+        for table in touched.iter().copied() {
+            if let Some(info) = self.tables.get_mut(table) {
+                info.column_indexes.update(|_, ti| {
+                    Arc::get_mut(ti).unwrap().reset();
+                });
+                info.indexes.update(|_, ti| {
+                    Arc::get_mut(ti).unwrap().reset();
+                });
+            }
         }
-        self.total_size_estimate = size_estimate;
         ever_changed
     }
 
     /// A "fast path" merge method that is not optimized for parallelism and does not respect read
     /// and write dependencies. This ends up being faster than the full "strata-aware" option in
     /// the body of `merge_all`.
-    fn merge_simple(&mut self, mut to_merge: SmallVec<[TableId; 4]>) -> bool {
+    fn merge_simple(
+        &mut self,
+        mut to_merge: SmallVec<[TableId; 4]>,
+        touched: &mut IndexSet<TableId>,
+    ) -> bool {
         let mut changed = false;
         while !to_merge.is_empty() {
             for table_id in to_merge.iter().copied() {
                 let mut info = self.tables.unwrap_val(table_id);
+                // Maintain `total_size_estimate` incrementally (see `merge_all`'s
+                // reset loop, which no longer re-sums every table).
+                self.total_size_estimate = self.total_size_estimate.wrapping_sub(info.table.len());
                 let mut es = ExecutionState::new(self.read_only_view(), Default::default());
                 changed |= info.table.merge(&mut es).added || es.changed;
+                self.total_size_estimate = self.total_size_estimate.wrapping_add(info.table.len());
                 self.tables.insert(table_id, info);
             }
             to_merge = self.notification_list.reset();
+            touched.extend(to_merge.iter().copied());
         }
         changed
     }
@@ -673,6 +848,7 @@ impl Database {
         let spec = table.spec();
         let table = WrappedTable::new(table);
         let res = self.tables.push(TableInfo {
+            identity: TableIdentity::fresh(),
             name,
             spec,
             table,
@@ -863,7 +1039,10 @@ fn get_index_from_tableinfo(table_info: &TableInfo, cols: &[ColumnId]) -> HashIn
 /// The core logic behind getting and updating a column index.
 ///
 /// This is the single-column analog to [`get_index_from_tableinfo`].
-fn get_column_index_from_tableinfo(table_info: &TableInfo, col: ColumnId) -> HashColumnIndex {
+pub(crate) fn get_column_index_from_tableinfo(
+    table_info: &TableInfo,
+    col: ColumnId,
+) -> HashColumnIndex {
     let index: Arc<_> = table_info.column_indexes.get_or_insert(col, || {
         Arc::new(ResettableOnceLock::new(Index::new(
             vec![col],

@@ -23,13 +23,13 @@ pub(crate) mod uf;
 #[cfg(test)]
 mod tests;
 
-pub use action::{ExecutionState, MergeVal, QueryEntry, WriteVal};
+pub use action::{ExecutionState, ExternalContext, MergeVal, QueryEntry, WriteVal};
 pub use base_values::{BaseValue, BaseValueId, BaseValuePrinter, BaseValues, Boxed};
 pub use common::Value;
 pub use containers::{ContainerRebuildSummary, ContainerValue, ContainerValueId, ContainerValues};
 pub use free_join::{
-    AtomId, CounterId, Database, ExternalFunction, ExternalFunctionId, TableId, Variable,
-    make_external_func, plan::PlanStrategy,
+    AtomId, CounterId, Database, ExternalFunction, ExternalFunctionId, TableId, TableIdentity,
+    Variable, make_external_func, plan::PlanStrategy,
 };
 pub use hash_index::TupleIndex;
 #[doc(hidden)]
