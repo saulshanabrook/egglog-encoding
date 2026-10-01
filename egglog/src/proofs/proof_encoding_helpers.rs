@@ -2,7 +2,9 @@
 //! naming, headers, and checking whether a program supports proof encoding.
 
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use egglog_concurrency::ReadOptimizedLock;
 
 use crate::{
     ArcSort, EGraph, TypeInfo, Value,
@@ -1776,7 +1778,11 @@ pub(crate) const DROP_REFLEXIVE_STEP: &str = "drop-reflexive-step";
 #[derive(Clone, Default)]
 pub(crate) struct DropReflexiveStep {
     /// `(spelling, column)` -> that spelling without the column.
-    dropped: Arc<Mutex<HashMap<(Value, i64), Value>>>,
+    /// Math run 12 measurements (1/16 threads, with/without decomposition) saw
+    /// only six insertions in 29.9–30.7 million lookups, all within the first
+    /// 355 lookups. Optimize for the read-only steady state: the previous mutex
+    /// contended even on cache hits.
+    dropped: Arc<ReadOptimizedLock<HashMap<(Value, i64), Value>>>,
 }
 
 impl crate::Primitive for DropReflexiveStep {
@@ -1799,7 +1805,7 @@ impl crate::PurePrim for DropReflexiveStep {
         }
         let base_values = crate::exec_state::Core::base_values(&state);
         let key = (*spelling, base_values.unwrap::<i64>(*column));
-        if let Some(dropped) = self.dropped.lock().unwrap().get(&key) {
+        if let Some(dropped) = self.dropped.read().get(&key) {
             return Some(*dropped);
         }
         let text = base_values.unwrap::<crate::sort::S>(*spelling);
@@ -1810,7 +1816,7 @@ impl crate::PurePrim for DropReflexiveStep {
                 .spelling()
                 .into(),
         );
-        self.dropped.lock().unwrap().insert(key, dropped);
+        self.dropped.lock().insert(key, dropped);
         Some(dropped)
     }
 }

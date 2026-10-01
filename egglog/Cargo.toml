@@ -65,6 +65,7 @@ csv = { workspace = true }
 egglog-core-relations = { workspace = true }
 egglog-ast = { workspace = true }
 egglog-bridge = { workspace = true }
+egglog-concurrency = { workspace = true }
 egglog-numeric-id = { workspace = true }
 egglog-add-primitive = { workspace = true }
 egglog-reports = { workspace = true }
