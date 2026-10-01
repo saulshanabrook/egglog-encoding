@@ -357,7 +357,7 @@ impl Hash for SpecializedPrimitive {
 
 #[derive(Debug, Clone)]
 pub enum ResolvedCall {
-    Func(FuncType),
+    Func(Arc<FuncType>),
     Primitive(SpecializedPrimitive),
     /// The `values` tuple constructor, used to destructure a tuple-output function's outputs in a
     /// query (`(= (values a b) (f x))`) or to construct them in a `set` action
@@ -409,20 +409,6 @@ impl ResolvedCall {
             // that incidentally ask for "a" sort do not panic. Tuple-output uses are routed
             // specially before this is consulted.
             ResolvedCall::Values(sorts) => &sorts[0],
-        }
-    }
-
-    /// Gives the types for a term's child with the given resolved call.
-    /// For functions this includes the output sort, for constructors it's just the inputs.
-    pub(crate) fn view_types(&self) -> Vec<ArcSort> {
-        match self {
-            ResolvedCall::Func(func) => {
-                let mut types = func.input.clone();
-                types.extend(func.outputs.iter().cloned());
-                types
-            }
-            ResolvedCall::Primitive(prim) => prim.input().to_vec(),
-            ResolvedCall::Values(sorts) => sorts.clone(),
         }
     }
 
@@ -490,6 +476,12 @@ impl ResolvedCall {
             ctx,
             span: span.clone(),
         })
+    }
+
+    /// Whether this call is to a `function` table, as opposed to a constructor
+    /// or a primitive.
+    pub(crate) fn is_custom_func(&self) -> bool {
+        matches!(self, ResolvedCall::Func(func) if func.subtype == FunctionSubtype::Custom)
     }
 }
 
@@ -933,7 +925,6 @@ where
     }
 }
 
-pub(crate) type CoreRule = GenericCoreRule<StringOrEq, String, String>;
 pub(crate) type ResolvedCoreRule = GenericCoreRule<ResolvedCall, ResolvedCall, ResolvedVar>;
 
 impl<BodyCall, ActionCall, Leaf> GenericCoreRule<BodyCall, ActionCall, Leaf>

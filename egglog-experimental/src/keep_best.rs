@@ -10,7 +10,7 @@
 use egglog::{
     CommandOutput, EGraph, Error, RawValues, TermDag, TermId, UserDefinedCommand, Value, Write,
     ast::{Expr, FunctionSubtype},
-    extract::{Extractor, TreeAdditiveCostModel},
+    extract::{DEFAULT_COST_MODEL, TreeExtractor},
     sort::S,
     span,
 };
@@ -96,10 +96,10 @@ fn collect_and_extract(
         let mut raw_rows: Vec<Vec<Value>> = Vec::new();
         for_each_table_row(egraph, table_name, &layout, false, |row| raw_rows.push(row))?;
 
-        let extractor = Extractor::compute_costs_from_rootsorts(
+        let extractor = TreeExtractor::compute_costs_from_rootsorts(
             Some(all_sorts.clone()),
             egraph,
-            TreeAdditiveCostModel::default(),
+            DEFAULT_COST_MODEL,
         );
         let mut termdag = TermDag::default();
         let mut extracted_rows: Vec<Vec<TermId>> = Vec::new();
@@ -107,14 +107,14 @@ fn collect_and_extract(
         for row_vals in &raw_rows {
             let mut term_ids = Vec::new();
             for (val, sort) in row_vals.iter().zip(all_sorts.iter()) {
-                let (_, tid) = extractor
-                    .extract_best_with_sort(egraph, &mut termdag, *val, sort.clone())
+                let extracted = extractor
+                    .extract_best_with_sort(&mut termdag, *val, sort.clone())
                     .ok_or_else(|| {
                         Error::ExtractError(format!(
                             "keep-best: could not extract value in table {table_name}"
                         ))
                     })?;
-                term_ids.push(tid);
+                term_ids.push(extracted.term);
             }
             extracted_rows.push(term_ids);
         }

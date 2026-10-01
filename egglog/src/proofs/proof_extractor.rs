@@ -275,7 +275,7 @@ impl Frame {
                                 ))
                             } else {
                                 let index = children.len();
-                                Step::Need(row[index], func.schema.input[index].clone())
+                                Step::Need(row[index], func.func_type.input[index].clone())
                             };
                         }
                         None => match eq.next_row(egraph, scanned, self.value, &self.sort) {

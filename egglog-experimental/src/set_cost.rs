@@ -2,7 +2,7 @@ use crate::Error;
 use egglog::{
     CommandOutput, EGraph, Enode, RawValues, Read, TermDag, TermId, UserDefinedCommand,
     ast::*,
-    extract::{CostModel, DefaultCost, Extractor, TreeAdditiveCostModel},
+    extract::{DEFAULT_COST_MODEL, DefaultCost, TreeCostModel, TreeExtractor},
     span,
     util::FreshGen,
 };
@@ -188,14 +188,42 @@ fn map_fallible<T>(
 #[derive(Clone)]
 pub struct DynamicCostModel;
 
-impl CostModel<DefaultCost> for DynamicCostModel {
-    fn fold(
+impl TreeCostModel<DefaultCost> for DynamicCostModel {
+    type EnodeCost = DefaultCost;
+    type ContainerCost = DefaultCost;
+
+    fn base_value_cost(
         &self,
-        _head: &str,
-        children_cost: &[DefaultCost],
-        head_cost: DefaultCost,
+        egraph: &EGraph,
+        sort: &egglog::ArcSort,
+        value: egglog::Value,
     ) -> DefaultCost {
-        TreeAdditiveCostModel {}.fold(_head, children_cost, head_cost)
+        DEFAULT_COST_MODEL.base_value_cost(egraph, sort, value)
+    }
+
+    fn container_cost(
+        &self,
+        egraph: &EGraph,
+        sort: &egglog::ArcSort,
+        value: egglog::Value,
+    ) -> DefaultCost {
+        DEFAULT_COST_MODEL.container_cost(egraph, sort, value)
+    }
+
+    fn fold_enode_cost(
+        &self,
+        head_cost: DefaultCost,
+        children_cost: &[DefaultCost],
+    ) -> DefaultCost {
+        DEFAULT_COST_MODEL.fold_enode_cost(head_cost, children_cost)
+    }
+
+    fn fold_container_cost(
+        &self,
+        container_cost: DefaultCost,
+        element_costs: &[DefaultCost],
+    ) -> DefaultCost {
+        DEFAULT_COST_MODEL.fold_container_cost(container_cost, element_costs)
     }
 
     fn enode_cost(
@@ -215,9 +243,9 @@ impl CostModel<DefaultCost> for DynamicCostModel {
                     assert!(cost >= 0);
                     cost as DefaultCost
                 })
-                .unwrap_or_else(|| TreeAdditiveCostModel {}.enode_cost(egraph, func, enode))
+                .unwrap_or_else(|| DEFAULT_COST_MODEL.enode_cost(egraph, func, enode))
         } else {
-            TreeAdditiveCostModel {}.enode_cost(egraph, func, enode)
+            DEFAULT_COST_MODEL.enode_cost(egraph, func, enode)
         }
     }
 }
@@ -271,14 +299,15 @@ impl UserDefinedCommand for CustomExtract {
 
         let mut termdag = TermDag::default();
 
-        let extractor = Extractor::compute_costs_from_rootsorts(
+        let extractor = TreeExtractor::compute_costs_from_rootsorts(
             Some(vec![sort.clone()]),
             egraph,
             DynamicCostModel,
         );
         // Omitted or zero variant count means best extraction.
         if n == 0 {
-            if let Some((cost, term)) = extractor.extract_best(egraph, &mut termdag, value) {
+            if let Some(extracted) = extractor.extract_best_with_sort(&mut termdag, value, sort) {
+                let (cost, term) = (extracted.cost, extracted.term);
                 if log_enabled!(log::Level::Info) {
                     log::info!("extracted with cost {cost}: {}", termdag.to_string(term));
                 }
@@ -291,9 +320,9 @@ impl UserDefinedCommand for CustomExtract {
             }
         } else {
             let terms: Vec<TermId> = extractor
-                .extract_variants(egraph, &mut termdag, value, n as usize)
+                .extract_variants_with_sort(&mut termdag, value, n as usize, sort)
                 .iter()
-                .map(|e| e.1)
+                .map(|e| e.term)
                 .collect();
             log::info!("extracted variants:");
             Ok(vec![CommandOutput::ExtractVariants(termdag, terms)])

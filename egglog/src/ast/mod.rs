@@ -59,6 +59,20 @@ pub struct ProofConstructorNames {
     pub proj_prim: String,
 }
 
+/// A lowered rule plus the execution options needed to rebuild it for scheduling.
+#[derive(Clone, Debug)]
+pub(crate) struct CompiledRule {
+    pub(crate) core: ResolvedCoreRule,
+    pub(crate) backend_id: egglog_bridge::RuleId,
+    /// Whether this rule's query uses delta evaluation.
+    pub(crate) seminaive: bool,
+    /// Whether its query or action may read the live database.
+    pub(crate) requires_read_context: bool,
+    pub(crate) no_decomp: bool,
+    pub(crate) include_subsumed: bool,
+}
+
+/// The egglog internal representation of already compiled rules.
 #[derive(Clone, Debug)]
 /// The egglog internal representation of already compiled rules
 pub(crate) struct Ruleset {
@@ -69,7 +83,7 @@ pub(crate) struct Ruleset {
 #[derive(Clone, Debug)]
 pub(crate) enum RulesetKind {
     /// Represents a ruleset with a set of rules.
-    Rules(IndexMap<String, (ResolvedCoreRule, egglog_bridge::RuleId)>),
+    Rules(IndexMap<String, CompiledRule>),
     /// A combined ruleset may contain other rulesets.
     Combined(Vec<String>),
 }
@@ -1290,7 +1304,7 @@ where
             GenericCommand::Rule { rule } => rule.fmt(f),
             GenericCommand::RunSchedule(sched) => write!(f, "(run-schedule {sched})"),
             GenericCommand::PrintOverallStatistics(_span, file) => match file {
-                Some(file) => write!(f, "(print-stats :file {file})"),
+                Some(file) => write!(f, "(print-stats :file {})", Literal::String(file.clone())),
                 None => write!(f, "(print-stats)"),
             },
             GenericCommand::Check(_ann, facts) => {
@@ -1314,7 +1328,7 @@ where
                     write!(f, " {n}")?;
                 }
                 if let Some(file) = file {
-                    write!(f, " :file {file:?}")?;
+                    write!(f, " :file {}", Literal::String(file.clone()))?;
                 }
                 match mode {
                     PrintFunctionMode::Default => {}
@@ -1331,7 +1345,7 @@ where
                 file,
                 proof_base,
             } => {
-                write!(f, "(input {name} {file:?}")?;
+                write!(f, "(input {name} {}", Literal::String(file.clone()))?;
                 if let Some(base) = proof_base {
                     write!(f, " :internal-proof-base {base}")?;
                 }
@@ -1341,9 +1355,16 @@ where
                 span: _,
                 file,
                 exprs,
-            } => write!(f, "(output {file:?} {})", ListDisplay(exprs, " ")),
+            } => write!(
+                f,
+                "(output {} {})",
+                Literal::String(file.clone()),
+                ListDisplay(exprs, " ")
+            ),
             GenericCommand::Fail(_span, cmds) => write!(f, "(fail {})", ListDisplay(cmds, " ")),
-            GenericCommand::Include(_span, file) => write!(f, "(include {file:?})"),
+            GenericCommand::Include(_span, file) => {
+                write!(f, "(include {})", Literal::String(file.clone()))
+            }
             GenericCommand::Datatypes { span: _, datatypes } => {
                 let datatypes: Vec<_> = datatypes
                     .iter()
@@ -1490,12 +1511,19 @@ pub enum FunctionSubtype {
     Custom,
 }
 
+impl FunctionSubtype {
+    /// How this subtype is spelled in a program, and in diagnostics about one.
+    pub fn label(self) -> &'static str {
+        match self {
+            FunctionSubtype::Constructor => "constructor",
+            FunctionSubtype::Custom => "function",
+        }
+    }
+}
+
 impl Display for FunctionSubtype {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        match self {
-            FunctionSubtype::Constructor => write!(f, "constructor"),
-            FunctionSubtype::Custom => write!(f, "function"),
-        }
+        write!(f, "{}", self.label())
     }
 }
 
@@ -1509,10 +1537,9 @@ where
 {
     pub name: String,
     pub subtype: FunctionSubtype,
-    /// Untyped schema
+    /// The schema as written. The resolved signature lives in `TypeInfo`,
+    /// keyed by `name`.
     pub schema: Schema,
-    /// Resolved schema after typechecking is stored here, otherwise "".
-    pub resolved_schema: Head,
     pub merge: Option<GenericMerge<Head, Leaf>>,
     pub cost: Option<DefaultCost>,
     pub unextractable: bool,
@@ -1626,7 +1653,7 @@ impl FunctionDecl {
             name,
             subtype: FunctionSubtype::Custom,
             schema,
-            resolved_schema: String::new(),
+
             merge,
             cost: None,
             unextractable: true,
@@ -1651,8 +1678,8 @@ impl FunctionDecl {
         Self {
             name,
             subtype: FunctionSubtype::Constructor,
-            resolved_schema: String::new(),
             schema,
+
             merge: None,
             cost,
             unextractable,
@@ -1679,7 +1706,7 @@ where
             name: self.name,
             subtype: self.subtype,
             schema: self.schema,
-            resolved_schema: self.resolved_schema,
+
             merge: self.merge.map(|expr| expr.visit_exprs(f)),
             cost: self.cost,
             unextractable: self.unextractable,

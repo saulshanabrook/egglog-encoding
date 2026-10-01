@@ -115,7 +115,7 @@ impl PreMergeTiming {
         }
     }
 
-    fn union(&mut self, other: Self) {
+    pub fn union(&mut self, other: Self) {
         *self = match (*self, other) {
             (
                 Self::Split {

@@ -55,9 +55,9 @@ fn only_proof_node_relations_use_flat_storage() {
                 "{}",
                 function.name()
             );
-            assert_eq!(function.schema.outputs.len(), 1, "{}", function.name());
+            assert_eq!(function.func_type.outputs.len(), 1, "{}", function.name());
             assert_eq!(
-                function.schema.outputs[0].name(),
+                function.func_type.outputs[0].name(),
                 "Unit",
                 "{}",
                 function.name()
@@ -66,7 +66,7 @@ fn only_proof_node_relations_use_flat_storage() {
             assert!(function.decl.internal_view.is_none(), "{}", function.name());
             assert!(
                 function
-                    .schema
+                    .func_type
                     .input
                     .last()
                     .is_some_and(|sort| sort.is_eq_sort()),

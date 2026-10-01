@@ -517,7 +517,7 @@ impl RuleBuilder<'_> {
     /// `entries` should match the number of keys to the function.
     pub fn subsume(&mut self, func: FunctionId, entries: &[QueryEntry]) {
         // Ensure the row exists (panics otherwise); its value is re-read per column below.
-        let _ret = self.lookup_with_subsumed(
+        let ret = self.lookup_with_subsumed(
             func,
             entries,
             QueryEntry::Const {
@@ -534,20 +534,21 @@ impl RuleBuilder<'_> {
         let entries = entries.to_vec();
         let table = info.table;
 
+        let ret: QueryEntry = ret.into();
         self.add_callback(move |inner, rb| {
-            // Then, add a tuple subsuming the entry, but only if the entry isn't already subsumed.
+            // Preserve the predicted primary value and every additional value column.
             let keys = inner.convert_all(&entries);
-            let cur_subsume_val = rb.lookup(
-                table,
-                &keys,
-                ColumnId::from_usize(schema_math.subsume_col()),
-            )?;
             // Re-read every value column so subsumption preserves the whole row (tuple-output views
             // carry more than one value, e.g. the e-class and its proof).
             let mut dst_entries = keys.clone();
             for i in 0..n_vals {
-                let v = rb.lookup(table, &keys, ColumnId::from_usize(schema_math.val_col(i)))?;
-                dst_entries.push(v.into());
+                let v = if i == 0 {
+                    inner.convert(&ret)
+                } else {
+                    rb.lookup(table, &keys, ColumnId::from_usize(schema_math.val_col(i)))?
+                        .into()
+                };
+                dst_entries.push(v);
             }
             schema_math.write_table_row(
                 &mut dst_entries,
@@ -557,13 +558,7 @@ impl RuleBuilder<'_> {
                     ret_val: None,
                 },
             );
-            rb.insert_if_eq(
-                table,
-                cur_subsume_val.into(),
-                NOT_SUBSUMED.into(),
-                &dst_entries,
-            )?;
-            Ok(())
+            rb.insert(table, &dst_entries).context("subsume")
         });
     }
 

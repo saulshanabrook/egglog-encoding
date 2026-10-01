@@ -119,7 +119,7 @@ impl ProofInstrumentor<'_> {
         // e-class rebuild below (union-tracking) — not the custom-output rebuild
         // (congruence), which would emit a nonsensical `Congr` on its nullary term.
         let output_is_eclass = self.output_is_eclass(fdecl);
-        let types = fdecl.resolved_schema.view_types();
+        let types = self.column_sorts(fdecl);
         let n = types.len();
         let child = |i: usize| format!("c{i}_");
         // Key columns of the view row: the children (the value tuple is unkeyed).
@@ -366,7 +366,7 @@ impl ProofInstrumentor<'_> {
         key_vars: &[String],
         out_idx: usize,
     ) -> String {
-        let value_uf_name = self.uf_name(fdecl.resolved_schema.output().name());
+        let value_uf_name = self.uf_name(self.sort_by_name(fdecl.schema.output()).name());
         let (query_view, value_var, view_prf) = self.query_fd_view(&fdecl.name, key_vars);
         let canon = self.fresh_var();
         let uf_prf = self.fresh_var();
@@ -427,7 +427,7 @@ impl ProofInstrumentor<'_> {
         key_vars: &[String],
         out_idx: usize,
     ) -> String {
-        let out_ty = fdecl.resolved_schema.output().clone();
+        let out_ty = self.sort_by_name(fdecl.schema.output());
         let value_prim = self.container_rebuild_prim(&out_ty);
         let (query_view, value_var, view_prf) = self.query_fd_view(&fdecl.name, key_vars);
         let canon = self.fresh_var();

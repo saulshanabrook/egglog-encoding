@@ -10,7 +10,7 @@
 use egglog::{
     CommandOutput, EGraph, Error, TermDag, TermId, TypeError, UserDefinedCommand,
     ast::{Expr, ParseError},
-    extract::{Cost, CostModel, Extractor},
+    extract::{Cost, TreeCostModel, TreeExtractor},
     prelude::span,
 };
 use log::log_enabled;
@@ -36,13 +36,15 @@ impl std::fmt::Display for MultiExtractOutput {
     }
 }
 
-pub struct MultiExtract<C: Cost + Ord + Eq + Clone + Debug + Send + Sync, CM: CostModel<C> + Clone>
-{
+pub struct MultiExtract<
+    C: Cost + Ord + Eq + Clone + Debug + Send + Sync,
+    CM: TreeCostModel<C> + Clone,
+> {
     cost_model: CM,
     _cost_t: PhantomData<C>,
 }
 
-impl<C: Cost + Ord + Eq + Clone + Debug + Send + Sync, CM: CostModel<C> + Clone>
+impl<C: Cost + Ord + Eq + Clone + Debug + Send + Sync, CM: TreeCostModel<C> + Clone>
     MultiExtract<C, CM>
 {
     pub fn new(cost_model: CM) -> Self {
@@ -55,7 +57,7 @@ impl<C: Cost + Ord + Eq + Clone + Debug + Send + Sync, CM: CostModel<C> + Clone>
 
 impl<
     C: Cost + Ord + Eq + Clone + Debug + Send + Sync,
-    CM: CostModel<C> + Clone + Send + Sync + 'static,
+    CM: TreeCostModel<C> + Clone + Send + Sync + 'static,
 > UserDefinedCommand for MultiExtract<C, CM>
 {
     fn update(&self, egraph: &mut EGraph, args: &[Expr]) -> Result<Vec<CommandOutput>, Error> {
@@ -96,7 +98,7 @@ impl<
             .collect::<Result<_, _>>()?;
 
         let mut termdag = TermDag::default();
-        let extractor = Extractor::compute_costs_from_rootsorts(
+        let extractor = TreeExtractor::compute_costs_from_rootsorts(
             Some(sorts.clone()),
             egraph,
             self.cost_model.clone(),
@@ -107,9 +109,9 @@ impl<
             .zip(sorts)
             .map(|(value, sort)| {
                 extractor
-                    .extract_variants_with_sort(egraph, &mut termdag, value, n as usize, sort)
+                    .extract_variants_with_sort(&mut termdag, value, n as usize, sort)
                     .into_iter()
-                    .map(|e| e.1)
+                    .map(|e| e.term)
                     .collect()
             })
             .collect();
