@@ -155,7 +155,7 @@ def test_profile_egg_treatment_uses_egg_binary_for_execution_identity_and_summar
     file_spec = models.FileSpec(
         "egglog-experimental/tests/math-microbenchmark-rational.egg",
         math_path,
-        "sha256:" + "b" * 64,
+        targets.sha256_file(math_path),
     )
     request = profile_runner.ProfileRequest(
         file=file_spec,

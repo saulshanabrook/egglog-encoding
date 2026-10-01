@@ -175,6 +175,146 @@ def test_runtime_uses_loaded_snapshot_without_reparsing_jsonl(tmp_path: Path) ->
     assert cast(dict[str, JsonValue], updated["selectors"])["rounds"] == 1
 
 
+def test_suite_validation_survives_export_swaps_and_subsets_without_leaking_to_other_targets(tmp_path: Path) -> None:
+    _runtime, _payload, store, comparison = _interactive_case(tmp_path)
+    reason = "strict proof validation failed: invalid witness"
+    comparison = replace(comparison, suite_mode=True, validation_issues=((comparison.files[0], reason),))
+    destination = tmp_path / "suite.html"
+    interactive.write_interactive_report(store.grouped_report(), comparison, destination)
+    envelope = _embedded_envelope(destination.read_text(encoding="utf-8"))
+    scope = cast(dict[str, JsonValue], envelope["initial_scope"])
+    grouped_path = tmp_path / "grouped.json"
+    grouped_path.write_bytes(serialize_grouped_report(store.grouped_report()))
+    runtime = InteractiveRuntime.from_path(grouped_path, store.display_path, json.dumps(scope))
+
+    assert reason in json.dumps(envelope["initial_payload"])
+    assert reason in json.dumps(runtime.payload())
+    swapped = scope | {
+        "baseline_endpoint_id": scope["candidate_endpoint_id"],
+        "candidate_endpoint_id": scope["baseline_endpoint_id"],
+        "file_ids": cast(list[str], scope["file_ids"])[:1],
+        "rounds": 1,
+    }
+    assert reason in json.dumps(runtime.apply(swapped))
+    assert reason not in json.dumps(runtime.apply(scope | {"file_ids": cast(list[str], scope["file_ids"])[1:]}))
+    unavailable = "strict validation unavailable for this selection"
+    changed_timeout = json.dumps(runtime.apply(scope | {"timeout_sec": 60}))
+    assert reason not in changed_timeout
+    assert unavailable not in changed_timeout
+    selectors = cast(dict[str, JsonValue], runtime.payload()["selectors"])
+    alternative = next(
+        endpoint
+        for endpoint in cast(list[dict[str, JsonValue]], selectors["endpoints"])
+        if endpoint["target"] == "alternative"
+    )
+    changed_endpoint = json.dumps(runtime.apply(scope | {"candidate_endpoint_id": alternative["id"]}))
+    assert reason not in changed_endpoint
+    assert unavailable not in changed_endpoint
+    assert reason in json.dumps(runtime.apply(scope | {"validation_issues": {}}))
+
+
+@pytest.mark.parametrize("change", ["endpoint", "timeout", "file"])
+def test_suite_retargeting_reports_complete_measurements_without_validation_prerequisite(
+    tmp_path: Path, change: str
+) -> None:
+    _runtime, _payload, store, comparison = _interactive_case(tmp_path)
+    comparison = replace(comparison, suite_mode=True, files=comparison.files[:1], rounds=1)
+    # Give every retargeted selection complete successful timings. Missing data
+    # and absent correctness diagnostics must not suppress these performance ratios.
+    for row in tuple(store.records):
+        if row["file_sha256"] == comparison.files[0].sha256:
+            store.append(row | {"timeout_sec": 60})
+            if row["treatment"] == "proofs":
+                store.append(row | {"binary_sha256": "sha256:alternative", "target_label": "alternative"})
+    scope = scope_for_comparison(comparison)
+    runtime = InteractiveRuntime(store.grouped_report(), scope)
+    selectors = cast(dict[str, Any], runtime.payload()["selectors"])
+    if change == "endpoint":
+        scope["candidate_endpoint_id"] = next(e["id"] for e in selectors["endpoints"] if e["target"] == "alternative")
+    elif change == "timeout":
+        scope["timeout_sec"] = 60
+    else:
+        scope["file_ids"] = [next(f["id"] for f in selectors["files"] if f["label"] == "two.egg")]
+    updated = runtime.apply(scope)
+    sections = cast(list[dict[str, Any]], updated["sections"])
+    wall = next(
+        block
+        for section in sections
+        if section["id"] == "files"
+        for block in section["blocks"]
+        if block["name"] == "Wall time"
+    )
+    assert "strict validation" not in json.dumps(wall)
+    assert "missing" not in json.dumps(wall)
+    for row in wall["rows"]:
+        assert row["ratio"]["value"] == pytest.approx(row["candidate"]["value"] / row["baseline"]["value"])
+
+
+def test_suite_artifact_keeps_requested_rounds_beyond_screening_rows(tmp_path: Path) -> None:
+    _runtime, _payload, store, comparison = _interactive_case(tmp_path)
+    comparison = replace(comparison, suite_mode=True, rounds=30)
+    runtime = InteractiveRuntime(store.grouped_report(), scope_for_comparison(comparison))
+    payload = runtime.initial_payload(comparison)
+    selectors = cast(dict[str, JsonValue], payload["selectors"])
+
+    assert selectors["rounds"] == 30
+    assert selectors["max_rounds"] == 30
+    assert "missing 28 row(s)" in json.dumps(payload)
+    assert "missing 28 row(s)" in json.dumps(runtime.apply(scope_for_comparison(comparison)))
+
+
+def test_suite_artifact_displays_preparation_failures_without_measurement_rows(tmp_path: Path) -> None:
+    store = ReportStore(tmp_path / "empty.jsonl")
+    baseline = make_endpoint(target_label="baseline", binary_sha256="sha256:base", treatment="off")
+    candidate = make_endpoint(target_label="candidate", binary_sha256="sha256:base", treatment="proof-extraction")
+    file = models.FileSpec(
+        "blocked.egg", tmp_path / "blocked.egg", "sha256:blocked", tmp_path / "facts", "sha256:facts"
+    )
+    reason = "strict proof validation failed before measurements"
+    comparison = models.ComparisonSpec(
+        baseline, candidate, (file,), 30, 120, validation_issues=((file, reason),), suite_mode=True
+    )
+    destination = tmp_path / "blocked.html"
+
+    interactive.write_interactive_report(store.grouped_report(), comparison, destination)
+    envelope = _embedded_envelope(destination.read_text(encoding="utf-8"))
+    scope = cast(dict[str, JsonValue], envelope["initial_scope"])
+    grouped_path = tmp_path / "grouped.json"
+    grouped_path.write_bytes(serialize_grouped_report(store.grouped_report()))
+    runtime = InteractiveRuntime.from_path(grouped_path, store.display_path, json.dumps(scope))
+    updated = runtime.apply(scope | {"rounds": 1})
+
+    assert json.loads(base64.b64decode(cast(str, envelope["report_grouped_base64"])))["groups"] == []
+    assert reason in json.dumps(envelope["initial_payload"])
+    assert reason in json.dumps(updated)
+    assert "facts" in json.dumps(updated)
+    assert not store.records
+    assert not store.path.exists()
+
+
+def test_runtime_discovers_native_egg_rows_alongside_egglog_rows(tmp_path: Path) -> None:
+    _runtime, _payload, store, comparison = _interactive_case(tmp_path)
+    store.append(
+        make_record(
+            20,
+            started_at="2026-07-17T13:00:00Z",
+            target_label="native",
+            binary_sha256="sha256:native",
+            file_sha256=comparison.files[0].sha256,
+            treatment="egg",
+        )
+    )
+
+    runtime = InteractiveRuntime(store.grouped_report(), scope_for_comparison(comparison))
+    selectors = cast(dict[str, JsonValue], runtime.payload()["selectors"])
+    endpoints = cast(list[dict[str, JsonValue]], selectors["endpoints"])
+    native = next(endpoint for endpoint in endpoints if endpoint["treatment"] == "egg")
+    updated = runtime.apply(scope_for_comparison(comparison) | {"candidate_endpoint_id": native["id"], "rounds": 1})
+
+    assert "native" in json.dumps(updated)
+    assert "missing" in json.dumps(updated)
+
+
 def test_html_embeds_exact_grouped_snapshot_initial_catalog_runtime_and_safe_data(tmp_path: Path) -> None:
     _runtime, _payload, store, comparison = _interactive_case(tmp_path)
     unsafe = make_record(
@@ -203,6 +343,7 @@ def test_html_embeds_exact_grouped_snapshot_initial_catalog_runtime_and_safe_dat
     assert set(cast(dict[str, str], envelope["python_modules"])) == {
         "benchmarking/__init__.py",
         "benchmarking/engines.py",
+        "benchmarking/math_workloads.py",
         "benchmarking/models.py",
         "benchmarking/reports/__init__.py",
         "benchmarking/reports/analysis.py",

@@ -203,6 +203,14 @@ class GroupedReport:
             raise ValueError("rounds must be positive")
         return self._by_key.get(key, ())[-rounds:]
 
+    def latest_failure(self, key: CacheKey, rounds: int) -> IndexedRecord | None:
+        """Keep terminal suite failures visible when shrinking the old 30-run window."""
+
+        return next(
+            (row for row in reversed(self.latest_records(key, max(30, rounds))) if row.record["status"] != "success"),
+            None,
+        )
+
 
 class ReportStore:
     """Load one report snapshot and keep its append/query indexes current."""
@@ -326,6 +334,14 @@ class ReportStore:
             raise ValueError("rounds must be positive")
         ordered = sorted(self._by_key.get(key, ()), key=lambda row: row.order_key)
         return tuple(ordered[-rounds:])
+
+    def latest_failure(self, key: CacheKey, rounds: int) -> IndexedRecord | None:
+        """Keep terminal suite failures visible when shrinking the old 30-run window."""
+
+        return next(
+            (row for row in reversed(self.latest_records(key, max(30, rounds))) if row.record["status"] != "success"),
+            None,
+        )
 
     def _indexed(self, record: ReportRecord) -> IndexedRecord:
         return IndexedRecord(

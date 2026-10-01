@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
 
+from .math_workloads import MATH_WORKLOAD_PATH as MATH_WORKLOAD_PATH
+from .math_workloads import recognize_math_workload
+
 type Engine = Literal["egglog", "egg", "egg-de", "egg-ee", "egg-nee", "egg-oee"]
 type Treatment = Literal[
     "off",
@@ -59,7 +62,6 @@ TREATMENT_SPECS: dict[Treatment, TreatmentSpec] = {
 }
 TREATMENTS = tuple(TREATMENT_SPECS)
 
-MATH_WORKLOAD_PATH = Path("egglog-experimental/tests/math-microbenchmark-rational.egg")
 PARAMETER_WORKLOAD_PATH = Path("benchmarks/disequality/parameter-analysis.egg")
 
 
@@ -75,8 +77,4 @@ def validate_engine_workload(file_spec: WorkloadFile, treatment: Treatment) -> N
         if file_spec.absolute_path.suffix != ".in":
             raise ValueError(f"treatment {treatment} requires a native .in workload")
         return
-    project_fixture = Path(__file__).resolve().parents[1] / MATH_WORKLOAD_PATH
-    if file_spec.absolute_path != project_fixture.resolve():
-        raise ValueError(
-            f"treatment {treatment} only supports {MATH_WORKLOAD_PATH.as_posix()}; cannot run {file_spec.display_path}"
-        )
+    recognize_math_workload(file_spec.absolute_path)

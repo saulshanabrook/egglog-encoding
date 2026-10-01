@@ -171,6 +171,44 @@ def test_build_target_builds_release_binary(monkeypatch: pytest.MonkeyPatch, tmp
     assert stream.getvalue().strip() == f"Building {label}"
 
 
+@pytest.mark.parametrize("engines", [("egglog",), ("egg",), ("egglog", "egg"), ("egg", "egglog", "egg")])
+@pytest.mark.parametrize("profile", ["release", "profiling"])
+def test_single_and_mixed_targets_build_the_same_individual_package_commands(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    engines: tuple[models.Engine, ...],
+    profile: targets.BuildProfile,
+) -> None:
+    commands: list[list[str]] = []
+    packages = {"egglog": "egglog-experimental", "egg": "egg-math-benchmark"}
+    row = models.TargetRow(".", str(tmp_path), "HEAD", "abc123", False)
+
+    def build(command: list[str], **kwargs: Any) -> None:
+        assert kwargs["cwd"] == tmp_path
+        commands.append(command)
+        binary = tmp_path / "target" / profile / command[-1]
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_text(f"{command[-1]} with its individual package features\n")
+
+    monkeypatch.setattr(targets.subprocess, "run", build)
+    monkeypatch.setattr(targets, "git_dirty", lambda _path: False)
+
+    resolved = targets.build_resolved_target(
+        targets.parse_target("."), row, Console(file=io.StringIO()), profile, engines
+    )
+
+    unique_engines = tuple(dict.fromkeys(engines))
+    profile_args = ["--release"] if profile == "release" else ["--profile", "profiling"]
+    assert commands == [["cargo", "build", *profile_args, "-p", packages[engine]] for engine in unique_engines]
+    assert tuple(binary.engine for binary in resolved.engine_binaries) == unique_engines
+    for binary in resolved.engine_binaries:
+        assert binary.path is not None
+        assert binary.sha256 == targets.sha256_file(binary.path)
+    assert {path.name for path in (tmp_path / "target" / profile).iterdir()} == {
+        packages[engine] for engine in unique_engines
+    }
+
+
 def test_legacy_resolved_target_only_falls_back_to_egglog_binary() -> None:
     binary = Path("/tmp/egglog-experimental")
     target = models.ResolvedTarget(

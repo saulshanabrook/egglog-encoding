@@ -20,6 +20,7 @@ from rich.console import Console
 from rich.text import Text
 
 from .engines import TREATMENT_SPECS, Engine, Treatment, validate_engine_workload
+from .math_workloads import LEGACY_SHA256, recognize_math_workload
 from .models import EngineBinary, FileSpec, ResolvedTarget, TargetRequest, TargetRow
 
 BuildProfile = Literal["release", "profiling"]
@@ -236,7 +237,28 @@ def build_target(
         )
     else:
         build_args.extend(("-p", package))
-    subprocess.run(build_args, cwd=checkout_path, check=True, stdout=sys.stderr, stderr=sys.stderr)
+    if os.environ.get("EGGLOG_BENCH_MEMORY_GUARD") == "1":
+        from .memory_guard import MemoryGuard
+        from .processes import terminate_process_group
+
+        guard = MemoryGuard.from_environment()
+        assert guard is not None
+        build_args.extend(("--jobs", "1"))
+        process = subprocess.Popen(
+            build_args, cwd=checkout_path, stdout=sys.stderr, stderr=sys.stderr, start_new_session=True
+        )
+        try:
+            guard.start(process.pid)
+            return_code = process.wait()
+        finally:
+            guard.close()
+            terminate_process_group(process)
+        if guard.reason is not None:
+            raise ValueError(f"resource guard stopped build: {guard.reason}")
+        if return_code != 0:
+            raise subprocess.CalledProcessError(return_code, build_args)
+    else:
+        subprocess.run(build_args, cwd=checkout_path, check=True, stdout=sys.stderr, stderr=sys.stderr)
     binary_stem = package or engine
     binary_name = f"{binary_stem}.exe" if os.name == "nt" else binary_stem
     binary_path = target_dir / build_profile / binary_name
@@ -316,7 +338,20 @@ def workload_command(
         validate_engine_workload(file_spec, treatment)
         if specification.engine != "egg":
             return [str(binary_path), str(file_spec.absolute_path), "100000", "10000"]
-        return [str(binary_path), *specification.flags]
+        witness = recognize_math_workload(file_spec.absolute_path)
+        # Keep the legacy fixed-driver command compatible with older targets.
+        if file_spec.sha256 == f"sha256:{LEGACY_SHA256}":
+            return [str(binary_path), *specification.flags]
+        return [
+            str(binary_path),
+            *specification.flags,
+            "--iterations",
+            str(witness.iterations),
+            "--check-left",
+            witness.left,
+            "--check-right",
+            witness.right,
+        ]
     return [
         str(binary_path),
         "--mode",
