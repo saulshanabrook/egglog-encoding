@@ -1,18 +1,12 @@
-"""Write the shared grouped snapshot, including cache-only export."""
+"""Write the shared grouped snapshot after benchmark collection."""
 
 from __future__ import annotations
 
-import argparse
 import os
-import sys
 import tempfile
-from collections.abc import Sequence
 from pathlib import Path
 
-from rich.console import Console
-from rich.text import Text
-
-from .store import GroupedReport, ReportStore, serialize_grouped_report
+from .store import GroupedReport, serialize_grouped_report
 
 
 def grouped_report_path(report_path: Path) -> Path:
@@ -41,29 +35,3 @@ def write_grouped_report(report: GroupedReport, destination: Path) -> Path:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
     return destination
-
-
-def main(argv: Sequence[str] | None = None) -> int:
-    """Regenerate the grouped artifact without building, collecting, or changing JSONL."""
-
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--report", default=".reports.jsonl", help="existing append-only JSONL report/cache path")
-    args = parser.parse_args(argv)
-    if args.report == "-":
-        parser.error("--report requires a file path; '-' streaming is not supported")
-    console = Console(stderr=True)
-    try:
-        path = Path(args.report).expanduser().resolve()
-        if not path.is_file():
-            raise FileNotFoundError(f"benchmark cache does not exist: {path}")
-        report = ReportStore(path).grouped_report()
-        destination = write_grouped_report(report, grouped_report_path(path))
-    except (OSError, ValueError) as error:
-        console.print(Text.assemble(("error:", "red"), " ", str(error)))
-        return 2
-    print(destination, file=sys.stderr)
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
