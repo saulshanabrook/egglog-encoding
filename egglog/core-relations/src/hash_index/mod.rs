@@ -941,7 +941,10 @@ impl ColumnIndex {
     ) -> ColumnIndex {
         const SORT_BULK_THRESHOLD: usize = 512;
         let mut res = ColumnIndex::new();
-        if subset.size() >= SORT_BULK_THRESHOLD || cols.len() != 1 {
+        // Use the same cutoff and index worker pool as a catalog refresh.
+        if parallelize_index_construction(subset.size()) {
+            res.merge_parallel(cols, table, subset);
+        } else if subset.size() >= SORT_BULK_THRESHOLD || cols.len() != 1 {
             res.rebuild_full(cols, table, subset);
         } else {
             res.reserve_for_n_rows(subset.size());

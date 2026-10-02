@@ -273,7 +273,7 @@ fn assert_matches_oracle(index: &ColumnIndex, expected: &BTreeMap<u32, Vec<usize
 
 /// Randomized oracle test: build a table whose value columns draw from a small pool (so values
 /// repeat across many rows), then check the sort-based rebuild, the parallel rebuild, and the
-/// per-row `build_for_subset` path all produce each value's rows in sorted, de-duplicated order.
+/// adaptive `build_for_subset` path all produce each value's rows in sorted, de-duplicated order.
 #[test]
 fn column_index_rebuild_matches_oracle() {
     // Column 0 is a unique key; columns `1..n_cols` are the covered value columns.
@@ -314,6 +314,11 @@ fn column_index_rebuild_matches_oracle() {
                     ci
                 });
                 assert_matches_oracle(&parallel, &expected, &format!("{ctx} merge_parallel"));
+
+                let subset = ThreadPool::new(8).install(|| {
+                    ColumnIndex::build_for_subset(table.as_ref(), table.all().as_ref(), &cols)
+                });
+                assert_matches_oracle(&subset, &expected, &format!("{ctx} build_for_subset"));
             }
         }
     }
@@ -361,6 +366,14 @@ fn parallel_column_index_handles_sparse_source_partitions() {
         index
     });
     assert_matches_oracle(&index, &expected, "sparse source partitions");
+
+    let mut selected_subset = Subset::empty();
+    for &row in &selected {
+        selected_subset.add_row_sorted(RowId::from_usize(row));
+    }
+    let built = ThreadPool::new(8)
+        .install(|| ColumnIndex::build_for_subset(table.as_ref(), selected_subset.as_ref(), &cols));
+    assert_matches_oracle(&built, &expected, "filtered occurrence index");
 }
 
 #[test]
