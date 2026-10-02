@@ -966,12 +966,7 @@ impl EGraph {
                             "expected string literal after `unstable-fn`".into(),
                         ));
                     };
-                    let panic_id = self
-                        .backend
-                        .action_registry()
-                        .read()
-                        .unwrap()
-                        .default_panic_id();
+                    let panic_id = self.backend.action_registry().read().default_panic_id();
                     let resolved = resolve_function_container_target_with_context(
                         &self.backend,
                         &self.functions,
@@ -1675,7 +1670,7 @@ impl EGraph {
     ///
     pub fn read<R>(&self, f: impl FnOnce(ReadState<'_, '_>) -> R) -> R {
         let registry = self.backend.action_registry().clone();
-        let guard = registry.read().unwrap();
+        let guard = registry.read();
         self.with_execution_state_tracked(|es| f(ReadState::wrap(es, &guard, Context::Read)))
             .0
     }
@@ -3292,7 +3287,7 @@ impl EGraph {
         f: impl FnOnce(FullState<'_, '_>) -> Result<R, Error>,
     ) -> Result<R, Error> {
         let registry = self.backend.action_registry().clone();
-        let guard = registry.read().unwrap();
+        let guard = registry.read();
         let (result, changed) =
             self.with_execution_state_tracked(|es| f(FullState::wrap(es, &guard, Context::Full)));
         drop(guard);

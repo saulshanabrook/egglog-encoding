@@ -1,26 +1,44 @@
 //! Implementation of the `keep-best` command.
 //!
-//! `(keep-best "table1" "table2" ...)` extracts the optimal representative
-//! term for every entry in each named table, clears the entire e-graph, and
-//! re-inserts only those optimal tuples.  This "compacts" the e-graph to the
-//! best solutions found so far.
+//! `(keep-best "table1" "table2" ... [:extractor greedy-dag])` extracts the
+//! best representative found by the selected extractor for every entry in each
+//! named table and then clears all existing rows. It rebuilds the selected
+//! tuples along with any constructor rows needed by their extracted values.
+//! This "compacts" the e-graph to the best solutions found so far.
 //!
 //! Each argument must evaluate to a `String` that names an existing function.
 
+use crate::DynamicCostModel;
+use crate::greedy_dag_extract::{extract_best_greedy_dag, split_trailing_extractor};
 use egglog::{
     CommandOutput, EGraph, Error, RawValues, TermDag, TermId, UserDefinedCommand, Value, Write,
-    ast::{Expr, FunctionSubtype},
-    extract::{DEFAULT_COST_MODEL, TreeExtractor},
+    ast::{Expr, FunctionSubtype, ParseError},
+    extract::TreeCostModelFromDag,
     sort::S,
     span,
 };
 
 use crate::table_rows::{for_each_table_row, table_layout};
 
+/// User-defined command implementing `(keep-best "table"...)`.
+///
+/// For every row in the named tables, the command extracts the best term for
+/// each value. It then **clears every function in the e-graph** and rebuilds
+/// the extracted rows from the named tables, including any constructor rows
+/// needed to represent their values.
 pub struct KeepBestCommand;
 
 impl UserDefinedCommand for KeepBestCommand {
     fn update(&self, egraph: &mut EGraph, args: &[Expr]) -> Result<Vec<CommandOutput>, Error> {
+        let (args, use_greedy_dag) = split_trailing_extractor(args)?;
+
+        if args.is_empty() {
+            return Err(Error::ParseError(ParseError(
+                span!(),
+                "keep-best expects at least one table name".into(),
+            )));
+        }
+
         // Step 1: evaluate each argument to a table name string.
         let table_names: Vec<String> = args
             .iter()
@@ -30,9 +48,9 @@ impl UserDefinedCommand for KeepBestCommand {
             })
             .collect::<Result<_, Error>>()?;
 
-        // Step 2: for each table, collect all rows and extract the optimal
+        // Step 2: for each table, collect all rows and extract the best
         // term for every column value.
-        let extracted = collect_and_extract(egraph, &table_names)?;
+        let extracted = collect_and_extract(egraph, &table_names, use_greedy_dag)?;
 
         // Step 3: clear every function in the e-graph in bulk.
         //
@@ -45,7 +63,7 @@ impl UserDefinedCommand for KeepBestCommand {
             egraph.clear_function(name)?;
         }
 
-        // Step 4: re-insert the optimal tuples. Evaluate each extracted term
+        // Step 4: re-insert the selected tuples. Evaluate each extracted term
         // via eval_expr so that constructor sub-terms are re-created bottom-up,
         // then stage all target-table inserts in one update call.
         let mut rows_to_insert: Vec<(String, FunctionSubtype, Vec<Value>)> = Vec::new();
@@ -85,6 +103,7 @@ type ExtractedTable = (String, FunctionSubtype, Vec<Vec<TermId>>, TermDag);
 fn collect_and_extract(
     egraph: &EGraph,
     table_names: &[String],
+    use_greedy_dag: bool,
 ) -> Result<Vec<ExtractedTable>, Error> {
     let mut result = Vec::new();
 
@@ -96,25 +115,37 @@ fn collect_and_extract(
         let mut raw_rows: Vec<Vec<Value>> = Vec::new();
         for_each_table_row(egraph, table_name, &layout, false, |row| raw_rows.push(row))?;
 
-        let extractor = TreeExtractor::compute_costs_from_rootsorts(
-            Some(all_sorts.clone()),
-            egraph,
-            DEFAULT_COST_MODEL,
-        );
-        let mut termdag = TermDag::default();
+        let roots = raw_rows
+            .iter()
+            .flat_map(|row_vals| {
+                row_vals
+                    .iter()
+                    .zip(all_sorts.iter())
+                    .map(|(val, sort)| (sort.clone(), *val))
+            })
+            .collect();
+        let extracted = if use_greedy_dag {
+            extract_best_greedy_dag(egraph, roots, DynamicCostModel)
+        } else {
+            egraph.extract_best_with_cost_model(roots, TreeCostModelFromDag(DynamicCostModel))
+        }
+        .map_err(|err| {
+            Error::ExtractError(format!(
+                "keep-best: could not extract value in table {table_name}: {err}"
+            ))
+        })?;
+        let termdag = extracted.termdag;
+        let extract_error = format!("keep-best: could not extract value in table {table_name}");
+        let mut terms = extracted.terms.into_iter().map(move |root| {
+            root.ok_or_else(|| Error::ExtractError(extract_error.clone()))
+                .map(|root| root.term)
+        });
         let mut extracted_rows: Vec<Vec<TermId>> = Vec::new();
 
         for row_vals in &raw_rows {
             let mut term_ids = Vec::new();
-            for (val, sort) in row_vals.iter().zip(all_sorts.iter()) {
-                let extracted = extractor
-                    .extract_best_with_sort(&mut termdag, *val, sort.clone())
-                    .ok_or_else(|| {
-                        Error::ExtractError(format!(
-                            "keep-best: could not extract value in table {table_name}"
-                        ))
-                    })?;
-                term_ids.push(extracted.term);
+            for _ in row_vals {
+                term_ids.push(terms.next().expect("one term per extracted table cell")?);
             }
             extracted_rows.push(term_ids);
         }
