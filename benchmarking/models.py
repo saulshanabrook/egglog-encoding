@@ -36,6 +36,15 @@ class FileSpec:
     sha256: str
     fact_directory: Path | None = None
     fact_directory_sha256: str = ""
+    engine_inputs: tuple[tuple[Engine, FileSpec], ...] = ()
+
+    def for_engine(self, engine: Engine) -> FileSpec:
+        """Resolve an engine's physical representation of this logical workload."""
+
+        for input_engine, file in self.engine_inputs:
+            if input_engine == engine:
+                return file
+        return self
 
 
 def validate_unique_file_identities(files: Sequence[FileSpec]) -> None:
@@ -118,7 +127,7 @@ class EndpointRequest:
     disequality_encoding: DisequalityEncoding = "nee"
 
     def __post_init__(self) -> None:
-        if TREATMENT_SPECS[self.treatment].engine == "egg" and self.disequality_encoding != "nee":
+        if TREATMENT_SPECS[self.treatment].engine != "egglog" and self.disequality_encoding != "nee":
             raise ValueError("disequality encoding selection is only supported by egglog treatments")
 
 
@@ -151,6 +160,9 @@ class ComparisonSpec:
         if not self.files:
             raise ValueError("benchmark comparison requires at least one file")
         validate_unique_file_identities(self.files)
+        for endpoint in (self.baseline, self.candidate):
+            engine = TREATMENT_SPECS[endpoint.treatment].engine
+            validate_unique_file_identities(tuple(file.for_engine(engine) for file in self.files))
         if self.rounds < 1:
             raise ValueError("benchmark rounds must be positive")
         if self.timeout_sec < 1:

@@ -1,6 +1,6 @@
 """Write and open one single-file, embedded-data benchmark-report snapshot.
 
-The exported HTML embeds the complete JSONL, the immediate all-sections report,
+The exported HTML embeds the complete grouped snapshot, the immediate all-sections report,
 the eval-live catalog renderer, and the environment-neutral Python runtime. It performs
 no collection and starts no server: opening the file renders the static catalog
 first, then loads a pinned Pyodide/SciPy runtime for cache-only retargeting.
@@ -20,8 +20,8 @@ from pathlib import Path
 from typing import Protocol, cast
 
 from ..models import ComparisonSpec
-from .interactive_runtime import InteractiveRuntime, JsonValue, scope_for_comparison
-from .store import ReportStore, serialize_report_record
+from .interactive_runtime import InitialScope, InteractiveRuntime, JsonValue, scope_for_comparison
+from .store import GroupedReport, serialize_grouped_report
 
 PYODIDE_VERSION = "314.0.2"
 PYODIDE_BASE_URL = f"https://cdn.jsdelivr.net/pyodide/v{PYODIDE_VERSION}/full/"
@@ -72,16 +72,16 @@ def interactive_report_path(report_path: Path) -> Path:
 
 
 def write_interactive_report(
-    store: ReportStore,
+    store: GroupedReport,
     comparison: ComparisonSpec,
     output_path: Path,
 ) -> Path:
     """Atomically write a complete cache-only browser artifact and return it."""
 
     destination = output_path.expanduser().resolve()
-    if destination == store.path.expanduser().resolve():
+    if destination == Path(store.display_path).expanduser().resolve():
         raise ValueError("interactive report path must differ from the JSONL report path")
-    report_bytes = b"".join(serialize_report_record(record) + b"\n" for record in store.records)
+    report_bytes = serialize_grouped_report(store)
     initial_scope = scope_for_comparison(comparison)
     runtime = InteractiveRuntime(store, initial_scope)
     page = _interactive_page(report_bytes, store.display_path, initial_scope, runtime.initial_payload(comparison))
@@ -115,13 +115,13 @@ def open_interactive_report(path: Path) -> None:
 def _interactive_page(
     report_bytes: bytes,
     report_path: str,
-    initial_scope: dict[str, JsonValue],
+    initial_scope: InitialScope,
     initial_payload: dict[str, JsonValue],
 ) -> bytes:
     eval_live = cast(EvalLiveModule, importlib.import_module("eval_live"))
     envelope = {
         "report_path": report_path,
-        "report_jsonl_base64": base64.b64encode(report_bytes).decode("ascii"),
+        "report_grouped_base64": base64.b64encode(report_bytes).decode("ascii"),
         "initial_scope": initial_scope,
         "initial_payload": initial_payload,
         "pyodide_base_url": PYODIDE_BASE_URL,

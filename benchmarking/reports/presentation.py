@@ -41,7 +41,7 @@ from .catalog import (
     report_id,
     text_cell,
 )
-from .store import ReportStore
+from .store import GroupedReport
 
 NULL = "—"
 DEFAULT_RULESET = "<default ruleset>"
@@ -83,7 +83,7 @@ RULESET_CAPTION = (
 
 
 def build_report_catalog(
-    store: ReportStore,
+    store: GroupedReport,
     comparison: ComparisonSpec,
     detail: DetailLevel = "summary",
 ) -> ReportCatalog:
@@ -336,6 +336,18 @@ def _phases_section(
     comparison: ComparisonSpec,
     file_labels: dict[FileSpec, str],
 ) -> ReportSection:
+    if not rows:
+        return ReportSection(
+            "phases",
+            "Slowdown decomposition",
+            (
+                ReportMessage(
+                    report_id("message", "phases", "unavailable"),
+                    None,
+                    "Phase timings are unavailable for the selected endpoints.",
+                ),
+            ),
+        )
     report_rows = []
     for row in rows:
         if row.file_order is None:

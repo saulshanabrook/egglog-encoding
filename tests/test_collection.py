@@ -565,7 +565,7 @@ def test_collect_rows_rejects_unsupported_timing_summary_before_append(
             Console(stderr=True),
         )
 
-    assert report.read_text(encoding="utf-8") == ""
+    assert not report.exists()
 
 
 def test_run_process_passes_treatment_flags(
@@ -704,7 +704,7 @@ def test_collect_rows_rejects_mutated_workload_before_append(
         collection.collect_rows(store, plan, 120, Console(stderr=True))
 
     assert store.row_count == 0
-    assert store.path.read_text(encoding="utf-8") == ""
+    assert not store.path.exists()
 
 
 def test_redirected_collection_logs_each_run_and_one_status_summary(

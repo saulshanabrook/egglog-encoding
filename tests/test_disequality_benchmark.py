@@ -65,5 +65,7 @@ def test_encoding_and_treatment_change_warns(tmp_path: Path) -> None:
         1,
         120,
     )
-    markdown = render_markdown_report_document(build_report_catalog(ReportStore(tmp_path / "report.jsonl"), comparison))
+    markdown = render_markdown_report_document(
+        build_report_catalog(ReportStore(tmp_path / "report.jsonl").grouped_report(), comparison)
+    )
     assert "disequality encoding and another endpoint setting" in markdown

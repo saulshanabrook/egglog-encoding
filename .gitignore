@@ -1,6 +1,8 @@
-/target/
+/target
+/benchmarks/local/
 /nightly/
 /.reports*.jsonl
+/.reports*-grouped.json
 /.reports*.html
 /.profiles/
 /.bench-worktrees/

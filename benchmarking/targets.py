@@ -211,23 +211,35 @@ def build_target(
     engine: Engine = "egglog",
 ) -> tuple[Path, str]:
     checkout_path = Path(row.path)
-    engine_label = "" if engine == "egglog" else " · egg"
+    engine_label = "" if engine == "egglog" else f" · {engine}"
     console.print(Text.assemble(("Building", "bold"), " ", _display_target(row), engine_label))
-    package = "egglog-experimental" if engine == "egglog" else "egg-math-benchmark"
+    package = {"egglog": "egglog-experimental", "egg": "egg-math-benchmark"}.get(engine)
+    target_dir = checkout_path / "target"
+    build_args = ["cargo", "build"]
     if build_profile == "release":
-        build_args = ["cargo", "build", "--release", "-p", package]
+        build_args.append("--release")
     else:
-        build_args = ["cargo", "build", "--profile", "profiling", "-p", package]
-    subprocess.run(
-        build_args,
-        cwd=checkout_path,
-        check=True,
-        stdout=sys.stderr,
-        stderr=sys.stderr,
-    )
-    binary_stem = "egglog-experimental" if engine == "egglog" else "egg-math-benchmark"
+        build_args.extend(("--profile", build_profile))
+    if package is None:
+        native = checkout_path / "benchmarks/disequality/native"
+        target_dir = checkout_path / "benchmarks/local/parameter-native/target"
+        build_args.extend(
+            (
+                "--locked",
+                "--manifest-path",
+                str(native / "Cargo.toml"),
+                "--target-dir",
+                str(target_dir),
+                "--bin",
+                engine,
+            )
+        )
+    else:
+        build_args.extend(("-p", package))
+    subprocess.run(build_args, cwd=checkout_path, check=True, stdout=sys.stderr, stderr=sys.stderr)
+    binary_stem = package or engine
     binary_name = f"{binary_stem}.exe" if os.name == "nt" else binary_stem
-    binary_path = checkout_path / "target" / build_profile / binary_name
+    binary_path = target_dir / build_profile / binary_name
     if not binary_path.is_file():
         raise FileNotFoundError(f"{build_profile} binary was not produced: {binary_path}")
     binary_sha256 = sha256_file(binary_path)
@@ -297,10 +309,13 @@ def workload_command(
     disequality_encoding: str = "nee",
 ) -> list[str]:
     specification = TREATMENT_SPECS[treatment]
-    if specification.engine == "egg":
+    file_spec = file_spec.for_engine(specification.engine)
+    if specification.engine != "egglog":
         if disequality_encoding != "nee":
             raise ValueError("disequality encoding selection is only supported by egglog treatments")
         validate_engine_workload(file_spec, treatment)
+        if specification.engine != "egg":
+            return [str(binary_path), str(file_spec.absolute_path), "100000", "10000"]
         return [str(binary_path), *specification.flags]
     return [
         str(binary_path),

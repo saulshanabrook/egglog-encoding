@@ -1,0 +1,31 @@
+[package]
+name = "parameter_analysis"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+egg = "=0.9.5"
+disegg = { git = "https://github.com/saulshanabrook/egg.git", rev = "09d7789439b26e131fab7be55a5a3719bbf55216" }
+
+[[bin]]
+name = "egg-de"
+path = "authors/de/main.rs"
+
+[[bin]]
+name = "egg-ee"
+path = "authors/ee/main.rs"
+
+[[bin]]
+name = "egg-nee"
+path = "authors/nee-no-saturation/main.rs"
+
+[[bin]]
+name = "egg-oee"
+path = "authors/nee-with-saturation/main.rs"
+
+[profile.profiling]
+inherits = "release"
+debug = true

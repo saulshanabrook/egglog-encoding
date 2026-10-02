@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Final, Literal, TypedDict, cast
@@ -26,6 +26,9 @@ from ..models import (
 
 type ReportSchemaVersion = Literal[5]
 REPORT_SCHEMA_VERSION: Final[ReportSchemaVersion] = 5
+
+type GroupedSchemaVersion = Literal[1]
+GROUPED_SCHEMA_VERSION: Final[GroupedSchemaVersion] = 1
 
 type TimingSummarySchemaVersion = Literal[4]
 TIMING_SUMMARY_SCHEMA_VERSION: Final[TimingSummarySchemaVersion] = 4
@@ -109,6 +112,7 @@ class CacheKey:
     ) -> CacheKey:
         """Build the identity shared by collection and reporting."""
 
+        file_spec = file_spec.for_engine(TREATMENT_SPECS[endpoint.treatment].engine)
         return cls(
             binary_sha256=endpoint.target.binary_sha256_for(endpoint.treatment),
             file_sha256=file_spec.sha256,
@@ -142,13 +146,69 @@ class IndexedRecord:
         return (self.started_at, self.row_index)
 
 
+class GroupedKey(TypedDict):
+    binary_sha256: str
+    file_sha256: str
+    treatment: Treatment
+    timeout_sec: int
+    fact_directory_sha256: str
+    disequality_encoding: DisequalityEncoding
+
+
+class GroupedSample(ReportRecord):
+    """The full JSONL observation, including disequality encoding, plus its row index."""
+
+    row_index: int
+
+
+class ObservationGroup(TypedDict):
+    key: GroupedKey
+    labels: list[str]
+    samples: list[GroupedSample]
+
+
+class GroupedReportRecord(TypedDict):
+    """Version the grouping structure separately from its shared ReportRecord samples.
+
+    Grouping-only changes can regenerate this snapshot without invalidating raw observations.
+    """
+
+    grouped_schema_version: GroupedSchemaVersion
+    report_schema_version: ReportSchemaVersion
+    groups: list[ObservationGroup]
+
+
+class GroupedReport:
+    """One complete, immutable-in-use report snapshot shared by all renderers."""
+
+    def __init__(self, data: GroupedReportRecord, display_path: str) -> None:
+        self.data = data
+        self.display_path = display_path
+        self._by_key = {
+            CacheKey(**group["key"]): tuple(
+                IndexedRecord(sample["row_index"], datetime.fromisoformat(sample["started_at"]), sample)
+                for sample in group["samples"]
+            )
+            for group in data["groups"]
+        }
+        self.records = tuple(
+            row.record
+            for row in sorted((row for rows in self._by_key.values() for row in rows), key=lambda row: row.row_index)
+        )
+
+    def latest_records(self, key: CacheKey, rounds: int) -> tuple[IndexedRecord, ...]:
+        """Select the requested tail without discarding the snapshot's other samples."""
+
+        if rounds < 1:
+            raise ValueError("rounds must be positive")
+        return self._by_key.get(key, ())[-rounds:]
+
+
 class ReportStore:
     """Load one report snapshot and keep its append/query indexes current."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.touch(exist_ok=True)
         self._rows: list[IndexedRecord] = []
         self._by_key: dict[CacheKey, list[IndexedRecord]] = {}
         self._by_label: dict[str, list[IndexedRecord]] = {}
@@ -156,6 +216,8 @@ class ReportStore:
             with self.path.open("rb") as handle:
                 for line in handle:
                     self._index(self._indexed(parse_report_record(line)))
+        except FileNotFoundError:
+            pass
         except (OSError, ValueError, KeyError, TypeError) as error:
             raise ValueError(self._incompatible_report_message()) from error
 
@@ -182,9 +244,41 @@ class ReportStore:
 
         encoded = serialize_report_record(record)
         indexed = self._indexed(record)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("ab") as handle:
             handle.write(encoded + b"\n")
         self._index(indexed)
+
+    def grouped_report(self) -> GroupedReport:
+        """Freeze every indexed observation and derive current aliases from JSONL alone."""
+
+        latest: dict[tuple[str, Engine], IndexedRecord] = {}
+        for label, rows in self._by_label.items():
+            for row in rows:
+                identity = (label, TREATMENT_SPECS[row.record["treatment"]].engine)
+                if identity not in latest or row.order_key > latest[identity].order_key:
+                    latest[identity] = row
+        labels: dict[tuple[Engine, str], list[str]] = {}
+        for (label, engine), row in latest.items():
+            labels.setdefault((engine, row.record["binary_sha256"]), []).append(label)
+        groups: list[ObservationGroup] = [
+            {
+                "key": cast(GroupedKey, asdict(key)),
+                "labels": sorted(labels.get((TREATMENT_SPECS[key.treatment].engine, key.binary_sha256), ())),
+                "samples": [
+                    {**row.record, "row_index": row.row_index} for row in sorted(rows, key=lambda row: row.order_key)
+                ],
+            }
+            for key, rows in self._by_key.items()
+        ]
+        return GroupedReport(
+            {
+                "grouped_schema_version": GROUPED_SCHEMA_VERSION,
+                "report_schema_version": REPORT_SCHEMA_VERSION,
+                "groups": groups,
+            },
+            self.display_path,
+        )
 
     def find_label_pointer(self, label: str, engine: Engine | None = None) -> CachedTarget | None:
         """Return the latest row carrying ``label`` for an optional engine."""
@@ -290,6 +384,31 @@ def serialize_report_record(record: ReportRecord) -> bytes:
     return json.dumps(record, ensure_ascii=False, separators=(",", ":")).encode()
 
 
+def parse_grouped_report(data: bytes | str, display_path: str) -> GroupedReport:
+    """Read the versioned trusted-writer snapshot without touching its source cache."""
+
+    record = cast(GroupedReportRecord, json.loads(data))
+    _require_current_grouped_report(record)
+    return GroupedReport(record, display_path)
+
+
+def serialize_grouped_report(report: GroupedReport) -> bytes:
+    """Encode the shared typed snapshot deterministically for files and HTML."""
+
+    _require_current_grouped_report(report.data)
+    return json.dumps(report.data, ensure_ascii=False, separators=(",", ":")).encode() + b"\n"
+
+
+def _require_current_grouped_report(record: GroupedReportRecord) -> None:
+    if record["grouped_schema_version"] != GROUPED_SCHEMA_VERSION:
+        raise ValueError(f"unsupported grouped report schema version {record['grouped_schema_version']!r}")
+    if record["report_schema_version"] != REPORT_SCHEMA_VERSION:
+        raise ValueError(f"unsupported report schema version {record['report_schema_version']!r}")
+    for group in record["groups"]:
+        for sample in group["samples"]:
+            _require_current_record(sample)
+
+
 def _require_current_record(record: ReportRecord) -> None:
     """Reject old report data and keep successful rows self-contained."""
 
@@ -299,7 +418,7 @@ def _require_current_record(record: ReportRecord) -> None:
     summary = record["timing_summary"]
     if summary is not None:
         _require_current_timing_summary(summary)
-    if record["status"] == "success" and summary is None:
+    if record["status"] == "success" and summary is None and TREATMENT_SPECS[record["treatment"]].timing_summary:
         raise ValueError("successful benchmark record is missing its timing summary")
 
 

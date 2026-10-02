@@ -2,7 +2,7 @@
 
 This module is the environment-neutral core shared by native artifact creation
 and the Pyodide browser runtime.  It discovers selector choices from every row
-in the loaded JSONL and atomically replaces the published all-sections catalog.
+in the grouped snapshot and atomically replaces the published all-sections catalog.
 Incomplete selections remain valid so the shared report can show its precise
 missing-result cells.  HTML generation, browser startup, and filesystem export
 belong in :mod:`interactive`.
@@ -13,16 +13,16 @@ from __future__ import annotations
 import json
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import TypedDict, cast
 
-from ..engines import TREATMENT_SPECS
-from ..models import BenchmarkEndpoint, ComparisonSpec, FileSpec, ResolvedTarget, TargetRequest, TargetRow
+from ..engines import TREATMENT_SPECS, Engine
+from ..models import BenchmarkEndpoint, ComparisonSpec, EngineBinary, FileSpec, ResolvedTarget, TargetRequest, TargetRow
 from .catalog import CellTone, ReportCatalog, ReportCell, ReportMessage, report_id
 from .presentation import build_report_catalog, report_file_labels
-from .store import ReportRecord, ReportStore
+from .store import GroupedReport, ReportRecord, parse_grouped_report
 
 type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | list[JsonValue] | dict[str, JsonValue]
@@ -61,16 +61,26 @@ class _FileChoice:
     file: FileSpec
 
 
-class _DisplayPathStore(ReportStore):
-    """Load a Pyodide virtual file while retaining its host display path."""
+class _FileSnapshot(TypedDict):
+    display_path: str
+    absolute_path: str
+    sha256: str
+    fact_directory: str | None
+    fact_directory_sha256: str
 
-    def __init__(self, path: Path, display_path: str) -> None:
-        self._display_path = display_path
-        super().__init__(path)
 
-    @property
-    def display_path(self) -> str:
-        return self._display_path
+class _EngineInput(_FileSnapshot):
+    engine: Engine
+
+
+class _InitialFile(_FileSnapshot):
+    engine_inputs: list[_EngineInput]
+
+
+class InitialScope(_ScopeRequest):
+    """Generated initial selection, including logical-to-physical input bindings."""
+
+    files: list[_InitialFile]
 
 
 class InteractiveRuntime:
@@ -78,8 +88,8 @@ class InteractiveRuntime:
 
     def __init__(
         self,
-        store: ReportStore,
-        initial_scope: object,
+        store: GroupedReport,
+        initial_scope: InitialScope,
     ) -> None:
         self._store = store
         (
@@ -88,6 +98,35 @@ class InteractiveRuntime:
             self._timeouts,
             self._max_rounds,
         ) = _cache_universe(store.records)
+        # Observations identify physical inputs, which can differ from the selected
+        # logical file. Keep its initial selection and bindings outside the grouped data.
+        choices = {choice.file_id: choice for choice in self._file_choices}
+        for logical in initial_scope["files"]:
+            file = FileSpec(
+                logical["display_path"],
+                Path(logical["absolute_path"]),
+                logical["sha256"],
+                None if logical["fact_directory"] is None else Path(logical["fact_directory"]),
+                logical["fact_directory_sha256"],
+            )
+            file_id = _file_id(file)
+            if file_id in choices:
+                file = choices[file_id].file
+            inputs = tuple(
+                (
+                    item["engine"],
+                    FileSpec(
+                        item["display_path"],
+                        Path(item["absolute_path"]),
+                        item["sha256"],
+                        None if item["fact_directory"] is None else Path(item["fact_directory"]),
+                        item["fact_directory_sha256"],
+                    ),
+                )
+                for item in logical["engine_inputs"]
+            )
+            choices[file_id] = _FileChoice(file_id, replace(file, engine_inputs=inputs))
+        self._file_choices = tuple(choices.values())
         self._endpoint_by_id = {choice.endpoint_id: choice.endpoint for choice in self._endpoint_choices}
         self._file_by_id = {choice.file_id: choice.file for choice in self._file_choices}
 
@@ -103,10 +142,10 @@ class InteractiveRuntime:
         display_path: str,
         initial_scope_json: str,
     ) -> InteractiveRuntime:
-        """Load the browser's virtual JSONL and restore its initial scope."""
+        """Load the browser's typed grouped snapshot and restore its initial scope."""
 
-        store = _DisplayPathStore(path, display_path)
-        return cls(store, json.loads(initial_scope_json))
+        store = parse_grouped_report(path.read_bytes(), display_path)
+        return cls(store, cast(InitialScope, json.loads(initial_scope_json)))
 
     def payload(self) -> dict[str, JsonValue]:
         """Return the last successfully published selectors and catalog."""
@@ -253,7 +292,7 @@ class InteractiveRuntime:
         }
 
 
-def scope_for_comparison(comparison: ComparisonSpec) -> dict[str, JsonValue]:
+def scope_for_comparison(comparison: ComparisonSpec) -> InitialScope:
     """Serialize one native comparison as the browser runtime's initial scope."""
 
     return {
@@ -262,6 +301,27 @@ def scope_for_comparison(comparison: ComparisonSpec) -> dict[str, JsonValue]:
         "file_ids": [_file_id(file) for file in comparison.files],
         "timeout_sec": comparison.timeout_sec,
         "rounds": comparison.rounds,
+        "files": [
+            {
+                "display_path": file.display_path,
+                "absolute_path": str(file.absolute_path),
+                "sha256": file.sha256,
+                "fact_directory": None if file.fact_directory is None else str(file.fact_directory),
+                "fact_directory_sha256": file.fact_directory_sha256,
+                "engine_inputs": [
+                    {
+                        "engine": engine,
+                        "display_path": physical.display_path,
+                        "absolute_path": str(physical.absolute_path),
+                        "sha256": physical.sha256,
+                        "fact_directory": None if physical.fact_directory is None else str(physical.fact_directory),
+                        "fact_directory_sha256": physical.fact_directory_sha256,
+                    }
+                    for engine, physical in file.engine_inputs
+                ],
+            }
+            for file in comparison.files
+        ],
     }
 
 
@@ -363,11 +423,14 @@ def _endpoint_from_record(record: ReportRecord) -> BenchmarkEndpoint:
         record["target_is_dirty"],
         record["target_label"],
     )
+    engine = TREATMENT_SPECS[record["treatment"]].engine
     target = ResolvedTarget(
         TargetRequest(row.label or row.source, row.source, row.label),
         row,
         record["binary_sha256"],
         None,
+        engine_binaries=(EngineBinary(engine, record["binary_sha256"], None),),
+        primary_engine=engine,
     )
     return BenchmarkEndpoint(target, record["treatment"], record["disequality_encoding"])
 
