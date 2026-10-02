@@ -97,7 +97,7 @@ impl ReadPrim for GetNodeSizePrimitive {
                 {
                     return None;
                 }
-                let output = &state.constructor_schema(name).ok()?.output;
+                let output = state.constructor_schema(name).ok()?.output();
                 state.is_sort_unionable(output)?.then_some(size)
             })
             .sum();

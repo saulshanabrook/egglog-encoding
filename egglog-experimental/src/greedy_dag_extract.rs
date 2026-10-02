@@ -265,7 +265,7 @@ impl<'egraph> ProducerRowsBuilder<'egraph> {
 /// snapshot. Separate results may choose different representatives for a shared
 /// e-class; optimizing one joint choice across roots would require a non-local
 /// result representation. See:
-/// https://github.com/egraphs-good/extraction-gym/issues/36.
+/// <https://github.com/egraphs-good/extraction-gym/issues/36>.
 ///
 /// Preparation evaluates the cost model once per reachable producer row and
 /// once per distinct primitive or container value. Fixed-point propagation,
@@ -332,7 +332,7 @@ impl<'egraph> ReachableExtractionBuilder<'egraph> {
                 func.func_type().subtype == FunctionSubtype::Constructor
                     && !func.is_hidden()
                     && !func.is_unextractable()
-                    && func.func_type().output.name() == sort_name
+                    && func.func_type().output().name() == sort_name
             })
             .map(|(_, func)| func)
             .collect::<Vec<_>>()
@@ -732,7 +732,7 @@ impl<'egraph, C: MonoidCost> GreedyDagExtractor<'egraph, C> {
 
         self.candidate_from_children(
             producer_row.eclass,
-            &func.func_type().output,
+            func.func_type().output(),
             &child_candidates,
             producer_row.cost.clone(),
             Some(producer_row_id),

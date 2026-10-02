@@ -133,10 +133,12 @@ pub use sugar::*;
 mod keep_best;
 pub use keep_best::KeepBestCommand;
 
+/// Create an e-graph with all experimental extensions registered.
 pub fn new_experimental_egraph() -> EGraph {
     new_experimental_egraph_with_options(true, DisequalityEncoding::default())
 }
 
+/// Register extensions with core schedules so term/proof lowering can process them.
 pub fn new_experimental_egraph_for_proofs() -> EGraph {
     new_experimental_egraph_with_options(false, DisequalityEncoding::default())
 }
@@ -153,14 +155,17 @@ pub fn new_experimental_egraph_with_options(
     egraph
 }
 
+/// Create an experimental e-graph with term encoding enabled.
 pub fn new_experimental_egraph_with_term_encoding() -> EGraph {
     new_experimental_egraph_for_proofs().with_term_encoding_enabled()
 }
 
+/// Create an experimental e-graph with proof generation enabled.
 pub fn new_experimental_egraph_with_proofs() -> EGraph {
     new_experimental_egraph_for_proofs().with_proofs_enabled()
 }
 
+/// Create an experimental e-graph that extracts and verifies proofs for checks.
 pub fn new_experimental_egraph_with_proof_testing() -> EGraph {
     new_experimental_egraph_with_proofs().with_proof_testing()
 }
@@ -216,7 +221,7 @@ fn add_experimental_extensions(egraph: &mut EGraph, extended_run_schedule: bool)
         .unwrap();
 }
 
-// Create a parser with experimental macros
+/// Create a parser with the `for` and `with-ruleset` macros.
 pub fn experimental_parser() -> Parser {
     let mut parser = Parser::default();
     parser.add_command_macro(Arc::new(sugar::For));

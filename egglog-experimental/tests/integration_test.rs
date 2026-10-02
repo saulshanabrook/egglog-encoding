@@ -2134,7 +2134,7 @@ fn test_multi_extract_dag() {
 
 #[test]
 fn test_extractor_keyword_does_not_shadow_a_value_named_extractor() {
-    // `:extractor` is a legal identifier, so a value may be bound to it.
+    // This fork reserves the `:` prefix; the ordinary name `extractor` stays positional.
     let mut egraph = egglog_experimental::new_experimental_egraph();
     let result = egraph
         .parse_and_run_program(
@@ -2144,35 +2144,31 @@ fn test_extractor_keyword_does_not_shadow_a_value_named_extractor() {
             (relation table2 (i64))
             (table1 1)
             (table2 2)
-            (let :extractor "table1")
-            (keep-best :extractor "table2")"#,
+            (let extractor "table1")
+            (keep-best extractor "table2")"#,
         )
-        .expect("a table name bound to `:extractor` is positional, not the selector");
+        .expect("a table name bound to `extractor` is positional, not the selector");
     assert!(result.is_empty(), "unexpected output: {result:?}");
 }
 
 #[test]
 fn test_extractor_keyword_does_not_shadow_a_term_named_extractor() {
-    let result =
-        run_dynamic_dag("(let :extractor (Leaf 1))\n(multi-extract 1 :extractor (Leaf 2))");
+    let result = run_dynamic_dag("(let extractor (Leaf 1))\n(multi-extract 1 extractor (Leaf 2))");
     assert!(matches!(result.as_slice(), [CommandOutput::UserDefined(_)]));
     let output = result[0].to_string();
     assert!(output.contains("(Leaf 1)"));
     assert!(output.contains("(Leaf 2)"));
 }
 
-/// A trailing `<symbol> <symbol>` pair is genuinely ambiguous: it is
-/// indistinguishable from the selector without changing the surface syntax.
-/// The selector wins, so a value named `:extractor` cannot be the
-/// second-to-last argument when the last one is also a bare symbol.
+// A trailing selector must still reject an unknown extractor name.
 #[test]
-fn test_extractor_keyword_wins_against_a_trailing_symbol_pair() {
+fn test_extractor_keyword_does_not_treat_a_symbol_as_a_positional_root() {
     let err = egglog_experimental::new_experimental_egraph()
         .parse_and_run_program(
             None,
-            &format!("{DYNAMIC_DAG_FIXTURE}\n(let :extractor (Leaf 1))\n(multi-extract 1 :extractor daggy)"),
+            &format!("{DYNAMIC_DAG_FIXTURE}\n(multi-extract 1 :extractor daggy)"),
         )
-        .expect_err("documented limitation");
+        .expect_err("the trailing pair selects an extractor");
     assert!(
         err.to_string().contains("unknown extractor: daggy"),
         "unexpected error: {err}"
@@ -2181,7 +2177,7 @@ fn test_extractor_keyword_wins_against_a_trailing_symbol_pair() {
 
 #[test]
 fn test_extractor_keyword_does_not_shadow_a_variant_count_named_extractor() {
-    let result = run_dynamic_dag("(let :extractor 2)\n(extract daggy :extractor)");
+    let result = run_dynamic_dag("(let extractor 2)\n(extract daggy extractor)");
     assert_eq!(result.len(), 1);
 }
 
