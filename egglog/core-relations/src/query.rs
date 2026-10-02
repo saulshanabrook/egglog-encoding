@@ -900,13 +900,62 @@ impl RuleBuilder<'_, '_> {
 
     /// Insert the specified values into the given table.
     pub fn insert(&mut self, table: TableId, vals: &[QueryEntry]) -> Result<(), QueryError> {
-        let table_info = self.table_info(table);
-        self.validate_row(table, table_info, vals)?;
+        let vals: Vec<WriteVal> = vals.iter().copied().map(WriteVal::QueryEntry).collect();
+        self.insert_write_vals(table, &vals, None).map(|_| ())
+    }
+
+    /// Insert `vals` into `table`, binding column `bind` of the staged row to
+    /// the returned variable.
+    ///
+    /// Unlike [`RuleBuilder::insert`], a column may be a [`WriteVal::IncCounter`]
+    /// minting a fresh value per row; binding it is how the caller learns what
+    /// was minted.
+    pub fn insert_and_bind(
+        &mut self,
+        table: TableId,
+        vals: &[WriteVal],
+        bind: ColumnId,
+    ) -> Result<Variable, QueryError> {
+        let res = self.qb.new_var();
+        self.insert_write_vals(table, vals, Some((bind, res)))?;
+        Ok(res)
+    }
+
+    fn insert_write_vals(
+        &mut self,
+        table: TableId,
+        vals: &[WriteVal],
+        bind: Option<(ColumnId, Variable)>,
+    ) -> Result<(), QueryError> {
+        let arity = self.table_info(table).spec.arity();
+        if vals.len() != arity {
+            return Err(QueryError::TableArityMismatch {
+                table,
+                expected: arity,
+                got: vals.len(),
+            });
+        }
+        if let Some((col, _)) = bind
+            && col.index() >= arity
+        {
+            return Err(QueryError::TableArityMismatch {
+                table,
+                expected: arity,
+                got: col.index() + 1,
+            });
+        }
         self.qb.instrs.push(Instr::Insert {
             table,
             vals: vals.to_vec(),
+            bind,
         });
-        self.qb.mark_used(vals);
+        self.qb.mark_used(vals.iter().filter_map(|x| match x {
+            WriteVal::QueryEntry(qe) => Some(qe),
+            WriteVal::IncCounter(_) | WriteVal::CurrentVal(_) => None,
+        }));
+        if let Some((_, res)) = bind {
+            self.qb.mark_defined(&res.into());
+        }
         Ok(())
     }
 

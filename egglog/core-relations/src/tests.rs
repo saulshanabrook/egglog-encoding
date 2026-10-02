@@ -1237,6 +1237,108 @@ fn lookup_with_fallback_partial_success_inner() {
 }
 
 #[test]
+fn insert_and_bind_batch() {
+    run_serial_and_parallel(insert_and_bind_batch_inner);
+}
+
+fn insert_and_bind_batch_inner() {
+    // Insert (src 1) (src 2) (src 3).
+    // Iterate over src, binding x to 1, 2, 3, and for each one mint a fresh id
+    // from a counter column, stage (node x fresh 7 ts), and record the id in
+    // (out x fresh).
+    let mut db = Database::default();
+    let mut add_table = |n_keys: usize, n_cols: usize, sort_col: Option<ColumnId>| {
+        db.add_table(
+            SortedWritesTable::new(
+                n_keys,
+                n_cols,
+                sort_col,
+                vec![],
+                Box::new(move |_, a: &[Value], b: &[Value], _| {
+                    assert_eq!(a, b, "merge not supported");
+                    false
+                }),
+            ),
+            iter::empty(),
+            iter::empty(),
+        )
+    };
+    let src = add_table(1, 2, None);
+    // `node` is shaped like a proof-node relation: its key is the arguments
+    // plus the minted id, followed by one value column and the timestamp.
+    let node = add_table(2, 4, Some(ColumnId::new(3)));
+    let out = add_table(1, 2, None);
+
+    {
+        let mut buf = db.new_buffer(src);
+        buf.stage_insert(&[v(1), v(0)]);
+        buf.stage_insert(&[v(2), v(0)]);
+        buf.stage_insert(&[v(3), v(0)]);
+    }
+    db.merge_all();
+
+    let id_counter = db.add_counter();
+    let ts_counter = db.add_counter();
+
+    let mut rsb = RuleSetBuilder::new(&mut db);
+    let mut query = rsb.new_rule();
+    let x = query.new_var_named("x");
+    let y = query.new_var_named("y");
+    query.add_atom(src, &[x.into(), y.into()], &[]).unwrap();
+    let mut rb = query.build();
+    let ts = rb.read_counter(ts_counter);
+    // `node` is (arg, minted, 7, ts); binding column 1 reports what was minted.
+    let row = [
+        WriteVal::QueryEntry(x.into()),
+        WriteVal::IncCounter(id_counter),
+        WriteVal::QueryEntry(v(7).into()),
+        WriteVal::QueryEntry(ts.into()),
+    ];
+    let fresh = rb.insert_and_bind(node, &row, ColumnId::new(1)).unwrap();
+    // A row that does not fill the table is rejected, as is an out-of-range
+    // bind column.
+    assert!(
+        rb.insert_and_bind(node, &row[..3], ColumnId::new(1))
+            .is_err()
+    );
+    assert!(rb.insert_and_bind(node, &row, ColumnId::new(4)).is_err());
+    rb.insert(out, &[x.into(), fresh.into()]).unwrap();
+    rb.build();
+    let rs = rsb.build();
+    assert!(db.run_rule_set(&rs, ReportLevel::TimeOnly).changed);
+
+    let sorted_rows = |db: &Database, table| {
+        let table = db.get_table(table);
+        let all = table.all();
+        let mut rows = table
+            .scan(all.as_ref())
+            .iter()
+            .map(|(_, row)| row.to_vec())
+            .collect::<Vec<_>>();
+        rows.sort();
+        rows
+    };
+    let out_rows = sorted_rows(&db, out);
+    assert_eq!(
+        out_rows.iter().map(|row| row[0]).collect::<Vec<_>>(),
+        vec![v(1), v(2), v(3)]
+    );
+    // Every call minted its own id.
+    let mut ids = out_rows.iter().map(|row| row[1]).collect::<Vec<_>>();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), 3);
+    // And each one landed in `node` alongside its argument, the `7` tail, and
+    // the timestamp, which both counters start at 0.
+    let mut expected = out_rows
+        .iter()
+        .map(|row| vec![row[0], row[1], v(7), v(0)])
+        .collect::<Vec<_>>();
+    expected.sort();
+    assert_eq!(sorted_rows(&db, node), expected);
+}
+
+#[test]
 fn call_external_with_fallback() {
     run_serial_and_parallel(call_external_with_fallback_inner);
 }
