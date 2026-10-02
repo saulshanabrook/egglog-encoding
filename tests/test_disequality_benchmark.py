@@ -38,7 +38,8 @@ def test_encoding_flags_depend_only_on_endpoint_not_workload(tmp_path: Path) -> 
     assert "--proofs" in command
     with pytest.raises(ValueError, match="only supported by egglog"):
         models.EndpointRequest(make_target().request, "egg", "ee")
-    native_file = replace(file, absolute_path=Path(__file__).resolve().parents[1] / MATH_WORKLOAD_PATH)
+    native_path = Path(__file__).resolve().parents[1] / MATH_WORKLOAD_PATH
+    native_file = replace(file, absolute_path=native_path, sha256=targets.sha256_file(native_path))
     assert targets.workload_command(Path("binary"), native_file, "egg") == ["binary", "--proof-mode", "off"]
     with pytest.raises(ValueError, match="only supported by egglog"):
         targets.workload_command(Path("binary"), native_file, "egg", "ee")

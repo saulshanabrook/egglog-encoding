@@ -214,7 +214,7 @@ def build_target(
     engine_label = "" if engine == "egglog" else f" · {engine}"
     console.print(Text.assemble(("Building", "bold"), " ", _display_target(row), engine_label))
     package = {"egglog": "egglog-experimental", "egg": "egg-math-benchmark"}.get(engine)
-    target_dir = checkout_path / "target"
+    target_dir = checkout_path / os.environ.get("CARGO_TARGET_DIR", "target")
     build_args = ["cargo", "build"]
     if build_profile == "release":
         build_args.append("--release")
@@ -236,7 +236,28 @@ def build_target(
         )
     else:
         build_args.extend(("-p", package))
-    subprocess.run(build_args, cwd=checkout_path, check=True, stdout=sys.stderr, stderr=sys.stderr)
+    if os.environ.get("EGGLOG_BENCH_MEMORY_GUARD") == "1":
+        from .memory_guard import MemoryGuard
+        from .processes import terminate_process_group
+
+        guard = MemoryGuard.from_environment()
+        assert guard is not None
+        build_args.extend(("--jobs", "1"))
+        process = subprocess.Popen(
+            build_args, cwd=checkout_path, stdout=sys.stderr, stderr=sys.stderr, start_new_session=True
+        )
+        try:
+            guard.start(process.pid)
+            return_code = process.wait()
+        finally:
+            guard.close()
+            terminate_process_group(process)
+        if guard.reason is not None:
+            raise ValueError(f"resource guard stopped build: {guard.reason}")
+        if return_code != 0:
+            raise subprocess.CalledProcessError(return_code, build_args)
+    else:
+        subprocess.run(build_args, cwd=checkout_path, check=True, stdout=sys.stderr, stderr=sys.stderr)
     binary_stem = package or engine
     binary_name = f"{binary_stem}.exe" if os.name == "nt" else binary_stem
     binary_path = target_dir / build_profile / binary_name

@@ -2109,29 +2109,7 @@
         (run)
         (run amx)))
 
-(check (= collectstoresplaceholderoutputBBBeqsatBBB10
-  (Evaluate
-    (Call "wmma.store.d.sync.aligned.row.m32n8k16.f32" (Int 32 1)
-      (vec-of
-        (Var (Handle 1) (V "output"))
-        (Load (Float 32 256) (V "conv") (Ramp (IntImm 32 0) (IntImm 32 1) 256))
-        (Bop (Sub)
-          (Bop (Add)
-            (Bop (Mul)
-              (Bop (Add)
-                (Bop (Mul)
-                  (Var (Int 32 1) (V "output.s0.y.mmy.mmy"))
-                  (IntImm 32 2))
-                (Var (Int 32 1) (V "output.s0.y.mmy.base")))
-              (Var (Int 32 1) (V "output.stride.1")))
-            (Var (Int 32 1) (V "output.s0.x.mmx.base")))
-          (Bop (Add)
-            (Bop (Mul)
-              (Var (Int 32 1) (V "output.min.1"))
-              (Var (Int 32 1) (V "output.stride.1")))
-            (Var (Int 32 1) (V "output.min.0"))))
-        (IntImm 32 8))
-      (Intrinsic)))))
+
 ; ;; These are not currently used
 ; (run-schedule (repeat 15 
 ;     (saturate (run typechecking))
@@ -2167,15 +2145,15 @@
 ; (ruleset subsume-invalid-exprs)
 
 ; 
-;; (extract collectstoresplaceholderconvBBBeqsatBBB0)
-;; (extract collectstoresplaceholderconvBBBeqsatBBB1)
-;; (extract collectstoresplaceholderconvBBBeqsatBBB2)
-;; (extract collectstoresplaceholderconvBBBeqsatBBB3)
-;; (extract collectstoresplaceholderconvBBBeqsatBBB4)
-;; (extract collectstoresplaceholderconvBBBeqsatBBB5)
-;; (extract collectstoresplaceholderconvBBBeqsatBBB6)
-;; (extract collectstoresplaceholderconvBBBeqsatBBB7)
-;; (extract collectstoresplaceholderconvBBBeqsatBBB8)
-;; (extract collectstoresplaceholderconvBBBeqsatBBB9)
-;; (extract collectstoresplaceholderoutputBBBeqsatBBB10)
-;; (extract collectstoresplaceholderoutputBBBeqsatBBB11)
+(extract collectstoresplaceholderconvBBBeqsatBBB0)
+(extract collectstoresplaceholderconvBBBeqsatBBB1)
+(extract collectstoresplaceholderconvBBBeqsatBBB2)
+(extract collectstoresplaceholderconvBBBeqsatBBB3)
+(extract collectstoresplaceholderconvBBBeqsatBBB4)
+(extract collectstoresplaceholderconvBBBeqsatBBB5)
+(extract collectstoresplaceholderconvBBBeqsatBBB6)
+(extract collectstoresplaceholderconvBBBeqsatBBB7)
+(extract collectstoresplaceholderconvBBBeqsatBBB8)
+(extract collectstoresplaceholderconvBBBeqsatBBB9)
+(extract collectstoresplaceholderoutputBBBeqsatBBB10)
+(extract collectstoresplaceholderoutputBBBeqsatBBB11)

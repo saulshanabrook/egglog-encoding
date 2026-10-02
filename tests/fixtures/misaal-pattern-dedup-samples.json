@@ -1,0 +1,1367 @@
+{
+  "source": "targets/halide/tmpHalideEnum_halide-swizzles_intermediate_results.py",
+  "source_sha256": "d16222bc7300888f4c220cc88d6aaceac838bd530868eb3ae180291b6ce899c6",
+  "description": "Eight existing source-corpus expression renderings, structurally decoded without importing MISAAL. Tests reconstruct pinned Context/operand objects and require exact original rendering before comparing deduplication. This does not run create_patterns or claim final active pattern counts.",
+  "samples": [
+    {
+      "source_record_index": 0,
+      "expressions": [
+        {
+          "rendered": " (typed:cast-uint-truncate ; typed:cast-uint_1_ip64_is1024_op32_os512_signed_0\n\t(buffer-index  0 'uint8 1024) ; < 128 x i8> False\n\t64\n\t1\n\t16\n\t32\n )",
+          "tree": {
+            "kind": "context",
+            "dsl_name": "typed:cast-uint-truncate",
+            "name": "typed:cast-uint_1_ip64_is1024_op32_os512_signed_0",
+            "args": [
+              {
+                "kind": "reg",
+                "index": "0",
+                "precision": 8,
+                "size": 1024,
+                "signed": false
+              },
+              {
+                "kind": "integer",
+                "value": 64
+              },
+              {
+                "kind": "integer",
+                "value": 1
+              },
+              {
+                "kind": "integer",
+                "value": 16
+              },
+              {
+                "kind": "integer",
+                "value": 32
+              }
+            ]
+          }
+        },
+        {
+          "rendered": " (typed:concat_vectors ; typed:concat_vectors_ip16_is256_op16_os512_signed_None\n\t (typed:slice_vectors ; typed:slice_vectors_ip8_is512_op8_os256_signed_None_32_1_32\n\t\t (typed:cast-uint-truncate ; typed:cast-uint_1_ip64_is1024_op32_os512_signed_0\n\t\t\t(buffer-index  0 'uint8 1024) ; < 128 x i8> False\n\t\t\t64\n\t\t\t1\n\t\t\t16\n\t\t\t32\n\t\t )\n\t\t32\n\t\t1\n\t\t32\n\t\t8\n\t\t512\n\t )\n\t (typed:slice_vectors ; typed:slice_vectors_ip8_is512_op8_os256_signed_None_0_1_32\n\t\t (typed:cast-uint-truncate ; typed:cast-uint_1_ip64_is1024_op32_os512_signed_0\n\t\t\t(buffer-index  0 'uint8 1024) ; < 128 x i8> False\n\t\t\t64\n\t\t\t1\n\t\t\t16\n\t\t\t32\n\t\t )\n\t\t0\n\t\t1\n\t\t32\n\t\t8\n\t\t512\n\t )\n\t16\n\t256\n )",
+          "tree": {
+            "kind": "context",
+            "dsl_name": "typed:concat_vectors",
+            "name": "typed:concat_vectors_ip16_is256_op16_os512_signed_None",
+            "args": [
+              {
+                "kind": "context",
+                "dsl_name": "typed:slice_vectors",
+                "name": "typed:slice_vectors_ip8_is512_op8_os256_signed_None_32_1_32",
+                "args": [
+                  {
+                    "kind": "context",
+                    "dsl_name": "typed:cast-uint-truncate",
+                    "name": "typed:cast-uint_1_ip64_is1024_op32_os512_signed_0",
+                    "args": [
+                      {
+                        "kind": "reg",
+                        "index": "0",
+                        "precision": 8,
+                        "size": 1024,
+                        "signed": false
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 64
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 1
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 16
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 32
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 32
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 1
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 32
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 8
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 512
+                  }
+                ]
+              },
+              {
+                "kind": "context",
+                "dsl_name": "typed:slice_vectors",
+                "name": "typed:slice_vectors_ip8_is512_op8_os256_signed_None_0_1_32",
+                "args": [
+                  {
+                    "kind": "context",
+                    "dsl_name": "typed:cast-uint-truncate",
+                    "name": "typed:cast-uint_1_ip64_is1024_op32_os512_signed_0",
+                    "args": [
+                      {
+                        "kind": "reg",
+                        "index": "0",
+                        "precision": 8,
+                        "size": 1024,
+                        "signed": false
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 64
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 1
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 16
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 32
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 0
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 1
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 32
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 8
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 512
+                  }
+                ]
+              },
+              {
+                "kind": "integer",
+                "value": 16
+              },
+              {
+                "kind": "integer",
+                "value": 256
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "source_record_index": 1,
+      "expressions": [
+        {
+          "rendered": " (typed:cast-uint-truncate ; typed:cast-uint_1_ip64_is1024_op32_os512_signed_0\n\t(buffer-index  0 'uint8 1024) ; < 128 x i8> False\n\t64\n\t1\n\t16\n\t32\n )",
+          "tree": {
+            "kind": "context",
+            "dsl_name": "typed:cast-uint-truncate",
+            "name": "typed:cast-uint_1_ip64_is1024_op32_os512_signed_0",
+            "args": [
+              {
+                "kind": "reg",
+                "index": "0",
+                "precision": 8,
+                "size": 1024,
+                "signed": false
+              },
+              {
+                "kind": "integer",
+                "value": 64
+              },
+              {
+                "kind": "integer",
+                "value": 1
+              },
+              {
+                "kind": "integer",
+                "value": 16
+              },
+              {
+                "kind": "integer",
+                "value": 32
+              }
+            ]
+          }
+        },
+        {
+          "rendered": " (typed:concat_vectors ; typed:concat_vectors_ip16_is256_op16_os512_signed_None\n\t (typed:slice_vectors ; typed:slice_vectors_ip8_is512_op8_os256_signed_None_32_1_32\n\t\t (typed:cast-uint-truncate ; typed:cast-uint_1_ip64_is1024_op32_os512_signed_0\n\t\t\t(buffer-index  0 'uint8 1024) ; < 128 x i8> False\n\t\t\t64\n\t\t\t1\n\t\t\t16\n\t\t\t32\n\t\t )\n\t\t32\n\t\t1\n\t\t32\n\t\t8\n\t\t512\n\t )\n\t (typed:slice_vectors ; typed:slice_vectors_ip8_is512_op8_os256_signed_None_0_1_32\n\t\t (typed:cast-uint-truncate ; typed:cast-uint_1_ip64_is1024_op32_os512_signed_0\n\t\t\t(buffer-index  0 'uint8 1024) ; < 128 x i8> False\n\t\t\t64\n\t\t\t1\n\t\t\t16\n\t\t\t32\n\t\t )\n\t\t0\n\t\t1\n\t\t32\n\t\t8\n\t\t512\n\t )\n\t16\n\t256\n )",
+          "tree": {
+            "kind": "context",
+            "dsl_name": "typed:concat_vectors",
+            "name": "typed:concat_vectors_ip16_is256_op16_os512_signed_None",
+            "args": [
+              {
+                "kind": "context",
+                "dsl_name": "typed:slice_vectors",
+                "name": "typed:slice_vectors_ip8_is512_op8_os256_signed_None_32_1_32",
+                "args": [
+                  {
+                    "kind": "context",
+                    "dsl_name": "typed:cast-uint-truncate",
+                    "name": "typed:cast-uint_1_ip64_is1024_op32_os512_signed_0",
+                    "args": [
+                      {
+                        "kind": "reg",
+                        "index": "0",
+                        "precision": 8,
+                        "size": 1024,
+                        "signed": false
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 64
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 1
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 16
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 32
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 32
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 1
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 32
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 8
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 512
+                  }
+                ]
+              },
+              {
+                "kind": "context",
+                "dsl_name": "typed:slice_vectors",
+                "name": "typed:slice_vectors_ip8_is512_op8_os256_signed_None_0_1_32",
+                "args": [
+                  {
+                    "kind": "context",
+                    "dsl_name": "typed:cast-uint-truncate",
+                    "name": "typed:cast-uint_1_ip64_is1024_op32_os512_signed_0",
+                    "args": [
+                      {
+                        "kind": "reg",
+                        "index": "0",
+                        "precision": 8,
+                        "size": 1024,
+                        "signed": false
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 64
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 1
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 16
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 32
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 0
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 1
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 32
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 8
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 512
+                  }
+                ]
+              },
+              {
+                "kind": "integer",
+                "value": 16
+              },
+              {
+                "kind": "integer",
+                "value": 256
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "source_record_index": 2,
+      "expressions": [
+        {
+          "rendered": " (typed:cast-uint-truncate ; typed:cast-uint_1_ip64_is1024_op32_os512_signed_0\n\t(buffer-index  0 'uint8 1024) ; < 128 x i8> False\n\t64\n\t1\n\t16\n\t32\n )",
+          "tree": {
+            "kind": "context",
+            "dsl_name": "typed:cast-uint-truncate",
+            "name": "typed:cast-uint_1_ip64_is1024_op32_os512_signed_0",
+            "args": [
+              {
+                "kind": "reg",
+                "index": "0",
+                "precision": 8,
+                "size": 1024,
+                "signed": false
+              },
+              {
+                "kind": "integer",
+                "value": 64
+              },
+              {
+                "kind": "integer",
+                "value": 1
+              },
+              {
+                "kind": "integer",
+                "value": 16
+              },
+              {
+                "kind": "integer",
+                "value": 32
+              }
+            ]
+          }
+        },
+        {
+          "rendered": " (typed:concat_vectors ; typed:concat_vectors_ip16_is256_op16_os512_signed_None\n\t (typed:slice_vectors ; typed:slice_vectors_ip8_is512_op8_os256_signed_None_32_1_32\n\t\t (typed:cast-uint-truncate ; typed:cast-uint_1_ip64_is1024_op32_os512_signed_0\n\t\t\t(buffer-index  0 'uint8 1024) ; < 128 x i8> False\n\t\t\t64\n\t\t\t1\n\t\t\t16\n\t\t\t32\n\t\t )\n\t\t32\n\t\t1\n\t\t32\n\t\t8\n\t\t512\n\t )\n\t (typed:slice_vectors ; typed:slice_vectors_ip8_is512_op8_os256_signed_None_0_1_32\n\t\t (typed:cast-uint-truncate ; typed:cast-uint_1_ip64_is1024_op32_os512_signed_0\n\t\t\t(buffer-index  0 'uint8 1024) ; < 128 x i8> False\n\t\t\t64\n\t\t\t1\n\t\t\t16\n\t\t\t32\n\t\t )\n\t\t0\n\t\t1\n\t\t32\n\t\t8\n\t\t512\n\t )\n\t16\n\t256\n )",
+          "tree": {
+            "kind": "context",
+            "dsl_name": "typed:concat_vectors",
+            "name": "typed:concat_vectors_ip16_is256_op16_os512_signed_None",
+            "args": [
+              {
+                "kind": "context",
+                "dsl_name": "typed:slice_vectors",
+                "name": "typed:slice_vectors_ip8_is512_op8_os256_signed_None_32_1_32",
+                "args": [
+                  {
+                    "kind": "context",
+                    "dsl_name": "typed:cast-uint-truncate",
+                    "name": "typed:cast-uint_1_ip64_is1024_op32_os512_signed_0",
+                    "args": [
+                      {
+                        "kind": "reg",
+                        "index": "0",
+                        "precision": 8,
+                        "size": 1024,
+                        "signed": false
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 64
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 1
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 16
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 32
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 32
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 1
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 32
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 8
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 512
+                  }
+                ]
+              },
+              {
+                "kind": "context",
+                "dsl_name": "typed:slice_vectors",
+                "name": "typed:slice_vectors_ip8_is512_op8_os256_signed_None_0_1_32",
+                "args": [
+                  {
+                    "kind": "context",
+                    "dsl_name": "typed:cast-uint-truncate",
+                    "name": "typed:cast-uint_1_ip64_is1024_op32_os512_signed_0",
+                    "args": [
+                      {
+                        "kind": "reg",
+                        "index": "0",
+                        "precision": 8,
+                        "size": 1024,
+                        "signed": false
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 64
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 1
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 16
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 32
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 0
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 1
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 32
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 8
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 512
+                  }
+                ]
+              },
+              {
+                "kind": "integer",
+                "value": 16
+              },
+              {
+                "kind": "integer",
+                "value": 256
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "source_record_index": 3,
+      "expressions": [
+        {
+          "rendered": " (typed:cast-uint-truncate ; typed:cast-uint_1_ip64_is1024_op32_os512_signed_0\n\t(buffer-index  0 'uint8 1024) ; < 128 x i8> False\n\t64\n\t1\n\t16\n\t32\n )",
+          "tree": {
+            "kind": "context",
+            "dsl_name": "typed:cast-uint-truncate",
+            "name": "typed:cast-uint_1_ip64_is1024_op32_os512_signed_0",
+            "args": [
+              {
+                "kind": "reg",
+                "index": "0",
+                "precision": 8,
+                "size": 1024,
+                "signed": false
+              },
+              {
+                "kind": "integer",
+                "value": 64
+              },
+              {
+                "kind": "integer",
+                "value": 1
+              },
+              {
+                "kind": "integer",
+                "value": 16
+              },
+              {
+                "kind": "integer",
+                "value": 32
+              }
+            ]
+          }
+        },
+        {
+          "rendered": " (typed:concat_vectors ; typed:concat_vectors_ip16_is256_op16_os512_signed_None\n\t (typed:slice_vectors ; typed:slice_vectors_ip8_is512_op8_os256_signed_None_32_1_32\n\t\t (typed:cast-uint-truncate ; typed:cast-uint_1_ip64_is1024_op32_os512_signed_0\n\t\t\t(buffer-index  0 'uint8 1024) ; < 128 x i8> False\n\t\t\t64\n\t\t\t1\n\t\t\t16\n\t\t\t32\n\t\t )\n\t\t32\n\t\t1\n\t\t32\n\t\t8\n\t\t512\n\t )\n\t (typed:slice_vectors ; typed:slice_vectors_ip8_is512_op8_os256_signed_None_0_1_32\n\t\t (typed:cast-uint-truncate ; typed:cast-uint_1_ip64_is1024_op32_os512_signed_0\n\t\t\t(buffer-index  0 'uint8 1024) ; < 128 x i8> False\n\t\t\t64\n\t\t\t1\n\t\t\t16\n\t\t\t32\n\t\t )\n\t\t0\n\t\t1\n\t\t32\n\t\t8\n\t\t512\n\t )\n\t16\n\t256\n )",
+          "tree": {
+            "kind": "context",
+            "dsl_name": "typed:concat_vectors",
+            "name": "typed:concat_vectors_ip16_is256_op16_os512_signed_None",
+            "args": [
+              {
+                "kind": "context",
+                "dsl_name": "typed:slice_vectors",
+                "name": "typed:slice_vectors_ip8_is512_op8_os256_signed_None_32_1_32",
+                "args": [
+                  {
+                    "kind": "context",
+                    "dsl_name": "typed:cast-uint-truncate",
+                    "name": "typed:cast-uint_1_ip64_is1024_op32_os512_signed_0",
+                    "args": [
+                      {
+                        "kind": "reg",
+                        "index": "0",
+                        "precision": 8,
+                        "size": 1024,
+                        "signed": false
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 64
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 1
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 16
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 32
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 32
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 1
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 32
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 8
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 512
+                  }
+                ]
+              },
+              {
+                "kind": "context",
+                "dsl_name": "typed:slice_vectors",
+                "name": "typed:slice_vectors_ip8_is512_op8_os256_signed_None_0_1_32",
+                "args": [
+                  {
+                    "kind": "context",
+                    "dsl_name": "typed:cast-uint-truncate",
+                    "name": "typed:cast-uint_1_ip64_is1024_op32_os512_signed_0",
+                    "args": [
+                      {
+                        "kind": "reg",
+                        "index": "0",
+                        "precision": 8,
+                        "size": 1024,
+                        "signed": false
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 64
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 1
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 16
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 32
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 0
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 1
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 32
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 8
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 512
+                  }
+                ]
+              },
+              {
+                "kind": "integer",
+                "value": 16
+              },
+              {
+                "kind": "integer",
+                "value": 256
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "source_record_index": 4,
+      "expressions": [
+        {
+          "rendered": " (typed:cast-uint-truncate ; typed:cast-uint_1_ip64_is1024_op32_os512_signed_0\n\t(buffer-index  0 'uint8 1024) ; < 128 x i8> False\n\t64\n\t1\n\t16\n\t32\n )",
+          "tree": {
+            "kind": "context",
+            "dsl_name": "typed:cast-uint-truncate",
+            "name": "typed:cast-uint_1_ip64_is1024_op32_os512_signed_0",
+            "args": [
+              {
+                "kind": "reg",
+                "index": "0",
+                "precision": 8,
+                "size": 1024,
+                "signed": false
+              },
+              {
+                "kind": "integer",
+                "value": 64
+              },
+              {
+                "kind": "integer",
+                "value": 1
+              },
+              {
+                "kind": "integer",
+                "value": 16
+              },
+              {
+                "kind": "integer",
+                "value": 32
+              }
+            ]
+          }
+        },
+        {
+          "rendered": " (typed:concat_vectors ; typed:concat_vectors_ip16_is256_op16_os512_signed_None\n\t (typed:slice_vectors ; typed:slice_vectors_ip8_is512_op8_os256_signed_None_32_1_32\n\t\t (typed:cast-uint-truncate ; typed:cast-uint_1_ip64_is1024_op32_os512_signed_0\n\t\t\t(buffer-index  0 'uint8 1024) ; < 128 x i8> False\n\t\t\t64\n\t\t\t1\n\t\t\t16\n\t\t\t32\n\t\t )\n\t\t32\n\t\t1\n\t\t32\n\t\t8\n\t\t512\n\t )\n\t (typed:slice_vectors ; typed:slice_vectors_ip8_is512_op8_os256_signed_None_0_1_32\n\t\t (typed:cast-uint-truncate ; typed:cast-uint_1_ip64_is1024_op32_os512_signed_0\n\t\t\t(buffer-index  0 'uint8 1024) ; < 128 x i8> False\n\t\t\t64\n\t\t\t1\n\t\t\t16\n\t\t\t32\n\t\t )\n\t\t0\n\t\t1\n\t\t32\n\t\t8\n\t\t512\n\t )\n\t16\n\t256\n )",
+          "tree": {
+            "kind": "context",
+            "dsl_name": "typed:concat_vectors",
+            "name": "typed:concat_vectors_ip16_is256_op16_os512_signed_None",
+            "args": [
+              {
+                "kind": "context",
+                "dsl_name": "typed:slice_vectors",
+                "name": "typed:slice_vectors_ip8_is512_op8_os256_signed_None_32_1_32",
+                "args": [
+                  {
+                    "kind": "context",
+                    "dsl_name": "typed:cast-uint-truncate",
+                    "name": "typed:cast-uint_1_ip64_is1024_op32_os512_signed_0",
+                    "args": [
+                      {
+                        "kind": "reg",
+                        "index": "0",
+                        "precision": 8,
+                        "size": 1024,
+                        "signed": false
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 64
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 1
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 16
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 32
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 32
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 1
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 32
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 8
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 512
+                  }
+                ]
+              },
+              {
+                "kind": "context",
+                "dsl_name": "typed:slice_vectors",
+                "name": "typed:slice_vectors_ip8_is512_op8_os256_signed_None_0_1_32",
+                "args": [
+                  {
+                    "kind": "context",
+                    "dsl_name": "typed:cast-uint-truncate",
+                    "name": "typed:cast-uint_1_ip64_is1024_op32_os512_signed_0",
+                    "args": [
+                      {
+                        "kind": "reg",
+                        "index": "0",
+                        "precision": 8,
+                        "size": 1024,
+                        "signed": false
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 64
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 1
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 16
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 32
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 0
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 1
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 32
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 8
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 512
+                  }
+                ]
+              },
+              {
+                "kind": "integer",
+                "value": 16
+              },
+              {
+                "kind": "integer",
+                "value": 256
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "source_record_index": 5,
+      "expressions": [
+        {
+          "rendered": " (typed:cast-uint-truncate ; typed:cast-uint_1_ip64_is1024_op32_os512_signed_0\n\t(buffer-index  0 'uint8 1024) ; < 128 x i8> False\n\t64\n\t1\n\t16\n\t32\n )",
+          "tree": {
+            "kind": "context",
+            "dsl_name": "typed:cast-uint-truncate",
+            "name": "typed:cast-uint_1_ip64_is1024_op32_os512_signed_0",
+            "args": [
+              {
+                "kind": "reg",
+                "index": "0",
+                "precision": 8,
+                "size": 1024,
+                "signed": false
+              },
+              {
+                "kind": "integer",
+                "value": 64
+              },
+              {
+                "kind": "integer",
+                "value": 1
+              },
+              {
+                "kind": "integer",
+                "value": 16
+              },
+              {
+                "kind": "integer",
+                "value": 32
+              }
+            ]
+          }
+        },
+        {
+          "rendered": " (typed:concat_vectors ; typed:concat_vectors_ip16_is256_op16_os512_signed_None\n\t (typed:slice_vectors ; typed:slice_vectors_ip8_is512_op8_os256_signed_None_32_1_32\n\t\t (typed:cast-uint-truncate ; typed:cast-uint_1_ip64_is1024_op32_os512_signed_0\n\t\t\t(buffer-index  0 'uint8 1024) ; < 128 x i8> False\n\t\t\t64\n\t\t\t1\n\t\t\t16\n\t\t\t32\n\t\t )\n\t\t32\n\t\t1\n\t\t32\n\t\t8\n\t\t512\n\t )\n\t (typed:slice_vectors ; typed:slice_vectors_ip8_is512_op8_os256_signed_None_0_1_32\n\t\t (typed:cast-uint-truncate ; typed:cast-uint_1_ip64_is1024_op32_os512_signed_0\n\t\t\t(buffer-index  0 'uint8 1024) ; < 128 x i8> False\n\t\t\t64\n\t\t\t1\n\t\t\t16\n\t\t\t32\n\t\t )\n\t\t0\n\t\t1\n\t\t32\n\t\t8\n\t\t512\n\t )\n\t16\n\t256\n )",
+          "tree": {
+            "kind": "context",
+            "dsl_name": "typed:concat_vectors",
+            "name": "typed:concat_vectors_ip16_is256_op16_os512_signed_None",
+            "args": [
+              {
+                "kind": "context",
+                "dsl_name": "typed:slice_vectors",
+                "name": "typed:slice_vectors_ip8_is512_op8_os256_signed_None_32_1_32",
+                "args": [
+                  {
+                    "kind": "context",
+                    "dsl_name": "typed:cast-uint-truncate",
+                    "name": "typed:cast-uint_1_ip64_is1024_op32_os512_signed_0",
+                    "args": [
+                      {
+                        "kind": "reg",
+                        "index": "0",
+                        "precision": 8,
+                        "size": 1024,
+                        "signed": false
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 64
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 1
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 16
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 32
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 32
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 1
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 32
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 8
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 512
+                  }
+                ]
+              },
+              {
+                "kind": "context",
+                "dsl_name": "typed:slice_vectors",
+                "name": "typed:slice_vectors_ip8_is512_op8_os256_signed_None_0_1_32",
+                "args": [
+                  {
+                    "kind": "context",
+                    "dsl_name": "typed:cast-uint-truncate",
+                    "name": "typed:cast-uint_1_ip64_is1024_op32_os512_signed_0",
+                    "args": [
+                      {
+                        "kind": "reg",
+                        "index": "0",
+                        "precision": 8,
+                        "size": 1024,
+                        "signed": false
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 64
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 1
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 16
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 32
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 0
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 1
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 32
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 8
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 512
+                  }
+                ]
+              },
+              {
+                "kind": "integer",
+                "value": 16
+              },
+              {
+                "kind": "integer",
+                "value": 256
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "source_record_index": 6,
+      "expressions": [
+        {
+          "rendered": " (typed:cast-uint-truncate ; typed:cast-uint_1_ip64_is1024_op32_os512_signed_0\n\t(buffer-index  0 'uint8 1024) ; < 128 x i8> False\n\t64\n\t1\n\t16\n\t32\n )",
+          "tree": {
+            "kind": "context",
+            "dsl_name": "typed:cast-uint-truncate",
+            "name": "typed:cast-uint_1_ip64_is1024_op32_os512_signed_0",
+            "args": [
+              {
+                "kind": "reg",
+                "index": "0",
+                "precision": 8,
+                "size": 1024,
+                "signed": false
+              },
+              {
+                "kind": "integer",
+                "value": 64
+              },
+              {
+                "kind": "integer",
+                "value": 1
+              },
+              {
+                "kind": "integer",
+                "value": 16
+              },
+              {
+                "kind": "integer",
+                "value": 32
+              }
+            ]
+          }
+        },
+        {
+          "rendered": " (typed:concat_vectors ; typed:concat_vectors_ip16_is256_op16_os512_signed_None\n\t (typed:slice_vectors ; typed:slice_vectors_ip8_is512_op8_os256_signed_None_32_1_32\n\t\t (typed:cast-uint-truncate ; typed:cast-uint_1_ip64_is1024_op32_os512_signed_0\n\t\t\t(buffer-index  0 'uint8 1024) ; < 128 x i8> False\n\t\t\t64\n\t\t\t1\n\t\t\t16\n\t\t\t32\n\t\t )\n\t\t32\n\t\t1\n\t\t32\n\t\t8\n\t\t512\n\t )\n\t (typed:slice_vectors ; typed:slice_vectors_ip8_is512_op8_os256_signed_None_0_1_32\n\t\t (typed:cast-uint-truncate ; typed:cast-uint_1_ip64_is1024_op32_os512_signed_0\n\t\t\t(buffer-index  0 'uint8 1024) ; < 128 x i8> False\n\t\t\t64\n\t\t\t1\n\t\t\t16\n\t\t\t32\n\t\t )\n\t\t0\n\t\t1\n\t\t32\n\t\t8\n\t\t512\n\t )\n\t16\n\t256\n )",
+          "tree": {
+            "kind": "context",
+            "dsl_name": "typed:concat_vectors",
+            "name": "typed:concat_vectors_ip16_is256_op16_os512_signed_None",
+            "args": [
+              {
+                "kind": "context",
+                "dsl_name": "typed:slice_vectors",
+                "name": "typed:slice_vectors_ip8_is512_op8_os256_signed_None_32_1_32",
+                "args": [
+                  {
+                    "kind": "context",
+                    "dsl_name": "typed:cast-uint-truncate",
+                    "name": "typed:cast-uint_1_ip64_is1024_op32_os512_signed_0",
+                    "args": [
+                      {
+                        "kind": "reg",
+                        "index": "0",
+                        "precision": 8,
+                        "size": 1024,
+                        "signed": false
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 64
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 1
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 16
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 32
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 32
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 1
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 32
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 8
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 512
+                  }
+                ]
+              },
+              {
+                "kind": "context",
+                "dsl_name": "typed:slice_vectors",
+                "name": "typed:slice_vectors_ip8_is512_op8_os256_signed_None_0_1_32",
+                "args": [
+                  {
+                    "kind": "context",
+                    "dsl_name": "typed:cast-uint-truncate",
+                    "name": "typed:cast-uint_1_ip64_is1024_op32_os512_signed_0",
+                    "args": [
+                      {
+                        "kind": "reg",
+                        "index": "0",
+                        "precision": 8,
+                        "size": 1024,
+                        "signed": false
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 64
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 1
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 16
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 32
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 0
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 1
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 32
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 8
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 512
+                  }
+                ]
+              },
+              {
+                "kind": "integer",
+                "value": 16
+              },
+              {
+                "kind": "integer",
+                "value": 256
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "source_record_index": 7,
+      "expressions": [
+        {
+          "rendered": " (typed:cast-uint-truncate ; typed:cast-uint_1_ip64_is1024_op32_os512_signed_0\n\t(buffer-index  0 'uint8 1024) ; < 128 x i8> False\n\t64\n\t1\n\t16\n\t32\n )",
+          "tree": {
+            "kind": "context",
+            "dsl_name": "typed:cast-uint-truncate",
+            "name": "typed:cast-uint_1_ip64_is1024_op32_os512_signed_0",
+            "args": [
+              {
+                "kind": "reg",
+                "index": "0",
+                "precision": 8,
+                "size": 1024,
+                "signed": false
+              },
+              {
+                "kind": "integer",
+                "value": 64
+              },
+              {
+                "kind": "integer",
+                "value": 1
+              },
+              {
+                "kind": "integer",
+                "value": 16
+              },
+              {
+                "kind": "integer",
+                "value": 32
+              }
+            ]
+          }
+        },
+        {
+          "rendered": " (typed:concat_vectors ; typed:concat_vectors_ip16_is256_op16_os512_signed_None\n\t (typed:slice_vectors ; typed:slice_vectors_ip8_is512_op8_os256_signed_None_32_1_32\n\t\t (typed:cast-uint-truncate ; typed:cast-uint_1_ip64_is1024_op32_os512_signed_0\n\t\t\t(buffer-index  0 'uint8 1024) ; < 128 x i8> False\n\t\t\t64\n\t\t\t1\n\t\t\t16\n\t\t\t32\n\t\t )\n\t\t32\n\t\t1\n\t\t32\n\t\t8\n\t\t512\n\t )\n\t (typed:slice_vectors ; typed:slice_vectors_ip8_is512_op8_os256_signed_None_0_1_32\n\t\t (typed:cast-uint-truncate ; typed:cast-uint_1_ip64_is1024_op32_os512_signed_0\n\t\t\t(buffer-index  0 'uint8 1024) ; < 128 x i8> False\n\t\t\t64\n\t\t\t1\n\t\t\t16\n\t\t\t32\n\t\t )\n\t\t0\n\t\t1\n\t\t32\n\t\t8\n\t\t512\n\t )\n\t16\n\t256\n )",
+          "tree": {
+            "kind": "context",
+            "dsl_name": "typed:concat_vectors",
+            "name": "typed:concat_vectors_ip16_is256_op16_os512_signed_None",
+            "args": [
+              {
+                "kind": "context",
+                "dsl_name": "typed:slice_vectors",
+                "name": "typed:slice_vectors_ip8_is512_op8_os256_signed_None_32_1_32",
+                "args": [
+                  {
+                    "kind": "context",
+                    "dsl_name": "typed:cast-uint-truncate",
+                    "name": "typed:cast-uint_1_ip64_is1024_op32_os512_signed_0",
+                    "args": [
+                      {
+                        "kind": "reg",
+                        "index": "0",
+                        "precision": 8,
+                        "size": 1024,
+                        "signed": false
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 64
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 1
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 16
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 32
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 32
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 1
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 32
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 8
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 512
+                  }
+                ]
+              },
+              {
+                "kind": "context",
+                "dsl_name": "typed:slice_vectors",
+                "name": "typed:slice_vectors_ip8_is512_op8_os256_signed_None_0_1_32",
+                "args": [
+                  {
+                    "kind": "context",
+                    "dsl_name": "typed:cast-uint-truncate",
+                    "name": "typed:cast-uint_1_ip64_is1024_op32_os512_signed_0",
+                    "args": [
+                      {
+                        "kind": "reg",
+                        "index": "0",
+                        "precision": 8,
+                        "size": 1024,
+                        "signed": false
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 64
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 1
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 16
+                      },
+                      {
+                        "kind": "integer",
+                        "value": 32
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 0
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 1
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 32
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 8
+                  },
+                  {
+                    "kind": "integer",
+                    "value": 512
+                  }
+                ]
+              },
+              {
+                "kind": "integer",
+                "value": 16
+              },
+              {
+                "kind": "integer",
+                "value": 256
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
