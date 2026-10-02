@@ -1,7 +1,42 @@
 ---
 source: egglog/tests/files.rs
+assertion_line: 297
 expression: proof_snapshot
 ---
+(let t0 (typeof (NilConst) (Lam "x" (TUnitConst) (Var "x"))))
+(let t1 (typeof (Cons "x" (TUnitConst) (NilConst)) (Var "x")))
+(let t2 (premises (Fiat (= t0 t0))))
+(let t3
+  (substitution
+        (@rewrite_var__3 t0)
+        (ctx (NilConst))
+        (x "x")
+        (t1 (TUnitConst))
+        (e (Var "x"))))
+(Congr
+  (= t0 (TArr (TUnitConst) (TUnitConst)))
+  (Rule
+    (= t0 (TArr (TUnitConst) t1))
+    (name
+      "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
+    t2
+    t3)
+  (Rule
+    (= t1 (TUnitConst))
+    (name "(rewrite (typeof (Cons x t ctx) (Var x)) t)")
+    (premises
+      (Rule
+        (= t1 t1)
+        (name
+          "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
+        t2
+        t3))
+    (substitution
+      (@rewrite_var__1 t1)
+      (x "x")
+      (t (TUnitConst))
+      (ctx (NilConst))))
+  1)
 (let t0 (typeof (NilConst) (Lam "x" (TUnitConst) (Var "x"))))
 (let t1 (typeof (Cons "x" (TUnitConst) (NilConst)) (Var "x")))
 (let t2 (premises (Fiat (= t0 t0))))

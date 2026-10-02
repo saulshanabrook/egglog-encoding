@@ -16,6 +16,7 @@ pub use egglog_ast::generic_ast_helpers::INTERNAL_SYMBOL_PREFIX;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SymbolGen {
     hint_to_count: HashMap<String, usize>,
+    generated: HashSet<String>,
     reserved_string: String,
     leave_off_zero: bool,
 }
@@ -25,6 +26,7 @@ impl SymbolGen {
     pub fn new(reserved_string: String) -> Self {
         Self {
             hint_to_count: HashMap::default(),
+            generated: HashSet::default(),
             reserved_string,
             leave_off_zero: true,
         }
@@ -61,18 +63,25 @@ pub trait FreshGen<Head: ?Sized, Leaf> {
 impl FreshGen<str, String> for SymbolGen {
     fn fresh(&mut self, name_hint: &str) -> String {
         let entry = self.hint_to_count.entry(name_hint.to_string()).or_insert(0);
-        let count_before = *entry;
-        *entry += 1;
-        format!(
-            "{}{}{}",
-            self.reserved_string,
-            name_hint,
-            if self.leave_off_zero && count_before == 0 {
-                "".to_string()
-            } else {
-                count_before.to_string()
+        loop {
+            let count_before = *entry;
+            *entry += 1;
+            let name = format!(
+                "{}{}{}",
+                self.reserved_string,
+                name_hint,
+                if self.leave_off_zero && count_before == 0 {
+                    "".to_string()
+                } else {
+                    count_before.to_string()
+                }
+            );
+            // Different hints can produce the same spelling: `x1` without a
+            // suffix and `x` with suffix 1. Keep the usual spelling when free.
+            if self.generated.insert(name.clone()) {
+                return name;
             }
-        )
+        }
     }
 }
 
@@ -84,22 +93,7 @@ impl FreshGen<String, String> for SymbolGen {
 
 impl FreshGen<ResolvedCall, ResolvedVar> for SymbolGen {
     fn fresh(&mut self, name_hint: &ResolvedCall) -> ResolvedVar {
-        let entry = self
-            .hint_to_count
-            .entry(format!("{name_hint}"))
-            .or_insert(0);
-        let count = *entry;
-        *entry += 1;
-        let name = format!(
-            "{}{}{}",
-            self.reserved_string,
-            name_hint,
-            if self.leave_off_zero && count == 0 {
-                "".to_string()
-            } else {
-                count.to_string()
-            }
-        );
+        let name = self.fresh(&name_hint.to_string());
         let sort = match name_hint {
             ResolvedCall::Func(f) => f.output().clone(),
             ResolvedCall::Primitive(prim) => prim.output().clone(),
@@ -112,5 +106,72 @@ impl FreshGen<ResolvedCall, ResolvedVar> for SymbolGen {
             // are desugared away by `remove_globals`
             is_global_ref: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ast::FunctionSubtype, sort::EqSort, typechecking::FuncType};
+    use std::sync::Arc;
+
+    #[test]
+    fn fresh_symbols_disambiguate_numeric_hints() {
+        for hints in [["x1", "x", "x"], ["x", "x", "x1"]] {
+            let mut symbols = SymbolGen::new("@".into());
+            let names: HashSet<_> = hints.map(|hint| symbols.fresh(hint)).into_iter().collect();
+            assert_eq!(names.len(), hints.len());
+        }
+
+        let mut symbols = SymbolGen::new("@".into());
+        assert_eq!(symbols.fresh("x"), "@x");
+        assert_eq!(symbols.fresh("x"), "@x1");
+        assert_eq!(symbols.fresh("x"), "@x2");
+    }
+
+    #[test]
+    fn typed_fresh_symbols_share_collision_checks() {
+        let mut symbols = SymbolGen::new("@".into());
+        let assumption = ResolvedCall::Func(FuncType {
+            name: "reproduction_anchor_13".into(),
+            subtype: FunctionSubtype::Custom,
+            input: vec![],
+            outputs: vec![Arc::new(EqSort {
+                name: "Assumption".into(),
+            })],
+        });
+        let type_anchor = ResolvedCall::Func(FuncType {
+            name: "reproduction_anchor_133".into(),
+            subtype: FunctionSubtype::Custom,
+            input: vec![],
+            outputs: vec![Arc::new(EqSort {
+                name: "Type".into(),
+            })],
+        });
+        let mut names = HashSet::default();
+        for _ in 0..35 {
+            let var = symbols.fresh(&assumption);
+            assert_eq!(var.sort.name(), "Assumption");
+            assert!(names.insert(var.name));
+        }
+        for _ in 0..5 {
+            let var = symbols.fresh(&type_anchor);
+            assert_eq!(var.sort.name(), "Type");
+            assert!(names.insert(var.name));
+        }
+        assert!(names.insert(symbols.fresh("reproduction_anchor_1334")));
+    }
+
+    #[test]
+    fn cloned_generator_keeps_allocations_with_zero_suffixes() {
+        let mut symbols = SymbolGen::new("@".into());
+        symbols.include_zero(true);
+        assert_eq!(symbols.fresh("x"), "@x0");
+        assert_eq!(symbols.fresh("x0"), "@x00");
+
+        let mut snapshot = symbols.clone();
+        snapshot.include_zero(false);
+        assert_eq!(snapshot.fresh("x00"), "@x001");
+        assert_eq!(symbols.fresh("x"), snapshot.fresh("x"));
     }
 }

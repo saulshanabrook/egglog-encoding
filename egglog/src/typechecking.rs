@@ -466,6 +466,29 @@ impl EGraph {
     ) -> Result<Vec<ResolvedNCommand>, TypeError> {
         let mut result = vec![];
         for command in program {
+            // A deferred extraction may create a shared proof helper before its
+            // serialized declaration, or after the captured context was made.
+            // Replay may reuse that identical internal declaration, but never a
+            // user declaration or a helper with a different schema or behavior.
+            if !self.extract_contexts.is_empty()
+                && let NCommand::Function(decl) = command
+                && decl.internal_hidden
+                && decl.internal_term_node
+                && {
+                    let names = &self.proof_state.proof_names;
+                    names.is_fiat(&decl.name)
+                        || names.proj_prim_args(&decl.name).is_some()
+                        || names.fused_rule_arity(&decl.name).is_some()
+                        || names.packed_proof_columns(&decl.name).is_some()
+                }
+                && let Some(existing) = self.functions.get(&decl.name)
+                && ResolvedNCommand::Function(existing.decl.clone())
+                    .to_command()
+                    .to_string()
+                    == command.to_command().to_string()
+            {
+                continue;
+            }
             result.push(self.typecheck_command(command)?);
         }
         Ok(result)
@@ -722,6 +745,16 @@ impl EGraph {
                     is_global_ref: false,
                 };
                 ResolvedNCommand::LetBegin(span.clone(), resolved_var, resolved)
+            }
+            // These are original-language expressions. Typecheck them when the
+            // command executes through ordinary extraction, before view lowering.
+            NCommand::ProveExtract(span, expr, variants, context) => {
+                ResolvedNCommand::ProveExtract(
+                    span.clone(),
+                    expr.clone(),
+                    variants.clone(),
+                    context.clone(),
+                )
             }
             NCommand::Extract(span, expr, variants) => {
                 // A tuple-output function returns more than one value, so it can't be extracted as a
