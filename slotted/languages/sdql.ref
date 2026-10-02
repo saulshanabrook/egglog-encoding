@@ -1,0 +1,42 @@
+;;; How `sdql.egg` corresponds to the reference crate.
+;;;
+;;; The language file says what the constructors ARE; this says what the reference
+;;; calls them, which is the only thing a differential harness needs that the encoding
+;;; itself does not. Keeping it out of the .egg file keeps the .egg file a language
+;;; declaration rather than a harness configuration.
+;;;
+;;; One line per operator:
+;;;
+;;;     <operator>  <Constructor>  <reference>
+;;;
+;;; `<operator>` is the name terms and rules are written with. `<reference>` is the tag
+;;; the reference's parser uses, or `=payload` where the reference writes the payload
+;;; itself instead of a tag -- optionally `=payload <prefix>` where it needs one.
+;;;
+;;; Two entries are not just a rename, and both are the reference working around
+;;; itself rather than anything about the encoding:
+;;;
+;;;   let    the oracle holds two languages in one `define_language!`, so `let` is
+;;;          already taken by the array language's differently-shaped `let`
+;;;   sym    the oracle matches operator tags before payloads, so a bare symbol in a
+;;;          child position parses as an operator unless it is prefixed
+
+lambda      Lambda      lambda
+sing        Sing        sing
+add         Add         +
+mult        Mult        *
+sub         Sub         -
+eq          Equality    eq
+get         Get         get
+range       Range       range
+apply       App         apply
+ifthen      IfThen      ifthen
+binop       Binop       binop
+subarray    SubArray    subarray
+unique      Unique      unique
+sum         Sum         sum
+merge       Merge       merge
+let         Let         sdql-let
+num         Num         =payload
+sym         Symbol      =payload sym:
+null        Null        null

@@ -1,0 +1,31 @@
+; This file emulates the use of rules / relations.
+
+(sort U)
+(constructor Thingy (U U U) U)
+
+(constructor RelA (U) U)
+(constructor RelB (U U) U)
+(constructor Truth () U)
+
+(let truth (Truth))
+
+(union truth (RelA (Thingy $0 $1 $2)))
+
+(rewrite
+    (Truth)
+    (RelB x y)
+    :when ((= Truth (RelA x))
+           (= Truth (RelA y)))
+)
+
+(run 10)
+
+(check (= (Truth) (RelB (Thingy $0 $1 $2) (Thingy $3 $4 $5))))
+
+(check (= (Truth) (RelB (Thingy $0 $1 $2) (Thingy $0 $4 $5))))
+(check (= (Truth) (RelB (Thingy $0 $1 $2) (Thingy $3 $0 $5))))
+(check (= (Truth) (RelB (Thingy $0 $1 $2) (Thingy $3 $4 $0))))
+
+(check (= (Truth) (RelB (Thingy $0 $1 $2) (Thingy $2 $1 $0))))
+
+(check (slots (Thingy $0 $1 $2) $0 $1 $2))

@@ -1,0 +1,27 @@
+(sort U)
+
+; (Sum $i ?b) means sum i=0..10 of ?b
+; ?b is supposed to have $i as a free variable.
+(constructor Sum (U U) U :binder 0)
+(constructor Mul (U U) U)
+
+(let x (Mul $4 (Sum $5 $5)))
+(let y (Sum $5 (Mul $4 $5)))
+(let z (Sum $1 (Mul $1 $1)))
+
+(rewrite
+    (Mul ?a (Sum $12 ?b)) ; This pattern should guarantee that $12 doesn't come up in ?a.
+    (Sum $12 (Mul ?a ?b))
+)
+
+(run 10)
+
+; x*(sum_i of i)
+;    should be the same as
+; sum_i of x*i
+(check (= x y))
+
+; x*(sum_i of i)
+;    should NOT be the same as
+; sum_i of i*i
+(fail (check (= x z)))

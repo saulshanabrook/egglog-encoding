@@ -1,0 +1,44 @@
+;;; COMPILED from slotted/tests/paper/figure-3.egg by slotted/slotted-egglog.py.
+;;;
+;;; Only the forms THIS file contributes. The machinery for its 2 constructors,
+;;; and anything an included library brought, are left out -- committing the
+;;; same generated thousands of lines once per test would swamp the diff that
+;;; a change in the compiler is supposed to show.
+;;; --update` rewrites it. Under `target/` it is build output.
+
+(let $m7 (Mul (map-of 0 7) (SlottedVar_0 0) (map-empty) (Null)))
+(let $zero (Null))
+(union $m7 $zero)
+(let $m9 (Mul (map-of 0 9) (SlottedVar_0 0) (map-empty) (Null)))
+(let $m97 (Mul (map-of 0 9) (SlottedVar_0 0) (map-of 0 7) (SlottedVar_0 0)))
+(run-schedule (seq (saturate (seq (saturate (run slotted)) (saturate (run slotted-migrate)) (saturate (run slotted-group)) (run slotted-shape))) (saturate (run slotted-read))))
+(check (= _c0cls_c0 (Mul _c0e0_lit_9 (SlottedVar_0 0) _c0e0_leaf1 _c0leaf0_1))
+       (RenamesToLeader_0 (Null) _c0leafren0_1 _c0leaf0_1)
+       (= _c0atom_0 (atom "@atom:0" (root "_c0" (ClassSlots_0 _c0cls_c0)) (lit "$9" _c0e0_lit_9) (leaf _c0e0_leaf1)))
+       (= _c0m _c0atom_0)
+       (= _c1cls_c1 (Null))
+       (= _c1atom_0 (atom "@atom:0" (root "_c1" (ClassSlots_0 _c1cls_c1))))
+       (= _c1m _c1atom_0)
+       (= _c0cls_c0 _c1cls_c1)
+       (= _grp (EclassGroup_0 _c0cls_c0))
+       (coset-same (compose (map-of (map-get (ren _c0m "$9") 0) 9) (ren _c0m "_c0")) (compose (map-empty) (ren _c1m "_c1")) _grp))
+(check (= _c0cls_c0 (Mul _c0e0_lit_7 (SlottedVar_0 0) _c0e0_leaf1 _c0leaf0_1))
+       (RenamesToLeader_0 (Null) _c0leafren0_1 _c0leaf0_1)
+       (= _c0atom_0 (atom "@atom:0" (root "_c0" (ClassSlots_0 _c0cls_c0)) (lit "$7" _c0e0_lit_7) (leaf _c0e0_leaf1)))
+       (= _c0m _c0atom_0)
+       (= _c1cls_c1 (Mul _c1e0_lit_9 (SlottedVar_0 0) _c1e0_leaf1 _c1leaf0_1))
+       (RenamesToLeader_0 (Null) _c1leafren0_1 _c1leaf0_1)
+       (= _c1atom_0 (atom "@atom:0" (root "_c1" (ClassSlots_0 _c1cls_c1)) (lit "$9" _c1e0_lit_9) (leaf _c1e0_leaf1)))
+       (= _c1m _c1atom_0)
+       (= _c0cls_c0 _c1cls_c1)
+       (= _grp (EclassGroup_0 _c0cls_c0))
+       (coset-same (compose (map-of (map-get (ren _c0m "$7") 0) 7) (ren _c0m "_c0")) (compose (map-of (map-get (ren _c1m "$9") 0) 9) (ren _c1m "_c1")) _grp))
+(fail (check (= _c0cls_c0 (Mul _c0e0_lit_9 (SlottedVar_0 0) _c0e0_lit_7 (SlottedVar_0 0)))
+       (= _c0atom_0 (atom "@atom:0" (root "_c0" (ClassSlots_0 _c0cls_c0)) (lit "$9" _c0e0_lit_9) (lit "$7" _c0e0_lit_7)))
+       (= _c0m _c0atom_0)
+       (= _c1cls_c1 (Null))
+       (= _c1atom_0 (atom "@atom:0" (root "_c1" (ClassSlots_0 _c1cls_c1))))
+       (= _c1m _c1atom_0)
+       (= _c0cls_c0 _c1cls_c1)
+       (= _grp (EclassGroup_0 _c0cls_c0))
+       (coset-same (compose (map-of (map-get (ren _c0m "$7") 0) 7 (map-get (ren _c0m "$9") 0) 9) (ren _c0m "_c0")) (compose (map-empty) (ren _c1m "_c1")) _grp)))

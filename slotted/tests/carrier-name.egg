@@ -1,0 +1,41 @@
+;;; A program that names its sort `U` -- the same name the machinery already uses.
+;;;
+;;; Declaring the carrier is not a collision: the core is renamed to the declared sort,
+;;; and here that rename is the identity. The program's own `(sort U)` line is dropped
+;;; rather than emitted twice, since the core declares it ahead of the relations that
+;;; use it.
+;;;
+;;;     python3 slotted/slotted-egglog.py slotted/tests/carrier-name.egg
+
+(sort U)
+
+(constructor Null () U)
+(constructor Succ (U) U)
+(constructor Prev (U) U)
+(constructor Lam (U U) U :binder 0)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; The sort is the real carrier, so rewriting over it works.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(rewrite (Prev (Succ x)) x :name "peel")
+
+(let one (Prev (Succ (Null))))
+(run 5)
+
+(check (= one (Null)))
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; And so do slots and binders: one declaration of the sort, not two.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(let id0 (Lam $0 $0))
+(let id5 (Lam $5 $5))
+(run 0)
+
+(check (= id0 id5))
+(check (slots id0))
+(pop)

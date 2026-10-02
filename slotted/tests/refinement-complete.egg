@@ -1,0 +1,17 @@
+;;; Six independent one-slot matches have 203 consistent identifications.
+;;; All must be applied within one user round, including this alternative that
+;;; the former 64-entry prefix omitted.
+(include "slotted/languages/toy.egg")
+
+(let seed (F $0 $0))
+(let result (Null))
+(rewrite (Null) (G a0 (G a1 (G a2 (G a3 (G a4 a5)))))
+         :when ((= p0 (F a0 a0))
+                (= p1 (F a1 a1))
+                (= p2 (F a2 a2))
+                (= p3 (F a3 a3))
+                (= p4 (F a4 a4))
+                (= p5 (F a5 a5)))
+         :name "six-independent-slots")
+(run 1)
+(check (= result (G $0 (G $0 (G $0 (G $0 (G $0 $1)))))))

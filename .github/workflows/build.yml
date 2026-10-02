@@ -40,6 +40,24 @@ jobs:
       - run: make rust-nits
       - run: make rust-test
 
+  slotted:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - run: echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      # The whole thing, differential half included: `xmulti` now pins the reference
+      # to an upstream rev rather than a local checkout, so a runner can build it.
+      # That covers the .egg files, the slotted-language tests, the four drift gates
+      # keeping generated files, snapshots, tutorial and correspondence honest, and
+      # every suite that compares against the reference.
+      - run: make slotted-check
+
   benchmark-smoke:
     permissions:
       contents: read

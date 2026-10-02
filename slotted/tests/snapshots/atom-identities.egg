@@ -1,0 +1,45 @@
+;;; COMPILED from slotted/tests/atom-identities.egg by slotted/slotted-egglog.py.
+;;;
+;;; Only the forms THIS file contributes. The machinery for its 10 constructors,
+;;; and anything an included library brought, are left out -- committing the
+;;; same generated thousands of lines once per test would swamp the diff that
+;;; a change in the compiler is supposed to show.
+;;; --update` rewrites it. Under `target/` it is build output.
+
+(let $seed (F (map-of 0 0) (SlottedVar_0 0) (map-of 0 0) (SlottedVar_0 0)))
+(let $result (Null))
+(relation _matched_8ed48c8628 (Frames i64 U U U))
+(rule ((= cls_p (Null))
+       (= atom_0 (atom "@atom:0" (root "_p" (ClassSlots_0 cls_p))))
+       (= cls_p_2 (F e1_lit_x (SlottedVar_0 0) e1_lit_x_1 (SlottedVar_0 0)))
+       (= atom_1 (atom "@atom:1" (root "p" (ClassSlots_0 cls_p_2)) (lit "$x" e1_lit_x) (lit "$x" e1_lit_x_1)))
+       (= cls_p_2 (F e2_lit_x (SlottedVar_0 0) e2_lit_x_3 (SlottedVar_0 0)))
+       (= grp_p (EclassGroup_0 cls_p_2))
+       (= atom_2 (atom "@atom:2" (root "p" (ClassSlots_0 cls_p_2) grp_p) (lit "$x" e2_lit_x) (lit "$x" e2_lit_x_3)))
+       (= cls_p2 (F e3_lit_y (SlottedVar_0 0) e3_lit_y_4 (SlottedVar_0 0)))
+       (= atom_3 (atom "@atom:3" (root "p2" (ClassSlots_0 cls_p2)) (lit "$y" e3_lit_y) (lit "$y" e3_lit_y_4)))
+       (= f (frame-join (frame-join (frame-join atom_0 atom_1) atom_2) atom_3))
+       (= refined (refinements (anchor f "_p")))
+       (= refined_len (vec-length refined))
+       (> refined_len 0))
+      ((_matched_8ed48c8628 refined refined_len cls_p cls_p_2 cls_p2)
+       (Idx refined_len 0)))
+(rule ((_matched_8ed48c8628 refined refined_len cls_p cls_p_2 cls_p2)
+       (Idx refined_len choice)
+       (= m (vec-get refined choice)))
+      ((let built_g (G (ren m "$x") (SlottedVar_0 0) (ren m "$y") (SlottedVar_0 0)))
+       (let built_g_slots (node-slots m (names "$x" "$y") (names) (names)))
+       (union built_g cls_p)) :ruleset slotted-apply)
+(rule ((_matched_8ed48c8628 refined refined_len cls_p cls_p_2 cls_p2))
+      ((delete (_matched_8ed48c8628 refined refined_len cls_p cls_p_2 cls_p2))) :ruleset slotted-apply)
+(run-schedule (seq (saturate (seq (saturate (run slotted)) (saturate (run slotted-migrate)) (saturate (run slotted-group)) (run slotted-shape))) (saturate (run slotted-read)))
+              (repeat 1 (seq (run) (saturate (run slotted-refine)) (run slotted-apply) (seq (saturate (seq (saturate (run slotted)) (saturate (run slotted-migrate)) (saturate (run slotted-group)) (run slotted-shape))) (saturate (run slotted-read))))))
+(check (= _c0cls_c0 (Null))
+       (= _c0atom_0 (atom "@atom:0" (root "_c0" (ClassSlots_0 _c0cls_c0))))
+       (= _c0m _c0atom_0)
+       (= _c1cls_c1 (G _c1e0_lit_0 (SlottedVar_0 0) _c1e0_lit_1 (SlottedVar_0 0)))
+       (= _c1atom_0 (atom "@atom:0" (root "_c1" (ClassSlots_0 _c1cls_c1)) (lit "$0" _c1e0_lit_0) (lit "$1" _c1e0_lit_1)))
+       (= _c1m _c1atom_0)
+       (= _c0cls_c0 _c1cls_c1)
+       (= _grp (EclassGroup_0 _c0cls_c0))
+       (coset-same (compose (map-empty) (ren _c0m "_c0")) (compose (map-of (map-get (ren _c1m "$0") 0) 0 (map-get (ren _c1m "$1") 0) 1) (ren _c1m "_c1")) _grp))

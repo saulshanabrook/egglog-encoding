@@ -307,8 +307,8 @@ pub trait Core<'a, 'db: 'a>: Internal<'a, 'db> {
 /// The single-entry methods (`lookup`, `eclass_of`, `contains`)
 /// return `None` if absent — never insert. The iteration /
 /// introspection methods (`function_entries`, `constructor_enodes`,
-/// `table_size`, `table_sizes`) walk the current contents of the
-/// database.
+/// `table_size`, `table_sizes`) walk the current
+/// contents of the database.
 ///
 /// Detectable misuse (wrong table subtype, wrong arity) is reported
 /// as [`crate::ApiError`] via the method's `Result`. Per-column sort
@@ -547,7 +547,7 @@ pub trait Write<'a, 'db: 'a>: Core<'a, 'db> + RegistrySealed<'a, 'db> {
     }
 }
 
-fn lookup_action(registry: &ActionRegistry, name: &str) -> Result<TableAction, Error> {
+pub(crate) fn lookup_action(registry: &ActionRegistry, name: &str) -> Result<TableAction, Error> {
     registry.lookup_table(name).cloned().ok_or_else(|| {
         ApiError::MissingTable {
             name: name.to_string(),

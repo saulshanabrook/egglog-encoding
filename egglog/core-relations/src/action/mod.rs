@@ -3,9 +3,10 @@
 //! This allows us to execute the "right-hand-side" of a rule. The
 //! implementation here is optimized to execute on a batch of rows at a time.
 use std::{
+    any::{Any, TypeId},
     ops::Deref,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -366,7 +367,13 @@ pub struct ExecutionState<'a> {
     /// Atomic flag for early stopping of rule execution.
     /// This flag is shared across all handles (clones) of this ExecutionState.
     stop_match: Arc<AtomicBool>,
+    /// Derived data shared by workers reading this immutable database view.
+    cache: Arc<ExecutionCache>,
 }
+
+/// Type-indexed extension data, owned by one immutable execution view.
+#[derive(Default)]
+struct ExecutionCache(Mutex<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>);
 
 /// A basic wrapper around an map from table id to a mutation buffer for that table that also
 /// tracks if a table has been modified.
@@ -417,6 +424,7 @@ impl Clone for ExecutionState<'_> {
             buffers: self.buffers.clone(),
             changed: false,
             stop_match: Arc::clone(&self.stop_match),
+            cache: Arc::clone(&self.cache),
         }
     }
 }
@@ -432,7 +440,30 @@ impl<'a> ExecutionState<'a> {
             buffers: MutationBuffers::new(db.notification_list, buffers),
             changed: false,
             stop_match: Arc::new(AtomicBool::new(false)),
+            cache: Default::default(),
         }
+    }
+
+    /// Get extension-owned scratch data for this execution's database view.
+    ///
+    /// Clones used by parallel workers share the data. A new execution starts
+    /// empty, including after a database clone or rollback. Table reads remain
+    /// fixed throughout an execution: mutations are staged until it finishes.
+    /// This is suitable for caching scans and their derived results, but does
+    /// not include pending writes or mutable counters in that guarantee.
+    ///
+    /// Use a distinct wrapper type for each cache. Its own synchronization is
+    /// independent of the registry lock, which is released before returning.
+    pub fn execution_cache<T: Default + Send + Sync + 'static>(&self) -> Arc<T> {
+        self.cache
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .entry(TypeId::of::<T>())
+            .or_insert_with(|| Arc::new(T::default()))
+            .clone()
+            .downcast()
+            .unwrap_or_else(|_| unreachable!("cache type matches its TypeId"))
     }
 
     /// Stage an insertion of the given row into `table`.
@@ -494,9 +525,10 @@ impl<'a> ExecutionState<'a> {
         &self.db.table_info[table].table
     }
 
-    /// Get the human-readable name for a table, if one exists.
+    /// Get the human-readable name for a table, if the table is visible to
+    /// this execution state and has one.
     pub fn table_name(&self, table: TableId) -> Option<&'a str> {
-        self.db.table_info[table].name()
+        self.db.table_info.get(table)?.name()
     }
 
     pub fn base_values(&self) -> &'a BaseValues {

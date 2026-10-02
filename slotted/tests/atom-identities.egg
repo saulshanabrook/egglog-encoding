@@ -1,0 +1,8 @@
+; Repeated roots must not share atom identities with a variable named p2.
+(include "slotted/languages/toy.egg")
+(let seed (F $0 $0))
+(let result (Null))
+(rewrite (Null) (G $x $y)
+ :when ((= p (F $x $x)) (= p (F $x $x)) (= p2 (F $y $y))))
+(run 1)
+(check (= result (G $0 $1)))

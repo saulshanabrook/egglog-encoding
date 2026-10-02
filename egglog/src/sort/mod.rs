@@ -35,6 +35,8 @@ mod f64;
 pub use self::f64::*;
 mod map;
 pub use map::*;
+pub(crate) mod slotted;
+pub use slotted::*;
 mod set;
 pub use set::*;
 mod vec;

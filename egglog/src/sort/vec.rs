@@ -184,13 +184,19 @@ impl ContainerSort for VecSort {
         add_primitive!(eg, "vec-push" = |mut xs: @VecContainer (arc), x: # (self.element())| -> @VecContainer (arc) {{ xs.data.push(x); xs }});
         add_primitive!(eg, "vec-pop"  = |mut xs: @VecContainer (arc)                       | -> @VecContainer (arc) {{ xs.data.pop();   xs }});
 
-        add_primitive_with_validator!(eg, "vec-length"       = |xs: @VecContainer (arc)| -> i64 { xs.data.len() as i64 }, vec_length_validator);
+        // Read-only access should not copy the vector, including on failed lookups.
+        add_primitive_with_validator!(eg, "vec-length" = |xs: # (arc)| -> i64 {
+            state.container_values().get_val::<VecContainer>(xs).unwrap().data.len() as i64
+        }, vec_length_validator);
         add_primitive_with_validator!(eg, "vec-contains"     = |xs: @VecContainer (arc), x: # (self.element())| -?> () { ( xs.data.contains(&x)).then_some(()) }, vec_contains_validator);
         add_primitive_with_validator!(eg, "vec-not-contains" = |xs: @VecContainer (arc), x: # (self.element())| -?> () { (!xs.data.contains(&x)).then_some(()) }, vec_not_contains_validator);
 
-        add_primitive_with_validator!(eg, "vec-get"    = |    xs: @VecContainer (arc), i: i64                       | -?> # (self.element()) { xs.data.get(i as usize).copied() }, vec_get_validator);
+        add_primitive_with_validator!(eg, "vec-get" = |xs: # (arc), i: i64| -?> # (self.element()) {
+            state.container_values().get_val::<VecContainer>(xs)?.data.get(i as usize).copied()
+        }, vec_get_validator);
         add_primitive!(eg, "vec-set"    = |mut xs: @VecContainer (arc), i: i64, x: # (self.element())| -> @VecContainer (arc) {{ xs.data[i as usize] = x;    xs }});
         add_primitive!(eg, "vec-remove" = |mut xs: @VecContainer (arc), i: i64                       | -> @VecContainer (arc) {{ xs.data.remove(i as usize); xs }});
+
         if self.element.is_eq_sort() {
             eg.add_write_primitive(
                 Union {

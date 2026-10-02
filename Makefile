@@ -1,6 +1,6 @@
 .PHONY: \
 	check nits test python-check python-nits rust-check rust-nits \
-	proof-tests benchmark-smoke nightly nightly-local nightly-uv nightly-rustup \
+	proof-tests slotted-check slotted-campaign slotted-eval slotted-check-no-oracle benchmark-smoke nightly nightly-local nightly-uv nightly-rustup \
 	update-snapshots format \
 	python-lock python-format-check python-lint python-typecheck python-test \
 	rust-format-check rust-clippy rust-doc-links rust-test
@@ -69,6 +69,42 @@ rust-doc-links:
 # This is a name-filtered subset of rust-test, useful for proof iteration.
 proof-tests:
 	cargo test --workspace --test files 'proofs/'
+
+# The slotted-e-graph encoding: the tests written in the slotted language and the
+# ones written against the encoding, the snapshots of what the compiler and the
+# generators emit, the differential suites against the slotted-egraphs reference, and
+# source-rule mutation checks. Kept out of `check` because the fuzzers dominate
+# its runtime; `--quick` drops them, and `--update` rewrites the snapshots. xmulti is the
+# reference-side oracle the suites compare to.
+slotted-check:
+	cargo build
+	cargo build --manifest-path slotted/xmulti/Cargo.toml
+	python3 slotted/checks/check-slotted.py
+
+# The offline half of the above. The rest compares against `xmulti`, whose separately
+# locked Cargo workspace fetches the pinned `slotted-egraphs` reference revision; use
+# this target when that Git dependency is unavailable.
+# A deep sweep, for when the 60-case `iso-fuzz` in `slotted-check` is not enough --
+# it is sized to run beside eighteen other checks, not to be a confidence statement.
+# Takes minutes and many cores; `campaign.py`'s header records what a deep run found.
+slotted-campaign:
+	cargo build --release --bin egglog
+	cargo build --manifest-path slotted/xmulti/Cargo.toml
+	python3 slotted/xdiff/campaign.py iso --cases 500 --seeds 32
+	python3 slotted/xdiff/campaign.py order --cases 100 --seeds 32
+	python3 slotted/xdiff/campaign.py checker --cases 200 --seeds 8
+	XDIFF_DEPTH=3 XDIFF_DUP=0.4 XDIFF_SHARE=0.7 XDIFF_LAM=0.55 XDIFF_USEBIND=0.6 \
+		python3 slotted/xdiff/campaign.py iso --cases 300 --seeds 8
+
+# The paper's case studies -- the S4.1 array goal and the S4.2 SDQL workloads -- on the
+# encoding and on the reference through both of its matchers, at the artifact's budgets.
+# Release builds of both binaries, since these are the numbers a graph is drawn from.
+slotted-eval:
+	python3 slotted/eval.py --params 0 1 2 3 --counts --jsonl target/slotted/eval.jsonl
+
+slotted-check-no-oracle:
+	cargo build
+	python3 slotted/checks/check-slotted.py --no-oracle
 
 # Use a disposable report path, keeping the default report cache untouched.
 benchmark-smoke:

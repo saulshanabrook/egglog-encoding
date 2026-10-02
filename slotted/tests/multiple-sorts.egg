@@ -1,0 +1,76 @@
+;; Two independent equality sorts share slot-map primitives and a schedule, but
+;; each has its own variable, class, equality, and substitution machinery.
+(datatype*
+  (Expr
+    (EZero)
+    (ESucc Expr)
+    (EPrev Expr)
+    (EPair Expr Expr)
+    (ELam Expr Expr :binder 0)
+    (ELet Expr Expr Expr :binder 1))
+  (Ty
+    (TZero)
+    (TSucc Ty)
+    (TPrev Ty)
+    (TPair Ty Ty)
+    (TLam Ty Ty :binder 0)
+    (TLet Ty Ty Ty :binder 1)))
+
+;; Both rule families run in the same phased schedule without crossing sorts.
+(push)
+(rewrite (EPrev (ESucc x)) x :name "expr-peel")
+(rewrite (TPrev (TSucc x)) x :name "ty-peel")
+(let e (EPrev (ESucc (EZero))))
+(let t (TPrev (TSucc (TZero))))
+(run 4)
+(check (= e (EZero)))
+(check (= t (TZero)))
+(pop)
+
+;; A rule over Expr neither fires over Ty nor leaks into Ty's renaming relation.
+(push)
+(rewrite (EPair x y) (EPair y x) :name "expr-comm")
+(let e12 (EPair $1 $2))
+(let e21 (EPair $2 $1))
+(let t12 (TPair $1 $2))
+(let t21 (TPair $2 $1))
+(run 4)
+(check (= e12 e21))
+(check (!= t12 t21))
+(check (renaming-= t12 t21))
+(pop)
+
+;; Binders and ClassSlots select the table family belonging to their carrier.
+(push)
+(let eid0 (ELam $0 $0))
+(let eid7 (ELam $7 $7))
+(let ek (ELam $0 $3))
+(let tid0 (TLam $0 $0))
+(let tid7 (TLam $7 $7))
+(let tk (TLam $0 $4))
+(let es (ESucc (EZero)))
+(let ts (TSucc (TZero)))
+(run 0)
+(check (= eid0 eid7))
+(check (= tid0 tid7))
+(check (slots eid0))
+(check (slots tid0))
+(check (slots ek $3))
+(check (slots tk $4))
+(check (holds es ESucc))
+(check (holds ts TSucc))
+(check (not-holds es EPrev))
+(check (not-holds ts TPrev))
+(pop)
+
+;; Substitution is also per carrier: each call names that carrier's ClassSlots
+;; table and variable constructor when lowered to the primitive.
+(push)
+(rewrite (ELet t $x body) (subst body $x t) :name "expr-beta")
+(rewrite (TLet t $x body) (subst body $x t) :name "ty-beta")
+(let ebeta (ELet (EZero) $0 $0))
+(let tbeta (TLet (TZero) $0 $0))
+(run 3)
+(check (= ebeta (EZero)))
+(check (= tbeta (TZero)))
+(pop)

@@ -1,0 +1,70 @@
+;;; A language declared the way egglog declares one: `(datatype ...)`.
+;;;
+;;; One form for the sort and its constructors. A variant's columns are its argument
+;;; sorts and its output sort is the datatype, so `(Succ M)` is `Succ : M -> M`. Options
+;;; come after the columns, which is where egglog puts `:cost`, so `:binder` goes there.
+;;;
+;;; This is the same machinery `(sort ...)` plus `(constructor ...)` reaches -- the sort
+;;; is the carrier, and a column in it is a slotted child. `own-sort.egg` writes the same
+;;; language the long way.
+;;;
+;;;     python3 slotted/slotted-egglog.py slotted/tests/datatype.egg
+
+(datatype M
+  (Num i64)
+  (Succ M)
+  (Prev M)
+  (Add M M)
+  (Lam M M :binder 0)
+  (Pair M M)
+  (Same))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Rewriting over a datatype's sort, and a payload column carried through.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(rewrite (Prev (Succ x)) x :name "peel")
+
+(let one (Prev (Succ (Num 7))))
+(let two (Prev (Succ (Succ (Num 7)))))
+(run 10)
+
+(check (= one (Num 7)))
+(check (= two (Succ (Num 7))))
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; `:binder` on a variant binds that column's slot, so alpha-equivalent lambdas are
+;;; one class and a bound slot is not one of the class's own.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(let id0 (Lam $0 $0))
+(let id7 (Lam $7 $7))
+(let k (Lam $0 $3))
+(run 0)
+
+(check (= id0 id7))
+(check (slots id0))          ; its own slot is bound, so it depends on none
+(check (slots k $3))
+(pop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; And a multipattern over it, joined on a body under two binders -- so nothing about
+;;; a datatype's sort is second class.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+(rewrite (Pair f g) (Same)
+         :when ((= f (Lam $v body))
+                (= g (Lam $w body)))
+         :name "same-body")
+
+(let same (Pair (Lam $0 (Num 1)) (Lam $3 (Num 1))))
+(let diff (Pair (Lam $0 (Num 1)) (Lam $3 (Num 2))))
+(run 4)
+
+(check (= same (Same)))
+(fail (check (= diff (Same))))
+(pop)

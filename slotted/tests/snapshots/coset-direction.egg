@@ -1,0 +1,46 @@
+;;; COMPILED from slotted/tests/coset-direction.egg by slotted/slotted-egglog.py.
+;;;
+;;; Only the forms THIS file contributes. The machinery for its 19 constructors,
+;;; and anything an included library brought, are left out -- committing the
+;;; same generated thousands of lines once per test would swamp the diff that
+;;; a change in the compiler is supposed to show.
+;;; --update` rewrites it. Under `target/` it is build output.
+
+(union (Binop (map-of 0 0) (SlottedVar_0 0) (map-of 0 1) (SlottedVar_0 0) (map-of 0 2) (SlottedVar_0 0)) (Binop (map-of 0 1) (SlottedVar_0 0) (map-of 0 0) (SlottedVar_0 0) (map-of 0 2) (SlottedVar_0 0)))
+(union (Binop (map-of 0 0) (SlottedVar_0 0) (map-of 0 1) (SlottedVar_0 0) (map-of 0 2) (SlottedVar_0 0)) (Binop (map-of 0 1) (SlottedVar_0 0) (map-of 0 2) (SlottedVar_0 0) (map-of 0 0) (SlottedVar_0 0)))
+(let $start (App (map-of 0 0) (SlottedVar_0 0) (map-of 0 0 1 1 2 2) (Binop (map-of 0 0) (SlottedVar_0 0) (map-of 0 1) (SlottedVar_0 0) (map-of 0 2) (SlottedVar_0 0))))
+(relation _matched_e00d1902d3 (Frames i64 U U))
+(rule ((= cls_p (App e0_lit_a (SlottedVar_0 0) e0_t1 cls_t1))
+       (= atom_0 (atom "@atom:0" (root "_p" (ClassSlots_0 cls_p)) (lit "$a" e0_lit_a) (child "_t1" e0_t1 (ClassSlots_0 cls_t1))))
+       (= cls_t1 (Binop e1_lit_b (SlottedVar_0 0) e1_lit_c (SlottedVar_0 0) e1_lit_a (SlottedVar_0 0)))
+       (= pinned_t1 (_pinned_App e0_lit_a (SlottedVar_0 0) e0_t1 cls_t1 2))
+       (Reading_0 cls_t1 pinned_t1 sym_t1)
+       (= atom_1 (atom "@atom:1" (root "_t1" (ClassSlots_0 cls_t1) sym_t1) (lit "$b" e1_lit_b) (lit "$c" e1_lit_c) (lit "$a" e1_lit_a)))
+       (= f (frame-join atom_0 atom_1))
+       (= refined (refinements (anchor f "_p")))
+       (= refined_len (vec-length refined))
+       (> refined_len 0))
+      ((_matched_e00d1902d3 refined refined_len cls_p cls_t1)
+       (Idx refined_len 0)))
+(rule ((_matched_e00d1902d3 refined refined_len cls_p cls_t1)
+       (Idx refined_len choice)
+       (= m (vec-get refined choice)))
+      ((union (Null) cls_p)) :ruleset slotted-apply)
+(rule ((_matched_e00d1902d3 refined refined_len cls_p cls_t1))
+      ((delete (_matched_e00d1902d3 refined refined_len cls_p cls_t1))) :ruleset slotted-apply)
+(run-schedule (seq (saturate (seq (saturate (run slotted)) (saturate (run slotted-migrate)) (saturate (run slotted-group)) (run slotted-shape))) (saturate (run slotted-read)))
+              (repeat 1 (seq (run) (saturate (run slotted-refine)) (run slotted-apply) (seq (saturate (seq (saturate (run slotted)) (saturate (run slotted-migrate)) (saturate (run slotted-group)) (run slotted-shape))) (saturate (run slotted-read))))))
+(check (= _c0cls_c0 (App _c0e0_lit_0 (SlottedVar_0 0) _c0e0_c0t1 _c0cls_c0t1))
+       (= _c0atom_0 (atom "@atom:0" (root "_c0" (ClassSlots_0 _c0cls_c0)) (lit "$0" _c0e0_lit_0) (child "_c0t1" _c0e0_c0t1 (ClassSlots_0 _c0cls_c0t1))))
+       (= _c0cls_c0t1 (Binop _c0e1_lit_0 (SlottedVar_0 0) _c0e1_lit_1 (SlottedVar_0 0) _c0e1_lit_2 (SlottedVar_0 0)))
+       (= _c0pinned_c0t1 (_pinned_App _c0e0_lit_0 (SlottedVar_0 0) _c0e0_c0t1 _c0cls_c0t1 2))
+       (Reading_0 _c0cls_c0t1 _c0pinned_c0t1 _c0sym_c0t1)
+       (= _c0atom_1 (atom "@atom:1" (root "_c0t1" (ClassSlots_0 _c0cls_c0t1) _c0sym_c0t1) (lit "$0" _c0e1_lit_0) (lit "$1" _c0e1_lit_1) (lit "$2" _c0e1_lit_2)))
+       (= _c0f (frame-join _c0atom_0 _c0atom_1))
+       (= _c0m _c0f)
+       (= _c1cls_c1 (Null))
+       (= _c1atom_0 (atom "@atom:0" (root "_c1" (ClassSlots_0 _c1cls_c1))))
+       (= _c1m _c1atom_0)
+       (= _c0cls_c0 _c1cls_c1)
+       (= _grp (EclassGroup_0 _c0cls_c0))
+       (coset-same (compose (map-of (map-get (ren _c0m "$0") 0) 0 (map-get (ren _c0m "$1") 0) 1 (map-get (ren _c0m "$2") 0) 2) (ren _c0m "_c0")) (compose (map-empty) (ren _c1m "_c1")) _grp))
