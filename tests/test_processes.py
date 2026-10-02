@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import os
 import resource
 import signal
@@ -147,6 +148,51 @@ def test_run_command_interrupt_cleans_up_before_propagating(monkeypatch: pytest.
     assert terminated == interrupted
 
 
+@pytest.mark.parametrize(
+    "parent_exited,group_states,allowed",
+    [
+        (False, "", False),
+        (True, "123 Z\n456 S\n", True),
+        (True, "456 S\n", True),
+        (True, "123 S\n", False),
+        (True, None, False),
+    ],
+)
+def test_cleanup_permission_race_requires_exited_parent_and_no_live_group_members(
+    monkeypatch: pytest.MonkeyPatch, parent_exited: bool, group_states: str | None, allowed: bool
+) -> None:
+    waited = []
+
+    class OwnedProcess:
+        pid = 123
+
+        def poll(self) -> int | None:
+            return -signal.SIGKILL if parent_exited else None
+
+        def wait(self) -> None:
+            waited.append(True)
+
+    def denied(*_args: object) -> None:
+        raise PermissionError("redundant group signal denied")
+
+    def snapshot(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert parent_exited
+        if group_states is None:
+            raise OSError("process-state query unavailable")
+        return subprocess.CompletedProcess([], 0, stdout=group_states)
+
+    monkeypatch.setattr(processes.os, "killpg", denied)
+    monkeypatch.setattr(processes.subprocess, "run", snapshot)
+    process = cast(subprocess.Popen[str], OwnedProcess())
+    if allowed:
+        processes.terminate_process_group(process)
+        assert waited == [True]
+    else:
+        with pytest.raises(PermissionError if group_states is not None else OSError):
+            processes.terminate_process_group(process)
+        assert waited == []
+
+
 def test_run_command_records_peak_rss() -> None:
     result = processes.run_command([sys.executable, "-c", "print('ok')"], ROOT, 120)
 
@@ -190,3 +236,59 @@ def test_timing_from_usage_records_peak_rss() -> None:
     timing = processes.timing_from_usage(usage, 1.0)
 
     assert timing.max_rss_bytes == processes.ru_maxrss_to_bytes(3)
+
+
+def test_successful_proof_output_is_never_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(processes, "read_error_tail", lambda *_args: pytest.fail("successful output is discarded"))
+    monkeypatch.setattr(processes, "missing_output", lambda *_args: pytest.fail("no capability output requested"))
+    result = processes.run_command(
+        [sys.executable, "-c", "import sys; sys.stdout.write('p' * (2 * 1024 * 1024))"], ROOT, 5
+    )
+    assert result.status == "success"
+
+
+def test_output_scans_bound_reads_and_preserve_cross_chunk_and_file_matches() -> None:
+    class BoundedLog(io.StringIO):
+        def read(self, size: int | None = -1) -> str:
+            assert size is not None and 0 < size <= 4096
+            return super().read(size)
+
+    stdout = BoundedLog("x" * 4094 + "--timing-summary" + "y" * (2 * 1024 * 1024) + "--proof-")
+    stderr = BoundedLog("extraction\n")
+    assert processes.missing_output((stdout, stderr), ("--timing-summary", "--proof-extraction")) is None
+    assert processes.missing_output((stdout, stderr), ("second", "first", "--proof-extraction")) == "second"
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        " \t\n" * 3000,
+        "\n\t" + "error\n" + " " * 5000,
+        "a" * (2 * 1024 * 1024) + "\nfinal error\n",
+        " " * 5000 + "éλ\u2028" * 3000 + "z" + "\t" * 5000,
+        "a" * 4096 + " " * 4096 + "b",
+    ],
+)
+def test_error_tail_is_exact_and_memory_bounded(content: str) -> None:
+    class BoundedLog(io.StringIO):
+        def read(self, size: int | None = -1) -> str:
+            assert size is not None and 0 < size <= 4096
+            return super().read(size)
+
+    assert processes.read_error_tail(BoundedLog(content)) == content.strip()[-1000:]
+
+
+def test_failure_preserves_stderr_priority_and_exact_tail() -> None:
+    result = processes.run_command(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.stdout.write('stdout error'); "
+            "sys.stderr.write('stderr error:' + 'x' * 1500 + 'end' + ' ' * 5000); sys.exit(1)",
+        ],
+        ROOT,
+        5,
+    )
+    assert result.status == "failure"
+    assert result.error is not None
+    assert result.error.message == "x" * 997 + "end"

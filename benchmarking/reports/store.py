@@ -196,12 +196,21 @@ class GroupedReport:
             for row in sorted((row for rows in self._by_key.values() for row in rows), key=lambda row: row.row_index)
         )
 
-    def latest_records(self, key: CacheKey, rounds: int) -> tuple[IndexedRecord, ...]:
+    def latest_records(self, key: CacheKey, rounds: int | None = None) -> tuple[IndexedRecord, ...]:
         """Select the requested tail without discarding the snapshot's other samples."""
 
-        if rounds < 1:
+        if rounds is not None and rounds < 1:
             raise ValueError("rounds must be positive")
-        return self._by_key.get(key, ())[-rounds:]
+        rows = self._by_key.get(key, ())
+        return rows if rounds is None else rows[-rounds:]
+
+    def latest_failure(self, key: CacheKey) -> IndexedRecord | None:
+        """Retain failures across every observation with this exact identity."""
+
+        return next(
+            (row for row in reversed(self.latest_records(key)) if row.record["status"] != "success"),
+            None,
+        )
 
 
 class ReportStore:
@@ -309,23 +318,31 @@ class ReportStore:
     def selected_statuses_for_keys(
         self,
         keys: Sequence[CacheKey],
-        rounds: int,
+        rounds: int | None,
     ) -> dict[CacheKey, tuple[Status, ...]]:
         """Select latest statuses for every distinct exact cache key."""
 
-        if rounds < 1:
+        if rounds is not None and rounds < 1:
             raise ValueError("rounds must be positive")
         return {
             key: tuple(row.record["status"] for row in self.latest_records(key, rounds)) for key in dict.fromkeys(keys)
         }
 
-    def latest_records(self, key: CacheKey, rounds: int) -> tuple[IndexedRecord, ...]:
-        """Return up to ``rounds`` newest rows in chronological presentation order."""
+    def latest_records(self, key: CacheKey, rounds: int | None = None) -> tuple[IndexedRecord, ...]:
+        """Return all rows, or the requested tail, in chronological presentation order."""
 
-        if rounds < 1:
+        if rounds is not None and rounds < 1:
             raise ValueError("rounds must be positive")
         ordered = sorted(self._by_key.get(key, ()), key=lambda row: row.order_key)
-        return tuple(ordered[-rounds:])
+        return tuple(ordered if rounds is None else ordered[-rounds:])
+
+    def latest_failure(self, key: CacheKey) -> IndexedRecord | None:
+        """Retain failures across every observation with this exact identity."""
+
+        return next(
+            (row for row in reversed(self.latest_records(key)) if row.record["status"] != "success"),
+            None,
+        )
 
     def _indexed(self, record: ReportRecord) -> IndexedRecord:
         return IndexedRecord(
