@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run
-"""Dispatch the public benchmark, profiling, and export CLI.
+"""Dispatch the public benchmark and profiling CLI.
 
 Command-specific parsing and execution belong in :mod:`benchmarking`.
 """
@@ -18,10 +18,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         from benchmarking.profile import main as profile_main
 
         return profile_main(raw_argv[1:])
-    if raw_argv and raw_argv[0] == "export":
-        from benchmarking.reports.grouped import main as export_main
-
-        return export_main(raw_argv[1:])
     from benchmarking.benchmark import main as benchmark_main
 
     return benchmark_main(raw_argv)

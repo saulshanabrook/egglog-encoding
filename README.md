@@ -487,9 +487,9 @@ report from that same grouped data in memory. The JSONL remains the measurement
 cache; grouped JSON is replaceable output for reports and charts. `--open`
 exports the grouped snapshot in an HTML report.
 
-`./bench.py export --report .reports.jsonl` refreshes grouped JSON without building
-or collecting. Unchanged output keeps its modification time. For another report
-path, `.jsonl` becomes `-grouped.json`; other names gain `-grouped.json`.
+The snapshot is refreshed even when all requested observations are cached.
+Unchanged output keeps its modification time. For another report path, `.jsonl`
+becomes `-grouped.json`; other names gain `-grouped.json`.
 
 Cache reuse is keyed by:
 

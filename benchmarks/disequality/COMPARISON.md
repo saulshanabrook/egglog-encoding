@@ -39,11 +39,14 @@ There is no conversion or input preparation during collection. The corpus's
 normal native output reports a contradiction; the native programs also permit
 consistent inputs to exit successfully.
 
-To regenerate images using cached observations only:
+To render an existing grouped snapshot without running benchmarks:
 
 ```sh
-make figures-parameter-cached
+make figures/parameter-analysis.svg figures/parameter-analysis.png
 ```
+
+These targets do not refresh the snapshot from JSONL; `make parameter-bench`
+refreshes it while reusing compatible cached observations.
 
 Outputs are `figures/parameter-analysis.png` and `figures/parameter-analysis.svg`.
 The Vega-Lite specification reads `.reports-grouped.json` directly and selects

@@ -31,23 +31,25 @@ fast completions. No confidence interval is drawn.
 ## Reproduce
 
 ```sh
-make figures-parameter         # collect/reuse, refresh grouped snapshot, render
-make figures-parameter-cached  # refresh snapshot and render existing cache only
+make figures-parameter  # collect/reuse, refresh grouped snapshot, render
 ```
 
-Both produce `figures/parameter-analysis.svg` and a 3× PNG, and print their
-absolute paths. To update the grouped snapshot without rendering:
+This produces `figures/parameter-analysis.svg` and a 3× PNG, and prints their
+absolute paths. To render an existing grouped snapshot without running benchmarks:
 
 ```sh
-make reports-grouped
+make figures/parameter-analysis.svg figures/parameter-analysis.png
 ```
+
+These file targets do not refresh the snapshot from JSONL. Run `make parameter-bench`
+to refresh it, reusing cached observations where available.
 
 The renderer uses `npx` with Vega 6.4.0, Vega-Lite 6.4.3, Vega CLI 6.4.0, and
 Canvas 3.2.3 pinned in the root `Makefile`; npm's cache supplies reusable packages.
 There is no figure-specific Python projector or repository npm manifest.
 Both images depend on the specification, shared snapshot, and render recipe.
-The snapshot depends on the JSONL cache and reporting code. It is written only
-when its contents change, so refreshing an unchanged cache leaves images alone.
+The benchmark runner writes the snapshot only when its contents change, so
+refreshing an unchanged cache leaves images alone.
 
 ## Inspect the selection
 

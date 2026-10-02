@@ -1,15 +1,13 @@
-"""Check the shared grouped snapshot, atomic refresh, and read-only export."""
+"""Check the shared grouped snapshot and atomic refresh."""
 
 from __future__ import annotations
 
 import json
 import os
 from pathlib import Path
-from typing import Any
 
 import pytest
 
-import bench
 from benchmarking.reports import grouped
 from benchmarking.reports.store import CacheKey, ReportStore, parse_grouped_report, serialize_grouped_report
 
@@ -93,33 +91,6 @@ def test_grouped_refresh_is_atomic_and_leaves_unchanged_files_untouched(
         grouped.write_grouped_report(store.grouped_report(), destination)
     assert destination.read_bytes() == original
     assert not list(tmp_path.glob(f".{destination.name}.*"))
-
-
-def test_export_writes_grouped_file_without_mutating_raw_cache(tmp_path: Path, capsys: Any) -> None:
-    path = tmp_path / "report.jsonl"
-    write_report(path, make_record(0, started_at="2026-09-30T00:00:00Z", target_label="original"))
-    os.utime(path, ns=(1_000_000_000, 1_000_000_000))
-    original = path.read_bytes()
-    before = path.stat()
-
-    assert bench.main(["export", "--report", str(path)]) == 0
-    destination = grouped.grouped_report_path(path)
-    output = capsys.readouterr()
-    assert output.out == ""
-    assert str(destination) in output.err
-    assert path.read_bytes() == original
-    assert path.stat().st_mtime_ns == before.st_mtime_ns
-    snapshot = destination.read_bytes()
-    destination.unlink()
-    assert bench.main(["export", "--report", str(path)]) == 0
-    assert destination.read_bytes() == snapshot
-
-
-def test_export_missing_cache_does_not_create_it(tmp_path: Path, capsys: Any) -> None:
-    path = tmp_path / "missing" / "report.jsonl"
-    assert bench.main(["export", "--report", str(path)]) == 2
-    assert not path.parent.exists()
-    assert "cache does not exist" in capsys.readouterr().err
 
 
 def test_grouped_path_is_a_distinct_sibling(tmp_path: Path) -> None:

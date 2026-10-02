@@ -156,6 +156,8 @@ class GroupedKey(TypedDict):
 
 
 class GroupedSample(ReportRecord):
+    """The full JSONL observation, including disequality encoding, plus its row index."""
+
     row_index: int
 
 
@@ -166,6 +168,11 @@ class ObservationGroup(TypedDict):
 
 
 class GroupedReportRecord(TypedDict):
+    """Version the grouping structure separately from its shared ReportRecord samples.
+
+    Grouping-only changes can regenerate this snapshot without invalidating raw observations.
+    """
+
     grouped_schema_version: GroupedSchemaVersion
     report_schema_version: ReportSchemaVersion
     groups: list[ObservationGroup]
