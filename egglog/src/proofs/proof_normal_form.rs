@@ -115,54 +115,30 @@ fn proof_form_expr(
             resolved
         }
         ResolvedExpr::Call(span, head @ ResolvedCall::Primitive(_), args) => {
-            // For primitives, extract any constructor/custom function call arguments
-            // into separate facts with fresh variables. Other primitives can stay inline.
+            // Normalize the whole argument first: a constructor may itself
+            // contain container primitives that must become side conditions.
+            // Custom functions are already lifted by recursion; lift any
+            // remaining constructor call so the primitive can be re-evaluated.
             let mut new_args = vec![];
             for arg in args {
-                match arg {
-                    // If the argument is a constructor or custom function call, extract it
-                    // (but allow other primitives to stay inline)
-                    ref arg_expr @ ResolvedExpr::Call(
-                        ref arg_span,
-                        ResolvedCall::Func(ref func_type),
-                        ref inner_args,
-                    ) => {
-                        // First recursively normalize the inner arguments
-                        let normalized_inner_args: Vec<_> = inner_args
-                            .iter()
-                            .map(|e| proof_form_expr(e.clone(), res, fresh))
-                            .collect();
-
-                        // Create a fresh variable for this constructor call
-                        let fresh_var = GenericExpr::Var(
-                            arg_span.clone(),
-                            ResolvedVar {
-                                name: fresh.fresh("v"),
-                                sort: func_type.outputs[0].clone(),
-                                is_global_ref: false,
-                            },
-                        );
-
-                        // Add an equality fact binding the constructor to the fresh variable
-                        res.push(ResolvedFact::Eq(
-                            arg_span.clone(),
-                            ResolvedExpr::Call(
-                                arg_span.clone(),
-                                match arg_expr {
-                                    ResolvedExpr::Call(_, call, _) => call.clone(),
-                                    _ => unreachable!(),
-                                },
-                                normalized_inner_args,
-                            ),
-                            fresh_var.clone(),
-                        ));
-
-                        new_args.push(fresh_var);
-                    }
-                    // Otherwise just recursively normalize
-                    other => {
-                        new_args.push(proof_form_expr(other, res, fresh));
-                    }
+                let normalized = proof_form_expr(arg, res, fresh);
+                if let ResolvedExpr::Call(arg_span, ResolvedCall::Func(function), _) = &normalized {
+                    let fresh_var = GenericExpr::Var(
+                        arg_span.clone(),
+                        ResolvedVar {
+                            name: fresh.fresh("v"),
+                            sort: function.outputs[0].clone(),
+                            is_global_ref: false,
+                        },
+                    );
+                    res.push(ResolvedFact::Eq(
+                        arg_span.clone(),
+                        normalized,
+                        fresh_var.clone(),
+                    ));
+                    new_args.push(fresh_var);
+                } else {
+                    new_args.push(normalized);
                 }
             }
             ResolvedExpr::Call(span, head, new_args)

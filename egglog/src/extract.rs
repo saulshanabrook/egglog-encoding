@@ -948,6 +948,42 @@ impl EGraph {
         Ok(ExtractedTermVariants { termdag, variants })
     }
 
+    /// Run command extraction with a cost model, retaining the usual best or
+    /// variants output. A proof of the result establishes equality, not optimality.
+    pub fn extract_command_with_cost_model<CM: TreeCostModel<DefaultCost>>(
+        &self,
+        sort: &ArcSort,
+        value: Value,
+        variants: usize,
+        cost_model: CM,
+    ) -> Result<CommandOutput, Error> {
+        let extractor =
+            TreeExtractor::compute_costs_from_rootsorts(Some(vec![sort.clone()]), self, cost_model);
+        let mut dag = TermDag::default();
+        if variants == 0 {
+            let extracted = extractor
+                .extract_best_with_sort(&mut dag, value, sort.clone())
+                .ok_or_else(|| {
+                    Error::ExtractError(
+                        "Unable to find any valid extraction (likely due to subsume or delete)"
+                            .into(),
+                    )
+                })?;
+            Ok(CommandOutput::ExtractBest(
+                dag,
+                extracted.cost,
+                extracted.term,
+            ))
+        } else {
+            let terms = extractor
+                .extract_variants_with_sort(&mut dag, value, variants, sort.clone())
+                .into_iter()
+                .map(|extracted| extracted.term)
+                .collect();
+            Ok(CommandOutput::ExtractVariants(dag, terms))
+        }
+    }
+
     /// Extracts the best term for one value using the default additive cost model.
     pub fn extract_value(
         &self,

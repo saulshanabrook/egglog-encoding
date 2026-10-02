@@ -144,3 +144,70 @@ impl FreshGen<ResolvedCall, ResolvedVar> for SymbolGen {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ast::FunctionSubtype, sort::EqSort, typechecking::FuncType};
+    use std::sync::Arc;
+
+    #[test]
+    fn fresh_symbols_disambiguate_numeric_hints() {
+        for hints in [["x1", "x", "x"], ["x", "x", "x1"]] {
+            let mut symbols = SymbolGen::new("@".into());
+            let names: HashSet<_> = hints.map(|hint| symbols.fresh(hint)).into_iter().collect();
+            assert_eq!(names.len(), hints.len());
+        }
+
+        let mut symbols = SymbolGen::new("@".into());
+        assert_eq!(symbols.fresh("x"), "@x");
+        assert_eq!(symbols.fresh("x"), "@x1");
+        assert_eq!(symbols.fresh("x"), "@x2");
+    }
+
+    #[test]
+    fn typed_fresh_symbols_share_collision_checks() {
+        let mut symbols = SymbolGen::new("@".into());
+        let assumption = ResolvedCall::Func(Arc::new(FuncType {
+            name: "reproduction_anchor_13".into(),
+            subtype: FunctionSubtype::Custom,
+            input: vec![],
+            outputs: vec![Arc::new(EqSort {
+                name: "Assumption".into(),
+            })],
+        }));
+        let type_anchor = ResolvedCall::Func(Arc::new(FuncType {
+            name: "reproduction_anchor_133".into(),
+            subtype: FunctionSubtype::Custom,
+            input: vec![],
+            outputs: vec![Arc::new(EqSort {
+                name: "Type".into(),
+            })],
+        }));
+        let mut names = HashSet::default();
+        for _ in 0..35 {
+            let var = symbols.fresh(&assumption);
+            assert_eq!(var.sort.name(), "Assumption");
+            assert!(names.insert(var.name));
+        }
+        for _ in 0..5 {
+            let var = symbols.fresh(&type_anchor);
+            assert_eq!(var.sort.name(), "Type");
+            assert!(names.insert(var.name));
+        }
+        assert!(names.insert(symbols.fresh("reproduction_anchor_1334")));
+    }
+
+    #[test]
+    fn cloned_generator_keeps_allocations_with_zero_suffixes() {
+        let mut symbols = SymbolGen::new("@".into());
+        symbols.include_zero(true);
+        assert_eq!(symbols.fresh("x"), "@x0");
+        assert_eq!(symbols.fresh("x0"), "@x00");
+
+        let mut snapshot = symbols.clone();
+        snapshot.include_zero(false);
+        assert_eq!(snapshot.fresh("x00"), "@x001");
+        assert_eq!(symbols.fresh("x"), snapshot.fresh("x"));
+    }
+}

@@ -1419,6 +1419,141 @@ fn mergefn_nested_function() {
 }
 
 #[test]
+fn merge_primitives_read_updated_views() {
+    // Exercise both the small merge fast path and the strata path. The latter
+    // temporarily removes every table in a stratum from the readable database.
+    for extra_dirty_tables in [0, 2] {
+        for read_only in [false, true] {
+            let mut egraph = EGraph::default();
+            let int_base = egraph.base_values_mut().register_type::<i64>();
+            let view = egraph.add_table(FunctionConfig {
+                schema: vec![ColumnTy::Base(int_base); 2],
+                n_vals: 1,
+                n_identity_vals: None,
+                default: DefaultVal::Fail,
+                merge: MergeFn::New,
+                name: "view".into(),
+                can_subsume: false,
+            });
+            let primitive = if read_only {
+                egraph.register_view_column_read("view".into(), 1, 0)
+            } else {
+                egraph.register_set_if_empty("view".into(), 1, 1)
+            };
+            let key = egraph.base_values().get(0i64);
+            let source = egraph.add_table(FunctionConfig {
+                schema: vec![ColumnTy::Base(int_base); 2],
+                n_vals: 1,
+                n_identity_vals: None,
+                default: DefaultVal::Fail,
+                merge: MergeFn::Primitive(primitive, vec![MergeFn::Const(key), MergeFn::New]),
+                name: "source".into(),
+                can_subsume: false,
+            });
+            let extras: Vec<_> = (0..extra_dirty_tables)
+                .map(|i| {
+                    egraph.add_table(FunctionConfig {
+                        schema: vec![ColumnTy::Base(int_base); 2],
+                        n_vals: 1,
+                        n_identity_vals: None,
+                        default: DefaultVal::Fail,
+                        merge: MergeFn::New,
+                        name: format!("extra-{i}"),
+                        can_subsume: false,
+                    })
+                })
+                .collect();
+            let source_action = TableAction::new(&egraph, source);
+            let view_action = TableAction::new(&egraph, view);
+            let old = egraph.base_values().get(10i64);
+            egraph.with_execution_state(None, |state| {
+                source_action.insert(state, [key, old].into_iter());
+                view_action.insert(state, [key, old].into_iter());
+            });
+            egraph.flush_updates();
+
+            let current = egraph.base_values().get(42i64);
+            let fallback = egraph.base_values().get(99i64);
+            egraph.with_execution_state(None, |state| {
+                // Queue the consumer first so the unordered fast path would
+                // return the old view value instead of the pending update.
+                source_action.insert(state, [key, fallback].into_iter());
+                view_action.insert(state, [key, current].into_iter());
+                for extra in &extras {
+                    TableAction::new(&egraph, *extra).insert(state, [key, old].into_iter());
+                }
+            });
+            egraph.flush_updates();
+            assert_eq!(egraph.lookup_id(source, &[key]), Some(current));
+            assert_eq!(egraph.lookup_id(view, &[key]), Some(current));
+        }
+    }
+}
+
+#[test]
+fn merge_set_if_empty_reuses_pending_inserts() {
+    let mut egraph = EGraph::default();
+    let int_base = egraph.base_values_mut().register_type::<i64>();
+    let view = egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Base(int_base); 2],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::AssertEq,
+        name: "view".into(),
+        can_subsume: false,
+    });
+    let primitive = egraph.register_set_if_empty("view".into(), 1, 1);
+    let key = egraph.base_values().get(0i64);
+    let other_key = egraph.base_values().get(1i64);
+    let source = egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Base(int_base); 2],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::Primitive(primitive, vec![MergeFn::Const(key), MergeFn::New]),
+        name: "source".into(),
+        can_subsume: false,
+    });
+    let action = TableAction::new(&egraph, source);
+    egraph.with_execution_state(None, |state| {
+        action.insert(state, [key, key].into_iter());
+        action.insert(state, [other_key, key].into_iter());
+    });
+    egraph.flush_updates();
+    let first = egraph.base_values().get(77i64);
+    let second = egraph.base_values().get(88i64);
+    egraph.with_execution_state(None, |state| {
+        action.insert(state, [key, first].into_iter());
+        action.insert(state, [other_key, second].into_iter());
+    });
+    egraph.flush_updates();
+    // Both conflicts query the same missing view key in one merge batch. The
+    // second must reuse the first staged row, rather than inserting 88 too.
+    assert_eq!(egraph.lookup_id(source, &[key]), Some(first));
+    assert_eq!(egraph.lookup_id(source, &[other_key]), Some(first));
+    assert_eq!(egraph.lookup_id(view, &[key]), Some(first));
+}
+
+#[test]
+#[should_panic(expected = "may only write to its own table, not read it")]
+fn merge_set_if_empty_rejects_self_read() {
+    let mut egraph = EGraph::default();
+    let int_base = egraph.base_values_mut().register_type::<i64>();
+    let primitive = egraph.register_set_if_empty("self".into(), 1, 1);
+    let key = egraph.base_values().get(0i64);
+    egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Base(int_base); 2],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::Primitive(primitive, vec![MergeFn::Const(key), MergeFn::New]),
+        name: "self".into(),
+        can_subsume: false,
+    });
+}
+
+#[test]
 fn constrain_prims_simple() {
     // Take two functions, f and g. Fill f with (f 1) (f 2) (f 3), then filter for even numbers
     // when adding to 'g'. This should only add 2 to g.
