@@ -30,8 +30,8 @@ pub use common::Value;
 pub use containers::{ContainerRebuildSummary, ContainerValue, ContainerValueId, ContainerValues};
 pub use flat_table::FlatTable;
 pub use free_join::{
-    AtomId, CounterId, Database, ExternalFunction, ExternalFunctionId, TableId, TableIdentity,
-    Variable, make_external_func, plan::PlanStrategy,
+    AtomId, CounterId, Database, ExternalFunction, ExternalFunctionBatch, ExternalFunctionId,
+    TableId, TableIdentity, Variable, make_external_func, plan::PlanStrategy,
 };
 pub use hash_index::TupleIndex;
 #[doc(hidden)]

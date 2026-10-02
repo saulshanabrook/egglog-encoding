@@ -48,6 +48,115 @@ fn flat_storage_accepts_append_and_scan_semantics() {
 }
 
 #[test]
+fn mint_batches_preserve_rows_and_fresh_ids() {
+    for n_args in [0, 2, 12] {
+        let mut egraph = EGraph::default();
+        let int = egraph.base_values_mut().register_type::<i64>();
+        let unit_ty = egraph.base_values_mut().register_type::<()>();
+        let unit = egraph.base_values_mut().get(());
+        // Mint primitives can be registered before their destination table.
+        let mint = egraph.register_mint_row("proof-row".into(), n_args, vec![unit]);
+        let mut schema = vec![ColumnTy::Base(int); n_args];
+        schema.extend([ColumnTy::Id, ColumnTy::Base(unit_ty)]);
+        let proof = egraph.add_internal_flat_table(FunctionConfig {
+            schema,
+            n_vals: 1,
+            n_identity_vals: None,
+            default: DefaultVal::Fail,
+            merge: MergeFn::AssertEq,
+            name: "proof-row".into(),
+            can_subsume: false,
+        });
+        let input = egraph.add_table(FunctionConfig {
+            schema: vec![ColumnTy::Base(int), ColumnTy::Id],
+            n_vals: 1,
+            n_identity_vals: None,
+            default: DefaultVal::FreshId,
+            merge: MergeFn::AssertEq,
+            name: "input".into(),
+            can_subsume: false,
+        });
+        let output = egraph.add_table(FunctionConfig {
+            schema: vec![ColumnTy::Base(int), ColumnTy::Id, ColumnTy::Id],
+            n_vals: 2,
+            n_identity_vals: None,
+            default: DefaultVal::Fail,
+            merge: MergeFn::Columns(vec![MergeFn::AssertEq, MergeFn::AssertEq]),
+            name: "output".into(),
+            can_subsume: false,
+        });
+        let fixed = egraph.base_value_constant(42i64);
+        let rule = {
+            let mut rb = egraph.new_rule("mint twice", true);
+            let x: QueryEntry = rb.new_var(ColumnTy::Base(int)).into();
+            let id: QueryEntry = rb.new_var(ColumnTy::Id).into();
+            rb.query_table(input, &[x.clone(), id], Some(false))
+                .unwrap();
+            let args: Vec<_> = (0..n_args)
+                .map(|i| if i % 2 == 0 { x.clone() } else { fixed.clone() })
+                .collect();
+            let a = rb.call_external_func(mint, &args, ColumnTy::Id, String::new);
+            let b = rb.call_external_func(mint, &args, ColumnTy::Id, String::new);
+            rb.set(output, &[x, a.into(), b.into()]);
+            rb.build()
+        };
+        assert!(!egraph.run_rules(&[rule], None).unwrap().changed());
+        let mut used_ids = hashbrown::HashSet::new();
+        for i in 0..600 {
+            let value = egraph.base_values_mut().get(i as i64);
+            used_ids.insert(egraph.add_term(input, &[value]));
+        }
+        assert!(egraph.run_rules(&[rule], None).unwrap().changed());
+        let mut expected = hashbrown::HashMap::new();
+        egraph.for_each(output, |row| {
+            for &id in &row.vals[1..] {
+                assert!(
+                    used_ids.insert(id),
+                    "mint ids must not collide with term ids"
+                );
+                assert!(
+                    expected.insert(id, row.vals[0]).is_none(),
+                    "minted ids must be unique"
+                );
+            }
+        });
+        assert_eq!(expected.len(), 1200);
+        let mut count = 0;
+        egraph.for_each(proof, |row| {
+            let x = expected.remove(&row.vals[n_args]).unwrap();
+            for i in 0..n_args {
+                let expected = if i % 2 == 0 {
+                    x
+                } else {
+                    egraph.base_values().get(42i64)
+                };
+                assert_eq!(row.vals[i], expected);
+            }
+            assert_eq!(row.vals[n_args + 1], unit);
+            count += 1;
+        });
+        assert_eq!(count, 1200);
+        assert!(expected.is_empty());
+        // Scalar calls share the same counter and still stage visible rows.
+        let args = vec![egraph.base_values().get(42i64); n_args];
+        let scalar = egraph
+            .with_execution_state(None, |state| state.call_external_func(mint, &args).unwrap());
+        assert!(used_ids.insert(scalar));
+        assert_ne!(scalar, egraph.fresh_id());
+        egraph.flush_updates();
+        let mut found = false;
+        egraph.for_each(proof, |row| {
+            if row.vals[n_args] == scalar {
+                assert_eq!(&row.vals[..n_args], &args);
+                assert_eq!(row.vals[n_args + 1], unit);
+                found = true;
+            }
+        });
+        assert!(found);
+    }
+}
+
+#[test]
 fn read_projection_is_part_of_table_construction() {
     let mut egraph = EGraph::default();
     let table = egraph.add_table_with_read_projection(

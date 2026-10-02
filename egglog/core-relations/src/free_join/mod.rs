@@ -234,6 +234,44 @@ pub trait ExternalFunction: dyn_clone::DynClone + Send + Sync {
     /// Invoke the function with mutable access to the database. If a value is
     /// not returned, halt the execution of the current rule.
     fn invoke(&self, state: &mut ExecutionState, args: &[Value]) -> Option<Value>;
+
+    /// Invoke the function on the active rows of an action batch. Overrides
+    /// must preserve the scalar operation's results and side effects, in row
+    /// order. The default calls [`Self::invoke`] for each active row.
+    fn invoke_batch(&self, state: &mut ExecutionState, batch: ExternalFunctionBatch<'_>) {
+        batch.map(|args| self.invoke(state, args));
+    }
+}
+
+/// The active inputs and output slots for an external-function instruction.
+///
+/// This hides execution masks and binding storage from external functions.
+/// Consume it with [`Self::map`] to write results and remove failed rows.
+pub struct ExternalFunctionBatch<'a> {
+    mask: &'a mut Mask,
+    bindings: &'a Bindings,
+    args: &'a [QueryEntry],
+    out: &'a mut [Value],
+}
+
+impl ExternalFunctionBatch<'_> {
+    /// Number of active calls, excluding rows removed by earlier instructions.
+    pub fn len(&self) -> usize {
+        self.mask.count_ones()
+    }
+
+    /// Whether there are no active calls.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Visit active rows in order, storing each result in its original lane.
+    /// Returning `None` removes that row from subsequent rule execution.
+    pub fn map(self, mut f: impl FnMut(&[Value]) -> Option<Value>) {
+        for_each_binding_with_mask!(self.mask, self.args, self.bindings, |iter| {
+            iter.assign_vec_and_retain(self.out, |_, args| f(&args));
+        });
+    }
 }
 
 /// Automatically generate an `ExternalFunction` implementation from a function.
@@ -266,12 +304,16 @@ pub(crate) fn invoke_batch(
 ) {
     let pool: Pool<Vec<Value>> = with_pool_set(|ps| ps.get_pool());
     let mut out = pool.get();
-    out.reserve(mask.len());
-    for_each_binding_with_mask!(mask, args, bindings, |iter| {
-        iter.fill_vec(&mut out, Value::stale, |_, args| {
-            this.invoke(state, args.as_slice())
-        });
-    });
+    out.resize(mask.len(), Value::stale());
+    this.invoke_batch(
+        state,
+        ExternalFunctionBatch {
+            mask,
+            bindings,
+            args,
+            out: &mut out,
+        },
+    );
     bindings.insert(out_var, &out);
 }
 
@@ -289,9 +331,15 @@ pub(crate) fn invoke_batch_assign(
     out_var: Variable,
 ) {
     let mut out = bindings.take(out_var).expect("out_var must be bound");
-    for_each_binding_with_mask!(mask, args, bindings, |iter| {
-        iter.assign_vec_and_retain(&mut out.vals, |_, args| this.invoke(state, &args))
-    });
+    this.invoke_batch(
+        state,
+        ExternalFunctionBatch {
+            mask,
+            bindings,
+            args,
+            out: &mut out.vals,
+        },
+    );
     bindings.replace(out);
 }
 

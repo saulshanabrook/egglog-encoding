@@ -19,8 +19,9 @@ use std::{
 use crate::core_relations::{
     BaseValue, BaseValueId, BaseValues, ColumnId, Constraint, ContainerValue, ContainerValues,
     CounterId, Database, DisplacedTable, ExecutionState, ExternalContext, ExternalFunction,
-    ExternalFunctionId, FlatTable, MergeVal, Offset, PlanStrategy, SortedWritesTable, TableId,
-    TableIdentity, TaggedRowBuffer, Value, WrappedTable, make_external_func,
+    ExternalFunctionBatch, ExternalFunctionId, FlatTable, MergeVal, Offset, PlanStrategy,
+    SortedWritesTable, TableId, TableIdentity, TaggedRowBuffer, Value, WrappedTable,
+    make_external_func,
 };
 use crate::numeric_id::{DenseIdMap, DenseIdMapWithReuse, NumericId, define_id};
 use egglog_concurrency::{ReadOptimizedLock, ThreadPool};
@@ -428,7 +429,7 @@ impl EGraph {
         self.register_external_func(Box::new(make_external_func(
             move |state: &mut ExecutionState, args: &[Value]| {
                 let registry = registry.read();
-                let action = registry.lookup_table(&view_name)?.clone();
+                let action = registry.lookup_table(&view_name)?;
                 // Too few vals and the row is staged short of its value columns;
                 // too many and the surplus lands on the timestamp.
                 debug_assert_eq!(
@@ -457,7 +458,7 @@ impl EGraph {
         self.register_external_func(Box::new(make_external_func(
             move |state: &mut ExecutionState, args: &[Value]| {
                 let registry = registry.read();
-                let action = registry.lookup_table(&view_name)?.clone();
+                let action = registry.lookup_table(&view_name)?;
                 let fallback = args[n_keys];
                 Some(
                     action
@@ -481,25 +482,85 @@ impl EGraph {
         n_args: usize,
         vals: Vec<Value>,
     ) -> ExternalFunctionId {
-        let registry = self.action_registry.clone();
-        let counter = self.id_counter;
-        let dep = table_name.clone();
-        let id = self.register_external_func(Box::new(make_external_func(
-            move |state: &mut ExecutionState, args: &[Value]| {
-                let action = registry.read().lookup_table(&table_name)?.clone();
+        #[derive(Clone)]
+        struct MintRows {
+            registry: SharedActionRegistry,
+            table_name: String,
+            n_args: usize,
+            counter: CounterId,
+            vals: Vec<Value>,
+        }
+
+        impl ExternalFunction for MintRows {
+            fn invoke(&self, state: &mut ExecutionState, args: &[Value]) -> Option<Value> {
+                let registry = self.registry.read();
+                let action = registry.lookup_table(&self.table_name)?;
                 debug_assert_eq!(
                     args.len(),
-                    n_args,
-                    "mint into `{table_name}` takes {n_args} arguments"
+                    self.n_args,
+                    "mint into `{}` takes {} arguments",
+                    self.table_name,
+                    self.n_args
                 );
-                let fresh = Value::from_usize(state.inc_counter(counter));
+                let fresh = Value::from_usize(state.inc_counter(self.counter));
                 action.insert(
                     state,
-                    args.iter().copied().chain([fresh]).chain(vals.clone()),
+                    args.iter()
+                        .copied()
+                        .chain([fresh])
+                        .chain(self.vals.iter().copied()),
                 );
                 Some(fresh)
-            },
-        )));
+            }
+
+            fn invoke_batch(&self, state: &mut ExecutionState, batch: ExternalFunctionBatch<'_>) {
+                if batch.is_empty() {
+                    return;
+                }
+                let registry = self.registry.read();
+                let Some(action) = registry.lookup_table(&self.table_name) else {
+                    batch.map(|_| None);
+                    return;
+                };
+                // Mint ids before borrowing the table buffer, in the same order
+                // as scalar calls. Reuse the row scratch and notify only once.
+                let fresh: Vec<_> = (0..batch.len())
+                    .map(|_| Value::from_usize(state.inc_counter(self.counter)))
+                    .collect();
+                let mut fresh = fresh.into_iter();
+                let ts = Value::from_usize(state.read_counter(action.timestamp));
+                let mut row = SmallVec::<[Value; 8]>::new();
+                state.stage_batch(action.table, |buffer| {
+                    batch.map(|args| {
+                        debug_assert_eq!(args.len(), self.n_args);
+                        let fresh = fresh.next().unwrap();
+                        row.clear();
+                        row.extend_from_slice(args);
+                        row.push(fresh);
+                        row.extend_from_slice(&self.vals);
+                        action.table_math.write_table_row(
+                            &mut row,
+                            RowVals {
+                                timestamp: ts,
+                                subsume: action.table_math.subsume.then_some(NOT_SUBSUMED),
+                                ret_val: None,
+                            },
+                        );
+                        buffer.stage_insert(&row);
+                        Some(fresh)
+                    });
+                });
+            }
+        }
+
+        let dep = table_name.clone();
+        let id = self.register_external_func(Box::new(MintRows {
+            registry: self.action_registry.clone(),
+            table_name,
+            n_args,
+            counter: self.id_counter,
+            vals,
+        }));
         self.external_write_deps.insert(id, dep);
         id
     }
