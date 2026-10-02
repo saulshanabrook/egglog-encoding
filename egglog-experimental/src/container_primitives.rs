@@ -13,6 +13,7 @@ use std::sync::Arc;
 type TypeConstraints = Vec<Box<dyn Constraint<AtomTerm, ArcSort>>>;
 type ConstraintChoice = Vec<Box<dyn Constraint<AtomTerm, ArcSort>>>;
 
+/// Register proof-aware merge primitives for pair and bound containers.
 pub fn add_container_primitives(egraph: &mut EGraph) {
     egraph.add_pure_primitive(
         PairMinBySecondI64,

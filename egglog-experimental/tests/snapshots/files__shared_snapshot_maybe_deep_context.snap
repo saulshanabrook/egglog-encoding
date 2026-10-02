@@ -1,0 +1,5 @@
+---
+source: egglog-experimental/tests/files.rs
+expression: snapshot
+---
+((consume-deep-maybe 1))
