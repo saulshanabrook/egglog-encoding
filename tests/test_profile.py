@@ -155,7 +155,7 @@ def test_profile_egg_treatment_uses_egg_binary_for_execution_identity_and_summar
     file_spec = models.FileSpec(
         "egglog-experimental/tests/math-microbenchmark-rational.egg",
         math_path,
-        "sha256:" + "b" * 64,
+        targets.sha256_file(math_path),
     )
     request = profile_runner.ProfileRequest(
         file=file_spec,
@@ -271,6 +271,7 @@ def test_target_resolvers_share_materialization_and_select_build_profile(
 
 
 def test_build_target_uses_profiling_profile(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("CARGO_TARGET_DIR", raising=False)
     commands: list[list[str]] = []
     binary = tmp_path / "target" / "profiling" / "egglog-experimental"
     binary.parent.mkdir(parents=True)

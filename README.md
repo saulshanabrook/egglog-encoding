@@ -29,6 +29,7 @@ make python-nits    # Python hygiene only
 make rust-nits      # rustfmt check, Clippy, and doc-link check only
 make proof-tests    # proof-focused subset of the workspace tests
 make benchmark-smoke
+make figures        # collect/reuse both proof overheads and render figures/
 make nightly        # benchmark the nightly endpoints and publish nightly/output/
 make nightly-local  # the same run at one round, for trying it out
 make update-snapshots
@@ -47,12 +48,19 @@ changes and downstream behavior in one reviewable unit.
 
 Proof-specific file tests use the `proofs/` filter: explicit `(prove ...)`
 fixtures under `tests/proofs` plus every proof-compatible file under
-proof-testing mode. Proof testing turns checks outside `fail` into proof queries
-and snapshots the generated proofs; checks inside `fail` remain negative
+proof-testing mode. Proof testing turns checks outside `fail` and extraction requests into proof
+queries and snapshots the generated proofs; checks inside `fail` remain negative
 assertions. Use `make proof-tests` for focused iteration and
 `make rust-check` or `make check` for the final compatibility gate.
 
 ## Benchmarking
+
+`make figures-parameter` compares the six parameter-analysis implementations.
+`make figures-expanded` compares Egg with Egglog on Math and shows the expanded
+families' proof-recording and proof-extraction overheads. Both pipelines reuse
+compatible cached observations and use Vega-Lite for statistics and rendering.
+See [figures/README.md](figures/README.md) and the
+[expanded source inventory](benchmarks/README.md) for their measurement boundaries.
 
 The public entrypoint is:
 
@@ -93,9 +101,9 @@ Treatments map directly to engine modes:
 | --- | --- |
 | `off` | egglog without term or proof encoding |
 | `term` | egglog with `--term-encoding` |
-| `proofs` | egglog with `--proofs` |
-| `proof-extraction` | egglog with `--proof-extraction`; rewrite checks, then extract, materialize, clean, and simplify proofs without verifying them |
-| `proof-testing` | egglog with `--proof-testing`; extract and verify proofs for checks |
+| `proofs` | egglog with `--proofs`; record proofs and execute ordinary checks and extracts |
+| `proof-extraction` | egglog with `--proof-extraction`; extract, materialize, clean, and simplify proofs for checks and extracted results, without verifying them |
+| `proof-testing` | egglog with `--proof-testing`; extract and verify proofs for checks and extracted results |
 | `egg` | current egg without explanation recording |
 | `egg-proofs` | current egg with explanation recording enabled |
 | `egg-proof-extraction` | current egg with explanation recording and extraction |
@@ -104,9 +112,27 @@ Treatments map directly to engine modes:
 
 The five egglog treatments run `egglog-experimental`. The four Math treatments
 (`egg` and its proof variants) run the separate `egg-math-benchmark` executable and
-support only `egglog-experimental/tests/math-microbenchmark-rational.egg`.
+support the canonical `egglog-experimental/tests/math-microbenchmark-rational.egg`
+and registered Math checkpoints. Complete input validation covers the rules,
+seeds, cutoff, and equality. Egg's greedy explanation-length optimization is
+disabled in all proof-enabled treatments.
 Results from either proof-extraction treatment are performance evidence only;
 the corresponding proof-testing treatment provides the strict validity check.
+
+`(prove-extract expression)` emits the ordinary extracted result followed by a
+proof that the input equals that result. An optional variant count requests a
+proof for each returned term. It preserves extraction costs, including the
+experimental dynamic cost model; the proof establishes equality, not optimality.
+Like `prove`, it requires proof recording and follows the configured validation
+setting. The command evaluates its input normally but never inserts a returned
+term to manufacture the equality. Proofs are assembled from exact constructor
+lookups over the shared result DAG, without expanding the result into a query.
+
+Use ordinary `(extract ...)` and `(check ...)` in benchmark sources:
+`--proofs` only records proofs, `--proof-extraction` also produces proofs for
+their results, and `--proof-testing` additionally verifies those proofs.
+Separate extension commands such as `multi-extract` are not automatically
+rewritten.
 
 ### Common comparisons
 
@@ -244,13 +270,13 @@ corpus:
 | Math | The paper artifact's Rational language, 24 rewrites, and seven seeds, run for eleven iterations through current egg or egglog without backoff | An equality first established on iteration eleven is checked; tests require it to fail after iteration ten in both engines |
 | eggcc 2mm | Bounded pass-one fixture with ordinary constructor-valued merges | Generated `main` function type is checked |
 | Pointer analysis | All 73,864 rows from the 23 `initdb.bc` relations consumed by the adapted program; three legacy lookup-or-create functions are constructors under current egglog, and the run uses ordinary seminaive scheduling | Known `constant_points_to` row is derived and both reported output-table sizes are available for artifact comparison |
-| Hardboiled | Dormant canonicalization rules using unsupported unstable helpers are omitted | Extracted WMMA store result is checked |
+| Hardboiled | Dormant canonicalization rules using unsupported unstable helpers are omitted | All twelve original roots are extracted |
 | Luminal | Static Llama graph from [`egglog_repro` commit `7fb0194`](https://github.com/saulshanabrook/egglog_repro/blob/7fb0194812b5b11e41a286d8b55e48e3b0bfcd66/llama.egg) | `t712` is checked after kernel lowering |
 | Herbie | Static engine proxy without Racket orchestration or an FPCore corpus | All 14 checks exercise the selected treatment |
-| MISAAL | Complete generated HVX dot-product workload with current global syntax | The source expression is checked equivalent to the synthesized HVX result |
+| MISAAL | Complete generated HVX dot-product workload with current global syntax | The original source-expression extraction is retained |
 | Churchroad | The paper's 16-by-32-bit wide multiply with its prelude and driver mapping rules materialized; the saturating schedule is bounded to 17 cycles, calibrated as a roughly one-second normal-mode workload | The multiply expansion and its two-input and three-input DSP proposals are checked |
-| DialEgg | Generated NMM-40 scaling workload with `base.egg` materialized | An alternative matrix-chain association is checked |
-| SpEQ | Four artifact-preserved programs that still match the artifact's GEMV/histogram reference rules, recorded using egglog-python's native command log | Each input is checked equal to its extracted reference call (or enclosing expression) |
+| DialEgg | Generated NMM-40 scaling workload with `base.egg` materialized | The original root is extracted using the supplied dynamic costs |
+| SpEQ | Four artifact-preserved programs that still match the artifact's GEMV/histogram reference rules, recorded using egglog-python's native command log | Original extraction requests remain in their application scopes |
 | Disequality parameter analysis | Author-supplied native corpus converted to Egglog: 100K equality pairs, 10K disequality pairs, and six fixed numeral constraints in the original order | The contradiction is derived and supports proof extraction/checking under NE and EE |
 
 The [disequality workload](benchmarks/disequality/README.md) uses NE by default.
@@ -296,8 +322,8 @@ details and archive SHA-256. Herbie remains a bounded static proxy in the
 ordinary benchmark suite; reproducing the historical Racket/FPCore
 orchestration remains outside the ordinary runner.
 
-Benchmark files must not contain executable `(prove ...)` commands. Use
-`(check ...)` in timed workloads so the selected treatment controls whether
+Benchmark files must not contain executable `(prove ...)` or `(prove-extract ...)`
+commands. Use source `(check ...)` and `(extract ...)` commands in timed workloads so the selected treatment controls whether
 proof extraction is included in the timing boundary.
 
 Reports normally identify a selected file by filename. If names collide, they
@@ -350,7 +376,7 @@ The remaining collection options are:
 - `--report PATH`: append-only report/cache path; default `.reports.jsonl`.
   A filesystem path is required; `-` is not a streaming destination.
 - `--rounds N`: selected observations required for every endpoint/file;
-  default `6`.
+  default `6`, or `10` with `--suite`.
 - `--timeout-sec N`: per-process timeout; default `1800` to accommodate the
   full-size disequality proof workload. Smaller workloads may use a lower limit.
 - `--force-run`: append `N` fresh rows for both endpoints before selecting the
@@ -360,6 +386,41 @@ The remaining collection options are:
   open it. For the default cache, the output is `.reports.html`.
 
 Use `./bench.py --help` for the complete option reference.
+
+### Expanded source families
+
+The [expanded suites](benchmarks/README.md) measure complete independent e-graph
+computations: initialize inputs, run rules, then extract or check a result.
+Pinned [source recipes](benchmarks/sources.json) regenerate the prepared manifest;
+shared-state stages stay together, aliases are deduplicated, and source blockers
+remain explicit.
+
+```sh
+make reproduce-benchmarks      # Author sources -> standalone workloads.
+make expanded-bench-recording  # Cached baselines and proof recording.
+make figures-expanded         # Both proof treatments, Math, and figures.
+make figures-expanded-cached  # Render existing grouped data only.
+make figures-expanded-archive # Gather the images and reproducible evidence.
+```
+
+Collection tops up to ten observations by default, with one sequential plan per
+comparison. The cohort uses all matching proofs-off observations. They must all
+succeed, with mean whole-process time strictly between 0.1 and 30 seconds.
+Memory and proof outcomes do not select it. Failed observations remain visible and
+invalidate their ratios. Expanded Make targets retain the 300-second timeout
+and memory guard. Correctness validation is separate: `make validate-benchmarks`.
+
+```sh
+./bench.py --suite eggcc --suite luminal --baseline-window --target figures=. \
+  --treatment proofs --compare-treatment off --rounds 10 --timeout-sec 300
+```
+
+Use `--suite expanded` for all included families, `--treatment proof-extraction`
+for recording plus extraction, or `--baseline-only` for normal-mode collection.
+Omit `--baseline-window` to collect a suite without the time window.
+The shared `.reports-grouped.json` and metadata-only inventory feed the authored
+Vega-Lite specs directly. [Figure documentation](figures/README.md) explains
+sample selection, outputs, cached rendering, and the evidence archive.
 
 ### Engine timing
 

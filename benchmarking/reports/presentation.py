@@ -61,7 +61,6 @@ RESULT_TONES: dict[ResultClass, CellTone] = {
 }
 RATIO_DIRECTION = "Ratios are candidate / baseline; below 1 is lower and above 1 is higher."
 DECOMPOSITION_CAPTION = (
-    "The Suite total row sums each selected file's candidate − baseline mean; file rows are per-file mean deltas. "
     "Each mechanism cell is its share of that row's wall-time change followed by its signed mean time change. "
     "Frontend includes parsing, other lowering, and declaration/install commands. Program rules includes every "
     "phase of source-origin rulesets except rebuild. Equality/rebuild combines encoded maintenance rulesets with "
@@ -187,8 +186,13 @@ def _comparison_caption(
     file_labels: dict[FileSpec, str],
 ) -> str:
     selected_files = ", ".join(_file_with_facts(file, file_labels[file]) for file in comparison.files)
+    rounds = (
+        f"all matching observations; top-up target {comparison.rounds} per endpoint/file; failed cases stop"
+        if comparison.suite_mode
+        else f"{comparison.rounds} round(s) per endpoint/file"
+    )
     return (
-        f"{len(comparison.files)} file(s): {selected_files} · {comparison.rounds} round(s) per endpoint/file · "
+        f"{len(comparison.files)} file(s): {selected_files} · {rounds} · "
         f"{comparison.timeout_sec} s timeout per run · Report: {report_path}"
     )
 
@@ -205,7 +209,11 @@ def _summary_section(
     file_labels: dict[FileSpec, str],
 ) -> ReportSection:
     title = f"Summary — {_endpoint_identity(comparison.candidate)} vs {_endpoint_identity(comparison.baseline)}"
-    selected = _deduplicate_summary_rows(rows, len(comparison.files))
+    selected = (
+        tuple((row, f"file-{row.file_order}") for row in rows)
+        if comparison.suite_mode
+        else _deduplicate_summary_rows(rows, len(comparison.files))
+    )
     report_rows: list[ReportRow] = []
     for row, scope in selected:
         if row.summary_kind == "suite":
@@ -220,10 +228,15 @@ def _summary_section(
             _row(
                 report_id("row", "summary", row.metric, scope),
                 text_cell(row.metric, _metric_label(row.metric)),
-                text_cell(scope, _scope_label(scope, len(comparison.files))),
+                text_cell(scope, "File" if row.summary_kind == "file" else _scope_label(scope, len(comparison.files))),
                 file_display,
                 _ratio_cell(row.ratio),
-                _result_cell(row.ratio.result_class, row.ratio.issue, rss=row.metric == "max_rss_bytes"),
+                _result_cell(
+                    row.ratio.result_class,
+                    row.ratio.issue,
+                    rss=row.metric == "max_rss_bytes",
+                    suite_mode=comparison.suite_mode,
+                ),
             )
         )
     table = _table(
@@ -235,7 +248,21 @@ def _summary_section(
         caption=RATIO_DIRECTION,
         alignments=("left", "left", "left", "right", "left"),
     )
-    return ReportSection("summary", title, (table,))
+    blocks: list[ReportBlock] = [table]
+    validation_issues = {
+        (file.sha256, file.fact_directory_sha256): reason for file, reason in comparison.validation_issues
+    }
+    for file in comparison.files:
+        if reason := validation_issues.get((file.sha256, file.fact_directory_sha256)):
+            blocks.append(
+                ReportMessage(
+                    report_id("message", "validation", file.sha256, file.fact_directory_sha256),
+                    file_labels[file],
+                    reason,
+                    tone="error",
+                )
+            )
+    return ReportSection("summary", title, tuple(blocks))
 
 
 def _endpoint_identity(endpoint: BenchmarkEndpoint) -> str:
@@ -321,7 +348,12 @@ def _files_section(
                         _estimate_cell(row.baseline, rss=metric == "max_rss_bytes"),
                         _estimate_cell(row.candidate, rss=metric == "max_rss_bytes"),
                         _ratio_cell(row.ratio),
-                        _result_cell(row.ratio.result_class, row.ratio.issue, rss=metric == "max_rss_bytes"),
+                        _result_cell(
+                            row.ratio.result_class,
+                            row.ratio.issue,
+                            rss=metric == "max_rss_bytes",
+                            suite_mode=comparison.suite_mode,
+                        ),
                     )
                     for row in metric_rows
                 ),
@@ -403,7 +435,15 @@ def _phases_section(
             "Residual",
         ),
         tuple(report_rows),
-        caption=DECOMPOSITION_CAPTION,
+        caption=(
+            (
+                "Rows are per-file mean deltas. "
+                if comparison.suite_mode
+                else "The Suite total row sums each selected file's candidate − baseline mean; "
+                "file rows are per-file mean deltas. "
+            )
+            + DECOMPOSITION_CAPTION
+        ),
         alignments=("left", "right", "right", "right", "right", "right", "right", "right"),
     )
     return ReportSection("phases", "Slowdown decomposition", (table,))
@@ -813,9 +853,10 @@ def _format_bytes_in_unit(value: float, divisor: float, unit: str, *, include_un
     return f"{text} {unit}" if include_unit else text
 
 
-def _result_cell(result_class: ResultClass, issue: str | None, *, rss: bool) -> ReportCell:
+def _result_cell(result_class: ResultClass, issue: str | None, *, rss: bool, suite_mode: bool = False) -> ReportCell:
     if result_class == "invalid":
-        text = f"incomplete: {issue or 'unavailable'}"
+        prefix = "unavailable" if suite_mode else "incomplete"
+        text = f"{prefix}: {issue or 'unavailable'}"
     elif result_class == "point_only":
         text = "point only"
     elif result_class == "lower":

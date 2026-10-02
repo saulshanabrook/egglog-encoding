@@ -48,7 +48,7 @@ fixedbitset = "0.5"
 smallvec = "1.10"
 bumpalo = "3.12"
 anyhow = "1.0"
-egg = { version = "=0.11.0", default-features = false, features = ["deterministic"] }
+egg = { git = "https://github.com/saulshanabrook/egg", branch = "codex/optional-quanta", default-features = false, features = ["std", "deterministic"] }
 crossbeam-queue = "0.3.11"
 crossbeam = "0.8.4"
 dashmap = "6.1.0"

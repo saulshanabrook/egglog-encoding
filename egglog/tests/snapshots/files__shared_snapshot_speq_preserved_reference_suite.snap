@@ -1,7 +1,12 @@
 ---
 source: egglog/tests/files.rs
-expression: snapshot_content_across_treatments
+assertion_line: 304
+expression: shared_snapshot
 ---
+(extraction-costs 19)
+(extraction-costs 19)
+(extraction-costs 12)
+(extraction-costs 80)
 ((gemm 0)
  (gemv 0)
  (histogram 0)

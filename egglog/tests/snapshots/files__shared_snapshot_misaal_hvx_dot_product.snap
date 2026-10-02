@@ -1,7 +1,9 @@
 ---
 source: egglog/tests/files.rs
-expression: snapshot_content_across_treatments
+assertion_line: 304
+expression: shared_snapshot
 ---
+(extraction-costs 137)
 ((ATOM 6)
  (LIT 0)
  (SYMBV 3)

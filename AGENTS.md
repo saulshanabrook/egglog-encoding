@@ -97,19 +97,32 @@ or modify the JSONL.
   indexed `ReportStore`; an interactive artifact embeds that complete snapshot
   and retargets only within it.
 - `proofs` is generation-only. The `proof-extraction` treatment uses
-  `--proof-extraction` to rewrite checks and extract, materialize, clean, and
+  `--proof-extraction` to rewrite checks and extracts, then materialize, clean, and
   simplify proofs without verifying them. Treat its results as performance
   evidence only; `--proof-testing` remains the strict correctness mode.
 - Bare `./bench.py` compares `proofs` with `off`. The `proof-extraction`
   treatment is explicit opt-in.
-- The five egglog treatments run `egglog-experimental`. The `egg` treatment and
-  its three proof variants run `egg-math-benchmark` on the fixed Rational Math
-  workload. `egg-de`, `egg-ee`, `egg-nee`, and `egg-oee` run the original native
-  parameter-analysis drivers on `.in` inputs without proofs. Mixed-engine
-  comparisons build each required executable, and every cache row identifies
-  the executable that actually ran.
-- Benchmark inputs should not contain executable `(prove ...)` commands. Use
-  `(check ...)` so the selected treatment controls proof extraction, and cover
+- The five egglog treatments run `egglog-experimental`. The four Math treatments
+  (`egg` and its proof variants) run `egg-math-benchmark` on the fixed Rational
+  Math iteration-11 workload. Validate the complete input hash before using the
+  native driver. The native parameter treatments use the original `.in` drivers.
+  Every cache row identifies the executable that actually ran.
+- Expanded suites read the generated `benchmarks/local/corpus/manifest.json`.
+  Source recipes are in `benchmarks/sources.json`; generation never requires old
+  ignored capture receipts. Preserve complete-call boundaries, aliases and blockers.
+- Figure collection requests 10 observations per endpoint by default. Expanded
+  cohort/report/figure analysis uses all exact-identity observations, with no
+  sample-count eligibility threshold; any failed observation remains visible.
+  Ordinary positional/default comparisons retain requested newest-N selection.
+- Expanded Make targets use a 300-second timeout and the memory guard: 10 GiB
+  process-group RSS, normal host memory pressure, and a 2 GiB host reserve.
+  Preserve in-flight safety failures and halt before launching another workload.
+- Source preparation and explicit strict validation keep evidence under ignored
+  `benchmarks/local/`, outside Cargo's disposable build cache. Neither is an
+  implicit timed screening pass. Do not import diagnostic timings into the cache.
+- Benchmark inputs should not contain executable `(prove ...)` or
+  `(prove-extract ...)` commands. Use source `(check ...)` and `(extract ...)`
+  commands so the selected treatment controls proof extraction, and cover
   strict proof validity in proof tests.
 - Benchmark files are resolved relative to the command invocation directory,
   not relative to comparison targets.

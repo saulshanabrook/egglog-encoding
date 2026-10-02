@@ -1,0 +1,361 @@
+"""Capture complete Eggcc calls and Churchroad mapping phases from native events."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import sys
+from dataclasses import asdict
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from benchmarking.processes import run_bounded_command  # noqa: E402
+from benchmarking.targets import sha256_file  # noqa: E402
+from scripts.eggcc_churchroad_complete import (  # noqa: E402
+    CaptureError,
+    churchroad_mapping_session,
+    churchroad_sessions,
+    eggcc_sessions,
+    read_events,
+)
+from scripts.hardboiled_replay import egglog_forms, native_check_contract  # noqa: E402
+from scripts.paper_benchmarks.materialize import constructors  # noqa: E402
+from scripts.reproduction_validation import CHURCHROAD_PLACEHOLDERS, churchroad_circuit_contract  # noqa: E402
+
+PINS = {
+    "eggcc": "16be0063133ef0b8ba21cd75ee377002dc3ecbed",
+    "churchroad": "9f82ca23b273a5a500cc6a1ca60b30d3c33c5721",
+}
+
+EGGCC_HELPERS = {
+    "TypeList-length",
+    "ListExpr-length",
+    "tuple-length",
+    "Length-List<i64+IntInterval>",
+    "Length-List<PtrPointees>",
+    "succ",
+}
+
+EGGCC_EXPR_SET_TOKENS_SHA256 = "992434eb3686e88fcd37cbe063c331f02150714343e3421ed36b550d8aac4eb8"
+
+EGGCC_QUERY = '(check (Function "main" in out body) (HasType body out))'
+
+
+def adapt_eggcc(source: str, *, typing_oracle: bool = True) -> str:
+    """Apply the checked-in pass-one fixture's compatibility changes exactly.
+
+    The unused ExprSet block must have no references outside its contiguous
+    declaration block. Only the six deterministic length/successor functions
+    may replace no-merge with merge-old. Keep every schedule command intact.
+    """
+    forms = egglog_forms(source)
+    starts = [i for i, (_, _, tokens) in enumerate(forms) if tokens[1:3] == ["sort", "ExprSetPrim"]]
+    ends = [i for i, (_, _, tokens) in enumerate(forms) if tokens[1:3] == ["datatype", "Pointees"]]
+    if len(starts) != 1 or len(ends) != 1 or ends[0] - starts[0] != 10:
+        raise ValueError("expected exactly the pinned ten-form ExprSet helper block before Pointees")
+    start, end = starts[0], ends[0]
+    block = [tokens for _, _, tokens in forms[start:end]]
+    if hashlib.sha256(json.dumps(block, separators=(",", ":")).encode()).hexdigest() != EGGCC_EXPR_SET_TOKENS_SHA256:
+        raise ValueError("ExprSet helper block differs from the pinned compiler")
+    if any(
+        token in {"ExprSet", "ExprSetPrim", "ES"} or token.startswith("ExprSet-")
+        for _, _, tokens in forms[:start] + forms[end:]
+        for token in tokens
+    ):
+        raise ValueError("ExprSet is referenced outside its unused helper block")
+    source = source[: forms[start][0]] + source[forms[end][0] :]
+    found = set(re.findall(r"^\(function (\S+) .*:no-merge\)$", source, re.MULTILINE))
+    if found != EGGCC_HELPERS:
+        raise ValueError(f"unexpected no-merge helper set: {sorted(found)}")
+    source = source.replace(":no-merge", ":merge old")
+    # Main-body typing is inferred by the original type-analysis schedule.
+    # FunctionHasType alone would merely recheck an asserted initialization fact.
+    if typing_oracle:
+        main_facts = [
+            line.strip() for line in source.splitlines() if line.strip().startswith('(FunctionHasType "main" ')
+        ]
+        if len(main_facts) != 1 or not main_facts[0].endswith(")"):
+            raise ValueError("expected exactly one main FunctionHasType seed")
+    else:
+        return (
+            "; Complete native Eggcc optimization invocation; raw commands retained separately.\n"
+            "; Compatibility: unused ExprSet helpers omitted; deterministic helpers use merge-old.\n"
+            + source.rstrip()
+            + "\n"
+        )
+    return (
+        "; Captured Eggcc pass-one invocation; original commands retained in acquisition evidence.\n"
+        f"; Pinned compiler: {PINS['eggcc']}\n"
+        "; Adaptations match eggcc-2mm-pass1: omit unreferenced ExprSet helpers;\n"
+        "; deterministic length/succ no-merge functions use merge-old.\n"
+        "; Oracle: the main function body's inferred result type agrees with the declared result type.\n"
+        + source.rstrip()
+        + "\n\n"
+        + EGGCC_QUERY
+        + "\n"
+    )
+
+
+def rename_churchroad_globals(
+    source: str, query: str, rules: str, *, aliases: dict[str, str] | None = None
+) -> tuple[str, str, dict[str, str]]:
+    """Preserve paper-era global references at each command's declaration time.
+
+    The native engine resolves bare names to previously declared globals, even
+    inside later rules. Carry aliases between source parts, but leave earlier
+    rule locals alone. Fresh base names avoid current global-shadowing errors.
+    """
+    tokens = re.compile(r';[^\n]*|"(?:\\.|[^"\\])*"|[()]|[^\s();"]+')
+    bindings = dict(aliases or {})
+    occupied = {token.lstrip("$") for token in tokens.findall(source + query + rules)}
+    translated = []
+    for program in (source, query):
+        edits = []
+        for start, end, form in egglog_forms(program):
+            kind = form[1]
+            atoms = [m for m in tokens.finditer(program, start, end) if not m[0].startswith(";")]
+            if kind in {"push", "pop", "include"} or any(
+                atoms[i - 1][0] == "(" and atom[0] == "let" for i, atom in enumerate(atoms[2:], 2)
+            ):
+                raise CaptureError("Churchroad nested binding/scope needs a reviewed global adaptation")
+            name = form[2] if kind == "let" else None
+            if name is not None:
+                alias = f"$churchroad-global-{name}"
+                if name in bindings:
+                    raise CaptureError("Churchroad global rebinding needs a reviewed adaptation")
+                if alias.lstrip("$") in occupied:
+                    raise ValueError("Churchroad global alias prefix collides with an existing atom")
+                edits.append((atoms[2].start(), atoms[2].end(), alias))
+            # Declaration names, sort names, schedule names and rule attributes
+            # are not expression variables. The pinned source has no global
+            # references in declaration defaults/merges or schedule conditions.
+            if kind in {"sort", "datatype", "function", "constructor", "relation", "ruleset", "run", "run-schedule"}:
+                if bindings and any(option in form for option in (":default", ":merge", ":until")):
+                    raise CaptureError("Churchroad declaration/schedule expression needs a reviewed global adaptation")
+            else:
+                depth = 0
+                attributes = False
+                for i, atom in enumerate(atoms):
+                    if atom[0] == "(":
+                        depth += 1
+                    elif atom[0] == ")":
+                        depth -= 1
+                    elif depth == 1 and atom[0].startswith(":"):
+                        attributes = True
+                    elif (
+                        not attributes
+                        and not (kind == "let" and i == 2)
+                        and atoms[i - 1][0] != "("
+                        and atom[0] in bindings
+                    ):
+                        edits.append((atom.start(), atom.end(), bindings[atom[0]]))
+            if name is not None:
+                bindings[name] = alias
+        for start, end, replacement in sorted(edits, reverse=True):
+            program = program[:start] + replacement + program[end:]
+        translated.append(program)
+    return translated[0], translated[1], bindings
+
+
+def materialize_sessions(record: dict[str, Any], sessions: list[dict[str, Any]], attempt: Path) -> None:
+    """Preserve native session state while adapting syntax and binding observer checks."""
+    family = record["family"]
+    record["materialization"] = {
+        "expected_sessions": len(sessions),
+        "materialized_sessions": 0,
+        "complete": False,
+    }
+    for index, session in enumerate(sessions):
+        raw = attempt / f"session-{index:03}-{session['kind']}.raw.egg"
+        raw.write_text(session["program"])
+        if family == "eggcc":
+            content = (
+                adapt_eggcc(session.get("replay_program", session["program"]), typing_oracle=False)
+                if session["kind"] == "optimization"
+                else session["program"]
+            )
+            # Compatibility rewrites only the six original no-merge
+            # helpers. Append strict observer functions afterwards.
+            content += session.get("lookup_program", "")
+        else:
+            chunks = []
+            check_positions = []
+            command_count = 0
+            aliases: dict[str, str] = {}
+            for part in session["parts"]:
+                program = constructors(part["program"])
+                program, _, aliases = rename_churchroad_globals(program, "", session["program"], aliases=aliases)
+                command_count += len(egglog_forms(program))
+                for start, end, _ in egglog_forms(part["checks"]):
+                    check_positions.append((command_count, part["checks"][start:end]))
+                    command_count += 1
+                chunks.append(program + "\n" + part["checks"])
+            content = "\n".join(chunks)
+            if session["kind"] == "circuit-extraction":
+                # Visibility affects extraction only, not constructor insertion,
+                # congruence, unions, rule matching or the native schedule.
+                for _, end, tokens in reversed(egglog_forms(content)):
+                    if tokens[1] == "constructor" and tokens[2] in CHURCHROAD_PLACEHOLDERS:
+                        content = content[: end - 1] + " :unextractable" + content[end - 1 :]
+        if "reproduction_" in session["program"].replace("; reproduction-", "; capture-"):
+            raise CaptureError("native source collides with reserved reproduction query variables")
+        replay = attempt / f"session-{index:03}-{session['kind']}.egg"
+        if family == "eggcc":
+            command_count = len(egglog_forms(content))
+            check_positions = [
+                (command_count + number, session["checks"][start:end])
+                for number, (start, end, _) in enumerate(egglog_forms(session["checks"]))
+            ]
+            content += "\n" + session["checks"]
+        if family == "eggcc":
+            from scripts.eggcc_observer_compat import adapt_observers
+
+            content, _ = adapt_observers(content)
+        replay.write_text(content)
+        session_record = {
+            key: value
+            for key, value in session.items()
+            if key not in {"program", "replay_program", "lookup_program", "checks", "parts"}
+        }
+        roots = session["roots"]
+        if session["kind"] == "circuit-extraction":
+            roots = [{**root, "replay_alias": aliases[root["name"]]} for root in roots]
+        session_record.update(
+            session=index,
+            raw=str(raw),
+            replay=str(replay),
+            raw_sha256=sha256_file(raw),
+            replay_sha256=sha256_file(replay),
+            roots=roots,
+            output_contract=(
+                churchroad_circuit_contract(content, roots)
+                if session["kind"] == "circuit-extraction"
+                else native_check_contract(content, check_positions, roots)
+            ),
+        )
+        record["sessions"].append(session_record)
+        record["materialization"]["materialized_sessions"] = len(record["sessions"])
+    record["materialization"]["complete"] = True
+    record["status"] = "ordinary-validation-pending"
+
+
+def materialize_complete_events(
+    record: dict[str, Any], attempt: Path, *, max_evidence_bytes: int = 384 * 1024**2
+) -> dict[str, Any]:
+    """Accept completed source boundaries; a later synthesis failure is not Egglog failure."""
+    try:
+        events = read_events(
+            attempt / "native-events", max_bytes=max_evidence_bytes, require_parent_complete=record["family"] == "eggcc"
+        )
+        if record["family"] == "eggcc":
+            sessions = eggcc_sessions(events)
+        elif events[-1]["kind"] == "parent-complete":
+            sessions = churchroad_sessions(events)
+        else:
+            mapping = [event for event in events if event["kind"] == "mapping-snapshot"]
+            if len(mapping) != 1:
+                raise CaptureError("source did not complete its Egglog mapping phase")
+            sessions = [churchroad_mapping_session(events, circuit_outputs=not mapping[0]["payload"]["proposals"])]
+        record["parent_completed"] = events[-1]["kind"] == "parent-complete"
+        record["source_completion"] = {
+            "status": "complete",
+            "parent_completed": record["parent_completed"],
+            "scope": "complete Egglog calls",
+            "outputs": [],
+        }
+        materialize_sessions(record, sessions, attempt)
+    except (OSError, CaptureError, ValueError, KeyError) as error:
+        record.update(status="blocked", reason=str(error))
+    return record
+
+
+def capture_complete(
+    family: str,
+    cases: list[dict[str, Any]],
+    destination: Path,
+    checkout: Path,
+    binary: Path,
+    engine: Path,
+    *,
+    timeout_sec: float = 300,
+    validate_ordinary: bool = False,
+) -> list[dict[str, Any]]:
+    """Run source programs serially and materialize under the same resource guard."""
+    from scripts.reproduction_validation import validate_capture
+
+    records = []
+    for case in cases:
+        attempt = destination / case["id"]
+        events = attempt / "native-events"
+        events.mkdir(parents=True)
+        source = checkout / case["source"]
+        command = ["env", f"EGGLOG_REPRO_CAPTURE_DIR={events.resolve()}"]
+        if family == "eggcc":
+            command += [str(binary), str(source), "--run-mode", "optimize", *case.get("native_options", [])]
+        else:
+            command += [
+                f"CARGO_MANIFEST_DIR={checkout}",
+                str(binary),
+                "--filepath",
+                str(source),
+                "--top-module-name",
+                case.get("top_module_name", "mul"),
+                "--architecture",
+                case.get("architecture", "xilinx-ultrascale-plus"),
+                "--out-filepath",
+                str(attempt / "native-output.v"),
+            ]
+        process = run_bounded_command(
+            command, checkout, attempt / "native", timeout_sec=timeout_sec, require_guard=True
+        )
+        record = {
+            "id": case["id"],
+            "family": family,
+            "revision": PINS[family],
+            "command": command,
+            "process": asdict(process),
+            "source_sha256": sha256_file(source),
+            "binary_sha256": sha256_file(binary),
+            "replay_engine_sha256": sha256_file(engine),
+            "status": "blocked",
+            "workloads": [],
+            "sessions": [],
+        }
+        if process.status not in {"success", "failure"}:
+            record.update(status=process.status, reason=process.message or process.status)
+        else:
+            request = attempt / "materialize.json"
+            request.write_text(json.dumps(record, default=str) + "\n")
+            materialization = run_bounded_command(
+                [sys.executable, str(Path(__file__).resolve()), str(request)],
+                ROOT,
+                attempt / "materialize",
+                timeout_sec=timeout_sec,
+                require_guard=True,
+            )
+            result = attempt / "materialized.json"
+            if materialization.status != "success" or not result.is_file():
+                record.update(status=materialization.status, reason=materialization.message or "materialization failed")
+            else:
+                record = json.loads(result.read_text())
+                if validate_ordinary:
+                    checked = validate_capture(record, engine, attempt / "validation", timeout_sec=timeout_sec)
+                    record.update(
+                        status="reproduced" if checked["status"] == "success" else checked["status"],
+                        workloads=checked["workloads"],
+                        reason=checked.get("reason"),
+                    )
+        (attempt / "capture.json").write_text(json.dumps(record, indent=2, default=str) + "\n")
+        records.append(record)
+        if record["status"] in {"resource-stopped", "memory-limit", "cancelled", "interrupted"}:
+            break
+    return records
+
+
+if __name__ == "__main__":
+    request = Path(sys.argv[1])
+    result = materialize_complete_events(json.loads(request.read_text()), request.parent)
+    (request.parent / "materialized.json").write_text(json.dumps(result, indent=2, default=str) + "\n")

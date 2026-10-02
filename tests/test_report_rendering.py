@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -63,6 +64,25 @@ def test_realistic_pair_report_markdown_snapshot(tmp_path: Path, snapshot: Snaps
     assert "0.983–1.16x" in markdown
     assert "883 ms–1.14 s" not in markdown
     assert "0.883–1.14 s" in markdown
+
+
+def test_summary_lists_all_validation_failures_and_suppresses_successful_ratios(tmp_path: Path) -> None:
+    report_path, comparison = _pair_case(tmp_path)
+    reasons = tuple(
+        (file, f"strict proof validation failed: witness {index}") for index, file in enumerate(comparison.files)
+    )
+    comparison = replace(comparison, suite_mode=True, validation_issues=reasons)
+    catalog = build_report_catalog(ReportStore(report_path).grouped_report(), comparison, "rulesets")
+    summary = next(section for section in catalog.sections if section.id == "summary")
+    messages = tuple(block for block in summary.blocks if isinstance(block, ReportMessage))
+    markdown = render_markdown_report_document(catalog)
+
+    assert [message.text for message in messages] == [reason for _file, reason in reasons]
+    assert "unavailable: strict proof validation failed" in markdown
+    assert "all matching observations; top-up target 2 per endpoint/file; failed cases stop" in markdown
+    assert "0.983–1.16x" not in markdown
+    assert "Suite total" not in markdown
+    assert "Lowest-ratio file" not in markdown
 
 
 def test_selection_uses_treatment_from_the_comparison(tmp_path: Path) -> None:

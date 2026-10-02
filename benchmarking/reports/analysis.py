@@ -21,7 +21,7 @@ from .store import CacheKey, GroupedReport, IndexedRecord
 
 MetricName = Literal["wall_sec", "max_rss_bytes"]
 ResultClass = Literal["higher", "invalid", "lower", "point_only", "unclear"]
-SummaryKind = Literal["suite", "lowest_file", "highest_file"]
+SummaryKind = Literal["suite", "lowest_file", "highest_file", "file"]
 RulesetPhaseName = Literal["assembly", "search", "apply", "execution", "merge", "rebuild"]
 RulesetMechanism = Literal["program", "equality"]
 type _MetricKey = tuple[int, int, MetricName]
@@ -170,11 +170,20 @@ def analyze_pair(
     """Return every presentation row requested for one exact endpoint pair."""
 
     observations = _selected_observations(store, comparison)
-    issues = {key: _selection_issue(rows, comparison.rounds) for key, rows in observations.items()}
-    t_critical = None if comparison.rounds < 2 else float(stats.t.ppf(0.975, comparison.rounds - 1))
-    estimates = _metric_estimates(observations, issues, t_critical)
-    file_rows = _file_comparisons(comparison, estimates, t_critical)
-    summary = _summary_rows(comparison, estimates, file_rows, t_critical)
+    issues = {
+        key: _selection_issue(rows, comparison.rounds, suite_mode=comparison.suite_mode)
+        for key, rows in observations.items()
+    }
+    estimates = _metric_estimates(observations, issues)
+    validation_issues = {
+        (file.sha256, file.fact_directory_sha256): reason for file, reason in comparison.validation_issues
+    }
+    for key, estimate in estimates.items():
+        file = comparison.files[key[1]]
+        if reason := validation_issues.get((file.sha256, file.fact_directory_sha256)):
+            estimates[key] = estimate._replace(issue="; ".join(filter(None, (reason, estimate.issue))))
+    file_rows = _file_comparisons(comparison, estimates)
+    summary = _summary_rows(comparison, estimates, file_rows)
 
     if detail == "summary":
         return PairReportViewData(summary, (), ())
@@ -193,41 +202,47 @@ def _selected_observations(
     for endpoint_order, endpoint in enumerate((comparison.baseline, comparison.candidate)):
         for file_order, file in enumerate(comparison.files):
             key = CacheKey.for_endpoint(endpoint, file, comparison.timeout_sec)
-            selected[(endpoint_order, file_order)] = store.latest_records(key, comparison.rounds)
+            selected[(endpoint_order, file_order)] = store.latest_records(
+                key, None if comparison.suite_mode else comparison.rounds
+            )
     return selected
 
 
-def _selection_issue(rows: tuple[IndexedRecord, ...], rounds: int) -> str | None:
-    if len(rows) < rounds:
+def _selection_issue(rows: tuple[IndexedRecord, ...], rounds: int, *, suite_mode: bool) -> str | None:
+    if not suite_mode and len(rows) < rounds:
         return f"missing {rounds - len(rows)} row(s)"
-    statuses = tuple(row.record["status"] for row in rows)
-    if "failure" in statuses:
-        return "failure row selected"
-    if "timed-out" in statuses:
-        return "timeout row selected"
+    for status, label in (("failure", "failure"), ("timed-out", "timeout")):
+        selected = next((row.record for row in reversed(rows) if row.record["status"] == status), None)
+        if selected is not None:
+            issue = f"{label} row selected"
+            if suite_mode:
+                issue += f" ({len(rows)}/{rounds} attempts)"
+                if message := (selected["error_message"] or "").strip():
+                    issue += f": {message.splitlines()[0]}"
+            return issue
+    if not rows or (not suite_mode and len(rows) < rounds):
+        return f"missing {max(1, rounds - len(rows))} row(s)"
     return None
 
 
 def _metric_estimates(
     observations: dict[_ObservationKey, tuple[IndexedRecord, ...]],
     issues: dict[_ObservationKey, str | None],
-    t_critical: float | None,
 ) -> dict[_MetricKey, _MetricEstimate]:
     result: dict[_MetricKey, _MetricEstimate] = {}
     for (endpoint_order, file_order), rows in observations.items():
         for metric in _METRICS:
             values = [float(value) for row in rows if (value := row.record[metric]) is not None]
             issue = issues[(endpoint_order, file_order)]
-            if issue is None and len(values) != len(rows):
+            if issue is None and (len(values) != len(rows) or any(not math.isfinite(value) for value in values)):
                 issue = "wall time unavailable" if metric == "wall_sec" else "peak RSS unavailable"
-            result[(endpoint_order, file_order, metric)] = _sample_estimate(values, issue, t_critical)
+            result[(endpoint_order, file_order, metric)] = _sample_estimate(values, issue)
     return result
 
 
 def _file_comparisons(
     comparison: ComparisonSpec,
     estimates: dict[_MetricKey, _MetricEstimate],
-    t_critical: float | None,
 ) -> tuple[FileComparisonView, ...]:
     rows: list[FileComparisonView] = []
     for file_order in range(len(comparison.files)):
@@ -240,7 +255,7 @@ def _file_comparisons(
                     metric,
                     baseline.estimate,
                     candidate.estimate,
-                    _ratio_estimate(baseline, candidate, t_critical),
+                    _ratio_estimate(baseline, candidate, suite_mode=comparison.suite_mode),
                 )
             )
     return tuple(rows)
@@ -249,11 +264,14 @@ def _file_comparisons(
 def _ratio_estimate(
     baseline: _MetricEstimate,
     candidate: _MetricEstimate,
-    t_critical: float | None,
+    *,
+    suite_mode: bool = False,
 ) -> RatioEstimate:
     baseline_mean = baseline.estimate.point
     candidate_mean = candidate.estimate.point
     issue = baseline.issue or candidate.issue
+    if suite_mode and issue is not None and issue.startswith("missing") and candidate.issue is not None:
+        issue = candidate.issue
     if issue is not None:
         return RatioEstimate(Estimate(None, None, None), "invalid", issue)
     if baseline_mean is None or candidate_mean is None:
@@ -264,8 +282,9 @@ def _ratio_estimate(
     point = candidate_mean / baseline_mean
     if min(baseline.sample_count, candidate.sample_count) < 2:
         return RatioEstimate(Estimate(point, None, None), "point_only", "CI undefined for n < 2")
-    if baseline.var_mean is None or candidate.var_mean is None or t_critical is None:
-        raise ValueError("multi-sample ratio is missing variance or its t critical value")
+    if baseline.var_mean is None or candidate.var_mean is None:
+        raise ValueError("multi-sample ratio is missing variance")
+    t_critical = float(stats.t.ppf(0.975, min(baseline.sample_count, candidate.sample_count) - 1))
     critical_squared = t_critical * t_critical
     fieller_a = baseline_mean * baseline_mean - critical_squared * baseline.var_mean
     fieller_d = candidate_mean * candidate_mean - critical_squared * candidate.var_mean
@@ -295,8 +314,9 @@ def _summary_rows(
     comparison: ComparisonSpec,
     estimates: dict[_MetricKey, _MetricEstimate],
     file_rows: tuple[FileComparisonView, ...],
-    t_critical: float | None,
 ) -> tuple[SummaryView, ...]:
+    if comparison.suite_mode:
+        return tuple(SummaryView(row.metric, "file", row.file_order, row.ratio) for row in file_rows)
     baseline = [estimates[(0, order, "wall_sec")] for order in range(len(comparison.files))]
     candidate = [estimates[(1, order, "wall_sec")] for order in range(len(comparison.files))]
     first_issue = next(
@@ -321,7 +341,6 @@ def _summary_rows(
             math.fsum(estimate.var_mean or 0.0 for estimate in candidate),
             None,
         ),
-        t_critical,
     )
     rows = [SummaryView("wall_sec", "suite", None, suite_ratio)]
     tail_specs: tuple[tuple[MetricName, SummaryKind], ...] = (
@@ -400,6 +419,8 @@ def _timing_breakdowns(
             )
         )
 
+    if comparison.suite_mode:
+        return tuple(files)
     suite_issue = next((row.issue for row in files if row.issue is not None), None)
     suite = FileTimingBreakdown(
         None,
@@ -513,7 +534,6 @@ def _sum_ruleset_groups(groups: Iterable[RulesetGroup]) -> RulesetGroup:
 def _sample_estimate(
     values: list[float],
     issue: str | None,
-    t_critical: float | None,
 ) -> _MetricEstimate:
     mean = statistics.fmean(values) if issue is None and values else None
     var_mean: float | None = None
@@ -521,8 +541,7 @@ def _sample_estimate(
     ci_high: float | None = None
     if mean is not None and len(values) >= 2:
         var_mean = statistics.variance(values) / len(values)
-        if t_critical is None:
-            raise ValueError("multi-sample estimate is missing its t critical value")
+        t_critical = float(stats.t.ppf(0.975, len(values) - 1))
         half_width = t_critical * math.sqrt(var_mean)
         ci_low = mean - half_width
         ci_high = mean + half_width

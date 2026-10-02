@@ -1,0 +1,430 @@
+"""Prepare standalone paper workloads from pinned author sources.
+
+This command owns acquisition/correctness evidence, never benchmark observations.
+The generated manifest is the single input to suite collection and figures.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import shutil
+import time
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+from scripts.hardboiled_replay import egglog_forms
+from scripts.reproduction_inventory import FAMILIES, ROOT, expected_cases, select_cases
+from scripts.reproduction_process import exclusive_job
+from scripts.source_tools import Preparation, acquire_source, sha256_file
+
+STOP_STATUSES = {"resource-stopped", "memory-limit", "cancelled", "interrupted"}
+
+
+def write_manifest(directory: Path, manifest: dict[str, Any]) -> None:
+    """Replace changed metadata; retain strict evidence history for exact identity matching."""
+    case_files = {case["id"]: set(case["workloads"]) for case in manifest.get("cases", [])}
+    if "cases" in manifest:
+        for workload in manifest["workloads"]:
+            workload["aliases"] = [
+                alias for alias in workload["aliases"] if workload["file"] in case_files.get(alias["case"], ())
+            ]
+        manifest["workloads"] = [workload for workload in manifest["workloads"] if workload["aliases"]]
+    # Strict evidence is an append-only identity-keyed history. Keep it even
+    # while regeneration is interrupted before the same input bytes reappear.
+    path = directory / "manifest.json"
+    content = json.dumps(manifest, indent=2) + "\n"
+    if not path.is_file() or path.read_text() != content:
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(content)
+        temporary.replace(path)
+
+
+def publish_workload(
+    directory: Path, manifest: dict[str, Any], case: dict[str, Any], source: Path, order: int, adaptations: list[str]
+) -> None:
+    """Keep one immutable file per identity and all independent source aliases."""
+    data = source.read_bytes()
+    forms = [tokens for _, _, tokens in egglog_forms(data.decode())]
+    if not any(tokens[1] in {"check", "extract"} for tokens in forms):
+        raise ValueError("source emitted a setup/helper call without an output query")
+    if any(tokens[1] in {"include", "input", "prove", "prove-extract"} for tokens in forms):
+        raise ValueError("workload must be self-contained and treatment-neutral")
+    digest = hashlib.sha256(data).hexdigest()
+    target = directory / (digest + ".egg")
+    if target.exists() and target.read_bytes() != data:
+        raise ValueError("content-addressed corpus file changed")
+    if not target.exists():
+        target.write_bytes(data)
+    workload = next((row for row in manifest["workloads"] if row["file"] == target.name), None)
+    if workload is None:
+        workload = {
+            "file": target.name,
+            "sha256": "sha256:" + digest,
+            "facts_sha256": "",
+            "aliases": [],
+            "adaptations": adaptations,
+        }
+        manifest["workloads"].append(workload)
+    for adaptation in adaptations:
+        if adaptation not in workload["adaptations"]:
+            workload["adaptations"].append(adaptation)
+    alias = {"case": case["id"], "order": order}
+    if alias not in workload["aliases"]:
+        workload["aliases"].append(alias)
+    if target.name not in case["workloads"]:
+        case["workloads"].append(target.name)
+
+
+def capture_source_file(case: dict[str, Any], recipe: dict[str, Any], directory: Path) -> tuple[Path, list[str]]:
+    """Fetch published programs and apply only their documented compatibility changes."""
+    directory.mkdir(parents=True, exist_ok=True)
+    family = case["family"]
+    if family == "math-growth":
+        source = ROOT / case["source"]
+        return source, ["original seven Math seeds and 24 rules; simple schedule; iteration-11 equality"]
+    url = f"{recipe['repository'].replace('https://github.com/', 'https://raw.githubusercontent.com/')}/{recipe['revision']}/{case['source']}"
+    original = directory / "source.egg"
+    if not original.exists():
+        with urllib.request.urlopen(url, timeout=60) as response, original.open("wb") as stream:
+            shutil.copyfileobj(response, stream)
+    source = original.read_text()
+    if family == "hardboiled":
+        from scripts.hardboiled_replay import omit_unexecuted_higher_order_rules
+        from scripts.reproduction_published import published_entries, verify_input
+
+        verify_input(published_entries(recipe)[case["id"]], original.read_bytes())
+        adapted = omit_unexecuted_higher_order_rules(source)
+        changes = ["omit statically unscheduled higher-order rules"] if adapted != source else []
+    else:
+        from scripts.luminal import luminal_witness
+
+        root, check = luminal_witness(source)
+        adapted = source.rstrip() + "\n\n" + check + "\n"
+        changes = [f"append equality between seeded {root} Iota and its derived KernelIota lowering"]
+    (directory / "source.json").write_text(
+        json.dumps({"url": url, "sha256": sha256_file(original), "adaptations": changes}, indent=2) + "\n"
+    )
+    replay = directory / "replay.egg"
+    replay.write_text(adapted)
+    return replay, changes
+
+
+def prepare_family(
+    family: str,
+    directory: Path,
+    engine: Path,
+    recipe: dict[str, Any],
+    *,
+    case_ids: list[str] | None = None,
+    timeout_sec: float = 300,
+) -> dict[str, Any]:
+    """Acquire/build the source environment once, with no historical local prerequisites."""
+    from scripts.reproduction_prepare_churchroad import REVISIONS as churchroad_pins
+    from scripts.reproduction_prepare_dialegg import DIALEGG_REVISION as dialegg_revision
+    from scripts.reproduction_prepare_eggcc import REVISION as eggcc_revision
+    from scripts.reproduction_prepare_misaal import MISAAL_REVISION
+
+    expected = {
+        "eggcc": ("https://github.com/egraphs-good/eggcc", eggcc_revision),
+        "dialegg": ("https://github.com/AzizZayed/dialegg-cgo-artifact", dialegg_revision),
+        "churchroad": ("https://github.com/gussmith23/churchroad", churchroad_pins["churchroad"][1]),
+        "misaal": ("https://github.com/RafaeNoor/MISAAL", MISAAL_REVISION),
+    }
+    if (recipe["repository"].removesuffix(".git"), recipe["revision"]) != expected[family]:
+        raise ValueError(f"{family} recipe differs from its source adapter pin")
+    if family == "eggcc":
+        from scripts.reproduction_prepare_eggcc import prepare_eggcc
+
+        result = prepare_eggcc(directory, engine)
+    elif family == "dialegg":
+        from scripts.reproduction_prepare_dialegg import prepare_dialegg
+
+        result = prepare_dialegg(directory, engine)
+    elif family == "churchroad":
+        from scripts.reproduction_prepare_churchroad import prepare_churchroad
+
+        result = prepare_churchroad(directory, engine)
+        if result["status"] == "success":
+            driver = Preparation(directory, continuation=True)
+            later = recipe["later_evaluation"]
+            source = acquire_source(driver, "churchroad-evaluation", later["repository"], later["revision"])
+            settings_path = Path(result["settings"])
+            settings = json.loads(settings_path.read_text())
+            settings[family]["paths"]["source_root"] = str(source)
+            settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+    elif family == "misaal":
+        from scripts.reproduction_prepare_misaal import prepare_exports
+
+        result = prepare_exports(directory, engine, case_ids=case_ids, timeout_sec=timeout_sec)
+    else:
+        raise ValueError(f"no source generator for {family}")
+    if result["status"] != "success":
+        return result
+    settings = json.loads(Path(result["settings"]).read_text())[family]
+    if family == "dialegg":
+        from scripts.dialegg_capture import prepare_complete_dialegg
+
+        build = directory / "frontend"
+        build.mkdir()
+        binary, evidence = prepare_complete_dialegg(
+            Path(settings["paths"]["llvm18_prefix"]), Path(settings["paths"]["dialegg_source"]), build, 600
+        )
+        if binary is None:
+            failure = evidence["builds"][-1]
+            return {"status": failure["status"], "reason": "DialEgg frontend build failed"}
+        settings["paths"]["prepared_frontend"] = str(binary)
+    return {"status": "success", "settings": settings}
+
+
+def capture_case(
+    case: dict[str, Any], settings: dict[str, Any], directory: Path, engine: Path, timeout_sec: float
+) -> dict[str, Any]:
+    """Stop at completed Egglog work; downstream code generation is not required."""
+    paths = {key: Path(value) for key, value in settings["paths"].items() if value is not None}
+    family = case["family"]
+    if family in {"eggcc", "churchroad"}:
+        from scripts.suite_capture_eggcc_churchroad import capture_complete
+
+        config = {**case, **case["configuration"]}
+        if case.get("source_set") == "later_evaluation":
+            config["source"] = str(paths["source_root"] / case["source"])
+        return capture_complete(
+            family,
+            [config],
+            directory,
+            paths["checkout"],
+            paths["binary"],
+            engine,
+            timeout_sec=timeout_sec,
+            validate_ordinary=False,
+        )[0]
+    if family == "dialegg":
+        from scripts.dialegg_capture import capture_complete_dialegg
+
+        directory.mkdir(parents=True)
+        args = argparse.Namespace(**paths, timeout_sec=timeout_sec, validate_ordinary=False)
+        record: dict[str, Any] = capture_complete_dialegg(args, [case["id"]], directory)["cases"][case["id"]]
+        return record
+    from scripts.misaal_reproduction import capture_misaal
+
+    request = paths["requests"] / (case["id"] + ".json")
+    if json.loads(request.read_text())["source_timeout_sec"] != timeout_sec:
+        raise ValueError("MISAAL prepared timeout differs from the source capture request")
+    return capture_misaal(request, directory)
+
+
+def reproduce(
+    directory: Path, families: list[str], names: list[str], engine: Path, *, timeout_sec: float = 300
+) -> dict[str, Any]:
+    """Resume generated inputs; persist every preparation outcome before another launch."""
+    from scripts.dialegg_capture import run_complete_command
+    from scripts.reproduction_validation import validate_capture
+
+    sources = json.loads((ROOT / "benchmarks/sources.json").read_text())
+    cases = expected_cases(sources)
+    selected = select_cases(cases, families, names)
+    directory = directory.resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+    old = json.loads((directory / "manifest.json").read_text()) if (directory / "manifest.json").is_file() else {}
+    old_cases = {case["id"]: case for case in old.get("cases", [])}
+    inputs = [
+        *[path for path in (ROOT / "scripts").rglob("*") if path.suffix in {".py", ".cpp", ".h"}],
+        *[path for path in (ROOT / "benchmarks/reproduction/fixtures").rglob("*") if path.is_file()],
+    ]
+    if math_input := sources.get("math-growth", {}).get("input"):
+        inputs.append(ROOT / math_input)
+    implementation = hashlib.sha256(
+        b"".join(str(path.relative_to(ROOT)).encode() + b"\0" + path.read_bytes() for path in sorted(inputs))
+    ).hexdigest()
+    recipe_hash = hashlib.sha256(json.dumps(sources, sort_keys=True).encode()).hexdigest()
+    reusable = old.get("preparation") == {
+        "recipes_sha256": recipe_hash,
+        "implementation_sha256": implementation,
+        "engine_sha256": sha256_file(engine),
+    }
+    manifest: dict[str, Any] = {
+        "sources": sources,
+        "preparation": {
+            "recipes_sha256": recipe_hash,
+            "implementation_sha256": implementation,
+            "engine_sha256": sha256_file(engine),
+        },
+        "cases": [],
+        "workloads": [],
+        "outcomes": old.get("outcomes", []),
+    }
+    for case in cases:
+        previous = old_cases.get(case["id"])
+        row = {**case, "status": "pending", "workloads": []}
+        if previous and reusable:
+            row = previous
+        manifest["cases"].append(row)
+    selected_ids = {case["id"] for case in selected}
+    current_files = {name for case in manifest["cases"] for name in case["workloads"]}
+    manifest["workloads"] = [row for row in old.get("workloads", []) if row["file"] in current_files]
+    for workload in manifest["workloads"]:
+        if "sha256:" + sha256_file(directory / workload["file"]) != workload["sha256"]:
+            raise ValueError(f"prepared workload changed: {workload['file']}")
+    write_manifest(directory, manifest)
+    job_root = ROOT / "benchmarks/local/reproduction" / str(time.time_ns())
+    job_root.mkdir(parents=True)
+    environments: dict[str, dict[str, Any]] = {}
+    for case in manifest["cases"]:
+        if case["id"] not in selected_ids or (reusable and case["status"] == "ready"):
+            continue
+        family = case["family"]
+        attempt = job_root / "cases" / case["id"]
+        attempt.mkdir(parents=True)
+        case.update(status="blocked", workloads=[], evidence=str(attempt.relative_to(ROOT)))
+        try:
+            if family in {"math-growth", "luminal", "hardboiled"}:
+                replay, adaptations = capture_source_file(case, sources[family], attempt)
+                process = run_complete_command(
+                    [str(engine), str(replay.resolve())], ROOT, attempt / "ordinary", timeout_sec
+                )
+                if process.status != "success":
+                    case.update(status="blocked", reason=f"ordinary replay: {process.status}: {process.message or ''}")
+                    if process.status in STOP_STATUSES:
+                        raise RuntimeError("resource safety stop")
+                else:
+                    publish_workload(directory, manifest, case, replay, 0, adaptations)
+                    case.update(status="ready", reason=None)
+            else:
+                if family not in environments:
+                    environments[family] = prepare_family(
+                        family,
+                        job_root / family,
+                        engine,
+                        sources[family],
+                        case_ids=[
+                            row["id"]
+                            for row in manifest["cases"]
+                            if row["family"] == family and row["id"] in selected_ids and row["status"] != "ready"
+                        ],
+                        timeout_sec=timeout_sec,
+                    )
+                environment = environments[family]
+                if environment["status"] != "success":
+                    case.update(reason=environment.get("reason", environment["status"]))
+                    if environment["status"] in STOP_STATUSES:
+                        raise RuntimeError("resource safety stop")
+                else:
+                    settings = environment["settings"]
+                    blocker = next(
+                        (
+                            row
+                            for row in settings.get("configuration_blockers", [])
+                            if all(
+                                case["configuration"].get(key) == value for key, value in row["configuration"].items()
+                            )
+                            and (not row.get("case_ids") or case["id"] in row["case_ids"])
+                        ),
+                        None,
+                    )
+                    if blocker:
+                        case["reason"] = blocker["reason"]
+                    else:
+                        captured = capture_case(case, settings, attempt / "capture", engine, timeout_sec)
+                        (attempt / "capture.json").write_text(json.dumps(captured, indent=2, default=str) + "\n")
+                        if captured["status"] in STOP_STATUSES:
+                            case["reason"] = captured.get("reason", captured["status"])
+                            raise RuntimeError("resource safety stop")
+                        if captured["status"] not in {
+                            "reproduced",
+                            "ordinary-validation-pending",
+                            "ordinary-validation-failed",
+                        }:
+                            case["reason"] = captured.get("reason") or f"source capture: {captured['status']}"
+                            write_manifest(directory, manifest)
+                            continue
+                        validation = validate_capture(captured, engine, attempt / "validation", timeout_sec=timeout_sec)
+                        reason = validation.get("reason")
+                        if not reason and captured.get("failed_invocations"):
+                            reason = (
+                                f"{len(captured['failed_invocations'])} Egglog calls failed; retained complete calls"
+                            )
+                        if not reason and captured.get("parent_failure"):
+                            reason = (
+                                "Source parent failed after completed independent Egglog calls; see capture evidence"
+                            )
+                        case.update(reason=reason)
+                        sessions = captured.get("sessions") or captured.get("invocations", [])
+                        orders = {
+                            session.get("replay") or session.get("standalone"): session.get("source_order", index)
+                            for index, session in enumerate(sessions)
+                        }
+                        for workload in validation["workloads"]:
+                            publish_workload(
+                                directory,
+                                manifest,
+                                case,
+                                Path(workload),
+                                orders[workload],
+                                ["source/API modernization and output membership checks (see capture)"],
+                            )
+                        case["status"] = "ready" if case["workloads"] else "blocked"
+                        if validation["status"] in STOP_STATUSES:
+                            raise RuntimeError("resource safety stop")
+            case["evidence"] = str(attempt.relative_to(ROOT))
+        except (OSError, ValueError, RuntimeError) as error:
+            case["reason"] = case.get("reason") or str(error)
+            if str(error) == "resource safety stop" or "guard refused" in str(error):
+                write_manifest(directory, manifest)
+                raise RuntimeError(
+                    f"{case['id']}: resource guard stopped preparation; later cases remain pending"
+                ) from error
+        write_manifest(directory, manifest)
+        print(f"{case['id']}: {case['status']} ({len(case['workloads'])} workloads)", flush=True)
+    return manifest
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--family", action="append", choices=FAMILIES)
+    parser.add_argument("--case", action="append", default=[])
+    parser.add_argument("--output", type=Path, default=ROOT / "benchmarks/local/corpus")
+    parser.add_argument("--engine", type=Path)
+    parser.add_argument("--timeout-sec", type=float, default=300)
+    args = parser.parse_args()
+    if args.timeout_sec <= 0:
+        parser.error("--timeout-sec must be positive")
+    try:
+        with exclusive_job(ROOT / "benchmarks/local/reproduction/.heavy-job.lock"):
+            if args.engine is None:
+                directory = ROOT / "benchmarks/local/reproduction" / ("engine-" + str(time.time_ns()))
+                directory.mkdir(parents=True)
+                driver = Preparation(directory)
+                driver.step(
+                    "build-engine",
+                    ["cargo", "build", "--locked", "--release", "-j1", "-p", "egglog-experimental"],
+                    cwd=ROOT,
+                    timeout=1800,
+                )
+                args.engine = ROOT / os.environ.get("CARGO_TARGET_DIR", "target") / "release/egglog-experimental"
+            if not args.engine.is_file():
+                raise ValueError(f"ordinary replay engine is missing: {args.engine}")
+            manifest = reproduce(
+                args.output,
+                args.family or list(FAMILIES),
+                args.case,
+                args.engine.resolve(),
+                timeout_sec=args.timeout_sec,
+            )
+        print((args.output / "manifest.json").resolve())
+        return int(
+            any(
+                case["status"] == "pending"
+                for case in select_cases(manifest["cases"], args.family or list(FAMILIES), args.case)
+            )
+        )
+
+    except (OSError, ValueError, RuntimeError) as error:
+        parser.exit(2, f"error: {error}\n")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
