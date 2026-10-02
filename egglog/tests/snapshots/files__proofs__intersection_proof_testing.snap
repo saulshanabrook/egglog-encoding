@@ -1,7 +1,262 @@
 ---
 source: egglog/tests/files.rs
+assertion_line: 297
 expression: proof_snapshot
 ---
+(let t0 (f (f (Var "a3"))))
+(let prop0 (= t0 t0))
+(let t1 (f (f (Var "a1"))))
+(let t2 (f (f (Var "a2"))))
+(let t3 (intersect t1 t2))
+(let t4 (intersect (f (Var "a1")) (f (Var "a2"))))
+(let t5 (f t4))
+(let t6 (intersect (Var "a1") (Var "a2")))
+(let t7
+  (premises
+              (Sym (= (Var "a3") t6) (Fiat (= t6 (Var "a3"))))
+              (Fiat (= (f (Var "a1")) (f (Var "a1"))))
+              (Fiat (= (f (Var "a2")) (f (Var "a2"))))))
+(let t8
+  (substitution
+              (x3 (Var "a3"))
+              (x1 (Var "a1"))
+              (x2 (Var "a2"))
+              (f1 (f (Var "a1")))
+              (f2 (f (Var "a2")))))
+(let prf0
+  (Congr
+        (= t0 t5)
+        (Fiat prop0)
+        (Sym
+          (= (f (Var "a3")) t4)
+          (Rule
+            (= t4 (f (Var "a3")))
+            (name
+              "(rule ((= x3 (intersect x1 x2))
+         (= f1 (f x1))
+         (= f2 (f x2)))
+        ((union (intersect f1 f2) (f x3)))
+           )")
+            t7
+            t8))
+        0))
+(let prf1
+  (Rule
+          (= t3 t5)
+          (name
+            "(rule ((= x3 (intersect x1 x2))
+         (= f1 (f x1))
+         (= f2 (f x2)))
+        ((union (intersect f1 f2) (f x3)))
+           )")
+          (premises
+            (Rule
+              (= t4 t4)
+              (name
+                "(rule ((= x3 (intersect x1 x2))
+         (= f1 (f x1))
+         (= f2 (f x2)))
+        ((union (intersect f1 f2) (f x3)))
+           )")
+              t7
+              t8)
+            (Fiat (= t1 t1))
+            (Fiat (= t2 t2)))
+          (substitution
+            (x3 t4)
+            (x1 (f (Var "a1")))
+            (x2 (f (Var "a2")))
+            (f1 t1)
+            (f2 t2))))
+(Trans
+  prop0
+  (Trans (= t0 t3) prf0 (Sym (= t5 t3) prf1))
+  (Trans (= t3 t0) prf1 (Sym (= t5 t0) prf0)))
+(let t0 (f (f (Var "a3"))))
+(let t1 (f (f (Var "b3"))))
+(let t2 (f (f (Var "a1"))))
+(let t3 (f (f (Var "a2"))))
+(let t4 (intersect t2 t3))
+(let t5 (intersect (f (Var "a1")) (f (Var "a2"))))
+(let t6 (f t5))
+(let t7 (intersect (Var "a1") (Var "a2")))
+(let t8
+  (premises
+              (Sym (= (Var "a3") t7) (Fiat (= t7 (Var "a3"))))
+              (Fiat (= (f (Var "a1")) (f (Var "a1"))))
+              (Fiat (= (f (Var "a2")) (f (Var "a2"))))))
+(let t9 (f1 (f (Var "a1"))))
+(let t10
+  (substitution
+              (x3 (Var "a3"))
+              (x1 (Var "a1"))
+              (x2 (Var "a2"))
+              t9
+              (f2 (f (Var "a2")))))
+(let prf0 (Fiat (= t2 t2)))
+(let t11 (x1 (f (Var "a1"))))
+(let t12 (f1 t2))
+(let t13 (f2 t3))
+(let t14 (intersect (f (Var "a1")) (f (Var "b2"))))
+(let t15 (intersect (Var "b1") (Var "b2")))
+(let t16
+  (premises
+              (Sym (= (Var "b3") t15) (Fiat (= t15 (Var "b3"))))
+              (Fiat (= (f (Var "a1")) (f (Var "b1"))))
+              (Fiat (= (f (Var "b2")) (f (Var "b2"))))))
+(let t17
+  (substitution
+              (x3 (Var "b3"))
+              (x1 (Var "b1"))
+              (x2 (Var "b2"))
+              t9
+              (f2 (f (Var "b2")))))
+(let t18 (f (f (Var "b2"))))
+(Trans
+  (= t0 t1)
+  (Trans
+    (= t0 t4)
+    (Congr
+      (= t0 t6)
+      (Fiat (= t0 t0))
+      (Sym
+        (= (f (Var "a3")) t5)
+        (Rule
+          (= t5 (f (Var "a3")))
+          (name
+            "(rule ((= x3 (intersect x1 x2))
+       (= f1 (f x1))
+       (= f2 (f x2)))
+      ((union (intersect f1 f2) (f x3)))
+         )")
+          t8
+          t10))
+      0)
+    (Sym
+      (= t6 t4)
+      (Rule
+        (= t4 t6)
+        (name
+          "(rule ((= x3 (intersect x1 x2))
+       (= f1 (f x1))
+       (= f2 (f x2)))
+      ((union (intersect f1 f2) (f x3)))
+         )")
+        (premises
+          (Rule
+            (= t5 t5)
+            (name
+              "(rule ((= x3 (intersect x1 x2))
+       (= f1 (f x1))
+       (= f2 (f x2)))
+      ((union (intersect f1 f2) (f x3)))
+         )")
+            t8
+            t10)
+          prf0
+          (Fiat (= t3 t3)))
+        (substitution (x3 t5) t11 (x2 (f (Var "a2"))) t12 t13))))
+  (Congr
+    (= t4 t1)
+    (Rule
+      (= t4 (f t14))
+      (name
+        "(rule ((= x3 (intersect x1 x2))
+       (= f1 (f x1))
+       (= f2 (f x2)))
+      ((union (intersect f1 f2) (f x3)))
+         )")
+      (premises
+        (Rule
+          (= t14 t14)
+          (name
+            "(rule ((= x3 (intersect x1 x2))
+       (= f1 (f x1))
+       (= f2 (f x2)))
+      ((union (intersect f1 f2) (f x3)))
+         )")
+          t16
+          t17)
+        prf0
+        (Sym (= t3 t18) (Fiat (= t18 t3))))
+      (substitution (x3 t14) t11 (x2 (f (Var "b2"))) t12 t13))
+    (Rule
+      (= t14 (f (Var "b3")))
+      (name
+        "(rule ((= x3 (intersect x1 x2))
+       (= f1 (f x1))
+       (= f2 (f x2)))
+      ((union (intersect f1 f2) (f x3)))
+         )")
+      t16
+      t17)
+    0))
+(let t0 (f (f (Var "a3"))))
+(let t1 (f (f (Var "a1"))))
+(let t2 (f (f (Var "a2"))))
+(let t3 (intersect t1 t2))
+(let t4 (intersect (f (Var "a1")) (f (Var "a2"))))
+(let t5 (f t4))
+(let t6 (intersect (Var "a1") (Var "a2")))
+(let t7
+  (premises
+            (Sym (= (Var "a3") t6) (Fiat (= t6 (Var "a3"))))
+            (Fiat (= (f (Var "a1")) (f (Var "a1"))))
+            (Fiat (= (f (Var "a2")) (f (Var "a2"))))))
+(let t8
+  (substitution
+            (x3 (Var "a3"))
+            (x1 (Var "a1"))
+            (x2 (Var "a2"))
+            (f1 (f (Var "a1")))
+            (f2 (f (Var "a2")))))
+(Trans
+  (= t0 t3)
+  (Congr
+    (= t0 t5)
+    (Fiat (= t0 t0))
+    (Sym
+      (= (f (Var "a3")) t4)
+      (Rule
+        (= t4 (f (Var "a3")))
+        (name
+          "(rule ((= x3 (intersect x1 x2))
+       (= f1 (f x1))
+       (= f2 (f x2)))
+      ((union (intersect f1 f2) (f x3)))
+         )")
+        t7
+        t8))
+    0)
+  (Sym
+    (= t5 t3)
+    (Rule
+      (= t3 t5)
+      (name
+        "(rule ((= x3 (intersect x1 x2))
+       (= f1 (f x1))
+       (= f2 (f x2)))
+      ((union (intersect f1 f2) (f x3)))
+         )")
+      (premises
+        (Rule
+          (= t4 t4)
+          (name
+            "(rule ((= x3 (intersect x1 x2))
+       (= f1 (f x1))
+       (= f2 (f x2)))
+      ((union (intersect f1 f2) (f x3)))
+         )")
+          t7
+          t8)
+        (Fiat (= t1 t1))
+        (Fiat (= t2 t2)))
+      (substitution
+        (x3 t4)
+        (x1 (f (Var "a1")))
+        (x2 (f (Var "a2")))
+        (f1 t1)
+        (f2 t2)))))
 (let t0 (f (f (Var "a3"))))
 (let t1 (f (f (Var "b3"))))
 (let t2 (f (f (Var "a1"))))

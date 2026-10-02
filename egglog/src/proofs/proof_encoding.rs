@@ -497,6 +497,7 @@ impl<'a> ProofInstrumentor<'a> {
     fn global_actions_in(&self, command: &ResolvedNCommand) -> Result<usize, Error> {
         Ok(match command {
             ResolvedNCommand::CoreAction(_) => 1,
+            ResolvedNCommand::Extract(..) => 2,
             ResolvedNCommand::Input {
                 span, name, file, ..
             } => Self::input_actions(self.egraph, span, name, file)?.len(),
@@ -519,6 +520,13 @@ impl<'a> ProofInstrumentor<'a> {
                         .into_iter()
                         .map(ResolvedNCommand::CoreAction),
                 );
+            } else if let ResolvedNCommand::Extract(span, expr, variants) = &command {
+                // Extraction evaluates its input and count as actions. These
+                // evaluations may introduce terms, unlike a check's query.
+                // Record only those source inputs, never the extracted result.
+                lowered.extend([expr, variants].map(|expr| {
+                    ResolvedNCommand::CoreAction(ResolvedAction::Expr(span.clone(), expr.clone()))
+                }));
             } else {
                 lowered.push(command);
             }
@@ -1103,7 +1111,14 @@ impl<'a> ProofInstrumentor<'a> {
                 // Global definition `(set (x) e)`: x is a nullary `:internal-let`
                 // function aliasing e. Store e's value+proof directly in x's FD view
                 // (x's e-class *is* e's), so it takes no e-class of its own.
-                if generic_exprs.is_empty() && self.egraph.type_info.is_global(&func_type.name) {
+                if generic_exprs.is_empty()
+                    && self
+                        .egraph
+                        .proof_state
+                        .original_typechecking
+                        .as_ref()
+                        .is_some_and(|source| source.type_info.is_global(&func_type.name))
+                {
                     let e_value = exprs.pop().expect("a set has a value");
                     let proof = if self.proofs_enabled() {
                         self.global_value_proof(emit, &e_value)
@@ -2136,7 +2151,13 @@ impl<'a> ProofInstrumentor<'a> {
                             // `:internal-let` function whose value is read from its
                             // FD view (see `lookup_global`). This is the only custom
                             // lookup allowed here.
-                            if self.egraph.type_info.is_global(&func_type.name) {
+                            if self
+                                .egraph
+                                .proof_state
+                                .original_typechecking
+                                .as_ref()
+                                .is_some_and(|source| source.type_info.is_global(&func_type.name))
+                            {
                                 Operand::plain(self.lookup_global(&func_type.name, emit.stmts))
                             } else {
                                 panic!(
@@ -2310,6 +2331,11 @@ impl<'a> ProofInstrumentor<'a> {
         } else {
             format!(":ruleset {}", rule.ruleset)
         };
+        let subsumed_opt = if rule.include_subsumed {
+            ":internal-include-subsumed"
+        } else {
+            ""
+        };
         // Preserve a user `:naive` (else it silently reverts to seminaive).
         // Otherwise an RHS-reading rule needs `:unsafe-seminaive` (or `:naive`
         // under the test knob).
@@ -2324,7 +2350,7 @@ impl<'a> ProofInstrumentor<'a> {
             "(rule ({})
                    ({proof_prelude}
                     {})
-                    {ruleset_opt} {eval_opt}
+                    {ruleset_opt} {eval_opt} {subsumed_opt}
                     :name \"{name}\")",
             ListDisplay(facts, " "),
             ListDisplay(actions, " "),
@@ -2568,23 +2594,41 @@ impl<'a> ProofInstrumentor<'a> {
                 res.push(command);
             }
             ResolvedNCommand::Extract(span, expr, variants) => {
-                // Instrument the expressions to use view tables (like actions, not facts)
+                // The checker records input and count as separate source actions.
+                // Number each expression's nodes exactly as its Expr action, so
+                // any newly constructed term carries the corresponding FiatTerm.
+                let base = self.global_action;
                 let mut action_stmts = vec![];
-                // An extract expression binds nothing, so no name it reads can
-                // stand for a term built here, and it is no rule head.
-                let scope = Scope::default();
-                let mut head = Head::composed();
-                let fiat = Justification::Fiat;
-                let mut emit = Emit {
-                    stmts: &mut action_stmts,
-                    head: &mut head,
-                    justification: &fiat,
-                    at: ActionNodes::default(),
-                };
-                let instrumented_expr = self.instrument_action_expr(expr, &mut emit, &scope).value;
-                let instrumented_variants = self
-                    .instrument_action_expr(variants, &mut emit, &scope)
-                    .value;
+                let [instrumented_expr, instrumented_variants] = [expr, variants].map(|expr| {
+                    let action = ResolvedAction::Expr(span.clone(), expr.clone());
+                    self.action_expr_index = action_nodes(&action)
+                        .into_iter()
+                        .enumerate()
+                        .filter_map(|(index, node)| match node {
+                            ActionNode::Expr(expr) => {
+                                Some((std::ptr::from_ref(expr) as usize, index))
+                            }
+                            ActionNode::Row(_) => None,
+                        })
+                        .collect();
+                    let ResolvedAction::Expr(_, expr) = &action else {
+                        unreachable!()
+                    };
+                    let mut head = Head::composed();
+                    let mut emit = Emit {
+                        stmts: &mut action_stmts,
+                        head: &mut head,
+                        justification: &Justification::Fiat,
+                        at: ActionNodes::default(),
+                    };
+                    let value = self
+                        .instrument_action_expr(expr, &mut emit, &Scope::default())
+                        .value;
+                    self.global_action += 1;
+                    value
+                });
+                // add_term_encoding_helper advances by both source actions.
+                self.global_action = base;
 
                 // Add any action statements needed to set up the expressions
                 for stmt in action_stmts {
@@ -2622,6 +2666,7 @@ impl<'a> ProofInstrumentor<'a> {
             | ResolvedNCommand::UnstableCombinedRuleset(..)
             | ResolvedNCommand::PrintOverallStatistics(..)
             | ResolvedNCommand::PrintFunction(..)
+            | ResolvedNCommand::ProveExtract(..)
             | ResolvedNCommand::ProveExists(..) => {
                 res.push(command.to_command().make_unresolved());
             }

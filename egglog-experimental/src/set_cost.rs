@@ -1,13 +1,10 @@
-use crate::Error;
 use egglog::{
-    CommandOutput, EGraph, Enode, RawValues, Read, TermDag, TermId, UserDefinedCommand,
+    EGraph, Enode, RawValues, Read,
     ast::*,
-    extract::{CostModel, DefaultCost, Extractor, TreeAdditiveCostModel},
-    span,
+    extract::{CostModel, DefaultCost, TreeAdditiveCostModel},
     util::FreshGen,
 };
 use egglog_ast::span::Span;
-use log::log_enabled;
 use std::sync::Arc;
 
 pub fn add_set_cost(egraph: &mut EGraph) {
@@ -15,9 +12,9 @@ pub fn add_set_cost(egraph: &mut EGraph) {
         .parser
         .add_command_macro(Arc::new(SetCostDeclarations));
     egraph.parser.add_action_macro(Arc::new(SetCost));
-    egraph
-        .add_command("extract".into(), Arc::new(CustomExtract))
-        .unwrap();
+    egraph.extract_command = |egraph, sort, value, variants| {
+        egraph.extract_command_with_cost_model(sort, value, variants, DynamicCostModel)
+    };
 }
 
 struct SetCost;
@@ -40,17 +37,21 @@ impl Macro<Vec<Action>> for SetCost {
                 let args = map_fallible(args, parser, Parser::parse_expr)?;
                 let value = parser.parse_expr(value)?;
 
-                let vs = (0..args.len())
-                    .map(|_| parser.symbol_gen.fresh("set_cost_var"))
-                    .collect::<Vec<_>>();
-                let (args, mut actions): (Vec<Expr>, Vec<Action>) = vs
+                let mut actions = vec![];
+                let args = args
                     .into_iter()
-                    .zip(args)
-                    .map(|(v, e)| {
-                        let span = e.span().clone();
-                        (Expr::Var(span.clone(), v.clone()), Action::Let(span, v, e))
+                    .map(|expr| match expr {
+                        // Reusing atoms is safe and avoids unsupported primitive
+                        // global bindings in proof mode. Evaluate calls only once.
+                        Expr::Lit(..) | Expr::Var(..) => expr,
+                        expr => {
+                            let name = parser.symbol_gen.fresh("set_cost_var");
+                            let span = expr.span().clone();
+                            actions.push(Action::Let(span.clone(), name.clone(), expr));
+                            Expr::Var(span, name)
+                        }
                     })
-                    .unzip();
+                    .collect::<Vec<_>>();
 
                 // We don't create costs for nodes that don't exist.
                 actions.push(Action::Expr(
@@ -208,8 +209,7 @@ impl CostModel<DefaultCost> for DynamicCostModel {
         if egraph.get_function(&name).is_some() {
             egraph
                 .read(|state| state.lookup(&name, RawValues(enode.children.to_vec())))
-                .ok()
-                .flatten()
+                .expect("dynamic extraction cost table must have the constructor's key schema")
                 .map(|c| {
                     let cost = egraph.value_to_base::<i64>(c);
                     assert!(cost >= 0);
@@ -218,85 +218,6 @@ impl CostModel<DefaultCost> for DynamicCostModel {
                 .unwrap_or_else(|| TreeAdditiveCostModel {}.enode_cost(egraph, func, enode))
         } else {
             TreeAdditiveCostModel {}.enode_cost(egraph, func, enode)
-        }
-    }
-}
-
-struct CustomExtract;
-
-impl UserDefinedCommand for CustomExtract {
-    fn update(
-        &self,
-        egraph: &mut EGraph,
-        args: &[Expr],
-    ) -> Result<Vec<CommandOutput>, egglog::Error> {
-        match args {
-            [] => {
-                return Err(Error::ParseError(ParseError(
-                    span!(),
-                    "extract expects an expression and optional variant count".into(),
-                )));
-            }
-            [_, _, _, ..] => {
-                return Err(Error::ParseError(ParseError(
-                    args[2].span(),
-                    "extract expects at most two arguments".into(),
-                )));
-            }
-            _ => {}
-        }
-        let (sort, value) = egraph.eval_expr(&args[0])?;
-        let n = args.get(1).map(|arg| egraph.eval_expr(arg)).transpose()?;
-        let n = if let Some(nv) = n {
-            // TODO: egglog does not yet support u64
-            if nv.0.name() != "i64" {
-                let i64sort = egraph.get_arcsort_by(|s| s.name() == "i64");
-                return Err(egglog::Error::TypeError(egglog::TypeError::Mismatch {
-                    expr: args[1].clone(),
-                    expected: i64sort,
-                    actual: nv.0,
-                }));
-            }
-            egraph.value_to_base::<i64>(nv.1)
-        } else {
-            0
-        };
-
-        if n < 0 {
-            return Err(Error::ParseError(ParseError(
-                args[1].span(),
-                "Cannot extract negative number of variants".into(),
-            )));
-        }
-
-        let mut termdag = TermDag::default();
-
-        let extractor = Extractor::compute_costs_from_rootsorts(
-            Some(vec![sort.clone()]),
-            egraph,
-            DynamicCostModel,
-        );
-        // Omitted or zero variant count means best extraction.
-        if n == 0 {
-            if let Some((cost, term)) = extractor.extract_best(egraph, &mut termdag, value) {
-                if log_enabled!(log::Level::Info) {
-                    log::info!("extracted with cost {cost}: {}", termdag.to_string(term));
-                }
-                Ok(vec![CommandOutput::ExtractBest(termdag, cost, term)])
-            } else {
-                Err(Error::ExtractError(
-                    "Unable to find any valid extraction (likely due to subsume or delete)"
-                        .to_string(),
-                ))
-            }
-        } else {
-            let terms: Vec<TermId> = extractor
-                .extract_variants(egraph, &mut termdag, value, n as usize)
-                .iter()
-                .map(|e| e.1)
-                .collect();
-            log::info!("extracted variants:");
-            Ok(vec![CommandOutput::ExtractVariants(termdag, terms)])
         }
     }
 }

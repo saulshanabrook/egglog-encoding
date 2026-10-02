@@ -72,6 +72,7 @@ const RESERVED_KEYWORDS: &[&str] = &[
     "begin",
     "prove",
     "prove-exists",
+    "prove-extract",
     // actions
     "let",
     "set",
@@ -887,6 +888,30 @@ impl Parser {
                     self.parse_expr(v)?,
                 )],
                 _ => return error!(span, "usage: (extract <expr> <number of variants>?)"),
+            },
+            "prove-extract" => match tail {
+                [e] => vec![Command::ProveExtract(
+                    span.clone(),
+                    self.parse_expr(e)?,
+                    Expr::Lit(span, Literal::Int(0)),
+                    None,
+                )],
+                [e, n] => vec![Command::ProveExtract(
+                    span,
+                    self.parse_expr(e)?,
+                    self.parse_expr(n)?,
+                    None,
+                )],
+                // Internal context retained when replaying a desugared program.
+                [e, n, Sexp::Atom(name, _), context] if name == ":context" => {
+                    vec![Command::ProveExtract(
+                        span,
+                        self.parse_expr(e)?,
+                        self.parse_expr(n)?,
+                        Some(context.expect_atom("extraction context")?),
+                    )]
+                }
+                _ => return error!(span, "usage: (prove-extract <expr> <number of variants>?)"),
             },
             "check" => vec![Command::Check(
                 span,
