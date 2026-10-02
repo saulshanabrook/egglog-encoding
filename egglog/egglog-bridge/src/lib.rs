@@ -23,7 +23,7 @@ use crate::core_relations::{
     TableIdentity, TaggedRowBuffer, Value, WrappedTable, make_external_func,
 };
 use crate::numeric_id::{DenseIdMap, DenseIdMapWithReuse, NumericId, define_id};
-use egglog_concurrency::ThreadPool;
+use egglog_concurrency::{ReadOptimizedLock, ThreadPool};
 use egglog_core_relations as core_relations;
 use egglog_numeric_id as numeric_id;
 use egglog_reports::{IterationReport, ReportLevel, RuleSetReport};
@@ -52,13 +52,22 @@ use thiserror::Error;
 /// bridge `EGraph`. The state wrappers (`PureState`/`ReadState`/
 /// `WriteState`/`FullState`) live in the `egglog` crate; they read
 /// from this registry at invoke time to back name-indexed action
-/// methods. Held by the bridge `EGraph` inside an `Arc<RwLock<_>>`.
+/// methods. Held by the bridge `EGraph` inside an `Arc<ReadOptimizedLock<_>>`.
 #[derive(Clone)]
 pub struct ActionRegistry {
     table_actions: hashbrown::HashMap<String, TableAction>,
     union_action: UnionAction,
     default_panic_id: ExternalFunctionId,
 }
+
+/// Shared live directory of table-operation handles.
+pub type SharedActionRegistry = Arc<ReadOptimizedLock<ActionRegistry>>;
+
+// Keep this instantiation safe even with the lock’s currently weaker Sync bound.
+const _: fn() = || {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<ActionRegistry>();
+};
 
 impl ActionRegistry {
     pub(crate) fn new(union_action: UnionAction, default_panic_id: ExternalFunctionId) -> Self {
@@ -141,11 +150,11 @@ pub struct EGraph {
     panic_funcs: HashMap<String, ExternalFunctionId>,
     report_level: ReportLevel,
     /// Live registry of name-indexed action handles. Shared (via
-    /// `Arc<RwLock<_>>`) with state wrappers and primitive callbacks
+    /// `Arc<ReadOptimizedLock<_>>`) with state wrappers and primitive callbacks
     /// in the egglog crate so name-indexed action methods on
     /// `WriteState` / `FullState` can resolve table actions at
     /// invoke time. Mutated in place from [`add_table`](EGraph::add_table).
-    action_registry: Arc<std::sync::RwLock<ActionRegistry>>,
+    action_registry: SharedActionRegistry,
     /// Table each row-inserting external function writes, by name. A merge body
     /// calling one declares the same write dependency an explicit `set` on that
     /// table would (see [`MergeFn::fill_deps`]).
@@ -262,7 +271,7 @@ impl EGraph {
             table: uf_table,
             timestamp: ts_counter,
         };
-        let action_registry = Arc::new(std::sync::RwLock::new(ActionRegistry::new(
+        let action_registry = Arc::new(ReadOptimizedLock::new(ActionRegistry::new(
             union_action,
             default_panic_id,
         )));
@@ -418,7 +427,7 @@ impl EGraph {
         let registry = self.action_registry.clone();
         self.register_external_func(Box::new(make_external_func(
             move |state: &mut ExecutionState, args: &[Value]| {
-                let registry = registry.read().unwrap();
+                let registry = registry.read();
                 let action = registry.lookup_table(&view_name)?.clone();
                 // Too few vals and the row is staged short of its value columns;
                 // too many and the surplus lands on the timestamp.
@@ -447,7 +456,7 @@ impl EGraph {
         let registry = self.action_registry.clone();
         self.register_external_func(Box::new(make_external_func(
             move |state: &mut ExecutionState, args: &[Value]| {
-                let registry = registry.read().unwrap();
+                let registry = registry.read();
                 let action = registry.lookup_table(&view_name)?.clone();
                 let fallback = args[n_keys];
                 Some(
@@ -477,7 +486,7 @@ impl EGraph {
         let dep = table_name.clone();
         let id = self.register_external_func(Box::new(make_external_func(
             move |state: &mut ExecutionState, args: &[Value]| {
-                let action = registry.read().unwrap().lookup_table(&table_name)?.clone();
+                let action = registry.read().lookup_table(&table_name)?.clone();
                 debug_assert_eq!(
                     args.len(),
                     n_args,
@@ -500,13 +509,7 @@ impl EGraph {
     /// not declared yet.
     fn external_write_table(&self, func: ExternalFunctionId) -> Option<TableId> {
         let name = self.external_write_deps.get(&func)?;
-        Some(
-            self.action_registry
-                .read()
-                .unwrap()
-                .lookup_table(name)?
-                .table,
-        )
+        Some(self.action_registry.read().lookup_table(name)?.table)
     }
 
     pub fn free_external_func(&mut self, func: ExternalFunctionId) {
@@ -968,18 +971,17 @@ impl EGraph {
         let action = TableAction::new(self, res);
         let table_name = self.funcs[res].name.to_string();
         self.action_registry
-            .write()
-            .unwrap()
+            .lock()
             .register_table(table_name, action);
         res
     }
 
     /// A handle to the live [`ActionRegistry`] for this EGraph.
-    /// The handle is shared (`Arc<RwLock<_>>`); cloning the outer
+    /// The handle is shared (`Arc<ReadOptimizedLock<_>>`); cloning the outer
     /// `Arc` does not duplicate the underlying registry. Used by the
     /// egglog crate's primitive machinery to thread the registry into
     /// state wrappers at invoke time.
-    pub fn action_registry(&self) -> &Arc<std::sync::RwLock<ActionRegistry>> {
+    pub fn action_registry(&self) -> &SharedActionRegistry {
         &self.action_registry
     }
 
