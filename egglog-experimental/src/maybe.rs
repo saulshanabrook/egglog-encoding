@@ -18,8 +18,11 @@ use egglog::{
 use crate::type_constraints::exact_signatures;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// An optional value stored in an e-graph.
 pub struct MaybeContainer {
+    /// Whether the contained value needs canonicalization during rebuilding.
     pub do_rebuild: bool,
+    /// The optional element.
     pub data: Option<Value>,
 }
 
@@ -42,12 +45,14 @@ impl ContainerValue for MaybeContainer {
 }
 
 #[derive(Clone, Debug)]
+/// A named optional-value container sort.
 pub struct MaybeSort {
     name: String,
     element: ArcSort,
 }
 
 impl MaybeSort {
+    /// Return the sort of the optional element.
     pub fn element(&self) -> ArcSort {
         self.element.clone()
     }
@@ -419,6 +424,7 @@ pub(crate) fn add_maybe(egraph: &mut EGraph) {
     egraph.add_pure_primitive(MaybeMatch, None);
 }
 
+/// Enumerate registered Maybe sorts paired with their element sorts.
 pub fn maybe_sorts(type_info: &TypeInfo) -> Vec<(ArcSort, ArcSort)> {
     type_info
         .get_arcsorts_by(|sort| sort.value_type() == Some(TypeId::of::<MaybeContainer>()))

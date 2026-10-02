@@ -110,7 +110,7 @@ fn constructors<'db>(state: &FullState<'_, 'db>) -> Vec<Constructor<'db>> {
             // `constructor_schema` rejects the function tables, which is also
             // what keeps globals out: they lower to function tables.
             let func_type = state.constructor_schema(&name).ok()?;
-            func_type.output.is_eq_sort().then_some(func_type)
+            func_type.output().is_eq_sort().then_some(func_type)
         })
         .collect()
 }
@@ -138,7 +138,7 @@ fn substitute<'db>(
     let mut by_output: HashMap<String, Vec<usize>> = HashMap::new();
     for (index, ctor) in ctors.iter().enumerate() {
         by_output
-            .entry(ctor.output.name().to_owned())
+            .entry(ctor.output().name().to_owned())
             .or_default()
             .push(index);
     }
