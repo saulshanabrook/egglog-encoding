@@ -397,8 +397,21 @@ scopes are separate. Capture provenance and excluded inputs remain in the catalo
 ```sh
 make expanded-bench-recording  # Baselines and proof recording only.
 make figures-expanded         # Both proof treatments, paired Math, and figures.
-make figures-expanded-cached  # Existing observations only; no builds or collection.
+make figures-data             # Collection and figure inventory, without rendering.
 ```
+
+To render an existing grouped snapshot, refresh catalog metadata separately and
+name the desired images:
+
+```sh
+make figure-inventory
+make figures/expanded/math-cutoff-11.svg figures/expanded/math-cutoff-11.png \
+  figures/expanded/proof-overhead-cdf.svg figures/expanded/proof-overhead-cdf.png
+```
+
+These commands do not build or run benchmarks. Direct image targets read the
+existing `.reports-grouped.json`; they do not refresh it from `.reports.jsonl`.
+Ordinary benchmark invocations refresh the grouped snapshot after collection.
 
 Collection requests ten runs per condition. The baseline cohort requires ten
 successful normal-mode runs with mean whole-process time strictly between 0.1

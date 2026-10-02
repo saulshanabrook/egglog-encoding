@@ -320,13 +320,21 @@ Classified failures remain visible; safety or infrastructure failures stop the p
 available complete replays, not missing artifact inputs.
 
 `make figures-expanded` runs four benchmark commands, one per comparison, and
-renders only the final Math and combined overhead PNG/SVG pairs. The first
+then refreshes the figure inventory and renders only the final Math and combined
+overhead PNG/SVG pairs. Each benchmark command refreshes the shared grouped
+snapshot automatically. `make figures-data` (or `make figures-expanded-data`)
+stops after refreshing the inventory. The first
 command finishes baseline collection itself; `make expanded-pilot` is an optional
 baseline-only entrypoint, not an extra prerequisite. Each proof mode uses a
 single collection plan across the selected cohort. Off samples are shared
 between proof modes, and there are no screening or strict-validation runs. Both
 time and memory come from the same measured process, with no separate memory
 benchmark.
+
+Direct image targets render the existing grouped snapshot and inventory without
+refreshing the snapshot from `.reports.jsonl` or running benchmarks. Use
+`make figure-inventory` separately to refresh catalog metadata before rendering;
+the [figure instructions](../figures/README.md) list the concrete image targets.
 
 The eleven DialEgg exports without matching rule work are omitted before both
 baseline and paired collection. Their unchanged files and capture records remain

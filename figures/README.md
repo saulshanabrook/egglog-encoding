@@ -7,15 +7,32 @@ measurement export is required.
 
 ```sh
 make figures-parameter        # Collect missing parameter observations, then render.
-make figures-parameter-cached # Existing parameter observations only.
 make figures-expanded         # Collect expanded proof comparisons, then render.
-make figures-expanded-cached  # Existing expanded observations only.
+make figures-data             # Collect expanded comparisons and refresh the inventory.
 ```
 
-The cached targets neither build nor run benchmark executables. They refresh
-exports, render changed images, and print their absolute paths. Unchanged JSON
-keeps its modification time. Each renderer depends on its specification, data,
-and the root Makefile containing the pinned tool versions.
+Ordinary benchmark invocations refresh `.reports-grouped.json` after collection.
+Unchanged JSON keeps its modification time. `figures-data` aliases
+`figures-expanded-data`; both collect observations and then refresh catalog
+metadata without rendering. `figures-expanded` renders after those steps finish,
+including with parallel Make.
+
+To render an existing grouped snapshot without building or running benchmarks,
+name the desired image targets. Refresh expanded catalog metadata first when
+inputs, validation evidence, or the requested timeout have changed:
+
+```sh
+make figures/parameter-analysis.svg figures/parameter-analysis.png
+make figure-inventory
+make figures/expanded/math-cutoff-11.svg figures/expanded/math-cutoff-11.png \
+  figures/expanded/proof-overhead-cdf.svg figures/expanded/proof-overhead-cdf.png
+```
+
+Direct image targets require the existing grouped snapshot and, for expanded
+figures, the inventory. They do not refresh the snapshot from `.reports.jsonl`.
+Each renderer depends on its specification, those data files, and the root
+Makefile containing the pinned tool versions; only changed dependencies trigger
+rendering.
 
 Outputs, in both PNG and SVG:
 

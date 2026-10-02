@@ -27,18 +27,18 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 EXPANDED_FIGURES = ("math-cutoff-11", "proof-overhead-cdf")
+EXPANDED_IMAGES = tuple(f"figures/expanded/{name}.{ext}" for name in EXPANDED_FIGURES for ext in ("svg", "png"))
 
 
 @pytest.fixture
 def pipeline_env(tmp_path: Path) -> dict[str, str]:
     """Run the real Make graph, isolating every external executable and artifact."""
     shutil.copyfile(ROOT / "Makefile", tmp_path / "Makefile")
-    for relative in ("bin", "figures/expanded", "benchmarks/local", "benchmarking/reports"):
+    for relative in ("bin", "figures/expanded", "benchmarks/local"):
         (tmp_path / relative).mkdir(parents=True, exist_ok=True)
     for name in (*EXPANDED_FIGURES, "unselected"):
         (tmp_path / f"figures/expanded/{name}.vl.json").write_text("{}\n")
     (tmp_path / ".reports.jsonl").write_text("retained observations\n")
-    (tmp_path / "benchmarking/reports/grouped.py").write_text("# exporter dependency\n")
     (tmp_path / "inventory-source.json").write_text("{}\n")
     stub = tmp_path / "stage.py"
     stub.write_text(
@@ -49,10 +49,8 @@ def pipeline_env(tmp_path: Path) -> dict[str, str]:
             root = pathlib.Path(os.environ['PIPELINE_TEST_ROOT'])
             name, args = pathlib.Path(sys.argv[0]).name, sys.argv[1:]
             lock = root / 'collecting'
-            if name == 'bench.py' and args[0] == 'export':
-                stage = 'export'
-                assert args[args.index('--report') + 1] == '.reports.jsonl'
-            elif name == 'bench.py':
+            if name == 'bench.py':
+                assert args[0] != 'export'
                 stage = 'pilot' if '--baseline-only' in args else 'collect'
                 assert os.environ['EGGLOG_BENCH_MEMORY_GUARD'] == '1'
             elif name == 'uv' and 'benchmarking.figure_inventory' in args:
@@ -91,14 +89,13 @@ def pipeline_env(tmp_path: Path) -> dict[str, str]:
                 time.sleep(0.05)
                 with (root / '.reports.jsonl').open('a') as output:
                     output.write(json.dumps(args) + '\n')
+                write_changed(root / '.reports-grouped.json', (root / '.reports.jsonl').read_text())
                 record('collect-end')
                 lock.rmdir()
             elif stage == 'pilot':
                 time.sleep(0.05)
                 (root / 'pilot-finished').touch()
                 raise SystemExit(int(os.environ.get('PIPELINE_TEST_PILOT_EXIT', '0')))
-            elif stage == 'export':
-                write_changed(root / '.reports-grouped.json', (root / '.reports.jsonl').read_text())
             elif stage == 'inventory':
                 inventory = json.loads((root / 'inventory-source.json').read_text())
                 inventory['timeout_sec'] = int(args[args.index('--timeout-sec') + 1])
@@ -124,13 +121,26 @@ def pipeline_env(tmp_path: Path) -> dict[str, str]:
 
 
 @pytest.mark.parametrize("timeout_sec", [300, 480])
-def test_cached_figures_export_metadata_then_render_without_collection(
+def test_inventory_then_direct_images_render_existing_snapshot_without_collection(
     tmp_path: Path, pipeline_env: dict[str, str], timeout_sec: int
 ) -> None:
     cache = tmp_path / ".reports.jsonl"
     cache_mtime = cache.stat().st_mtime_ns
+    snapshot = tmp_path / ".reports-grouped.json"
+    snapshot.write_text("existing grouped snapshot\n")
+    # A newer JSONL must not trigger a snapshot refresh during direct rendering.
+    os.utime(snapshot, (1_600_000_000, 1_600_000_000))
     result = subprocess.run(
-        ["make", "-j8", "figures-expanded-cached", f"EXPANDED_TIMEOUT_SEC={timeout_sec}"],
+        ["make", "figure-inventory", f"EXPANDED_TIMEOUT_SEC={timeout_sec}"],
+        cwd=tmp_path,
+        env=pipeline_env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == 0, result.stderr
+    result = subprocess.run(
+        ["make", "-j8", *EXPANDED_IMAGES],
         cwd=tmp_path,
         env=pipeline_env,
         capture_output=True,
@@ -139,10 +149,10 @@ def test_cached_figures_export_metadata_then_render_without_collection(
     )
     assert result.returncode == 0, result.stderr
     events = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text().splitlines()]
-    assert [event[0] for event in events] == ["export", "inventory", *(["render"] * 4)]
+    assert [event[0] for event in events] == ["inventory", *(["render"] * 4)]
     assert json.loads((tmp_path / "benchmarks/local/figure-inventory.json").read_text())["timeout_sec"] == timeout_sec
     rendered = set()
-    for _stage, *args in events[2:]:
+    for _stage, *args in events[1:]:
         assert "--yes" in args
         assert {arg for arg in args if arg.startswith("--package=")} == {
             "--package=vega@6.4.0",
@@ -161,6 +171,8 @@ def test_cached_figures_export_metadata_then_render_without_collection(
     assert rendered == {f"{name}.{extension}" for name in EXPANDED_FIGURES for extension in ("svg", "png")}
     assert cache.read_text() == "retained observations\n"
     assert cache.stat().st_mtime_ns == cache_mtime
+    assert snapshot.read_text() == "existing grouped snapshot\n"
+    assert snapshot.stat().st_mtime == 1_600_000_000
 
 
 @pytest.mark.parametrize("pilot_exit", [0, 1, 2])
@@ -180,7 +192,11 @@ def test_parallel_expanded_pipeline_orders_baselines_proofs_and_figures(
             "make",
             "-j8",
             *([f"EXPANDED_TIMEOUT_SEC={timeout_override}"] if timeout_override is not None else []),
-            *([] if recording_only else ["figures-expanded", "figures-expanded-data", "expanded-bench"]),
+            *(
+                []
+                if recording_only
+                else ["figures-expanded", "figures-data", "figures-expanded-data", "expanded-bench"]
+            ),
             "expanded-bench-recording",
             *(["expanded-pilot"] if explicit_pilot else []),
         ],
@@ -222,21 +238,21 @@ def test_parallel_expanded_pipeline_orders_baselines_proofs_and_figures(
         assert args.baseline_window == (suite == "expanded") and not args.baseline_only
         assert args.target == "figures=." and args.rounds == 10 and args.timeout_sec == (timeout_override or 300)
     remaining = events[2 * len(comparisons) :]
+    assert (tmp_path / ".reports-grouped.json").read_text() == (tmp_path / ".reports.jsonl").read_text()
     if recording_only:
         assert not remaining
         return
-    assert {event[0] for event in remaining} == {"export", "inventory", "render"}
-    assert sum(event[0] == "render" for event in remaining) == 4
+    assert [event[0] for event in remaining] == ["inventory", *(["render"] * 4)]
     inventory = json.loads((tmp_path / "benchmarks/local/figure-inventory.json").read_text())
     assert inventory["timeout_sec"] == (timeout_override or 300)
 
 
-@pytest.mark.parametrize("failure", ["collect", "export", "inventory"])
+@pytest.mark.parametrize("failure", ["collect", "inventory"])
 def test_failed_pipeline_stage_blocks_downstream_work(
     tmp_path: Path, pipeline_env: dict[str, str], failure: str
 ) -> None:
     result = subprocess.run(
-        ["make", "-j8", "figures-expanded" if failure == "collect" else "figures-expanded-cached"],
+        ["make", "-j8", "figures-expanded"],
         cwd=tmp_path,
         env={**pipeline_env, "PIPELINE_TEST_FAILURE": failure},
         capture_output=True,
@@ -247,9 +263,39 @@ def test_failed_pipeline_stage_blocks_downstream_work(
     events = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text().splitlines()]
     assert [event[0] for event in events] == {
         "collect": ["collect-start"],
-        "export": ["export"],
-        "inventory": ["export", "inventory"],
+        "inventory": [*(["collect-start", "collect-end"] * 4), "inventory"],
     }[failure]
+    assert not list((tmp_path / "figures/expanded").glob("*.svg"))
+    assert not list((tmp_path / "figures/expanded").glob("*.png"))
+
+
+@pytest.mark.parametrize("target", ["figures-data", "figures-expanded-data"])
+def test_data_targets_collect_then_refresh_inventory_without_rendering(
+    tmp_path: Path, pipeline_env: dict[str, str], target: str
+) -> None:
+    result = subprocess.run(
+        ["make", "-j8", target], cwd=tmp_path, env=pipeline_env, capture_output=True, text=True, timeout=15
+    )
+    assert result.returncode == 0, result.stderr
+    events = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text().splitlines()]
+    assert [event[0] for event in events] == [*(["collect-start", "collect-end"] * 4), "inventory"]
+    assert (tmp_path / ".reports-grouped.json").read_text() == (tmp_path / ".reports.jsonl").read_text()
+    assert not list((tmp_path / "figures/expanded").glob("*.svg"))
+    assert not list((tmp_path / "figures/expanded").glob("*.png"))
+
+
+@pytest.mark.parametrize("missing", [".reports-grouped.json", "benchmarks/local/figure-inventory.json"])
+def test_direct_images_require_existing_snapshot_and_inventory(
+    tmp_path: Path, pipeline_env: dict[str, str], missing: str
+) -> None:
+    for relative in (".reports-grouped.json", "benchmarks/local/figure-inventory.json"):
+        if relative != missing:
+            (tmp_path / relative).write_text("{}\n")
+    result = subprocess.run(
+        ["make", "-j8", *EXPANDED_IMAGES], cwd=tmp_path, env=pipeline_env, capture_output=True, text=True, timeout=15
+    )
+    assert result.returncode != 0
+    assert not (tmp_path / "events.jsonl").exists()
     assert not list((tmp_path / "figures/expanded").glob("*.svg"))
     assert not list((tmp_path / "figures/expanded").glob("*.png"))
 
@@ -335,17 +381,16 @@ def test_math_suite_admits_and_plans_all_four_endpoints_at_requested_timeout(
 
 
 @pytest.mark.parametrize(
-    ("changed", "expected_figures", "exported"),
+    ("changed", "expected_figures"),
     [
-        (None, (), False),
-        ("figures/expanded/math-cutoff-11.vl.json", ("math-cutoff-11",), False),
-        ("figures/expanded/proof-overhead-cdf.vl.json", ("proof-overhead-cdf",), False),
-        ("figures/expanded/unselected.vl.json", (), False),
-        (".reports-grouped.json", EXPANDED_FIGURES, False),
-        (".reports.jsonl", EXPANDED_FIGURES, True),
-        ("inventory-source.json", EXPANDED_FIGURES, False),
-        ("Makefile", EXPANDED_FIGURES, False),
-        ("benchmarking/reports/grouped.py", (), True),
+        (None, ()),
+        ("figures/expanded/math-cutoff-11.vl.json", ("math-cutoff-11",)),
+        ("figures/expanded/proof-overhead-cdf.vl.json", ("proof-overhead-cdf",)),
+        ("figures/expanded/unselected.vl.json", ()),
+        (".reports-grouped.json", EXPANDED_FIGURES),
+        (".reports.jsonl", ()),
+        ("inventory-source.json", EXPANDED_FIGURES),
+        ("Makefile", EXPANDED_FIGURES),
     ],
 )
 def test_cached_figures_rebuild_only_changed_dependencies(
@@ -353,12 +398,17 @@ def test_cached_figures_rebuild_only_changed_dependencies(
     pipeline_env: dict[str, str],
     changed: str | None,
     expected_figures: tuple[str, ...],
-    exported: bool,
 ) -> None:
-    command = ["make", "-j8", "figures-expanded-cached"]
+    (tmp_path / ".reports-grouped.json").write_text("existing grouped snapshot\n")
+    refresh_inventory = ["make", "figure-inventory"]
+    result = subprocess.run(
+        refresh_inventory, cwd=tmp_path, env=pipeline_env, capture_output=True, text=True, timeout=15
+    )
+    assert result.returncode == 0, result.stderr
+    command = ["make", "-j8", *EXPANDED_IMAGES]
     initial = subprocess.run(command, cwd=tmp_path, env=pipeline_env, capture_output=True, text=True, timeout=15)
     assert initial.returncode == 0, initial.stderr
-    images = [tmp_path / f"figures/expanded/{name}.{ext}" for name in EXPANDED_FIGURES for ext in ("svg", "png")]
+    images = [tmp_path / image for image in EXPANDED_IMAGES]
     # Establish deterministic dependency ordering without filesystem-resolution sleeps.
     for path in tmp_path.rglob("*"):
         if path.is_file():
@@ -374,12 +424,14 @@ def test_cached_figures_rebuild_only_changed_dependencies(
             path.write_text("retained observations\nnew observation\n")
         os.utime(path, (1_600_000_003, 1_600_000_003))
     (tmp_path / "events.jsonl").write_text("")
+    result = subprocess.run(
+        refresh_inventory, cwd=tmp_path, env=pipeline_env, capture_output=True, text=True, timeout=15
+    )
+    assert result.returncode == 0, result.stderr
     result = subprocess.run(command, cwd=tmp_path, env=pipeline_env, capture_output=True, text=True, timeout=15)
     assert result.returncode == 0, result.stderr
     events = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text().splitlines()]
-    assert {event[0] for event in events} <= {"export", "inventory", "render"}
-    assert any(event[0] == "export" for event in events) == exported
-    assert sum(event[0] == "inventory" for event in events) == 1
+    assert [event[0] for event in events] == ["inventory", *(["render"] * (2 * len(expected_figures)))]
     rendered = set()
     for stage, *args in events:
         if stage == "render":
@@ -388,3 +440,6 @@ def test_cached_figures_rebuild_only_changed_dependencies(
     assert rendered == {f"{name}.{extension}" for name in expected_figures for extension in ("svg", "png")}
     for path in images:
         assert (path.stat().st_mtime == 1_600_000_002) == (path.stem not in expected_figures)
+    assert ((tmp_path / "benchmarks/local/figure-inventory.json").stat().st_mtime == 1_600_000_001) == (
+        changed != "inventory-source.json"
+    )
