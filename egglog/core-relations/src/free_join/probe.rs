@@ -208,17 +208,19 @@ impl<'rows, 'exec> From<Arc<TrieRoot>> for AtomRows<'rows, 'exec> {
 /// reusable table index is valid.
 pub(super) enum ProbeIndex<'ctx, 'rows, 'exec> {
     /// A persistent, fully refreshed multi-column table index. This is used for
-    /// a large dense root with cacheable columns, no additional constraints,
-    /// and no stale rows. `intersect_outer` clips results when the root is a
-    /// dense subrange rather than the whole table.
+    /// a large dense root with cacheable columns and no additional constraints.
+    /// Stale candidates are allowed only when rows are retained for a later
+    /// cover and `child_shape` is `Leaf`: that cover filters them before emitting
+    /// matches. Other uses require live rows. `intersect_outer` clips results
+    /// when the root is a dense subrange rather than the whole table.
     CachedTuple {
         intersect_outer: Option<OffsetRange>,
         table: &'rows Index<TupleIndex>,
         continuations: &'rows RootContinuationCache,
         child_shape: ChildShape,
     },
-    /// The single-column counterpart of [`Self::CachedTuple`], selected under
-    /// the same catalog-index conditions.
+    /// The single-column counterpart of [`Self::CachedTuple`], also used for
+    /// occurrence indexes, with the same candidate-liveness requirements.
     CachedColumn {
         intersect_outer: Option<OffsetRange>,
         table: &'rows Index<ColumnIndex>,

@@ -723,9 +723,11 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
     ///
     /// `subset_may_contain_stale_rows` describes the source subset, not the
     /// resulting node. Physical root and dense ranges can contain tombstoned
-    /// row ids, whereas catalog indexes and packed child subsets already
-    /// contain only live rows. When constraints require materializing a
-    /// filtered subset, potentially stale inputs are refined to live rows
+    /// row ids, whereas catalog continuations and packed child subsets already
+    /// contain only live rows. Catalogs retaining stale candidates go directly
+    /// to a cover scan, never through this indexed-continuation path. When
+    /// constraints require materializing a filtered subset, potentially stale
+    /// inputs are refined to live rows
     /// first. With no constraints, the table scan used by
     /// `TrieNode::build_from_subset` already skips stale rows.
     fn build_packed_node(
@@ -931,14 +933,18 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
             },
             _ => None,
         };
-        // Cached probes borrow their row groups without filtering stale rows
-        // or slow constraints. Even an existence-only match must prove that
-        // at least one valid row remains, so reject either source of invalid
-        // candidates here and let the filtered index paths handle them.
+        // Cached probes do not filter stale rows. They may retain those
+        // candidates when the next use is a cover: Leaf rules out
+        // another indexed access in that phase, and the cover's scan_project
+        // checks liveness before producing matches. Reuse the persistent index
+        // in this case instead of rebuilding it during every proof rebuild.
+        // Existence-only probes must establish liveness immediately; indexed
+        // continuations also continue to require filtered rows.
+        let cover_checks_liveness = keep_rows && terminal_child_shape == ChildShape::Leaf;
         let can_use_catalog = root_range.is_some()
             && all_cacheable
             && constraints.is_empty()
-            && !info.table.has_stale_rows()
+            && (!info.table.has_stale_rows() || cover_checks_liveness)
             && whole_table.size() / 2 < source.size();
 
         // Occurrence scans bind one scalar through a disjunction of columns.
@@ -1160,7 +1166,9 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
                 binding_info,
                 ProbeRequest::column(
                     scan,
-                    false,
+                    // Partition discovery must select the same representation
+                    // as execution, including its retained-cover catalog path.
+                    tail.keep_rows,
                     tail.child_shape,
                     prepared.resolve(prepared_slot),
                 ),

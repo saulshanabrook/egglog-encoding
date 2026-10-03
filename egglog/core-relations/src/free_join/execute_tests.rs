@@ -31,6 +31,163 @@ use crate::free_join::{
 };
 
 #[test]
+fn retained_catalog_candidates_are_filtered_by_cover() {
+    use crate::{
+        PlanStrategy,
+        free_join::{
+            Database, get_column_index_from_tableinfo, get_index_from_tableinfo,
+            get_occurrence_index_from_tableinfo, plan::Plan,
+        },
+        table::SortedWritesTable,
+        table_shortcuts::v,
+    };
+    use egglog_reports::ReportLevel;
+
+    for workers in [1, 4] {
+        let pool = egglog_concurrency::ThreadPool::new(workers);
+        pool.install(|| {
+            // Exercise occurrence, ordinary column, and tuple catalogs. A small
+            // gate probes the index; a large occurrence gate also exercises
+            // index traversal without moving the row cover ahead of the probe.
+            for (occurrence, key_width, gate_size, fact_size, key_count) in [
+                (true, 1, 16, 64, 64),
+                (true, 1, 192, 64, 64),
+                (false, 1, 16, 64, 64),
+                (false, 2, 16, 64, 64),
+                // Enough rows for parallel execution, but few fact keys: the
+                // facts index must lead the top-level intersection. Partition
+                // discovery and execution must agree on catalog shards versus
+                // filtered-index ranges even though only execution reads rows.
+                (false, 1, 4_096, 16_384, 256),
+            ] {
+                let mut db = Database::new();
+                let [facts, gate, output] = [3, key_width, 1].map(|arity| {
+                    db.add_table(
+                        SortedWritesTable::new(
+                            arity,
+                            arity,
+                            None,
+                            vec![],
+                            Box::new(|_, old, new, _| {
+                                assert_eq!(old, new);
+                                false
+                            }),
+                        ),
+                        std::iter::empty(),
+                        std::iter::empty(),
+                    )
+                });
+                let row = |x| [v(x), v(x % key_count + 100), v(x + 200)];
+                {
+                    let mut facts_buf = db.new_buffer(facts);
+                    let mut gate_buf = db.new_buffer(gate);
+                    for x in 0..fact_size {
+                        facts_buf.stage_insert(&row(x));
+                    }
+                    for x in 0..gate_size {
+                        gate_buf.stage_insert(&[v(x + 100), v(x + 200)][..key_width]);
+                    }
+                }
+                db.merge_all();
+                let columns = [ColumnId::new(1), ColumnId::new(2)];
+                // Build before deletion so the index retains invalid candidates.
+                if occurrence {
+                    drop(get_occurrence_index_from_tableinfo(
+                        db.get_table_info(facts),
+                        &columns,
+                    ));
+                } else if key_width == 1 {
+                    drop(get_column_index_from_tableinfo(
+                        db.get_table_info(facts),
+                        columns[0],
+                    ));
+                } else {
+                    drop(get_index_from_tableinfo(db.get_table_info(facts), &columns));
+                }
+                {
+                    let mut buf = db.new_buffer(facts);
+                    for x in 0..3 {
+                        buf.stage_remove(&row(x));
+                    }
+                }
+                db.merge_all();
+                assert!(db.get_table(facts).has_stale_rows());
+                if occurrence {
+                    let index =
+                        get_occurrence_index_from_tableinfo(db.get_table_info(facts), &columns);
+                    assert!(index.get().unwrap().get_subset(&v(100)).is_some());
+                } else if key_width == 1 {
+                    let index =
+                        get_column_index_from_tableinfo(db.get_table_info(facts), columns[0]);
+                    assert!(index.get().unwrap().get_subset(&v(100)).is_some());
+                } else {
+                    let index = get_index_from_tableinfo(db.get_table_info(facts), &columns);
+                    assert!(index.get().unwrap().get_subset(&row(0)[1..]).is_some());
+                }
+                let mut rsb = db.new_rule_set();
+                let mut query = rsb.new_rule();
+                query.set_plan_strategy(PlanStrategy::PureSize);
+                query.set_no_decomp(true);
+                let value = query.new_var();
+                let id = query.new_var();
+                let from = query.new_var();
+                let to = query.new_var();
+                let args = [id.into(), from.into(), to.into()];
+                let atom = if occurrence {
+                    query.add_atom(gate, &[value.into()], &[]).unwrap();
+                    query
+                        .add_occurrence_atom(facts, &args, value.into(), &columns, &[])
+                        .unwrap()
+                } else {
+                    query.add_atom(gate, &args[1..=key_width], &[]).unwrap();
+                    query.add_atom(facts, &args, &[]).unwrap()
+                };
+                let mut rule = query.build();
+                rule.insert(output, &[id.into()]).unwrap();
+                rule.build_with_description("retained-catalog");
+                let rules = rsb.build();
+                let (plan, _, _) = rules.plans.values().next().unwrap();
+                let Plan::SinglePlan(plan) = plan else {
+                    panic!("expected a single plan")
+                };
+                let prepared = PreparedJoinIndexes::new(&db, &plan.atoms, &plan.stages);
+                let order = InstrOrder::from_iter(0..plan.stages.instrs.len());
+                let tail = scan_atom_tail_use(atom, &plan.stages.instrs, &prepared, &order, 1);
+                assert!(
+                    tail.keep_rows,
+                    "occurrence={occurrence} key_width={key_width} gate_size={gate_size}: {:?}",
+                    plan.stages
+                );
+                assert_eq!(tail.child_shape, ChildShape::Leaf);
+
+                // Deleted rows must not produce a match even though the index
+                // returns them. With the larger gate, occurrence keys from both
+                // columns match each surviving row (twice the rule matches).
+                let matching_keys = |x: usize| {
+                    usize::from(x % key_count < gate_size)
+                        + usize::from(occurrence && x + 100 < gate_size)
+                };
+                let expected = (3..fact_size)
+                    .filter(|&x| matching_keys(x) != 0)
+                    .map(v)
+                    .collect::<Vec<_>>();
+                let expected_matches: usize = (3..fact_size).map(matching_keys).sum();
+                let report = db.run_rule_set(&rules, ReportLevel::TimeOnly, None);
+                assert_eq!(report.num_matches("retained-catalog"), expected_matches);
+                let table = db.get_table(output);
+                let mut actual = table
+                    .scan(table.all().as_ref())
+                    .iter()
+                    .map(|(_, row)| row[0])
+                    .collect::<Vec<_>>();
+                actual.sort();
+                assert_eq!(actual, expected);
+            }
+        });
+    }
+}
+
+#[test]
 fn catalog_candidates_require_live_rows_before_terminal_match() {
     terminal_catalog_filter_cases(true);
 }
