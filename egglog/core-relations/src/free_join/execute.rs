@@ -15,6 +15,115 @@
 //! factorized until action execution, and clone only the live state when work
 //! moves to another task. Index selection and probing remain in the probe
 //! layer; the join-tail layer decides their order and lifetime.
+//!
+//! # Dynamic variable ordering
+//!
+//! Ordering here means choosing the next [`JoinStage`], rather than rebuilding
+//! the query plan. An `Intersect` binds one variable by intersecting its domains
+//! in the participating atoms. A `FusedIntersect` binds one or more variables from
+//! one cover atom and probes the other atoms for those values. The GJ planner
+//! initially visits variables in ID order, then fuses same-atom single scans;
+//! consequently, even a GJ plan can contain both kinds of stage. Runtime ordering
+//! does not change these groups or choose a different fused cover.
+//!
+//! The cached [`JoinStages`] and their prepared index identities stay immutable.
+//! [`InstrOrder`] maps execution positions to logical stages; only its unexecuted
+//! suffix can change. [`BindingInfo`] holds the current variable bindings and
+//! each atom's residual rows after earlier matches. These residuals let different
+//! recursive prefixes choose different orders without changing the shared plan.
+//! The same mechanism runs within each stage block of a decomposed plan.
+//!
+//! ## Greedy ordering from residual sizes
+//!
+//! [`JoinState::run_join_stages_with`] starts with the identity permutation and
+//! calls [`sort_plan_by_size`] after the header has produced the initial row
+//! subsets. Within each reorderable phase, the sorter greedily chooses stages
+//! by decreasing refinement score, then increasing estimated input size, then
+//! decreasing number of intersected relations. Refinement favors atoms already
+//! touched by other stages. Its counters start from the *logical* plan prefix
+//! before the phase, not from the physical execution history, and are updated
+//! after each greedy selection. The per-stage scoring details are in
+//! [`sort_plan_by_size_inner`](super::join_tail::sort_plan_by_size_inner).
+//!
+//! [`estimate_size`] uses the smallest participating atom's residual row count
+//! for an `Intersect`, the cover's residual row count for a `FusedIntersect`,
+//! and the materialization's key count for a `FusedIntersectMat`. These cheap
+//! estimates do not account for overlap between domains or duplicate keys.
+//! Materialization `Full`, `Value`, and `Lookup` stages remain fixed barriers;
+//! `KeyOnly` stages may participate in the greedy ordering.
+//!
+//! [`JoinState::run_plan`] periodically repeats this sort on the remaining
+//! suffix: when the incumbent estimate exceeds 32 rows, the zero-based position
+//! satisfies `cur % 3 == 1`, and another stage remains. The estimates now use
+//! residuals narrowed by this recursive prefix. This limits sorting overhead
+//! while allowing the initial choice to adapt as the join proceeds.
+//!
+//! Once a scalar stage is selected, its execution separately chooses the
+//! smallest available probe domain as the leading scan, then intersects its
+//! keys with the other scans. Successful matches narrow the participating
+//! atoms' residuals for the recursive continuation. This choice of leading
+//! relation is independent of the choice of next variable/stage; a fused stage
+//! instead retains the cover selected by the planner.
+//!
+//! ## Bounded lookahead before executing the next stage
+//!
+//! After any scheduled greedy sort, [`lookahead`] can override the next choice
+//! with a single swap. It addresses a weakness of row-count ordering: a payload
+//! scan can look cheap even though a later intersection would reject almost
+//! every prefix. Proof columns often expose this problem, but the policy uses
+//! ordinary join structure and does not classify proof or action-only variables.
+//!
+//! Lookahead is enabled only for blocks containing an ordinary fused stage and
+//! no materialization stages. At a prefix, the incumbent must have an estimate
+//! above one, must not already be a factorized leaf, and must have a successor.
+//! The prefix must also be at position zero, have an estimate above 32, or have
+//! a fused incumbent. A partition-owned top stage is excluded as described below.
+//!
+//! [`JoinState::mixed_probe_order`] inspects at most 64 stages of that suffix,
+//! including the incumbent, with a shared budget of 256 key/row probes. Scalar
+//! candidates start with at most 16 residual rows or cached distinct keys, then
+//! test those keys against the other scans. Fused candidates start with at most
+//! 16 physical cover rows and test each projected component. Only tiny scans,
+//! initialized root projections, and initialized column indexes are used; this
+//! pass never builds or refreshes an index, and does not probe occurrence scans.
+//! Missing information or an exhausted budget retains candidates. Component-wise
+//! fused probes and catalog probes that omit remaining constraints may overcount,
+//! so the resulting counts are conservative extension bounds. The probe budget
+//! does not bound all metadata and dependency traversal work.
+//!
+//! An empty bound takes priority. A positive candidate must have a bound at most
+//! four and satisfy `128 * candidate_bound < incumbent_bound`. For scalar stages,
+//! existing distinct-key counts also cap the incumbent's row-count estimate:
+//! recursion is per shared key, not per physical row. These are heuristic cost
+//! comparisons, not guaranteed selectivity or speedup ratios; an occurrence
+//! incumbent retains its row-count estimate. The selected stage still runs
+//! through the normal exact executor; lookahead neither emits matches nor
+//! filters the executor's rows itself.
+//!
+//! ## Factorization and execution invariants
+//!
+//! After either kind of reorder,
+//! [`recompute_leaf_scans`](super::join_tail::recompute_leaf_scans) updates the
+//! flags aligned with physical positions. A projection with no later consumer
+//! of its cover atom or required scalar bindings can store its rows as an
+//! independent [`BindingSet`] instead of recursively enumerating them. The
+//! Cartesian product of these factors is expanded at the action boundary.
+//!
+//! Lookahead scores a nonempty independent fused leaf as one continuation. It
+//! may promote that leaf only if the swap also moves the incumbent pure
+//! projection past its final other use of the same atom, making the displaced
+//! projection eligible for factorization. Empty candidates do not need this
+//! extra profitability condition. This is payload deferral through ordering, not a
+//! separate pass that replaces proof-side joins with lookups. A later recursive
+//! sort can reconsider the order again.
+//!
+//! Top-level parallel partitions are selected *after* the initial greedy sort
+//! and *before* lookahead. Their ownership is tied to that chosen stage's index
+//! shards or cover ranges, so its position is preserved. Descendants clear
+//! `top_partition` and may reorder their remaining suffix normally. Prepared
+//! indexes remain addressed by logical stage, and the remaining-stage bit mask
+//! describes a set, so swaps do not invalidate either. Task-local permutations,
+//! residuals, and leaf flags travel together when recursive work is forked.
 
 use std::{cell::RefCell, cmp, mem, sync::Arc};
 

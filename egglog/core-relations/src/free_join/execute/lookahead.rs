@@ -1,6 +1,10 @@
 //! Bounded residual-key lookahead for mixed/fused plans. It only changes
 //! the next stage, never filters answers or replaces the executor. Missing
 //! indexes and exhausted budgets leave conservative candidate supersets.
+//!
+//! See the [executor overview](super) for the complete dynamic variable ordering
+//! policy: the initial greedy sort, recursive reordering, this bounded override,
+//! and their interaction with factorization and parallel partitions.
 use super::super::join_tail::for_each_stage_atom;
 use super::super::packed_cache::RootProjectionSlot;
 use super::super::probe::intersect_with_dense_ref;
@@ -27,7 +31,7 @@ impl RowSink for Keys {
     }
 }
 
-fn may_overlap(a: SubsetRef<'_>, b: SubsetRef<'_>, budget: &mut usize) -> bool {
+fn may_overlap(a: SubsetRef, b: SubsetRef, budget: &mut usize) -> bool {
     match (a, b) {
         (SubsetRef::Dense(r), s) | (s, SubsetRef::Dense(r)) => {
             intersect_with_dense_ref(s, r).is_some()
@@ -52,10 +56,10 @@ fn may_overlap(a: SubsetRef<'_>, b: SubsetRef<'_>, budget: &mut usize) -> bool {
     }
 }
 
-impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
+impl JoinState<'_, '_, '_> {
     fn cached_projection(
         &self,
-        source: &AtomRows<'_, '_>,
+        source: &AtomRows,
         col: ColumnId,
         cs: &[Constraint],
     ) -> Option<RootProjectionSlot> {
@@ -68,7 +72,7 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
     fn small_keys(
         &self,
         atom: &Atom,
-        source: &AtomRows<'_, '_>,
+        source: &AtomRows,
         col: ColumnId,
         cs: &[Constraint],
         budget: &mut usize,
@@ -103,7 +107,7 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
     fn probe_scan(
         &self,
         atom: &Atom,
-        source: &AtomRows<'_, '_>,
+        source: &AtomRows,
         col: ColumnId,
         cs: &[Constraint],
         keys: &mut Keys,
@@ -147,7 +151,7 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
         &self,
         stage: &JoinStage,
         atoms: &DenseIdMap<AtomId, Atom>,
-        bindings: &BindingInfo<'_, '_>,
+        bindings: &BindingInfo,
         budget: &mut usize,
     ) -> Option<usize> {
         match stage {
@@ -279,7 +283,7 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
         &self,
         stage: &JoinStage,
         atoms: &DenseIdMap<AtomId, Atom>,
-        bindings: &BindingInfo<'_, '_>,
+        bindings: &BindingInfo,
     ) -> usize {
         let mut bound = estimate_size(stage, bindings);
         if let JoinStage::Intersect { scans, .. } = stage {
@@ -317,7 +321,7 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
         atoms: &DenseIdMap<AtomId, Atom>,
         order: &mut InstrOrder,
         cur: usize,
-        bindings: &BindingInfo<'_, '_>,
+        bindings: &BindingInfo,
     ) -> bool {
         if !stages.supports_lookahead {
             return false;
@@ -420,4 +424,4 @@ mod tests {
 
 #[cfg(test)]
 #[path = "lookahead_tests.rs"]
-mod probe_tests;
+mod lookahead_tests;
