@@ -269,6 +269,26 @@ impl TrieRoot {
         }
     }
 
+    /// Read a published scalar projection without creating its map or slot.
+    /// As with `projection_slot`, the key includes the root's column and
+    /// canonical remaining slow constraints.
+    pub(super) fn cached_projection(
+        &self,
+        column: ColumnId,
+        constraints: &[Constraint],
+    ) -> Option<RootProjectionSlot> {
+        let projections = self.root_projections.as_ref()?.get()?;
+        let mut canonical: SmallVec<[Constraint; 2]> = constraints.iter().cloned().collect();
+        canonical.sort_unstable();
+        let key = RootProjectionKey {
+            column,
+            constraints: canonical,
+        };
+        let slot = projections.get(&key)?;
+        slot.get()?;
+        Some(Arc::clone(slot.value()))
+    }
+
     /// Find the shared slot for projecting `column` after applying the scan's
     /// remaining slow `constraints`. The root subset already satisfies its
     /// fast (header) constraints, so callers must not include them here.

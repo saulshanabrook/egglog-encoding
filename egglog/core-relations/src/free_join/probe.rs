@@ -33,7 +33,10 @@ use super::{
 /// the source data via `subslice`. Use this in `for_each` paths where the result
 /// may be discarded (e.g., empty after refinement), to avoid pool allocations.
 #[inline]
-fn intersect_with_dense_ref<'a>(v: SubsetRef<'a>, range: OffsetRange) -> Option<SubsetRef<'a>> {
+pub(super) fn intersect_with_dense_ref<'a>(
+    v: SubsetRef<'a>,
+    range: OffsetRange,
+) -> Option<SubsetRef<'a>> {
     match v {
         SubsetRef::Dense(r) => {
             let resl = cmp::max(r.start, range.start);

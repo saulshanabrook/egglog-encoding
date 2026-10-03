@@ -607,7 +607,7 @@ pub(super) fn sort_plan_by_size_inner(
 /// or their prepared index state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct InstrOrder {
-    data: SmallVec<[u16; 8]>,
+    pub(super) data: SmallVec<[u16; 8]>,
 }
 
 impl InstrOrder {

@@ -1252,6 +1252,15 @@ where
         }
     }
 
+    /// Borrow an already registered handle without creating or refreshing an index.
+    pub(crate) fn get_if_present(&self, key: &K) -> Option<I> {
+        self.data
+            .read()
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, index)| index.clone())
+    }
+
     pub fn get_or_insert(&self, k: K, init: impl FnOnce() -> I) -> I {
         #[cfg(test)]
         self.get_or_insert_calls.fetch_add(1, Ordering::Relaxed);

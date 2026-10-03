@@ -64,6 +64,8 @@ use super::{
     with_pool_set,
 };
 
+mod lookahead;
+
 const TOP_COVER_PARTITIONS_PER_WORKER: usize = 4;
 const MIN_TOP_COVER_ROWS_PER_PARTITION: usize = 256;
 const TOP_INDEX_RANGES_PER_WORKER: usize = 32;
@@ -1501,6 +1503,25 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
             // produced by earlier stages. Packed child families make the
             // resulting atom-local successor choice safe to cache again.
             sort_plan_by_size(instr_order, leaf_scans, cur, &stages.instrs, binding_info);
+            cur_size = estimate_size(&stages.instrs[instr_order.get(cur)], binding_info);
+        }
+
+        // Skip cheap or already-factorized stages to limit speculative
+        // overhead. Preserve partition ownership and materialization barriers.
+        if stages.supports_lookahead
+            && cur_size > 1
+            && !leaf_scans[cur]
+            && cur + 1 < instr_order.len()
+            && top_partition.is_none()
+            && (cur == 0
+                || cur_size > 32
+                || matches!(
+                    &stages.instrs[instr_order.get(cur)],
+                    JoinStage::FusedIntersect { .. }
+                ))
+            && self.mixed_probe_order(stages, atoms, instr_order, cur, binding_info)
+        {
+            super::join_tail::recompute_leaf_scans(instr_order, leaf_scans, &stages.instrs, cur);
             cur_size = estimate_size(&stages.instrs[instr_order.get(cur)], binding_info);
         }
 

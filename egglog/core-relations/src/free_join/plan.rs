@@ -279,6 +279,24 @@ pub(crate) struct SinglePlan {
 #[derive(Debug, Clone)]
 pub(crate) struct JoinStages {
     pub instrs: Arc<Vec<JoinStage>>,
+    /// Bounded lookahead only permutes ordinary mixed/fused stages. Keep
+    /// this immutable eligibility test out of the recursive executor.
+    pub(super) supports_lookahead: bool,
+}
+
+impl JoinStages {
+    pub(crate) fn new(instrs: Vec<JoinStage>) -> Self {
+        let supports_lookahead = instrs
+            .iter()
+            .any(|s| matches!(s, JoinStage::FusedIntersect { .. }))
+            && !instrs
+                .iter()
+                .any(|s| matches!(s, JoinStage::FusedIntersectMat { .. }));
+        Self {
+            instrs: Arc::new(instrs),
+            supports_lookahead,
+        }
+    }
 }
 
 /// Specification of the materialization of the intermediate results, as required by tree decomposition.
@@ -998,9 +1016,7 @@ fn plan_single_bag(
     instrs.splice(0..0, prologue);
     instrs.extend(epilogue);
 
-    let stages = JoinStages {
-        instrs: Arc::new(instrs),
-    };
+    let stages = JoinStages::new(instrs);
 
     (header, stages, MatSpec { msg_vars, val_vars })
 }
@@ -1043,9 +1059,7 @@ fn build_result_block(blocks: &[(JoinStages, MatSpec)]) -> JoinStages {
         });
     }
 
-    JoinStages {
-        instrs: Arc::new(result_block),
-    }
+    JoinStages::new(result_block)
 }
 
 /// The last stage and the result block have the following structure:
@@ -1083,12 +1097,10 @@ fn fuse_last_stage(
     }
 
     // Fuse the instructions
-    let mut last_block = last_block.0;
-    let mut instrs = Arc::unwrap_or_clone(last_block.instrs);
+    let mut instrs = Arc::unwrap_or_clone(last_block.0.instrs);
     instrs.extend(result_block.instrs[1..].iter().cloned());
-    last_block.instrs = Arc::new(instrs);
 
-    (blocks, last_block)
+    (blocks, JoinStages::new(instrs))
 }
 
 /// Eagerly lift materialization lookups up
@@ -1129,9 +1141,7 @@ fn loop_lifting(stages: JoinStages) -> JoinStages {
             }
         }
     }
-    JoinStages {
-        instrs: Arc::new(instrs),
-    }
+    JoinStages::new(instrs)
 }
 
 /// This is the main entry point for query optimization using tree decomposition.
@@ -1144,9 +1154,7 @@ pub(crate) fn tree_decompose_and_plan(
     macro_rules! fast_path {
         () => {{
             let (header, instrs) = plan_stages(&ctx, strat);
-            let stages = JoinStages {
-                instrs: Arc::new(instrs),
-            };
+            let stages = JoinStages::new(instrs);
 
             Plan::SinglePlan(SinglePlan {
                 atoms: Arc::new(ctx.atoms),
