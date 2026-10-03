@@ -56,7 +56,9 @@ impl<'rows, 'exec> FrameUpdates<'rows, 'exec> {
             // A two-prober frame commonly contains one binding, two atom
             // refinements, and the end marker.
             updates: Vec::with_capacity(capacity.saturating_mul(4)),
-            subsets: Vec::with_capacity(capacity.saturating_mul(2)),
+            // Many leaf frames never retain atom rows. Allocate on the first
+            // refinement instead of adding a second allocation to every batch.
+            subsets: Vec::new(),
             frames: 0,
             last_start: 0,
             last_subset_start: 0,
