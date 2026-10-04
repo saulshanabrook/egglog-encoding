@@ -1,0 +1,46 @@
+; Staged removals and insertions are applied in two phases -- every delete in a
+; batch lands before any insert -- so within one action `delete` then `set` is a
+; replace, and the order the two were staged in is not observable. Instruction
+; selection is free to fuse the pair as long as it preserves that.
+
+; A delete and a set of the SAME key in one action: the set wins.
+(function f (i64) i64 :no-merge)
+(set (f 1) 10)
+(ruleset replace-same-key)
+(rule ((= v (f 1)))
+      ((delete (f 1))
+       (set (f 1) 99))
+      :ruleset replace-same-key)
+(run-schedule replace-same-key)
+(check (= (f 1) 99))
+
+; Across lanes of one batch: lane k=1 inserts key 2 while lane k=2 deletes it.
+; Phase ordering means the insert survives; staging the pair per lane in the
+; wrong order would destroy it. Run exactly one iteration: a second one would
+; shift key 3 onto the row already there, which `:no-merge` rejects.
+(function g (i64) i64 :no-merge)
+(relation shift (i64))
+(set (g 1) 100)
+(set (g 2) 200)
+(shift 1)
+(shift 2)
+(ruleset shift-keys)
+(rule ((shift k) (= v (g k)))
+      ((delete (g k))
+       (set (g (+ k 1)) v))
+      :ruleset shift-keys)
+(run-schedule shift-keys)
+(check (= (g 2) 100))
+(check (= (g 3) 200))
+(fail (check (= (g 1) 100)))
+
+; The read side: an eq-sort rewrite plus a union, so the rebuild rules run and
+; exercise the paired canonicalization reads on the union-find view.
+(datatype Math (Num i64) (Add Math Math) (Mul Math Math))
+(ruleset math)
+(rewrite (Add a b) (Add b a) :ruleset math)
+(rewrite (Mul a (Add b c)) (Add (Mul a b) (Mul a c)) :ruleset math)
+(let $lhs (Mul (Num 3) (Add (Num 1) (Num 2))))
+(union (Num 1) (Num 2))
+(run-schedule (repeat 4 math))
+(check (= $lhs (Add (Mul (Num 3) (Num 1)) (Mul (Num 3) (Num 2)))))

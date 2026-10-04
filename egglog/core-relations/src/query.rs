@@ -801,6 +801,17 @@ impl RuleBuilder<'_, '_> {
             .push((plan, desc.into(), symbol_map))
     }
 
+    /// Return a variable bound to a fresh value of `counter` in each row.
+    ///
+    /// Each row advances the counter, so unlike [`RuleBuilder::read_counter`]
+    /// the bound values differ between rows.
+    pub fn inc_counter(&mut self, counter: CounterId) -> Variable {
+        let dst = self.qb.new_var();
+        self.qb.instrs.push(Instr::IncCounter { counter, dst });
+        self.qb.mark_defined(&dst.into());
+        dst
+    }
+
     /// Return a variable containing the result of reading the specified counter.
     pub fn read_counter(&mut self, counter: CounterId) -> Variable {
         let dst = self.qb.new_var();

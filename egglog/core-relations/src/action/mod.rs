@@ -626,36 +626,84 @@ type RowScratch = SmallVec<[Value; 12]>;
 /// it by lane. Every such slice must therefore be at least as long as the mask
 /// the lanes come from; a shorter one panics rather than silently truncating the
 /// batch.
+///
+/// Counter columns are reserved here, once for the whole batch of `n_rows`: a
+/// shared counter is one atomic, and incrementing it per row makes it a
+/// contended cache line under multiple threads.
 fn row_sources<'a>(
-    vals: impl IntoIterator<Item = WriteVal>,
+    vals: impl IntoIterator<Item = WriteVal> + Clone,
     bindings: &'a Bindings,
+    counters: &Counters,
+    n_rows: usize,
 ) -> SmallVec<[WriteSource<'a>; 12]> {
+    // Incrementing per row hands a counter's values out in column order within
+    // a row and then row by row, so a counter used by `k` columns advances `k`
+    // times per row. Reserve that whole run and keep the same interleaving.
+    let mut reserved: SmallVec<[(CounterId, usize, usize); 2]> = SmallVec::new();
+    for val in vals.clone() {
+        if let WriteVal::IncCounter(ctr) = val {
+            match reserved.iter_mut().find(|(c, _, _)| *c == ctr) {
+                Some((_, _, stride)) => *stride += 1,
+                None => reserved.push((ctr, 0, 1)),
+            }
+        }
+    }
+    for (ctr, base, stride) in reserved.iter_mut() {
+        *base = counters.inc_by(*ctr, *stride * n_rows);
+    }
+    let mut seen: SmallVec<[(CounterId, usize); 2]> = SmallVec::new();
     vals.into_iter()
         .map(|val| match val {
             WriteVal::QueryEntry(entry) => WriteSource::Value(value_source(&entry, bindings)),
-            WriteVal::IncCounter(ctr) => WriteSource::Counter(ctr),
+            WriteVal::IncCounter(ctr) => {
+                let (_, base, stride) = *reserved.iter().find(|(c, _, _)| *c == ctr).unwrap();
+                let offset = match seen.iter_mut().find(|(c, _)| *c == ctr) {
+                    Some((_, n)) => {
+                        *n += 1;
+                        *n - 1
+                    }
+                    None => {
+                        seen.push((ctr, 1));
+                        0
+                    }
+                };
+                WriteSource::Counter {
+                    base,
+                    stride,
+                    offset,
+                }
+            }
             WriteVal::CurrentVal(col) => WriteSource::Current(col),
         })
         .collect()
 }
 
-/// One column's source within [`row_sources`]. `Counter` and `Current` are
-/// per-row: a counter yields a fresh value for every lane, and `Current` copies
-/// a column written earlier in the same row.
+/// One column's source within [`row_sources`].
 enum WriteSource<'a> {
     Value(ValueSource<'a, Value>),
-    Counter(CounterId),
+    /// The `ord`th row of a counter column reserved by [`row_sources`].
+    Counter {
+        base: usize,
+        stride: usize,
+        offset: usize,
+    },
+    /// A column written earlier in the same row.
     Current(usize),
 }
 
-/// Overwrite `out` with lane `idx` of `sources`. Panics if any source slice is
-/// shorter than `idx + 1` (see [`row_sources`]).
-fn gather_row(sources: &[WriteSource<'_>], counters: &Counters, idx: usize, out: &mut RowScratch) {
+/// Overwrite `out` with lane `idx` of `sources`, where `ord` counts rows from
+/// the start of the batch. Panics if any source slice is shorter than `idx + 1`
+/// (see [`row_sources`]).
+fn gather_row(sources: &[WriteSource<'_>], idx: usize, ord: usize, out: &mut RowScratch) {
     out.clear();
     for source in sources {
         let val = match source {
             WriteSource::Value(source) => source.at(idx),
-            WriteSource::Counter(ctr) => Value::from_usize(counters.inc(*ctr)),
+            WriteSource::Counter {
+                base,
+                stride,
+                offset,
+            } => Value::from_usize(base + ord * stride + offset),
             WriteSource::Current(col) => out[*col],
         };
         out.push(val);
@@ -665,12 +713,16 @@ fn gather_row(sources: &[WriteSource<'_>], counters: &Counters, idx: usize, out:
 impl ExecutionState<'_> {
     /// Stage one row per live lane into `table`.
     fn stage_rows(&mut self, table: TableId, vals: &[WriteVal], mask: &Mask, bindings: &Bindings) {
-        let counters = self.db.counters;
-        let sources = row_sources(vals.iter().copied(), bindings);
+        let sources = row_sources(
+            vals.iter().copied(),
+            bindings,
+            self.db.counters,
+            mask.count_ones(),
+        );
         let mut row = RowScratch::new();
         self.stage_batch(table, |buf| {
-            for idx in mask.ones() {
-                gather_row(&sources, counters, idx, &mut row);
+            for (ord, idx) in mask.ones().enumerate() {
+                gather_row(&sources, idx, ord, &mut row);
                 buf.stage_insert(&row);
             }
         });
@@ -688,15 +740,19 @@ impl ExecutionState<'_> {
         mask: &Mask,
         bindings: &mut Bindings,
     ) {
-        let counters = self.db.counters;
         let mut out = with_pool_set(|ps| ps.get::<Vec<Value>>());
         out.resize(bindings.matches, Value::stale());
         {
-            let sources = row_sources(vals.iter().copied(), bindings);
+            let sources = row_sources(
+                vals.iter().copied(),
+                bindings,
+                self.db.counters,
+                mask.count_ones(),
+            );
             let mut row = RowScratch::new();
             self.stage_batch(table, |buf| {
-                for idx in mask.ones() {
-                    gather_row(&sources, counters, idx, &mut row);
+                for (ord, idx) in mask.ones().enumerate() {
+                    gather_row(&sources, idx, ord, &mut row);
                     buf.stage_insert(&row);
                     out[idx] = row[col.index()];
                 }
@@ -921,12 +977,16 @@ impl ExecutionState<'_> {
                 }
             },
             Instr::Remove { table, args } => {
-                let counters = self.db.counters;
-                let sources = row_sources(args.iter().copied().map(WriteVal::QueryEntry), bindings);
+                let sources = row_sources(
+                    args.iter().copied().map(WriteVal::QueryEntry),
+                    bindings,
+                    self.db.counters,
+                    mask.count_ones(),
+                );
                 let mut row = RowScratch::new();
                 self.stage_batch(*table, |buf| {
-                    for idx in mask.ones() {
-                        gather_row(&sources, counters, idx, &mut row);
+                    for (ord, idx) in mask.ones().enumerate() {
+                        gather_row(&sources, idx, ord, &mut row);
                         buf.stage_remove(&row);
                     }
                 });
@@ -987,6 +1047,17 @@ impl ExecutionState<'_> {
             }
             Instr::AssertEq(l, r) => assert_impl(bindings, mask, l, r, |l, r| l == r),
             Instr::AssertNe(l, r) => assert_impl(bindings, mask, l, r, |l, r| l != r),
+            Instr::IncCounter { counter, dst } => {
+                // One atomic for the batch. Lanes take consecutive values in
+                // mask order, exactly as one `inc` per lane would assign them.
+                let base = self.db.counters.inc_by(*counter, mask.count_ones());
+                let mut vals = with_pool_set(|ps| ps.get::<Vec<Value>>());
+                vals.resize(bindings.matches, Value::stale());
+                for (i, idx) in mask.ones().enumerate() {
+                    vals[idx] = Value::from_usize(base + i);
+                }
+                bindings.insert(*dst, &vals);
+            }
             Instr::ReadCounter { counter, dst } => {
                 let mut vals = with_pool_set(|ps| ps.get::<Vec<Value>>());
                 let ctr_val = Value::from_usize(self.read_counter(*counter));
@@ -1098,6 +1169,11 @@ pub(crate) enum Instr {
         ops: Vec<QueryEntry>,
         divider: usize,
     },
+
+    /// Mint a fresh value from a counter for each live lane and write it to the
+    /// given variable. Unlike [`Instr::ReadCounter`] the lanes differ: each one
+    /// advances the counter.
+    IncCounter { counter: CounterId, dst: Variable },
 
     /// Read the value of a counter and write it to the given variable.
     ReadCounter {

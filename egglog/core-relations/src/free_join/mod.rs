@@ -281,6 +281,11 @@ impl Counters {
     pub(crate) fn read(&self, ctr: CounterId) -> usize {
         self.0[ctr].load(Ordering::Acquire)
     }
+    /// Reserve `n` consecutive values, returning the first. Equivalent to `n`
+    /// calls to [`Counters::inc`], but with one atomic instead of `n`.
+    pub(crate) fn inc_by(&self, ctr: CounterId, n: usize) -> usize {
+        self.0[ctr].fetch_add(n, Ordering::Release)
+    }
     pub(crate) fn inc(&self, ctr: CounterId) -> usize {
         // We synchronize with `read_counter` but not with other increments.
         // NB: we may want to experiment with Ordering::Relaxed here.

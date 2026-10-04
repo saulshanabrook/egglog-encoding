@@ -1,0 +1,91 @@
+---
+source: egglog/tests/files.rs
+expression: proof_snapshot
+---
+(Rule
+  (= (@ExistsConstructor) (@ExistsConstructor))
+  (name "@prove_exists_rule")
+  (premises
+    (Rule
+      (= (f 1 99) (f 1 99))
+      (name
+        "(rule ((= v (f 1)))
+      ((delete (f 1))
+       (set (f 1) 99))
+        :ruleset replace-same-key )")
+      (premises (Fiat (= (f 1 10) (f 1 10))) (Fiat (= 10 10)))
+      (substitution (@n 10) (v 10)))
+    (Fiat (= 99 99)))
+  (substitution (@n1 99)))
+(let prf0 (Fiat (= 100 100)))
+(Rule
+  (= (@ExistsConstructor1) (@ExistsConstructor1))
+  (name "@prove_exists_rule1")
+  (premises
+    (Rule
+      (= (g 2 100) (g 2 100))
+      (name
+        "(rule ((shift k)
+       (= v (g k)))
+      ((delete (g k))
+       (set (g (+ k 1)) v))
+        :ruleset shift-keys )")
+      (premises
+        (Fiat (= (shift 1) (shift 1)))
+        (Fiat (= (g 1 100) (g 1 100)))
+        prf0)
+      (substitution (k 1) (@n2 100) (v 100)))
+    prf0)
+  (substitution (@n3 100)))
+(let prf0 (Fiat (= 200 200)))
+(Rule
+  (= (@ExistsConstructor2) (@ExistsConstructor2))
+  (name "@prove_exists_rule2")
+  (premises
+    (Rule
+      (= (g 3 200) (g 3 200))
+      (name
+        "(rule ((shift k)
+       (= v (g k)))
+      ((delete (g k))
+       (set (g (+ k 1)) v))
+        :ruleset shift-keys )")
+      (premises
+        (Fiat (= (shift 2) (shift 2)))
+        (Fiat (= (g 2 200) (g 2 200)))
+        prf0)
+      (substitution (k 2) (@n2 200) (v 200)))
+    prf0)
+  (substitution (@n4 200)))
+(let t0 (Add (Num 1) (Num 2)))
+(let t1 (Mul (Num 3) t0))
+(let t2 (Mul (Num 3) (Num 1)))
+(let t3 (Mul (Num 3) (Num 2)))
+(let t4 (Add (Num 1) (Num 1)))
+(let prf0 (Fiat (= (Num 1) (Num 2))))
+(let t5
+  (premises
+        (Congr
+          (= t1 (Mul (Num 3) t4))
+          (Fiat (= t1 t1))
+          (Congr (= t0 t4) (Fiat (= t0 t0)) (Sym (= (Num 2) (Num 1)) prf0) 1)
+          1)))
+(let t6 (substitution (@rewrite_var__1 t1) (a (Num 3)) (b (Num 1)) (c (Num 1))))
+(Congr
+  (= t1 (Add t2 t3))
+  (Rule
+    (= t1 (Add t2 t2))
+    (name "(rewrite (Mul a (Add b c)) (Add (Mul a b) (Mul a c)) :ruleset math)")
+    t5
+    t6)
+  (Congr
+    (= t2 t3)
+    (Rule
+      (= t2 t2)
+      (name
+        "(rewrite (Mul a (Add b c)) (Add (Mul a b) (Mul a c)) :ruleset math)")
+      t5
+      t6)
+    prf0
+    1)
+  1)

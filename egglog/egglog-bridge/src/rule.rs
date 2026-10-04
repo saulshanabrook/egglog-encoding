@@ -395,6 +395,15 @@ impl RuleBuilder<'_> {
     ) -> Variable {
         let args = args.to_vec();
         let res = self.new_var(ret_ty);
+        // Minting a bare id touches no table and cannot fail: it is a counter
+        // bump, and the instruction reserves the whole batch at once.
+        if let Some(counter) = self.egraph.id_minter_plan(func) {
+            self.query.add_rule.push(Box::new(move |inner, rb| {
+                inner.mapping.insert(res.id, rb.inc_counter(counter).into());
+                Ok(())
+            }));
+            return res;
+        }
         // A mint cannot fail, so it needs no panic fallback: lower it to a
         // batched insert whose minted column comes from the id counter.
         if let Some(mint) = self.egraph.mint_insert_plan(func, args.len()) {

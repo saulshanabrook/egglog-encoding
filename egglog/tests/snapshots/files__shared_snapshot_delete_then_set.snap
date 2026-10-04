@@ -1,0 +1,10 @@
+---
+source: egglog/tests/files.rs
+expression: snapshot_content_across_treatments
+---
+((Add 2)
+ (Mul 2)
+ (Num 3)
+ (f 1)
+ (g 2)
+ (shift 2))

@@ -149,6 +149,7 @@ pub struct EGraph {
     /// path re-resolves it per call, so the two agree only because a table
     /// name is bound at most once (the typechecker rejects a redefinition).
     mint_specs: BTreeMap<ExternalFunctionId, MintSpec>,
+    id_minter_specs: BTreeMap<ExternalFunctionId, CounterId>,
     set_if_empty_specs: BTreeMap<ExternalFunctionId, SetIfEmptySpec>,
     view_col_specs: BTreeMap<ExternalFunctionId, ViewColSpec>,
     threads: usize,
@@ -279,6 +280,7 @@ impl EGraph {
             action_registry,
             external_write_deps: Default::default(),
             mint_specs: Default::default(),
+            id_minter_specs: Default::default(),
             set_if_empty_specs: Default::default(),
             view_col_specs: Default::default(),
             threads,
@@ -481,6 +483,26 @@ impl EGraph {
         id
     }
 
+    /// Register a primitive that mints a fresh value from `counter`, ignoring
+    /// its arguments. This backs the encoding's `get-fresh!`.
+    pub fn register_id_minter(&mut self, counter: CounterId) -> ExternalFunctionId {
+        let id = self.register_external_func(Box::new(make_external_func(
+            move |state: &mut ExecutionState, _args: &[Value]| {
+                Some(Value::from_usize(state.inc_counter(counter)))
+            },
+        )));
+        self.id_minter_specs.insert(id, counter);
+        id
+    }
+
+    /// The counter a [`EGraph::register_id_minter`] primitive draws from, or
+    /// `None` if `func` is not one. A call site that lowers to
+    /// [`core_relations`]'s counter instruction reserves the batch's ids with
+    /// one atomic rather than one per row.
+    pub(crate) fn id_minter_plan(&self, func: ExternalFunctionId) -> Option<CounterId> {
+        self.id_minter_specs.get(&func).copied()
+    }
+
     /// Register the term encoder's mint op for the term-node relation named
     /// `table_name`, returning the [`ExternalFunctionId`] its call sites resolve
     /// to.
@@ -625,6 +647,7 @@ impl EGraph {
     pub fn free_external_func(&mut self, func: ExternalFunctionId) {
         self.external_write_deps.remove(&func);
         self.mint_specs.remove(&func);
+        self.id_minter_specs.remove(&func);
         self.set_if_empty_specs.remove(&func);
         self.view_col_specs.remove(&func);
         self.db.free_external_function(func);
