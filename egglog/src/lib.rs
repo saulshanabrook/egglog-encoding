@@ -384,6 +384,11 @@ pub struct Function {
     backend_id: egglog_bridge::FunctionId,
 }
 
+struct GroundActions {
+    lookups: Vec<(egglog_bridge::TableAction, Vec<usize>)>,
+    union: Option<(usize, usize)>,
+}
+
 impl Function {
     /// Get the name of the function.
     pub fn name(&self) -> &str {
@@ -1294,15 +1299,22 @@ impl EGraph {
         }
     }
 
-    /// Provide a program for use in proof checking.
+    /// Provide source for use in proof checking.
     /// This enables testing of a desugared egglog proof program outside of proof mode.
     /// When proof_testing is true, turns every `check` outside `fail` into a `prove` command.
+    /// Parse and resolve the source in one fresh proof graph, just as
+    /// [`Self::resolve_program`] does: anonymous variables allocated during parsing
+    /// share the generator that names proof rules during lowering. Passing an AST
+    /// parsed by another graph loses that state and can produce different rule names.
+    /// This helper uses the default parser and proof configuration, plus this graph's
+    /// fact directory; it does not replay custom parser or command extensions.
     /// Checks inside `fail` remain negative assertions.
     /// Not intended for general use but needed in files.rs, so public but hidden.
     #[doc(hidden)]
     pub fn set_proof_checking_program(
         &mut self,
-        prog: Vec<Command>,
+        filename: Option<String>,
+        source: &str,
         proof_testing: bool,
     ) -> Result<(), Error> {
         // make a new e-graph, desugar the program in proof mode
@@ -1313,6 +1325,7 @@ impl EGraph {
         if proof_testing {
             proof_check_eg = proof_check_eg.with_proof_testing();
         }
+        let prog = proof_check_eg.parse_program_timed(filename, source)?;
         let resolved = proof_check_eg.process_program_internal(prog, false)?;
 
         self.proof_check_program = resolved.resolved_before_proofs;
@@ -1630,6 +1643,72 @@ impl EGraph {
             Ok(_) => Ok(()),
             Err(e) => Err(Error::BackendError(e.to_string())),
         }
+    }
+
+    fn eval_ground_actions(&mut self, prepared: GroundActions) -> Result<(), Error> {
+        let union = egglog_bridge::UnionAction::new(&self.backend);
+        self.backend
+            .run_actions(|state| {
+                let mut values = Vec::with_capacity(prepared.lookups.len());
+                for (table, args) in &prepared.lookups {
+                    let args: Vec<_> = args.iter().map(|index| values[*index]).collect();
+                    values.push(table.lookup_or_insert(state, &args).unwrap());
+                }
+                if let Some((left, right)) = prepared.union {
+                    union.union(state, values[left], values[right]);
+                }
+            })
+            .map_err(|e| Error::BackendError(e.to_string()))
+    }
+
+    fn ground_table(&self, func: &FuncType, arity: usize) -> Option<egglog_bridge::TableAction> {
+        let function = self.functions.get(&func.name)?;
+        if func.subtype != FunctionSubtype::Constructor
+            || function.subtype() != FunctionSubtype::Constructor
+            || func.num_outputs() != 1
+            || function.decl.internal_view.is_some()
+            || function.is_let_binding()
+            || self.type_info.is_global(&func.name)
+            || self.type_info.indexes.contains_key(&func.name)
+        {
+            return None;
+        }
+        let table = egglog_bridge::TableAction::new(&self.backend, function.backend_id);
+        if table.kind() != TableKind::Constructor
+            || table.output_arity() != 1
+            || table.input_arity() != arity
+        {
+            return None;
+        }
+        Some(table)
+    }
+
+    /// Typecheck closed source actions directly into an execution plan. No IDs or
+    /// writes are allocated until every call and the optional union have passed.
+    fn prepare_ground_action(&self, action: &Action) -> Option<GroundActions> {
+        if self.proof_state.original_typechecking.is_some() {
+            return None;
+        }
+        let mut prepared = GroundActions {
+            lookups: Vec::new(),
+            union: None,
+        };
+        let checked = self
+            .type_info
+            .check_closed_action(action, &mut |_, func, args| {
+                // Custom sorts and encoded views retain ordinary compiled execution.
+                if !(func.output().as_ref() as &dyn Any).is::<EqSort>() {
+                    return None;
+                }
+                let table = self.ground_table(func, args.len())?;
+                let index = prepared.lookups.len();
+                prepared.lookups.push((table, args));
+                Some(index)
+            })?;
+        if let typechecking::ClosedAction::Union(left, right) = checked {
+            prepared.union = Some((left, right));
+        }
+        Some(prepared)
     }
 
     /// Get the list of all functions in the e-graph.
@@ -2276,7 +2355,7 @@ impl EGraph {
                     panic!("Globals should have been desugared away: {name} = {contents}")
                 }
                 _ => {
-                    self.eval_actions(&ResolvedActions::new(vec![action.clone()]))?;
+                    self.eval_actions(&ResolvedActions::new(vec![action]))?;
                 }
             },
             // One `eval_actions` call, so the block's `let`s stay local.
@@ -2914,6 +2993,19 @@ impl EGraph {
             let macro_expanded = macro_expanded?;
 
             for command in macro_expanded {
+                if run_commands && let Command::Action(action) = &command {
+                    let timer = Instant::now();
+                    let prepared = self.prepare_ground_action(action);
+                    self.overall_report.typecheck += timer.elapsed();
+                    if let Some(prepared) = prepared {
+                        let timer = Instant::now();
+                        let result = self.eval_ground_actions(prepared);
+                        self.overall_report.commands_actions += timer.elapsed();
+                        result?;
+                        continue;
+                    }
+                }
+
                 // handle include specially- we keep them as-is for desugaring
                 if let Command::Include(span, file) = &command {
                     let include_timer = Instant::now();
@@ -4006,6 +4098,174 @@ mod tests {
     use crate::*;
 
     use crate::PureState;
+
+    // Force the ordinary route by preserving each singleton's action boundary
+    // but giving it block origin. Other commands, including push/pop, are intact.
+    fn run_ground_action_oracle(
+        graph: &mut EGraph,
+        source: &str,
+        direct: bool,
+    ) -> Result<Vec<String>, Error> {
+        if direct {
+            return graph
+                .parse_and_run_program(None, source)
+                .map(|outputs| outputs.iter().map(ToString::to_string).collect());
+        }
+        let mut outputs = Vec::new();
+        for command in graph.parse_program(None, source)? {
+            for command in graph.resolve_command(command)?.desugared {
+                let command = match command {
+                    ResolvedNCommand::CoreAction(action) if !direct => {
+                        ResolvedNCommand::CoreActions(ResolvedActions::singleton(action))
+                    }
+                    command => command,
+                };
+                outputs.extend(graph.run_command(command)?.iter().map(ToString::to_string));
+            }
+        }
+        Ok(outputs)
+    }
+
+    fn assert_action_graphs_equal(left: &EGraph, right: &EGraph) {
+        assert_eq!(
+            left.functions.keys().collect::<Vec<_>>(),
+            right.functions.keys().collect::<Vec<_>>()
+        );
+        for (name, function) in &left.functions {
+            let mut left_rows = Vec::new();
+            left.backend.for_each(function.backend_id, |row| {
+                left_rows.push((row.vals.to_vec(), row.subsumed))
+            });
+            let mut right_rows = Vec::new();
+            right
+                .backend
+                .for_each(right.functions[name].backend_id, |row| {
+                    right_rows.push((row.vals.to_vec(), row.subsumed))
+                });
+            left_rows.sort();
+            right_rows.sort();
+            assert_eq!(left_rows, right_rows, "{name}");
+        }
+    }
+
+    #[test]
+    fn ground_actions_match_compiled_execution() {
+        for threads in [1, 4] {
+            let mut direct = EGraph::default();
+            let mut compiled = EGraph::default();
+            for graph in [&mut direct, &mut compiled] {
+                graph.backend.set_num_threads(threads);
+                graph
+                    .parse_and_run_program(
+                        None,
+                        "(datatype T (A) (B) (N1) (N2) (Pair T T) (Num i64))
+                     (relation seen (T))
+                     (function missing (T) T :no-merge)
+                     (function tuple-result (T) (T T) :merge (values old0 old1))
+                     (index Occ missing (any 0 1))
+                     (let $global (A))",
+                    )
+                    .unwrap();
+            }
+            for (source, succeeds) in [
+                ("(Pair (N1) (Pair (N1) (N2)))", true),
+                ("(seen (Pair (A) (A)))", true),
+                ("(union (A) (A))", true),
+                ("(Pair (B) (B))", true),
+                ("(union (A) (B))", true),
+                ("(union (A) (B))", true),
+                ("(check (= (Pair (A) (A)) (Pair (B) (B))))", true),
+                ("(push)", true),
+                ("(constructor Temporary () T) (Temporary)", true),
+                ("(pop)", true),
+                ("(Temporary)", false),
+                ("(Num (+ 1 2))", true),
+                ("(Pair $global (N1))", true),
+                ("(begin (Pair (N2) (N2)))", true),
+                ("(begin (let local (N2)) (Pair local local))", true),
+                ("(missing (Pair (N2) (A)))", false),
+                ("(set (missing (N1)) (N2))", true),
+                ("(delete (missing (N1)))", true),
+                ("(tuple-result (A))", false),
+                ("(Occ (A) (A) (B))", false),
+                ("(Pair (A) unbound)", false),
+                ("(Pair (A))", false),
+            ] {
+                let actual = run_ground_action_oracle(&mut direct, source, true);
+                let expected = run_ground_action_oracle(&mut compiled, source, false);
+                assert_eq!(actual.is_ok(), succeeds, "{source}: {actual:?}");
+                assert_eq!(expected.is_ok(), succeeds, "{source}: {expected:?}");
+                if let (Ok(actual), Ok(expected)) = (actual, expected) {
+                    assert_eq!(actual, expected, "{source}");
+                }
+                assert_action_graphs_equal(&direct, &compiled);
+            }
+        }
+    }
+
+    #[test]
+    fn ground_actions_check_eligibility_before_mutation() {
+        for mode in 0..3 {
+            let mut graph = match mode {
+                0 => EGraph::default(),
+                1 => EGraph::new_with_term_encoding(),
+                _ => EGraph::new_with_proofs(),
+            };
+            graph
+                .parse_and_run_program(
+                    None,
+                    "(datatype T (A) (N1) (N2) (Pair T T) (Num i64))
+                     (let $global (A))",
+                )
+                .unwrap();
+            if mode == 0 {
+                graph
+                    .parse_and_run_program(
+                        None,
+                        "(function custom (T) T :no-merge)
+                     (index Occ custom (any 0 1))",
+                    )
+                    .unwrap();
+            }
+            for (source, admitted) in [
+                ("(Pair (N1) (N2))", true),
+                ("(Pair (N1) (missing))", false),
+                ("(union (N1) (+ 1 2))", false),
+                ("(union (A) (Pair (A) (A)))", true),
+                ("(Num 1)", false),
+                ("(+ 1 2)", false),
+                ("(custom (A))", false),
+                ("(Pair $global (A))", false),
+                ("(set (custom (A)) (N1))", false),
+                ("(delete (custom (A)))", false),
+                ("(begin (A))", false),
+            ] {
+                if mode != 0 && !admitted {
+                    continue;
+                }
+                let before = graph.clone();
+                let commands = graph.parse_program(None, source).unwrap();
+                let accepted = commands.iter().any(|command| match command {
+                    Command::Action(action) => graph.prepare_ground_action(action).is_some(),
+                    _ => false,
+                });
+                assert_eq!(accepted, admitted && mode == 0, "mode {mode}: {source}");
+                assert_action_graphs_equal(&graph, &before);
+                assert!(!graph.backend.flush_updates());
+            }
+        }
+    }
+
+    #[test]
+    fn ground_actions_keep_numeric_constructor_names_distinct() {
+        let source = "(datatype T (A) (A1))
+                      (begin (A) (A) (A) (A) (A))
+                      (union (A) (A1))
+                      (check (= (A) (A1)))";
+        for direct in [true, false] {
+            run_ground_action_oracle(&mut EGraph::default(), source, direct).unwrap();
+        }
+    }
 
     #[test]
     fn execution_drops_resolved_commands_but_keeps_proof_history() {

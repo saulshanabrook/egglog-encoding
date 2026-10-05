@@ -327,3 +327,34 @@ fn unordered_container_reshaped_element_collapse_proof() {
         .parse_and_run_program(None, program)
         .unwrap();
 }
+
+#[test]
+fn desugared_proof_replay_preserves_anonymous_variable_names() {
+    for proof_testing in [false, true] {
+        let query = if proof_testing { "check" } else { "prove" };
+        let source = format!("(datatype T (A)) (A) ({query} (= _ (A)))");
+        let mut encoder = EGraph::new_with_proofs();
+        if proof_testing {
+            encoder = encoder.with_proof_testing();
+        }
+        let encoded = encoder
+            .resolve_program(None, &source)
+            .unwrap()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let mut replay = EGraph::default();
+        replay
+            .set_proof_checking_program(None, &source, proof_testing)
+            .unwrap();
+        replay.ensure_no_reserved_symbols(false);
+        let outputs = replay.parse_and_run_program(None, &encoded).unwrap();
+        assert!(
+            outputs
+                .iter()
+                .any(|output| matches!(output, CommandOutput::ProveExists { .. }))
+        );
+    }
+}
