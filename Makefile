@@ -106,3 +106,38 @@ update-snapshots:
 format:
 	uv run --locked ruff format .
 	cargo fmt --all
+
+# Same committed input, six implementations, no proof recording or extraction.
+PARAMETER_FILE := benchmarks/disequality/parameter-analysis.egg
+PARAMETER_ROUNDS ?= 10
+PARAMETER_TIMEOUT_SEC ?= 300
+PARAMETER_ARGS = $(PARAMETER_FILE) --target figures=. --rounds $(PARAMETER_ROUNDS) --timeout-sec $(PARAMETER_TIMEOUT_SEC)
+
+.PHONY: parameter-test parameter-bench figures-parameter figures-parameter-test
+parameter-test:
+	uv run --locked pytest -q benchmarks/disequality/native/test_original.py
+
+parameter-bench:
+	./bench.py $(PARAMETER_ARGS) \
+		--treatment off --compare-treatment off --disequality-encoding ee --compare-disequality-encoding nee
+	./bench.py $(PARAMETER_ARGS) \
+		--treatment egg-de --compare-treatment egg-nee
+	./bench.py $(PARAMETER_ARGS) \
+		--treatment egg-ee --compare-treatment egg-oee
+
+figures-parameter: parameter-bench
+	$(MAKE) figures/parameter-analysis.svg figures/parameter-analysis.png
+	@printf '%s\n' "$(abspath figures/parameter-analysis.svg)" "$(abspath figures/parameter-analysis.png)"
+
+.DELETE_ON_ERROR:
+NPX ?= npx --yes
+VEGA = $(NPX) --package=vega@6.4.0 --package=vega-lite@6.4.3 --package=vega-cli@6.4.0 --package=canvas@3.2.3
+
+figures/parameter-analysis.svg: figures/parameter-analysis.vl.json .reports-grouped.json Makefile
+	cd figures && $(VEGA) vl2svg $(notdir $<) $(notdir $@)
+
+figures/parameter-analysis.png: figures/parameter-analysis.vl.json .reports-grouped.json Makefile
+	cd figures && $(VEGA) vl2png $(notdir $<) $(notdir $@) -s 3
+
+figures-parameter-test:
+	cd figures && $(VEGA) node --test parameter.test.mjs
