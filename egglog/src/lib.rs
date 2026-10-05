@@ -1730,9 +1730,9 @@ impl EGraph {
 
     /// Typecheck closed source actions directly into an execution plan. No IDs or
     /// writes are allocated until every call and the optional union have passed.
-    fn prepare_source_action(
+    fn prepare_source_action<S>(
         &self,
-        form: &Sexp<'_>,
+        form: &Sexp<'_, S>,
         calls: &mut GroundActionCache,
     ) -> Option<GroundActions> {
         let (head, action) = self.parser.closed_action(form)?;
@@ -3070,8 +3070,24 @@ impl EGraph {
                     if let Some(command) = expanded.next() {
                         break Some(command);
                     }
+                    // Proof/resolution paths already require the full AST, so
+                    // construct owned spans directly instead of converting later.
+                    if !run_commands || self.proof_state.original_typechecking.is_some() {
+                        let timer = Instant::now();
+                        let parsed = self.parser.parse_next_command(parser);
+                        self.overall_report.frontend_parse += timer.elapsed();
+                        match parsed {
+                            Ok(Some(commands)) => *expanded = commands.into_iter(),
+                            Ok(None) => break None,
+                            Err(error) => {
+                                self.flush_ground_actions(&mut pending)?;
+                                return Err(error.into());
+                            }
+                        }
+                        continue;
+                    }
                     let timer = Instant::now();
-                    let parsed = parser.next_sexp();
+                    let parsed = parser.next_sexp(|_, range| range);
                     self.overall_report.frontend_parse += timer.elapsed();
                     let form = match parsed {
                         Ok(Some(form)) => form,
@@ -3081,21 +3097,20 @@ impl EGraph {
                             return Err(error.into());
                         }
                     };
-                    if run_commands && self.proof_state.original_typechecking.is_none() {
-                        let timer = Instant::now();
-                        let prepared = self.prepare_source_action(&form, &mut ground_calls);
-                        self.overall_report.typecheck += timer.elapsed();
-                        if let Some(prepared) = prepared {
-                            self.queue_ground_action(
-                                prepared,
-                                &mut pending,
-                                &mut pending_lookups,
-                                &mut batchable,
-                            )?;
-                            continue 'program;
-                        }
+                    let timer = Instant::now();
+                    let prepared = self.prepare_source_action(&form, &mut ground_calls);
+                    self.overall_report.typecheck += timer.elapsed();
+                    if let Some(prepared) = prepared {
+                        self.queue_ground_action(
+                            prepared,
+                            &mut pending,
+                            &mut pending_lookups,
+                            &mut batchable,
+                        )?;
+                        continue 'program;
                     }
                     let timer = Instant::now();
+                    let form = form.with_spans(parser);
                     let parsed = self.parser.parse_command(&form);
                     self.overall_report.frontend_parse += timer.elapsed();
                     *expanded = match parsed {
@@ -4437,7 +4452,10 @@ mod tests {
                     _ => false,
                 });
                 assert_eq!(accepted, admitted && mode == 0, "mode {mode}: {source}");
-                let form = SexpParser::new(None, source).next_sexp().unwrap().unwrap();
+                let form = SexpParser::new(None, source)
+                    .next_sexp(|_, range| range)
+                    .unwrap()
+                    .unwrap();
                 assert_eq!(
                     graph
                         .prepare_source_action(&form, &mut GroundActionCache::default())
@@ -4484,7 +4502,7 @@ mod tests {
                       (union (N3) (N4))";
         let mut parser = SexpParser::new(None, source);
         let mut calls = GroundActionCache::default();
-        while let Some(form) = parser.next_sexp().unwrap() {
+        while let Some(form) = parser.next_sexp(|_, range| range).unwrap() {
             assert!(
                 source_graph
                     .prepare_source_action(&form, &mut calls)
@@ -4544,7 +4562,10 @@ mod tests {
                 }
             }
             for (text, admitted) in [("(A)", false), ("(F (A))", kind != "expression")] {
-                let form = SexpParser::new(None, text).next_sexp().unwrap().unwrap();
+                let form = SexpParser::new(None, text)
+                    .next_sexp(|_, range| range)
+                    .unwrap()
+                    .unwrap();
                 assert_eq!(
                     graph
                         .prepare_source_action(&form, &mut GroundActionCache::default())
@@ -4627,7 +4648,7 @@ mod tests {
             .unwrap();
         graph.command_macros.register(Arc::new(RejectA));
         let form = SexpParser::new(None, "(F (B))")
-            .next_sexp()
+            .next_sexp(|_, range| range)
             .unwrap()
             .unwrap();
         assert!(

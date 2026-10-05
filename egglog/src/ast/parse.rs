@@ -6,6 +6,7 @@ use egglog_ast::generic_ast::*;
 use egglog_ast::span::{EgglogSpan, Span, SrcFile};
 use ordered_float::OrderedFloat;
 use std::borrow::Cow;
+use std::ops::Range;
 
 #[macro_export]
 macro_rules! span {
@@ -95,13 +96,31 @@ const RESERVED_KEYWORDS: &[&str] = &[
 const COMMAND_ONLY_KEYWORDS: &[&str] = &["input", "output"];
 
 /// A parsed S-expression. Atoms borrow from the input; macros may also construct
-/// atoms with owned strings. Spans own their source and can outlive the input.
-pub enum Sexp<'a> {
+/// atoms with owned strings. The default spans own their source and can outlive
+/// the input. Streaming admission uses byte ranges until an owned span is needed.
+pub enum Sexp<'a, S = Span> {
     // Will never contain `Literal::Unit`, as this
     // will be parsed as an empty `Sexp::List`.
-    Literal(Literal, Span),
-    Atom(Cow<'a, str>, Span),
-    List(Vec<Sexp<'a>>, Span),
+    Literal(Literal, S),
+    Atom(Cow<'a, str>, S),
+    List(Vec<Sexp<'a, S>>, S),
+}
+
+impl<'a> Sexp<'a, Range<usize>> {
+    /// Restore the ordinary macro/AST representation only when admission fails.
+    pub(crate) fn with_spans(self, source: &SexpParser<'a>) -> Sexp<'a> {
+        match self {
+            Self::Literal(literal, range) => Sexp::Literal(literal, source.source_span(range)),
+            Self::Atom(atom, range) => Sexp::Atom(atom, source.source_span(range)),
+            Self::List(items, range) => Sexp::List(
+                items
+                    .into_iter()
+                    .map(|item| item.with_spans(source))
+                    .collect(),
+                source.source_span(range),
+            ),
+        }
+    }
 }
 
 impl<'a> Sexp<'a> {
@@ -323,17 +342,17 @@ impl Parser {
         &mut self,
         ctx: &mut SexpParser<'_>,
     ) -> Result<Option<Vec<Command>>, ParseError> {
-        ctx.next_sexp()?
+        ctx.next_sexp(SexpParser::source_span)?
             .map(|form| self.parse_command(&form))
             .transpose()
     }
 
     /// Admit only the command/action dispatch that produces a singleton closed
     /// action. Expression dispatch and types are checked for every call later.
-    pub(crate) fn closed_action<'s, 'a>(
+    pub(crate) fn closed_action<'s, 'a, S>(
         &self,
-        form: &'s Sexp<'a>,
-    ) -> Option<(Option<&'s str>, typechecking::ClosedAction<&'s Sexp<'a>>)> {
+        form: &'s Sexp<'a, S>,
+    ) -> Option<(Option<&'s str>, typechecking::ClosedAction<&'s Sexp<'a, S>>)> {
         let Sexp::List(items, _) = form else {
             return None;
         };
@@ -373,7 +392,10 @@ impl Parser {
         filename: Option<String>,
         input: &str,
     ) -> Result<Expr, ParseError> {
-        let sexp = sexp(&mut SexpParser::new(filename, input))?;
+        let sexp = sexp(
+            &mut SexpParser::new(filename, input),
+            SexpParser::source_span,
+        )?;
         self.parse_expr(&sexp)
     }
 
@@ -382,7 +404,10 @@ impl Parser {
         filename: Option<String>,
         input: &str,
     ) -> Result<Schedule, ParseError> {
-        let sexp = sexp(&mut SexpParser::new(filename, input))?;
+        let sexp = sexp(
+            &mut SexpParser::new(filename, input),
+            SexpParser::source_span,
+        )?;
         self.parse_schedule(&sexp)
     }
 
@@ -392,7 +417,10 @@ impl Parser {
         filename: Option<String>,
         input: &str,
     ) -> Result<Fact, ParseError> {
-        let sexp = sexp(&mut SexpParser::new(filename, input))?;
+        let sexp = sexp(
+            &mut SexpParser::new(filename, input),
+            SexpParser::source_span,
+        )?;
         self.parse_fact(&sexp)
     }
 
@@ -1437,13 +1465,24 @@ impl<'a> SexpParser<'a> {
 
     /// Read one complete form with the ordinary grammar, retaining it for either
     /// checked source execution or parser-macro expansion without re-lexing.
-    pub(crate) fn next_sexp(&mut self) -> Result<Option<Sexp<'a>>, ParseError> {
+    pub(crate) fn next_sexp<S>(
+        &mut self,
+        make_span: impl Fn(&Self, Range<usize>) -> S,
+    ) -> Result<Option<Sexp<'a, S>>, ParseError> {
         self.advance_past_whitespace();
         if self.is_at_end() {
             Ok(None)
         } else {
-            sexp(self).map(Some)
+            sexp(self, make_span).map(Some)
         }
+    }
+
+    pub(crate) fn source_span(&self, range: Range<usize>) -> Span {
+        Span::Egglog(Arc::new(EgglogSpan {
+            file: self.source.clone(),
+            i: range.start,
+            j: range.end,
+        }))
     }
 
     fn current_char(&self) -> Option<char> {
@@ -1489,16 +1528,12 @@ impl<'a> SexpParser<'a> {
         self.index == self.input.len()
     }
 
-    fn next(&mut self) -> Result<(Token<'a>, EgglogSpan), ParseError> {
+    fn next(&mut self) -> Result<(Token<'a>, Range<usize>), ParseError> {
         self.advance_past_whitespace();
-        let mut span = EgglogSpan {
-            file: self.source.clone(),
-            i: self.index,
-            j: self.index,
-        };
+        let mut span = self.index..self.index;
 
         let Some(c) = self.current_char() else {
-            return error!(s(span), "unexpected end of file");
+            return error!(self.source_span(span), "unexpected end of file");
         };
         self.advance_char();
 
@@ -1510,9 +1545,11 @@ impl<'a> SexpParser<'a> {
                 let mut string = String::new();
 
                 loop {
-                    span.j = self.index;
+                    span.end = self.index;
                     match self.current_char() {
-                        None => return error!(s(span), "string is missing end quote"),
+                        None => {
+                            return error!(self.source_span(span), "string is missing end quote");
+                        }
                         Some('"') if !in_escape => break,
                         Some('\\') if !in_escape => in_escape = true,
                         Some(c) => {
@@ -1523,7 +1560,10 @@ impl<'a> SexpParser<'a> {
                                 (true, '\\') => '\\',
                                 (true, '\"') => '\"',
                                 (true, c) => {
-                                    return error!(s(span), "unrecognized escape character {c}");
+                                    return error!(
+                                        self.source_span(span),
+                                        "unrecognized escape character {c}"
+                                    );
                                 }
                             });
                             in_escape = false;
@@ -1550,18 +1590,14 @@ impl<'a> SexpParser<'a> {
                         }
                     }
                 }
-                Token::Other(&self.input[span.i..self.index])
+                Token::Other(&self.input[span.start..self.index])
             }
         };
 
-        span.j = self.index;
+        span.end = self.index;
 
         Ok((token, span))
     }
-}
-
-fn s(span: EgglogSpan) -> Span {
-    Span::Egglog(Arc::new(span))
 }
 
 enum Token<'a> {
@@ -1571,8 +1607,11 @@ enum Token<'a> {
     Other(&'a str),
 }
 
-fn sexp<'a>(ctx: &mut SexpParser<'a>) -> Result<Sexp<'a>, ParseError> {
-    let mut stack: Vec<(EgglogSpan, Vec<Sexp<'a>>)> = vec![];
+fn sexp<'a, S>(
+    ctx: &mut SexpParser<'a>,
+    make_span: impl Fn(&SexpParser<'a>, Range<usize>) -> S,
+) -> Result<Sexp<'a, S>, ParseError> {
+    let mut stack: Vec<(Range<usize>, Vec<Sexp<'a, S>>)> = vec![];
 
     loop {
         let (token, span) = ctx.next()?;
@@ -1584,15 +1623,15 @@ fn sexp<'a>(ctx: &mut SexpParser<'a>) -> Result<Sexp<'a>, ParseError> {
             }
             Token::Close => {
                 if stack.is_empty() {
-                    return error!(s(span), "unexpected `)`");
+                    return error!(ctx.source_span(span), "unexpected `)`");
                 }
                 let (mut list_span, list) = stack.pop().unwrap();
-                list_span.j = span.j;
-                Sexp::List(list, s(list_span))
+                list_span.end = span.end;
+                Sexp::List(list, make_span(ctx, list_span))
             }
-            Token::String(sym) => Sexp::Literal(Literal::String(sym), s(span)),
+            Token::String(sym) => Sexp::Literal(Literal::String(sym), make_span(ctx, span)),
             Token::Other(s) => {
-                let span = self::s(span);
+                let span = make_span(ctx, span);
                 let numeric = matches!(s.as_bytes()[0], b'0'..=b'9' | b'+' | b'-' | b'.');
 
                 if s == "true" {
@@ -1631,7 +1670,7 @@ pub(crate) fn all_sexps(mut ctx: SexpParser<'_>) -> Result<Vec<Sexp<'_>>, ParseE
     let mut sexps = Vec::new();
     ctx.advance_past_whitespace();
     while !ctx.is_at_end() {
-        sexps.push(sexp(&mut ctx)?);
+        sexps.push(sexp(&mut ctx, SexpParser::source_span)?);
         ctx.advance_past_whitespace();
     }
     Ok(sexps)
@@ -1640,6 +1679,94 @@ pub(crate) fn all_sexps(mut ctx: SexpParser<'_>) -> Result<Vec<Sexp<'_>>, ParseE
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compact_sexps_preserve_owned_utf8_spans() {
+        let source = "\u{2003}(呼 λ (内 12 -1.5 true ()) \"λ\\n\\\"\") ; trailing".to_owned();
+        let mut eager = SexpParser::new(Some("utf8.egg".into()), &source);
+        let expected = eager.next_sexp(SexpParser::source_span).unwrap().unwrap();
+        let mut compact = SexpParser::new(Some("utf8.egg".into()), &source);
+        let raw = compact.next_sexp(|_, range| range).unwrap().unwrap();
+        let actual = raw.with_spans(&compact);
+        let mut pending = vec![(&expected, &actual)];
+        while let Some((expected, actual)) = pending.pop() {
+            assert_eq!(expected.span(), actual.span());
+            match (expected, actual) {
+                (Sexp::Literal(left, _), Sexp::Literal(right, _)) => assert_eq!(left, right),
+                (Sexp::Atom(left, _), Sexp::Atom(right, _)) => assert_eq!(left, right),
+                (Sexp::List(left, _), Sexp::List(right, _)) => {
+                    assert_eq!(left.len(), right.len());
+                    pending.extend(left.iter().zip(right));
+                }
+                _ => panic!("compact parsing changed the form"),
+            }
+        }
+        let retained = actual.span();
+        drop((expected, actual, eager, compact));
+        drop(source);
+        assert_eq!(
+            retained.string(),
+            "(呼 λ (内 12 -1.5 true ()) \"λ\\n\\\"\")"
+        );
+        let Span::Egglog(span) = retained else {
+            panic!("expected source span")
+        };
+        assert_eq!(span.file.name.as_deref(), Some("utf8.egg"));
+    }
+
+    #[test]
+    fn compact_lex_errors_match_owned_errors() {
+        for source in ["(呼", "\u{2003})", "(f \"λ\\q\")", "\"λ"] {
+            let eager = SexpParser::new(Some("errors.egg".into()), source)
+                .next_sexp(SexpParser::source_span)
+                .err()
+                .unwrap();
+            let compact = SexpParser::new(Some("errors.egg".into()), source)
+                .next_sexp(|_, range| range)
+                .err()
+                .unwrap();
+            assert_eq!(eager.0, compact.0);
+            assert_eq!(eager.1, compact.1);
+            assert_eq!(eager.to_string(), compact.to_string());
+        }
+    }
+
+    #[test]
+    fn streamed_fallback_macros_keep_owned_spans() {
+        use std::sync::Mutex;
+
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let mut graph = EGraph::default();
+        graph
+            .parse_and_run_program(None, "(datatype T (A) (F T))")
+            .unwrap();
+        let macro_spans = captured.clone();
+        graph.parser.add_expr_macro(Arc::new(SimpleMacro::new(
+            "capture",
+            move |args, span, _| {
+                macro_spans
+                    .lock()
+                    .unwrap()
+                    .extend([span.clone(), args[0].span()]);
+                Ok(Expr::Call(span, "A".into(), vec![]))
+            },
+        )));
+        let source = "(F (A))\n(capture \"λ\\n\")".to_owned();
+        graph
+            .parse_and_run_program(Some("fallback.egg".into()), &source)
+            .unwrap();
+        assert_eq!(graph.get_size("F"), 1);
+        drop((graph, source));
+        let spans = captured.lock().unwrap();
+        assert_eq!(spans[0].string(), "(capture \"λ\\n\")");
+        assert_eq!(spans[1].string(), "\"λ\\n\"");
+        for span in spans.iter() {
+            let Span::Egglog(span) = span else {
+                panic!("expected source span")
+            };
+            assert_eq!(span.file.name.as_deref(), Some("fallback.egg"));
+        }
+    }
 
     #[test]
     fn numeric_tokens_preserve_literal_and_atom_classification() {
@@ -1692,7 +1819,7 @@ mod tests {
             ("+word", None),
             ("..5", None),
         ] {
-            let parsed = sexp(&mut SexpParser::new(None, source)).unwrap();
+            let parsed = sexp(&mut SexpParser::new(None, source), SexpParser::source_span).unwrap();
             assert_eq!(parsed.span().string(), source);
             match (parsed, expected) {
                 (Sexp::Literal(actual, _), Some(expected)) => {
@@ -1710,7 +1837,8 @@ mod tests {
         for enforce_reserved in [false, true] {
             parser.ensure_no_reserved_symbols = enforce_reserved;
             for source in ["(index)", "(set)", "(input)", "(output)", "(union (A))"] {
-                let form = sexp(&mut SexpParser::new(None, source)).unwrap();
+                let form =
+                    sexp(&mut SexpParser::new(None, source), SexpParser::source_span).unwrap();
                 assert!(parser.closed_action(&form).is_none(), "{source}");
                 assert!(parser.parse_command(&form).is_err(), "{source}");
             }
@@ -1725,7 +1853,7 @@ mod tests {
         }
 
         parser.add_user_defined("A".into()).unwrap();
-        let form = sexp(&mut SexpParser::new(None, "(A)")).unwrap();
+        let form = sexp(&mut SexpParser::new(None, "(A)"), SexpParser::source_span).unwrap();
         assert!(parser.closed_action(&form).is_none());
         assert!(
             matches!(parser.parse_command(&form).unwrap().as_slice(), [Command::UserDefined(_, head, _)] if head == "A")
@@ -1733,7 +1861,11 @@ mod tests {
         // Command dispatch does not apply to nested expression heads.
         assert!(parser.can_parse_constructor_call("A"));
 
-        let form = sexp(&mut SexpParser::new(None, "(union (A) (B))")).unwrap();
+        let form = sexp(
+            &mut SexpParser::new(None, "(union (A) (B))"),
+            SexpParser::source_span,
+        )
+        .unwrap();
         parser.add_expr_macro(Arc::new(SimpleMacro::new("union", |_, span, _| {
             Err(ParseError(span, "expression override must not run".into()))
         })));
@@ -1815,7 +1947,11 @@ mod tests {
     #[test]
     fn sexp_atoms_borrow_input_and_preserve_utf8_and_escapes() {
         let source = r#"(呼 λ 1e400 "λ\n\t\"\\")"#.to_owned();
-        let form = sexp(&mut SexpParser::new(Some("utf8.egg".into()), &source)).unwrap();
+        let form = sexp(
+            &mut SexpParser::new(Some("utf8.egg".into()), &source),
+            SexpParser::source_span,
+        )
+        .unwrap();
         let items = form.expect_list("call").unwrap();
         for (item, text) in items.iter().zip(["呼", "λ", "1e400"]) {
             let Sexp::Atom(Cow::Borrowed(atom), Span::Egglog(span)) = item else {
