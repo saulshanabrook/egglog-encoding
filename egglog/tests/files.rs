@@ -206,12 +206,9 @@ impl Run {
         message: &str,
     ) -> Result<Vec<CommandOutput>, String> {
         let mut egraph = self.egraph();
-        let parsed_proof_check_prog = egraph
-            .parse_program(None, proof_check_prog)
-            .unwrap_or_else(|_| panic!("Failed to parse proof check program"));
         // hard code proof testing to true, we only use proof checking program in proof testing mode
         egraph
-            .set_proof_checking_program(parsed_proof_check_prog, true)
+            .set_proof_checking_program(self.filename_for_test_run(), proof_check_prog, true)
             .expect("Failed to set proof checking program");
 
         egraph.ensure_no_reserved_symbols(false);
