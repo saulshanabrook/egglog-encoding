@@ -1687,6 +1687,25 @@ impl EGraph {
         result.map_err(|e| Error::BackendError(e.to_string()))
     }
 
+    /// Apply the same memory and backend-callback boundaries to source and AST
+    /// plans. Metadata stays valid across bounded flushes within an action run.
+    fn queue_ground_action(
+        &mut self,
+        prepared: GroundActions,
+        pending: &mut Vec<GroundActions>,
+        pending_lookups: &mut usize,
+        batchable: &mut Option<bool>,
+    ) -> Result<(), Error> {
+        *pending_lookups += prepared.lookups.len();
+        pending.push(prepared);
+        let can_batch = *batchable.get_or_insert_with(|| self.backend.can_batch_actions());
+        if !can_batch || pending.len() >= 2_048 || *pending_lookups >= 131_072 {
+            self.flush_ground_actions(pending)?;
+            *pending_lookups = 0;
+        }
+        Ok(())
+    }
+
     fn ground_table(&self, func: &FuncType) -> Option<egglog_bridge::TableAction> {
         let function = self.functions.get(&func.name)?;
         if func.subtype != FunctionSubtype::Constructor
@@ -1711,10 +1730,29 @@ impl EGraph {
 
     /// Typecheck closed source actions directly into an execution plan. No IDs or
     /// writes are allocated until every call and the optional union have passed.
-    fn prepare_ground_action(
+    fn prepare_source_action(
         &self,
-        action: &Action,
+        form: &Sexp<'_>,
         calls: &mut GroundActionCache,
+    ) -> Option<GroundActions> {
+        let (head, action) = self.parser.closed_action(form)?;
+        if !self
+            .command_macros
+            .preserves_closed_constructor_action(head)
+        {
+            return None;
+        }
+        self.prepare_ground_action(Some(action), calls, |head| {
+            self.parser.can_parse_constructor_call(head)
+        })
+    }
+
+    /// The source and AST paths use the same semantic checks and plan emitter.
+    fn prepare_ground_action<Node: typechecking::CallView>(
+        &self,
+        action: Option<typechecking::ClosedAction<&Node>>,
+        calls: &mut GroundActionCache,
+        mut permit_call: impl FnMut(&str) -> bool,
     ) -> Option<GroundActions> {
         if self.proof_state.original_typechecking.is_some() {
             return None;
@@ -1724,8 +1762,14 @@ impl EGraph {
             union: None,
         };
         let checked = self.type_info.check_closed_action(
-            action,
+            action?,
             &mut |head| {
+                // Source admission is checked even on metadata cache hits: AST
+                // calls did not pass parser dispatch, and parser macros may add
+                // overrides while expanding a form to zero ordinary commands.
+                if !permit_call(head) {
+                    return None;
+                }
                 if let Some(cached) = calls.get(head) {
                     return cached.clone();
                 }
@@ -3019,7 +3063,7 @@ impl EGraph {
         let mut batchable = None;
         let mut ground_calls = GroundActionCache::default();
 
-        loop {
+        'program: loop {
             let next = match &mut program {
                 ProgramSource::Commands(commands) => commands.next(),
                 ProgramSource::Text { parser, expanded } => loop {
@@ -3027,16 +3071,40 @@ impl EGraph {
                         break Some(command);
                     }
                     let timer = Instant::now();
-                    let parsed = self.parser.parse_next_command(parser);
+                    let parsed = parser.next_sexp();
                     self.overall_report.frontend_parse += timer.elapsed();
-                    match parsed {
-                        Ok(Some(commands)) => *expanded = commands.into_iter(),
+                    let form = match parsed {
+                        Ok(Some(form)) => form,
                         Ok(None) => break None,
                         Err(error) => {
                             self.flush_ground_actions(&mut pending)?;
                             return Err(error.into());
                         }
+                    };
+                    if run_commands && self.proof_state.original_typechecking.is_none() {
+                        let timer = Instant::now();
+                        let prepared = self.prepare_source_action(&form, &mut ground_calls);
+                        self.overall_report.typecheck += timer.elapsed();
+                        if let Some(prepared) = prepared {
+                            self.queue_ground_action(
+                                prepared,
+                                &mut pending,
+                                &mut pending_lookups,
+                                &mut batchable,
+                            )?;
+                            continue 'program;
+                        }
                     }
+                    let timer = Instant::now();
+                    let parsed = self.parser.parse_command(&form);
+                    self.overall_report.frontend_parse += timer.elapsed();
+                    *expanded = match parsed {
+                        Ok(commands) => commands.into_iter(),
+                        Err(error) => {
+                            self.flush_ground_actions(&mut pending)?;
+                            return Err(error.into());
+                        }
+                    };
                 },
             };
             let Some(before_expanded_command) = next else {
@@ -3068,17 +3136,19 @@ impl EGraph {
             for command in macro_expanded {
                 if run_commands && let Command::Action(action) = &command {
                     let timer = Instant::now();
-                    let prepared = self.prepare_ground_action(action, &mut ground_calls);
+                    let prepared = self.prepare_ground_action(
+                        typechecking::ClosedAction::from_action(action),
+                        &mut ground_calls,
+                        |_| true,
+                    );
                     self.overall_report.typecheck += timer.elapsed();
                     if let Some(prepared) = prepared {
-                        pending_lookups += prepared.lookups.len();
-                        pending.push(prepared);
-                        let can_batch =
-                            *batchable.get_or_insert_with(|| self.backend.can_batch_actions());
-                        if !can_batch || pending.len() >= 2_048 || pending_lookups >= 131_072 {
-                            self.flush_ground_actions(&mut pending)?;
-                            pending_lookups = 0;
-                        }
+                        self.queue_ground_action(
+                            prepared,
+                            &mut pending,
+                            &mut pending_lookups,
+                            &mut batchable,
+                        )?;
                         continue;
                     }
                 }
@@ -4358,15 +4428,222 @@ mod tests {
                 let commands = graph.parse_program(None, source).unwrap();
                 let accepted = commands.iter().any(|command| match command {
                     Command::Action(action) => graph
-                        .prepare_ground_action(action, &mut GroundActionCache::default())
+                        .prepare_ground_action(
+                            typechecking::ClosedAction::from_action(action),
+                            &mut GroundActionCache::default(),
+                            |_| true,
+                        )
                         .is_some(),
                     _ => false,
                 });
                 assert_eq!(accepted, admitted && mode == 0, "mode {mode}: {source}");
+                let form = SexpParser::new(None, source).next_sexp().unwrap().unwrap();
+                assert_eq!(
+                    graph
+                        .prepare_source_action(&form, &mut GroundActionCache::default())
+                        .is_some(),
+                    accepted,
+                    "source plan mode {mode}: {source}"
+                );
                 assert_action_graphs_equal(&graph, &before);
                 assert!(!graph.backend.flush_updates());
             }
         }
+    }
+
+    #[test]
+    fn source_actions_share_checked_plans_with_ast_execution() {
+        struct Identity;
+        impl CommandMacro for Identity {
+            fn preserves_closed_constructor_action(&self, _: Option<&str>) -> bool {
+                true
+            }
+
+            fn transform(
+                &self,
+                command: Command,
+                _: &mut SymbolGen,
+                _: &TypeInfo,
+            ) -> Result<Vec<Command>, Error> {
+                Ok(vec![command])
+            }
+        }
+        let mut source_graph = EGraph::default();
+        source_graph
+            .parse_and_run_program(
+                None,
+                "(datatype T (N1) (N2) (N3) (N4) (N5) (f T T) (g T) (h T T T))
+                 (relation seen (T))
+                 (rule ((= x (f a b))) ((seen x)))",
+            )
+            .unwrap();
+        source_graph.command_macros.register(Arc::new(Identity));
+        let source = "(f (N1) (N2))
+                      (union (N1) (g (N3)))
+                      (union (f (N1) (N2)) (h (N3) (N4) (N5)))
+                      (union (N3) (N4))";
+        let mut parser = SexpParser::new(None, source);
+        let mut calls = GroundActionCache::default();
+        while let Some(form) = parser.next_sexp().unwrap() {
+            assert!(
+                source_graph
+                    .prepare_source_action(&form, &mut calls)
+                    .is_some()
+            );
+        }
+        let mut ast_graph = source_graph.clone();
+        let commands = ast_graph.parse_program(None, source).unwrap();
+        source_graph.parse_and_run_program(None, source).unwrap();
+        ast_graph.run_program(commands).unwrap();
+        for graph in [&mut source_graph, &mut ast_graph] {
+            graph
+                .parse_and_run_program(
+                    None,
+                    "(run 1)
+                     (check (seen (h (N4) (N4) (N5))))
+                     (check (= (f (g (N4)) (N2)) (h (N3) (N4) (N5))))",
+                )
+                .unwrap();
+        }
+        assert_action_graphs_equal(&source_graph, &ast_graph);
+    }
+
+    #[test]
+    fn source_actions_respect_parser_override_precedence() {
+        let mut initial = EGraph::default();
+        initial
+            .parse_and_run_program(None, "(datatype T (A) (B) (F T))")
+            .unwrap();
+        for kind in ["expression", "action", "command"] {
+            let mut graph = initial.clone();
+            match kind {
+                "expression" => graph
+                    .parser
+                    .add_expr_macro(Arc::new(SimpleMacro::new("A", |_, span, _| {
+                        Ok(Expr::Call(span, "B".into(), vec![]))
+                    }))),
+                "action" => {
+                    graph
+                        .parser
+                        .add_action_macro(Arc::new(SimpleMacro::new("A", |_, span, _| {
+                            Ok(vec![Action::Expr(
+                                span.clone(),
+                                Expr::Call(span, "B".into(), vec![]),
+                            )])
+                        })))
+                }
+                _ => {
+                    graph
+                        .parser
+                        .add_command_macro(Arc::new(SimpleMacro::new("A", |_, span, _| {
+                            Ok(vec![Command::Action(Action::Expr(
+                                span.clone(),
+                                Expr::Call(span, "B".into(), vec![]),
+                            ))])
+                        })))
+                }
+            }
+            for (text, admitted) in [("(A)", false), ("(F (A))", kind != "expression")] {
+                let form = SexpParser::new(None, text).next_sexp().unwrap().unwrap();
+                assert_eq!(
+                    graph
+                        .prepare_source_action(&form, &mut GroundActionCache::default())
+                        .is_some(),
+                    admitted,
+                    "{kind}: {text}"
+                );
+            }
+            let mut ordinary = graph.clone();
+            let source = "(A) (F (A))";
+            let commands = ordinary.parse_program(None, source).unwrap();
+            graph.parse_and_run_program(None, source).unwrap();
+            ordinary.run_program(commands).unwrap();
+            assert_action_graphs_equal(&graph, &ordinary);
+            assert_eq!(graph.get_size("B"), 1);
+            assert_eq!(graph.get_size("A"), usize::from(kind != "expression"));
+        }
+    }
+
+    #[test]
+    fn source_actions_recheck_parser_overrides_after_empty_or_ground_expansion() {
+        for emit_action in [false, true] {
+            let mut graph = EGraph::default();
+            graph
+                .parse_and_run_program(None, "(datatype T (A) (B) (F T))")
+                .unwrap();
+            graph.parser.add_command_macro(Arc::new(SimpleMacro::new(
+                "install",
+                move |_, span, parser| {
+                    parser.add_expr_macro(Arc::new(SimpleMacro::new("A", |_, span, _| {
+                        Ok(Expr::Call(span, "B".into(), vec![]))
+                    })));
+                    Ok(if emit_action {
+                        vec![Command::Action(Action::Expr(
+                            span.clone(),
+                            Expr::Call(
+                                span.clone(),
+                                "F".into(),
+                                vec![Expr::Call(span, "A".into(), vec![])],
+                            ),
+                        ))]
+                    } else {
+                        vec![]
+                    })
+                },
+            )));
+            let mut ordinary = graph.clone();
+            let source = "(F (A)) (install) (F (A))";
+            let commands = ordinary.parse_program(None, source).unwrap();
+            graph.parse_and_run_program(None, source).unwrap();
+            ordinary.run_program(commands).unwrap();
+            assert_action_graphs_equal(&graph, &ordinary);
+            assert_eq!(graph.get_size("F"), 2);
+            assert_eq!(graph.get_size("A"), 1);
+            assert_eq!(graph.get_size("B"), 1);
+        }
+    }
+
+    #[test]
+    fn source_actions_require_command_macro_opt_in_and_keep_error_prefix() {
+        struct RejectA;
+        impl CommandMacro for RejectA {
+            fn transform(
+                &self,
+                command: Command,
+                _: &mut SymbolGen,
+                _: &TypeInfo,
+            ) -> Result<Vec<Command>, Error> {
+                if matches!(&command, Command::Action(Action::Expr(_, Expr::Call(_, head, _))) if head == "A")
+                {
+                    Err(Error::BackendError("A rejected by macro".into()))
+                } else {
+                    Ok(vec![command])
+                }
+            }
+        }
+        let mut graph = EGraph::default();
+        graph
+            .parse_and_run_program(None, "(datatype T (A) (B) (F T))")
+            .unwrap();
+        graph.command_macros.register(Arc::new(RejectA));
+        let form = SexpParser::new(None, "(F (B))")
+            .next_sexp()
+            .unwrap()
+            .unwrap();
+        assert!(
+            graph
+                .prepare_source_action(&form, &mut GroundActionCache::default())
+                .is_none()
+        );
+        let mut ordinary = graph.clone();
+        let source = "(F (B)) (A)";
+        let commands = ordinary.parse_program(None, source).unwrap();
+        let source_error = graph.parse_and_run_program(None, source).unwrap_err();
+        let ast_error = ordinary.run_program(commands).unwrap_err();
+        assert_eq!(source_error.to_string(), ast_error.to_string());
+        assert_action_graphs_equal(&graph, &ordinary);
+        assert_eq!(graph.get_size("F"), 1);
+        assert_eq!(graph.get_size("A"), 0);
     }
 
     #[test]

@@ -2,6 +2,60 @@ use egglog_experimental::{DisequalityEncoding, new_experimental_egraph_with_opti
 use std::{path::Path, process::Command};
 
 #[test]
+fn source_constructor_actions_match_ast_with_disequality_macros() {
+    let setup = "(datatype T (N1) (N2) (N3) (N4) (N5) (f T T) (g T) (h T T T))";
+    let source = "(f (N1) (N2))
+                  (disequal (f (N1) (N2)) (h (N3) (N4) (N5)))
+                  (union (N1) (g (N3)))
+                  (union (N3) (N4))
+                  (fail (check-contradiction))
+                  (union (f (g (N4)) (N2)) (h (N3) (N4) (N5)))
+                  (check-contradiction)";
+    for encoding in [DisequalityEncoding::Nee, DisequalityEncoding::Ee] {
+        let mut streamed = new_experimental_egraph_with_options(false, encoding);
+        streamed.parse_and_run_program(None, setup).unwrap();
+        let mut ordinary = streamed.clone();
+        let commands = ordinary.parse_program(None, source).unwrap();
+        let streamed_outputs = streamed.parse_and_run_program(None, source).unwrap();
+        let ordinary_outputs = ordinary.run_program(commands).unwrap();
+        assert_eq!(
+            streamed_outputs
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            ordinary_outputs
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        );
+        for name in ["N1", "N2", "N3", "N4", "N5", "f", "g", "h"] {
+            assert_eq!(
+                streamed.get_size(name),
+                ordinary.get_size(name),
+                "{encoding:?}: {name}"
+            );
+        }
+    }
+}
+
+#[test]
+fn source_actions_keep_disequality_placeholder_lowering() {
+    for encoding in [DisequalityEncoding::Nee, DisequalityEncoding::Ee] {
+        let mut graph = new_experimental_egraph_with_options(false, encoding);
+        // Rust clients/internal syntax can declare the placeholder spelling as
+        // an ordinary constructor. Root expression actions still invoke lowering.
+        graph.ensure_no_reserved_symbols(false);
+        graph
+            .parse_and_run_program(None, "(datatype T (A) (@disequal T T))")
+            .unwrap();
+        graph
+            .parse_and_run_program(None, "(@disequal (A) (A)) (check-contradiction)")
+            .unwrap();
+        assert_eq!(graph.get_size("@disequal"), 0);
+    }
+}
+
+#[test]
 fn encodings_compose_with_proofs() {
     for encoding in [DisequalityEncoding::Nee, DisequalityEncoding::Ee] {
         for mode in 0..4 {
