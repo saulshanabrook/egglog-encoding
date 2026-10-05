@@ -1645,20 +1645,31 @@ impl EGraph {
         }
     }
 
-    fn eval_ground_actions(&mut self, prepared: GroundActions) -> Result<(), Error> {
+    /// Commit a bounded sequence of validated constructor actions together.
+    /// Their command-local indexes are independent, while pending table values
+    /// are shared until the final merge/rebuild restores congruence.
+    fn flush_ground_actions(&mut self, pending: &mut Vec<GroundActions>) -> Result<(), Error> {
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let timer = Instant::now();
         let union = egglog_bridge::UnionAction::new(&self.backend);
-        self.backend
-            .run_actions(|state| {
-                let mut values = Vec::with_capacity(prepared.lookups.len());
-                for (table, args) in &prepared.lookups {
-                    let args: Vec<_> = args.iter().map(|index| values[*index]).collect();
+        let result = self.backend.run_actions(|state| {
+            let mut values = Vec::new();
+            for prepared in pending.drain(..) {
+                values.clear();
+                for (table, args) in prepared.lookups {
+                    let args: smallvec::SmallVec<[Value; 4]> =
+                        args.iter().map(|index| values[*index]).collect();
                     values.push(table.lookup_or_insert(state, &args).unwrap());
                 }
                 if let Some((left, right)) = prepared.union {
                     union.union(state, values[left], values[right]);
                 }
-            })
-            .map_err(|e| Error::BackendError(e.to_string()))
+            }
+        });
+        self.overall_report.commands_actions += timer.elapsed();
+        result.map_err(|e| Error::BackendError(e.to_string()))
     }
 
     fn ground_table(&self, func: &FuncType, arity: usize) -> Option<egglog_bridge::TableAction> {
@@ -2973,6 +2984,10 @@ impl EGraph {
         let mut outputs = Vec::new();
         let mut desugared_before_proofs = Vec::new();
         let mut desugared = Vec::new();
+        let mut pending = Vec::new();
+        let mut pending_lookups = 0;
+        // Tables and callback capabilities cannot change inside an admitted run.
+        let mut batchable = None;
 
         for before_expanded_command in program {
             // First do user-provided macro expansion for this command,
@@ -2990,7 +3005,13 @@ impl EGraph {
                 macro_type_info,
             );
             self.overall_report.frontend_other += macro_timer.elapsed();
-            let macro_expanded = macro_expanded?;
+            let macro_expanded = match macro_expanded {
+                Ok(commands) => commands,
+                Err(error) => {
+                    self.flush_ground_actions(&mut pending)?;
+                    return Err(error);
+                }
+            };
 
             for command in macro_expanded {
                 if run_commands && let Command::Action(action) = &command {
@@ -2998,13 +3019,23 @@ impl EGraph {
                     let prepared = self.prepare_ground_action(action);
                     self.overall_report.typecheck += timer.elapsed();
                     if let Some(prepared) = prepared {
-                        let timer = Instant::now();
-                        let result = self.eval_ground_actions(prepared);
-                        self.overall_report.commands_actions += timer.elapsed();
-                        result?;
+                        pending_lookups += prepared.lookups.len();
+                        pending.push(prepared);
+                        let can_batch =
+                            *batchable.get_or_insert_with(|| self.backend.can_batch_actions());
+                        if !can_batch || pending.len() >= 256 || pending_lookups >= 16_384 {
+                            self.flush_ground_actions(&mut pending)?;
+                            pending_lookups = 0;
+                        }
                         continue;
                     }
                 }
+
+                // Reads, schedules, declarations, unsupported actions and includes
+                // observe the complete preceding prefix, even if they later fail.
+                self.flush_ground_actions(&mut pending)?;
+                pending_lookups = 0;
+                batchable = None;
 
                 // handle include specially- we keep them as-is for desugaring
                 if let Command::Include(span, file) = &command {
@@ -3048,6 +3079,8 @@ impl EGraph {
                 }
             }
         }
+
+        self.flush_ground_actions(&mut pending)?;
 
         Ok(ResolvedNCommandsWithOutput {
             outputs,
@@ -4253,6 +4286,148 @@ mod tests {
                 assert_action_graphs_equal(&graph, &before);
                 assert!(!graph.backend.flush_updates());
             }
+        }
+    }
+
+    #[test]
+    fn ground_actions_batch_restores_congruence_and_rule_visibility() {
+        for threads in [1, 4] {
+            let mut graph = EGraph::default();
+            graph.backend.set_num_threads(threads);
+            graph
+                .parse_and_run_program(
+                    None,
+                    "
+                (datatype T (A) (B) (F T) (G T))
+                (relation seen (T))
+                (rule ((= x (G (F (A))))) ((seen x)))
+                ",
+                )
+                .unwrap();
+            assert!(graph.backend.can_batch_actions());
+            graph
+                .parse_and_run_program(
+                    None,
+                    "
+                (G (F (A)))
+                (union (A) (B))
+                (G (F (B)))
+                (G (F (B)))
+                (check (= (G (F (A))) (G (F (B)))))
+                (run 1)
+                (check (seen (G (F (B)))))
+            ",
+                )
+                .unwrap();
+            assert_eq!(graph.get_size("F"), 1);
+            assert_eq!(graph.get_size("G"), 1);
+        }
+    }
+
+    #[test]
+    fn ground_actions_batch_flushes_before_errors_and_rollback() {
+        let mut graph = EGraph::default();
+        graph
+            .parse_and_run_program(None, "(datatype T (A) (B) (F T))")
+            .unwrap();
+        assert!(
+            graph
+                .parse_and_run_program(None, "(F (A)) (missing)")
+                .is_err()
+        );
+        assert_eq!(graph.get_size("F"), 1);
+        graph
+            .parse_and_run_program(
+                None,
+                "
+            (push)
+            (union (A) (B))
+            (check (= (A) (B)))
+            (pop)
+            (fail (check (= (A) (B))))
+            (fail (union (A) (B)) (panic \"expected\"))
+            (fail (check (= (A) (B))))
+        ",
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn ground_actions_batch_flushes_before_macro_errors() {
+        struct RejectCheck;
+        impl CommandMacro for RejectCheck {
+            fn transform(
+                &self,
+                command: Command,
+                _: &mut SymbolGen,
+                _: &TypeInfo,
+            ) -> Result<Vec<Command>, Error> {
+                if matches!(command, Command::Check(..)) {
+                    Err(Error::BackendError("expected macro error".into()))
+                } else {
+                    Ok(vec![command])
+                }
+            }
+        }
+        let mut graph = EGraph::default();
+        graph
+            .parse_and_run_program(None, "(datatype T (A) (F T))")
+            .unwrap();
+        graph.command_macros.register(Arc::new(RejectCheck));
+        assert!(
+            graph
+                .parse_and_run_program(None, "(F (A)) (check (= (A) (A)))")
+                .is_err()
+        );
+        assert_eq!(graph.get_size("F"), 1);
+    }
+
+    #[test]
+    fn ground_actions_batch_keeps_failing_merge_boundary() {
+        let mut graph = EGraph::default();
+        graph
+            .parse_and_run_program(
+                None,
+                "
+            (datatype T (A) (B) (C))
+            (function value (T) i64 :no-merge)
+            (set (value (A)) 0)
+            (set (value (B)) 1)
+        ",
+            )
+            .unwrap();
+        assert!(!graph.backend.can_batch_actions());
+        assert!(
+            graph
+                .parse_and_run_program(None, "(union (A) (B)) (C)")
+                .is_err()
+        );
+        assert_eq!(graph.get_size("C"), 0);
+    }
+
+    #[test]
+    fn ground_actions_batch_preserves_subsumed_rows() {
+        for direct in [true, false] {
+            let mut graph = EGraph::default();
+            run_ground_action_oracle(
+                &mut graph,
+                "
+                (datatype T (A) (B) (F T))
+                (F (A))
+                (subsume (F (A)))
+                (union (A) (B))
+                (F (B))
+            ",
+                direct,
+            )
+            .unwrap();
+            let mut rows = Vec::new();
+            graph
+                .backend
+                .for_each(graph.functions["F"].backend_id, |row| {
+                    rows.push(row.subsumed);
+                });
+            assert_eq!(rows, vec![true]);
         }
     }
 
