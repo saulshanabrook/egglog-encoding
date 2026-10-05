@@ -233,3 +233,86 @@ fn test_early_stop_multiple_clones() {
     assert!(state2.should_stop());
     assert!(state3.should_stop());
 }
+
+#[test]
+fn lowered_inserts_share_scalar_counter_reservations() {
+    use crate::{
+        action::{Bindings, Instr, QueryEntry, WriteVal},
+        free_join::{Database, Variable},
+        table::SortedWritesTable,
+        table_shortcuts::v,
+        table_spec::ColumnId,
+    };
+
+    // Cover both observable counters and the reservable ids used by proof minting.
+    for reservation_size in [1, 64] {
+        let mut db = Database::default();
+        let counter = db.add_reservable_counter(reservation_size);
+        let table = db.add_table(
+            SortedWritesTable::new(1, 3, None, vec![], Box::new(|_, _, _, _| false)),
+            std::iter::empty(),
+            std::iter::empty(),
+        );
+        db.with_execution_state(None, |state| {
+            let arg = Variable::from_usize(0);
+            let dst = Variable::from_usize(1);
+            let mut bindings = Bindings::new(5);
+            bindings.insert(arg, &[v(10), v(11), v(12), v(13), v(14)]);
+            let mut mask = with_pool_set(|ps| Mask::new(0..5, ps));
+            mask.iter(&[true, false, true, false, true])
+                .retain(|live| *live);
+            let vals = vec![
+                WriteVal::IncCounter(counter),
+                WriteVal::QueryEntry(QueryEntry::Var(arg)),
+                WriteVal::CurrentVal(0),
+            ];
+
+            assert_eq!(state.inc_counter(counter), 0);
+            state.run_instr(
+                &mut mask,
+                &Instr::Insert {
+                    table,
+                    vals: vals.clone(),
+                    bind: Some((ColumnId::from_usize(0), dst)),
+                },
+                &mut bindings,
+            );
+            assert_eq!(bindings[dst][0], v(1));
+            assert_eq!(bindings[dst][2], v(2));
+            assert_eq!(bindings[dst][4], v(3));
+            state.run_instr(
+                &mut mask,
+                &Instr::Insert {
+                    table,
+                    vals,
+                    bind: None,
+                },
+                &mut bindings,
+            );
+            assert_eq!(state.inc_counter(counter), 7);
+            // Lowered inserts must reuse the scalar reservation, not issue a
+            // shared atomic increment for every live lane.
+            assert_eq!(state.read_counter(counter), reservation_size.max(8));
+        });
+        db.merge_all();
+        let table = db.get_table(table);
+        let all = table.all();
+        let mut rows: Vec<_> = table
+            .scan(all.as_ref())
+            .iter()
+            .map(|(_, row)| row.to_vec())
+            .collect();
+        rows.sort();
+        assert_eq!(
+            rows,
+            vec![
+                vec![v(1), v(10), v(1)],
+                vec![v(2), v(12), v(2)],
+                vec![v(3), v(14), v(3)],
+                vec![v(4), v(10), v(4)],
+                vec![v(5), v(12), v(5)],
+                vec![v(6), v(14), v(6)],
+            ]
+        );
+    }
+}
