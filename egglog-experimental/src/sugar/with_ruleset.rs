@@ -20,7 +20,7 @@ impl Macro<Vec<Command>> for WithRuleset {
 
     fn parse(
         &self,
-        args: &[Sexp],
+        args: &[Sexp<'_>],
         span: Span,
         parser: &mut Parser,
     ) -> Result<Vec<Command>, ParseError> {
@@ -46,7 +46,7 @@ impl Macro<Vec<Command>> for WithRuleset {
 
                                 Command::Rule {
                                     rule: GenericRule {
-                                        ruleset: ruleset.clone(),
+                                        ruleset: ruleset.as_ref().to_owned(),
                                         ..rule
                                     },
                                 }
@@ -60,7 +60,7 @@ impl Macro<Vec<Command>> for WithRuleset {
                                     ));
                                 }
 
-                                Command::Rewrite(ruleset.clone(), rewrite, subsume)
+                                Command::Rewrite(ruleset.as_ref().to_owned(), rewrite, subsume)
                             }
                             Command::BiRewrite(rule_ruleset, rewrite) => {
                                 if !rule_ruleset.is_empty() {
@@ -71,7 +71,7 @@ impl Macro<Vec<Command>> for WithRuleset {
                                     ));
                                 }
 
-                                Command::BiRewrite(ruleset.clone(), rewrite)
+                                Command::BiRewrite(ruleset.as_ref().to_owned(), rewrite)
                             }
                             _ => {
                                 // Ideally the span should be the current command's span (i.e. cmd.span()),
