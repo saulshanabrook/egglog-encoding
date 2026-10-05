@@ -11,6 +11,19 @@ use std::sync::Arc;
 
 /// A command macro that can transform commands during desugaring
 pub trait CommandMacro: Send + Sync {
+    /// Whether this macro leaves a literal-free, closed constructor action
+    /// unchanged. `None` identifies a union; `Some(head)` identifies an expression
+    /// action whose outermost call has that name. The promise applies to actions
+    /// whose calls pass ordinary parser precedence and declared-constructor type
+    /// checks. This capability query must have no side effects and may be called
+    /// before those checks complete.
+    ///
+    /// Opting in promises a singleton unchanged command, no error, and no side
+    /// effects, so execution may skip `transform` for this action.
+    fn preserves_closed_constructor_action(&self, _expression_head: Option<&str>) -> bool {
+        false
+    }
+
     /// Transform the command, potentially using type information.
     /// Returns the transformed commands. If the macro doesn't apply,
     /// it should return vec![command] unchanged.
@@ -37,6 +50,15 @@ impl CommandMacroRegistry {
     /// Register a new command macro
     pub fn register(&mut self, macro_impl: Arc<dyn CommandMacro>) {
         self.macros.push(macro_impl);
+    }
+
+    pub(crate) fn preserves_closed_constructor_action(
+        &self,
+        expression_head: Option<&str>,
+    ) -> bool {
+        self.macros
+            .iter()
+            .all(|mac| mac.preserves_closed_constructor_action(expression_head))
     }
 
     /// Apply all registered macros to a command in sequence
