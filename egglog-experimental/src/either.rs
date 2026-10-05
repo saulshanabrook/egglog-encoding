@@ -8,15 +8,22 @@ use egglog::{
 use std::any::TypeId;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// The selected alternative of an Either value.
 pub enum EitherData {
+    /// A value of the left sort.
     Left(Value),
+    /// A value of the right sort.
     Right(Value),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// A tagged value of one of two sorts, stored in an e-graph.
 pub struct EitherContainer {
+    /// Whether a left value requires canonicalization during rebuilding.
     pub do_rebuild_left: bool,
+    /// Whether a right value requires canonicalization during rebuilding.
     pub do_rebuild_right: bool,
+    /// The selected alternative and its value.
     pub data: EitherData,
 }
 
@@ -47,6 +54,7 @@ impl ContainerValue for EitherContainer {
 }
 
 #[derive(Clone, Debug)]
+/// A named container sort with left and right alternatives.
 pub struct EitherSort {
     name: String,
     left: ArcSort,
@@ -54,10 +62,12 @@ pub struct EitherSort {
 }
 
 impl EitherSort {
+    /// Return the sort of left values.
     pub fn left(&self) -> ArcSort {
         self.left.clone()
     }
 
+    /// Return the sort of right values.
     pub fn right(&self) -> ArcSort {
         self.right.clone()
     }
@@ -246,6 +256,7 @@ impl ContainerSort for EitherSort {
     }
 }
 
+/// Enumerate registered Either sorts paired with their left and right sorts.
 pub fn either_sorts(type_info: &TypeInfo) -> Vec<(ArcSort, ArcSort, ArcSort)> {
     type_info
         .get_arcsorts_by(|sort| sort.value_type() == Some(TypeId::of::<EitherContainer>()))

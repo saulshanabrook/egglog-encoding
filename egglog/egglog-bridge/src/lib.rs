@@ -18,12 +18,13 @@ use std::{
 
 use crate::core_relations::{
     BaseValue, BaseValueId, BaseValues, ColumnId, Constraint, ContainerValue, ContainerValues,
-    CounterId, Database, DisplacedTable, ExecutionState, ExternalFunction, ExternalFunctionId,
-    FlatTable, MergeVal, Offset, PlanStrategy, SortedWritesTable, TableId, TaggedRowBuffer, Value,
-    WrappedTable, make_external_func,
+    CounterId, Database, DisplacedTable, ExecutionState, ExternalContext, ExternalFunction,
+    ExternalFunctionBatch, ExternalFunctionId, FlatTable, MergeVal, Offset, PlanStrategy,
+    SortedWritesTable, TableId, TableIdentity, TaggedRowBuffer, Value, WrappedTable,
+    make_external_func,
 };
 use crate::numeric_id::{DenseIdMap, DenseIdMapWithReuse, NumericId, define_id};
-use egglog_concurrency::ThreadPool;
+use egglog_concurrency::{ReadOptimizedLock, ThreadPool};
 use egglog_core_relations as core_relations;
 use egglog_numeric_id as numeric_id;
 use egglog_reports::{IterationReport, ReportLevel, RuleSetReport};
@@ -34,6 +35,8 @@ use once_cell::sync::Lazy;
 use smallvec::SmallVec;
 use std::collections::BTreeMap;
 use web_time::{Duration, Instant};
+
+const FRESH_ID_RESERVATION_SIZE: usize = 256;
 
 pub mod macros;
 pub(crate) mod rule;
@@ -50,13 +53,22 @@ use thiserror::Error;
 /// bridge `EGraph`. The state wrappers (`PureState`/`ReadState`/
 /// `WriteState`/`FullState`) live in the `egglog` crate; they read
 /// from this registry at invoke time to back name-indexed action
-/// methods. Held by the bridge `EGraph` inside an `Arc<RwLock<_>>`.
+/// methods. Held by the bridge `EGraph` inside an `Arc<ReadOptimizedLock<_>>`.
 #[derive(Clone)]
 pub struct ActionRegistry {
     table_actions: hashbrown::HashMap<String, TableAction>,
     union_action: UnionAction,
     default_panic_id: ExternalFunctionId,
 }
+
+/// Shared live directory of table-operation handles.
+pub type SharedActionRegistry = Arc<ReadOptimizedLock<ActionRegistry>>;
+
+// Keep this instantiation safe even with the lock’s currently weaker Sync bound.
+const _: fn() = || {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<ActionRegistry>();
+};
 
 impl ActionRegistry {
     pub(crate) fn new(union_action: UnionAction, default_panic_id: ExternalFunctionId) -> Self {
@@ -68,19 +80,28 @@ impl ActionRegistry {
     }
 
     pub(crate) fn register_table(&mut self, name: String, action: TableAction) {
+        assert!(
+            action.identity.is_some(),
+            "registered table must be installed"
+        );
         self.table_actions.insert(name, action);
     }
 
     /// Look up the [`TableAction`] for a table by name, or `None` if
-    /// no table with that name has been registered.
+    /// no table with that name has been registered. The registry may become
+    /// obsolete because of `push`/`pop`, so a hit may name a table a given
+    /// execution state no longer has; check it with [`TableAction::is_live`]
+    /// before use.
     pub fn lookup_table(&self, name: &str) -> Option<&TableAction> {
         self.table_actions.get(name)
     }
 
-    /// Snapshot the registered table names and their current row counts.
+    /// Snapshot the names and row counts of the registered tables that exist
+    /// in `state`.
     pub fn table_sizes(&self, state: &ExecutionState) -> Vec<(&str, usize)> {
         self.table_actions
             .iter()
+            .filter(|(_, action)| action.is_live(state))
             .map(|(name, action)| (name.as_str(), action.row_count(state)))
             .collect()
     }
@@ -130,11 +151,11 @@ pub struct EGraph {
     panic_funcs: HashMap<String, ExternalFunctionId>,
     report_level: ReportLevel,
     /// Live registry of name-indexed action handles. Shared (via
-    /// `Arc<RwLock<_>>`) with state wrappers and primitive callbacks
+    /// `Arc<ReadOptimizedLock<_>>`) with state wrappers and primitive callbacks
     /// in the egglog crate so name-indexed action methods on
     /// `WriteState` / `FullState` can resolve table actions at
     /// invoke time. Mutated in place from [`add_table`](EGraph::add_table).
-    action_registry: Arc<std::sync::RwLock<ActionRegistry>>,
+    action_registry: SharedActionRegistry,
     /// Table each row-inserting external function writes, by name. A merge body
     /// calling one declares the same write dependency an explicit `set` on that
     /// table would (see [`MergeFn::fill_deps`]).
@@ -237,7 +258,7 @@ impl EGraph {
                     iter::empty(),
                     iter::empty(),
                 );
-                let id_counter = db.add_counter();
+                let id_counter = db.add_reservable_counter(FRESH_ID_RESERVATION_SIZE);
                 let ts_counter = db.add_counter();
                 // Start the timestamp counter at 1.
                 db.inc_counter(ts_counter);
@@ -261,7 +282,7 @@ impl EGraph {
             table: uf_table,
             timestamp: ts_counter,
         };
-        let action_registry = Arc::new(std::sync::RwLock::new(ActionRegistry::new(
+        let action_registry = Arc::new(ReadOptimizedLock::new(ActionRegistry::new(
             union_action,
             default_panic_id,
         )));
@@ -340,7 +361,7 @@ impl EGraph {
         self.register_container_ty::<C>();
         let thread_pool = self.thread_pool();
         install_thread_pool(thread_pool, || {
-            self.db.with_execution_state(|state| {
+            self.db.with_execution_state(None, |state| {
                 state.clone().container_values().register_val(val, state)
             })
         })
@@ -421,8 +442,8 @@ impl EGraph {
         let spec_name = view_name.clone();
         let id = self.register_external_func(Box::new(make_external_func(
             move |state: &mut ExecutionState, args: &[Value]| {
-                let registry = registry.read().unwrap();
-                let action = registry.lookup_table(&view_name)?.clone();
+                let registry = registry.read();
+                let action = registry.lookup_table(&view_name)?;
                 // Too few vals and the row is staged short of its value columns;
                 // too many and the surplus lands on the timestamp.
                 debug_assert_eq!(
@@ -460,8 +481,8 @@ impl EGraph {
         let spec_name = view_name.clone();
         let id = self.register_external_func(Box::new(make_external_func(
             move |state: &mut ExecutionState, args: &[Value]| {
-                let registry = registry.read().unwrap();
-                let action = registry.lookup_table(&view_name)?.clone();
+                let registry = registry.read();
+                let action = registry.lookup_table(&view_name)?;
                 let fallback = args[n_keys];
                 Some(
                     action
@@ -494,37 +515,93 @@ impl EGraph {
         n_args: usize,
         vals: Vec<Value>,
     ) -> ExternalFunctionId {
-        let registry = self.action_registry.clone();
-        let counter = self.id_counter;
-        let dep = table_name.clone();
-        let spec_name = table_name.clone();
-        let spec_vals = vals.clone();
-        let id = self.register_external_func(Box::new(make_external_func(
-            move |state: &mut ExecutionState, args: &[Value]| {
-                let action = registry.read().unwrap().lookup_table(&table_name)?.clone();
+        #[derive(Clone)]
+        struct MintRows {
+            registry: SharedActionRegistry,
+            table_name: String,
+            n_args: usize,
+            counter: CounterId,
+            vals: Vec<Value>,
+        }
+
+        impl ExternalFunction for MintRows {
+            fn invoke(&self, state: &mut ExecutionState, args: &[Value]) -> Option<Value> {
+                let registry = self.registry.read();
+                let action = registry.lookup_table(&self.table_name)?;
                 debug_assert_eq!(
                     args.len(),
-                    n_args,
-                    "mint into `{table_name}` takes {n_args} arguments"
+                    self.n_args,
+                    "mint into `{}` takes {} arguments",
+                    self.table_name,
+                    self.n_args
                 );
-                let fresh = Value::from_usize(state.inc_counter(counter));
+                let fresh = Value::from_usize(state.inc_counter(self.counter));
                 action.insert(
                     state,
-                    args.iter().copied().chain([fresh]).chain(vals.clone()),
+                    args.iter()
+                        .copied()
+                        .chain([fresh])
+                        .chain(self.vals.iter().copied()),
                 );
                 Some(fresh)
-            },
-        )));
+            }
+
+            fn invoke_batch(&self, state: &mut ExecutionState, batch: ExternalFunctionBatch<'_>) {
+                if batch.is_empty() {
+                    return;
+                }
+                let registry = self.registry.read();
+                let Some(action) = registry.lookup_table(&self.table_name) else {
+                    batch.map(|_| None);
+                    return;
+                };
+                // Mint ids before borrowing the table buffer, in the same order
+                // as scalar calls. Reuse the row scratch and notify only once.
+                let fresh: Vec<_> = (0..batch.len())
+                    .map(|_| Value::from_usize(state.inc_counter(self.counter)))
+                    .collect();
+                let mut fresh = fresh.into_iter();
+                let ts = Value::from_usize(state.read_counter(action.timestamp));
+                let mut row = SmallVec::<[Value; 8]>::new();
+                state.stage_batch(action.table, |buffer| {
+                    batch.map(|args| {
+                        debug_assert_eq!(args.len(), self.n_args);
+                        let fresh = fresh.next().unwrap();
+                        row.clear();
+                        row.extend_from_slice(args);
+                        row.push(fresh);
+                        row.extend_from_slice(&self.vals);
+                        action.table_math.write_table_row(
+                            &mut row,
+                            RowVals {
+                                timestamp: ts,
+                                subsume: action.table_math.subsume.then_some(NOT_SUBSUMED),
+                                ret_val: None,
+                            },
+                        );
+                        buffer.stage_insert(&row);
+                        Some(fresh)
+                    });
+                });
+            }
+        }
+
+        let dep = table_name.clone();
+        let spec = MintSpec {
+            table_name: table_name.clone(),
+            n_args,
+            vals: vals.clone(),
+            counter: self.id_counter,
+        };
+        let id = self.register_external_func(Box::new(MintRows {
+            registry: self.action_registry.clone(),
+            table_name,
+            n_args,
+            counter: self.id_counter,
+            vals,
+        }));
         self.external_write_deps.insert(id, dep);
-        self.mint_specs.insert(
-            id,
-            MintSpec {
-                table_name: spec_name,
-                n_args,
-                vals: spec_vals,
-                counter,
-            },
-        );
+        self.mint_specs.insert(id, spec);
         id
     }
 
@@ -539,7 +616,7 @@ impl EGraph {
         n_args: usize,
     ) -> Option<MintInsertPlan> {
         let spec = self.mint_specs.get(&func)?;
-        let registry = self.action_registry.read().unwrap();
+        let registry = self.action_registry.read();
         let action = registry.lookup_table(&spec.table_name)?;
         let math = action.table_math;
         // The row is `args ++ [fresh] ++ vals`, so the minted id sits at
@@ -566,7 +643,7 @@ impl EGraph {
         n_args: usize,
     ) -> Option<SetIfEmptyPlan> {
         let spec = self.set_if_empty_specs.get(&func)?;
-        let registry = self.action_registry.read().unwrap();
+        let registry = self.action_registry.read();
         let action = registry.lookup_table(&spec.view_name)?;
         let math = action.table_math;
         if math.num_keys() != spec.n_keys
@@ -592,7 +669,7 @@ impl EGraph {
         n_args: usize,
     ) -> Option<ViewColPlan> {
         let spec = self.view_col_specs.get(&func)?;
-        let registry = self.action_registry.read().unwrap();
+        let registry = self.action_registry.read();
         let action = registry.lookup_table(&spec.view_name)?;
         let math = action.table_math;
         if math.num_keys() != spec.n_keys
@@ -613,13 +690,7 @@ impl EGraph {
     /// not declared yet.
     fn external_write_table(&self, func: ExternalFunctionId) -> Option<TableId> {
         let name = self.external_write_deps.get(&func)?;
-        Some(
-            self.action_registry
-                .read()
-                .unwrap()
-                .lookup_table(name)?
-                .table,
-        )
+        Some(self.action_registry.read().lookup_table(name)?.table)
     }
 
     pub fn free_external_func(&mut self, func: ExternalFunctionId) {
@@ -804,7 +875,7 @@ impl EGraph {
         // `dyn`-compatibility on `Table` or dynamic dispatch per row.
         macro_rules! drain_buf {
             ($buf:expr) => {
-                for (_, row) in $buf.non_stale() {
+                for (_, row) in $buf.iter() {
                     let subsumed =
                         schema_math.subsume && row[schema_math.subsume_col()] == SUBSUMED;
                     if !f(ScanEntry {
@@ -848,11 +919,11 @@ impl EGraph {
         let mut cur = Offset::new(0);
         let mut out = TaggedRowBuffer::new(table.spec().arity());
         while let Some(next) = table.scan_bounded(all.as_ref(), cur, BATCH_SIZE, &mut out) {
-            out.non_stale().for_each(|(_, row)| f(row));
+            out.iter().for_each(|(_, row)| f(row));
             out.clear();
             cur = next;
         }
-        out.non_stale().for_each(|(_, row)| f(row));
+        out.iter().for_each(|(_, row)| f(row));
     }
 
     /// Register a function in this EGraph.
@@ -1084,37 +1155,140 @@ impl EGraph {
         let action = TableAction::new(self, res);
         let table_name = self.funcs[res].name.to_string();
         self.action_registry
-            .write()
-            .unwrap()
+            .lock()
             .register_table(table_name, action);
         res
     }
 
     /// A handle to the live [`ActionRegistry`] for this EGraph.
-    /// The handle is shared (`Arc<RwLock<_>>`); cloning the outer
+    /// The handle is shared (`Arc<ReadOptimizedLock<_>>`); cloning the outer
     /// `Arc` does not duplicate the underlying registry. Used by the
     /// egglog crate's primitive machinery to thread the registry into
     /// state wrappers at invoke time.
-    pub fn action_registry(&self) -> &Arc<std::sync::RwLock<ActionRegistry>> {
+    pub fn action_registry(&self) -> &SharedActionRegistry {
         &self.action_registry
     }
 
-    /// Run the given rules, returning whether the database changed.
+    /// Run the given rules for one iteration and return its report.
+    ///
+    /// `context` is visible to any external function the rules reach; pass
+    /// `None` if there is nothing to share.
+    ///
+    /// If a rule action raises an egglog-level panic, actions completed before
+    /// it remain applied. A successful recovery rebuild leaves the e-graph
+    /// canonical and reusable; it does not roll effects back or guarantee that
+    /// the failed action will be retried. If rebuilding also fails, the returned
+    /// error reports both failures and the e-graph has no reuse guarantee.
     ///
     /// If the given rules are malformed, this method can return an error.
-    pub fn run_rules(&mut self, rules: &[RuleId]) -> Result<IterationReport> {
+    pub fn run_rules(
+        &mut self,
+        rules: &[RuleId],
+        context: ExternalContext<'_>,
+    ) -> Result<IterationReport> {
         let thread_pool = self.thread_pool();
-        install_thread_pool(thread_pool, || self.run_rules_inner(rules))
+        install_thread_pool(thread_pool, || self.run_rules_inner(rules, context))
     }
 
-    fn run_rules_inner(&mut self, rules: &[RuleId]) -> Result<IterationReport> {
+    /// Run `rules` for one iteration like [`EGraph::run_rules`], but without
+    /// rebuilding afterwards. Unions made by the rules are recorded in the
+    /// union-find but ids in the tables are not canonicalized until
+    /// [`EGraph::rebuild_now`] is called; until then, rebuilding may increase
+    /// or decrease table sizes. This lets a runner apply rules one at a time
+    /// and rebuild at most once per iteration, as egg does.
+    ///
+    /// Completed actions are not rolled back on error, and this method does not
+    /// rebuild on either success or error; the caller retains responsibility
+    /// for calling [`EGraph::rebuild_now`].
+    pub fn run_rules_no_rebuild(
+        &mut self,
+        rules: &[RuleId],
+        context: ExternalContext<'_>,
+    ) -> Result<IterationReport> {
+        let thread_pool = self.thread_pool();
+        install_thread_pool(thread_pool, || {
+            let ts = self.next_ts();
+            let (assembly_time, rule_set_report) = run_rules_impl(
+                &mut self.db,
+                &mut self.rules,
+                rules,
+                ts,
+                self.report_level,
+                context,
+            )?;
+            if let Some(message) = self.panic_message.lock().unwrap().take() {
+                return Err(PanicError(message).into());
+            }
+            self.inc_ts();
+            Ok(IterationReport {
+                assembly_time,
+                rule_set_report,
+                rebuild_time: Duration::ZERO,
+            })
+        })
+    }
+
+    /// Flush the pending update buffers without rebuilding, for use with
+    /// [`EGraph::run_rules_no_rebuild`]. Returns `true` if the database is
+    /// updated.
+    pub fn flush_updates_no_rebuild(&mut self) -> bool {
+        let thread_pool = self.thread_pool();
+        install_thread_pool(thread_pool, || {
+            let updated = self.db.merge_all();
+            self.inc_ts();
+            updated
+        })
+    }
+
+    /// Canonicalize the database after deferred-rebuild runs. Returns the time
+    /// spent rebuilding.
+    pub fn rebuild_now(&mut self) -> Result<Duration> {
+        let thread_pool = self.thread_pool();
+        install_thread_pool(thread_pool, || {
+            let timer = Instant::now();
+            self.rebuild()?;
+            if let Some(message) = self.panic_message.lock().unwrap().take() {
+                return Err(PanicError(message).into());
+            }
+            Ok(timer.elapsed())
+        })
+    }
+
+    fn run_rules_inner(
+        &mut self,
+        rules: &[RuleId],
+        context: ExternalContext<'_>,
+    ) -> Result<IterationReport> {
         let ts = self.next_ts();
 
         let uf_size_before = self.db.get_table(self.uf_table).len();
-        let (assembly_time, rule_set_report) =
-            run_rules_impl(&mut self.db, &mut self.rules, rules, ts, self.report_level)?;
-        if let Some(message) = self.panic_message.lock().unwrap().take() {
-            return Err(PanicError(message).into());
+        let (assembly_time, rule_set_report) = run_rules_impl(
+            &mut self.db,
+            &mut self.rules,
+            rules,
+            ts,
+            self.report_level,
+            context,
+        )?;
+        let panic_message = self.panic_message.lock().unwrap().take();
+        if let Some(message) = panic_message {
+            let action_error = PanicError(message);
+
+            // Some actions may already have changed the database. Canonicalize
+            // those effects before surfacing the catchable egglog error.
+            let rebuild_error = self.rebuild().err();
+            let rebuild_panic = self.panic_message.lock().unwrap().take();
+            let recovery_error = match (rebuild_error, rebuild_panic) {
+                (None, None) => return Err(action_error.into()),
+                (Some(error), None) => error.to_string(),
+                (None, Some(message)) => PanicError(message).to_string(),
+                (Some(error), Some(message)) => {
+                    format!("{error}; {}", PanicError(message))
+                }
+            };
+            return Err(anyhow::anyhow!(
+                "{action_error}; rebuilding after the failed rule action also failed: {recovery_error}"
+            ));
         }
 
         let mut iteration_report = IterationReport {
@@ -1236,6 +1410,7 @@ impl EGraph {
                                 &[*rule],
                                 ts,
                                 ReportLevel::TimeOnly,
+                                None,
                             )?
                             .1
                             .changed;
@@ -1252,6 +1427,7 @@ impl EGraph {
                             &[info.nonincremental_rebuild_rule],
                             ts,
                             ReportLevel::TimeOnly,
+                            None,
                         )?
                         .1
                         .changed;
@@ -1326,6 +1502,7 @@ impl EGraph {
                 &scratch,
                 ts,
                 ReportLevel::TimeOnly,
+                None,
             )?
             .1
             .changed;
@@ -1343,6 +1520,7 @@ impl EGraph {
                     &scratch,
                     ts,
                     ReportLevel::TimeOnly,
+                    None,
                 )?
                 .1
                 .changed;
@@ -1460,6 +1638,9 @@ impl EGraph {
     /// The staged updates are not immediately reflected in the EGraph, so you may want to
     /// manually flush the updates using [`EGraph::flush_updates`].
     ///
+    /// `context` is visible to any external function the closure reaches; pass
+    /// `None` if there is nothing to share.
+    ///
     /// # Seminaive-safety trust boundary
     ///
     /// This method hands out a raw `&mut ExecutionState`, which bypasses
@@ -1469,9 +1650,13 @@ impl EGraph {
     /// / global-action context: appropriate for one-shot database
     /// manipulation from outside any rule, not for use inside
     /// primitive implementations.
-    pub fn with_execution_state<R>(&self, f: impl FnOnce(&mut ExecutionState<'_>) -> R) -> R {
+    pub fn with_execution_state<R>(
+        &self,
+        context: ExternalContext<'_>,
+        f: impl FnOnce(&mut ExecutionState<'_>) -> R,
+    ) -> R {
         let thread_pool = self.thread_pool();
-        install_thread_pool(thread_pool, || self.db.with_execution_state(f))
+        install_thread_pool(thread_pool, || self.db.with_execution_state(context, f))
     }
 
     /// Like [`EGraph::with_execution_state`], but also reports whether `f`
@@ -1480,10 +1665,13 @@ impl EGraph {
     /// no-op merge plus a spurious timestamp bump.
     pub fn with_execution_state_tracked<R>(
         &self,
+        context: ExternalContext<'_>,
         f: impl FnOnce(&mut ExecutionState<'_>) -> R,
     ) -> (R, bool) {
         let thread_pool = self.thread_pool();
-        install_thread_pool(thread_pool, || self.db.with_execution_state_tracked(f))
+        install_thread_pool(thread_pool, || {
+            self.db.with_execution_state_tracked(context, f)
+        })
     }
 
     /// Flush the pending update buffers to the EGraph.
@@ -2143,6 +2331,16 @@ pub enum TableKind {
     Constructor,
 }
 
+impl TableKind {
+    /// How this kind of table is spelled in a program, and in diagnostics.
+    pub fn label(self) -> &'static str {
+        match self {
+            TableKind::Function => "function",
+            TableKind::Constructor => "constructor",
+        }
+    }
+}
+
 /// User-visible table shape used by read-only, name-indexed APIs.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 struct TableReadProjection {
@@ -2165,6 +2363,11 @@ pub enum TableReadProjectionError {
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct TableAction {
     table: TableId,
+    // A self-referential merge is resolved before its backing table is installed.
+    // Its internal actions need only the reserved TableId; name-indexed handles
+    // are created after installation and must have an allocation identity.
+    identity: Option<TableIdentity>,
+    name: Arc<str>,
     table_math: SchemaMath,
     default: Option<MergeVal>,
     timestamp: CounterId,
@@ -2186,6 +2389,8 @@ impl TableAction {
         };
         TableAction {
             table: func_info.table,
+            identity: egraph.db.table_identity(func_info.table),
+            name: Arc::clone(&func_info.name),
             table_math: func_info.schema_math(),
             default: match &func_info.default_val {
                 DefaultVal::FreshId => Some(MergeVal::Counter(egraph.id_counter)),
@@ -2196,6 +2401,17 @@ impl TableAction {
             kind,
             read_projection: func_info.read_projection,
         }
+    }
+
+    /// Whether this still names the same table allocation in `state`.
+    ///
+    /// A table declared inside a `push` is dropped by the corresponding `pop`.
+    /// Its [`TableId`] may then be reused by a different table, while handles
+    /// handed out before the pop still hold the old id.
+    pub fn is_live(&self, state: &ExecutionState) -> bool {
+        self.identity.is_some()
+            && state.table_identity(self.table) == self.identity
+            && state.table_name(self.table) == Some(self.name.as_ref())
     }
 
     /// Whether this physical table is a `Function` (no auto-insert) or a
@@ -2324,7 +2540,7 @@ impl TableAction {
         let mut buf = TaggedRowBuffer::new(imp.spec().arity());
         macro_rules! drain_buf {
             ($buf:expr) => {
-                for (_, row) in $buf.non_stale() {
+                for (_, row) in $buf.iter() {
                     let subsumed =
                         schema_math.subsume && row[schema_math.subsume_col()] == SUBSUMED;
                     if !f(ScanEntry {
@@ -2359,6 +2575,24 @@ impl TableAction {
                 row.vals[input_arity],
                 row.subsumed,
             )
+        });
+    }
+
+    /// Call `f` on each row whose output column is `value`.
+    pub fn for_each_output_value(
+        &self,
+        state: &ExecutionState,
+        value: Value,
+        mut f: impl FnMut(ScanEntry<'_>),
+    ) {
+        let schema_math = self.table_math;
+        let output_col = ColumnId::from_usize(self.read_projection.input_arity);
+        state.for_each_matching_col(self.table, output_col, value, |row| {
+            let subsumed = schema_math.subsume && row[schema_math.subsume_col()] == SUBSUMED;
+            f(ScanEntry {
+                vals: &row[0..schema_math.func_cols],
+                subsumed,
+            });
         });
     }
 
@@ -2496,7 +2730,9 @@ impl TableAction {
         state.stage_remove(self.table, key);
     }
 
-    /// Subsume a row in this table.
+    /// Subsume a row in a table with subsumption enabled. For a constructor,
+    /// the configured default is inserted if the key is absent. Rows predicted
+    /// earlier in the same action are reused.
     pub fn subsume(&self, state: &mut ExecutionState, key: impl Iterator<Item = Value>) {
         assert!(
             self.table_math.subsume,
@@ -2504,9 +2740,15 @@ impl TableAction {
         );
         let ts = Value::from_usize(state.read_counter(self.timestamp));
         let mut scratch = key.collect::<SmallVec<[_; 8]>>();
-        let values = self
-            .lookup_values(state, &scratch)
-            .expect("subsume lookup failed");
+        let values = if self.table_math.n_vals() == 1 {
+            vec![
+                self.lookup_or_insert(state, &scratch)
+                    .expect("subsume lookup failed"),
+            ]
+        } else {
+            self.lookup_values(state, &scratch)
+                .expect("subsume lookup failed")
+        };
         scratch.extend(values);
         scratch.push(ts);
         scratch.push(SUBSUMED);
@@ -2544,6 +2786,7 @@ fn run_rules_impl(
     rules: &[RuleId],
     next_ts: Timestamp,
     report_level: ReportLevel,
+    context: ExternalContext<'_>,
 ) -> Result<(Duration, RuleSetReport)> {
     let assembly_timer = Instant::now();
     for rule in rules {
@@ -2562,7 +2805,10 @@ fn run_rules_impl(
     }
     let ruleset = rsb.build();
     let assembly_time = assembly_timer.elapsed();
-    Ok((assembly_time, db.run_rule_set(&ruleset, report_level)))
+    Ok((
+        assembly_time,
+        db.run_rule_set(&ruleset, report_level, context),
+    ))
 }
 
 // These markers are just used to make it easy to distinguish time spent in

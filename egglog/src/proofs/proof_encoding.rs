@@ -1044,7 +1044,7 @@ impl<'a> ProofInstrumentor<'a> {
             // differs. The proof column (value column 1) is a payload the identity
             // guard ignores.
             debug_assert!(
-                !fdecl.resolved_schema.output().is_eq_sort(),
+                !self.sort_by_name(fdecl.schema.output()).is_eq_sort(),
                 "eq-sort `:no-merge` must be rejected by command_supports_proof_encoding"
             );
             format!(
@@ -1954,13 +1954,44 @@ impl<'a> ProofInstrumentor<'a> {
         Operand::built(dedup, fv_nat, connector)
     }
 
+    /// The sort named `name`.
+    ///
+    /// Encoding runs over the program the pre-instrumentation typechecking
+    /// resolved, so that is where to look first — the same way a container
+    /// sort is resolved.
+    pub(super) fn sort_by_name(&self, name: &str) -> ArcSort {
+        self.egraph
+            .proof_state
+            .original_typechecking
+            .as_ref()
+            .and_then(|typechecking| typechecking.get_sort_by_name(name))
+            .or_else(|| self.egraph.get_sort_by_name(name))
+            .cloned()
+            .unwrap_or_else(|| panic!("sort {name} not found while encoding"))
+    }
+
+    /// The declared sorts of `fdecl`'s columns, inputs followed by the output.
+    ///
+    /// Resolved from the declaration's own schema rather than looked up by
+    /// name: encoding also runs over declarations desugaring generated, which
+    /// are not typechecked until after this pass.
+    pub(super) fn column_sorts(&self, fdecl: &ResolvedFunctionDecl) -> Vec<ArcSort> {
+        fdecl
+            .schema
+            .input
+            .iter()
+            .chain(&fdecl.schema.outputs)
+            .map(|name| self.sort_by_name(name))
+            .collect()
+    }
+
     /// Declare one index per distinct eq-sort among a view's columns, so an `@UF`
     /// edge on a term reaches the rows mentioning it by lookup instead of by
     /// matching the view once per column. The e-class column is indexed too, so a
     /// stale e-class is found the same way. Containers are excluded: they carry
     /// no `@UF` row and are canonicalized structurally.
     fn declare_view_indexes(&mut self, fdecl: &ResolvedFunctionDecl) -> String {
-        let types = fdecl.resolved_schema.view_types();
+        let types = self.column_sorts(fdecl);
         // Children, plus the value column when it is an e-class. When only the
         // e-class moves the canonical key equals the old one, so the rebuild rule
         // deletes the old row before re-inserting rather than after (see

@@ -1,9 +1,156 @@
 use crate::{
+    TableId, Value,
     action::mask::{IterResult, ValueSource},
+    numeric_id::NumericId,
+    pool::Clear,
     pool::{PoolSet, with_pool_set},
 };
 
-use super::mask::{Mask, MaskIter};
+use super::{
+    PredictedEntry, PredictedVals,
+    mask::{Mask, MaskIter},
+};
+
+#[test]
+fn external_batches_preserve_sparse_lanes_and_fallback_outputs() {
+    use crate::free_join::{invoke_batch, invoke_batch_assign};
+    use crate::{
+        Database, ExecutionState, ExternalFunction, ExternalFunctionBatch, QueryEntry, Variable,
+    };
+
+    #[derive(Clone)]
+    struct Batched;
+    impl ExternalFunction for Batched {
+        fn invoke(&self, _: &mut ExecutionState, _: &[Value]) -> Option<Value> {
+            panic!("the action instruction must dispatch the batch override")
+        }
+
+        fn invoke_batch(&self, _: &mut ExecutionState, batch: ExternalFunctionBatch<'_>) {
+            assert_eq!(batch.len(), 4);
+            batch.map(|args| {
+                let n = args[0].index();
+                (n != 5).then(|| Value::from_usize(n + args[1].index()))
+            });
+        }
+    }
+
+    let db = Database::default();
+    let ps = PoolSet::default();
+    let input = Variable::from_usize(0);
+    let output = Variable::from_usize(1);
+    let values: Vec<_> = (0..8).map(Value::from_usize).collect();
+    let mut bindings = super::Bindings::new(8);
+    bindings.insert(input, &values);
+    let args = [QueryEntry::Var(input), Value::from_usize(100).into()];
+    let mut mask = Mask::new(0..8, &ps);
+    mask.iter(&values).retain(|v| v.index() % 2 == 1);
+    db.with_execution_state(None, |state| {
+        invoke_batch(&Batched, state, &mut mask, &mut bindings, &args, output)
+    });
+    assert_eq!(mask.ones().collect::<Vec<_>>(), [1, 3, 7]);
+    for i in [1, 3, 7] {
+        assert_eq!(bindings[output][i], Value::from_usize(100 + i));
+    }
+
+    // A fallback must preserve results in lanes where the first call succeeded.
+    let fallback =
+        crate::make_external_func(|_: &mut ExecutionState, args: &[Value]| Some(args[0]));
+    let mut missing = Mask::new(0..8, &ps);
+    missing.iter(&values).retain(|v| v.index() == 5);
+    db.with_execution_state(None, |state| {
+        invoke_batch_assign(
+            &fallback,
+            state,
+            &mut missing,
+            &mut bindings,
+            &[Value::from_usize(999).into()],
+            output,
+        )
+    });
+    assert_eq!(bindings[output][5], Value::from_usize(999));
+    for i in [1, 3, 7] {
+        assert_eq!(bindings[output][i], Value::from_usize(100 + i));
+    }
+}
+
+#[test]
+fn predicted_vals_store_rows_contiguously() {
+    let mut predicted = PredictedVals::default();
+    let table = TableId::from_usize(3);
+    let other_table = TableId::from_usize(4);
+    let key = [
+        Value::from_usize(10),
+        Value::from_usize(11),
+        Value::from_usize(12),
+        Value::from_usize(13),
+    ];
+    let row = [key[0], key[1], key[2], key[3], Value::from_usize(99)];
+    let mut default_calls = 0;
+
+    let (got, inserted) = predicted.get_or_insert_with(table, &key, row.len(), |values, _| {
+        default_calls += 1;
+        values.extend_from_slice(&row[key.len()..]);
+    });
+    assert_eq!(got, row);
+    assert!(inserted);
+
+    let (got, inserted) = predicted.get_or_insert_with(table, &key, row.len(), |_, _| {
+        default_calls += 1;
+    });
+    assert_eq!(got, row);
+    assert!(!inserted);
+    assert_eq!(default_calls, 1);
+
+    let other_row = [key[0], key[1], key[2], key[3], Value::from_usize(100)];
+    let (got, inserted) =
+        predicted.get_or_insert_with(other_table, &key, other_row.len(), |values, _| {
+            default_calls += 1;
+            values.extend_from_slice(&other_row[key.len()..]);
+        });
+    assert_eq!(got, other_row);
+    assert!(inserted);
+    assert_eq!(predicted.index.len(), 2);
+    assert_eq!(predicted.values.len(), 2 * row.len());
+
+    predicted.clear();
+    assert!(predicted.index.is_empty());
+    assert!(predicted.values.is_empty());
+}
+
+#[test]
+fn predicted_vals_resolve_hash_collisions_with_the_backing_rows() {
+    let mut predicted = PredictedVals::default();
+    let table = TableId::from_usize(3);
+    let collision_key = [Value::from_usize(10), Value::from_usize(11)];
+    let key = [Value::from_usize(20), Value::from_usize(21)];
+    let collision_row = [collision_key[0], collision_key[1], Value::from_usize(30)];
+    let row = [key[0], key[1], Value::from_usize(31)];
+    let hash = PredictedVals::hash(table, &key);
+
+    predicted.values.extend_from_slice(&collision_row);
+    predicted.index.insert_unique(
+        hash,
+        PredictedEntry {
+            hash,
+            index: 0,
+            table,
+            key_arity: collision_key.len() as u32,
+        },
+        |entry| entry.hash,
+    );
+
+    let (got, inserted) = predicted.get_or_insert_with(table, &key, row.len(), |values, _| {
+        values.extend_from_slice(&row[key.len()..]);
+    });
+    assert_eq!(got, row);
+    assert!(inserted);
+
+    let (got, inserted) = predicted.get_or_insert_with(table, &key, row.len(), |_, _| {
+        unreachable!("the inserted row should be found through the collision")
+    });
+    assert_eq!(got, row);
+    assert!(!inserted);
+}
 
 #[test]
 fn mask_iter() {
@@ -147,4 +294,87 @@ fn test_early_stop_multiple_clones() {
     assert!(state1.should_stop());
     assert!(state2.should_stop());
     assert!(state3.should_stop());
+}
+
+#[test]
+fn lowered_inserts_share_scalar_counter_reservations() {
+    use crate::{
+        action::{Bindings, Instr, QueryEntry, WriteVal},
+        free_join::{Database, Variable},
+        table::SortedWritesTable,
+        table_shortcuts::v,
+        table_spec::ColumnId,
+    };
+
+    // Cover both observable counters and the reservable ids used by proof minting.
+    for reservation_size in [1, 64] {
+        let mut db = Database::default();
+        let counter = db.add_reservable_counter(reservation_size);
+        let table = db.add_table(
+            SortedWritesTable::new(1, 3, None, vec![], Box::new(|_, _, _, _| false)),
+            std::iter::empty(),
+            std::iter::empty(),
+        );
+        db.with_execution_state(None, |state| {
+            let arg = Variable::from_usize(0);
+            let dst = Variable::from_usize(1);
+            let mut bindings = Bindings::new(5);
+            bindings.insert(arg, &[v(10), v(11), v(12), v(13), v(14)]);
+            let mut mask = with_pool_set(|ps| Mask::new(0..5, ps));
+            mask.iter(&[true, false, true, false, true])
+                .retain(|live| *live);
+            let vals = vec![
+                WriteVal::IncCounter(counter),
+                WriteVal::QueryEntry(QueryEntry::Var(arg)),
+                WriteVal::CurrentVal(0),
+            ];
+
+            assert_eq!(state.inc_counter(counter), 0);
+            state.run_instr(
+                &mut mask,
+                &Instr::Insert {
+                    table,
+                    vals: vals.clone(),
+                    bind: Some((ColumnId::from_usize(0), dst)),
+                },
+                &mut bindings,
+            );
+            assert_eq!(bindings[dst][0], v(1));
+            assert_eq!(bindings[dst][2], v(2));
+            assert_eq!(bindings[dst][4], v(3));
+            state.run_instr(
+                &mut mask,
+                &Instr::Insert {
+                    table,
+                    vals,
+                    bind: None,
+                },
+                &mut bindings,
+            );
+            assert_eq!(state.inc_counter(counter), 7);
+            // Lowered inserts must reuse the scalar reservation, not issue a
+            // shared atomic increment for every live lane.
+            assert_eq!(state.read_counter(counter), reservation_size.max(8));
+        });
+        db.merge_all();
+        let table = db.get_table(table);
+        let all = table.all();
+        let mut rows: Vec<_> = table
+            .scan(all.as_ref())
+            .iter()
+            .map(|(_, row)| row.to_vec())
+            .collect();
+        rows.sort();
+        assert_eq!(
+            rows,
+            vec![
+                vec![v(1), v(10), v(1)],
+                vec![v(2), v(12), v(2)],
+                vec![v(3), v(14), v(3)],
+                vec![v(4), v(10), v(4)],
+                vec![v(5), v(12), v(5)],
+                vec![v(6), v(14), v(6)],
+            ]
+        );
+    }
 }

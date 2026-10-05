@@ -3,7 +3,7 @@ use std::hash::Hasher;
 use crate::Context;
 use crate::proofs::proof_container_rebuild::register_container_rebuild_from_spec;
 use crate::{
-    core::{CoreActionContext, CoreRule, GenericActionsExt, ResolvedCall},
+    core::{CoreActionContext, GenericActionsExt, ResolvedCall},
     *,
 };
 use ast::{
@@ -12,9 +12,9 @@ use ast::{
 };
 use core_relations::ExternalFunction;
 use egglog_ast::generic_ast::GenericAction;
-use egglog_bridge::ActionRegistry;
+use egglog_bridge::{ActionRegistry, SharedActionRegistry};
 use enum_map::EnumMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 // `ExternalFunction` wrapper for `PurePrim`. Holds the primitive
 // directly so the dispatch chain `external_funcs[id].invoke(...)` →
@@ -43,7 +43,7 @@ impl<T: PurePrim + Clone> ExternalFunction for PurePrimWrapper<T> {
 #[derive(Clone)]
 struct RegistryPrimWrapper<T, S> {
     prim: T,
-    registry: Arc<RwLock<ActionRegistry>>,
+    registry: SharedActionRegistry,
     /// Stamped onto the state wrapper.
     ctx: Context,
     _wrap: std::marker::PhantomData<fn() -> S>,
@@ -106,7 +106,7 @@ impl<T: Clone + Send + Sync + 'static, S: RegistryWrap<T> + 'static> ExternalFun
     for RegistryPrimWrapper<T, S>
 {
     fn invoke(&self, exec_state: &mut ExecutionState, args: &[Value]) -> Option<Value> {
-        let registry = self.registry.read().unwrap();
+        let registry = self.registry.read();
         S::invoke(&self.prim, exec_state, self.ctx, args, &registry)
     }
 }
@@ -237,12 +237,14 @@ pub struct TypeInfo {
     reserved_primitives: HashSet<&'static str>,
     pub(crate) sorts: HashMap<String, Arc<dyn Sort>>,
     primitives: HashMap<String, Vec<PrimitiveWithId>>,
-    func_types: HashMap<String, FuncType>,
+    func_types: HashMap<String, Arc<FuncType>>,
     pub(crate) global_sorts: HashMap<String, ArcSort>,
     /// Sorts that do not allow union (e.g., from `:no-union` sorts or relations).
     pub(crate) non_unionable_sorts: HashSet<String>,
     /// Declared indexes, by the name their atoms are written with.
     pub(crate) indexes: HashMap<String, IndexInfo>,
+    /// Function declarations hidden from user-facing table listings.
+    pub(crate) hidden_functions: HashSet<String>,
 }
 
 /// A declared index: a read-only relation over the rows of `function`, holding
@@ -527,12 +529,12 @@ impl EGraph {
         let unit = self.type_info.sorts.get("Unit").expect("Unit sort").clone();
         self.type_info.func_types.insert(
             name.to_owned(),
-            FuncType {
+            Arc::new(FuncType {
                 name: name.to_owned(),
                 subtype: FunctionSubtype::Custom,
                 input,
                 outputs: vec![unit],
-            },
+            }),
         );
         self.type_info.indexes.insert(
             name.to_owned(),
@@ -556,7 +558,7 @@ impl EGraph {
                 // the view's e-class at insertion time. Registered here so it
                 // survives re-parse of the desugared program.
                 if resolved.internal_view.is_some()
-                    && let ResolvedCall::Func(ft) = &resolved.resolved_schema
+                    && let Some(ft) = self.type_info.get_func_type(&resolved.name)
                     && ft.outputs.len() >= 2
                 {
                     let (name, input, outputs) =
@@ -568,7 +570,7 @@ impl EGraph {
                 // statement. Registered here for the same reason as `set-if-empty`
                 // above.
                 if resolved.internal_term_node
-                    && let ResolvedCall::Func(ft) = &resolved.resolved_schema
+                    && let Some(ft) = self.type_info.get_func_type(&resolved.name)
                     && let Some((id_sort, arg_sorts)) = ft.input.split_last()
                     && id_sort.is_eq_sort()
                 {
@@ -1046,7 +1048,11 @@ impl TypeInfo {
             ));
         }
         let ftype = self.function_to_functype(fdecl)?;
-        if self.func_types.insert(fdecl.name.clone(), ftype).is_some() {
+        if self
+            .func_types
+            .insert(fdecl.name.clone(), Arc::new(ftype))
+            .is_some()
+        {
             return Err(TypeError::FunctionAlreadyBound(
                 fdecl.name.clone(),
                 fdecl.span.clone(),
@@ -1148,7 +1154,7 @@ impl TypeInfo {
             name: fdecl.name.clone(),
             subtype: fdecl.subtype,
             schema: fdecl.schema.clone(),
-            resolved_schema: ResolvedCall::Func(self.func_types.get(&fdecl.name).unwrap().clone()),
+
             merge,
             cost: fdecl.cost,
             unextractable: fdecl.unextractable,
@@ -1268,8 +1274,6 @@ impl TypeInfo {
             no_decomp,
             include_subsumed,
         } = rule;
-        let mut constraints = vec![];
-
         // Compile with the permissive Read/Full primitive contexts (so the RHS
         // can read the database) when the whole EGraph is non-seminaive, or the
         // rule's own mode requires it (`:naive` / `:unsafe-seminaive`).
@@ -1285,26 +1289,15 @@ impl TypeInfo {
         };
 
         let (query, mapped_query) = Facts(body.clone()).to_query(self, symbol_gen);
-        constraints.extend(query.get_constraints(self, query_ctx)?);
+        let mut problem = Problem::default();
+        problem.add_query(&query, self, query_ctx)?;
 
         let mut binding = query.vars().collect::<IndexSet<_>>();
         // We lower to core actions with `union_to_set_optimization`
         // later in the pipeline. For typechecking we do not need it.
         let mut ctx = CoreActionContext::new(self, &mut binding, symbol_gen, false);
         let (actions, mapped_action) = head.to_core_actions(&mut ctx)?;
-
-        let mut problem = Problem::default();
-        problem.add_rule(
-            &CoreRule {
-                span: span.clone(),
-                body: query,
-                head: actions,
-            },
-            self,
-            symbol_gen,
-            query_ctx,
-            action_ctx,
-        )?;
+        problem.add_actions(&actions, self, symbol_gen, action_ctx)?;
 
         let assignment = problem
             .solve(|sort: &ArcSort| sort.name())
@@ -1546,13 +1539,21 @@ impl TypeInfo {
             .any(|p| p.context_ids.iter().any(|(_, pid)| *pid == Some(id)) && p.validator.is_some())
     }
 
-    pub fn get_func_type(&self, sym: &str) -> Option<&FuncType> {
+    /// The shared signature declared for `sym`, or `None` if no function with
+    /// that name is declared. Clone it to keep it past the borrow.
+    pub fn get_func_type(&self, sym: &str) -> Option<&Arc<FuncType>> {
         self.func_types.get(sym)
     }
 
+    /// Record a signature for a function that did not come through
+    /// typechecking — desugaring generates some (global bindings, proof
+    /// tables) directly.
+    pub(crate) fn declare_func_type(&mut self, func_type: Arc<FuncType>) {
+        self.func_types.insert(func_type.name.clone(), func_type);
+    }
+
     pub fn is_constructor(&self, sym: &str) -> bool {
-        self.func_types
-            .get(sym)
+        self.get_func_type(sym)
             .is_some_and(|f| f.subtype == FunctionSubtype::Constructor)
     }
 

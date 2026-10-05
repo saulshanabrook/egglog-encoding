@@ -45,7 +45,7 @@ fn no_proof_relation_names_a_term() {
             continue;
         }
         if function
-            .schema
+            .func_type
             .input
             .iter()
             .any(|sort| sort.name() != proof_sort && sort.is_eq_sort())

@@ -30,6 +30,7 @@
 //! [`ReadPrim`]: crate::ReadPrim
 //! [`FullPrim`]: crate::FullPrim
 
+use std::any::TypeId;
 use std::ops::Deref;
 
 use crate::Error;
@@ -39,6 +40,7 @@ use crate::core_relations::{
     Value,
 };
 use crate::{
+    ArcSort, TypeInfo,
     ast::{FunctionSubtype, Literal, ResolvedExpr},
     core::ResolvedCall,
     sort::{F, S},
@@ -142,6 +144,15 @@ pub(crate) trait Internal<'a, 'db: 'a>: 'a {
 /// name through it.
 pub(crate) trait RegistrySealed<'a, 'db: 'a>: Internal<'a, 'db> {
     fn registry(&self) -> &ActionRegistry;
+
+    /// The [`TypeInfo`] the e-graph made visible for this operation, or `None`
+    /// in an execution the e-graph did not supply one for (its internal
+    /// rebuild rules, whose actions never read a signature).
+    ///
+    /// Borrowed for the operation, so nothing can be declared while it runs.
+    fn type_info(&self) -> Option<&'db TypeInfo> {
+        self.es().external_context()?.downcast_ref()
+    }
 }
 
 // =====================================================================
@@ -181,6 +192,30 @@ pub trait Core<'a, 'db: 'a>: Internal<'a, 'db> {
         let cv = self.container_values();
         let es = self.es_mut();
         cv.register_val(container, es)
+    }
+
+    /// Map a container value's contents through `remap` and intern the
+    /// result, returning `None` if `value` is not a container of `type_id`.
+    ///
+    /// The container `value` names is not modified: this interns a separate
+    /// value, which is `value` itself when `remap` changed nothing. `type_id`
+    /// comes from [`Sort::value_type`](crate::sort::Sort::value_type).
+    ///
+    /// `remap` sees every value the container stores, including ones of sorts
+    /// it does not care about, so it should return its argument unchanged for
+    /// those.
+    fn map_container(
+        &mut self,
+        type_id: TypeId,
+        value: Value,
+        remap: &(dyn Fn(Value) -> Value + Send + Sync),
+    ) -> Option<Value> {
+        // Same borrow shape as `register_container`: the `ContainerValues`
+        // reference is tied to the inner ExecutionState's lifetime, not
+        // to `&self`, so it survives the `&mut` reborrow.
+        let cv = self.container_values();
+        let es = self.es_mut();
+        cv.rebuild_val_with(type_id, value, es, remap)
     }
 
     /// Convert an egglog [`Value`] to a Rust base type, assuming that the
@@ -307,8 +342,11 @@ pub trait Core<'a, 'db: 'a>: Internal<'a, 'db> {
 /// The single-entry methods (`lookup`, `eclass_of`, `contains`)
 /// return `None` if absent — never insert. The iteration /
 /// introspection methods (`function_entries`, `constructor_enodes`,
-/// `table_size`, `table_sizes`) walk the current contents of the
-/// database.
+/// `constructor_enodes_for_eclass`, `eclass_enodes`, `table_size`,
+/// `tables`, `table_sizes`) walk the current
+/// contents of the database, while `constructor_schema` /
+/// `function_schema` / `table_subtype` report how a table is declared
+/// rather than what it holds.
 ///
 /// Detectable misuse (wrong table subtype, wrong arity) is reported
 /// as [`crate::ApiError`] via the method's `Result`. Per-column sort
@@ -323,7 +361,7 @@ pub trait Read<'a, 'db: 'a>: Core<'a, 'db> + RegistrySealed<'a, 'db> {
     /// **Only valid for `function` tables.** Constructors error;
     /// use [`Read::eclass_of`] for those.
     fn lookup<K: IntoValues>(&self, name: &str, key: K) -> Result<Option<Value>, Error> {
-        let action = lookup_action(self.registry(), name)?;
+        let action = lookup_action(self.registry(), self.es(), name)?;
         let input_arity = check_read_projection(
             name,
             &action,
@@ -341,7 +379,7 @@ pub trait Read<'a, 'db: 'a>: Core<'a, 'db> + RegistrySealed<'a, 'db> {
     /// **Only valid for constructor tables.** Functions error;
     /// use [`Read::lookup`] for those.
     fn eclass_of<K: IntoValues>(&self, name: &str, inputs: K) -> Result<Option<Value>, Error> {
-        let action = lookup_action(self.registry(), name)?;
+        let action = lookup_action(self.registry(), self.es(), name)?;
         let input_arity = check_read_projection(
             name,
             &action,
@@ -356,24 +394,70 @@ pub trait Read<'a, 'db: 'a>: Core<'a, 'db> + RegistrySealed<'a, 'db> {
     /// True iff a row with the given key exists in the table. Works
     /// for any subtype — never mints.
     fn contains<K: IntoValues>(&self, name: &str, key: K) -> Result<bool, Error> {
-        let action = lookup_action(self.registry(), name)?;
+        let action = lookup_action(self.registry(), self.es(), name)?;
         let input_arity = check_read_projection(name, &action, None, None)?;
         let key_values: ValueRow = key.into_values(self.base_values()).collect();
         check_arity(name, input_arity, key_values.len())?;
         Ok(action.lookup_visible(self.es(), &key_values).is_some())
     }
 
+    /// A constructor's declared signature: its input sorts and the sort of the
+    /// eclass column. Pair with [`Read::tables`] to walk every table.
+    ///
+    /// **Only valid for constructor tables.** Functions error; use
+    /// [`Read::function_schema`] for those.
+    fn constructor_schema(&self, name: &str) -> Result<&'db FuncType, Error> {
+        func_type_of(self.type_info(), name, FunctionSubtype::Constructor)
+    }
+
+    /// A function's declared signature: its input sorts and its output sort.
+    ///
+    /// **Only valid for `function` tables.** Constructors error; use
+    /// [`Read::constructor_schema`] for those.
+    fn function_schema(&self, name: &str) -> Result<&'db FuncType, Error> {
+        func_type_of(self.type_info(), name, FunctionSubtype::Custom)
+    }
+
+    /// Whether the named table is a `constructor` or a `function`, or `None`
+    /// if no table with that name is registered. Unlike the two schema
+    /// accessors, a mismatch is not an error, so this is the one to dispatch
+    /// on when either subtype is acceptable.
+    fn table_subtype(&self, name: &str) -> Option<FunctionSubtype> {
+        Some(self.type_info()?.get_func_type(name)?.subtype)
+    }
+
     /// Return the current row count for the named table, or `None` if no table
     /// with that name is registered.
     fn table_size(&self, name: &str) -> Option<usize> {
-        self.registry()
-            .lookup_table(name)
+        lookup_action(self.registry(), self.es(), name)
+            .ok()
             .map(|action| action.row_count(self.es()))
     }
 
     /// Snapshot the registered table names and their current row counts.
     fn table_sizes(&self) -> Vec<(&str, usize)> {
         self.registry().table_sizes(self.es())
+    }
+
+    /// Iterate over the registered table names visible to this state.
+    fn tables(&self) -> impl Iterator<Item = &str> {
+        self.table_sizes().into_iter().map(|(name, _)| name)
+    }
+
+    /// Whether the named table was declared `:internal-hidden`. Returns `None`
+    /// when no [`TypeInfo`] is visible to this execution.
+    fn is_table_hidden(&self, name: &str) -> Option<bool> {
+        Some(self.type_info()?.hidden_functions.contains(name))
+    }
+
+    /// Whether `sort` is a unionable eq-sort, i.e. the output sort of a table
+    /// whose rows are e-nodes. `relation`s desugar to constructors over a
+    /// fresh *non*-unionable sort, so this separates e-node tables from fact
+    /// tables; pair it with [`Read::constructor_schema`] and
+    /// [`Read::table_subtype`]. Returns `None` when no [`TypeInfo`] is visible
+    /// to this execution (the e-graph's internal rebuild rules).
+    fn is_sort_unionable(&self, sort: &ArcSort) -> Option<bool> {
+        Some(self.type_info()?.is_sort_unionable(sort))
     }
 
     /// Call `f` on each [`Enode`] of a constructor / relation table.
@@ -393,7 +477,7 @@ pub trait Read<'a, 'db: 'a>: Core<'a, 'db> + RegistrySealed<'a, 'db> {
         name: &str,
         mut f: impl FnMut(Enode<'_>) -> bool,
     ) -> Result<(), Error> {
-        let action = lookup_action(self.registry(), name)?;
+        let action = lookup_action(self.registry(), self.es(), name)?;
         check_read_projection(
             name,
             &action,
@@ -402,11 +486,75 @@ pub trait Read<'a, 'db: 'a>: Core<'a, 'db> + RegistrySealed<'a, 'db> {
         )?;
         action.for_each_visible_while(self.es(), |children, eclass, subsumed| {
             f(Enode {
+                name,
                 children,
                 eclass,
                 subsumed,
             })
         });
+        Ok(())
+    }
+
+    /// Call `f` on the [`Enode`]s of the *one* table `name` whose eclass column
+    /// holds exactly `eclass`. For every constructor at once, use
+    /// [`Read::eclass_enodes`].
+    ///
+    /// Rows whose eclass has since been merged into another are matched under
+    /// the id they store, not their canonical one. Errors with `WrongSubtype`
+    /// if `name` is a function.
+    fn constructor_enodes_for_eclass(
+        &self,
+        name: &str,
+        eclass: Value,
+        mut f: impl FnMut(Enode<'_>),
+    ) -> Result<(), Error> {
+        let action = lookup_action(self.registry(), self.es(), name)?;
+        let input_arity = check_read_projection(
+            name,
+            &action,
+            Some((TableKind::Constructor, "constructor")),
+            None,
+        )?;
+        action.for_each_output_value(self.es(), eclass, |row| {
+            f(Enode {
+                name,
+                children: &row.vals[..input_arity],
+                eclass: row.vals[input_arity],
+                subsumed: row.subsumed,
+            });
+        });
+        Ok(())
+    }
+
+    /// Call `f` on every [`Enode`] of `eclass`, across every constructor.
+    /// [`Enode::name`] says which one each row came from.
+    ///
+    /// A [`Value`] does not say what sort it belongs to, so this probes each
+    /// constructor whose output is an eq-sort. A caller that already knows the
+    /// sort should narrow to those constructors itself and use
+    /// [`Read::constructor_enodes_for_eclass`], which is one probe rather than
+    /// one per constructor.
+    fn eclass_enodes(&self, eclass: Value, mut f: impl FnMut(Enode<'_>)) -> Result<(), Error> {
+        let names: Vec<String> = self.tables().map(str::to_owned).collect();
+        for name in names {
+            // A function's last column is an output, not an eclass, and a
+            // constructor over a base sort has no eclass column to match.
+            let action = lookup_action(self.registry(), self.es(), &name)?;
+            if action
+                .validate_read_projection(Some(TableKind::Constructor), false)
+                .is_err()
+            {
+                continue;
+            }
+            let Some(func_type) = self.type_info().and_then(|info| info.get_func_type(&name))
+            else {
+                continue;
+            };
+            if !func_type.output().is_eq_sort() {
+                continue;
+            }
+            self.constructor_enodes_for_eclass(&name, eclass, &mut f)?;
+        }
         Ok(())
     }
 
@@ -431,7 +579,7 @@ pub trait Read<'a, 'db: 'a>: Core<'a, 'db> + RegistrySealed<'a, 'db> {
         name: &str,
         mut f: impl FnMut(FunctionEntry<'_>) -> bool,
     ) -> Result<(), Error> {
-        let action = lookup_action(self.registry(), name)?;
+        let action = lookup_action(self.registry(), self.es(), name)?;
         check_read_projection(
             name,
             &action,
@@ -453,6 +601,8 @@ pub trait Read<'a, 'db: 'a>: Core<'a, 'db> + RegistrySealed<'a, 'db> {
 /// [`Value`]s; convert with [`Core::value_to_base`] / [`Core::value_to_container`].
 #[derive(Clone, Copy, Debug)]
 pub struct Enode<'a> {
+    /// The constructor this row belongs to.
+    pub name: &'a str,
     /// The constructor's input columns.
     pub children: &'a [Value],
     /// The eclass id this enode belongs to.
@@ -493,8 +643,8 @@ pub trait Write<'a, 'db: 'a>: Core<'a, 'db> + RegistrySealed<'a, 'db> {
         key: K,
         value: V,
     ) -> Result<(), Error> {
-        let action = lookup_action(self.registry(), name)?;
-        check_subtype(name, &action, TableKind::Function, "function")?;
+        let action = lookup_action(self.registry(), self.es(), name)?;
+        check_subtype(name, &action, TableKind::Function)?;
         check_single_output(name, &action, "set")?;
         let bv = self.base_values();
         let mut row: ValueRow = key.into_values(bv).collect();
@@ -512,8 +662,8 @@ pub trait Write<'a, 'db: 'a>: Core<'a, 'db> + RegistrySealed<'a, 'db> {
     /// **Only valid for constructor tables.** Functions error;
     /// use [`Write::set`] for those.
     fn add<R: IntoValues>(&mut self, name: &str, inputs: R) -> Result<Value, Error> {
-        let action = lookup_action(self.registry(), name)?;
-        check_subtype(name, &action, TableKind::Constructor, "constructor")?;
+        let action = lookup_action(self.registry(), self.es(), name)?;
+        check_subtype(name, &action, TableKind::Constructor)?;
         let key: ValueRow = inputs.into_values(self.base_values()).collect();
         check_arity(name, action.input_arity(), key.len())?;
         let value = action
@@ -524,16 +674,19 @@ pub trait Write<'a, 'db: 'a>: Core<'a, 'db> + RegistrySealed<'a, 'db> {
 
     /// Remove a row from the named table. Works for any subtype.
     fn remove<K: IntoValues>(&mut self, name: &str, key: K) -> Result<(), Error> {
-        let action = lookup_action(self.registry(), name)?;
+        let action = lookup_action(self.registry(), self.es(), name)?;
         let key_values: ValueRow = key.into_values(self.base_values()).collect();
         check_arity(name, action.input_arity(), key_values.len())?;
         action.remove(self.es_mut(), &key_values);
         Ok(())
     }
 
-    /// Subsume a row in the named table.
+    /// Subsume a row in the named table. For a subsumable constructor, a
+    /// missing row is inserted as subsumed. This may be sequenced with
+    /// [`Write::add`] for the same key without an intermediate flush; the
+    /// predicted output is reused and subsumption takes precedence.
     fn subsume<K: IntoValues>(&mut self, name: &str, key: K) -> Result<(), Error> {
-        let action = lookup_action(self.registry(), name)?;
+        let action = lookup_action(self.registry(), self.es(), name)?;
         let key_values: ValueRow = key.into_values(self.base_values()).collect();
         check_arity(name, action.input_arity(), key_values.len())?;
         action.subsume(self.es_mut(), key_values.into_iter());
@@ -558,32 +711,62 @@ pub trait Write<'a, 'db: 'a>: Core<'a, 'db> + RegistrySealed<'a, 'db> {
     }
 }
 
-fn lookup_action(registry: &ActionRegistry, name: &str) -> Result<TableAction, Error> {
-    registry.lookup_table(name).cloned().ok_or_else(|| {
-        ApiError::MissingTable {
+fn func_type_of<'db>(
+    type_info: Option<&'db TypeInfo>,
+    name: &str,
+    expected: FunctionSubtype,
+) -> Result<&'db FuncType, Error> {
+    let Some(type_info) = type_info else {
+        return Err(ApiError::SchemasUnavailable {
             name: name.to_string(),
         }
-        .into()
-    })
+        .into());
+    };
+    let Some(func_type) = type_info.get_func_type(name) else {
+        return Err(ApiError::MissingTable {
+            name: name.to_string(),
+        }
+        .into());
+    };
+    if func_type.subtype != expected {
+        return Err(ApiError::WrongSubtype {
+            name: name.to_string(),
+            expected: expected.label(),
+            actual: func_type.subtype.label(),
+        }
+        .into());
+    }
+    Ok(func_type)
 }
 
-fn check_subtype(
+/// The registry outlives `push`/`pop`, so it can still name a table this
+/// execution state no longer has. Those read as missing rather than reaching
+/// the backend, which would panic on them.
+fn lookup_action(
+    registry: &ActionRegistry,
+    es: &ExecutionState,
     name: &str,
-    action: &TableAction,
-    expected: TableKind,
-    expected_label: &'static str,
-) -> Result<(), Error> {
+) -> Result<TableAction, Error> {
+    registry
+        .lookup_table(name)
+        .filter(|action| action.is_live(es))
+        .cloned()
+        .ok_or_else(|| {
+            ApiError::MissingTable {
+                name: name.to_string(),
+            }
+            .into()
+        })
+}
+
+fn check_subtype(name: &str, action: &TableAction, expected: TableKind) -> Result<(), Error> {
     if action.kind() == expected {
         return Ok(());
     }
-    let actual_label = match action.kind() {
-        TableKind::Function => "function",
-        TableKind::Constructor => "constructor",
-    };
     Err(ApiError::WrongSubtype {
         name: name.to_string(),
-        expected: expected_label,
-        actual: actual_label,
+        expected: expected.label(),
+        actual: action.kind().label(),
     }
     .into())
 }
@@ -654,7 +837,7 @@ fn apply_registered_function<'a, 'db: 'a>(
     func: &FuncType,
     args: &[Value],
 ) -> Option<Value> {
-    let action = lookup_action(state.registry(), &func.name).ok()?;
+    let action = lookup_action(state.registry(), state.es(), &func.name).ok()?;
     state.apply_table_function(func.subtype, &action, args)
 }
 

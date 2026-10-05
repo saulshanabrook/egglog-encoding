@@ -158,7 +158,10 @@ impl SortedOffsetSlice {
     pub(crate) fn binary_search_by_id(&self, target: RowId) -> usize {
         self.binary_search_from(0, target)
     }
-    fn binary_search_from(&self, start: usize, target: RowId) -> usize {
+    /// Return the first index whose offset is at least `target`, searching from
+    /// `start`. The caller must know that every preceding offset is below
+    /// `target`; `start` may equal the slice length.
+    pub(crate) fn binary_search_from(&self, start: usize, target: RowId) -> usize {
         match self.inner()[start..].binary_search(&target) {
             Ok(mut found) => {
                 found += start;
@@ -468,6 +471,12 @@ impl Subset {
                 } else if cur_len > other_len {
                     // other is much smaller: iterate other and gallop in cur.
                     // O(other_len * log(cur_len / other_len)) vs O(cur_len) for retain.
+                    // NB: the result is compacted into `cur` in place, so `cur` as a
+                    // whole is transiently unsorted while the loop runs. `write` only
+                    // ever advances to `ci` (a match at `found >= ci` writes to
+                    // `write <= found` and then sets `ci = found + 1`), so the
+                    // *suffix* `cur.0[ci..]` is always untouched, and searching it is
+                    // equivalent to searching all of `cur` from `ci`.
                     let mut write = 0usize;
                     let mut ci = 0usize;
                     #[allow(clippy::needless_range_loop)]
@@ -476,15 +485,19 @@ impl Subset {
                             break;
                         }
                         let target = other_inner[oi];
-                        let result = cur.slice().scan_for_offset(ci, target);
+                        debug_assert!(write <= ci);
+                        // SAFETY: `cur.0[ci..]` is an unmodified suffix of the
+                        // original sorted vector, per the note above.
+                        let suffix = unsafe { SortedOffsetSlice::new_unchecked(&cur.0[ci..]) };
+                        let result = suffix.scan_for_offset(0, target);
                         match result {
                             Ok(found) => {
                                 cur.0[write] = target;
                                 write += 1;
-                                ci = found + 1;
+                                ci += found + 1;
                             }
                             Err(next_ci) => {
-                                ci = next_ci;
+                                ci += next_ci;
                             }
                         }
                     }

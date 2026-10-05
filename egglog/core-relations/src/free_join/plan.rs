@@ -64,7 +64,7 @@ use crate::{
     table_spec::Constraint,
 };
 
-use super::{ActionId, AtomId, ColumnId, SubAtom, VarInfo, Variable};
+use super::{ActionId, AtomId, ColumnId, ColumnIds, SubAtom, VarInfo, Variable};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ScanSpec {
@@ -153,13 +153,13 @@ pub(crate) enum JoinStage {
         cover: ScanSpec,
         bind: SmallVec<[(ColumnId, Variable); 2]>,
         // to_intersect.1 is the index into the cover atom.
-        to_intersect: Vec<(ScanSpec, SmallVec<[ColumnId; 2]>)>,
+        to_intersect: Vec<(ScanSpec, ColumnIds)>,
     },
     FusedIntersectMat {
         cover: MatId,
         mode: MatScanMode,
         bind: SmallVec<[(ColumnId, Variable); 2]>,
-        to_intersect: Vec<(ScanSpec, SmallVec<[ColumnId; 2]>)>,
+        to_intersect: Vec<(ScanSpec, ColumnIds)>,
     },
 }
 
@@ -279,6 +279,24 @@ pub(crate) struct SinglePlan {
 #[derive(Debug, Clone)]
 pub(crate) struct JoinStages {
     pub instrs: Arc<Vec<JoinStage>>,
+    /// Bounded lookahead only permutes ordinary mixed/fused stages. Keep
+    /// this immutable eligibility test out of the recursive executor.
+    pub(super) supports_lookahead: bool,
+}
+
+impl JoinStages {
+    pub(crate) fn new(instrs: Vec<JoinStage>) -> Self {
+        let supports_lookahead = instrs
+            .iter()
+            .any(|s| matches!(s, JoinStage::FusedIntersect { .. }))
+            && !instrs
+                .iter()
+                .any(|s| matches!(s, JoinStage::FusedIntersectMat { .. }));
+        Self {
+            instrs: Arc::new(instrs),
+            supports_lookahead,
+        }
+    }
 }
 
 /// Specification of the materialization of the intermediate results, as required by tree decomposition.
@@ -938,7 +956,7 @@ fn plan_single_bag(
                     .enumerate()
                     .map(|(j, var)| (ColumnId::from_usize(j), *var))
                     .collect();
-                let mut to_intersect: Vec<(ScanSpec, SmallVec<[ColumnId; 2]>)> = vec![];
+                let mut to_intersect: Vec<(ScanSpec, ColumnIds)> = vec![];
                 for (col, var) in prev_block.1.msg_vars.iter().enumerate() {
                     let vinfo = &bag.vars[*var];
                     for occ in vinfo.occurrences.iter() {
@@ -998,9 +1016,7 @@ fn plan_single_bag(
     instrs.splice(0..0, prologue);
     instrs.extend(epilogue);
 
-    let stages = JoinStages {
-        instrs: Arc::new(instrs),
-    };
+    let stages = JoinStages::new(instrs);
 
     (header, stages, MatSpec { msg_vars, val_vars })
 }
@@ -1043,9 +1059,7 @@ fn build_result_block(blocks: &[(JoinStages, MatSpec)]) -> JoinStages {
         });
     }
 
-    JoinStages {
-        instrs: Arc::new(result_block),
-    }
+    JoinStages::new(result_block)
 }
 
 /// The last stage and the result block have the following structure:
@@ -1083,12 +1097,10 @@ fn fuse_last_stage(
     }
 
     // Fuse the instructions
-    let mut last_block = last_block.0;
-    let mut instrs = Arc::unwrap_or_clone(last_block.instrs);
+    let mut instrs = Arc::unwrap_or_clone(last_block.0.instrs);
     instrs.extend(result_block.instrs[1..].iter().cloned());
-    last_block.instrs = Arc::new(instrs);
 
-    (blocks, last_block)
+    (blocks, JoinStages::new(instrs))
 }
 
 /// Eagerly lift materialization lookups up
@@ -1129,9 +1141,7 @@ fn loop_lifting(stages: JoinStages) -> JoinStages {
             }
         }
     }
-    JoinStages {
-        instrs: Arc::new(instrs),
-    }
+    JoinStages::new(instrs)
 }
 
 /// This is the main entry point for query optimization using tree decomposition.
@@ -1144,9 +1154,7 @@ pub(crate) fn tree_decompose_and_plan(
     macro_rules! fast_path {
         () => {{
             let (header, instrs) = plan_stages(&ctx, strat);
-            let stages = JoinStages {
-                instrs: Arc::new(instrs),
-            };
+            let stages = JoinStages::new(instrs);
 
             Plan::SinglePlan(SinglePlan {
                 atoms: Arc::new(ctx.atoms),
@@ -1237,8 +1245,8 @@ struct StageInfo {
     cover: SubAtom,
     vars: SmallVec<[Variable; 1]>,
     filters: Vec<(
-        SubAtom,                 /* the subatom to index */
-        SmallVec<[ColumnId; 2]>, /* how to build a key for that index from the cover atom */
+        SubAtom,   /* the subatom to index */
+        ColumnIds, /* how to build a key for that index from the cover atom */
     )>,
 }
 
@@ -1510,7 +1518,7 @@ fn get_next_freejoin_stage(
     state: &mut PlanningState,
     ordering: &mut impl Iterator<Item = AtomId>,
 ) -> Option<StageInfo> {
-    let mut scratch_subatom: HashMap<AtomId, SmallVec<[ColumnId; 2]>> = Default::default();
+    let mut scratch_subatom: HashMap<AtomId, ColumnIds> = Default::default();
 
     loop {
         let mut covered = false;
@@ -1547,7 +1555,7 @@ fn get_next_freejoin_stage(
 
         let mut filters = Vec::new();
         for (atom, cols) in scratch_subatom.drain() {
-            let mut form_key = SmallVec::<[ColumnId; 2]>::new();
+            let mut form_key = ColumnIds::new();
             for var_ix in &cols {
                 let var = ctx.atoms[atom].get_var(*var_ix).unwrap();
                 // form_key is an index _into the subatom forming the cover_.
@@ -1567,9 +1575,10 @@ fn get_next_freejoin_stage(
 
 /// Plan generic join queries (one variable per stage).
 ///
-/// Variables are visited in their natural id order. Runtime `sort_plan_by_size` reorders stages
-/// anyway, so static ordering only needs to be deterministic; [`fuse_single_scans`] collapses
-/// any same-atom single-scans afterwards regardless of where they ended up.
+/// Variables are visited in their natural id order. Runtime `sort_plan_by_size`
+/// reorders stages anyway, so static ordering only needs to be deterministic;
+/// [`fuse_single_scans`] collapses any same-atom single-scans afterwards
+/// regardless of where they ended up.
 fn plan_gj(
     ctx: &PlanningContext,
     state: &mut PlanningState,

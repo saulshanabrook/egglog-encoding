@@ -1,8 +1,202 @@
+use std::cell::Cell;
+
 use egglog::{
     ast::{ResolvedCommand, sanitize_internal_names},
-    extract::DefaultCost,
+    extract::{
+        AdditiveCostModel, DEFAULT_COST_MODEL, DagCostModel, DefaultCost, MonoidCost,
+        TreeCostModel, TreeCostModelFromDag, TreeExtractor,
+    },
     *,
 };
+
+type CustomCost = u128;
+
+struct CustomCostModel {
+    node_cost: CustomCost,
+}
+
+struct BorrowedCountingTreeCostModel<'a>(&'a Cell<usize>);
+
+impl TreeCostModel<DefaultCost> for BorrowedCountingTreeCostModel<'_> {
+    type EnodeCost = ();
+    type ContainerCost = ();
+
+    fn base_value_cost(&self, _egraph: &EGraph, _sort: &ArcSort, _value: Value) -> DefaultCost {
+        self.0.set(self.0.get() + 1);
+        1
+    }
+
+    fn enode_cost(&self, _egraph: &EGraph, _func: &Function, _enode: &Enode<'_>) {
+        self.0.set(self.0.get() + 1);
+    }
+
+    fn container_cost(&self, _egraph: &EGraph, _sort: &ArcSort, _value: Value) {
+        self.0.set(self.0.get() + 1);
+    }
+
+    fn fold_enode_cost(&self, (): (), child_costs: &[DefaultCost]) -> DefaultCost {
+        1 + child_costs.iter().sum::<DefaultCost>()
+    }
+
+    fn fold_container_cost(&self, (): (), element_costs: &[DefaultCost]) -> DefaultCost {
+        element_costs.iter().sum()
+    }
+}
+
+enum CustomEnodeCost {
+    Wide,
+    Other(CustomCost),
+}
+
+struct CustomContainerCost(CustomCost);
+
+impl TreeCostModel<CustomCost> for CustomCostModel {
+    type EnodeCost = CustomEnodeCost;
+    type ContainerCost = CustomContainerCost;
+
+    fn base_value_cost(&self, _egraph: &EGraph, _sort: &ArcSort, _value: Value) -> CustomCost {
+        self.node_cost
+    }
+
+    fn enode_cost(&self, _egraph: &EGraph, func: &Function, _enode: &Enode<'_>) -> CustomEnodeCost {
+        if func.name() == "Wide" {
+            CustomEnodeCost::Wide
+        } else {
+            CustomEnodeCost::Other(self.node_cost)
+        }
+    }
+
+    fn container_cost(
+        &self,
+        _egraph: &EGraph,
+        _sort: &ArcSort,
+        _value: Value,
+    ) -> CustomContainerCost {
+        CustomContainerCost(3)
+    }
+
+    fn fold_enode_cost(
+        &self,
+        enode_cost: CustomEnodeCost,
+        child_costs: &[CustomCost],
+    ) -> CustomCost {
+        let child_cost = child_costs
+            .iter()
+            .fold(CustomCost::identity(), |cost, child| cost.combine(child));
+        match enode_cost {
+            CustomEnodeCost::Wide => child_cost.saturating_mul(10),
+            CustomEnodeCost::Other(cost) => cost.combine(&child_cost),
+        }
+    }
+
+    fn fold_container_cost(
+        &self,
+        container_cost: CustomContainerCost,
+        element_costs: &[CustomCost],
+    ) -> CustomCost {
+        element_costs
+            .iter()
+            .fold(container_cost.0, |cost, element| cost.combine(element))
+    }
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct OrderedOnlyCost(u128);
+
+struct DirectTreeCostModel;
+
+impl TreeCostModel<OrderedOnlyCost> for DirectTreeCostModel {
+    type EnodeCost = ();
+    type ContainerCost = ();
+
+    fn base_value_cost(&self, _egraph: &EGraph, _sort: &ArcSort, _value: Value) -> OrderedOnlyCost {
+        OrderedOnlyCost(1)
+    }
+
+    fn enode_cost(&self, _egraph: &EGraph, _func: &Function, _enode: &Enode<'_>) {}
+
+    fn container_cost(&self, _egraph: &EGraph, _sort: &ArcSort, _value: Value) {}
+
+    fn fold_enode_cost(&self, (): (), child_costs: &[OrderedOnlyCost]) -> OrderedOnlyCost {
+        OrderedOnlyCost(1 + child_costs.iter().map(|cost| cost.0).sum::<u128>())
+    }
+
+    fn fold_container_cost(&self, (): (), element_costs: &[OrderedOnlyCost]) -> OrderedOnlyCost {
+        OrderedOnlyCost(element_costs.iter().map(|cost| cost.0).sum())
+    }
+}
+
+struct IndependentTreeAndDagCostModel;
+
+impl DagCostModel<CustomCost> for IndependentTreeAndDagCostModel {
+    fn base_value_cost(&self, _egraph: &EGraph, _sort: &ArcSort, _value: Value) -> CustomCost {
+        1
+    }
+
+    fn enode_cost(&self, _egraph: &EGraph, _func: &Function, _enode: &Enode<'_>) -> CustomCost {
+        1
+    }
+
+    fn container_cost(&self, _egraph: &EGraph, _sort: &ArcSort, _value: Value) -> CustomCost {
+        3
+    }
+}
+
+impl TreeCostModel<CustomCost> for IndependentTreeAndDagCostModel {
+    type EnodeCost = CustomCost;
+    type ContainerCost = CustomCost;
+
+    fn base_value_cost(&self, _egraph: &EGraph, _sort: &ArcSort, _value: Value) -> CustomCost {
+        1
+    }
+
+    fn enode_cost(&self, _egraph: &EGraph, _func: &Function, _enode: &Enode<'_>) -> CustomCost {
+        1
+    }
+
+    fn container_cost(&self, _egraph: &EGraph, _sort: &ArcSort, _value: Value) -> CustomCost {
+        0
+    }
+
+    fn fold_enode_cost(&self, enode_cost: CustomCost, child_costs: &[CustomCost]) -> CustomCost {
+        enode_cost + child_costs.iter().sum::<CustomCost>()
+    }
+
+    fn fold_container_cost(
+        &self,
+        container_cost: CustomCost,
+        element_costs: &[CustomCost],
+    ) -> CustomCost {
+        container_cost + element_costs.iter().sum::<CustomCost>()
+    }
+}
+
+fn daggy_root(egraph: &mut EGraph) -> (ArcSort, Value) {
+    let expr = egraph
+        .parser
+        .get_expr_from_string(None, "(Pair (Wide (Leaf 0)) (Wide (Leaf 0)))")
+        .unwrap();
+    egraph.eval_expr(&expr).unwrap()
+}
+
+fn add_daggy_example(egraph: &mut EGraph) {
+    egraph
+        .parse_and_run_program(
+            None,
+            r#"
+             (datatype E
+               (Pair E E)
+               (Wide E)
+               (Leaf i64)
+             )
+             (let shared (Wide (Leaf 0)))
+             (let daggy (Pair shared shared))
+             (let treeish (Pair (Leaf 1) (Leaf 2)))
+             (union daggy treeish)
+             "#,
+        )
+        .unwrap();
+}
 
 #[test]
 fn globals_missing_prefix_errors_when_opted_in() {
@@ -120,6 +314,56 @@ fn primitive_error_in_run_schedule_returns_error() {
 
     let err = egraph.parse_and_run_program(None, program).unwrap_err();
     assert!(err.to_string().contains("call of primitive << failed"));
+}
+
+#[test]
+fn failed_run_continues_from_canonical_partial_state() {
+    let mut egraph = EGraph::default();
+    egraph
+        .parse_and_run_program(
+            None,
+            r#"
+            (ruleset problematic)
+            (datatype E (A) (B))
+            (function P (E) i64 :merge old)
+            (set (P (A)) 0)
+            (set (P (B)) 0)
+            (rule ((= a (A)) (= b (B)))
+                  ((union a b) (panic "boom"))
+                  :ruleset problematic)
+            "#,
+        )
+        .unwrap();
+
+    // `fail` deliberately rolls back in this fork. Observe the error directly
+    // to exercise the backend's recovery of a canonical partial state.
+    let error = egraph
+        .parse_and_run_program(None, "(run problematic 1)")
+        .unwrap_err();
+    assert!(error.to_string().contains("boom"));
+    egraph
+        .parse_and_run_program(None, "(check (= (A) (B)))")
+        .unwrap();
+    assert_eq!(egraph.get_size("P"), 1);
+}
+
+#[test]
+fn check_facts_stops_safely_in_parallel_mode() {
+    use std::fmt::Write;
+
+    let mut program = String::from("(relation Candidate (i64))\n");
+    for i in 0..20_000 {
+        writeln!(&mut program, "(Candidate {i})").unwrap();
+    }
+
+    let mut egraph = EGraph::new(32);
+    egraph.parse_and_run_program(None, &program).unwrap();
+    egraph
+        .parse_and_run_program(None, "(check (Candidate x))")
+        .unwrap();
+    egraph
+        .parse_and_run_program(None, "(check (Candidate 19999))")
+        .unwrap();
 }
 
 #[test]
@@ -467,6 +711,268 @@ fn test_extract_variants1() {
 }
 
 #[test]
+fn tree_cost_model_accepts_custom_enode_annotation() {
+    let mut egraph = EGraph::default();
+    add_daggy_example(&mut egraph);
+
+    let (sort, value) = daggy_root(&mut egraph);
+
+    let extracted: extract::ExtractedTerms<u128> = egraph
+        .extract_best_with_cost_model(
+            vec![(sort.clone(), value)],
+            CustomCostModel { node_cost: 1 },
+        )
+        .unwrap();
+    let root = extracted.terms.into_iter().next().unwrap().unwrap();
+
+    assert_eq!(root.cost, 5);
+    let extracted_term = extracted.termdag.to_string(root.term);
+    assert_eq!(extracted_term, "(Pair (Leaf 1) (Leaf 2))");
+    let extracted_expr = egraph
+        .parser
+        .get_expr_from_string(None, &extracted_term)
+        .unwrap();
+    let (extracted_sort, extracted_value) = egraph.eval_expr(&extracted_expr).unwrap();
+    assert_eq!(extracted_sort.name(), sort.name());
+    assert_eq!(extracted_value, value);
+}
+
+#[test]
+fn tree_cost_model_does_not_require_monoid_cost() {
+    let mut egraph = EGraph::default();
+    add_daggy_example(&mut egraph);
+
+    let (sort, value) = daggy_root(&mut egraph);
+    let extracted = egraph
+        .extract_best_with_cost_model(vec![(sort, value)], DirectTreeCostModel)
+        .unwrap();
+    let root = extracted.terms.into_iter().next().unwrap().unwrap();
+
+    assert_eq!(root.cost, OrderedOnlyCost(5));
+    assert_eq!(
+        extracted.termdag.to_string(root.term),
+        "(Pair (Leaf 1) (Leaf 2))"
+    );
+
+    // One type may implement the independent tree and DAG model interfaces.
+    let (sort, value) = daggy_root(&mut egraph);
+    let extracted = egraph
+        .extract_best_with_cost_model(vec![(sort, value)], IndependentTreeAndDagCostModel)
+        .unwrap();
+    assert_eq!(extracted.terms[0].as_ref().unwrap().cost, 5);
+
+    let (sort, value) = daggy_root(&mut egraph);
+    let extracted = egraph
+        .extract_best_with_cost_model(
+            vec![(sort, value)],
+            TreeCostModelFromDag(IndependentTreeAndDagCostModel),
+        )
+        .unwrap();
+    assert_eq!(extracted.terms[0].as_ref().unwrap().cost, 5);
+}
+
+#[test]
+fn monoid_unsigned_cost_saturates() {
+    assert_eq!(<usize as MonoidCost>::identity(), 0);
+    assert_eq!(usize::MAX.combine(&1), usize::MAX);
+    assert_eq!(u64::MAX.combine(&1), u64::MAX);
+    assert_eq!(u128::MAX.combine(&1), u128::MAX);
+}
+
+#[test]
+fn additive_cost_model_uses_configured_default_node_cost() {
+    let mut egraph = EGraph::default();
+    add_daggy_example(&mut egraph);
+
+    let (sort, value) = daggy_root(&mut egraph);
+
+    let extracted = egraph
+        .extract_best_with_cost_model(
+            vec![(sort.clone(), value)],
+            TreeCostModelFromDag(AdditiveCostModel { node_cost: 2 }),
+        )
+        .unwrap();
+    let root = extracted.terms.into_iter().next().unwrap().unwrap();
+
+    assert_eq!(root.cost, 10);
+    assert_eq!(
+        extracted.termdag.to_string(root.term),
+        "(Pair (Leaf 1) (Leaf 2))"
+    );
+
+    let (termdag, term, cost) = egraph.extract_value(&sort, value).unwrap();
+    assert_eq!(cost, 5);
+    assert_eq!(termdag.to_string(term), "(Pair (Leaf 1) (Leaf 2))");
+}
+
+#[test]
+fn tree_extractor_reuses_costs_for_multiple_values() {
+    let mut egraph = EGraph::default();
+    add_daggy_example(&mut egraph);
+
+    let (sort, root_value) = daggy_root(&mut egraph);
+    let leaf = egraph
+        .parser
+        .get_expr_from_string(None, "(Leaf 9)")
+        .unwrap();
+    let (_, leaf_value) = egraph.eval_expr(&leaf).unwrap();
+    let calls = Cell::new(0);
+    let extractor = TreeExtractor::compute_costs_from_rootsorts(
+        Some(vec![sort.clone()]),
+        &egraph,
+        BorrowedCountingTreeCostModel(&calls),
+    );
+    assert!(calls.get() > 0);
+    let prepared_calls = calls.get();
+    let mut termdag = TermDag::default();
+
+    let root = extractor
+        .extract_best_with_sort(&mut termdag, root_value, sort.clone())
+        .unwrap();
+    let leaf = extractor
+        .extract_best_with_sort(&mut termdag, leaf_value, sort.clone())
+        .unwrap();
+
+    assert_eq!(termdag.to_string(root.term), "(Pair (Leaf 1) (Leaf 2))");
+    assert_eq!(termdag.to_string(leaf.term), "(Leaf 9)");
+    assert_eq!(calls.get(), prepared_calls);
+
+    let all_sorts = TreeExtractor::compute_costs_from_rootsorts(None, &egraph, DEFAULT_COST_MODEL);
+    let leaf = all_sorts
+        .extract_best_with_sort(&mut termdag, leaf_value, sort)
+        .unwrap();
+    assert_eq!(termdag.to_string(leaf.term), "(Leaf 9)");
+}
+
+#[test]
+fn tree_extractor_supports_reachable_sorts_and_zero_variants() {
+    let mut egraph = EGraph::default();
+    egraph
+        .parse_and_run_program(
+            None,
+            r#"
+            (sort Child)
+            (constructor Leaf (i64) Child)
+            (sort Parent)
+            (constructor Wrap (Child) Parent)
+            (sort IntVec (Vec i64))
+            (let $root (Wrap (Leaf 1)))
+            "#,
+        )
+        .unwrap();
+
+    let child_expr = egraph
+        .parser
+        .get_expr_from_string(None, "(Leaf 1)")
+        .unwrap();
+    let (child_sort, child_value) = egraph.eval_expr(&child_expr).unwrap();
+    let parent_sort = egraph.get_arcsort_by(|sort| sort.name() == "Parent");
+    let primitive = egraph.parser.get_expr_from_string(None, "1").unwrap();
+    let (primitive_sort, primitive_value) = egraph.eval_expr(&primitive).unwrap();
+    let container = egraph
+        .parser
+        .get_expr_from_string(None, "(vec-of 1)")
+        .unwrap();
+    let (container_sort, container_value) = egraph.eval_expr(&container).unwrap();
+
+    let extractor = TreeExtractor::compute_costs_from_rootsorts(
+        Some(vec![parent_sort]),
+        &egraph,
+        DEFAULT_COST_MODEL,
+    );
+    let mut termdag = TermDag::default();
+
+    let variants =
+        extractor.extract_variants_with_sort(&mut termdag, child_value, 1, child_sort.clone());
+    assert_eq!(termdag.to_string(variants[0].term), "(Leaf 1)");
+    assert!(
+        extractor
+            .extract_variants_with_sort(&mut termdag, child_value, 0, child_sort)
+            .is_empty()
+    );
+    assert!(
+        extractor
+            .extract_variants_with_sort(&mut termdag, primitive_value, 0, primitive_sort.clone())
+            .is_empty()
+    );
+    assert!(
+        extractor
+            .extract_variants_with_sort(&mut termdag, container_value, 0, container_sort.clone())
+            .is_empty()
+    );
+    let container_variants = extractor.extract_variants_with_sort(
+        &mut termdag,
+        container_value,
+        2,
+        container_sort.clone(),
+    );
+    assert_eq!(container_variants.len(), 1);
+    assert_eq!(termdag.to_string(container_variants[0].term), "(vec-of 1)");
+
+    let annotated = egraph
+        .extract_best_with_cost_model(
+            vec![(container_sort.clone(), container_value)],
+            CustomCostModel { node_cost: 1 },
+        )
+        .unwrap();
+    assert_eq!(annotated.terms[0].as_ref().unwrap().cost, 4);
+    let adapted = egraph
+        .extract_best_with_cost_model(
+            vec![(container_sort, container_value)],
+            TreeCostModelFromDag(IndependentTreeAndDagCostModel),
+        )
+        .unwrap();
+    assert_eq!(adapted.terms[0].as_ref().unwrap().cost, 4);
+
+    let calls = Cell::new(0);
+    let extracted = egraph
+        .extract_variants_with_cost_model(
+            vec![(primitive_sort, primitive_value)],
+            0,
+            BorrowedCountingTreeCostModel(&calls),
+        )
+        .unwrap();
+    assert_eq!(extracted.variants.len(), 1);
+    assert!(extracted.variants[0].is_empty());
+    assert_eq!(calls.get(), 0);
+}
+
+#[test]
+fn extract_best_returns_none_for_unextractable_roots() {
+    let mut egraph = EGraph::default();
+    egraph
+        .parse_and_run_program(
+            None,
+            r#"
+            (datatype Math)
+            (constructor visible () Math)
+            (constructor hidden () Math :unextractable)
+            "#,
+        )
+        .unwrap();
+
+    let visible = egraph
+        .parser
+        .get_expr_from_string(None, "(visible)")
+        .unwrap();
+    let hidden = egraph
+        .parser
+        .get_expr_from_string(None, "(hidden)")
+        .unwrap();
+    let (sort, visible) = egraph.eval_expr(&visible).unwrap();
+    let (_, hidden) = egraph.eval_expr(&hidden).unwrap();
+
+    let extracted = egraph
+        .extract_best(vec![(sort.clone(), visible), (sort, hidden)])
+        .unwrap();
+
+    assert_eq!(extracted.terms.len(), 2);
+    let visible_root = extracted.terms[0].as_ref().unwrap();
+    assert_eq!(extracted.termdag.to_string(visible_root.term), "(visible)");
+    assert!(extracted.terms[1].is_none());
+}
+
+#[test]
 fn test_subsumed_unextractable_action_extract() {
     // Test when an expression is subsumed, it isn't extracted, even if its the cheapest
     let mut egraph = EGraph::default();
@@ -717,6 +1223,70 @@ fn test_subsume_ok() {
         "#,
     );
     assert!(res.is_ok());
+}
+
+#[test]
+fn test_rule_subsume_predicted_rows() {
+    let mut egraph = EGraph::default();
+    egraph
+        .parse_and_run_program(
+            None,
+            r#"
+            (datatype Math (Num i64))
+            (relation fire (i64))
+            (relation after (i64))
+            (relation saw-num (i64))
+            (ruleset mutate)
+            (ruleset observe)
+
+            ;; Subsume a missing row directly.
+            (rule ((fire 0))
+                  ((subsume (Num 0))
+                   (after 0))
+                  :ruleset mutate)
+
+            ;; Add, then subsume, within one rule action.
+            (rule ((fire 1))
+                  ((let n (Num 1))
+                   (subsume (Num 1))
+                   (after 1))
+                  :ruleset mutate)
+
+            ;; Subsumption remains dominant when followed by an add.
+            (rule ((fire 2))
+                  ((subsume (Num 2))
+                   (let n (Num 2))
+                   (after 2))
+                  :ruleset mutate)
+
+            (rule ((= e (Num n)))
+                  ((saw-num n))
+                  :ruleset observe)
+
+            (fire 0)
+            (fire 1)
+            (fire 2)
+            (run mutate 1)
+            (check (after 0) (after 1) (after 2))
+            (run observe 1)
+            (fail (check (saw-num 0)))
+            (fail (check (saw-num 1)))
+            (fail (check (saw-num 2)))
+            "#,
+        )
+        .unwrap();
+
+    let mut nums = Vec::new();
+    egraph
+        .constructor_enodes("Num", |enode| {
+            nums.push((
+                egraph.value_to_base::<i64>(enode.children[0]),
+                enode.subsumed,
+            ));
+        })
+        .unwrap();
+    nums.sort_unstable();
+    assert_eq!(nums, vec![(0, true), (1, true), (2, true)]);
 }
 
 #[test]

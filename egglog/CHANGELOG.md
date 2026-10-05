@@ -2,6 +2,7 @@
 
 ## [Unreleased] - ReleaseDate
 
+- Free-join plans with 65 to 128 stages now use constant-time tail metadata (128-bit stage masks) instead of rescanning the remaining stages; smaller plans keep their 64-bit masks. `paged_llama` runs about 17% faster.
 - **Breaking reporting formats.** `--save-report` now stores each iteration with its ruleset name and timing responsibility, and no longer serializes the redundant `ruleset_timings` or `search_and_apply_time_per_rule` aggregates. `--timing-summary` now emits the typed version-4 timing partition used by the benchmark runner; the runner's JSONL schema is also version 4, so older disposable benchmark caches must be recomputed.
 - **Proof mode is substantially faster and uses less memory.** The term/proof encoding no longer writes each proof's `Congr`/`Trans`/`Sym` steps as rows while rules run; it records what justified a fact and rebuilds the steps when a proof is asked for. A flat `(rewrite (Add a b) (Add b a))` firing writes 2 proof rows where it wrote 13. Across the benchmark suite that is 0.73–0.75x wall time, and peak memory on `math-microbenchmark` goes from 2.3 GiB to 1.1 GiB. Proof semantics are unchanged by this work; the proof snapshots that do move in this release move for the separate fixes and the now-deterministic extraction order below.
 - Fix `set-if-empty` in the term/proof encoding looking its key up in the committed table while staging its insert, so two calls with the same key in one action batch both missed and both inserted, minting two e-classes for one term — leaving the encoding one iteration behind ordinary execution on programs that do not saturate. It now reads through the batch's predicted rows, as `lookup_or_insert` already did.
@@ -76,10 +77,63 @@
 - **Name-indexed e-graph access from primitives and `rust_rule` callbacks (#745, #751).** New `Read` / `Write` capability traits on the state wrappers let primitive bodies and rule callbacks read/write tables by name (`fs.lookup`, `fs.set`, `fs.add`, `fs.union`, `fs.function_entries`, `fs.constructor_enodes`, etc.) instead of through raw `FunctionId` + `&[Value]`; `EGraph::update(|fs| ...)` gives the same surface outside a rule, and `EGraph::function_entries` / `EGraph::constructor_enodes` expose the table scans directly at the top level. Misuse (wrong subtype, wrong arity, unknown table) surfaces as `Error::ApiError`.
 - **Container support in the term/proof encoding.** Programs using container sorts (`Vec`, `Set`, `Map`, `MultiSet`, `Pair`) now work under the term/proof encoding (previously rejected), including containers read (`vec-get`, `map-get`, …) or constructed (`vec-of`, `set-of`, …) in a rule body (`set-get` excepted: it indexes an internal runtime order that proofs cannot reproduce). A container built in the body is a *side condition* with no carryable proof: it is marked with an `Eval` proof step and re-evaluated against the typed rule when checked, so it can be read or matched in the query but not carried into an action (that is rejected). Two user-visible extraction changes: container terms extract in a deterministic, reproducible order rather than value-id order, and maps extract in a flat `(map-of k0 v0 …)` form (new `map-of` constructor) instead of nested `map-insert`s.
 
+- **The scheduler runner applies each rule's chosen matches immediately.** After a rule's `filter_matches`, its chosen matches are applied before the next rule's `filter_matches` is called, so schedulers observe up-to-date e-node counts within an iteration. The e-graph is still rebuilt at most once per iteration (egglog-bridge gains `run_rules_no_rebuild`, `flush_updates_no_rebuild`, and `rebuild_now` for this). Measured on Herbie's rewriting workload with identical scheduling decisions, the per-rule application costs nothing single-threaded and 0–7 % wall time with 8 threads.
+- Fix subsuming constructor rows created earlier in the same rule or `EGraph::update` action, including executing subsequent rule actions after subsuming a missing row.
+- Egglog-level rule-action errors preserve completed effects without rollback; successful recovery rebuilds leave the e-graph reusable in a canonical partial state. Custom schedulers clear failed decided rows instead of retaining them, though a later query may rediscover the match.
+- `Read::is_sort_unionable` and `Read::is_table_hidden` let read primitives classify visible constructor tables without exposing the e-graph; `EGraph::num_nodes` also handles term/proof constructor views.
+- **Schedulers now receive a `SchedulerContext`.** `Scheduler::filter_matches` and `can_stop` receive read-only access to the e-graph and a runner-cached `num_nodes()` convenience. Add `EGraph::total_size` for all non-hidden function rows and `EGraph::num_nodes` for the constructor-node measure.
+- **Breaking:** extraction now uses independent `TreeCostModel` and `DagCostModel` traits. `MonoidCost` supplies the lawful combination operation required by DAG extraction, and `TreeCostModelFromDag` explicitly adapts a DAG model to tree extraction. Batch extraction returns named result structs through `extract_best` and `extract_variants`, with `*_with_cost_model` variants for custom models and `DEFAULT_COST_MODEL` for the default tree model. The reusable tree extractor is exposed as `TreeExtractor`.
+
+- Add `Read::eclass_enodes` to scan an e-class across every constructor, rename the single-constructor method to `constructor_enodes_for_eclass`, and add `Enode::name`.
+
+- Allow consumers to safely downcast `UserDefinedCommandOutput` trait-object
+  references to known concrete output types with `as_any`.
+
+- Treat tables dropped by `pop` as missing in the name-indexed `Read` and `Write` APIs.
+
+- Escape quotes and backslashes in printed rule names and panic messages, and print command paths as string literals, so the generated syntax round-trips through the parser.
+
+## [3.0.0] - 2026-08-18
+
+### Breaking changes
+
+- **Relations are now constructors.** A `relation` is desugared to a non-unionable constructor instead of a function returning unit `()` (#770).
+- **Custom primitives use capability-specific traits.** Implement `PurePrim`, `ReadPrim`, `WritePrim`, or `FullPrim` and register it with the corresponding `add_*_primitive` method. `rust_rule` callbacks now take `&mut WriteState` instead of `RustRuleContext`; use `rust_rule_full` when a callback also needs read access. Higher-order primitives dispatch through `state.apply_function` (#856).
+- **Thread configuration is now per e-graph.** The global Rayon pool is replaced by a scoped `egglog-concurrency` pool. `EGraph::set_num_threads` now takes `&mut self`; `EGraph::new`, `with_num_threads`, and `set_num_threads` configure one e-graph without affecting others (#910).
+- **The function schema API has changed.** `Function::schema()` is replaced by `Function::func_type()`, `ResolvedSchema` is replaced by `FuncType`, and `GenericFunctionDecl::resolved_schema` is removed (#986).
+- **Backend execution APIs now take an `ExternalContext`.** `Database::run_rule_set`, `with_execution_state`, `with_execution_state_tracked`, and the corresponding bridge APIs require the context; pass `None` when no external data is needed (#986).
+- **`EGraph::print_function` has a new signature.** It now takes an `Option<(File, PathBuf)>` output sink and a `Span`, allowing write failures to return `Error::IoError` (#920).
+
+### New features and improvements
+
+- **Add name-indexed e-graph access for primitives and `rust_rule` callbacks.** The `Read` and `Write` APIs now support table lookup and mutation, table and constructor scans, schema queries, table-size queries, and indexed e-class traversal by name. `EGraph::read`, `EGraph::update`, and top-level scan methods expose the same capabilities outside callbacks. Invalid names, types, and arities return `Error::ApiError`. These APIs support out-of-tree extensions such as `unstable-subst` in `egglog-experimental` (#892, #895, #901, #986).
+- **Add container support to the term/proof encoding.** Programs can read and construct `Vec`, `Set`, `Map`, `MultiSet`, and `Pair` values in rule bodies (`set-get` remains unsupported). Body-created containers are proof side conditions and cannot be carried into actions. Container extraction is now deterministic, and maps extract in flat `(map-of k0 v0 …)` form (#927).
+- **Add `:naive` and `:unsafe-seminaive` rule options.** Both permit database reads on a rule's right-hand side. `:naive` matches the full database each iteration; `:unsafe-seminaive` keeps delta matching but can be evaluation-order dependent and is rejected by the term/proof encoding. The options are mutually exclusive (#912).
+- Add typed `EGraph` extension state that clones with the e-graph and is restored by `push` and `pop` (#884).
+- Add typechecking and evaluation APIs for body-defined primitives: `EGraph::typecheck_expr_with_bindings_and_output`, `Core::eval_resolved_expr`, and `Core::apply_primitive`. `unstable-fn` containers can now target primitive overloads (#881, #889).
+- Add `f64` `exp`, `log`, and `sqrt` primitives, plus `BigRat`-to-`i64` conversion for integral values (#890, #891).
+- Add `RunReport::can_stop` so scheduler progress can be distinguished from database updates (#882).
+- Report full source paths in spans and error messages (#886).
+
+### Performance
+
+- Speed up query evaluation with sorted-array subset indexes and by sharing trie roots across compatible query plans. Measured improvements include about 33% on `gemma` from sorted indexes and about 15% on `whisper`, 12% on `gemma`, and 8% on `qwen3_moe` from trie sharing (#948, #949).
+
+### Bug fixes
+
+- Fix a crash where constrained bounded scans could return stale, deleted rows to primitives (#964).
+- Replace many reachable panics with recoverable errors, including malformed declarations and commands, invalid primitive calls, unavailable proof operations, missing files, duplicate rule names, and unknown rulesets. Out-of-range partial primitives now return no result, variable-free scheduled rules execute correctly, and scheduler state is restored after errors (#876, #908, #920).
+- Fix seminaive matching after nested containers are rebuilt in place (#888).
+- Fix custom scheduler queries offering subsumed rows as fresh matches (#885).
+- Fix multi-column secondary indexes returning rows out of order or recording duplicates during rebuilds (#914).
+- Fix builds of egglog as a library with default features disabled (#961).
+- Improve printed syntax: nullary calls render as `(foo)`, and string literals escape `"` and `\` so they round-trip through the parser (#887, #920).
+
 ## [2.0.0] - 2026-02-11
 
 Bigger changes
 
+- **Breaking:** extraction APIs now return `TermId` values paired with a `TermDag` instead of returning owned `Term` values. This affects `EGraph::extract_value`, `Extractor::extract_best`, `EGraph::function_to_dag`, and the extraction variants of `CommandOutput` (#789).
 - Index catalog optimized for small set of indices (#719)
 - Warn when globals lack the $ prefix; require globals to use the `$` prefix; missing prefixes now log a warning by default and can be upgraded to errors with `--strict-mode` or `EGraph::set_strict_mode`. (#722)
 - Rename global vars in tests (#792, #800)
@@ -298,7 +352,7 @@ This is egglog's first release! Egglog is ready for use, but is still fairly exp
 As of yet, the rust interface is not documented or well supported. We recommend using the language interface. Egglog also lacks proofs, a feature that egg has.
 
 
-[Unreleased]: https://github.com/egraphs-good/egglog/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/egraphs-good/egglog/compare/v3.0.0...HEAD
 [0.1.0]: https://github.com/egraphs-good/egglog/tree/v0.1.0
 [0.2.0]: https://github.com/egraphs-good/egglog/tree/v0.2.0
 [0.3.0]: https://github.com/egraphs-good/egglog/tree/v0.3.0
@@ -306,6 +360,7 @@ As of yet, the rust interface is not documented or well supported. We recommend 
 [0.5.0]: https://github.com/egraphs-good/egglog/tree/v0.5.0
 [1.0.0]: https://github.com/egraphs-good/egglog/tree/v1.0.0
 [2.0.0]: https://github.com/egraphs-good/egglog/tree/v2.0.0
+[3.0.0]: https://github.com/egraphs-good/egglog/tree/v3.0.0
 
 
 See release-instructions.md for more information on how to do a release.

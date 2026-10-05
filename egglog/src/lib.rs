@@ -48,7 +48,7 @@ use egglog_reports::{
 pub use exec_state::{
     Context, Core, Enode, FullState, FunctionEntry, PureState, Read, ReadState, Write, WriteState,
 };
-use extract::{DefaultCost, Extractor, TreeAdditiveCostModel};
+use extract::DefaultCost;
 use indexmap::map::Entry;
 use log::{Level, log_enabled};
 use numeric_id::DenseIdMap;
@@ -76,7 +76,7 @@ use std::sync::Arc;
 use std::time::Instant;
 pub use termdag::{OrdTerm, Term, TermDag, TermId};
 use thiserror::Error;
-use typechecking::FuncType;
+pub use typechecking::FuncType;
 pub use typechecking::PrimitiveValidator;
 pub use typechecking::TypeError;
 pub use typechecking::TypeInfo;
@@ -134,9 +134,32 @@ pub trait FullPrim: Primitive {
     fn apply<'a, 'db>(&self, state: FullState<'a, 'db>, args: &[Value]) -> Option<Value>;
 }
 
-/// A user-defined command output trait.
-pub trait UserDefinedCommandOutput: Debug + std::fmt::Display + Send + Sync {}
-impl<T> UserDefinedCommandOutput for T where T: Debug + std::fmt::Display + Send + Sync {}
+/// A type-erased output from a user-defined command.
+pub trait UserDefinedCommandOutput: Debug + std::fmt::Display + Send + Sync {
+    /// Views a stored output as [`Any`] so consumers can safely downcast it.
+    ///
+    /// Call this on a `&dyn UserDefinedCommandOutput`; smart pointers that
+    /// themselves satisfy this trait should first be dereferenced with
+    /// `as_ref()`.
+    ///
+    /// [`CommandOutput::UserDefined`] owns its output, so values stored there
+    /// satisfy the required `'static` bound. Keeping the bound on this method
+    /// lets borrowed values continue to implement `UserDefinedCommandOutput`.
+    fn as_any(&self) -> &dyn Any
+    where
+        Self: 'static;
+}
+impl<T> UserDefinedCommandOutput for T
+where
+    T: Debug + std::fmt::Display + Send + Sync,
+{
+    fn as_any(&self) -> &dyn Any
+    where
+        Self: 'static,
+    {
+        self
+    }
+}
 
 /// Output from a command.
 #[derive(Clone, Debug)]
@@ -250,7 +273,7 @@ impl std::fmt::Display for CommandOutput {
                 write!(f, "Overall statistics:\n{run_report}")
             }
             CommandOutput::PrintFunction(function, termdag, terms_and_outputs, mode) => {
-                let out_is_unit = function.schema.output().name() == UnitSort.name();
+                let out_is_unit = function.func_type.output().name() == UnitSort.name();
                 if *mode == PrintFunctionMode::CSV {
                     let mut wtr = Writer::from_writer(vec![]);
                     for (term_id, output) in terms_and_outputs {
@@ -356,7 +379,7 @@ pub trait UserDefinedCommand: Send + Sync {
 #[derive(Clone)]
 pub struct Function {
     decl: ResolvedFunctionDecl,
-    schema: ResolvedSchema,
+    func_type: Arc<FuncType>,
     can_subsume: bool,
     backend_id: egglog_bridge::FunctionId,
 }
@@ -367,9 +390,9 @@ impl Function {
         &self.decl.name
     }
 
-    /// Get the schema of the function.
-    pub fn schema(&self) -> &ResolvedSchema {
-        &self.schema
+    /// The function's resolved signature.
+    pub fn func_type(&self) -> &FuncType {
+        &self.func_type
     }
 
     /// Whether this function supports subsumption.
@@ -407,7 +430,7 @@ impl Function {
         let input_arity = if rows_are_enodes {
             self.extraction_layout().1
         } else {
-            self.schema.input.len()
+            self.func_type.input.len()
         };
         (
             if rows_are_enodes {
@@ -419,24 +442,14 @@ impl Function {
             if rows_are_enodes {
                 1
             } else {
-                self.schema.outputs.len() - usize::from(self.is_fd_view())
+                self.func_type.outputs.len() - usize::from(self.is_fd_view())
             },
         )
     }
-}
 
-#[derive(Clone, Debug)]
-pub struct ResolvedSchema {
-    pub input: Vec<ArcSort>,
-    /// The output (value-column) sorts, primary first. A tuple-output function has more than one;
-    /// ordinary functions have exactly one. Always non-empty.
-    pub outputs: Vec<ArcSort>,
-}
-
-impl ResolvedSchema {
-    /// The primary (first) output sort.
-    pub fn output(&self) -> &ArcSort {
-        &self.outputs[0]
+    /// Whether this constructor is excluded from ordinary extraction.
+    pub fn is_unextractable(&self) -> bool {
+        self.decl.unextractable
     }
 }
 
@@ -444,7 +457,7 @@ impl Debug for Function {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Function")
             .field("decl", &self.decl)
-            .field("schema", &self.schema)
+            .field("func_type", &self.func_type)
             .finish()
     }
 }
@@ -953,12 +966,7 @@ impl EGraph {
                             "expected string literal after `unstable-fn`".into(),
                         ));
                     };
-                    let panic_id = self
-                        .backend
-                        .action_registry()
-                        .read()
-                        .unwrap()
-                        .default_panic_id();
+                    let panic_id = self.backend.action_registry().read().default_panic_id();
                     let resolved = resolve_function_container_target_with_context(
                         &self.backend,
                         &self.functions,
@@ -1087,28 +1095,63 @@ impl EGraph {
     }
 
     fn declare_function(&mut self, decl: &ResolvedFunctionDecl) -> Result<(), Error> {
-        let get_sort = |name: &String| match self.type_info.get_sort_by_name(name) {
-            Some(sort) => Ok(sort.clone()),
-            None => Err(Error::TypeError(TypeError::UndefinedSort(
-                name.to_owned(),
-                decl.span.clone(),
-            ))),
+        // Typechecking records the signatures it resolves, so reuse that.
+        // Desugaring also generates declarations (the functions global bindings
+        // lower to, proof tables) without typechecking them; resolving those
+        // here is what keeps every declared function reachable by name.
+        let func_type = match self.type_info.get_func_type(&decl.name) {
+            Some(func_type) => {
+                debug_assert!(
+                    func_type.subtype == decl.subtype
+                        && func_type.input.len() == decl.schema.input.len()
+                        && func_type
+                            .input
+                            .iter()
+                            .zip(&decl.schema.input)
+                            .all(|(sort, name)| sort.name() == name)
+                        && func_type.outputs.len() == decl.schema.outputs.len()
+                        && func_type
+                            .outputs
+                            .iter()
+                            .zip(&decl.schema.outputs)
+                            .all(|(sort, name)| sort.name() == name),
+                    "recorded signature for {} disagrees with its declaration",
+                    decl.name
+                );
+                func_type.clone()
+            }
+            None => {
+                let get_sort = |name: &String| match self.type_info.get_sort_by_name(name) {
+                    Some(sort) => Ok(sort.clone()),
+                    None => Err(Error::TypeError(TypeError::UndefinedSort(
+                        name.to_owned(),
+                        decl.span.clone(),
+                    ))),
+                };
+                let func_type = Arc::new(FuncType {
+                    name: decl.name.clone(),
+                    subtype: decl.subtype,
+                    input: decl
+                        .schema
+                        .input
+                        .iter()
+                        .map(get_sort)
+                        .collect::<Result<Vec<_>, _>>()?,
+                    outputs: decl
+                        .schema
+                        .outputs
+                        .iter()
+                        .map(get_sort)
+                        .collect::<Result<Vec<_>, _>>()?,
+                });
+                self.type_info.declare_func_type(func_type.clone());
+                func_type
+            }
         };
 
-        let input = decl
-            .schema
-            .input
-            .iter()
-            .map(get_sort)
-            .collect::<Result<Vec<_>, _>>()?;
-        let outputs = decl
-            .schema
-            .outputs
-            .iter()
-            .map(get_sort)
-            .collect::<Result<Vec<_>, _>>()?;
+        let input = &func_type.input;
+        let outputs = &func_type.outputs;
         let num_outputs = outputs.len();
-
         let can_subsume = match decl.subtype {
             FunctionSubtype::Constructor => true,
             // View tables need subsumption support
@@ -1182,7 +1225,7 @@ impl EGraph {
         };
         let function = Function {
             decl: decl.clone(),
-            schema: ResolvedSchema { input, outputs },
+            func_type,
             can_subsume,
             backend_id: own_id,
         };
@@ -1194,6 +1237,11 @@ impl EGraph {
                 .add_table_with_read_projection(config, kind, input_arity, output_arity)
         };
         assert_eq!(backend_id, function.backend_id);
+        if function.is_hidden() {
+            self.type_info
+                .hidden_functions
+                .insert(function.name().to_owned());
+        }
 
         let old = self.functions.insert(decl.name.clone(), function);
         if old.is_some() {
@@ -1445,8 +1493,8 @@ impl EGraph {
         ) {
             match &rulesets[ruleset].kind {
                 RulesetKind::Rules(rules) => {
-                    for (_, id) in rules.values() {
-                        ids.push(*id);
+                    for rule in rules.values() {
+                        ids.push(rule.backend_id);
                     }
                 }
                 RulesetKind::Combined(sub_rulesets) => {
@@ -1462,7 +1510,7 @@ impl EGraph {
 
         let iteration_report = self
             .backend
-            .run_rules(&rule_ids)
+            .run_rules(&rule_ids, Some(&self.type_info))
             .map_err(|e| Error::BackendError(e.to_string()))?;
 
         let report = RunReport::singleton(
@@ -1544,7 +1592,14 @@ impl EGraph {
             indexmap::map::Entry::Occupied(_) => {
                 return Err(Error::RuleAlreadyExists(rule.name, rule.span));
             }
-            indexmap::map::Entry::Vacant(e) => e.insert((core_rule, rule_id)),
+            indexmap::map::Entry::Vacant(e) => e.insert(CompiledRule {
+                core: core_rule,
+                backend_id: rule_id,
+                seminaive,
+                requires_read_context,
+                no_decomp,
+                include_subsumed: rule.include_subsumed,
+            }),
         };
         Ok(rule.name)
     }
@@ -1568,7 +1623,7 @@ impl EGraph {
         );
         translator.actions(&actions)?;
         let id = translator.build(false);
-        let result = self.backend.run_rules(&[id]);
+        let result = self.backend.run_rules(&[id], Some(&self.type_info));
         self.backend.free_rule(id);
 
         match result {
@@ -1588,6 +1643,26 @@ impl EGraph {
         self.functions.iter()
     }
 
+    /// Run `f` against a raw execution state, with this e-graph's declarations
+    /// visible to any primitive it reaches.
+    ///
+    /// Every execution egglog starts goes through here or its `_tracked` twin,
+    /// so no call site has to decide whether a primitive it cannot see might
+    /// want to resolve a signature.
+    fn with_execution_state<R>(&self, f: impl FnOnce(&mut ExecutionState<'_>) -> R) -> R {
+        self.backend.with_execution_state(Some(&self.type_info), f)
+    }
+
+    /// [`EGraph::with_execution_state`], also reporting whether `f` staged a
+    /// mutation.
+    fn with_execution_state_tracked<R>(
+        &self,
+        f: impl FnOnce(&mut ExecutionState<'_>) -> R,
+    ) -> (R, bool) {
+        self.backend
+            .with_execution_state_tracked(Some(&self.type_info), f)
+    }
+
     /// Run a read-only closure against the e-graph. The closure receives
     /// a [`ReadState`], so it can read but not write. Because this
     /// borrows `&self`, the closure and its callbacks may also call other
@@ -1595,9 +1670,8 @@ impl EGraph {
     ///
     pub fn read<R>(&self, f: impl FnOnce(ReadState<'_, '_>) -> R) -> R {
         let registry = self.backend.action_registry().clone();
-        let guard = registry.read().unwrap();
-        self.backend
-            .with_execution_state_tracked(|es| f(ReadState::wrap(es, &guard, Context::Read)))
+        let guard = registry.read();
+        self.with_execution_state_tracked(|es| f(ReadState::wrap(es, &guard, Context::Read)))
             .0
     }
 
@@ -1690,6 +1764,7 @@ impl EGraph {
         }
         self.backend.for_each_while(function.backend_id, |row| {
             f(Enode {
+                name,
                 children: &row.vals[..input_arity],
                 eclass: row.vals[input_arity],
                 subsumed: row.subsumed,
@@ -1937,7 +2012,7 @@ impl EGraph {
         );
 
         let id = translator.build(false);
-        let rule_result = self.backend.run_rules(&[id]);
+        let rule_result = self.backend.run_rules(&[id], Some(&self.type_info));
         self.backend.free_rule(id);
         self.backend.free_external_func(ext_id);
         let _ = rule_result.map_err(|e| {
@@ -2024,8 +2099,9 @@ impl EGraph {
         let ext_sc_ref = ext_sc.clone();
         let ext_id = self
             .backend
-            .register_external_func(Box::new(make_external_func(move |_, _| {
+            .register_external_func(Box::new(make_external_func(move |exec_state, _| {
                 *ext_sc_ref.lock().unwrap() = Some(());
+                exec_state.trigger_early_stop();
                 Some(Value::new_const(0))
             })));
 
@@ -2044,7 +2120,7 @@ impl EGraph {
             egglog_bridge::ColumnTy::Id,
         );
         let id = translator.build(false);
-        let run_result = self.backend.run_rules(&[id]);
+        let run_result = self.backend.run_rules(&[id], Some(&self.type_info));
         self.backend.free_rule(id);
         self.backend.free_external_func(ext_id);
         let iteration_report = run_result.map_err(|e| Error::BackendError(e.to_string()))?;
@@ -2217,42 +2293,36 @@ impl EGraph {
                 let n = self.eval_resolved_expr(span, &variants)?;
                 let n: i64 = self.backend.base_values().unwrap(n);
 
-                let mut termdag = TermDag::default();
-
-                let extractor = Extractor::compute_costs_from_rootsorts(
-                    Some(vec![sort]),
-                    self,
-                    TreeAdditiveCostModel::default(),
-                );
                 return if n == 0 {
-                    if let Some((cost, term)) = extractor.extract_best(self, &mut termdag, x) {
-                        // dont turn termdag into a string if we have messages disabled for performance reasons
-                        if log_enabled!(Level::Info) {
-                            log::info!("extracted with cost {cost}: {}", termdag.to_string(term));
-                        }
-                        Ok(vec![CommandOutput::ExtractBest(termdag, cost, term)])
-                    } else {
-                        Err(Error::ExtractError(
-                            "Unable to find any valid extraction (likely due to subsume or delete)"
-                                .to_string(),
-                        ))
+                    let (termdag, term, cost) = self.extract_value(&sort, x)?;
+                    // dont turn termdag into a string if we have messages disabled for performance reasons
+                    if log_enabled!(Level::Info) {
+                        log::info!("extracted with cost {cost}: {}", termdag.to_string(term));
                     }
+                    Ok(vec![CommandOutput::ExtractBest(termdag, cost, term)])
                 } else {
                     if n < 0 {
                         return Err(Error::ExtractError(
                             "cannot extract a negative number of variants".to_string(),
                         ));
                     }
-                    let terms: Vec<TermId> = extractor
-                        .extract_variants(self, &mut termdag, x, n as usize)
-                        .iter()
-                        .map(|e| e.1)
+                    let extracted = self.extract_variants(vec![(sort, x)], n as usize)?;
+                    let terms: Vec<TermId> = extracted
+                        .variants
+                        .into_iter()
+                        .next()
+                        .expect("extract_variants returns one result for one root")
+                        .into_iter()
+                        .map(|extracted| extracted.term)
                         .collect();
                     if log_enabled!(Level::Info) {
                         let expr_str = expr.to_string();
                         log::info!("extracted {} variants for {expr_str}", terms.len());
                     }
-                    Ok(vec![CommandOutput::ExtractVariants(termdag, terms)])
+                    Ok(vec![CommandOutput::ExtractVariants(
+                        extracted.termdag,
+                        terms,
+                    )])
                 };
             }
             ResolvedNCommand::Push(n) => {
@@ -2350,38 +2420,34 @@ impl EGraph {
             ResolvedNCommand::Output { span, file, exprs } => {
                 let mut filename = self.fact_directory.clone().unwrap_or_default();
                 filename.push(file.as_str());
-                // append to file
+
+                // Preserve the command's file-error ordering: reject an invalid
+                // output path before evaluating expressions.
+                use std::io::Write;
                 let mut f = File::options()
                     .append(true)
                     .create(true)
                     .open(&filename)
                     .map_err(|e| Error::IoError(filename.clone(), e, span.clone()))?;
 
-                let extractor = Extractor::compute_costs_from_rootsorts(
-                    None,
-                    self,
-                    TreeAdditiveCostModel::default(),
-                );
-                let mut termdag: TermDag = Default::default();
-
-                use std::io::Write;
-                for expr in exprs {
-                    let value = self.eval_resolved_expr(span.clone(), &expr)?;
-                    let expr_type = expr.output_type();
-
-                    let term = match extractor.extract_best_with_sort(
-                        self,
-                        &mut termdag,
-                        value,
-                        expr_type,
-                    ) {
-                        Some((_, term)) => term,
-                        None => return Err(Error::ExtractError(
+                // Evaluation may mutate the e-graph, so finish it before
+                // extraction takes a shared borrow for its prepared costs.
+                let roots = exprs
+                    .iter()
+                    .map(|expr| {
+                        let value = self.eval_resolved_expr(span.clone(), expr)?;
+                        Ok((expr.output_type(), value))
+                    })
+                    .collect::<Result<Vec<_>, Error>>()?;
+                let extracted = self.extract_best(roots)?;
+                for root in extracted.terms {
+                    let root = root.ok_or_else(|| {
+                        Error::ExtractError(
                             "Unable to find any valid extraction (likely due to subsume or delete)"
                                 .to_string(),
-                        )),
-                    };
-                    writeln!(f, "{}", termdag.to_string(term))
+                        )
+                    })?;
+                    writeln!(f, "{}", extracted.termdag.to_string(root.term))
                         .map_err(|e| Error::IoError(filename.clone(), e, span.clone()))?;
                 }
 
@@ -2547,14 +2613,14 @@ impl EGraph {
         let table_action = egglog_bridge::TableAction::new(&self.backend, func.backend_id);
 
         if function_type.subtype != FunctionSubtype::Constructor {
-            self.backend.with_execution_state(|es| {
+            self.with_execution_state(|es| {
                 for row in parsed_contents.iter() {
                     table_action.insert(es, row.iter().copied());
                 }
                 Some(unit_val)
             });
         } else {
-            self.backend.with_execution_state(|es| {
+            self.with_execution_state(|es| {
                 for row in parsed_contents.iter() {
                     // Constructor semantics: mint a fresh eclass id for
                     // each missing key.
@@ -2595,16 +2661,16 @@ impl EGraph {
         let view_id = view.backend_id;
         // Proofs are on for this relation iff the view's proof column (its last
         // output) is not `Unit`; term-encoding-only mode uses `Unit` there.
-        let proofs = view.schema.outputs.last().unwrap().name() != "Unit";
+        let proofs = view.func_type.outputs.last().unwrap().name() != "Unit";
         // A constructor's and a relation's output is the e-class the load mints;
         // a function's is a value the rows carry. That is the split the view
         // records, and it has to agree with the one `input_actions` made when it
         // built the per-row actions a fiat now names.
         let output_is_minted = view.rows_are_enodes();
         // The CSV columns: the view's children, plus any output they carry.
-        let mut csv_sorts: Vec<ArcSort> = view.schema.input.clone();
+        let mut csv_sorts: Vec<ArcSort> = view.func_type.input.clone();
         if !output_is_minted {
-            csv_sorts.push(view.schema.outputs[0].clone());
+            csv_sorts.push(view.func_type.outputs[0].clone());
         }
 
         let rows = Self::read_input_rows(self.fact_directory.as_deref(), &csv_sorts, &span, &file)?;
@@ -2900,6 +2966,11 @@ impl EGraph {
 
     /// Run a program, represented as an AST.
     /// Return a list of messages.
+    ///
+    /// Egglog errors, including `(panic ...)`, are not transactional: effects
+    /// completed before an error remain. After a rule-action error, a successful
+    /// recovery rebuild leaves the database canonical and reusable. Rust panics
+    /// in extension code unwind normally instead of becoming [`enum@Error`] values.
     pub fn run_program(&mut self, program: Vec<Command>) -> Result<Vec<CommandOutput>, Error> {
         let res = self.process_program_internal(program, true)?;
         Ok(res.outputs)
@@ -3038,7 +3109,7 @@ impl EGraph {
 
     /// Convert from a Rust container type to an egglog value.
     pub fn container_to_value<T: ContainerValue>(&mut self, x: T) -> Value {
-        self.backend.with_execution_state(|state| {
+        self.with_execution_state(|state| {
             self.backend.container_values().register_val::<T>(x, state)
         })
     }
@@ -3051,11 +3122,78 @@ impl EGraph {
         self.backend.table_size(function_id)
     }
 
+    /// The total number of rows across all non-hidden functions, including
+    /// global `let` bindings.
+    pub fn total_size(&self) -> usize {
+        self.functions
+            .values()
+            .filter(|f| !f.is_hidden())
+            .map(|f| self.backend.table_size(f.backend_id))
+            .sum()
+    }
+
+    /// The number of e-nodes in the e-graph: the total number of rows across
+    /// visible constructor tables for unionable eq-sorts, including their
+    /// term/proof-encoding views. Analysis functions, global lets, hidden
+    /// helpers, and `relation`s are excluded.
+    pub fn num_nodes(&self) -> usize {
+        self.functions
+            .values()
+            .filter(|f| {
+                !f.is_hidden()
+                    && !f.is_let_binding()
+                    && f.rows_are_enodes()
+                    && self.type_info.is_sort_unionable(f.extraction_layout().0)
+            })
+            .map(|f| self.backend.table_size(f.backend_id))
+            .sum()
+    }
+
     /// Get a function by name.
     ///
     /// Returns `None` if the function does not exist.
     pub fn get_function(&self, name: &str) -> Option<&Function> {
         self.functions.get(name)
+    }
+
+    /// Returns the typed child values stored inside a container-sort value.
+    ///
+    /// `sort` must be a container sort and `value` must belong to that sort.
+    pub fn container_inner_values(&self, sort: &ArcSort, value: Value) -> Vec<(ArcSort, Value)> {
+        sort.inner_values(self.backend.container_values(), value)
+    }
+
+    /// Reconstructs a base-sort value into a [`TermDag`].
+    ///
+    /// `sort` must be a base sort and `value` must belong to that sort in this
+    /// e-graph.
+    pub fn reconstruct_base_value(
+        &self,
+        sort: &ArcSort,
+        value: Value,
+        termdag: &mut TermDag,
+    ) -> TermId {
+        sort.reconstruct_termdag_base(self.backend.base_values(), value, termdag)
+    }
+
+    /// Reconstructs a container-sort value from its extracted element terms.
+    ///
+    /// `sort` and `value` must identify a container in this e-graph, and
+    /// `element_terms` must correspond to [`EGraph::container_inner_values`] in
+    /// the same order.
+    pub fn reconstruct_container_value(
+        &self,
+        sort: &ArcSort,
+        value: Value,
+        termdag: &mut TermDag,
+        element_terms: Vec<TermId>,
+    ) -> TermId {
+        sort.reconstruct_termdag_container(
+            self.backend.container_values(),
+            value,
+            termdag,
+            element_terms,
+        )
     }
 
     /// Returns `true` if a user-defined command with the given name is
@@ -3149,10 +3287,9 @@ impl EGraph {
         f: impl FnOnce(FullState<'_, '_>) -> Result<R, Error>,
     ) -> Result<R, Error> {
         let registry = self.backend.action_registry().clone();
-        let guard = registry.read().unwrap();
-        let (result, changed) = self
-            .backend
-            .with_execution_state_tracked(|es| f(FullState::wrap(es, &guard, Context::Full)));
+        let guard = registry.read();
+        let (result, changed) =
+            self.with_execution_state_tracked(|es| f(FullState::wrap(es, &guard, Context::Full)));
         drop(guard);
         // A read-only closure stages nothing, so `flush_updates` would only do
         // a no-op merge plus a spurious timestamp bump and rebuild check. Skip
@@ -3209,12 +3346,15 @@ impl EGraph {
                 Some(())
             })?;
             let rule_ids = match &self.rulesets[&ruleset].kind {
-                RulesetKind::Rules(rules) => rules.values().map(|(_, id)| *id).collect::<Vec<_>>(),
+                RulesetKind::Rules(rules) => rules
+                    .values()
+                    .map(|rule| rule.backend_id)
+                    .collect::<Vec<_>>(),
                 RulesetKind::Combined(_) => unreachable!("the query ruleset was created directly"),
             };
             let iteration_report = self
                 .backend
-                .run_rules(&rule_ids)
+                .run_rules(&rule_ids, Some(&self.type_info))
                 .map_err(|e| Error::BackendError(e.to_string()))?;
             self.overall_report.commands_check += iteration_report.total_time();
             Ok(())
@@ -3228,7 +3368,7 @@ impl EGraph {
         }) = self.rulesets.swap_remove(&ruleset)
         {
             for (_, rule) in rules {
-                self.backend.free_rule(rule.1);
+                self.backend.free_rule(rule.backend_id);
             }
         }
         outcome?;
@@ -4551,6 +4691,58 @@ mod tests {
             )
             .unwrap_err();
         assert!(matches!(err, Error::IoError(..)));
+    }
+
+    /// Regression test: `SymbolGen::fresh` minted colliding names for
+    /// different hints (e.g. hint "x" at count 11 and hint "x1" at count 1
+    /// both produce "@x11"). Two distinct globals sharing one minted name
+    /// were then conflated while compiling an action, silently binding a
+    /// global to the wrong term.
+    #[test]
+    fn test_fresh_name_collision_globals() {
+        let mut egraph = EGraph::default();
+        // Each `(or2 x y)` command consumes one `fresh("x")`. After the ten
+        // `t` commands (plus the definition of `x` itself), the minted name
+        // for a fresh "x" is "@x11". Global `x1` has only been minted once
+        // (by its own definition), so minting for it also produces "@x11".
+        // The final command references both globals, conflating them.
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (sort B)
+                (constructor var (String) B)
+                (constructor and2 (B B) B)
+                (constructor or2 (B B) B)
+                (let x (var "x"))
+                (let y (var "y"))
+                (let t1 (or2 x y))
+                (let t2 (or2 x y))
+                (let t3 (or2 x y))
+                (let t4 (or2 x y))
+                (let t5 (or2 x y))
+                (let t6 (or2 x y))
+                (let t7 (or2 x y))
+                (let t8 (or2 x y))
+                (let t9 (or2 x y))
+                (let t10 (or2 x y))
+                (let x1 (var "x1"))
+                (let out (and2 x x1))
+                "#,
+            )
+            .unwrap();
+
+        // `out` must equal the term it was bound to. With the name
+        // collision, the last action was miscompiled as
+        // `(set (out) (and2 (x1) (x1)))`, so this check failed.
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (check (= out (and2 (var "x") x1)))
+                "#,
+            )
+            .unwrap();
     }
 }
 
