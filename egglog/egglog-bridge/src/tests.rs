@@ -23,6 +23,362 @@ use crate::{
     TableAction, TableKind, add_expressions, define_rule,
 };
 
+#[derive(Debug, PartialEq, Eq)]
+struct ActionState {
+    next_id: usize,
+    next_timestamp: usize,
+    rows: Vec<Vec<Vec<Value>>>,
+    panic: Option<String>,
+}
+
+// Include union-find rows and every physical column, including timestamps and
+// subsumption flags. Public table projection would hide those differences.
+fn action_state(graph: &EGraph) -> ActionState {
+    let rows = std::iter::once(graph.uf_table)
+        .chain(graph.funcs.iter().map(|(_, info)| info.table))
+        .map(|table| {
+            let mut rows = Vec::new();
+            graph.scan_table(graph.db.get_table(table), |row| rows.push(row.to_vec()));
+            rows.sort();
+            rows
+        })
+        .collect();
+    ActionState {
+        next_id: graph.db.read_counter(graph.id_counter),
+        next_timestamp: graph.db.read_counter(graph.timestamp_counter),
+        rows,
+        panic: graph.panic_message.lock().unwrap().clone(),
+    }
+}
+
+fn ground_action_graph(threads: usize) -> (EGraph, [FunctionId; 3]) {
+    let mut graph = EGraph::new(threads);
+    let tables = [("A", 0), ("B", 0), ("Pair", 2)].map(|(name, inputs)| {
+        graph.add_table(FunctionConfig {
+            schema: vec![ColumnTy::Id; inputs + 1],
+            n_vals: 1,
+            n_identity_vals: None,
+            default: DefaultVal::FreshId,
+            merge: MergeFn::UnionId,
+            name: name.into(),
+            can_subsume: true,
+        })
+    });
+    (graph, tables)
+}
+
+#[test]
+fn batch_guard_allows_constructors_and_unit_relations() {
+    let (mut graph, _) = ground_action_graph(1);
+    assert!(graph.can_batch_actions());
+    let unit = graph.base_values_mut().register_type::<()>();
+    graph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Base(unit)],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::AssertEq,
+        name: "disequality-relation".into(),
+        can_subsume: false,
+    });
+    assert!(graph.can_batch_actions());
+    let _ = graph.container_values();
+    assert!(graph.clone().can_batch_actions());
+}
+
+#[test]
+fn batch_guard_rejects_non_unit_assertions_without_prior_unit_registration() {
+    let (mut graph, _) = ground_action_graph(1);
+    let integer = graph.base_values_mut().register_type::<i64>();
+    graph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Base(integer)],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::AssertEq,
+        name: "hidden-conflict".into(),
+        can_subsume: false,
+    });
+    assert!(!graph.can_batch_actions());
+}
+
+#[test]
+fn batch_guard_checks_every_physical_merge() {
+    let (mut graph, _) = ground_action_graph(1);
+    let unit = graph.base_values_mut().register_type::<()>();
+    let callback =
+        graph.register_external_func(Box::new(make_external_func(|_, args| Some(args[0]))));
+    // An unused primitive is harmless; invoking it from a merge is not.
+    assert!(graph.can_batch_actions());
+    for (name, outputs, default, merge) in [
+        (
+            "callback",
+            vec![ColumnTy::Base(unit)],
+            DefaultVal::Fail,
+            MergeFn::Primitive(callback, vec![MergeFn::Old]),
+        ),
+        (
+            "custom-unit-merge",
+            vec![ColumnTy::Base(unit)],
+            DefaultVal::Fail,
+            MergeFn::Old,
+        ),
+        (
+            "non-constructor-union",
+            vec![ColumnTy::Id],
+            DefaultVal::Fail,
+            MergeFn::UnionId,
+        ),
+        (
+            "tuple",
+            vec![ColumnTy::Base(unit), ColumnTy::Base(unit)],
+            DefaultVal::Fail,
+            MergeFn::Columns(vec![MergeFn::AssertEq, MergeFn::AssertEq]),
+        ),
+    ] {
+        let mut candidate = graph.clone();
+        let n_vals = outputs.len();
+        candidate.add_table(FunctionConfig {
+            schema: std::iter::once(ColumnTy::Id).chain(outputs).collect(),
+            n_vals,
+            n_identity_vals: None,
+            default,
+            merge,
+            name: name.into(),
+            can_subsume: false,
+        });
+        assert!(!candidate.can_batch_actions(), "{name}");
+        assert!(!candidate.clone().can_batch_actions(), "{name}");
+    }
+    graph.add_internal_flat_table(FunctionConfig {
+        schema: vec![ColumnTy::Id, ColumnTy::Base(unit)],
+        n_vals: 1,
+        n_identity_vals: None,
+        default: DefaultVal::Fail,
+        merge: MergeFn::AssertEq,
+        name: "hidden-flat-table".into(),
+        can_subsume: false,
+    });
+    assert!(!graph.can_batch_actions());
+}
+
+#[test]
+fn batch_guard_rejects_container_registration_and_mutable_access() {
+    let (graph, _) = ground_action_graph(1);
+    let mut exposed = graph.clone();
+    let _ = exposed.container_values_mut();
+    assert!(!exposed.can_batch_actions());
+    assert!(!exposed.clone().can_batch_actions());
+
+    let mut registered = graph.clone();
+    registered.register_container_ty::<VecContainer>();
+    assert!(!registered.can_batch_actions());
+
+    let mut interned = graph;
+    interned.get_container_value(VecContainer(vec![]));
+    assert!(!interned.can_batch_actions());
+}
+
+// The same already-lowered instruction stream, executed either by an empty-LHS
+// rule or in one ExecutionState. Indices name earlier lookup results.
+fn execute_ground_actions(
+    graph: &mut EGraph,
+    lookups: &[(FunctionId, Vec<usize>)],
+    union: Option<(usize, usize)>,
+    direct: bool,
+) -> crate::Result<()> {
+    if direct {
+        let lookups: Vec<_> = lookups
+            .iter()
+            .map(|(func, args)| (TableAction::new(graph, *func), args))
+            .collect();
+        let union_action = crate::UnionAction::new(graph);
+        graph.run_actions(|state| {
+            let mut values = Vec::new();
+            for (table, args) in lookups {
+                let args: Vec<_> = args.iter().map(|index| values[*index]).collect();
+                values.push(table.lookup_or_insert(state, &args).unwrap());
+            }
+            if let Some((left, right)) = union {
+                union_action.union(state, values[left], values[right]);
+            }
+        })
+    } else {
+        let mut builder = graph.new_rule("ground action oracle", false);
+        let mut values = Vec::<QueryEntry>::new();
+        for (table, args) in lookups {
+            let args: Vec<_> = args.iter().map(|index| values[*index].clone()).collect();
+            values.push(
+                builder
+                    .lookup(*table, &args, || "lookup failed".into())
+                    .into(),
+            );
+        }
+        if let Some((left, right)) = union {
+            builder.union(values[left].clone(), values[right].clone());
+        }
+        let rule = builder.build();
+        let result = graph.run_rules(&[rule], None);
+        graph.free_rule(rule);
+        result.map(|_| ())
+    }
+}
+
+#[test]
+fn ground_actions_match_rule_rows_ids_and_epochs() {
+    for threads in [1, 4] {
+        let (mut direct, [a, b, pair]) = ground_action_graph(threads);
+        let (mut compiled, _) = ground_action_graph(threads);
+        for (lookups, union) in [
+            // Repeated absent keys must predict the same IDs within a batch.
+            (
+                vec![
+                    (a, vec![]),
+                    (a, vec![]),
+                    (pair, vec![0, 1]),
+                    (pair, vec![1, 0]),
+                ],
+                None,
+            ),
+            // Existing keys and self-unions still have the ordinary epoch behavior.
+            (vec![(a, vec![]), (a, vec![])], Some((0, 1))),
+            (vec![(b, vec![]), (pair, vec![0, 0])], None),
+            // This union also merges the two Pair rows through congruence.
+            (vec![(a, vec![]), (b, vec![])], Some((0, 1))),
+            (
+                vec![(a, vec![]), (b, vec![]), (pair, vec![0, 1])],
+                Some((0, 1)),
+            ),
+            (vec![(a, vec![])], None),
+        ] {
+            execute_ground_actions(&mut compiled, &lookups, union, false).unwrap();
+            execute_ground_actions(&mut direct, &lookups, union, true).unwrap();
+            assert_eq!(action_state(&direct), action_state(&compiled));
+        }
+        // The ID counter is a reservation high-water mark, not a term count.
+        // Check visible equality and congruence without assuming its block size.
+        let a_id = direct.lookup_id(a, &[]).unwrap();
+        let b_id = direct.lookup_id(b, &[]).unwrap();
+        assert_eq!(a_id, b_id);
+        let pair_id = direct.lookup_id(pair, &[a_id, a_id]).unwrap();
+        assert_eq!(direct.lookup_id(pair, &[b_id, b_id]), Some(pair_id));
+        assert_ne!(pair_id, a_id);
+        assert_eq!(direct.table_size(pair), 1);
+
+        // A pending panic is consumed after committing and recovery rebuilds
+        // the completed effects. Compare both canonical partial states.
+        for graph in [&mut direct, &mut compiled] {
+            *graph.panic_message.lock().unwrap() = Some("pending panic".into());
+        }
+        let before = direct.next_ts();
+        let lookups = [(a, vec![]), (pair, vec![0, 0]), (pair, vec![1, 0])];
+        let direct_error = execute_ground_actions(&mut direct, &lookups, None, true).unwrap_err();
+        let compiled_error =
+            execute_ground_actions(&mut compiled, &lookups, None, false).unwrap_err();
+        assert_eq!(direct_error.to_string(), compiled_error.to_string());
+        assert!(direct.next_ts() > before);
+        assert_eq!(action_state(&direct), action_state(&compiled));
+        assert_eq!(direct.table_size(pair), 2);
+    }
+}
+
+#[test]
+fn rule_operation_errors_preserve_pending_work_and_empty_rules_recover_panics() {
+    let (mut graph, [a, _, pair]) = ground_action_graph(1);
+    let table = TableAction::new(&graph, a);
+    graph.with_execution_state(None, |state| table.lookup_or_insert(state, &[]));
+    *graph.panic_message.lock().unwrap() = Some("keep pending".into());
+    let before = action_state(&graph);
+    let mut builder = graph.new_rule("invalid lookup arity", false);
+    builder.lookup(pair, &[], || "unreachable".into());
+    let rule = builder.build();
+    let error = graph.run_rules(&[rule], None).unwrap_err();
+    assert!(
+        matches!(
+            error.downcast_ref::<core_relations::QueryError>(),
+            Some(core_relations::QueryError::KeyArityMismatch {
+                expected: 2,
+                got: 0,
+                ..
+            })
+        ),
+        "{error:#}"
+    );
+    assert_eq!(action_state(&graph), before);
+    graph.free_rule(rule);
+
+    // Empty rule sets skip the normal merge, but panic recovery rebuilds the
+    // completed effects and commits pending writes.
+    assert!(graph.run_rules(&[], None).is_err());
+    assert!(graph.next_ts().index() > before.next_timestamp);
+    assert_eq!(graph.table_size(a), 1);
+    let recovered_timestamp = graph.next_ts().index();
+    graph.run_rules(&[], None).unwrap();
+    assert_eq!(graph.next_ts().index(), recovered_timestamp + 1);
+    assert_eq!(graph.table_size(a), 1);
+    graph.run_actions(|_| {}).unwrap();
+    assert_eq!(graph.table_size(a), 1);
+}
+
+#[test]
+fn ground_actions_preserve_rebuild_conflict_partial_state() {
+    for threads in [1, 4] {
+        let (mut direct, [a, b, _]) = ground_action_graph(threads);
+        let (mut compiled, _) = ground_action_graph(threads);
+        for graph in [&mut direct, &mut compiled] {
+            let base = graph.base_values_mut().register_type::<i64>();
+            let one = graph.base_values().get(1_i64);
+            let two = graph.base_values().get(2_i64);
+            let function = graph.add_table(FunctionConfig {
+                schema: vec![ColumnTy::Id, ColumnTy::Base(base)],
+                n_vals: 1,
+                n_identity_vals: None,
+                default: DefaultVal::Fail,
+                merge: MergeFn::AssertEq,
+                name: "conflict after union".into(),
+                can_subsume: false,
+            });
+            let mut builder = graph.new_rule("seed distinct keys", false);
+            let left = builder.lookup(a, &[], || "unreachable".into());
+            let right = builder.lookup(b, &[], || "unreachable".into());
+            builder.set(
+                function,
+                &[
+                    left.into(),
+                    QueryEntry::Const {
+                        val: one,
+                        ty: ColumnTy::Base(base),
+                    },
+                ],
+            );
+            builder.set(
+                function,
+                &[
+                    right.into(),
+                    QueryEntry::Const {
+                        val: two,
+                        ty: ColumnTy::Base(base),
+                    },
+                ],
+            );
+            let rule = builder.build();
+            graph.run_rules(&[rule], None).unwrap();
+            graph.free_rule(rule);
+        }
+        let before = direct.next_ts();
+        let lookups = [(a, vec![]), (b, vec![])];
+        let direct_error =
+            execute_ground_actions(&mut direct, &lookups, Some((0, 1)), true).unwrap_err();
+        let compiled_error =
+            execute_ground_actions(&mut compiled, &lookups, Some((0, 1)), false).unwrap_err();
+        assert!(direct_error.is::<crate::PanicError>());
+        assert_eq!(direct_error.to_string(), compiled_error.to_string());
+        assert_eq!(action_state(&direct), action_state(&compiled));
+        assert!(direct.next_ts() > before);
+        assert!(direct.panic_message.lock().unwrap().is_none());
+    }
+}
+
 fn valid_flat_config(name: &str) -> FunctionConfig {
     FunctionConfig {
         schema: vec![ColumnTy::Id, ColumnTy::Id],

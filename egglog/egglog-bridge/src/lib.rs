@@ -172,6 +172,9 @@ pub struct EGraph {
     mint_specs: BTreeMap<ExternalFunctionId, MintSpec>,
     set_if_empty_specs: BTreeMap<ExternalFunctionId, SetIfEmptySpec>,
     view_col_specs: BTreeMap<ExternalFunctionId, ViewColSpec>,
+    /// Container registration and mutable registry access can install opaque
+    /// rebuild callbacks whose effects depend on action boundaries.
+    container_callbacks_possible: bool,
     threads: usize,
     thread_pool: Option<Arc<ThreadPool>>,
 }
@@ -302,6 +305,7 @@ impl EGraph {
             mint_specs: Default::default(),
             set_if_empty_specs: Default::default(),
             view_col_specs: Default::default(),
+            container_callbacks_possible: false,
             threads,
             thread_pool,
         }
@@ -348,6 +352,7 @@ impl EGraph {
     /// Get a mutable reference to the underlying table of containers for this
     /// `EGraph`.
     pub fn container_values_mut(&mut self) -> &mut ContainerValues {
+        self.container_callbacks_possible = true;
         self.db.container_values_mut()
     }
 
@@ -372,6 +377,7 @@ impl EGraph {
     /// The given container will use the EGraph's union-find to manage rebuilding and the merging
     /// of containers with a common id.
     pub fn register_container_ty<C: ContainerValue>(&mut self) {
+        self.container_callbacks_possible = true;
         let uf_table = self.uf_table;
         let ts_counter = self.timestamp_counter;
         self.db.container_values_mut().register_type::<C>(
@@ -1077,6 +1083,18 @@ impl EGraph {
         // up front, then build the merge and the backing table. Non-self-referential merges resolve
         // the same either way.
         let table_id = self.db.next_table_id();
+        let batch_safe_merge = storage == TableStorage::SortedWrites
+            && n_vals == 1
+            && match (&merge, default, schema.last().unwrap()) {
+                (MergeFn::UnionId, DefaultVal::FreshId, ColumnTy::Id) => true,
+                (MergeFn::AssertEq, DefaultVal::Fail, ColumnTy::Base(output)) => {
+                    // A raw bridge graph need not have registered Unit yet.
+                    // Registering it is idempotent and identifies the actual
+                    // Rust unit type without relying on a frontend sort name.
+                    *output == self.db.base_values_mut().register_type::<()>()
+                }
+                _ => false,
+            };
         let res = self.funcs.push(FunctionInfo {
             table: table_id,
             schema: schema.clone(),
@@ -1086,6 +1104,7 @@ impl EGraph {
             nonincremental_rebuild_rule: RuleId::new(!0),
             default_val: default,
             can_subsume,
+            batch_safe_merge,
             name: name.clone(),
             read_projection,
         });
@@ -1259,17 +1278,62 @@ impl EGraph {
         rules: &[RuleId],
         context: ExternalContext<'_>,
     ) -> Result<IterationReport> {
-        let ts = self.next_ts();
+        let ((assembly_time, rule_set_report), rebuild_time) = self.run_iteration(|this, ts| {
+            run_rules_impl(
+                &mut this.db,
+                &mut this.rules,
+                rules,
+                ts,
+                this.report_level,
+                context,
+            )
+        })?;
+        Ok(IterationReport {
+            assembly_time,
+            rule_set_report,
+            rebuild_time,
+        })
+    }
 
+    /// Whether consecutive closed constructor/union actions may share one
+    /// commit and rebuild boundary. Callers must still flush before reads,
+    /// rule execution, or any action outside that restricted language.
+    ///
+    /// Check every physical function, including tables installed outside the
+    /// frontend: a union can trigger merges in tables the actions never name.
+    /// Only constructor congruence and inert Unit relations are admitted;
+    /// container callbacks and all other merge behavior retain their original
+    /// action boundaries.
+    #[doc(hidden)]
+    pub fn can_batch_actions(&self) -> bool {
+        !self.container_callbacks_possible
+            && self.funcs.iter().all(|(_, info)| info.batch_safe_merge)
+    }
+
+    /// Execute one action batch with the same commit, panic, epoch, and rebuild
+    /// boundaries as a single rule iteration. All actions share predicted values.
+    #[doc(hidden)]
+    pub fn run_actions(&mut self, actions: impl FnOnce(&mut ExecutionState)) -> Result<()> {
+        let thread_pool = self.thread_pool();
+        install_thread_pool(thread_pool, || {
+            self.run_iteration(|this, _| {
+                this.db.with_execution_state(None, actions);
+                this.db.merge_all();
+                Ok(())
+            })
+            .map(|_| ())
+        })
+    }
+
+    // The operation owns its commit: run_rule_set deliberately skips merging
+    // for an empty rule set. An operation error must bypass the whole postlude.
+    fn run_iteration<R>(
+        &mut self,
+        operation: impl FnOnce(&mut Self, Timestamp) -> Result<R>,
+    ) -> Result<(R, Duration)> {
+        let ts = self.next_ts();
         let uf_size_before = self.db.get_table(self.uf_table).len();
-        let (assembly_time, rule_set_report) = run_rules_impl(
-            &mut self.db,
-            &mut self.rules,
-            rules,
-            ts,
-            self.report_level,
-            context,
-        )?;
+        let result = operation(self, ts)?;
         let panic_message = self.panic_message.lock().unwrap().take();
         if let Some(message) = panic_message {
             let action_error = PanicError(message);
@@ -1291,11 +1355,6 @@ impl EGraph {
             ));
         }
 
-        let mut iteration_report = IterationReport {
-            assembly_time,
-            rule_set_report,
-            rebuild_time: Duration::ZERO,
-        };
         let uf_size_after = self.db.get_table(self.uf_table).len();
         if uf_size_before == uf_size_after {
             // No new unions: skip the full rebuild but still advance the
@@ -1303,18 +1362,18 @@ impl EGraph {
             // Rebuilding is only necessary when new unions have been made because ids may need to be updated.
             // Adding terms doesn't necessarily touch the union-find, only doing a union between existing ids does.
             self.inc_ts();
-            return Ok(iteration_report);
+            return Ok((result, Duration::ZERO));
         }
 
         let rebuild_timer = Instant::now();
         self.rebuild()?;
-        iteration_report.rebuild_time = rebuild_timer.elapsed();
+        let rebuild_time = rebuild_timer.elapsed();
 
         if let Some(message) = self.panic_message.lock().unwrap().take() {
             return Err(PanicError(message).into());
         }
 
-        Ok(iteration_report)
+        Ok((result, rebuild_time))
     }
 
     fn rebuild(&mut self) -> Result<()> {
@@ -1728,6 +1787,8 @@ struct FunctionInfo {
     nonincremental_rebuild_rule: RuleId,
     default_val: DefaultVal,
     can_subsume: bool,
+    /// The installed merge and schema admit deferred action boundaries.
+    batch_safe_merge: bool,
     name: Arc<str>,
     /// User-visible row projection. This equals the physical layout unless the
     /// table is an encoded view with internal columns.
@@ -2608,29 +2669,15 @@ impl TableAction {
             Some(default) => {
                 let timestamp =
                     MergeVal::Constant(Value::from_usize(state.read_counter(self.timestamp)));
-                let mut merge_vals = SmallVec::<[MergeVal; 3]>::new();
-                // Build just the non-key portion (single value + ts + subsume) of the row.
-                // `lookup_or_insert` is only used for single-value functions/constructors.
-                SchemaMath {
-                    n_keys: 0,
-                    func_cols: 1,
-                    ..self.table_math
-                }
-                .write_table_row(
-                    &mut merge_vals,
-                    RowVals {
-                        timestamp,
-                        subsume: self
-                            .table_math
-                            .subsume
-                            .then_some(MergeVal::Constant(NOT_SUBSUMED)),
-                        ret_val: Some(default),
-                    },
-                );
-                Some(
-                    state.predict_val(self.table, key, merge_vals.iter().copied())
-                        [self.table_math.ret_val_col()],
-                )
+                // Single output, timestamp, and the optional subsumption column.
+                let merge_vals = [default, timestamp, MergeVal::Constant(NOT_SUBSUMED)];
+                let merge_vals = &merge_vals[..2 + usize::from(self.table_math.subsume)];
+                Some(state.predict_col(
+                    self.table,
+                    key,
+                    merge_vals.iter().copied(),
+                    ColumnId::from_usize(self.table_math.ret_val_col()),
+                ))
             }
             None => self.lookup(state, key),
         }
@@ -2668,10 +2715,12 @@ impl TableAction {
                     merge_vals.push(MergeVal::Constant(NOT_SUBSUMED));
                 }
                 // The first value column (the minted output) is at `ret_val_col()`.
-                Some(
-                    state.predict_val(self.table, key, merge_vals.iter().copied())
-                        [self.table_math.ret_val_col()],
-                )
+                Some(state.predict_col(
+                    self.table,
+                    key,
+                    merge_vals.iter().copied(),
+                    ColumnId::from_usize(self.table_math.ret_val_col()),
+                ))
             }
             None => self.lookup(state, key),
         }
