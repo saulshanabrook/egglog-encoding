@@ -1,6 +1,10 @@
 use egglog_experimental::DisequalityEncoding;
 use std::ffi::OsString;
 
+#[cfg(feature = "bin")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() {
     let (encoding, args) = extension_args(std::env::args_os()).unwrap_or_else(|error| {
         eprintln!("error: {error}");

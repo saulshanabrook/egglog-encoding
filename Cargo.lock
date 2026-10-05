@@ -664,6 +664,7 @@ dependencies = [
  "lazy_static",
  "libtest-mimic",
  "log",
+ "mimalloc",
  "num",
  "serde_json",
 ]
