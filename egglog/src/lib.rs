@@ -73,6 +73,7 @@ use std::io::Write as _;
 use std::iter::once;
 use std::ops::Deref;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 pub use termdag::{OrdTerm, Term, TermDag, TermId};
@@ -395,10 +396,10 @@ enum ProgramSource<'a> {
 
 // Owned metadata survives bounded flushes, but is discarded before any command
 // that can change types or table identities. Declined heads are cached too.
-type GroundActionCache = HashMap<String, Option<(Arc<FuncType>, egglog_bridge::TableAction)>>;
+type GroundActionCache = HashMap<String, Option<(Arc<FuncType>, Rc<egglog_bridge::TableAction>)>>;
 
 struct GroundActions {
-    lookups: Vec<(egglog_bridge::TableAction, SmallVec<[usize; 4]>)>,
+    lookups: Vec<(Rc<egglog_bridge::TableAction>, SmallVec<[usize; 4]>)>,
     union: Option<(usize, usize)>,
 }
 
@@ -1671,12 +1672,22 @@ impl EGraph {
         let result = self.backend.run_actions(|state| {
             let mut values = Vec::new();
             let mut arguments = Vec::new();
+            // Table handles are interned for this action run. Nullary results
+            // stay fixed until this transaction's final merge/rebuild.
+            let mut constants = HashMap::default();
             for prepared in pending.drain(..) {
                 values.clear();
                 for (table, args) in prepared.lookups {
-                    arguments.clear();
-                    arguments.extend(args.iter().map(|index| values[*index]));
-                    values.push(table.lookup_or_insert(state, &arguments).unwrap());
+                    let value = if args.is_empty() {
+                        *constants
+                            .entry(Rc::as_ptr(&table))
+                            .or_insert_with(|| table.lookup_or_insert(state, &[]).unwrap())
+                    } else {
+                        arguments.clear();
+                        arguments.extend(args.iter().map(|index| values[*index]));
+                        table.lookup_or_insert(state, &arguments).unwrap()
+                    };
+                    values.push(value);
                 }
                 if let Some((left, right)) = prepared.union {
                     union.union(state, values[left], values[right]);
@@ -1778,7 +1789,8 @@ impl EGraph {
                     if !(func.output().as_ref() as &dyn Any).is::<EqSort>() {
                         return None;
                     }
-                    self.ground_table(func).map(|table| (func.clone(), table))
+                    self.ground_table(func)
+                        .map(|table| (func.clone(), Rc::new(table)))
                 });
                 calls.insert(head.into(), call.clone());
                 call
@@ -4728,15 +4740,18 @@ mod tests {
             graph
                 .parse_and_run_program(
                     None,
-                    "
+                    &format!(
+                        "
                 (G (F (A)))
                 (union (A) (B))
                 (G (F (B)))
-                (G (F (B)))
+                {}
                 (check (= (G (F (A))) (G (F (B)))))
                 (run 1)
                 (check (seen (G (F (B)))))
             ",
+                        "(G (F (B)))\n".repeat(2_050)
+                    ),
                 )
                 .unwrap();
             assert_eq!(graph.get_size("F"), 1);
