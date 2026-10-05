@@ -63,6 +63,7 @@ pub mod proof {
 }
 use scheduler::{SchedulerId, SchedulerRecord};
 pub use serialize::{SerializeConfig, SerializeOutput, SerializedNode};
+use smallvec::SmallVec;
 use sort::*;
 use std::any::{Any, TypeId};
 use std::fmt::{Debug, Display, Formatter};
@@ -392,8 +393,12 @@ enum ProgramSource<'a> {
     },
 }
 
+// Owned metadata survives bounded flushes, but is discarded before any command
+// that can change types or table identities. Declined heads are cached too.
+type GroundActionCache = HashMap<String, Option<(Arc<FuncType>, egglog_bridge::TableAction)>>;
+
 struct GroundActions {
-    lookups: Vec<(egglog_bridge::TableAction, Vec<usize>)>,
+    lookups: Vec<(egglog_bridge::TableAction, SmallVec<[usize; 4]>)>,
     union: Option<(usize, usize)>,
 }
 
@@ -1665,12 +1670,13 @@ impl EGraph {
         let union = egglog_bridge::UnionAction::new(&self.backend);
         let result = self.backend.run_actions(|state| {
             let mut values = Vec::new();
+            let mut arguments = Vec::new();
             for prepared in pending.drain(..) {
                 values.clear();
                 for (table, args) in prepared.lookups {
-                    let args: smallvec::SmallVec<[Value; 4]> =
-                        args.iter().map(|index| values[*index]).collect();
-                    values.push(table.lookup_or_insert(state, &args).unwrap());
+                    arguments.clear();
+                    arguments.extend(args.iter().map(|index| values[*index]));
+                    values.push(table.lookup_or_insert(state, &arguments).unwrap());
                 }
                 if let Some((left, right)) = prepared.union {
                     union.union(state, values[left], values[right]);
@@ -1681,7 +1687,7 @@ impl EGraph {
         result.map_err(|e| Error::BackendError(e.to_string()))
     }
 
-    fn ground_table(&self, func: &FuncType, arity: usize) -> Option<egglog_bridge::TableAction> {
+    fn ground_table(&self, func: &FuncType) -> Option<egglog_bridge::TableAction> {
         let function = self.functions.get(&func.name)?;
         if func.subtype != FunctionSubtype::Constructor
             || function.subtype() != FunctionSubtype::Constructor
@@ -1696,7 +1702,7 @@ impl EGraph {
         let table = egglog_bridge::TableAction::new(&self.backend, function.backend_id);
         if table.kind() != TableKind::Constructor
             || table.output_arity() != 1
-            || table.input_arity() != arity
+            || table.input_arity() != func.input.len()
         {
             return None;
         }
@@ -1705,7 +1711,11 @@ impl EGraph {
 
     /// Typecheck closed source actions directly into an execution plan. No IDs or
     /// writes are allocated until every call and the optional union have passed.
-    fn prepare_ground_action(&self, action: &Action) -> Option<GroundActions> {
+    fn prepare_ground_action(
+        &self,
+        action: &Action,
+        calls: &mut GroundActionCache,
+    ) -> Option<GroundActions> {
         if self.proof_state.original_typechecking.is_some() {
             return None;
         }
@@ -1713,18 +1723,28 @@ impl EGraph {
             lookups: Vec::new(),
             union: None,
         };
-        let checked = self
-            .type_info
-            .check_closed_action(action, &mut |_, func, args| {
-                // Custom sorts and encoded views retain ordinary compiled execution.
-                if !(func.output().as_ref() as &dyn Any).is::<EqSort>() {
-                    return None;
+        let checked = self.type_info.check_closed_action(
+            action,
+            &mut |head| {
+                if let Some(cached) = calls.get(head) {
+                    return cached.clone();
                 }
-                let table = self.ground_table(func, args.len())?;
+                let call = self.type_info.closed_call_type(head).and_then(|func| {
+                    // Custom sorts and encoded views retain ordinary compiled execution.
+                    if !(func.output().as_ref() as &dyn Any).is::<EqSort>() {
+                        return None;
+                    }
+                    self.ground_table(func).map(|table| (func.clone(), table))
+                });
+                calls.insert(head.into(), call.clone());
+                call
+            },
+            &mut |_, _, table, args: SmallVec<[usize; 4]>| {
                 let index = prepared.lookups.len();
                 prepared.lookups.push((table, args));
                 Some(index)
-            })?;
+            },
+        )?;
         if let typechecking::ClosedAction::Union(left, right) = checked {
             prepared.union = Some((left, right));
         }
@@ -2987,7 +3007,7 @@ impl EGraph {
     /// Only resolution retains the lowered commands in the returned value.
     fn process_program_internal(
         &mut self,
-        mut program: ProgramSource,
+        mut program: ProgramSource<'_>,
         run_commands: bool,
     ) -> Result<ResolvedNCommandsWithOutput, Error> {
         let mut outputs = Vec::new();
@@ -2997,6 +3017,7 @@ impl EGraph {
         let mut pending_lookups = 0;
         // Tables and callback capabilities cannot change inside an admitted run.
         let mut batchable = None;
+        let mut ground_calls = GroundActionCache::default();
 
         loop {
             let next = match &mut program {
@@ -3047,14 +3068,14 @@ impl EGraph {
             for command in macro_expanded {
                 if run_commands && let Command::Action(action) = &command {
                     let timer = Instant::now();
-                    let prepared = self.prepare_ground_action(action);
+                    let prepared = self.prepare_ground_action(action, &mut ground_calls);
                     self.overall_report.typecheck += timer.elapsed();
                     if let Some(prepared) = prepared {
                         pending_lookups += prepared.lookups.len();
                         pending.push(prepared);
                         let can_batch =
                             *batchable.get_or_insert_with(|| self.backend.can_batch_actions());
-                        if !can_batch || pending.len() >= 256 || pending_lookups >= 16_384 {
+                        if !can_batch || pending.len() >= 2_048 || pending_lookups >= 131_072 {
                             self.flush_ground_actions(&mut pending)?;
                             pending_lookups = 0;
                         }
@@ -3067,6 +3088,7 @@ impl EGraph {
                 self.flush_ground_actions(&mut pending)?;
                 pending_lookups = 0;
                 batchable = None;
+                ground_calls.clear();
 
                 // handle include specially- we keep them as-is for desugaring
                 if let Command::Include(span, file) = &command {
@@ -4335,7 +4357,9 @@ mod tests {
                 let before = graph.clone();
                 let commands = graph.parse_program(None, source).unwrap();
                 let accepted = commands.iter().any(|command| match command {
-                    Command::Action(action) => graph.prepare_ground_action(action).is_some(),
+                    Command::Action(action) => graph
+                        .prepare_ground_action(action, &mut GroundActionCache::default())
+                        .is_some(),
                     _ => false,
                 });
                 assert_eq!(accepted, admitted && mode == 0, "mode {mode}: {source}");
@@ -4343,6 +4367,48 @@ mod tests {
                 assert!(!graph.backend.flush_updates());
             }
         }
+    }
+
+    #[test]
+    fn ground_action_cache_keeps_call_validation_and_command_scope() {
+        let mut initial = EGraph::default();
+        initial
+            .parse_and_run_program(None, "(datatype T (A) (F T)) (datatype U (B))")
+            .unwrap();
+        for source in ["(F (A)) (F (A) (A))", "(F (A)) (F (B))"] {
+            let mut graph = initial.clone();
+            assert!(graph.parse_and_run_program(None, source).is_err());
+            assert_eq!(graph.get_size("F"), 1);
+            assert_eq!(graph.get_size("B"), 0);
+        }
+
+        let mut graph = initial;
+        assert!(
+            graph
+                .parse_and_run_program(
+                    None,
+                    "(push) (constructor Temporary () T) (Temporary) (pop) (Temporary)",
+                )
+                .is_err()
+        );
+        assert!(!graph.functions.contains_key("Temporary"));
+        graph
+            .parse_and_run_program(
+                None,
+                "
+            (push)
+            (constructor Reused () T)
+            (Reused)
+            (pop)
+            (constructor Padding () T)
+            (constructor Reused () T)
+            (Reused)
+            (check (= (Reused) (Reused)))
+        ",
+            )
+            .unwrap();
+        assert_eq!(graph.get_size("Padding"), 0);
+        assert_eq!(graph.get_size("Reused"), 1);
     }
 
     #[test]
