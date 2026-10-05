@@ -16,6 +16,12 @@ use egglog_bridge::{ActionRegistry, SharedActionRegistry};
 use enum_map::EnumMap;
 use std::sync::Arc;
 
+/// Result of checking a closed expression or union, independent of its representation.
+pub(crate) enum ClosedAction<T> {
+    Expr(T),
+    Union(T, T),
+}
+
 // `ExternalFunction` wrapper for `PurePrim`. Holds the primitive
 // directly so the dispatch chain `external_funcs[id].invoke(...)` →
 // `T::apply(...)` is just one vtable hop plus a direct call — no
@@ -1501,6 +1507,60 @@ impl TypeInfo {
         }
     }
 
+    /// Check a closed action once, letting the caller select its output representation.
+    /// The emitter may decline an otherwise well-typed call (for example a table that
+    /// needs compiled execution). It must only prepare work: any failure discards the
+    /// tentative output and falls back to general inference without executing it.
+    pub(crate) fn check_closed_action<T>(
+        &self,
+        action: &Action,
+        emit: &mut impl FnMut(&Span, &Arc<FuncType>, Vec<T>) -> Option<T>,
+    ) -> Option<ClosedAction<T>> {
+        match action {
+            Action::Expr(_, expr) => {
+                let (value, _) = self.check_declared_expr(expr, emit)?;
+                Some(ClosedAction::Expr(value))
+            }
+            Action::Union(_, left, right) => {
+                let (left, left_sort) = self.check_declared_expr(left, emit)?;
+                let (right, right_sort) = self.check_declared_expr(right, emit)?;
+                (left_sort.name() == right_sort.name() && self.is_sort_unionable(left_sort))
+                    .then_some(ClosedAction::Union(left, right))
+            }
+            _ => None,
+        }
+    }
+
+    fn check_declared_expr<'a, T>(
+        &'a self,
+        expr: &Expr,
+        emit: &mut impl FnMut(&Span, &Arc<FuncType>, Vec<T>) -> Option<T>,
+    ) -> Option<(T, &'a ArcSort)> {
+        let Expr::Call(span, head, args) = expr else {
+            return None;
+        };
+        // `values` and overloaded primitive names require general inference.
+        if head == "values" || self.is_primitive(head) {
+            return None;
+        }
+        let func = self.get_func_type(head)?;
+        let [output] = func.outputs.as_slice() else {
+            return None;
+        };
+        if func.input.len() != args.len() {
+            return None;
+        }
+        let mut checked_args = Vec::with_capacity(args.len());
+        for (arg, expected) in args.iter().zip(&func.input) {
+            let (value, sort) = self.check_declared_expr(arg, emit)?;
+            if sort.name() != expected.name() {
+                return None;
+            }
+            checked_args.push(value);
+        }
+        Some((emit(span, func, checked_args)?, output))
+    }
+
     fn typecheck_standalone_action(
         &self,
         symbol_gen: &mut SymbolGen,
@@ -1702,6 +1762,55 @@ pub enum TypeError {
 #[cfg(test)]
 mod test {
     use crate::{EGraph, Error, typechecking::TypeError};
+
+    #[test]
+    fn closed_actions_keep_primitive_ambiguity() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(function number () i64 :merge old)
+                 (function clash (i64 i64) i64 :merge old)",
+            )
+            .unwrap();
+        // Give the declared name a primitive alternative with the same signature.
+        egraph.type_info.primitives.insert(
+            "clash".into(),
+            egraph.type_info.get_prims("+").unwrap().to_vec(),
+        );
+        assert!(
+            egraph
+                .parse_and_run_program(None, "(clash (number) (number))")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn constructor_actions_preserve_rollback_and_proofs() {
+        for mode in 0..3 {
+            let mut egraph = match mode {
+                0 => EGraph::default(),
+                1 => EGraph::new_with_term_encoding(),
+                _ => EGraph::default().with_proofs_enabled().with_proof_testing(),
+            };
+            egraph
+                .parse_and_run_program(
+                    None,
+                    "(datatype T (A) (B) (F T))
+                     (datatype U (X))
+                     (push)
+                     (constructor Local () T)
+                     (union (F (Local)) (F (A)))
+                     (check (= (F (Local)) (F (A))))
+                     (pop)
+                     (constructor Local () U)
+                     (union (Local) (X))
+                     (check (= (Local) (X)))
+                     (fail (check (= (A) (B))))",
+                )
+                .unwrap_or_else(|error| panic!("mode {mode}: {error}"));
+        }
+    }
 
     #[test]
     fn test_arity_mismatch() {
