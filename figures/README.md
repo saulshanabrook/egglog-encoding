@@ -56,7 +56,9 @@ including incomplete campaigns. The ordinary positional CLI report retains its
 newest-N selection.
 
 CDF membership depends only on the proofs-off mean whole-process time, strictly
-between 0.1 and 30 seconds. Memory and proof results do not select membership.
+between 0.1 and 30 seconds. The `min_wall_sec` and `max_wall_sec` parameters in
+the CDF spec own this window; collection runs all prepared workloads. Memory and
+proof results do not select membership.
 Each dot represents one deduplicated replay, with source aliases retained in
 metadata. Families are not weighted equally. Failed/missing proof ratios stay
 in the selected denominator: a 90% threshold is shown only when at least 90%
@@ -97,6 +99,6 @@ make python-check
 
 Tests cover arbitrary/unequal counts, ratios of means, ties, current input and
 label identities, missing endpoints, failures, shared denominators, cohort
-agreement with Python, unchanged output mtimes, and Make ordering. See the
+boundary cases, unchanged output mtimes, and Make ordering. See the
 [source and measurement notes](../benchmarks/README.md) and
 [parameter figure notes](parameter-analysis.md).

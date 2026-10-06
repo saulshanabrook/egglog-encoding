@@ -24,7 +24,11 @@ make reproduce-benchmarks REPRODUCE_ARGS='--family hardboiled'
 Preparation acquires the pinned author sources and prerequisites, captures
 complete calls, and validates their ordinary replay. Generated files, toolchains,
 and diagnostic logs stay under ignored `benchmarks/local/`, outside Cargo's
-build cache. No preparation timing becomes a benchmark observation.
+build cache. Source modifications are checked-in [patches](reproduction/patches),
+applied to pinned revisions with `git apply --check`. A changed engine revalidates
+retained captures without rerunning the authors' compilers; generation identity
+tracks each family's recipe, adapters and patches. No preparation timing becomes
+a benchmark observation.
 
 The resulting `benchmarks/local/corpus/manifest.json` is the sole input inventory
 used by collection. It records actual source revisions, content hashes,
@@ -38,18 +42,24 @@ explicitly; they do not become successful or empty workloads.
 | --- | --- |
 | Math | The original combined seven-seed, 24-rule workload at iteration 11 |
 | Luminal | Seven author-exported model programs, retaining schedules and derived-result queries |
-| Eggcc | Complete independent output-bearing calls from the declared passing programs; unavailable Gurobi configurations remain blockers |
+| Eggcc | Complete optimization calls from the declared passing programs, followed by ordinary extraction from original Function roots; unavailable Gurobi configurations remain blockers |
 | HardBoiled | The authors' 42 published Egglog files, with original extraction roots and declared compatibility adaptations |
 | MISAAL | Completed Egglog rewriting/legalization calls; generation stops before later LLVM compilation |
-| Churchroad | Declared integration/evaluation circuits, preserving shared graph state and recording recovery/extraction adaptations |
+| Churchroad | Declared integration/evaluation circuits through the complete Egglog mapping phase, preserving shared state and extracting original output ports; no later synthesis |
 | DialEgg | Complete optimization and substantive shape-inference computations; setup-only invocations are excluded |
 
 SpEQ is excluded from this expanded campaign; its source and exclusion reason
 remain in the recipes. Herbie and pointer analysis are also outside this
 campaign. The ordinary default benchmark suite is unchanged.
 
-Churchroad's recovered circuit extraction establishes an Egglog result; it does
-not claim that the author's subsequent hardware-mapping extractor succeeded.
+Eggcc's replay uses the original input roots, rules and schedule. Ordinary
+Egglog extraction does not enforce Tiger's effect/linearity constraints, so the
+result is not a claim of compilable native output. Native Tiger still supplies
+inputs to later passes during generation; reconstruction-only helper graphs are
+not benchmark workloads.
+
+Churchroad's circuit extraction establishes an Egglog result; it does not claim
+that the author's subsequent hardware-mapping extractor or synthesis succeeded.
 Necessary source repairs and proof-compatible adaptations belong to the pinned
 recipe and generated provenance and apply equally to both timed conditions.
 
@@ -64,22 +74,22 @@ make figures-expanded          # Collect missing observations, then render.
 Or select families through the normal runner:
 
 ```sh
-./bench.py --suite eggcc --suite luminal --baseline-window --target figures=. \
+./bench.py --suite eggcc --suite luminal --target figures=. \
   --treatment proofs --compare-treatment off --rounds 10 --timeout-sec 300
 ```
 
-Each comparison uses one sequential collection plan. Collection first tops up
-normal-mode observations, selects the cohort, and collects the requested proof
-treatment. Ten observations per condition is the Make default. Compatible
-cached observations are reused; repeated Make invocations do not remeasure
-completed samples. `--baseline-only` stops after normal-mode collection.
+Each comparison collects every prepared workload using one sequential plan.
+Ten observations per condition is the Make default. Compatible observations are
+reused, including proofs-off runs shared between the two proof comparisons;
+repeated Make invocations do not remeasure completed samples.
 
-Eligibility uses **all** exact-identity normal-mode observations: a nonempty,
+The time window is a Vega-Lite parameter, not a collection gate. Figure
+eligibility uses **all** exact-identity proofs-off observations: a nonempty,
 wholly successful, finite sample with `0.1 < mean wall seconds < 30`. Memory and
-proof outcomes never select the cohort. Reports show selected, too-fast,
-too-slow, pending, and failed counts by family. More observations can change
-membership near the time boundaries. A partial render describes the available
-samples, not a completed collection campaign.
+proof outcomes never select the cohort. Figures show selected, too-fast,
+too-slow, unresolved, and unavailable counts by family. Changing the window
+requires only rerendering. A partial render describes available samples,
+not a completed collection campaign.
 
 All timed observations, including failures, go into append-only `.reports.jsonl`.
 Reuse requires matching executable, workload, facts, treatment, disequality
@@ -97,8 +107,9 @@ Both compare against the same proofs-off observations.
 
 Expanded Make targets use a 300-second timeout and the existing guard: 10 GiB
 process-group RSS, normal macOS memory pressure, and 2 GiB host reserve. A
-workload failure stops its remaining repetitions; a safety stop preserves the
-observation and stops the invocation. Host-pressure interruption and a workload
+workload failure stops the failed treatment's remaining repetitions; other
+treatments still collect their samples. A safety stop preserves the observation
+and stops the invocation. Host-pressure interruption and a workload
 exceeding its RSS limit remain distinguishable. Timeout limits are never
 substituted for measured runtimes.
 

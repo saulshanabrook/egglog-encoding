@@ -403,21 +403,22 @@ make figures-expanded-cached  # Render existing grouped data only.
 make figures-expanded-archive # Gather the images and reproducible evidence.
 ```
 
-Collection tops up to ten observations by default, with one sequential plan per
-comparison. The cohort uses all matching proofs-off observations. They must all
-succeed, with mean whole-process time strictly between 0.1 and 30 seconds.
-Memory and proof outcomes do not select it. Failed observations remain visible and
-invalidate their ratios. Expanded Make targets retain the 300-second timeout
-and memory guard. Correctness validation is separate: `make validate-benchmarks`.
+Collection tops up every prepared workload to ten observations per condition by
+default, with one sequential plan per comparison. Vega-Lite selects the plotted
+cohort from successful proofs-off samples with mean whole-process time strictly
+between 0.1 and 30 seconds; memory and proof outcomes do not select it. Failed
+observations remain visible and invalidate their ratios. Expanded Make targets
+retain the 300-second timeout and memory guard. Correctness validation is
+separate: `make validate-benchmarks`.
 
 ```sh
-./bench.py --suite eggcc --suite luminal --baseline-window --target figures=. \
+./bench.py --suite eggcc --suite luminal --target figures=. \
   --treatment proofs --compare-treatment off --rounds 10 --timeout-sec 300
 ```
 
 Use `--suite expanded` for all included families, `--treatment proof-extraction`
-for recording plus extraction, or `--baseline-only` for normal-mode collection.
-Omit `--baseline-window` to collect a suite without the time window.
+for recording plus extraction. Changing the chart's time window requires only
+rerendering; it does not change collection or cached observations.
 The shared `.reports-grouped.json` and metadata-only inventory feed the authored
 Vega-Lite specs directly. [Figure documentation](figures/README.md) explains
 sample selection, outputs, cached rendering, and the evidence archive.

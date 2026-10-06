@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.hardboiled_replay import egglog_forms, omit_unexecuted_higher_order_rules
+from scripts.hardboiled_replay import egglog_forms
 
 ROOT = Path(__file__).resolve().parents[1]
 INPUT_KIND = "author-published-egglog"
@@ -53,105 +53,3 @@ def verify_input(entry: dict[str, Any], data: bytes) -> None:
     extracts = sum(tokens[1] == "extract" for tokens in forms)
     if not extracts or extracts != entry["extracts"]:
         raise ValueError("published input lost its original extraction queries")
-
-
-def prepare_published(output: Path, engine: Path) -> dict[str, Any]:
-    """Fetch each pinned raw file into a fresh destination without a native build."""
-    from scripts.reproduction_prepare_misaal_racket import fetch_bytes
-
-    output.mkdir()
-    inputs = output / "inputs"
-    inputs.mkdir()
-    entries = published_entries()
-    acquired = []
-    for entry in entries.values():
-        url = f"https://raw.githubusercontent.com/yihozhang/egglog-benchmarks/{REVISION}/benchmarks/hardboiled/{entry['file']}"
-        data = fetch_bytes(url, entry["size_bytes"])
-        verify_input(entry, data)
-        (inputs / entry["file"]).write_bytes(data)
-        acquired.append({**entry, "url": url})
-    receipt = output / "published-inputs.json"
-    receipt.write_text(
-        json.dumps(
-            {"input_kind": INPUT_KIND, "repository": REPOSITORY, "revision": REVISION, "inputs": acquired}, indent=2
-        )
-        + "\n"
-    )
-    settings = output / "settings.json"
-    settings.write_text(
-        json.dumps(
-            {
-                "hardboiled": {
-                    "input_kind": INPUT_KIND,
-                    "revision": REVISION,
-                    "paths": {"inputs": str(inputs.resolve()), "egglog": str(engine.resolve())},
-                    "identity_paths": [str(receipt.resolve())],
-                }
-            },
-            indent=2,
-        )
-        + "\n"
-    )
-    return {"status": "success", "settings": str(settings), "input_kind": INPUT_KIND}
-
-
-def capture_published(case: dict[str, Any], settings: dict[str, Any], output: Path) -> dict[str, Any]:
-    """Retain exact published bytes separately from the guarded benchmark adaptation."""
-    entry = published_entries()[case["id"]]
-    if (
-        case["family"] != "hardboiled"
-        or case.get("input_kind") != INPUT_KIND
-        or settings.get("input_kind") != INPUT_KIND
-        or case["source"] != "benchmarks/hardboiled/" + entry["file"]
-    ):
-        raise ValueError("published input differs from the selected source case")
-    data = (ROOT / settings["paths"]["inputs"] / entry["file"]).read_bytes()
-    verify_input(entry, data)
-    adapted = omit_unexecuted_higher_order_rules(data.decode()).encode()
-    output.mkdir()
-    source = output / "source" / entry["file"]
-    source.parent.mkdir()
-    source.write_bytes(data)
-    replay = output / entry["file"]
-    replay.write_bytes(adapted)
-    return {
-        "status": "ordinary-validation-pending",
-        "family": "hardboiled",
-        "case_id": case["id"],
-        "input_kind": INPUT_KIND,
-        "published_input": {"repository": REPOSITORY, "revision": REVISION, **entry},
-        "published_source": str(source),
-        "materialization": {"complete": True, "expected_sessions": 1, "materialized_sessions": 1},
-        "sessions": [
-            {
-                "replay": str(replay),
-                "replay_sha256": "sha256:" + hashlib.sha256(adapted).hexdigest(),
-                "adaptations": ["omit-unexecuted-higher-order-rules"] if adapted != data else [],
-                "output_contract": {"kind": INPUT_KIND, "extracts": entry["extracts"]},
-            }
-        ],
-    }
-
-
-def verify_published_capture(capture: dict[str, Any]) -> None:
-    """Prevent a published-input label from admitting native prefixes or unpinned files."""
-    entry = published_entries()[capture["case_id"]]
-    if (
-        capture.get("family") != "hardboiled"
-        or capture.get("published_input") != {"repository": REPOSITORY, "revision": REVISION, **entry}
-        or "source_completion" in capture
-        or len(capture.get("sessions", [])) != 1
-    ):
-        raise ValueError("published acquisition provenance is incomplete or changed")
-    session = capture["sessions"][0]
-    if session.get("output_contract") != {"kind": INPUT_KIND, "extracts": entry["extracts"]}:
-        raise ValueError("published extraction contract changed")
-    data = Path(capture["published_source"]).read_bytes()
-    verify_input(entry, data)
-    adapted = omit_unexecuted_higher_order_rules(data.decode()).encode()
-    if (
-        session.get("adaptations") != (["omit-unexecuted-higher-order-rules"] if adapted != data else [])
-        or session.get("replay_sha256") != "sha256:" + hashlib.sha256(adapted).hexdigest()
-        or Path(session["replay"]).read_bytes() != adapted
-    ):
-        raise ValueError("published replay differs from the permitted unscheduled-rule adaptation")

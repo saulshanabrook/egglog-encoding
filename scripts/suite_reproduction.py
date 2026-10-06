@@ -24,6 +24,35 @@ from scripts.source_tools import Preparation, acquire_source, sha256_file
 STOP_STATUSES = {"resource-stopped", "memory-limit", "cancelled", "interrupted"}
 
 
+def generation_identity(family: str, recipe: dict[str, Any]) -> str:
+    """Invalidate only the recipes, adapters and patches used by this family."""
+    shared = {
+        "suite_reproduction.py",
+        "reproduction_inventory.py",
+        "source_tools.py",
+        "reproduction_process.py",
+        "hardboiled_replay.py",
+        "reproduction_validation.py",
+    }
+    if family == "hardboiled":
+        shared.add("reproduction_published.py")
+    inputs = {path for path in (ROOT / "scripts").glob("*.py") if path.name in shared or family in path.stem}
+    materializer = ROOT / "scripts/paper_benchmarks/materialize.py"
+    if family in {"eggcc", "churchroad", "misaal", "dialegg"} and materializer.is_file():
+        inputs.add(materializer)
+    inputs.update(
+        path
+        for path in (ROOT / "benchmarks/reproduction").rglob("*")
+        if path.is_file() and family in path.relative_to(ROOT / "benchmarks/reproduction").as_posix()
+    )
+    if family == "math-growth":
+        inputs.add(ROOT / recipe["input"])
+    digest = hashlib.sha256(json.dumps(recipe, sort_keys=True).encode())
+    for path in sorted(inputs):
+        digest.update(str(path.relative_to(ROOT)).encode() + b"\0" + path.read_bytes())
+    return digest.hexdigest()
+
+
 def write_manifest(directory: Path, manifest: dict[str, Any]) -> None:
     """Replace changed metadata; retain strict evidence history for exact identity matching."""
     case_files = {case["id"]: set(case["workloads"]) for case in manifest.get("cases", [])}
@@ -231,28 +260,17 @@ def reproduce(
     directory.mkdir(parents=True, exist_ok=True)
     old = json.loads((directory / "manifest.json").read_text()) if (directory / "manifest.json").is_file() else {}
     old_cases = {case["id"]: case for case in old.get("cases", [])}
-    inputs = [
-        *[path for path in (ROOT / "scripts").rglob("*") if path.suffix in {".py", ".cpp", ".h"}],
-        *[path for path in (ROOT / "benchmarks/reproduction/fixtures").rglob("*") if path.is_file()],
-    ]
-    if math_input := sources.get("math-growth", {}).get("input"):
-        inputs.append(ROOT / math_input)
-    implementation = hashlib.sha256(
-        b"".join(str(path.relative_to(ROOT)).encode() + b"\0" + path.read_bytes() for path in sorted(inputs))
-    ).hexdigest()
-    recipe_hash = hashlib.sha256(json.dumps(sources, sort_keys=True).encode()).hexdigest()
-    reusable = old.get("preparation") == {
-        "recipes_sha256": recipe_hash,
-        "implementation_sha256": implementation,
-        "engine_sha256": sha256_file(engine),
+    preparation = {
+        family: generation_identity(family, sources[family])
+        for family in dict.fromkeys(case["family"] for case in cases)
     }
+    reusable = {
+        family for family, identity in preparation.items() if old.get("preparation", {}).get(family) == identity
+    }
+    validation_identity = {"engine_sha256": sha256_file(engine), "timeout_sec": timeout_sec}
     manifest: dict[str, Any] = {
         "sources": sources,
-        "preparation": {
-            "recipes_sha256": recipe_hash,
-            "implementation_sha256": implementation,
-            "engine_sha256": sha256_file(engine),
-        },
+        "preparation": preparation,
         "cases": [],
         "workloads": [],
         "outcomes": old.get("outcomes", []),
@@ -260,8 +278,8 @@ def reproduce(
     for case in cases:
         previous = old_cases.get(case["id"])
         row = {**case, "status": "pending", "workloads": []}
-        if previous and reusable:
-            row = previous
+        if previous and case["family"] in reusable:
+            row = dict(previous)
         manifest["cases"].append(row)
     selected_ids = {case["id"] for case in selected}
     current_files = {name for case in manifest["cases"] for name in case["workloads"]}
@@ -274,15 +292,31 @@ def reproduce(
     job_root.mkdir(parents=True)
     environments: dict[str, dict[str, Any]] = {}
     for case in manifest["cases"]:
-        if case["id"] not in selected_ids or (reusable and case["status"] == "ready"):
+        if case["id"] not in selected_ids or (
+            case["status"] == "ready" and case.get("validation") == validation_identity
+        ):
             continue
         family = case["family"]
         attempt = job_root / "cases" / case["id"]
         attempt.mkdir(parents=True)
-        case.update(status="blocked", workloads=[], evidence=str(attempt.relative_to(ROOT)))
+        case.update(status="blocked", workloads=[], reason=None, evidence=str(attempt.relative_to(ROOT)))
         try:
+            captured = None
+            if case.get("capture"):
+                path = ROOT / case["capture"]
+                if sha256_file(path) != case["capture_sha256"]:
+                    raise ValueError("retained source capture changed")
+                captured = json.loads(path.read_text())
             if family in {"math-growth", "luminal", "hardboiled"}:
-                replay, adaptations = capture_source_file(case, sources[family], attempt)
+                if captured is None:
+                    replay, adaptations = capture_source_file(case, sources[family], attempt)
+                    captured = {"replay": str(replay), "sha256": sha256_file(replay), "adaptations": adaptations}
+                replay = Path(captured["replay"])
+                if sha256_file(replay) != captured["sha256"]:
+                    raise ValueError("retained published replay changed")
+                capture_path = attempt / "capture.json"
+                capture_path.write_text(json.dumps(captured, indent=2) + "\n")
+                case.update(capture=str(capture_path.relative_to(ROOT)), capture_sha256=sha256_file(capture_path))
                 process = run_complete_command(
                     [str(engine), str(replay.resolve())], ROOT, attempt / "ordinary", timeout_sec
                 )
@@ -291,10 +325,10 @@ def reproduce(
                     if process.status in STOP_STATUSES:
                         raise RuntimeError("resource safety stop")
                 else:
-                    publish_workload(directory, manifest, case, replay, 0, adaptations)
+                    publish_workload(directory, manifest, case, replay, 0, captured["adaptations"])
                     case.update(status="ready", reason=None)
             else:
-                if family not in environments:
+                if captured is None and family not in environments:
                     environments[family] = prepare_family(
                         family,
                         job_root / family,
@@ -307,7 +341,9 @@ def reproduce(
                         ],
                         timeout_sec=timeout_sec,
                     )
-                environment = environments[family]
+                environment: dict[str, Any] = (
+                    environments[family] if captured is None else {"status": "success", "settings": {}}
+                )
                 if environment["status"] != "success":
                     case.update(reason=environment.get("reason", environment["status"]))
                     if environment["status"] in STOP_STATUSES:
@@ -328,8 +364,10 @@ def reproduce(
                     if blocker:
                         case["reason"] = blocker["reason"]
                     else:
-                        captured = capture_case(case, settings, attempt / "capture", engine, timeout_sec)
-                        (attempt / "capture.json").write_text(json.dumps(captured, indent=2, default=str) + "\n")
+                        if captured is None:
+                            captured = capture_case(case, settings, attempt / "capture", engine, timeout_sec)
+                        capture_path = attempt / "capture.json"
+                        capture_path.write_text(json.dumps(captured, indent=2, default=str) + "\n")
                         if captured["status"] in STOP_STATUSES:
                             case["reason"] = captured.get("reason", captured["status"])
                             raise RuntimeError("resource safety stop")
@@ -341,16 +379,19 @@ def reproduce(
                             case["reason"] = captured.get("reason") or f"source capture: {captured['status']}"
                             write_manifest(directory, manifest)
                             continue
+                        case.update(
+                            capture=str(capture_path.relative_to(ROOT)), capture_sha256=sha256_file(capture_path)
+                        )
                         validation = validate_capture(captured, engine, attempt / "validation", timeout_sec=timeout_sec)
                         reason = validation.get("reason")
                         if not reason and captured.get("failed_invocations"):
                             reason = (
                                 f"{len(captured['failed_invocations'])} Egglog calls failed; retained complete calls"
                             )
-                        if not reason and captured.get("parent_failure"):
-                            reason = (
-                                "Source parent failed after completed independent Egglog calls; see capture evidence"
-                            )
+                        parent_status = captured.get("process", {}).get("status")
+                        if not reason and (captured.get("parent_failure") or parent_status in {"failure", "timed-out"}):
+                            outcome = "timed out" if parent_status == "timed-out" else "failed"
+                            reason = f"Source parent {outcome} after complete Egglog calls; see capture evidence"
                         case.update(reason=reason)
                         sessions = captured.get("sessions") or captured.get("invocations", [])
                         orders = {
@@ -364,12 +405,13 @@ def reproduce(
                                 case,
                                 Path(workload),
                                 orders[workload],
-                                ["source/API modernization and output membership checks (see capture)"],
+                                ["source/API modernization and output contracts (see capture)"],
                             )
                         case["status"] = "ready" if case["workloads"] else "blocked"
                         if validation["status"] in STOP_STATUSES:
                             raise RuntimeError("resource safety stop")
             case["evidence"] = str(attempt.relative_to(ROOT))
+            case["validation"] = validation_identity
         except (OSError, ValueError, RuntimeError) as error:
             case["reason"] = case.get("reason") or str(error)
             if str(error) == "resource safety stop" or "guard refused" in str(error):

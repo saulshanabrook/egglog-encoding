@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import difflib
 import hashlib
 import json
 from dataclasses import asdict
@@ -76,29 +75,21 @@ class Preparation:
             raise RuntimeError(f"{name}: {result.status}; see {prefix}.result.json")
         return result.stdout_path.read_text()
 
-    def patch(self, source: Path, replacements: list[tuple[str, str]], name: str) -> None:
-        """Change only acquired source, with exact contexts and a reversible diff."""
-        if not source.resolve().is_relative_to(self.directory / "sources"):
+    def apply_patch(self, checkout: Path, patch: Path) -> None:
+        """Apply a versioned diff to acquired source and retain its exact bytes."""
+        checkout = checkout.resolve()
+        if not checkout.is_relative_to(self.directory / "sources"):
             raise ValueError("refusing to patch a source outside this preparation")
-        before = source.read_text()
-        after = before
-        for old, new in replacements:
-            if after.count(old) != 1:
-                raise ValueError(f"patch {name} expected exactly one context in {source}")
-            after = after.replace(old, new)
-        patch = self.directory / "patches" / f"{name}.patch"
-        patch.parent.mkdir(exist_ok=True)
-        relative = source.relative_to(self.directory / "sources")
-        with patch.open("x") as output:
-            output.writelines(
-                difflib.unified_diff(before.splitlines(True), after.splitlines(True), f"a/{relative}", f"b/{relative}")
-            )
+        retained = self.directory / "patches" / patch.name
+        retained.parent.mkdir(exist_ok=True)
+        with retained.open("xb") as output:
+            output.write(patch.read_bytes())
         write_json(
-            patch.with_suffix(".before.json"),
-            {"path": str(source), "sha256": sha256_file(source)},
+            retained.with_suffix(".json"),
+            {"checkout": str(checkout), "patch_sha256": sha256_file(retained)},
         )
-        source.write_text(after)
-        write_json(patch.with_suffix(".after.json"), {"path": str(source), "sha256": sha256_file(source)})
+        self.step(patch.stem + "-check", ["git", "apply", "--check", str(retained)], cwd=checkout, timeout=30)
+        self.step(patch.stem + "-apply", ["git", "apply", str(retained)], cwd=checkout, timeout=30)
 
 
 def acquire_source(preparation: Preparation, name: str, url: str, revision: str) -> Path:

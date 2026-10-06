@@ -113,7 +113,10 @@ or modify the JSONL.
 - Figure collection requests 10 observations per endpoint by default. Expanded
   cohort/report/figure analysis uses all exact-identity observations, with no
   sample-count eligibility threshold; any failed observation remains visible.
-  Ordinary positional/default comparisons retain requested newest-N selection.
+  Collection attempts every prepared workload; timing eligibility lives only
+  in Vega-Lite. Failures stop repetitions for the affected treatment, not other
+  treatments of that workload. Ordinary positional/default comparisons retain
+  requested newest-N selection.
 - Expanded Make targets use a 300-second timeout and the memory guard: 10 GiB
   process-group RSS, normal host memory pressure, and a 2 GiB host reserve.
   Preserve in-flight safety failures and halt before launching another workload.

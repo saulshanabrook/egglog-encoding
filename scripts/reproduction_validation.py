@@ -12,9 +12,59 @@ from typing import Any, cast
 from benchmarking.targets import sha256_file
 from scripts.dialegg_capture import run_complete_command, validate_extract_output
 from scripts.hardboiled_replay import egglog_forms, native_check_contract
-from scripts.reproduction_published import INPUT_KIND, verify_published_capture
 
 CHURCHROAD_PLACEHOLDERS = ("Wire", "PrimitiveInterfaceDSP", "PrimitiveInterfaceDSP3")
+
+
+def eggcc_root_contract(source: str, roots: list[dict[str, Any]]) -> dict[str, Any]:
+    """Bind ordinary extracts to existing Function values from the initializer."""
+    forms = [tokens for _, _, tokens in egglog_forms(source)]
+    if not roots or any(len({root[key] for root in roots}) != len(roots) for key in ("name", "binding", "table")):
+        raise ValueError("Eggcc extraction requires distinct original function roots")
+    extracts = [(index, tokens) for index, tokens in enumerate(forms) if tokens[1] == "extract"]
+    if [index for index, _ in extracts] != list(range(len(forms) - len(roots), len(forms))):
+        raise ValueError("Eggcc replay must end with one extract per original function")
+    trees = [_sexpr(tokens) for tokens in forms]
+    records = []
+    for (position, tokens), root in zip(extracts, roots, strict=True):
+        table, binding = root["table"], root["binding"]
+        declaration = ["function", table, [], "Expr", ":merge", "old"]
+        initializers = [tree for tree in trees if tree[0] == "rule" and ["set", [table], binding] in tree[2]]
+        if (
+            trees.count(declaration) != 1
+            or len(initializers) != 1
+            or initializers[0][1] != []
+            or sum(form.count(table) for form in forms) != 3
+            or tokens != ["(", "extract", "(", table, ")", ")"]
+        ):
+            raise ValueError("Eggcc root must retain exactly one existing initializer value")
+        initializer = initializers[0]
+        actions = initializer[2]
+        lets = {action[1]: action[2] for action in actions if action[0] == "let"}
+        function = lets.get(binding)
+        if not isinstance(function, list) or len(function) != 5 or function[0] != "Function":
+            raise ValueError("Eggcc extract is not an original Function root")
+        name = lets.get(function[1], function[1])
+        if (
+            name != json.dumps(root["name"])
+            or actions.index(["let", binding, function]) >= actions.index(["set", [table], binding])
+            or trees.index(declaration) >= trees.index(initializer)
+        ):
+            raise ValueError("Eggcc root handle changed its original function binding")
+        records.append(
+            {
+                "command": position,
+                "tokens": tokens,
+                "prefix_sha256": hashlib.sha256(json.dumps(forms[:position]).encode()).hexdigest(),
+            }
+        )
+    return {
+        "kind": "eggcc-root-extract",
+        "roots": roots,
+        "extracts": records,
+        "claims_native_selection": False,
+        "claims_effect_linearity": False,
+    }
 
 
 def churchroad_circuit_contract(source: str, roots: list[dict[str, Any]]) -> dict[str, Any]:
@@ -208,11 +258,10 @@ def validate_static_native_output(source: str, contract: dict[str, Any], stdout:
 def validate_capture(
     capture: dict[str, Any], engine: Path, output: Path, *, timeout_sec: float = 300
 ) -> dict[str, Any]:
-    """Keep parent completion, exact replay bytes and output agreement separate.
+    """Validate complete Egglog calls independently of later compiler phases.
 
-    Original best-extract contracts compare every returned term. For native
-    custom extractors, query-only checks establish membership of their actual
-    selections; ordinary extraction need not choose the same optimum.
+    DialEgg/MISAAL retain native output contracts. Eggcc and Churchroad extract
+    their original roots without claiming native custom-extractor selections.
     """
     output.mkdir(parents=True, exist_ok=False)
     result: dict[str, Any] = {
@@ -227,11 +276,8 @@ def validate_capture(
     try:
         if capture.get("status") not in {"reproduced", "ordinary-validation-pending", "ordinary-validation-failed"}:
             raise ValueError("capture is blocked or incomplete; native completion alone cannot admit its prefixes")
-        published = capture.get("input_kind") == INPUT_KIND
-        if published:
-            verify_published_capture(capture)
-        elif capture.get("source_completion", {}).get("status") not in {"success", "complete"}:
-            raise ValueError("the source parent did not complete; its prefixes are diagnostic only")
+        if capture.get("source_completion", {}).get("status") not in {"success", "complete"}:
+            raise ValueError("the captured Egglog calls did not complete; prefixes are diagnostic only")
         sessions = capture.get("sessions") or capture.get("invocations")
         if sessions is None and capture.get("output_contract"):
             sessions = [
@@ -282,7 +328,7 @@ def validate_capture(
                     "ordinary-best-static-native",
                     "query-only-native-output-equality",
                     "churchroad-circuit-extract",
-                    *({INPUT_KIND} if published else set()),
+                    "eggcc-root-extract",
                 }:
                     raise ValueError("unknown or absent native output contract")
                 elif contract["kind"] == "query-only-native-output-equality":
@@ -298,6 +344,10 @@ def validate_capture(
                     source, contract["roots"]
                 ):
                     raise ValueError("Churchroad circuit extraction boundary or preceding graph state changed")
+                elif contract["kind"] == "eggcc-root-extract" and contract != eggcc_root_contract(
+                    source, contract["roots"]
+                ):
+                    raise ValueError("Eggcc extraction boundary or original function roots changed")
                 if contract["kind"] == "ordinary-best-static-native":
                     expected = static_native_contract(source, contract["expected_terms"], contract["native_costs"])
                     if contract != expected:

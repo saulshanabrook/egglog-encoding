@@ -28,7 +28,7 @@ def prepared_environment(tmp_path: Path) -> tuple[Path, models.ResolvedTarget]:
 
 
 @pytest.mark.parametrize("status", ["failure", "timed-out"])
-def test_suite_failure_stops_pair_and_is_terminal_but_positional_keeps_attempt_policy(
+def test_suite_failure_stops_its_treatment_but_positional_keeps_attempt_policy(
     prepared_environment: tuple[Path, models.ResolvedTarget],
     monkeypatch: pytest.MonkeyPatch,
     status: models.Status,
@@ -50,8 +50,8 @@ def test_suite_failure_stops_pair_and_is_terminal_but_positional_keeps_attempt_p
     endpoints = (models.BenchmarkEndpoint(target, "off"), models.BenchmarkEndpoint(target, "proof-extraction"))
     plan = collection.build_collection_plan(store, target, endpoints, (file,), 30, 120, False, True)
     collection.collect_rows(store, plan, 120, Console(file=io.StringIO()))
-    assert calls == ["off"]
-    assert store.row_count == 1
+    assert calls == ["off", "proof-extraction"]
+    assert store.row_count == 2
     assert (
         collection.build_collection_plan(
             store, target, endpoints, (file,), 30, 120, False, True
@@ -60,7 +60,7 @@ def test_suite_failure_stops_pair_and_is_terminal_but_positional_keeps_attempt_p
     )
     assert (
         collection.build_collection_plan(store, target, endpoints, (file,), 30, 120, False).total_missing_observations
-        == 59
+        == 58
     )
     assert (
         collection.build_collection_plan(

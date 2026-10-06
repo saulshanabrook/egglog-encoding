@@ -57,6 +57,59 @@ def test_all_native_output_terms_must_match(example: tuple, tmp_path: Path) -> N
     assert len(launches) == 2
 
 
+EGGCC_SOURCE = """(datatype Type (UnitT))
+(datatype Expr (A) (Function String Type Type Expr))
+(ruleset init)
+(function reproduction_root_0 () Expr :merge old)
+(rule () ((let name "main") (let t (UnitT)) (let body (A))
+          (let original (Function name t t body))
+          (set (reproduction_root_0) original)) :ruleset init)
+(run init 1)
+(run 1)
+(extract (reproduction_root_0))
+"""
+EGGCC_ROOTS = [{"name": "main", "binding": "original", "table": "reproduction_root_0"}]
+
+
+def test_eggcc_extract_uses_original_value_without_native_selection_claim(example: tuple, tmp_path: Path) -> None:
+    capture, engine, _ = example
+    session = capture["invocations"][0]
+    replay = Path(session["replay"])
+    replay.write_text(EGGCC_SOURCE)
+    contract = validation.eggcc_root_contract(EGGCC_SOURCE, EGGCC_ROOTS)
+    assert contract["claims_native_selection"] is False and contract["claims_effect_linearity"] is False
+    session.update(replay_sha256=sha256_file(replay), output_contract=contract)
+    checked = validation.validate_capture(capture, engine, tmp_path / "eggcc")
+    assert checked["status"] == "success" and checked["workloads"] == [str(replay)]
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ('(let name "main")', '(let name "different")'),
+        ("(set (reproduction_root_0) original)", "(set (reproduction_root_0) body)"),
+        ("(set (reproduction_root_0) original)", "(set (reproduction_root_0) (Function name t t body))"),
+        ("(rule ()", "(rule ((= body (A)))"),
+        ("(extract (reproduction_root_0))", "(extract (A))"),
+        ("(extract (reproduction_root_0))", ""),
+    ],
+)
+def test_eggcc_contract_rejects_new_assumptions_and_changed_roots(old: str, new: str) -> None:
+    with pytest.raises(ValueError, match="Eggcc"):
+        validation.eggcc_root_contract(EGGCC_SOURCE.replace(old, new), EGGCC_ROOTS)
+
+
+def test_eggcc_contract_binds_schedule_and_extraction_boundary(example: tuple, tmp_path: Path) -> None:
+    capture, engine, launches = example
+    session = capture["invocations"][0]
+    replay = Path(session["replay"])
+    contract = validation.eggcc_root_contract(EGGCC_SOURCE, EGGCC_ROOTS)
+    replay.write_text(EGGCC_SOURCE.replace("(run 1)", "(run 2)"))
+    session.update(replay_sha256=sha256_file(replay), output_contract=contract)
+    result = validation.validate_capture(capture, engine, tmp_path / "changed-eggcc")
+    assert result["status"] == "blocked" and not launches
+
+
 @pytest.fixture
 def circuit_example(
     example: tuple, monkeypatch: pytest.MonkeyPatch
