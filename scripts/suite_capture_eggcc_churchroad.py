@@ -17,13 +17,16 @@ from benchmarking.targets import sha256_file  # noqa: E402
 from scripts.eggcc_churchroad_complete import (  # noqa: E402
     CaptureError,
     churchroad_mapping_session,
-    churchroad_sessions,
     eggcc_sessions,
     read_events,
 )
-from scripts.hardboiled_replay import egglog_forms, native_check_contract  # noqa: E402
+from scripts.hardboiled_replay import egglog_forms  # noqa: E402
 from scripts.paper_benchmarks.materialize import constructors  # noqa: E402
-from scripts.reproduction_validation import CHURCHROAD_PLACEHOLDERS, churchroad_circuit_contract  # noqa: E402
+from scripts.reproduction_validation import (  # noqa: E402
+    CHURCHROAD_PLACEHOLDERS,
+    churchroad_circuit_contract,
+    eggcc_root_contract,
+)
 
 PINS = {
     "eggcc": "16be0063133ef0b8ba21cd75ee377002dc3ecbed",
@@ -41,10 +44,8 @@ EGGCC_HELPERS = {
 
 EGGCC_EXPR_SET_TOKENS_SHA256 = "992434eb3686e88fcd37cbe063c331f02150714343e3421ed36b550d8aac4eb8"
 
-EGGCC_QUERY = '(check (Function "main" in out body) (HasType body out))'
 
-
-def adapt_eggcc(source: str, *, typing_oracle: bool = True) -> str:
+def adapt_eggcc(source: str) -> str:
     """Apply the checked-in pass-one fixture's compatibility changes exactly.
 
     The unused ExprSet block must have no references outside its contiguous
@@ -71,30 +72,10 @@ def adapt_eggcc(source: str, *, typing_oracle: bool = True) -> str:
     if found != EGGCC_HELPERS:
         raise ValueError(f"unexpected no-merge helper set: {sorted(found)}")
     source = source.replace(":no-merge", ":merge old")
-    # Main-body typing is inferred by the original type-analysis schedule.
-    # FunctionHasType alone would merely recheck an asserted initialization fact.
-    if typing_oracle:
-        main_facts = [
-            line.strip() for line in source.splitlines() if line.strip().startswith('(FunctionHasType "main" ')
-        ]
-        if len(main_facts) != 1 or not main_facts[0].endswith(")"):
-            raise ValueError("expected exactly one main FunctionHasType seed")
-    else:
-        return (
-            "; Complete native Eggcc optimization invocation; raw commands retained separately.\n"
-            "; Compatibility: unused ExprSet helpers omitted; deterministic helpers use merge-old.\n"
-            + source.rstrip()
-            + "\n"
-        )
     return (
-        "; Captured Eggcc pass-one invocation; original commands retained in acquisition evidence.\n"
-        f"; Pinned compiler: {PINS['eggcc']}\n"
-        "; Adaptations match eggcc-2mm-pass1: omit unreferenced ExprSet helpers;\n"
-        "; deterministic length/succ no-merge functions use merge-old.\n"
-        "; Oracle: the main function body's inferred result type agrees with the declared result type.\n"
+        "; Complete native Eggcc optimization invocation; raw commands retained separately.\n"
+        "; Compatibility: unused ExprSet helpers omitted; deterministic helpers use merge-old.\n"
         + source.rstrip()
-        + "\n\n"
-        + EGGCC_QUERY
         + "\n"
     )
 
@@ -161,7 +142,7 @@ def rename_churchroad_globals(
 
 
 def materialize_sessions(record: dict[str, Any], sessions: list[dict[str, Any]], attempt: Path) -> None:
-    """Preserve native session state while adapting syntax and binding observer checks."""
+    """Adapt syntax while preserving native state and existing output-root values."""
     family = record["family"]
     record["materialization"] = {
         "expected_sessions": len(sessions),
@@ -171,72 +152,45 @@ def materialize_sessions(record: dict[str, Any], sessions: list[dict[str, Any]],
     for index, session in enumerate(sessions):
         raw = attempt / f"session-{index:03}-{session['kind']}.raw.egg"
         raw.write_text(session["program"])
+        roots = session["roots"]
         if family == "eggcc":
-            content = (
-                adapt_eggcc(session.get("replay_program", session["program"]), typing_oracle=False)
-                if session["kind"] == "optimization"
-                else session["program"]
-            )
-            # Compatibility rewrites only the six original no-merge
-            # helpers. Append strict observer functions afterwards.
-            content += session.get("lookup_program", "")
+            content = adapt_eggcc(session["replay_program"]) + "\n" + session["extracts"] + "\n"
+            contract = eggcc_root_contract(content, roots)
         else:
             chunks = []
-            check_positions = []
-            command_count = 0
             aliases: dict[str, str] = {}
             for part in session["parts"]:
-                program = constructors(part["program"])
-                program, _, aliases = rename_churchroad_globals(program, "", session["program"], aliases=aliases)
-                command_count += len(egglog_forms(program))
-                for start, end, _ in egglog_forms(part["checks"]):
-                    check_positions.append((command_count, part["checks"][start:end]))
-                    command_count += 1
-                chunks.append(program + "\n" + part["checks"])
+                program, _, aliases = rename_churchroad_globals(
+                    constructors(part), "", session["program"], aliases=aliases
+                )
+                chunks.append(program)
             content = "\n".join(chunks)
-            if session["kind"] == "circuit-extraction":
-                # Visibility affects extraction only, not constructor insertion,
-                # congruence, unions, rule matching or the native schedule.
-                for _, end, tokens in reversed(egglog_forms(content)):
-                    if tokens[1] == "constructor" and tokens[2] in CHURCHROAD_PLACEHOLDERS:
-                        content = content[: end - 1] + " :unextractable" + content[end - 1 :]
-        if "reproduction_" in session["program"].replace("; reproduction-", "; capture-"):
-            raise CaptureError("native source collides with reserved reproduction query variables")
-        replay = attempt / f"session-{index:03}-{session['kind']}.egg"
-        if family == "eggcc":
-            command_count = len(egglog_forms(content))
-            check_positions = [
-                (command_count + number, session["checks"][start:end])
-                for number, (start, end, _) in enumerate(egglog_forms(session["checks"]))
-            ]
-            content += "\n" + session["checks"]
-        if family == "eggcc":
-            from scripts.eggcc_observer_compat import adapt_observers
-
-            content, _ = adapt_observers(content)
-        replay.write_text(content)
-        session_record = {
-            key: value
-            for key, value in session.items()
-            if key not in {"program", "replay_program", "lookup_program", "checks", "parts"}
-        }
-        roots = session["roots"]
-        if session["kind"] == "circuit-extraction":
+            # These placeholders remain available to all source rules; only
+            # ordinary output extraction excludes them from its representatives.
+            for _, end, tokens in reversed(egglog_forms(content)):
+                if tokens[1] == "constructor" and tokens[2] in CHURCHROAD_PLACEHOLDERS:
+                    content = content[: end - 1] + " :unextractable" + content[end - 1 :]
             roots = [{**root, "replay_alias": aliases[root["name"]]} for root in roots]
-        session_record.update(
-            session=index,
-            raw=str(raw),
-            replay=str(replay),
-            raw_sha256=sha256_file(raw),
-            replay_sha256=sha256_file(replay),
-            roots=roots,
-            output_contract=(
-                churchroad_circuit_contract(content, roots)
-                if session["kind"] == "circuit-extraction"
-                else native_check_contract(content, check_positions, roots)
-            ),
+            content += "\n" + "\n".join(f"(extract {root['replay_alias']})" for root in roots) + "\n"
+            contract = churchroad_circuit_contract(content, roots)
+        replay = attempt / f"session-{index:03}-{session['kind']}.egg"
+        replay.write_text(content)
+        record["sessions"].append(
+            {
+                **{
+                    key: value
+                    for key, value in session.items()
+                    if key not in {"program", "replay_program", "extracts", "parts"}
+                },
+                "session": index,
+                "raw": str(raw),
+                "replay": str(replay),
+                "raw_sha256": sha256_file(raw),
+                "replay_sha256": sha256_file(replay),
+                "roots": roots,
+                "output_contract": contract,
+            }
         )
-        record["sessions"].append(session_record)
         record["materialization"]["materialized_sessions"] = len(record["sessions"])
     record["materialization"]["complete"] = True
     record["status"] = "ordinary-validation-pending"
@@ -245,20 +199,10 @@ def materialize_sessions(record: dict[str, Any], sessions: list[dict[str, Any]],
 def materialize_complete_events(
     record: dict[str, Any], attempt: Path, *, max_evidence_bytes: int = 384 * 1024**2
 ) -> dict[str, Any]:
-    """Accept completed source boundaries; a later synthesis failure is not Egglog failure."""
+    """Admit completed independent calls; retain any later parent failure separately."""
     try:
-        events = read_events(
-            attempt / "native-events", max_bytes=max_evidence_bytes, require_parent_complete=record["family"] == "eggcc"
-        )
-        if record["family"] == "eggcc":
-            sessions = eggcc_sessions(events)
-        elif events[-1]["kind"] == "parent-complete":
-            sessions = churchroad_sessions(events)
-        else:
-            mapping = [event for event in events if event["kind"] == "mapping-snapshot"]
-            if len(mapping) != 1:
-                raise CaptureError("source did not complete its Egglog mapping phase")
-            sessions = [churchroad_mapping_session(events, circuit_outputs=not mapping[0]["payload"]["proposals"])]
+        events = read_events(attempt / "native-events", max_bytes=max_evidence_bytes)
+        sessions = eggcc_sessions(events) if record["family"] == "eggcc" else [churchroad_mapping_session(events)]
         record["parent_completed"] = events[-1]["kind"] == "parent-complete"
         record["source_completion"] = {
             "status": "complete",
