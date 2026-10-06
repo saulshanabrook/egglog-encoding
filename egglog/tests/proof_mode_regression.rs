@@ -388,3 +388,30 @@ fn encoded_constructor_merge_reads_pending_view_updates() {
             .unwrap();
     }
 }
+
+#[test]
+fn proof_query_normalizes_containers_inside_primitive_constructor_arguments() {
+    for mut egraph in [
+        EGraph::default(),
+        EGraph::new_with_term_encoding(),
+        EGraph::new_with_proofs().with_proof_testing(),
+    ] {
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (sort E)
+                (sort Es (Vec E))
+                (constructor A () E)
+                (constructor Wrap (Es) E)
+                (relation Seen ())
+                (let a (A))
+                (Wrap (vec-of a))
+                (rule ((!= (Wrap (vec-of a)) a)) ((Seen)))
+                (run 1)
+                (check (Seen))
+                "#,
+            )
+            .unwrap();
+    }
+}
