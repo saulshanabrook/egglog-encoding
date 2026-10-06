@@ -368,7 +368,9 @@ fn desugar_prove(parser: &mut Parser, span: Span, query: Vec<Fact>) -> Vec<NComm
                 name,
                 eval_mode: RuleEvalMode::Seminaive,
                 no_decomp: false,
-                include_subsumed: false,
+                // Like `check_facts`, proof queries can inspect subsumed rows:
+                // subsumption hides them from rewriting, not from logical checks.
+                include_subsumed: true,
             },
         },
         // run the rule

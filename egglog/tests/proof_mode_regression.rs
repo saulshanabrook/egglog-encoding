@@ -329,6 +329,38 @@ fn unordered_container_reshaped_element_collapse_proof() {
 }
 
 #[test]
+fn encoded_rules_preserve_explicit_subsumed_row_visibility() {
+    for mut egraph in [
+        EGraph::default(),
+        EGraph::new_with_term_encoding(),
+        EGraph::new_with_proofs(),
+        EGraph::new_with_proofs().with_proof_testing(),
+    ] {
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (datatype Expr (Leaf i64))
+                (function observed () Expr :merge old)
+                (relation OrdinarySawLeaf ())
+                (let input (Leaf 1))
+                (subsume (Leaf 1))
+                (ruleset flush)
+                (run flush 1)
+                (ruleset observe)
+                (rule ((= x (Leaf 1))) ((set (observed) x))
+                    :ruleset observe :internal-include-subsumed)
+                (rule ((= x (Leaf 1))) ((OrdinarySawLeaf)) :ruleset observe)
+                (run observe 1)
+                (check (= input (observed)))
+                (fail (check (OrdinarySawLeaf)))
+                "#,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
 fn encoded_constructor_merge_reads_pending_view_updates() {
     // The rule dirties Pair's view while f's conflict builds another Pair.
     // The encoded set-if-empty merge primitive must read that view from an

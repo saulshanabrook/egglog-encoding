@@ -1199,6 +1199,64 @@ mod tests {
     }
 
     #[test]
+    fn proof_checks_include_subsumed_rows_but_not_deleted_rows() {
+        let source = r#"
+            (datatype Expr (Leaf i64) (Pair Expr Expr))
+            (relation Seen (Expr))
+            (relation OrdinarySawLeaf ())
+            (let input (Pair (Leaf 1) (Leaf 1)))
+            (Seen input)
+            (subsume (Leaf 1))
+            (subsume (Seen input))
+            (ruleset flush)
+            (run flush 1)
+            (rule ((= x (Leaf 1))) ((OrdinarySawLeaf)))
+            (run 1)
+        "#;
+        let facts = "(= x (Leaf 1)) (= input (Pair x x)) (Seen input)";
+        for mode in ["off", "term", "recording", "extraction", "testing"] {
+            let mut egraph = match mode {
+                "off" => EGraph::default(),
+                "term" => EGraph::new_with_term_encoding(),
+                "recording" => EGraph::new_with_proofs(),
+                "extraction" => EGraph::default().with_proof_extraction(),
+                "testing" => EGraph::new_with_proofs().with_proof_testing(),
+                _ => unreachable!(),
+            };
+            egraph.parse_and_run_program(None, source).unwrap();
+            let outputs = egraph
+                .parse_and_run_program(None, &format!("(check {facts})"))
+                .unwrap_or_else(|error| panic!("{mode}: {error}"));
+            assert_eq!(
+                outputs
+                    .iter()
+                    .filter(|output| matches!(output, CommandOutput::ProveExists { .. }))
+                    .count(),
+                usize::from(matches!(mode, "extraction" | "testing")),
+                "{mode}"
+            );
+            if mode == "recording" {
+                // Explicit `prove` has the same query visibility as `check`.
+                egraph
+                    .parse_and_run_program(None, &format!("(prove {facts})"))
+                    .unwrap();
+            }
+            egraph
+                .parse_and_run_program(None, "(fail (check (OrdinarySawLeaf)))")
+                .unwrap();
+
+            // A deleted row is absent, unlike a subsumed row. Neither query
+            // mode may reinsert it in order to satisfy the check.
+            egraph
+                .parse_and_run_program(
+                    None,
+                    "(delete (Seen input)) (run flush 1) (fail (check (Seen input)))",
+                )
+                .unwrap_or_else(|error| panic!("{mode}: {error}"));
+        }
+    }
+
+    #[test]
     fn proof_extraction_still_rejects_a_false_check() {
         let error = EGraph::default()
             .with_proof_extraction()

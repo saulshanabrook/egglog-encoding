@@ -2,6 +2,7 @@
 
 ## [Unreleased] - ReleaseDate
 
+- Let proof queries see subsumed rows, matching ordinary checks while still excluding deleted rows. Preserve explicit `:internal-include-subsumed` observers during term/proof encoding; ordinary rules still exclude subsumed rows. Re-enable the subsumption proof fixtures.
 - Track constructor-view reads and writes performed by merge primitives, so merge scheduling keeps their tables available and their reads up to date. This fixes a proof-mode panic in constructor-valued merges.
 - Free-join plans with 65 to 128 stages now use constant-time tail metadata (128-bit stage masks) instead of rescanning the remaining stages; smaller plans keep their 64-bit masks. `paged_llama` runs about 17% faster.
 - **Breaking reporting formats.** `--save-report` now stores each iteration with its ruleset name and timing responsibility, and no longer serializes the redundant `ruleset_timings` or `search_and_apply_time_per_rule` aggregates. `--timing-summary` now emits the typed version-4 timing partition used by the benchmark runner; the runner's JSONL schema is also version 4, so older disposable benchmark caches must be recomputed.
