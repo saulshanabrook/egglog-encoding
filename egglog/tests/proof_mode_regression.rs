@@ -391,10 +391,14 @@ fn encoded_constructor_merge_reads_pending_view_updates() {
 
 #[test]
 fn proof_query_normalizes_containers_inside_primitive_constructor_arguments() {
-    for mut egraph in [
-        EGraph::default(),
-        EGraph::new_with_term_encoding(),
-        EGraph::new_with_proofs().with_proof_testing(),
+    for (mode, mut egraph) in [
+        ("ordinary", EGraph::default()),
+        ("term encoding", EGraph::new_with_term_encoding()),
+        ("proof generation", EGraph::new_with_proofs()),
+        (
+            "proof testing",
+            EGraph::new_with_proofs().with_proof_testing(),
+        ),
     ] {
         egraph
             .parse_and_run_program(
@@ -412,6 +416,6 @@ fn proof_query_normalizes_containers_inside_primitive_constructor_arguments() {
                 (check (Seen))
                 "#,
             )
-            .unwrap();
+            .unwrap_or_else(|error| panic!("{mode}: {error:?}"));
     }
 }

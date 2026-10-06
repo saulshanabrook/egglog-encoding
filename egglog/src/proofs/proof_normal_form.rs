@@ -118,16 +118,21 @@ fn proof_form_expr(
             // Normalize the whole argument first: a constructor may itself
             // contain container primitives that must become side conditions.
             // Custom functions are already lifted by recursion; lift any
-            // remaining constructor call so the primitive can be re-evaluated.
+            // remaining constructor call or global so the primitive can be
+            // re-evaluated over local variables. Globals later become view
+            // lookups, which cannot remain inside a container side condition.
             let mut new_args = vec![];
             for arg in args {
                 let normalized = proof_form_expr(arg, res, fresh);
-                if let ResolvedExpr::Call(arg_span, ResolvedCall::Func(function), _) = &normalized {
+                if matches!(&normalized, ResolvedExpr::Call(_, ResolvedCall::Func(_), _))
+                    || matches!(&normalized, ResolvedExpr::Var(_, var) if var.is_global_ref)
+                {
+                    let arg_span = normalized.span();
                     let fresh_var = GenericExpr::Var(
                         arg_span.clone(),
                         ResolvedVar {
                             name: fresh.fresh("v"),
-                            sort: function.outputs[0].clone(),
+                            sort: normalized.output_type(),
                             is_global_ref: false,
                         },
                     );
