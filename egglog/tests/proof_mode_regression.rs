@@ -327,3 +327,32 @@ fn unordered_container_reshaped_element_collapse_proof() {
         .parse_and_run_program(None, program)
         .unwrap();
 }
+
+#[test]
+fn encoded_constructor_merge_reads_pending_view_updates() {
+    // The rule dirties Pair's view while f's conflict builds another Pair.
+    // The encoded set-if-empty merge primitive must read that view from an
+    // earlier merge stratum, rather than from a table currently being merged.
+    for mut egraph in [
+        EGraph::default(),
+        EGraph::new_with_term_encoding(),
+        EGraph::new_with_proofs(),
+        EGraph::new_with_proofs().with_proof_testing(),
+    ] {
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (datatype Expr (A) (B) (Pair Expr Expr))
+                (function f (i64) Expr :merge (Pair old new))
+                (let a (A))
+                (let b (B))
+                (set (f 0) a)
+                (rule () ((let c (Pair a a)) (set (f 0) b)))
+                (run 1)
+                (check (= (f 0) (Pair a b)))
+                "#,
+            )
+            .unwrap();
+    }
+}
