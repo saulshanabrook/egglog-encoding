@@ -23,6 +23,17 @@ fn proj_prim_uses_the_typed_container_argument() {
 
             (run 1)
             (prove (Seen (Z)))
+
+            ; An explicit global binding must preserve the whole key, `(S (Z))`.
+            (relation SeenBound (N))
+            (rule ((Has m)
+                   (= bound-key $key)
+                   (= z (map-get m bound-key)))
+                  ((SeenBound z))
+                  :name "map-get-with-bound-key")
+
+            (run 1)
+            (prove (SeenBound (Z)))
             "#,
         )
         .unwrap();

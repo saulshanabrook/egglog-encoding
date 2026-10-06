@@ -327,3 +327,95 @@ fn unordered_container_reshaped_element_collapse_proof() {
         .parse_and_run_program(None, program)
         .unwrap();
 }
+
+#[test]
+fn encoded_rules_preserve_explicit_subsumed_row_visibility() {
+    for mut egraph in [
+        EGraph::default(),
+        EGraph::new_with_term_encoding(),
+        EGraph::new_with_proofs(),
+        EGraph::new_with_proofs().with_proof_testing(),
+    ] {
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (datatype Expr (Leaf i64))
+                (function observed () Expr :merge old)
+                (relation OrdinarySawLeaf ())
+                (let input (Leaf 1))
+                (subsume (Leaf 1))
+                (ruleset flush)
+                (run flush 1)
+                (ruleset observe)
+                (rule ((= x (Leaf 1))) ((set (observed) x))
+                    :ruleset observe :internal-include-subsumed)
+                (rule ((= x (Leaf 1))) ((OrdinarySawLeaf)) :ruleset observe)
+                (run observe 1)
+                (check (= input (observed)))
+                (fail (check (OrdinarySawLeaf)))
+                "#,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn encoded_constructor_merge_reads_pending_view_updates() {
+    // The rule dirties Pair's view while f's conflict builds another Pair.
+    // The encoded set-if-empty merge primitive must read that view from an
+    // earlier merge stratum, rather than from a table currently being merged.
+    for mut egraph in [
+        EGraph::default(),
+        EGraph::new_with_term_encoding(),
+        EGraph::new_with_proofs(),
+        EGraph::new_with_proofs().with_proof_testing(),
+    ] {
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (datatype Expr (A) (B) (Pair Expr Expr))
+                (function f (i64) Expr :merge (Pair old new))
+                (let a (A))
+                (let b (B))
+                (set (f 0) a)
+                (rule () ((let c (Pair a a)) (set (f 0) b)))
+                (run 1)
+                (check (= (f 0) (Pair a b)))
+                "#,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn proof_query_normalizes_containers_inside_primitive_constructor_arguments() {
+    for (mode, mut egraph) in [
+        ("ordinary", EGraph::default()),
+        ("term encoding", EGraph::new_with_term_encoding()),
+        ("proof generation", EGraph::new_with_proofs()),
+        (
+            "proof testing",
+            EGraph::new_with_proofs().with_proof_testing(),
+        ),
+    ] {
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (sort E)
+                (sort Es (Vec E))
+                (constructor A () E)
+                (constructor Wrap (Es) E)
+                (relation Seen ())
+                (let a (A))
+                (Wrap (vec-of a))
+                (rule ((!= (Wrap (vec-of a)) a)) ((Seen)))
+                (run 1)
+                (check (Seen))
+                "#,
+            )
+            .unwrap_or_else(|error| panic!("{mode}: {error:?}"));
+    }
+}

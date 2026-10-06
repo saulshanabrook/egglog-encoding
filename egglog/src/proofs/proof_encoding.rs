@@ -2341,6 +2341,11 @@ impl<'a> ProofInstrumentor<'a> {
         } else {
             format!(":ruleset {}", rule.ruleset)
         };
+        let subsumed_opt = if rule.include_subsumed {
+            ":internal-include-subsumed"
+        } else {
+            ""
+        };
         // Preserve a user `:naive` (else it silently reverts to seminaive).
         // Otherwise an RHS-reading rule needs `:unsafe-seminaive` (or `:naive`
         // under the test knob).
@@ -2355,7 +2360,7 @@ impl<'a> ProofInstrumentor<'a> {
             "(rule ({})
                    ({proof_prelude}
                     {})
-                    {ruleset_opt} {eval_opt}
+                    {ruleset_opt} {eval_opt} {subsumed_opt}
                     :name \"{name}\")",
             ListDisplay(facts, " "),
             ListDisplay(actions, " "),
