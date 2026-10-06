@@ -46,13 +46,15 @@ impl ProofInstrumentor<'_> {
             return "()".to_string();
         }
         match fact {
-            // In proof normal form, this is the only way that function calls appear.
+            // A custom function's output is a child of its application. Global
+            // views instead prove their value directly, so use ordinary equality
+            // instrumentation below to anchor them at the proof's left endpoint.
             ResolvedFact::Eq(
                 _span,
                 ResolvedExpr::Call(_span2, head @ ResolvedCall::Func(_), args),
                 // TODO this could actually be arbitrary pretty easily, it's just nested functions that are hard.
                 ResolvedExpr::Var(_span3, v),
-            ) if head.is_custom_func() => {
+            ) if head.is_custom_func() && !self.egraph.type_info.is_global(head.name()) => {
                 let mut new_args = vec![];
                 let mut arg_proofs = vec![];
                 for arg in args {

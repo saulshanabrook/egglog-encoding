@@ -2,7 +2,7 @@
 
 ## [Unreleased] - ReleaseDate
 
-- Normalize constructor arguments inside primitive proof queries recursively, including container-producing arguments. Bind global primitive arguments to local variables so container side conditions remain independently checkable after globals become encoded views.
+- Normalize constructor arguments inside primitive proof queries recursively, including container-producing arguments. Bind global primitive arguments to local variables so container side conditions remain independently checkable after globals become encoded views. Preserve the whole global value when anchoring these bindings in proofs.
 - Let proof queries see subsumed rows, matching ordinary checks while still excluding deleted rows. Preserve explicit `:internal-include-subsumed` observers during term/proof encoding; ordinary rules still exclude subsumed rows. Re-enable the subsumption proof fixtures.
 - Track constructor-view reads and writes performed by merge primitives, so merge scheduling keeps their tables available and their reads up to date. This fixes a proof-mode panic in constructor-valued merges.
 - Free-join plans with 65 to 128 stages now use constant-time tail metadata (128-bit stage masks) instead of rescanning the remaining stages; smaller plans keep their 64-bit masks. `paged_llama` runs about 17% faster.
