@@ -25,7 +25,7 @@ def test_optional_descendant_hooks_always_preserve_root_cleanup(
     process = SimpleNamespace(pid=123, returncode=0, poll=lambda: next(polls), wait=lambda: events.append("wait"))
     monkeypatch.setattr(processes.subprocess, "Popen", lambda *_args, **_kwargs: process)
     exits = iter([SimpleNamespace(si_pid=123)] if mode == "immediate-exit" else [None, SimpleNamespace(si_pid=123)])
-    monkeypatch.setattr(processes.os, "waitid", lambda *_: next(exits))
+    monkeypatch.setattr(processes.os, "waitid", lambda *_: next(exits), raising=False)
     monkeypatch.setattr(processes.MemoryGuard, "from_environment", lambda **_: None)
 
     def default_sample(pid: int) -> int:
@@ -94,7 +94,7 @@ def test_scoped_cleanup_retains_root_identity_and_stops_root_before_drain(
             raise OSError("cannot observe root")
         return SimpleNamespace(si_pid=pid)
 
-    monkeypatch.setattr(processes.os, "waitid", waitid)
+    monkeypatch.setattr(processes.os, "waitid", waitid, raising=False)
 
     def cleanup() -> None:
         events.append("drain")
@@ -170,7 +170,7 @@ def test_permission_error_is_waived_only_for_confirmed_exited_empty_macos_group(
         assert flags & processes.os.WNOWAIT
         return None if group == "root-running" else SimpleNamespace(si_pid=999 if group == "wrong-root" else pid)
 
-    monkeypatch.setattr(processes.os, "waitid", exited)
+    monkeypatch.setattr(processes.os, "waitid", exited, raising=False)
     snapshots = {
         "empty": "",
         "zombie": "123 123 Z\n",
@@ -213,7 +213,7 @@ def test_signal_failures_cannot_skip_callback_or_wait_and_remain_failures(
     process.wait = wait
     monkeypatch.setattr(processes.subprocess, "Popen", lambda *_a, **_k: process)
     monkeypatch.setattr(processes.MemoryGuard, "from_environment", lambda **_: None)
-    monkeypatch.setattr(processes.os, "waitid", lambda *_: SimpleNamespace(si_pid=123))
+    monkeypatch.setattr(processes.os, "waitid", lambda *_: SimpleNamespace(si_pid=123), raising=False)
     count = 0
 
     def signal_root(_pid: int) -> None:
@@ -246,7 +246,7 @@ def test_signal_interruption_still_runs_callback_and_final_wait(
     process = SimpleNamespace(pid=123, returncode=0, wait=lambda: events.append("wait"))
     monkeypatch.setattr(processes.subprocess, "Popen", lambda *_a, **_k: process)
     monkeypatch.setattr(processes.MemoryGuard, "from_environment", lambda **_: None)
-    monkeypatch.setattr(processes.os, "waitid", lambda *_: SimpleNamespace(si_pid=123))
+    monkeypatch.setattr(processes.os, "waitid", lambda *_: SimpleNamespace(si_pid=123), raising=False)
     count = 0
 
     def signal_root(_pid: int) -> None:
