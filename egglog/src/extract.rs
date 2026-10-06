@@ -265,6 +265,36 @@ pub struct ExtractedTermVariants<C> {
     pub variants: Vec<Vec<ExtractedTerm<C>>>,
 }
 
+/// Typed evidence retained while reconstructing a selected term. The row's
+/// proof belongs to this exact constructor choice, not a later table lookup.
+#[derive(Clone)]
+pub(crate) struct SelectedNode {
+    pub sort: ArcSort,
+    pub value: Value,
+    pub children: Vec<(TermId, String)>,
+    pub row: Option<(Value, Value)>,
+}
+
+pub(crate) type SelectedNodes = HashMap<(TermId, String), SelectedNode>;
+
+#[derive(Default)]
+struct Reconstruction {
+    cache: HashMap<(Value, String), TermId>,
+    evidence: Option<SelectedNodes>,
+}
+
+struct CommandCostModel;
+
+impl DagCostModel<DefaultCost> for CommandCostModel {
+    fn base_value_cost(&self, _: &EGraph, _: &ArcSort, _: Value) -> DefaultCost {
+        1
+    }
+
+    fn enode_cost(&self, egraph: &EGraph, func: &Function, enode: &Enode<'_>) -> DefaultCost {
+        (egraph.extraction_cost)(egraph, func, enode)
+    }
+}
+
 /// Bellman-Ford-like tree extraction with reusable cost preparation.
 ///
 /// The prepared state borrows the e-graph because reconstruction still needs
@@ -590,27 +620,41 @@ impl<'g, C: Cost> TreeExtractor<'g, C> {
         }
     }
 
-    /// This recursively reconstruct the termdag that gives the minimum cost for eclass value.
+    /// Reconstruct the prepared best tree, or a variant's chosen root row.
+    /// Variants share best children without replacing their cached best root.
     fn reconstruct_termdag_node_helper(
         &self,
-        egraph: &EGraph,
         termdag: &mut TermDag,
         value: Value,
         sort: &ArcSort,
-        cache: &mut HashMap<(Value, String), TermId>,
+        reconstruction: &mut Reconstruction,
+        root_row: Option<(&Function, &[Value])>,
     ) -> TermId {
-        let key = (value, sort.name().to_owned());
-        if let Some(term) = cache.get(&key) {
+        let egraph = self.egraph;
+        let key = root_row.is_none().then(|| (value, sort.name().to_owned()));
+        if let Some(key) = &key
+            && let Some(term) = reconstruction.cache.get(key)
+        {
             return *term;
         }
 
+        let mut children = vec![];
+        let mut row = None;
         let term = if sort.is_container_sort() {
             let elements = sort.inner_values(egraph.backend.container_values(), value);
             let mut ch_terms: Vec<TermId> = Vec::new();
             for ch in elements.iter() {
-                ch_terms.push(
-                    self.reconstruct_termdag_node_helper(egraph, termdag, ch.1, &ch.0, cache),
+                let term = self.reconstruct_termdag_node_helper(
+                    termdag,
+                    ch.1,
+                    &ch.0,
+                    reconstruction,
+                    None,
                 );
+                if reconstruction.evidence.is_some() {
+                    children.push((term, ch.0.name().to_owned()));
+                }
+                ch_terms.push(term);
             }
             sort.reconstruct_termdag_container(
                 egraph.backend.container_values(),
@@ -619,13 +663,10 @@ impl<'g, C: Cost> TreeExtractor<'g, C> {
                 ch_terms,
             )
         } else if sort.is_eq_sort() {
-            let (func_name, hyperedge) = self
-                .parent_edge
-                .get(sort.name())
-                .unwrap()
-                .get(&value)
-                .unwrap();
-            let func = egraph.functions.get(func_name).unwrap();
+            let (func, hyperedge) = root_row.unwrap_or_else(|| {
+                let (func_name, hyperedge) = &self.parent_edge[sort.name()][&value];
+                (&egraph.functions[func_name], hyperedge.as_slice())
+            });
             let ch_sorts = &func.func_type.input;
 
             let num_children = func.extraction_layout().1;
@@ -633,9 +674,20 @@ impl<'g, C: Cost> TreeExtractor<'g, C> {
 
             let mut ch_terms: Vec<TermId> = Vec::new();
             for (value, sort) in hyperedge.iter().take(num_children).zip(ch_sorts.iter()) {
-                ch_terms.push(
-                    self.reconstruct_termdag_node_helper(egraph, termdag, *value, sort, cache),
+                let term = self.reconstruct_termdag_node_helper(
+                    termdag,
+                    *value,
+                    sort,
+                    reconstruction,
+                    None,
                 );
+                if reconstruction.evidence.is_some() {
+                    children.push((term, sort.name().to_owned()));
+                }
+                ch_terms.push(term);
+            }
+            if func.decl.internal_view.is_some() {
+                row = Some((hyperedge[num_children], hyperedge[num_children + 1]));
             }
             termdag.app(output_name.to_string(), ch_terms)
         } else {
@@ -643,7 +695,20 @@ impl<'g, C: Cost> TreeExtractor<'g, C> {
             sort.reconstruct_termdag_base(egraph.backend.base_values(), value, termdag)
         };
 
-        cache.insert(key, term);
+        if let Some(key) = key {
+            reconstruction.cache.insert(key, term);
+        }
+        if let Some(evidence) = &mut reconstruction.evidence {
+            evidence.insert(
+                (term, sort.name().to_owned()),
+                SelectedNode {
+                    sort: sort.clone(),
+                    value,
+                    children,
+                    row,
+                },
+            );
+        }
         term
     }
 
@@ -663,7 +728,7 @@ impl<'g, C: Cost> TreeExtractor<'g, C> {
     fn extract_best_with_sort_cached(
         &self,
         termdag: &mut TermDag,
-        cache: &mut HashMap<(Value, String), TermId>,
+        reconstruction: &mut Reconstruction,
         value: Value,
         sort: ArcSort,
     ) -> Option<ExtractedTerm<C>> {
@@ -672,8 +737,13 @@ impl<'g, C: Cost> TreeExtractor<'g, C> {
         let canonical_value = find_canonical(egraph, value, &sort);
 
         let best_cost = self.compute_cost_node(egraph, canonical_value, &sort)?;
-        let term =
-            self.reconstruct_termdag_node_helper(egraph, termdag, canonical_value, &sort, cache);
+        let term = self.reconstruct_termdag_node_helper(
+            termdag,
+            canonical_value,
+            &sort,
+            reconstruction,
+            None,
+        );
 
         Some(ExtractedTerm {
             cost: best_cost,
@@ -688,6 +758,23 @@ impl<'g, C: Cost> TreeExtractor<'g, C> {
     pub fn extract_variants_with_sort(
         &self,
         termdag: &mut TermDag,
+        value: Value,
+        nvariants: usize,
+        sort: ArcSort,
+    ) -> Vec<ExtractedTerm<C>> {
+        self.extract_variants_with_sort_cached(
+            termdag,
+            &mut Reconstruction::default(),
+            value,
+            nvariants,
+            sort,
+        )
+    }
+
+    fn extract_variants_with_sort_cached(
+        &self,
+        termdag: &mut TermDag,
+        reconstruction: &mut Reconstruction,
         value: Value,
         nvariants: usize,
         sort: ArcSort,
@@ -735,23 +822,17 @@ impl<'g, C: Cost> TreeExtractor<'g, C> {
             }
 
             let mut res: Vec<ExtractedTerm<C>> = Vec::new();
-            let mut cache: HashMap<(Value, String), TermId> = Default::default();
             root_variants.sort();
             root_variants.truncate(nvariants);
             for (cost, func_name, hyperedge) in root_variants {
-                let mut ch_terms: Vec<TermId> = Vec::new();
-                let func = egraph.functions.get(&func_name).unwrap();
-                let ch_sorts = &func.func_type.input;
-                let num_children = func.extraction_layout().1;
-                for (value, sort) in hyperedge.iter().zip(ch_sorts.iter()).take(num_children) {
-                    ch_terms.push(self.reconstruct_termdag_node_helper(
-                        egraph, termdag, *value, sort, &mut cache,
-                    ));
-                }
-                res.push(ExtractedTerm {
-                    cost,
-                    term: termdag.app(func.name().to_owned(), ch_terms),
-                });
+                let term = self.reconstruct_termdag_node_helper(
+                    termdag,
+                    canonical_value,
+                    &sort,
+                    reconstruction,
+                    Some((&egraph.functions[&func_name], &hyperedge)),
+                );
+                res.push(ExtractedTerm { cost, term });
             }
 
             res
@@ -759,7 +840,9 @@ impl<'g, C: Cost> TreeExtractor<'g, C> {
             log::warn!(
                 "extracting multiple variants for containers or primitives is not implemented, returning a single variant."
             );
-            if let Some(res) = self.extract_best_with_sort(termdag, value, sort) {
+            if let Some(res) =
+                self.extract_best_with_sort_cached(termdag, reconstruction, value, sort)
+            {
                 vec![res]
             } else {
                 vec![]
@@ -946,6 +1029,52 @@ impl EGraph {
             .collect();
 
         Ok(ExtractedTermVariants { termdag, variants })
+    }
+
+    /// Run the built-in tree extractor, optionally retaining its typed choices
+    /// for proof certification. Dynamic costs change choices, never algorithms.
+    pub(crate) fn extract_command(
+        &self,
+        sort: &ArcSort,
+        value: Value,
+        variants: usize,
+        evidence: bool,
+    ) -> Result<(CommandOutput, SelectedNodes), Error> {
+        let extractor = TreeExtractor::compute_costs_from_rootsorts(
+            Some(vec![sort.clone()]),
+            self,
+            TreeCostModelFromDag(CommandCostModel),
+        );
+        let mut dag = TermDag::default();
+        let mut reconstruction = Reconstruction {
+            evidence: evidence.then(HashMap::default),
+            ..Default::default()
+        };
+        let output = if variants == 0 {
+            let extracted = extractor
+                .extract_best_with_sort_cached(&mut dag, &mut reconstruction, value, sort.clone())
+                .ok_or_else(|| {
+                    Error::ExtractError(
+                        "Unable to find any valid extraction (likely due to subsume or delete)"
+                            .into(),
+                    )
+                })?;
+            CommandOutput::ExtractBest(dag, extracted.cost, extracted.term)
+        } else {
+            let terms = extractor
+                .extract_variants_with_sort_cached(
+                    &mut dag,
+                    &mut reconstruction,
+                    value,
+                    variants,
+                    sort.clone(),
+                )
+                .into_iter()
+                .map(|extracted| extracted.term)
+                .collect();
+            CommandOutput::ExtractVariants(dag, terms)
+        };
+        Ok((output, reconstruction.evidence.unwrap_or_default()))
     }
 
     /// Extracts the best term for one value using the default additive cost model.

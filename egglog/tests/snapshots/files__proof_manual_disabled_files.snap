@@ -1,5 +1,6 @@
 ---
 source: egglog/tests/files.rs
+assertion_line: 467
 expression: "snapshot.join(\"\\n\")"
 ---
 eggcc-2mm.egg: the full benchmark exceeds the routine proof harness resource budget; the bounded eggcc-2mm-pass1 fixture covers this workload in proof benchmarks

@@ -185,7 +185,14 @@ impl ProofInstrumentor<'_> {
                         // the e-class + proof.
                         assert!(
                             func_type.subtype == FunctionSubtype::Constructor
-                                || self.egraph.type_info.is_global(&func_type.name),
+                                || self
+                                    .egraph
+                                    .proof_state
+                                    .original_typechecking
+                                    .as_ref()
+                                    .is_some_and(|source| source
+                                        .type_info
+                                        .is_global(&func_type.name)),
                             "Only constructor (or global) function calls are allowed in fact expressions due to proof normal form. Got {func_type:?}",
                         );
 

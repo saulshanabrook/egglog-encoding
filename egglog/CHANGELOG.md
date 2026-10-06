@@ -2,6 +2,8 @@
 
 ## [Unreleased] - ReleaseDate
 
+- **Proofs for extracted results.** `(prove-extract expr [variants])` returns tree extraction results and equality proofs, preserving dynamic costs and variant order. Proof-testing and proof-extraction modes also rewrite ordinary `extract` commands; desugared replay retains strict verification.
+
 - Normalize constructor arguments inside primitive proof queries recursively, including container-producing arguments. Bind global primitive arguments to local variables so container side conditions remain independently checkable after globals become encoded views. Preserve the whole global value when anchoring these bindings in proofs.
 - Let proof queries see subsumed rows, matching ordinary checks while still excluding deleted rows. Preserve explicit `:internal-include-subsumed` observers during term/proof encoding; ordinary rules still exclude subsumed rows. Re-enable the subsumption proof fixtures.
 - Track constructor-view reads and writes performed by merge primitives, so merge scheduling keeps their tables available and their reads up to date. This fixes a proof-mode panic in constructor-valued merges.

@@ -2,7 +2,8 @@
 mod tests {
     use crate::ast::{
         GenericAction, GenericNCommand, Literal, ResolvedAction, ResolvedCommand, ResolvedExpr,
-        ResolvedFact, RuleEvalMode, remove_globals::remove_globals, sanitize_internal_names,
+        ResolvedFact, ResolvedNCommand, RuleEvalMode, remove_globals::remove_globals,
+        sanitize_internal_names,
     };
     use crate::core::ResolvedCall;
     use crate::proofs::proof_checker::eval_expr_with_subst;
@@ -19,6 +20,979 @@ mod tests {
     fn term_encode(source: &str) -> Vec<ResolvedCommand> {
         let mut egraph = crate::EGraph::new_with_term_encoding();
         egraph.resolve_program(None, source).unwrap()
+    }
+
+    #[test]
+    fn prove_extract_preserves_results_and_proves_each_actual_variant() {
+        let source = r#"
+            (datatype E (A) (Pair E E))
+            (let input (Pair (A) (A)))
+            (rewrite (Pair x x) x)
+            (run 1)
+        "#;
+        for variants in [0, 2] {
+            let extract = format!("(extract input {variants})");
+            let mut plain = EGraph::default();
+            plain.parse_and_run_program(None, source).unwrap();
+            let expected_outputs = plain.parse_and_run_program(None, &extract).unwrap();
+            let expected = expected_outputs[0].to_string();
+            for mode in ["explicit", "testing", "extraction", "recording"] {
+                let mut egraph = match mode {
+                    "testing" => EGraph::new_with_proofs().with_proof_testing(),
+                    "extraction" => EGraph::default().with_proof_extraction(),
+                    _ => EGraph::new_with_proofs(),
+                };
+                egraph.parse_and_run_program(None, source).unwrap();
+                let command = if mode == "explicit" {
+                    format!("(prove-extract input {variants})")
+                } else {
+                    extract.clone()
+                };
+                let outputs = egraph.parse_and_run_program(None, &command).unwrap();
+                let result = outputs
+                    .iter()
+                    .find(|output| {
+                        matches!(
+                            output,
+                            CommandOutput::ExtractBest(..) | CommandOutput::ExtractVariants(..)
+                        )
+                    })
+                    .unwrap();
+                assert_eq!(result.to_string(), expected, "mode={mode}");
+                if let (
+                    CommandOutput::ExtractBest(_, actual, _),
+                    CommandOutput::ExtractBest(_, expected, _),
+                ) = (result, &expected_outputs[0])
+                {
+                    assert_eq!(actual, expected, "mode={mode}");
+                }
+                let terms = match result {
+                    CommandOutput::ExtractBest(dag, _, term) => vec![dag.to_string(*term)],
+                    CommandOutput::ExtractVariants(dag, terms) => {
+                        terms.iter().map(|term| dag.to_string(*term)).collect()
+                    }
+                    _ => unreachable!(),
+                };
+                let proofs: Vec<_> = outputs
+                    .iter()
+                    .filter_map(|output| match output {
+                        CommandOutput::ProveExists {
+                            proof_store,
+                            proof_id,
+                        } => Some((proof_store, *proof_id)),
+                        _ => None,
+                    })
+                    .collect();
+                if mode == "recording" {
+                    assert!(proofs.is_empty());
+                    continue;
+                }
+                assert_eq!(proofs.len(), terms.len());
+                for ((store, id), term) in proofs.into_iter().zip(terms) {
+                    let Proposition { lhs, rhs } = store.get(id).proposition();
+                    assert_eq!(store.term_dag().to_string(*lhs), "(Pair (A) (A))");
+                    assert_eq!(store.term_dag().to_string(*rhs), term);
+                    store
+                        .clone()
+                        .check_proof(id, &egraph.proof_check_program)
+                        .unwrap();
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn prove_extract_numbers_nested_inputs_after_ordinary_extraction_and_in_replay() {
+        let source = r#"
+            (datatype E (Leaf i64) (Pair E E))
+            (extract (Pair (Leaf 1) (Leaf 2)))
+            (prove-extract (Pair (Leaf 3) (Leaf 4)))
+            (let later (Leaf 5))
+            (prove-extract later)
+        "#;
+        for testing in [false, true] {
+            let mut compiler = EGraph::new_with_proofs();
+            if testing {
+                compiler = compiler.with_proof_testing();
+            }
+            let expected = compiler
+                .clone()
+                .parse_and_run_program(None, source)
+                .unwrap();
+            let desugared = compiler
+                .resolve_program(None, source)
+                .unwrap()
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n");
+            let mut replay = EGraph::default();
+            let original = replay.parse_program(None, source).unwrap();
+            replay
+                .set_proof_checking_program(original, testing)
+                .unwrap();
+            replay.ensure_no_reserved_symbols(false);
+            let actual = replay.parse_and_run_program(None, &desugared).unwrap();
+            for outputs in [&expected, &actual] {
+                assert_eq!(
+                    outputs
+                        .iter()
+                        .filter(|output| matches!(output, CommandOutput::ProveExists { .. }))
+                        .count(),
+                    if testing { 3 } else { 2 }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn prove_extract_records_only_the_evaluated_input_as_fiat() {
+        let mut egraph = EGraph::new_with_proofs();
+        let outputs = egraph
+            .parse_and_run_program(
+                None,
+                r#"
+            (datatype E (Num i64))
+            (prove-extract (Num 7))
+        "#,
+            )
+            .unwrap();
+        assert!(
+            outputs
+                .iter()
+                .any(|output| matches!(output, CommandOutput::ExtractBest(..)))
+        );
+        assert_eq!(
+            outputs
+                .iter()
+                .filter(|output| matches!(output, CommandOutput::ProveExists { .. }))
+                .count(),
+            1
+        );
+        assert!(
+            egraph
+                .parse_and_run_program(None, "(prove (= (Num 7) (Num 8)))")
+                .is_err()
+        );
+        let proof_source = egraph
+            .proof_check_program
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(proof_source.contains("(Num 7)"));
+        assert!(
+            !egraph
+                .proof_check_program
+                .iter()
+                .any(|command| matches!(command,
+            ResolvedNCommand::CoreAction(action) if action.to_string().contains("(Num 8)")))
+        );
+    }
+
+    #[test]
+    fn prove_extract_does_not_treat_rule_created_result_as_fiat() {
+        let mut egraph = EGraph::new_with_proofs().with_proof_testing();
+        let outputs = egraph
+            .parse_and_run_program(
+                None,
+                r#"
+            (datatype E (A :cost 10) (B :cost 1))
+            (A)
+            (rewrite (A) (B))
+            (run 1)
+            (extract (A))
+        "#,
+            )
+            .unwrap();
+        assert!(outputs.iter().any(|output| matches!(output, CommandOutput::ExtractBest(dag, cost, term) if *cost == 1 && dag.to_string(*term) == "(B)")));
+        assert_eq!(
+            outputs
+                .iter()
+                .filter(|output| matches!(output, CommandOutput::ProveExists { .. }))
+                .count(),
+            1
+        );
+        assert!(
+            !egraph
+                .proof_check_program
+                .iter()
+                .any(|command| matches!(command,
+            ResolvedNCommand::CoreAction(action) if action.to_string().contains("(B)")))
+        );
+    }
+
+    #[test]
+    fn prove_extract_primitive_result_and_nested_fail() {
+        let mut egraph = EGraph::new_with_proofs().with_proof_testing();
+        let outputs = egraph
+            .parse_and_run_program(
+                None,
+                r#"
+            (extract (+ 2 3))
+            (fail (extract 7 -1))
+            (fail (check (= 7 8)))
+        "#,
+            )
+            .unwrap();
+        assert_eq!(
+            outputs
+                .iter()
+                .filter(|output| matches!(output, CommandOutput::ProveExists { .. }))
+                .count(),
+            1
+        );
+        assert!(outputs.iter().any(|output| matches!(output, CommandOutput::ExtractBest(dag, _, term) if dag.to_string(*term) == "5")));
+        assert!(
+            EGraph::default()
+                .parse_and_run_program(None, "(prove-extract 7)")
+                .unwrap_err()
+                .to_string()
+                .contains("proof")
+        );
+    }
+
+    #[test]
+    fn prove_extract_desugared_replay_keeps_scopes_and_restores_after_failure() {
+        let source = r#"
+            (push)
+            (datatype E (A :cost 10) (B :cost 1))
+            (A)
+            (rewrite (A) (B))
+            (run 1)
+            (extract (A))
+            (fail (extract 7 -1))
+            (extract (A) 2)
+            (pop)
+            (datatype E (C i64))
+            (let input (C 7))
+            (extract input)
+        "#;
+        let mut native = EGraph::new_with_proofs().with_proof_testing();
+        let expected = native.parse_and_run_program(None, source).unwrap();
+        assert!(
+            native.extract_sources.is_empty(),
+            "live extraction consumes source metadata"
+        );
+        let mut compiler = EGraph::new_with_proofs().with_proof_testing();
+        let desugared = compiler
+            .resolve_program(None, source)
+            .unwrap()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut replay = EGraph::default();
+        let original = replay.parse_program(None, source).unwrap();
+        replay.set_proof_checking_program(original, true).unwrap();
+        replay.ensure_no_reserved_symbols(false);
+        let outputs = replay.parse_and_run_program(None, &desugared).unwrap();
+        assert!(!replay.are_proofs_enabled());
+        assert!(!replay.parser.ensure_no_reserved_symbols);
+        let results = |outputs: &[CommandOutput]| {
+            outputs
+                .iter()
+                .filter_map(|output| match output {
+                    CommandOutput::ExtractBest(_, cost, _) => Some(format!("{cost}: {output}")),
+                    CommandOutput::ExtractVariants(..) => Some(output.to_string()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(results(&outputs), results(&expected));
+        assert_eq!(
+            outputs
+                .iter()
+                .filter(|output| matches!(output, CommandOutput::ProveExists { .. }))
+                .count(),
+            4
+        );
+        // A plain command after replay must remain plain even after nested failure.
+        replay
+            .parse_and_run_program(None, "(datatype Plain (P)) (extract (P))")
+            .unwrap();
+    }
+
+    #[test]
+    fn prove_extract_replay_declares_helpers_once() {
+        for source in [
+            "(datatype E (A)) (extract (A)) (extract (A)) (A) (check (= (A) (A)))",
+            include_str!("../../tests/intersection.egg"),
+            include_str!("../../tests/web-demo/typecheck.egg"),
+            include_str!("../../tests/web-demo/unification-points-to.egg"),
+        ] {
+            let mut compiler = EGraph::new_with_proofs().with_proof_testing();
+            let desugared = compiler
+                .resolve_program(None, source)
+                .unwrap()
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n");
+            let mut replay = EGraph::default();
+            let original = replay.parse_program(None, source).unwrap();
+            replay.set_proof_checking_program(original, true).unwrap();
+            replay.ensure_no_reserved_symbols(false);
+            let outputs = replay.parse_and_run_program(None, &desugared).unwrap();
+            assert!(
+                outputs
+                    .iter()
+                    .any(|output| matches!(output, CommandOutput::ProveExists { .. }))
+            );
+            // A similarly named helper with altered columns must still fail.
+            let mut changed = replay
+                .functions
+                .values()
+                .find(|function| {
+                    replay
+                        .proof_state
+                        .proof_names
+                        .fused_rule_arity(function.name())
+                        .is_some()
+                })
+                .unwrap()
+                .decl
+                .clone();
+            changed.schema.input.push("i64".into());
+            let command = ResolvedNCommand::Function(changed).to_command().to_string();
+            let error = replay
+                .parse_and_run_program(None, &command)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("already bound"), "{error}");
+            let ordinary = "(function user-function () i64 :no-merge)";
+            replay.parse_and_run_program(None, ordinary).unwrap();
+            assert!(
+                replay
+                    .parse_and_run_program(None, ordinary)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("already bound")
+            );
+        }
+    }
+
+    #[test]
+    fn prove_extract_nested_container_result_is_strictly_valid() {
+        let source = r#"
+            (sort E)
+            (sort Es (Vec E))
+            (constructor A () E :cost 10)
+            (constructor B () E :cost 1)
+            (constructor Wrap (Es) E)
+            (let input (Wrap (vec-of (Wrap (vec-of (A))))))
+            (rewrite (A) (B))
+            (run 1)
+            (extract input)
+        "#;
+        let mut plain = EGraph::default();
+        let expected = plain.parse_and_run_program(None, source).unwrap();
+        let expected = expected
+            .iter()
+            .find_map(|output| match output {
+                CommandOutput::ExtractBest(dag, cost, term) => Some((dag.to_string(*term), *cost)),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(expected.0, "(Wrap (vec-of (Wrap (vec-of (B)))))");
+        for desugared in [false, true] {
+            let mut egraph = EGraph::new_with_proofs().with_proof_testing();
+            let outputs = if desugared {
+                let encoded = egraph
+                    .resolve_program(None, source)
+                    .unwrap()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let mut replay = EGraph::default();
+                let original = replay.parse_program(None, source).unwrap();
+                replay.set_proof_checking_program(original, true).unwrap();
+                replay.ensure_no_reserved_symbols(false);
+                replay.parse_and_run_program(None, &encoded).unwrap()
+            } else {
+                egraph.parse_and_run_program(None, source).unwrap()
+            };
+            assert!(outputs.iter().any(|output| matches!(output,
+                CommandOutput::ExtractBest(dag, cost, term)
+                    if (dag.to_string(*term), *cost) == expected)));
+            assert_eq!(
+                outputs
+                    .iter()
+                    .filter(|output| matches!(output, CommandOutput::ProveExists { .. }))
+                    .count(),
+                1
+            );
+        }
+    }
+
+    #[test]
+    fn prove_extract_replay_rejects_stale_or_mismatched_source_action() {
+        let source = "(extract 7)";
+        let mut replay = EGraph::default();
+        let original = replay.parse_program(None, source).unwrap();
+        replay.set_proof_checking_program(original, true).unwrap();
+        replay.ensure_no_reserved_symbols(false);
+        let action = *replay.extract_sources.keys().next().unwrap();
+        for (command, message) in [
+            (
+                "(prove-extract 7 0 :proof-action 999999)".to_string(),
+                "missing",
+            ),
+            (
+                format!("(prove-extract 8 0 :proof-action {action})"),
+                "mismatched",
+            ),
+            (
+                format!("(prove-extract 7 2 :proof-action {action})"),
+                "mismatched",
+            ),
+            (
+                format!("(prove-extract 7 0 :proof-action {action})"),
+                "missing extraction proof sort",
+            ),
+        ] {
+            assert!(
+                replay
+                    .parse_and_run_program(None, &command)
+                    .unwrap_err()
+                    .to_string()
+                    .contains(message)
+            );
+            assert!(!replay.are_proofs_enabled());
+        }
+    }
+
+    #[test]
+    fn prove_extract_replay_rejects_another_action_from_the_same_eclass() {
+        let source = r#"
+            (datatype E (A :cost 10) (B :cost 1))
+            (union (A) (B)) (extract (A)) (extract (B))
+        "#;
+        let mut compiler = EGraph::new_with_proofs().with_proof_testing();
+        let mut encoded = compiler.resolve_program(None, source).unwrap();
+        let positions = encoded
+            .iter()
+            .enumerate()
+            .filter_map(|(index, command)| {
+                matches!(command, crate::ast::GenericCommand::ProveExtract(..)).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        let crate::ast::GenericCommand::ProveExtract(_, _, _, wrong_action) = encoded[positions[1]]
+        else {
+            unreachable!()
+        };
+        let crate::ast::GenericCommand::ProveExtract(_, _, _, action) = &mut encoded[positions[0]]
+        else {
+            unreachable!()
+        };
+        *action = wrong_action;
+        let encoded = encoded
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut replay = EGraph::default();
+        let original = replay.parse_program(None, source).unwrap();
+        replay.set_proof_checking_program(original, true).unwrap();
+        replay.ensure_no_reserved_symbols(false);
+        let error = replay.parse_and_run_program(None, &encoded).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("mismatched prove-extract request"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn prove_extract_keeps_deep_shared_terms_and_proofs_as_dags() {
+        const DEPTH: usize = 128;
+        let mut source = String::from(
+            "(datatype E (A :cost 1) (B :cost 0) (Pair E E :cost 0))\n\
+             (let node0 (A))\n",
+        );
+        for depth in 1..=DEPTH {
+            let previous = depth - 1;
+            source.push_str(&format!(
+                "(let node{depth} (Pair node{previous} node{previous}))\n"
+            ));
+        }
+        source.push_str(&format!(
+            "(rewrite (A) (B))\n(run 1)\n(prove-extract node{DEPTH})"
+        ));
+
+        // The source and result have only DEPTH + 1 distinct terms, but their
+        // expanded trees have more than 2^DEPTH leaves. Never render those trees.
+        let mut egraph = EGraph::new_with_proofs();
+        let outputs = egraph.parse_and_run_program(None, &source).unwrap();
+        let mut extracted = 0;
+        let mut proven = 0;
+        for output in outputs {
+            match output {
+                CommandOutput::ExtractBest(dag, cost, mut term) => {
+                    extracted += 1;
+                    assert_eq!(cost, 0);
+                    assert_eq!(dag.size(), DEPTH + 1);
+                    for _ in 0..DEPTH {
+                        let crate::Term::App(head, children) = dag.get(term) else {
+                            panic!("expected a shared Pair")
+                        };
+                        assert_eq!(head, "Pair");
+                        assert_eq!(children.len(), 2);
+                        assert_eq!(children[0], children[1]);
+                        term = children[0];
+                    }
+                    assert_eq!(dag.get(term), &crate::Term::App("B".into(), vec![]));
+                }
+                CommandOutput::ProveExists {
+                    mut proof_store,
+                    proof_id,
+                } => {
+                    proven += 1;
+                    // Allow ample room for existence, union-find, and congruence
+                    // evidence while excluding an unfolded proof or term tree.
+                    assert!(proof_store.term_dag().size() < 100 * (DEPTH + 1));
+                    assert!(proof_store.id_to_proof.len() < 100 * (DEPTH + 1));
+                    let Proposition { lhs, rhs } = *proof_store.get(proof_id).proposition();
+                    for (mut term, leaf) in [(lhs, "A"), (rhs, "B")] {
+                        for _ in 0..DEPTH {
+                            let crate::Term::App(head, children) = proof_store.term_dag().get(term)
+                            else {
+                                panic!("expected a shared Pair in the proposition")
+                            };
+                            assert_eq!(head, "Pair");
+                            assert_eq!(children.len(), 2);
+                            assert_eq!(children[0], children[1]);
+                            term = children[0];
+                        }
+                        assert_eq!(
+                            proof_store.term_dag().get(term),
+                            &crate::Term::App(leaf.into(), vec![])
+                        );
+                    }
+                    proof_store
+                        .check_proof(proof_id, &egraph.proof_check_program)
+                        .unwrap();
+                }
+                _ => {}
+            }
+        }
+        assert_eq!((extracted, proven), (1, 1));
+    }
+
+    #[test]
+    fn prove_extract_preserves_custom_cost_and_variant_order() {
+        for variants in [0, 5] {
+            let mut egraph = EGraph::new_with_proofs().with_proof_testing();
+            egraph
+                .parse_and_run_program(
+                    None,
+                    "(datatype E (A :cost 10) (B :cost 1) (C :cost 3))\n\
+                     (A) (rewrite (A) (B)) (rewrite (A) (C)) (run 1)",
+                )
+                .unwrap();
+            egraph.extraction_cost = |_, func, _| match func.name() {
+                "A" => 217,
+                "B" => 300,
+                "C" => 250,
+                _ => unreachable!(),
+            };
+            let outputs = egraph
+                .parse_and_run_program(None, &format!("(prove-extract (A) {variants})"))
+                .unwrap();
+            let expected = if variants == 0 {
+                vec!["(A)"]
+            } else {
+                vec!["(A)", "(C)", "(B)"]
+            };
+            let actual = outputs
+                .iter()
+                .find_map(|output| match output {
+                    CommandOutput::ExtractBest(dag, cost, term) => {
+                        assert_eq!(*cost, 217);
+                        Some(vec![dag.to_string(*term)])
+                    }
+                    CommandOutput::ExtractVariants(dag, terms) => {
+                        Some(terms.iter().map(|term| dag.to_string(*term)).collect())
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(actual, expected);
+            let proven = outputs
+                .iter()
+                .filter_map(|output| match output {
+                    CommandOutput::ProveExists {
+                        proof_store,
+                        proof_id,
+                    } => {
+                        let proposition = proof_store.get(*proof_id).proposition();
+                        assert_eq!(proof_store.term_dag().to_string(proposition.lhs), "(A)");
+                        Some(proof_store.term_dag().to_string(proposition.rhs))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(proven, expected);
+        }
+    }
+
+    #[test]
+    fn prove_extract_follows_representative_changes_between_extractions() {
+        let mut egraph = EGraph::new_with_proofs().with_proof_testing();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(datatype E (A :cost 1) (B :cost 5) (C :cost 9) (Pair E E))\n\
+                 (A) (B) (let input (Pair (C) (C)))",
+            )
+            .unwrap();
+        for (change, expected, expected_cost) in [
+            ("", "(Pair (C) (C))", 19),
+            ("(union (B) (C)) (run 1)", "(Pair (B) (B))", 11),
+            ("(union (A) (B)) (run 1)", "(Pair (A) (A))", 3),
+        ] {
+            let outputs = egraph
+                .parse_and_run_program(None, &format!("{change} (prove-extract input)"))
+                .unwrap();
+            assert!(outputs.iter().any(|output| matches!(output,
+                CommandOutput::ExtractBest(dag, cost, term)
+                    if *cost == expected_cost && dag.to_string(*term) == expected)));
+            let proofs = outputs
+                .iter()
+                .filter_map(|output| match output {
+                    CommandOutput::ProveExists {
+                        proof_store,
+                        proof_id,
+                    } => Some((proof_store, *proof_id)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(proofs.len(), 1);
+            let (store, id) = proofs[0];
+            let proposition = store.get(id).proposition();
+            assert_eq!(
+                store.term_dag().to_string(proposition.lhs),
+                "(Pair (C) (C))"
+            );
+            assert_eq!(store.term_dag().to_string(proposition.rhs), expected);
+        }
+    }
+
+    #[test]
+    fn prove_extract_normalizes_collapsed_set_and_map_entries() {
+        let source = r#"
+            (sort E)
+            (sort Es (Set E))
+            (sort Em (Map E E))
+            (constructor A () E :cost 9)
+            (constructor C () E :cost 5)
+            (constructor B () E :cost 1)
+            (constructor Wrap (Es Em) E)
+            (let input (Wrap (set-of (A) (C)) (map-of (A) (C) (C) (A))))
+            (rewrite (A) (B))
+            (rewrite (C) (B))
+            (run 1)
+            (extract input)
+        "#;
+        let mut plain = EGraph::default();
+        let expected = plain
+            .parse_and_run_program(None, source)
+            .unwrap()
+            .into_iter()
+            .find_map(|output| match output {
+                CommandOutput::ExtractBest(dag, cost, term) => Some((dag.to_string(term), cost)),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(expected.0, "(Wrap (set-of (B)) (map-of (B) (B)))");
+        let mut egraph = EGraph::new_with_proofs().with_proof_testing();
+        let outputs = egraph.parse_and_run_program(None, source).unwrap();
+        assert!(outputs.iter().any(|output| matches!(output,
+            CommandOutput::ExtractBest(dag, cost, term)
+                if (dag.to_string(*term), *cost) == expected)));
+        let proofs = outputs
+            .iter()
+            .filter_map(|output| match output {
+                CommandOutput::ProveExists {
+                    proof_store,
+                    proof_id,
+                } => Some((proof_store, *proof_id)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(proofs.len(), 1);
+        let (store, id) = proofs[0];
+        assert_eq!(store.term_dag().to_string(store.get(id).rhs()), expected.0);
+    }
+
+    #[test]
+    fn prove_extract_preserves_source_container_positions_when_storage_order_differs() {
+        let source = r#"
+            (sort E)
+            (sort Es (Set E))
+            (sort Bag (MultiSet E))
+            (sort M (Map E i64))
+            (sort Nested (Vec Es))
+            (constructor A () E)
+            (constructor B () E)
+            (constructor Wrap (Nested M) E)
+            (let b (B)) (let a (A))
+            (extract (set-of a b))
+            (extract (multiset-of a b a))
+            (extract (map-of a 1 b 2))
+            (extract (Wrap (vec-of (set-of a b)) (map-of a 1 b 2)))
+        "#;
+        let results = |outputs: &[CommandOutput]| {
+            outputs
+                .iter()
+                .filter_map(|output| {
+                    if let CommandOutput::ExtractBest(dag, cost, term) = output {
+                        Some((dag.to_string(*term), *cost))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        let expected = results(
+            &EGraph::default()
+                .parse_and_run_program(None, source)
+                .unwrap(),
+        );
+        for replay in [false, true] {
+            let mut compiler = EGraph::new_with_proofs().with_proof_testing();
+            let outputs = if replay {
+                let encoded = compiler
+                    .resolve_program(None, source)
+                    .unwrap()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let mut graph = EGraph::default();
+                let original = graph.parse_program(None, source).unwrap();
+                graph.set_proof_checking_program(original, true).unwrap();
+                graph.ensure_no_reserved_symbols(false);
+                graph.parse_and_run_program(None, &encoded).unwrap()
+            } else {
+                compiler.parse_and_run_program(None, source).unwrap()
+            };
+            assert_eq!(results(&outputs), expected);
+            assert_eq!(
+                outputs
+                    .iter()
+                    .filter(|output| matches!(output, CommandOutput::ProveExists { .. }))
+                    .count(),
+                expected.len()
+            );
+        }
+    }
+
+    #[test]
+    fn prove_extract_certifies_container_roots_and_typed_empty_containers() {
+        let source = r#"
+            (sort E)
+            (sort Es (Vec E))
+            (sort Ints (Vec i64))
+            (constructor A () E :cost 9)
+            (constructor B () E :cost 1)
+            (constructor Wrap (Es Ints) E)
+            (let a (A))
+            (let empty (Wrap (vec-empty) (vec-empty)))
+            (rewrite (A) (B))
+            (run 1)
+            (extract (vec-of a a))
+            (extract empty)
+        "#;
+        let mut plain = EGraph::default();
+        let expected = plain
+            .parse_and_run_program(None, source)
+            .unwrap()
+            .into_iter()
+            .filter_map(|output| match output {
+                CommandOutput::ExtractBest(dag, cost, term) => Some((dag.to_string(term), cost)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(expected.len(), 2);
+        assert_eq!(expected[0].0, "(vec-of (B) (B))");
+        // Both empty values share the same term shape, but their different
+        // element sorts must be recovered from Wrap's argument types.
+        assert_eq!(expected[1].0, "(Wrap (vec-empty) (vec-empty))");
+
+        let mut egraph = EGraph::new_with_proofs().with_proof_testing();
+        let outputs = egraph.parse_and_run_program(None, source).unwrap();
+        let actual = outputs
+            .iter()
+            .filter_map(|output| match output {
+                CommandOutput::ExtractBest(dag, cost, term) => Some((dag.to_string(*term), *cost)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
+        let proofs = outputs
+            .iter()
+            .filter_map(|output| match output {
+                CommandOutput::ProveExists {
+                    proof_store,
+                    proof_id,
+                } => Some((proof_store, *proof_id)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(proofs.len(), expected.len());
+        for ((store, id), (term, _)) in proofs.into_iter().zip(expected) {
+            assert_eq!(store.term_dag().to_string(store.get(id).rhs()), term);
+        }
+    }
+
+    #[test]
+    fn prove_extract_rejects_union_sensitive_input_primitive_mismatch() {
+        let source = r#"
+            (datatype E (A :cost 2) (B :cost 1))
+            (sort Es (Set E))
+            (let a (A))
+            (let b (B))
+            (union (A) (B))
+            (run 1)
+        "#;
+        let mut plain = EGraph::default();
+        plain.parse_and_run_program(None, source).unwrap();
+        let outputs = plain
+            .parse_and_run_program(None, "(extract (set-intersect (set-of a) (set-of b)))")
+            .unwrap();
+        assert!(outputs.iter().any(|output| matches!(output,
+            CommandOutput::ExtractBest(dag, _, term)
+                if dag.to_string(*term) == "(set-of (B))")));
+
+        // Re-evaluating the historical source terms intersects {A} and {B}
+        // structurally and gives the empty set, while the runtime has already
+        // merged their elements. Until that primitive evaluation can carry its
+        // own congruence evidence, reject the mismatch instead of proving it.
+        let mut egraph = EGraph::new_with_proofs().with_proof_testing();
+        egraph.parse_and_run_program(None, source).unwrap();
+        let error = egraph
+            .parse_and_run_program(
+                None,
+                "(prove-extract (set-intersect (set-of a) (set-of b)))",
+            )
+            .unwrap_err();
+        assert!(
+            matches!(&error, Error::ExtractError(message)
+                if message.contains("proof semantics do not match its evaluated value")),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn prove_extract_keeps_global_input_evidence_after_delete_or_subsume() {
+        for (change, setup) in ["delete", "subsume"].into_iter().flat_map(|change| {
+            [
+                "(let input (A)) (union input (B))",
+                // B is the older representative. Its existence is a Fiat,
+                // but the equality from the original input A needs the rule.
+                "(B) (let input (A)) (rewrite (A) (B)) (run 1)",
+            ]
+            .into_iter()
+            .map(move |setup| (change, setup))
+        }) {
+            let source = format!(
+                "(datatype E (A :cost 1) (B :cost 5))\n\
+                 {setup}\n\
+                 ({change} (A))\n\
+                 (extract input)"
+            );
+            let mut plain = EGraph::default();
+            let outputs = plain.parse_and_run_program(None, &source).unwrap();
+            assert!(outputs.iter().any(|output| matches!(output,
+                CommandOutput::ExtractBest(dag, cost, term)
+                    if *cost == 5 && dag.to_string(*term) == "(B)")));
+
+            // Removing A from extraction does not remove the global's value
+            // or its proof that the original input was A. B remains a valid
+            // representative of the same class, even when A's view is deleted.
+            let mut egraph = EGraph::new_with_proofs().with_proof_testing();
+            let outputs = egraph.parse_and_run_program(None, &source).unwrap();
+            assert!(outputs.iter().any(|output| matches!(output,
+                CommandOutput::ExtractBest(dag, cost, term)
+                    if *cost == 5 && dag.to_string(*term) == "(B)")));
+            let proofs = outputs
+                .iter()
+                .filter_map(|output| match output {
+                    CommandOutput::ProveExists {
+                        proof_store,
+                        proof_id,
+                    } => Some((proof_store, *proof_id)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(proofs.len(), 1);
+            let (store, id) = proofs[0];
+            assert_eq!(store.term_dag().to_string(store.get(id).lhs()), "(A)");
+            assert_eq!(store.term_dag().to_string(store.get(id).rhs()), "(B)");
+        }
+    }
+
+    #[test]
+    fn prove_extract_certifies_late_global_after_source_row_removal() {
+        for change in ["delete", "subsume"] {
+            let source = format!(
+                "(datatype E (A :cost 1) (B :cost 5) (F E))\n\
+                 (B) (A)\n\
+                 (rewrite (A) (B))\n\
+                 (run 1)\n\
+                 (let input (A))\n\
+                 ({change} (A))\n\
+                 (extract input)"
+            );
+            let mut plain = EGraph::default();
+            let expected = plain
+                .parse_and_run_program(None, &source)
+                .unwrap()
+                .into_iter()
+                .find_map(|output| match output {
+                    CommandOutput::ExtractBest(dag, cost, term) => {
+                        Some((dag.to_string(term), cost))
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(expected, ("(B)".into(), 5));
+
+            let mut egraph = EGraph::new_with_proofs().with_proof_testing();
+            let outputs = egraph.parse_and_run_program(None, &source).unwrap();
+            assert!(outputs.iter().any(|output| matches!(output,
+                CommandOutput::ExtractBest(dag, cost, term)
+                    if (dag.to_string(*term), *cost) == expected)));
+            let proofs = outputs
+                .iter()
+                .filter_map(|output| match output {
+                    CommandOutput::ProveExists {
+                        proof_store,
+                        proof_id,
+                    } => Some((proof_store, *proof_id)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(proofs.len(), 1);
+            let (store, id) = proofs[0];
+            // This global was evaluated after the union. The prior extractor
+            // proves B = B; retaining evidence for the stronger A = B is also
+            // valid. Neither requires reviving the removed constructor row.
+            let lhs = store.term_dag().to_string(store.get(id).lhs());
+            assert!(matches!(lhs.as_str(), "(A)" | "(B)"));
+            assert_eq!(store.term_dag().to_string(store.get(id).rhs()), expected.0);
+
+            // The nested expression needs more than the retained certificate
+            // for the evaluated global. Reject the unsupported combination
+            // safely instead of returning an invalid proof or panicking.
+            let nested = source.replace("(extract input)", "(extract (F input))");
+            let mut egraph = EGraph::new_with_proofs().with_proof_testing();
+            let error = egraph.parse_and_run_program(None, &nested).unwrap_err();
+            assert!(matches!(error, Error::ExtractError(_)), "{error:?}");
+        }
     }
 
     /// A bridge supply for a firing where every term the head builds is new, so

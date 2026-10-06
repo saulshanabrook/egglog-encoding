@@ -915,6 +915,21 @@ impl<'a, 'db: 'a> PureState<'a, 'db> {
 }
 
 impl<'a, 'db: 'a> ReadState<'a, 'db> {
+    /// Look up all output columns of a function without inserting a row.
+    /// Internal proof code reads the physical value and evidence columns,
+    /// rather than the source-level projection exposed by [`Read`].
+    pub(crate) fn lookup_proof_values<K: IntoValues>(
+        &self,
+        name: &str,
+        key: K,
+    ) -> Result<Option<Vec<Value>>, Error> {
+        let action = lookup_action(self.registry(), self.es(), name)?;
+        check_subtype(name, &action, TableKind::Function)?;
+        let key_values: ValueRow = key.into_values(self.base_values()).collect();
+        check_arity(name, action.input_arity(), key_values.len())?;
+        Ok(action.lookup_values(self.es(), &key_values))
+    }
+
     pub(crate) fn wrap(
         es: &'a mut ExecutionState<'db>,
         registry: &'a ActionRegistry,

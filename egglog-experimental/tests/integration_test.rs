@@ -529,6 +529,132 @@ fn test_greedy_dag_multi_extract_avoids_combined_root_cycle() {
 }
 
 #[test]
+fn test_prove_extract_preserves_dynamic_cost_winner_and_variants() {
+    let source = r#"
+        (with-dynamic-cost (datatype E (Leaf i64) (Add E E)))
+        (let input (Leaf 2))
+        (rewrite (Leaf 2) (Add (Leaf 1) (Leaf 1)))
+        (run 1)
+        (set-cost (Leaf 2) 100)
+        (set-cost (Leaf 1) 3)
+        (set-cost (Add (Leaf 1) (Leaf 1)) 2)
+    "#;
+    for variants in [0, 2] {
+        let mut off = egglog_experimental::new_experimental_egraph();
+        off.parse_and_run_program(None, source).unwrap();
+        let expected = off
+            .parse_and_run_program(None, &format!("(extract input {variants})"))
+            .unwrap();
+        for mode in ["recording", "testing", "explicit"] {
+            let mut on = egglog_experimental::new_experimental_egraph_with_proofs();
+            if mode == "testing" {
+                on = on.with_proof_testing();
+            }
+            on.parse_and_run_program(None, source).unwrap();
+            let command = if mode == "explicit" {
+                "prove-extract"
+            } else {
+                "extract"
+            };
+            let outputs = on
+                .parse_and_run_program(None, &format!("({command} input {variants})"))
+                .unwrap();
+            let actual = outputs
+                .iter()
+                .find(|output| {
+                    matches!(
+                        output,
+                        CommandOutput::ExtractBest(..) | CommandOutput::ExtractVariants(..)
+                    )
+                })
+                .unwrap();
+            assert_eq!(actual.to_string(), expected[0].to_string());
+            if variants == 0 {
+                let CommandOutput::ExtractBest(dag, cost, term) = actual else {
+                    unreachable!()
+                };
+                assert_eq!(*cost, 10);
+                assert_eq!(dag.to_string(*term), "(Add (Leaf 1) (Leaf 1))");
+            }
+            assert_eq!(
+                outputs
+                    .iter()
+                    .filter(|output| matches!(output, CommandOutput::ProveExists { .. }))
+                    .count(),
+                if mode == "recording" {
+                    0
+                } else if variants == 0 {
+                    1
+                } else {
+                    2
+                }
+            );
+        }
+    }
+}
+
+#[test]
+fn test_encoded_extract_rejects_explicit_algorithms() {
+    for proofs in [false, true] {
+        let mut egraph =
+            egglog_experimental::new_experimental_egraph().with_term_encoding_enabled();
+        if proofs {
+            egraph = egraph.with_proofs_enabled().with_proof_testing();
+        }
+        let error = egraph
+            .parse_and_run_program(None, "(datatype E (A)) (extract (A) :extractor greedy-dag)")
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("explicit extraction algorithms"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn test_prove_extract_dynamic_cost_desugared_replay() {
+    let source = r#"
+        (with-dynamic-cost (datatype E (Leaf i64) (Add E E)))
+        (let input (Leaf 2))
+        (rewrite (Leaf 2) (Add (Leaf 1) (Leaf 1)))
+        (run 1)
+        (set-cost (Leaf 2) 100)
+        (set-cost (Leaf 1) 3)
+        (set-cost (Add (Leaf 1) (Leaf 1)) 2)
+        (extract input)
+    "#;
+    for testing in [false, true] {
+        let mut compiler = egglog_experimental::new_experimental_egraph_with_proofs();
+        if testing {
+            compiler = compiler.with_proof_testing();
+        }
+        let desugared = compiler
+            .resolve_program(None, source)
+            .unwrap()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut replay = egglog_experimental::new_experimental_egraph();
+        if testing {
+            let original = replay.parse_program(None, source).unwrap();
+            replay.set_proof_checking_program(original, true).unwrap();
+        }
+        replay.ensure_no_reserved_symbols(false);
+        let outputs = replay.parse_and_run_program(None, &desugared).unwrap();
+        assert!(outputs.iter().any(|output| matches!(output, CommandOutput::ExtractBest(dag, 10, term) if dag.to_string(*term) == "(Add (Leaf 1) (Leaf 1))")));
+        assert_eq!(
+            outputs
+                .iter()
+                .filter(|output| matches!(output, CommandOutput::ProveExists { .. }))
+                .count(),
+            usize::from(testing)
+        );
+        assert!(!replay.are_proofs_enabled());
+    }
+}
+
+#[test]
 fn test_get_size_primitive() {
     let mut egraph = egglog_experimental::new_experimental_egraph();
 
@@ -1275,7 +1401,7 @@ fn test_extract_missing_expression_returns_error_instead_of_panicking() {
 
     assert!(
         err.to_string()
-            .contains("extract expects an expression and optional variant count")
+            .contains("usage: (extract <expr> <number of variants>?)")
     );
 }
 

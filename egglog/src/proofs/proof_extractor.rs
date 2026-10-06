@@ -15,7 +15,7 @@ type Key = (Value, String);
 /// requested root, ignoring `:unextractable` and hidden constructor flags, and
 /// skips view tables so proof terms use their original constructor names. A term
 /// of any depth extracts without overflowing the stack.
-struct RootExtractor {
+pub(super) struct RootExtractor {
     cache: HashMap<Key, Option<TermId>>,
     active: HashSet<Key>,
     /// Every function the search has read so far, keyed by its index in
@@ -309,7 +309,7 @@ impl Frame {
 }
 
 impl RootExtractor {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             cache: Default::default(),
             active: Default::default(),
@@ -335,7 +335,7 @@ impl RootExtractor {
         })
     }
 
-    fn extract(
+    pub(super) fn extract(
         &mut self,
         egraph: &EGraph,
         termdag: &mut TermDag,
