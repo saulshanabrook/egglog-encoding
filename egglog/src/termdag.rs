@@ -468,12 +468,9 @@ impl TermDag {
         }
 
         let size = match self.get(term_id) {
-            Term::App(_, children) => {
-                1 + children
-                    .iter()
-                    .map(|child| self.compute_term_size(*child, sizes))
-                    .sum::<usize>()
-            }
+            Term::App(_, children) => children.iter().fold(1usize, |size, child| {
+                size.saturating_add(self.compute_term_size(*child, sizes))
+            }),
             Term::Lit(_) | Term::Var(_) => 1,
         };
 
@@ -690,6 +687,22 @@ mod tests {
         );
         assert!(buf.trim_end().ends_with(')'));
         assert_eq!(repr, "(f t t)");
+    }
+
+    #[test]
+    fn test_to_string_with_let_handles_exponentially_large_shared_terms() {
+        const DEPTH: usize = 128;
+        let mut dag = TermDag::default();
+        let mut term = dag.app("Leaf".into(), vec![]);
+        for _ in 0..DEPTH {
+            term = dag.app("Pair".into(), vec![term, term]);
+        }
+
+        // The expanded size exceeds usize, but sharing keeps the rendering small.
+        let result = dag.to_string_with_let(&mut SymbolGen::new(String::new()), term);
+        assert!(result.contains("(let "));
+        assert!(result.matches("(Pair").count() <= DEPTH + 1);
+        assert!(result.len() < 1_000_000);
     }
 
     #[test]
