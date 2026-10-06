@@ -19,7 +19,6 @@ from typing import cast
 from rich.console import Console
 from rich.text import Text
 
-from .baseline_selection import BASELINE_ROUNDS, run_baseline_campaign
 from .collection import (
     CollectionPlan,
     build_collection_plan,
@@ -46,9 +45,7 @@ from .reports.presentation import build_report_catalog
 from .reports.render import render_markdown_report_document, render_rich_report_document
 from .reports.store import ReportStore
 from .suites import (
-    PROOF_TREATMENTS,
     SUITE_NAMES,
-    ProofTreatment,
     build_coverage,
     render_coverage_markdown,
     resolve_suite,
@@ -74,16 +71,6 @@ def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
         choices=SUITE_NAMES,
         action="append",
         help="captured family; repeat to select a union and reuse cached observations",
-    )
-    parser.add_argument(
-        "--baseline-window",
-        action="store_true",
-        help="select suites by all exact-identity off observations: 0.1 < mean seconds < 30",
-    )
-    parser.add_argument(
-        "--baseline-only",
-        action="store_true",
-        help="with --baseline-window, finish normal-mode collection without running proofs",
     )
     parser.add_argument(
         "--fact-directory",
@@ -161,20 +148,7 @@ def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
     if args.treatment is None:
         args.treatment = "proof-extraction" if args.suite is not None else "proofs"
     if args.rounds is None:
-        args.rounds = BASELINE_ROUNDS if args.suite is not None else DEFAULT_ROUNDS
-    if args.baseline_only and not args.baseline_window:
-        parser.error("--baseline-only requires --baseline-window")
-    if args.baseline_window and (
-        args.suite is None
-        or args.treatment not in PROOF_TREATMENTS
-        or args.compare_treatment != "off"
-        or args.compare_target is not None
-        or args.force_run
-    ):
-        parser.error(
-            "--baseline-window requires --suite, proofs or proof-extraction versus off, "
-            "one current target, and no --force-run"
-        )
+        args.rounds = 10 if args.suite is not None else DEFAULT_ROUNDS
     args.command = "benchmark"
     return args
 
@@ -287,12 +261,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         report_path = resolve_report_path(str(args.report), invocation_cwd)
         baseline_request, candidate_request = endpoint_requests(args)
 
-        if args.baseline_window and (
-            candidate_request.target.is_label_lookup
-            or Path(candidate_request.target.source).expanduser().resolve() != script_root
-        ):
-            raise ValueError("--baseline-window requires the current checkout, for example --target figures=.")
-
         # ReportStore validates the complete existing artifact before target
         # materialization can build or run anything.
         store = ReportStore(report_path)
@@ -327,31 +295,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         try:
             validation_issues: tuple[tuple[FileSpec, str], ...] = ()
             deferred: tuple[tuple[FileSpec, str], ...] = ()
-            baseline_comparison: ComparisonSpec | None = None
-            if args.baseline_window:
-                assert suite is not None
-                baseline_comparison = run_baseline_campaign(
-                    suite,
-                    resolved_targets[candidate_request.target],
-                    store,
-                    int(args.timeout_sec),
-                    console,
-                    rounds=int(args.rounds),
-                    baseline_only=bool(args.baseline_only),
-                    disequality_encoding=args.disequality_encoding,
-                    baseline_encoding=args.compare_disequality_encoding,
-                    treatment=cast(ProofTreatment, args.treatment),
-                )
-                if baseline_comparison is None:
-                    collection_complete = True
-                    return 0
-                files = baseline_comparison.files
-                validation_issues = baseline_comparison.validation_issues
-            elif suite is not None:
+            if suite is not None:
                 while True:
-                    # A new binary can invalidate cached failures, changing the
-                    # shared workload subset and another label's cache needs.
-                    files = suite.files
+                    # A new binary can invalidate cached failures and change
+                    # which observations still need collection.
                     validation_issues, deferred = suite_outcomes(
                         suite,
                         tuple(
@@ -362,8 +309,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                         ),
                         int(args.timeout_sec),
                     )
-                    if not files:
-                        break
                     incomplete_labels = tuple(
                         (request, endpoints)
                         for request, endpoints in request_groups
@@ -405,28 +350,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                         )
                 for file, reason in deferred:
                     console.print(Text(f"{file.display_path}: safety-deferred; {reason}"))
-            if suite is not None and not files:
-                hashes: dict[str, str] = {
-                    binary.engine: binary.sha256
-                    for target in resolved_targets.values()
-                    for binary in target.engine_binaries
-                }
-                if not hashes:
-                    hashes = {"egglog": next(iter(resolved_targets.values())).binary_sha256}
-                rendered = render_coverage_markdown(
-                    build_coverage(
-                        suite,
-                        hashes,
-                        store.records,
-                        timeout_sec=int(args.timeout_sec),
-                    )
-                )
-                if args.format == "markdown":
-                    sys.stdout.write(rendered + "\n")
-                else:
-                    console.print(Text(rendered))
-                collection_complete = True
-                return 0
             comparison = ComparisonSpec(
                 baseline=BenchmarkEndpoint(
                     resolved_targets[baseline_request.target],
@@ -446,20 +369,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             # Preflight every fresh target before any measured observation can be
             # appended, then execute the already-validated plans in order.
-            plans = (
-                ()
-                if args.baseline_window
-                else collection_plans(store, comparison, bool(args.force_run), tuple(file for file, _ in deferred))
-            )
+            plans = collection_plans(store, comparison, bool(args.force_run), tuple(file for file, _ in deferred))
             for plan in plans:
                 preflight_collection(plan, comparison.timeout_sec)
-            stopped_files: set[FileSpec] = set()
             for plan in plans:
                 emit_collection_plan(console, plan)
-                if comparison.suite_mode:
-                    collect_rows(store, plan, comparison.timeout_sec, console, stopped_files)
-                else:
-                    collect_rows(store, plan, comparison.timeout_sec, console)
+                collect_rows(store, plan, comparison.timeout_sec, console)
             collection_complete = True
         finally:
             try:

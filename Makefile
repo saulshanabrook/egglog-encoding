@@ -145,7 +145,7 @@ figures-parameter-test:
 	cd figures && $(VEGA) node --test parameter.test.mjs
 
 # Source generation and correctness diagnostics are separate from timing.
-.PHONY: reproduce-benchmarks validate-benchmarks expanded-pilot expanded-bench-recording expanded-bench
+.PHONY: reproduce-benchmarks validate-benchmarks expanded-bench-recording expanded-bench
 reproduce-benchmarks validate-benchmarks: export EGGLOG_BENCH_MEMORY_GUARD = 1
 reproduce-benchmarks:
 	uv run --locked python -m scripts.suite_reproduction $(REPRODUCE_ARGS)
@@ -157,21 +157,14 @@ EXPANDED_ROUNDS ?= 10
 EXPANDED_TIMEOUT_SEC ?= 300
 EXPANDED_ARGS = --target figures=. --rounds $(EXPANDED_ROUNDS) --timeout-sec $(EXPANDED_TIMEOUT_SEC)
 
-expanded-pilot expanded-bench-recording expanded-bench: export EGGLOG_BENCH_MEMORY_GUARD = 1
-expanded-pilot:
-	./bench.py --suite expanded --baseline-window --baseline-only $(EXPANDED_ARGS) \
-		--treatment proof-extraction --compare-treatment off
-
-# One sequential plan per comparison, including missing baselines. Order an
-# explicitly requested pilot first, and keep collectors serial under make -j.
-expanded-bench-recording: $(filter expanded-pilot,$(MAKECMDGOALS))
-	./bench.py --suite expanded --baseline-window $(EXPANDED_ARGS) \
+expanded-bench-recording expanded-bench: export EGGLOG_BENCH_MEMORY_GUARD = 1
+# Keep collectors serial under make -j; the extraction comparison reuses off rows.
+expanded-bench-recording:
+	./bench.py --suite expanded $(EXPANDED_ARGS) \
 		--treatment proofs --compare-treatment off
 
 expanded-bench: expanded-bench-recording
-	./bench.py --suite expanded --baseline-window $(EXPANDED_ARGS) \
-		--treatment proof-extraction --compare-treatment off
-	./bench.py --suite math-11 $(EXPANDED_ARGS) \
+	./bench.py --suite expanded $(EXPANDED_ARGS) \
 		--treatment proof-extraction --compare-treatment off
 	./bench.py --suite math-11 $(EXPANDED_ARGS) \
 		--treatment egg-proof-extraction --compare-treatment egg

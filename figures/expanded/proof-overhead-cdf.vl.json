@@ -10,11 +10,9 @@
   },
   "title": {
     "text": "How much overhead do Egglog proofs add?",
-    "subtitle": [
-      "Proofs-off mean: 0.1–30 seconds; all observations for the latest figures identities.",
-      "Each dot is one replay; colors identify families. Both proof modes use the same cohort.",
-      "50%/90% labels show measured coverage; missing and failed ratios stay in the denominator."
-    ]
+    "subtitle": {
+      "expr": "['Proofs-off mean: ' + min_wall_sec + '–' + max_wall_sec + ' seconds; all observations for the latest figures identities.', 'Each dot is one replay; colors identify families. Both proof modes use the same cohort.', '50%/90% labels show measured coverage; missing and failed ratios stay in the denominator.']"
+    }
   },
   "data": {"url": "../../.reports-grouped.json", "format": {"type": "json"}},
   "transform": [
@@ -51,8 +49,6 @@
     {"calculate": "datum.item.label", "as": "workload"},
     {"calculate": "datum.item.family", "as": "family"},
     {"calculate": "datum.item.file_sha256", "as": "file_sha256"},
-    {"calculate": "datum.inventory.min_wall_sec", "as": "min_wall_sec"},
-    {"calculate": "datum.inventory.max_wall_sec", "as": "max_wall_sec"},
     {"calculate": "datum.endpoint.engine", "as": "engine"},
     {"calculate": "datum.endpoint.proof_mode", "as": "proof_mode"},
     {
@@ -88,15 +84,15 @@
         {"op": "sum", "field": "host_stop", "as": "host_stop"},
         {"op": "sum", "field": "rss_stop", "as": "rss_stop"}
       ],
-      "groupby": ["family", "workload_id", "workload", "file_sha256", "min_wall_sec", "max_wall_sec", "proof_mode", "selected_count", "unavailable_reason"]
+      "groupby": ["family", "workload_id", "workload", "file_sha256", "proof_mode", "selected_count", "unavailable_reason"]
     },
-    {"pivot": "proof_mode", "value": "selected_count", "op": "argmax", "groupby": ["family", "workload_id", "workload", "file_sha256", "min_wall_sec", "max_wall_sec"]},
+    {"pivot": "proof_mode", "value": "selected_count", "op": "argmax", "groupby": ["family", "workload_id", "workload", "file_sha256"]},
     {
       "calculate": "isValid(datum.Off) && datum.Off.selected_count > 0 && datum.Off.time_count === datum.Off.selected_count && !datum.Off.failed",
       "as": "baseline_complete"
     },
     {
-      "calculate": "!datum.file_sha256 ? 'No replay' : !datum.baseline_complete ? 'Baseline unresolved' : datum.Off.time_mean <= datum.min_wall_sec ? 'Too fast' : datum.Off.time_mean >= datum.max_wall_sec ? 'Too slow' : 'Selected'",
+      "calculate": "!datum.file_sha256 ? 'No replay' : !datum.baseline_complete ? 'Baseline unresolved' : datum.Off.time_mean <= min_wall_sec ? 'Too fast' : datum.Off.time_mean >= max_wall_sec ? 'Too slow' : 'Selected'",
       "as": "cohort_status"
     },
     {"calculate": "datum.cohort_status === 'Selected' ? 1 : 0", "as": "selected"},
@@ -493,10 +489,9 @@
           ],
           "title": {
             "text": "Coverage by family",
-            "subtitle": [
-              "Time / Memory: valid ratios, Record / Record + extract. Selected is shared.",
-              "Too fast: ≤0.1 s; too slow: ≥30 s. Unresolved: incomplete or failed baseline."
-            ],
+            "subtitle": {
+              "expr": "['Time / Memory: valid ratios, Record / Record + extract. Selected is shared.', 'Too fast: ≤' + min_wall_sec + ' s; too slow: ≥' + max_wall_sec + ' s. Unresolved: incomplete or failed baseline.']"
+            },
             "anchor": "start",
             "fontSize": 13,
             "subtitleFontSize": 11
@@ -597,6 +592,8 @@
     "title": {"anchor": "start", "fontSize": 18, "subtitleFontSize": 11, "subtitlePadding": 7, "subtitleLineHeight": 15}
   },
   "params": [
+    {"name": "min_wall_sec", "value": 0.1},
+    {"name": "max_wall_sec", "value": 30},
     {"name": "target_label", "value": "figures"},
     {
       "name": "endpoints",

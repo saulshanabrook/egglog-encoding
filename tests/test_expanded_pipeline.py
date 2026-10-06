@@ -42,7 +42,7 @@ def pipeline_env(tmp_path: Path) -> dict[str, str]:
             lock = root / 'collecting'
             if name == 'bench.py':
                 assert args[0] != 'export'
-                stage = 'pilot' if '--baseline-only' in args else 'collect'
+                stage = 'collect'
                 assert os.environ['EGGLOG_BENCH_MEMORY_GUARD'] == '1'
             elif name == 'uv' and 'benchmarking.figure_inventory' in args:
                 stage = 'inventory'
@@ -69,8 +69,6 @@ def pipeline_env(tmp_path: Path) -> dict[str, str]:
                 os.replace(output.name, path)
 
             if stage == 'collect':
-                if os.environ.get('PIPELINE_TEST_EXPLICIT_PILOT') == '1':
-                    assert (root / 'pilot-finished').exists()
                 lock.mkdir()  # Fail concurrent collectors; do not serialize them in this stub.
                 record('collect-start')
             else:
@@ -85,10 +83,6 @@ def pipeline_env(tmp_path: Path) -> dict[str, str]:
                 write_changed(root / '.reports-grouped.json', (root / '.reports.jsonl').read_text())
                 record('collect-end')
                 lock.rmdir()
-            elif stage == 'pilot':
-                time.sleep(0.05)
-                (root / 'pilot-finished').touch()
-                raise SystemExit(int(os.environ.get('PIPELINE_TEST_PILOT_EXIT', '0')))
             elif stage == 'inventory':
                 inventory = json.loads((root / 'inventory-source.json').read_text())
                 inventory['timeout_sec'] = int(args[args.index('--timeout-sec') + 1])
@@ -188,16 +182,12 @@ def test_cached_targets_print_paths_without_collection(
         assert str(tmp_path / image) in result.stdout
 
 
-@pytest.mark.parametrize("pilot_exit", [0, 1, 2])
 @pytest.mark.parametrize("timeout_override", [None, 480])
-@pytest.mark.parametrize("explicit_pilot", [False, True])
 @pytest.mark.parametrize("recording_only", [False, True])
 def test_parallel_expanded_pipeline_orders_baselines_proofs_and_figures(
     tmp_path: Path,
     pipeline_env: dict[str, str],
-    pilot_exit: int,
     timeout_override: int | None,
-    explicit_pilot: bool,
     recording_only: bool,
 ) -> None:
     result = subprocess.run(
@@ -211,36 +201,19 @@ def test_parallel_expanded_pipeline_orders_baselines_proofs_and_figures(
                 else ["figures-expanded", "figures-data", "figures-expanded-data", "expanded-bench"]
             ),
             "expanded-bench-recording",
-            *(["expanded-pilot"] if explicit_pilot else []),
         ],
         cwd=tmp_path,
-        env={
-            **pipeline_env,
-            "PIPELINE_TEST_PILOT_EXIT": str(pilot_exit),
-            "PIPELINE_TEST_EXPLICIT_PILOT": str(int(explicit_pilot)),
-        },
+        env=pipeline_env,
         capture_output=True,
         text=True,
         timeout=15,
     )
     events = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text().splitlines()]
-    if explicit_pilot:
-        assert events[0][0] == "pilot"
-        args = parse_benchmark_args(events[0][1:])
-        assert args.baseline_only and args.baseline_window
-        assert args.suite == ["expanded"] and args.treatment == "proof-extraction" and args.compare_treatment == "off"
-        assert args.target == "figures=." and args.rounds == 10 and args.timeout_sec == (timeout_override or 300)
-        if pilot_exit != 0:
-            assert result.returncode != 0
-            assert len(events) == 1
-            return
-        events = events[1:]
     assert result.returncode == 0, result.stderr
     comparisons = [("expanded", "proofs", "off")]
     if not recording_only:
         comparisons += [
             ("expanded", "proof-extraction", "off"),
-            ("math-11", "proof-extraction", "off"),
             ("math-11", "egg-proof-extraction", "egg"),
         ]
     for index, (suite, candidate, baseline) in enumerate(comparisons):
@@ -248,7 +221,6 @@ def test_parallel_expanded_pipeline_orders_baselines_proofs_and_figures(
         assert start[0] == "collect-start" and end[0] == "collect-end" and start[1:] == end[1:]
         args = parse_benchmark_args(start[1:])
         assert args.suite == [suite] and args.treatment == candidate and args.compare_treatment == baseline
-        assert args.baseline_window == (suite == "expanded") and not args.baseline_only
         assert args.target == "figures=." and args.rounds == 10 and args.timeout_sec == (timeout_override or 300)
     remaining = events[2 * len(comparisons) :]
     assert (tmp_path / ".reports-grouped.json").read_text() == (tmp_path / ".reports.jsonl").read_text()
@@ -276,7 +248,7 @@ def test_failed_pipeline_stage_blocks_downstream_work(
     events = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text().splitlines()]
     assert [event[0] for event in events] == {
         "collect": ["collect-start"],
-        "inventory": [*(["collect-start", "collect-end"] * 4), "inventory"],
+        "inventory": [*(["collect-start", "collect-end"] * 3), "inventory"],
     }[failure]
     assert not list((tmp_path / "figures/expanded").glob("*.svg"))
     assert not list((tmp_path / "figures/expanded").glob("*.png"))
@@ -291,7 +263,7 @@ def test_data_targets_collect_then_refresh_inventory_without_rendering(
     )
     assert result.returncode == 0, result.stderr
     events = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text().splitlines()]
-    assert [event[0] for event in events] == [*(["collect-start", "collect-end"] * 4), "inventory"]
+    assert [event[0] for event in events] == [*(["collect-start", "collect-end"] * 3), "inventory"]
     assert (tmp_path / ".reports-grouped.json").read_text() == (tmp_path / ".reports.jsonl").read_text()
     assert not list((tmp_path / "figures/expanded").glob("*.svg"))
     assert not list((tmp_path / "figures/expanded").glob("*.png"))

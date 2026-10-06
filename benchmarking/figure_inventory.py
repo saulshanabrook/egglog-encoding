@@ -9,7 +9,6 @@ import tempfile
 from pathlib import Path
 from typing import TypedDict
 
-from .baseline_selection import MAX_WALL_SEC, MIN_WALL_SEC
 from .suites import SAFETY_POLICY, VALIDATION_POLICY, load_manifest
 
 
@@ -41,8 +40,6 @@ class SourceExclusion(TypedDict):
 class FigureInventory(TypedDict):
     id: int
     timeout_sec: int
-    min_wall_sec: float
-    max_wall_sec: float
     expected_cases: int
     workloads: list[FigureWorkload]
     exclusions: list[SourceExclusion]
@@ -126,8 +123,6 @@ def figure_inventory(root: Path, timeout_sec: int = 300) -> FigureInventory:
     return {
         "id": 1,
         "timeout_sec": timeout_sec,
-        "min_wall_sec": MIN_WALL_SEC,
-        "max_wall_sec": MAX_WALL_SEC,
         "expected_cases": len(cases),
         "workloads": list(workloads.values()),
         "exclusions": exclusions,

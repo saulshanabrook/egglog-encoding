@@ -4,7 +4,6 @@ import {readFile} from 'node:fs/promises';
 import {createRequire} from 'node:module';
 import {delimiter, join} from 'node:path';
 import test from 'node:test';
-import {spawnSync} from 'node:child_process';
 
 const cli = process.env.PATH.split(delimiter).map(path => join(path, 'vl2svg')).find(existsSync);
 assert.ok(cli, 'Run make figures-expanded-test');
@@ -25,15 +24,16 @@ function group(id, treatment, seconds, changes = {}) {
     error_message: null, ...changes,
   }))};
 }
-async function evaluate(chart, workloads, groups) {
+async function evaluate(chart, workloads, groups, parameters = {}) {
   const spec = JSON.parse(await readFile(new URL(`expanded/${chart}.vl.json`, import.meta.url), 'utf8'));
   assert.equal(spec.data.url, '../../.reports-grouped.json');
+  for (const param of spec.params ?? []) if (param.name in parameters) param.value = parameters[param.name];
   const warnings = [];
   const logger = vega.logger(vega.Warn, undefined, (...args) => warnings.push(args));
   const runtime = compile(spec, {logger}).spec;
   const loader = vega.loader();
   loader.load = async url => JSON.stringify(url.includes('figure-inventory')
-    ? {id: 1, timeout_sec: 300, min_wall_sec: 0.1, max_wall_sec: 30, workloads, exclusions: []}
+    ? {id: 1, timeout_sec: 300, workloads, exclusions: []}
     : {grouped_schema_version: 1, report_schema_version: 5, groups});
   const view = new vega.View(vega.parse(runtime), {renderer: 'none', loader, logger});
   try {
@@ -129,24 +129,23 @@ test('Ties share the cumulative rank and thresholds use the complete selected de
   assert.ok(labels.every(m => m.x >= 0 && m.x <= 300 && m.y >= 0 && m.y <= 185));
 });
 
-// The collector and Vega own their respective calculations; use identical rows
-// to guard their shared population policy, including former window boundaries.
-test('Vega cohort agrees with Python for all matching samples and failures', async () => {
+test('Vega alone selects the cohort from all matching samples and preserves dropped counts', async () => {
   const cases = [
     ['one', [1]], ['ten', Array(10).fill(1)], ['thirty', Array(30).fill(1)],
-    ['boundary-fast', [.1]], ['boundary-slow', [30]], ['empty', []],
+    ['boundary-fast', [.1]], ['boundary-slow', [30]], ['empty', []], ['invalid', [null]],
     ['all-not-latest-ten', [...Array(20).fill(.05), ...Array(10).fill(.15)]],
     ['old-failure', Array(35).fill(1)],
   ];
   const baselines = cases.map(([id, values]) => group(id, 'off', values));
   baselines.at(-1).samples[0].status = 'failure';
-  const reference = spawnSync('uv', ['run', '--locked', 'python', '-c',
-    'import json,sys; from benchmarking.baseline_selection import classify_baseline; ' +
-    'print(json.dumps([classify_baseline(rows).status for rows in json.load(sys.stdin)]))'],
-    {cwd: new URL('../', import.meta.url), input: JSON.stringify(baselines.map(g => g.samples)), encoding: 'utf8'});
-  assert.equal(reference.status, 0, reference.stderr);
-  const expected = JSON.parse(reference.stdout).flatMap((status, i) => status === 'selected' ? [cases[i][0]] : []);
   const groups = [...baselines, ...cases.map(([id]) => group(id, 'proof-extraction', [2]))];
   const {marks} = await evaluate('proof-overhead-cdf', cases.map(([id]) => workload(id)), groups);
-  assert.deepEqual(points(marks).map(m => m.datum.workload_id).sort(), expected.sort());
+  assert.deepEqual(points(marks).map(m => m.datum.workload_id).sort(), ['one', 'ten', 'thirty']);
+  const coverage = marks.find(m => m.datum.manifest_n === cases.length).datum;
+  assert.deepEqual([coverage.cohort_n, coverage.too_fast_n, coverage.too_slow_n, coverage.unresolved_n], [3, 2, 1, 3]);
+  const changed = await evaluate('proof-overhead-cdf', cases.map(([id]) => workload(id)), groups,
+    {min_wall_sec: 0.05, max_wall_sec: 31});
+  assert.deepEqual(points(changed.marks).map(m => m.datum.workload_id).sort(),
+    ['all-not-latest-ten', 'boundary-fast', 'boundary-slow', 'one', 'ten', 'thirty']);
+  assert.match(changed.svg, /Too fast: ≤0.05 s; too slow: ≥31 s/);
 });

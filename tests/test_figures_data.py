@@ -9,7 +9,7 @@ from benchmarking.suites import SAFETY_POLICY, VALIDATION_POLICY
 from .corpus_fixtures import prepare_corpus
 
 
-def test_metadata_retains_current_hashes_aliases_blockers_and_bounds_without_opening_inputs(tmp_path: Path) -> None:
+def test_metadata_retains_current_hashes_aliases_and_blockers_without_opening_inputs(tmp_path: Path) -> None:
     path = prepare_corpus(tmp_path)
     raw = json.loads(path.read_text())
     raw["cases"].extend(
@@ -44,7 +44,7 @@ def test_metadata_retains_current_hashes_aliases_blockers_and_bounds_without_ope
     (path.parent / raw["workloads"][0]["file"]).unlink()
     inventory = figure_inventory(tmp_path)
     assert inventory["expected_cases"] == 4
-    assert inventory["min_wall_sec"] == 0.1 and inventory["max_wall_sec"] == 30
+    assert "min_wall_sec" not in inventory and "max_wall_sec" not in inventory
     assert len(inventory["workloads"]) == 2
     workload = inventory["workloads"][0]
     assert workload["file_sha256"] == raw["workloads"][0]["sha256"]

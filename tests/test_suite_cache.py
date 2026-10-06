@@ -120,6 +120,7 @@ def test_fixed_math_suite_plans_all_four_endpoints_and_reuses_off_observations(t
     )
     suite = suites.resolve_suite("math-11", tmp_path)
     assert len(suite.files) == 1 and suite.files[0].sha256 == "sha256:" + math_workloads.LEGACY_SHA256
+    assert suites.resolve_suite("expanded", tmp_path).files == suite.files
     target = replace(
         make_target(),
         engine_binaries=(

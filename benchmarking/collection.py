@@ -140,13 +140,13 @@ def build_collection_plan(
     selected = store.selected_statuses_for_keys(
         tuple(request[2] for request in requests), None if suite_mode else rounds
     )
-    stopped = set(blocked_files)
-    if suite_mode and not force_run:
-        stopped.update(file for file, _treatment, key in requests if store.latest_failure(key))
     runs: list[BenchmarkRunPlan] = []
     for file_spec, treatment, cache_key in requests:
         cached = selected[cache_key]
-        missing = 0 if file_spec in stopped else rounds if force_run else max(0, rounds - len(cached))
+        stopped = file_spec in blocked_files or (
+            suite_mode and not force_run and store.latest_failure(cache_key) is not None
+        )
+        missing = 0 if stopped else rounds if force_run else max(0, rounds - len(cached))
         runs.append(
             BenchmarkRunPlan(
                 file=file_spec,
@@ -177,8 +177,8 @@ def resolve_targets(
     Materializing all requests before building prevents distinct aliases for the
     same checkout from rebuilding the same executable. Each alias retains its
     own request and row provenance while sharing the executable path and hash.
-    Suites defer label collection until admission selects workloads for these
-    binary identities; callers must then resolve any incomplete cached targets.
+    Suites defer label builds until exact cached failures and safety deferrals
+    are known; callers must then resolve any incomplete cached targets.
     """
 
     resolved: dict[TargetRequest, ResolvedTarget] = {}
@@ -327,9 +327,12 @@ def label_has_enough_rows(
     )
     selected = store.selected_statuses_for_keys(keys, rounds)
     stopped = {(file.sha256, file.fact_directory_sha256) for file in blocked_files}
-    if suite_mode:
-        stopped.update((key.file_sha256, key.fact_directory_sha256) for key in keys if store.latest_failure(key))
-    return all((key.file_sha256, key.fact_directory_sha256) in stopped or len(selected[key]) >= rounds for key in keys)
+    return all(
+        (key.file_sha256, key.fact_directory_sha256) in stopped
+        or (suite_mode and store.latest_failure(key) is not None)
+        or len(selected[key]) >= rounds
+        for key in keys
+    )
 
 
 def run_process(
@@ -532,7 +535,6 @@ def _collection_eta(
     plan: CollectionPlan,
     timeout_sec: int,
     remaining: dict[BenchmarkRunPlan, int],
-    stopped: set[FileSpec],
 ) -> str:
     """Estimate remaining executable time from each exact endpoint's recent runs.
 
@@ -542,7 +544,7 @@ def _collection_eta(
 
     seconds = 0.0
     for run, count in remaining.items():
-        if not count or run.file in stopped:
+        if not count:
             continue
         key = CacheKey.for_endpoint(
             BenchmarkEndpoint(plan.target, run.treatment, run.disequality_encoding), run.file, timeout_sec
@@ -566,7 +568,6 @@ def collect_rows(
     plan: CollectionPlan,
     timeout_sec: int,
     console: Console,
-    stopped_files: set[FileSpec] | None = None,
 ) -> None:
     """Run and append every missing observation after caller preflight."""
 
@@ -577,9 +578,8 @@ def collect_rows(
     max_deficit = max(run.missing_observations for run in plan.runs)
     completed_observations = 0
     result_counts: Counter[Status] = Counter()
-    stopped = stopped_files if stopped_files is not None else set()
     remaining = {run: run.missing_observations for run in plan.runs if run.missing_observations}
-    eta = _collection_eta(store, plan, timeout_sec, remaining, stopped)
+    eta = _collection_eta(store, plan, timeout_sec, remaining)
     console.print(Text(f"{target.display_label}: {eta} (remaining executable time)"))
 
     with Progress(
@@ -609,7 +609,7 @@ def collect_rows(
         )
         for round_index in range(max_deficit):
             for run in plan.runs:
-                if round_index >= run.missing_observations or run.file in stopped:
+                if round_index >= run.missing_observations or not remaining[run]:
                     continue
                 observation_number = completed_observations + 1
                 label = collection_label(
@@ -659,8 +659,8 @@ def collect_rows(
                 remaining[run] -= 1
                 result_counts[observation.result.status] += 1
                 if plan.stop_on_failure and observation.result.status != "success":
-                    stopped.add(run.file)
-                eta = _collection_eta(store, plan, timeout_sec, remaining, stopped)
+                    remaining[run] = 0
+                eta = _collection_eta(store, plan, timeout_sec, remaining)
                 progress.update(
                     process_task,
                     advance=1,

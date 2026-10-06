@@ -918,8 +918,8 @@ def test_collection_eta_weights_remaining_work_by_endpoint_and_ignores_failures(
             )
         )
     # 2 * mean(1, 3) + 3 * mean(100, 200), not a throughput average across runs.
-    assert collection._collection_eta(store, plan, 120, {off: 2, proofs: 3}, set()) == "ETA ~0:07:34"
-    assert collection._collection_eta(store, plan, 120, {off: 0, proofs: 0}, set()) == "ETA ~0:00:00"
+    assert collection._collection_eta(store, plan, 120, {off: 2, proofs: 3}) == "ETA ~0:07:34"
+    assert collection._collection_eta(store, plan, 120, {off: 0, proofs: 0}) == "ETA ~0:00:00"
 
 
 @pytest.mark.parametrize("mismatch", ["binary", "file", "facts", "treatment", "timeout", "encoding"])
@@ -942,9 +942,9 @@ def test_collection_eta_waits_for_matching_successful_measurements(tmp_path: Pat
     else:
         record["timeout_sec"] = 300
     store.append(record)
-    assert collection._collection_eta(store, plan, 120, {run: 10}, set()) == "ETA pending"
+    assert collection._collection_eta(store, plan, 120, {run: 10}) == "ETA pending"
     # A terminal failure removes this workload's remaining repetitions from the ETA.
-    assert collection._collection_eta(store, plan, 120, {run: 10}, {run.file}) == "ETA ~0:00:00"
+    assert collection._collection_eta(store, plan, 120, {run: 0}) == "ETA ~0:00:00"
 
 
 def test_resource_guard_failure_is_retained_before_collection_halts(
@@ -1005,3 +1005,82 @@ def test_suite_reduced_sample_retains_old_failure_until_explicit_retry(tmp_path:
     assert store.latest_failure(CacheKey.for_endpoint(proof, FILE_SPEC, 120)) is not None
     retry = collection.build_collection_plan(store, target, (proof,), (FILE_SPEC,), 10, 120, True, True)
     assert retry.total_missing_observations == 10
+
+
+@pytest.mark.parametrize("status", ["failure", "timed-out"])
+def test_suite_cached_failure_only_stops_matching_endpoint(tmp_path: Path, status: models.Status) -> None:
+    target = make_target()
+    endpoints = (
+        endpoint(target, "off"),
+        endpoint(target, "proofs"),
+        endpoint(target, "proof-extraction"),
+        models.BenchmarkEndpoint(target, "proof-extraction", "ee"),
+    )
+    store = ReportStore(tmp_path / "report.jsonl")
+    store.append(make_record(0, started_at="2026-01-01T00:00:00Z", treatment="proof-extraction", status=status))
+    store.append(make_record(1, started_at="2026-01-01T00:00:01Z", treatment="off"))
+    plan = collection.build_collection_plan(store, target, endpoints, (FILE_SPEC,), 3, 120, False, True)
+    assert [run.missing_observations for run in plan.runs] == [2, 3, 0, 3]
+    requests = tuple(models.EndpointRequest(target.request, e.treatment, e.disequality_encoding) for e in endpoints)
+    assert not collection.label_has_enough_rows(store, target, requests, (FILE_SPEC,), 3, 120, True)
+    assert collection.label_has_enough_rows(store, target, requests[2:3], (FILE_SPEC,), 3, 120, True)
+    forced = collection.build_collection_plan(store, target, endpoints, (FILE_SPEC,), 3, 120, True, True)
+    assert [run.missing_observations for run in forced.runs] == [3, 3, 3, 3]
+    deferred = collection.build_collection_plan(
+        store, target, endpoints, (FILE_SPEC,), 3, 120, True, True, (FILE_SPEC,)
+    )
+    assert deferred.total_missing_observations == 0
+
+
+def test_suite_fresh_failure_only_stops_its_workload_treatment_and_encoding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, executable_target: models.ResolvedTarget
+) -> None:
+    target = executable_target
+    files = (FILE_SPEC, replace(FILE_SPEC, sha256="sha256:other"))
+    endpoints = (
+        endpoint(target, "proof-extraction"),
+        endpoint(target, "off"),
+        endpoint(target, "proofs"),
+        models.BenchmarkEndpoint(target, "proof-extraction", "ee"),
+    )
+    store = ReportStore(tmp_path / "report.jsonl")
+    plan = collection.build_collection_plan(store, target, endpoints, files, 3, 120, False, True)
+
+    def measured(
+        _binary: Path,
+        _checkout: Path,
+        file: models.FileSpec,
+        treatment: models.Treatment,
+        _timeout: int,
+        encoding: models.DisequalityEncoding,
+    ) -> collection.ProcessObservation:
+        failed = file == FILE_SPEC and treatment == "proof-extraction" and encoding == "nee"
+        return collection.ProcessObservation(
+            processes.TimingResult(
+                "failure" if failed else "success",
+                processes.TimingRow(0.2, 1000),
+                processes.ErrorRow("extraction failed", exit_code=1) if failed else None,
+            ),
+            None if failed else make_timing_summary(),
+        )
+
+    monkeypatch.setattr(collection, "run_process", measured)
+    collection.collect_rows(store, plan, 120, Console(file=io.StringIO()))
+    assert [len(store.latest_records(CacheKey.for_endpoint(e, f, 120))) for f in files for e in endpoints] == [
+        1,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+    ]
+    assert (
+        collection.build_collection_plan(
+            store, target, endpoints, files, 3, 120, False, True
+        ).total_missing_observations
+        == 0
+    )
+    requests = tuple(models.EndpointRequest(target.request, e.treatment, e.disequality_encoding) for e in endpoints)
+    assert collection.label_has_enough_rows(store, target, requests, files, 3, 120, True)
