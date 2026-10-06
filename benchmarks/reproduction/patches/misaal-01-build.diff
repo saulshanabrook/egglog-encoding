@@ -1,0 +1,92 @@
+--- a/frontends/halide/dependencies/llvm/CMakeLists.txt
++++ b/frontends/halide/dependencies/llvm/CMakeLists.txt
+@@ -62,7 +62,7 @@
+ 
+     cmake_dependent_option(${OPTION} "Include ${comp} target" ON
+                            "${comp} IN_LIST LLVM_TARGETS_TO_BUILD" OFF)
+-    if (${OPTION} OR Halide_SHARED_LLVM)
++    if (${OPTION})
+         message(STATUS "Enabling ${comp} backend")
+         list(APPEND Halide_LLVM_DEFS $<BUILD_INTERFACE:${DEFINE}>)
+         list(APPEND active_components ${comp})
+--- a/frontends/halide/src/CMakeLists.txt
++++ b/frontends/halide/src/CMakeLists.txt
+@@ -241,6 +241,7 @@
+     HexagonOffload.cpp
+     HexagonOptimize.cpp
+     HydrideCodeGen.cpp
++    misaal.cpp
+     ImageParam.cpp
+     InferArguments.cpp
+     InjectHostDevBufferCopies.cpp
+--- a/frontends/halide/src/CodeGen_LLVM.cpp
++++ b/frontends/halide/src/CodeGen_LLVM.cpp
+@@ -369,8 +369,11 @@
+ 
+     if (!CF) return;
+ 
++    internal_assert(!CF->isVarArg() && CI->arg_size() == CF->arg_size())
++        << "Hydride wrapper call must match the fixed formal argument count";
++
+     // Map Arguments in the VMAP
+-    for (unsigned i = 0; i < CI->getNumOperands(); i++) {
++    for (unsigned i = 0; i < CI->arg_size(); i++) {
+         llvm::Value *ActualParam = CI->getArgOperand(i);
+ 
+         llvm::Value *FormalParam = llvm::dyn_cast<llvm::Argument>((CF->arg_begin() + i));
+--- a/lib/patterns/ARM.py
++++ b/lib/patterns/ARM.py
+@@ -39,8 +39,9 @@
+ 
+ 
+ 
+-pickle_file_name = MISAAL_ROOT+ "/lib/patterns/ARM.pickle"
+-abstract_pickle_file_name = MISAAL_ROOT+ "/lib/patterns/ARM_abstract.pickle"
++pattern_cache_dir = os.getenv("MISAAL_PATTERN_CACHE_DIR", os.path.join(MISAAL_ROOT, "lib", "patterns"))
++pickle_file_name = os.path.join(pattern_cache_dir, "ARM.pickle")
++abstract_pickle_file_name = os.path.join(pattern_cache_dir, "ARM_abstract.pickle")
+ 
+ arm_patterns = []
+ 
+--- a/lib/patterns/HVX.py
++++ b/lib/patterns/HVX.py
+@@ -50,8 +50,9 @@
+ 
+ 
+ 
+-pickle_file_name = f"{MISAAL_ROOT}/lib/patterns/hvx.pickle"
+-abstract_pickle_file_name = f"{MISAAL_ROOT}/lib/patterns/hvx_abstract.pickle"
++pattern_cache_dir = os.getenv("MISAAL_PATTERN_CACHE_DIR", os.path.join(MISAAL_ROOT, "lib", "patterns"))
++pickle_file_name = os.path.join(pattern_cache_dir, "hvx.pickle")
++abstract_pickle_file_name = os.path.join(pattern_cache_dir, "hvx_abstract.pickle")
+ 
+ HVX_patterns = []
+ 
+--- a/lib/patterns/Halide.py
++++ b/lib/patterns/Halide.py
+@@ -33,8 +33,9 @@
+     with open(tf, "r") as ReadFile:
+         props.append(json.load(ReadFile))
+ 
+-pickle_file_name = MISAAL_ROOT+"/lib/patterns/halide.pickle"
+-abstract_pickle_file_name = MISAAL_ROOT+"/lib/patterns/halide_abstract.pickle"
++pattern_cache_dir = os.getenv("MISAAL_PATTERN_CACHE_DIR", os.path.join(MISAAL_ROOT, "lib", "patterns"))
++pickle_file_name = os.path.join(pattern_cache_dir, "halide.pickle")
++abstract_pickle_file_name = os.path.join(pattern_cache_dir, "halide_abstract.pickle")
+ 
+ Halide_patterns = []
+ 
+--- a/lib/patterns/x86.py
++++ b/lib/patterns/x86.py
+@@ -41,8 +41,9 @@
+ 
+ 
+ 
+-pickle_file_name = MISAAL_ROOT+ "/lib/patterns/x86.pickle"
+-abstract_pickle_file_name = MISAAL_ROOT+ "/lib/patterns/x86_abstract.pickle"
++pattern_cache_dir = os.getenv("MISAAL_PATTERN_CACHE_DIR", os.path.join(MISAAL_ROOT, "lib", "patterns"))
++pickle_file_name = os.path.join(pattern_cache_dir, "x86.pickle")
++abstract_pickle_file_name = os.path.join(pattern_cache_dir, "x86_abstract.pickle")
+ 
+ 
+ x86_patterns = []

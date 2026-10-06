@@ -34,229 +34,32 @@ SOURCE_SHA256 = {
     "lib/compiler/HydrideCompiler.py": "d1ff08a7349e8956da3f33d17e18ac149f03ac51064fcfa0b6ad40205cb04368",
     "lib/compiler/EggLogCompiler.py": "87a96401b12291e184cf7eb65efe1f481bccd6faac514c56aef0502f1cc7c479",
     "lib/compiler/Compiler.py": "d901a610725def31cfe6f41ef0d44f23d9e0409b78b7c22c80666140b783d7da",
+    "lib/patterns/PatternUtils.py": "e89b1a4c9dda901f2416100dbc6b5e47554264e00eb755c52c669f48b54eb8d5",
+    "lib/utils/DSLInstructionUtils.py": "e385eaa17a81bbcb8106ad33cbbe1ac2ed4307879b0f366f3b72219744b43bdb",
+    "targets/halide/axioms.egg": "5c710032858d34440ad94979c8788bb96967d1d71e93e55f3ea2bad2184ab4c1",
 }
 EXPORT_SOURCE_SHA256 = {
     **SOURCE_SHA256,
-    "frontends/halide/src/MisaalExport.h": "d9163d565ae657cfad0679ab02c1d6fae1b2b8d79aff96358d6705f11061111f",
     "frontends/halide/src/Module.cpp": "7a4cef8dc3ce9d56f418e6bfe609e8975e1850d7661642a883a2497dcb26b517",
     "frontends/halide/src/CodeGen_LLVM.cpp": "2fcddb595e52f3cfd2e1280389c804eda49b7576a6b83eb7052d643a8af0dc7b",
     "frontends/halide/src/CodeGen_Hexagon.cpp": "39eb6b45e0778dd301f849a05a7df06c661c5e567544b3a912e1f9c93884d861",
     "frontends/halide/src/misaal.cpp": "96d0fa88a670e578696bd74a99a1eb77e5bd7505d61e34fa38d2ced187b0a85f",
+    "lib/compiler/EggLogCompiler.py": "5dc5c1be8df36646f7c7cbb63b9758eb217604bfdd98b4baeb4ba15ec3952b83",
+    "lib/patterns/PatternUtils.py": "0ca26f6a358e5fcc4819e586aba5699b4ee02120bf19ea3a776d7399fd68dcde",
+    "lib/utils/DSLInstructionUtils.py": "82ecf858a2aaa68a9885f21d01c80887bd6e2c56ef9b7f618aad2f7af193a477",
+    "targets/halide/axioms.egg": "e9d5c2f49af2c58df6e15f84372c79c0a1c9b92f1f0edbd285d5b92941d77e5f",
+    "frontends/halide/src/MisaalExport.h": "d9163d565ae657cfad0679ab02c1d6fae1b2b8d79aff96358d6705f11061111f",
 }
 
+PATCHES = tuple(
+    ROOT / "benchmarks/reproduction/patches" / name
+    for name in (
+        "misaal-02-export.diff",
+        "misaal-03-patterns.diff",
+        "misaal-04-capture.diff",
+    )
+)
 HEADER_PATH = "frontends/halide/src/MisaalExport.h"
-# C++17 inline state has one process-wide definition across the patched TUs.
-# Text fields are UTF-8 byte hex; the Python reader owns strict ledger validation.
-HEADER = r"""#ifndef MISAAL_EXPORT_H
-#define MISAAL_EXPORT_H
-#include <cstdlib>
-#include <cstring>
-#include <fstream>
-#include <stdexcept>
-#include <string>
-#include <vector>
-
-namespace misaal_export {
-inline bool enabled() {
-    const char *mode = std::getenv("MISAAL_EXPORT_MODE");
-    if (!mode) return false;
-    if (std::strcmp(mode, "egglog-only-v1") != 0)
-        throw std::runtime_error("Invalid MISAAL export mode");
-    const char *path = std::getenv("MISAAL_EXPORT_EVENTS");
-    if (!path || path[0] != '/')
-        throw std::runtime_error("MISAAL export requires an absolute event path");
-    return true;
-}
-inline std::string hex(const std::string &value) {
-    const char *digits = "0123456789abcdef";
-    std::string result;
-    for (unsigned char c : value) {
-        result += digits[c >> 4];
-        result += digits[c & 15];
-    }
-    return result;
-}
-struct Ledger {
-    std::ofstream file;
-    size_t seq = 0, modules = 0, functions = 0, children = 0;
-    std::vector<size_t> stack;
-    long function = -1, child = -1;
-    void emit(const std::string &event, const std::string &fields) {
-        if (!file.is_open()) {
-            const char *path = std::getenv("MISAAL_EXPORT_EVENTS");
-            if (!path || std::ifstream(path).good())
-                throw std::runtime_error("MISAAL event path must be fresh");
-            file.open(path, std::ios::out);
-        }
-        file << "{\"schema\":\"misaal-export-v1\",\"seq\":" << seq++
-             << ",\"event\":\"" << event << "\"" << fields << "}\n";
-        file.flush();
-        if (!file.good()) throw std::runtime_error("MISAAL event write failed");
-    }
-    void begin_module(const std::string &name, const std::string &target,
-                      size_t function_count, size_t submodule_count) {
-        if (function != -1 || child != -1)
-            throw std::runtime_error("Overlapping MISAAL module export");
-        const size_t id = modules++;
-        emit("module_begin", ",\"module_id\":" + std::to_string(id) +
-             ",\"parent_module_id\":" + (stack.empty() ? "null" : std::to_string(stack.back())) +
-             ",\"name_hex\":\"" + hex(name) + "\",\"target_hex\":\"" + hex(target) +
-             "\",\"function_count\":" + std::to_string(function_count) +
-             ",\"submodule_count\":" + std::to_string(submodule_count));
-        stack.push_back(id);
-    }
-    void end_module() {
-        if (stack.empty() || function != -1 || child != -1)
-            throw std::runtime_error("Unfinished MISAAL module export");
-        const size_t id = stack.back();
-        emit("module_end", ",\"module_id\":" + std::to_string(id));
-        stack.pop_back();
-        if (stack.empty())
-            emit("export_complete", ",\"root_module_id\":" + std::to_string(id) +
-                 ",\"module_count\":" + std::to_string(modules) +
-                 ",\"function_count\":" + std::to_string(functions) +
-                 ",\"child_count\":" + std::to_string(children));
-    }
-    void begin_function(const std::string &name) {
-        if (stack.empty() || function != -1 || child != -1)
-            throw std::runtime_error("Overlapping MISAAL function export");
-        function = functions++;
-        emit("function_begin", ",\"module_id\":" + std::to_string(stack.back()) +
-             ",\"function_id\":" + std::to_string(function) + ",\"name_hex\":\"" + hex(name) + "\"");
-    }
-    void end_function() {
-        if (stack.empty() || function == -1 || child != -1)
-            throw std::runtime_error("Unfinished MISAAL function export");
-        emit("function_end", ",\"module_id\":" + std::to_string(stack.back()) +
-             ",\"function_id\":" + std::to_string(function));
-        function = -1;
-    }
-    void begin_child(const std::string &script) {
-        if (stack.empty() || function == -1 || child != -1)
-            throw std::runtime_error("MISAAL child outside source function");
-        child = children++;
-        emit("child_begin", ",\"module_id\":" + std::to_string(stack.back()) +
-             ",\"function_id\":" + std::to_string(function) +
-             ",\"child_id\":" + std::to_string(child) + ",\"script_hex\":\"" + hex(script) + "\"");
-    }
-    void end_child(int status) {
-        if (status != 0 || stack.empty() || function == -1 || child == -1)
-            throw std::runtime_error("MISAAL source child failed");
-        emit("child_end", ",\"module_id\":" + std::to_string(stack.back()) +
-             ",\"function_id\":" + std::to_string(function) +
-             ",\"child_id\":" + std::to_string(child) + ",\"returncode\":0");
-        child = -1;
-    }
-};
-inline Ledger ledger;
-}  // namespace misaal_export
-#endif
-"""
-
-
-def patched_sources(source: Path) -> dict[str, str]:
-    """Validate the complete fixed boundary before deriving any source edits."""
-    for relative, digest in SOURCE_SHA256.items():
-        path = source / relative
-        if not path.resolve().is_relative_to(source.resolve()) or sha256_file(path) != digest:
-            raise ValueError(f"MISAAL export source identity changed: {relative}")
-    if (source / HEADER_PATH).exists():
-        raise ValueError("MISAAL export header already exists")
-    edits: dict[str, list[tuple[str, str]]] = {
-        "frontends/halide/src/Module.cpp": [
-            ('#include "Module.h"', '#include "Module.h"\n#include "MisaalExport.h"\n#include "CodeGen_LLVM.h"'),
-            (
-                "void Module::compile(const std::map<OutputFileType, std::string> &output_files) const {\n",
-                """void Module::compile(const std::map<OutputFileType, std::string> &output_files) const {
-    if (misaal_export::enabled()) {
-        misaal_export::ledger.begin_module(name(), target().to_string(), functions().size(), submodules().size());
-        for (const auto &submodule : submodules()) {
-            submodule.compile({});
-        }
-        llvm::LLVMContext context;
-        auto codegen = Internal::CodeGen_LLVM::new_for_target(target(), context);
-        codegen->compile(*this);
-        misaal_export::ledger.end_module();
-        return;
-    }
-""",
-            ),
-        ],
-        "frontends/halide/src/CodeGen_LLVM.cpp": [
-            ('#include "CodeGen_LLVM.h"', '#include "CodeGen_LLVM.h"\n#include "MisaalExport.h"'),
-            (
-                "std::unique_ptr<llvm::Module> CodeGen_LLVM::compile(const Module &input) {\n",
-                """std::unique_ptr<llvm::Module> CodeGen_LLVM::compile(const Module &input) {
-    if (misaal_export::enabled()) {
-        for (const auto &f : input.functions()) {
-            const auto names = get_mangled_names(f, get_target());
-            misaal_export::ledger.begin_function(f.name);
-            run_with_large_stack([&]() {
-                compile_func(f, names.simple_name, names.extern_name);
-            });
-            misaal_export::ledger.end_function();
-        }
-        return nullptr;
-    }
-""",
-            ),
-            (
-                "    // Generate the function declaration and argument unpacking code.\n    begin_func",
-                "    if (!misaal_export::enabled()) {\n"
-                "    // Generate the function declaration and argument unpacking code.\n    begin_func",
-            ),
-            (
-                "    f.body.accept(this);\n\n    Stmt body = f.body;",
-                "    f.body.accept(this);\n    }\n\n    Stmt body = f.body;",
-            ),
-            (
-                "    body.accept(this);\n\n    // Clean up and return.\n    end_func(f.args);",
-                "    if (misaal_export::enabled()) return;\n    body.accept(this);\n\n"
-                "    // Clean up and return.\n    end_func(f.args);",
-            ),
-        ],
-        "frontends/halide/src/CodeGen_Hexagon.cpp": [
-            ('#include "CodeGen_Posix.h"', '#include "CodeGen_Posix.h"\n#include "MisaalExport.h"'),
-            (
-                "    CodeGen_Posix::begin_func(f.linkage, simple_name, extern_name, f.args);",
-                "    if (!misaal_export::enabled()) "
-                "CodeGen_Posix::begin_func(f.linkage, simple_name, extern_name, f.args);",
-            ),
-            (
-                '    if(defer_to_llvm){\n        debug(0) << "Compiling Hexagon through LLVM!\\n";',
-                "    if(defer_to_llvm){\n        if (misaal_export::enabled()) return;\n"
-                '        debug(0) << "Compiling Hexagon through LLVM!\\n";',
-            ),
-            (
-                "        body = optimize_hexagon_instructions_synthesis(body, target, this->func_value_bounds);",
-                "        body = optimize_hexagon_instructions_synthesis(body, target, this->func_value_bounds);\n"
-                "        if (misaal_export::enabled()) return;",
-            ),
-            (
-                '        const char* disable_opt = getenv("HL_DISABLE_HEXAGON_OPT");',
-                "        if (misaal_export::enabled()) return;\n"
-                '        const char* disable_opt = getenv("HL_DISABLE_HEXAGON_OPT");',
-            ),
-        ],
-        "frontends/halide/src/misaal.cpp": [
-            ('#include "misaal.h"', '#include "misaal.h"\n#include "MisaalExport.h"'),
-            (
-                "        int ret_code = system(cmd.c_str());",
-                "        if (misaal_export::enabled()) misaal_export::ledger.begin_child(fname);\n"
-                "        int ret_code = system(cmd.c_str());\n"
-                "        if (misaal_export::enabled()) misaal_export::ledger.end_child(ret_code);",
-            ),
-        ],
-    }
-    result = {HEADER_PATH: HEADER}
-    for relative, replacements in edits.items():
-        content = (source / relative).read_text()
-        for before, after in replacements:
-            if content.count(before) != 1:
-                raise ValueError(f"MISAAL export patch context changed: {relative}")
-            content = content.replace(before, after)
-        result[relative] = content
-    return result
 
 
 def verified_export_template(path: Path) -> dict[str, Any]:
@@ -287,7 +90,8 @@ def prepare_export_frontend(output: Path, template_request: Path, *, timeout_sec
     if seed["revision"] != MISAAL_REVISION or "egglog_export" in seed:
         raise ValueError("export preparation requires a retained original MISAAL44ff request")
     source = Path(seed["checkout"]).resolve()
-    patched = patched_sources(source)
+    if any(sha256_file(source / name) != digest for name, digest in SOURCE_SHA256.items()):
+        raise ValueError("MISAAL export source identity changed")
     frontend = source / "frontends/halide"
     inputs = {str(p.relative_to(frontend)): sha256_file(p) for p in sorted(frontend.rglob("*")) if p.is_file()}
     tools = [Path("/usr/bin/clang"), Path("/usr/bin/clang++"), LLVM12 / "bin/llvm-config"]
@@ -297,14 +101,15 @@ def prepare_export_frontend(output: Path, template_request: Path, *, timeout_sec
     preparation = Preparation(output)
     checkout = output / "sources/MISAAL"
     shutil.copytree(source, checkout, ignore=shutil.ignore_patterns(".git", "__pycache__"))
-    for relative, content in patched.items():
-        destination = checkout / relative
-        if relative == HEADER_PATH:
-            with destination.open("x") as stream:
-                stream.write(content)
-        else:
-            preparation.patch(destination, [(destination.read_text(), content)], "export-" + destination.stem)
-    after = {relative: sha256_file(checkout / relative) for relative in patched}
+    for patch in PATCHES:
+        preparation.apply_patch(checkout, patch)
+    after = {
+        name: sha256_file(checkout / name)
+        for name, digest in EXPORT_SOURCE_SHA256.items()
+        if digest != SOURCE_SHA256.get(name)
+    }
+    if any(sha256_file(checkout / name) != digest for name, digest in EXPORT_SOURCE_SHA256.items()):
+        raise ValueError("MISAAL prepared export source identity changed")
     build = output / "halide-build"
     cmake = ["uv", "tool", "run", "--from", "cmake==3.31.10", "cmake"]
     commands = {
@@ -341,6 +146,7 @@ def prepare_export_frontend(output: Path, template_request: Path, *, timeout_sec
             "template_request": str(template_request),
             "template_sha256": sha256_file(template_request),
             "implementation_sha256": sha256_file(Path(__file__)),
+            "patches": {patch.name: sha256_file(patch) for patch in PATCHES},
             "source_before": SOURCE_SHA256,
             "source_after": after,
             "frontend_inputs": inputs,
@@ -407,6 +213,7 @@ def verified_frontend(receipt: Path) -> dict[str, Any]:
         or record.get("status") != "success"
         or record.get("checkout") != str(checkout)
         or record.get("build") != str(build)
+        or identity.get("patches") != {patch.name: sha256_file(patch) for patch in PATCHES}
         or identity.get("source_before") != SOURCE_SHA256
         or identity.get("implementation_sha256") != sha256_file(Path(__file__))
         or record.get("identity_sha256") != sha256_file(directory / "identity.json")
@@ -414,9 +221,7 @@ def verified_frontend(receipt: Path) -> dict[str, Any]:
     ):
         raise ValueError("unrecognized export frontend build receipt")
     expected_after = {
-        name: digest
-        for name, digest in EXPORT_SOURCE_SHA256.items()
-        if name == HEADER_PATH or digest != SOURCE_SHA256.get(name)
+        name: digest for name, digest in EXPORT_SOURCE_SHA256.items() if digest != SOURCE_SHA256.get(name)
     }
     if record.get("source_after") != expected_after or identity.get("source_after") != expected_after:
         raise ValueError("export frontend patch identity changed")
@@ -426,7 +231,11 @@ def verified_frontend(receipt: Path) -> dict[str, Any]:
     frontend = checkout / "frontends/halide"
     expected_inputs = dict(identity["frontend_inputs"])
     expected_inputs.update(
-        {str(Path(name).relative_to("frontends/halide")): digest for name, digest in expected_after.items()}
+        {
+            str(Path(name).relative_to("frontends/halide")): digest
+            for name, digest in expected_after.items()
+            if name.startswith("frontends/halide/")
+        }
     )
     actual_inputs = {str(p.relative_to(frontend)): sha256_file(p) for p in sorted(frontend.rglob("*")) if p.is_file()}
     if actual_inputs != expected_inputs:
@@ -441,7 +250,11 @@ def verified_frontend(receipt: Path) -> dict[str, Any]:
         path = directory / relative
         if not path.resolve().is_relative_to(directory) or sha256_file(path) != digest:
             raise ValueError("export build evidence changed")
-    for number, name in ((1, "export-halide-configure"), (2, "export-halide-build")):
+    for name in ("export-halide-configure", "export-halide-build"):
+        matches = list((directory / "steps").glob(f"*-{name}.request.json"))
+        if len(matches) != 1:
+            raise ValueError("export build evidence is incomplete")
+        number = int(matches[0].name.split("-", 1)[0])
         prefix = f"steps/{number:03}-{name}"
         if not {prefix + ".request.json", prefix + ".result.json"}.issubset(record["evidence"]):
             raise ValueError("export build evidence is incomplete")

@@ -7,8 +7,6 @@ import json
 import os
 import subprocess
 import sys
-import threading
-from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -19,109 +17,39 @@ from scripts import misaal_reproduction as misaal
 
 
 @pytest.fixture
-def protocol_request(tmp_path: Path) -> Iterator[Path]:
+def protocol_request(tmp_path: Path) -> Path:
     checkout = tmp_path / "source"
     compiler = checkout / "lib/compiler"
     compiler.mkdir(parents=True)
     (checkout / "lib/patterns").mkdir()
     (compiler / "EggLogCompiler.py").write_text(
-        "import subprocess as sb\nfrom types import SimpleNamespace\nclass EggLogCompiler: pass\n"
+        "from misaal_capture import capture_helper\nimport subprocess as sb\n"
+        "from types import SimpleNamespace\nclass EggLogCompiler: pass\n"
         "def is_pattern_valid_egg(filename, backend='original/configured/backend'):\n"
         "    compiler = SimpleNamespace(egglog_bin=backend)\n"
-        "    result = sb.run(compiler.egglog_bin + ' ' + filename, shell=True)\n"
+        "    result = capture_helper(compiler.egglog_bin, filename, quiet=False)\n"
         "    return result.returncode == 0\n"
     )
     pattern_utils = checkout / "lib/patterns/PatternUtils.py"
     pattern_utils.write_text(
-        "import subprocess as sb\nfrom types import SimpleNamespace\n"
+        "from misaal_capture import capture_helper\nimport subprocess as sb\nfrom types import SimpleNamespace\n"
         "def is_pattern_valid_egg(filename, backend='original/configured/backend'):\n"
         "    compiler = SimpleNamespace(egglog_bin=backend)\n"
-        "    result = sb.run(compiler.egglog_bin + ' ' + filename, shell=True, stdout=sb.DEVNULL, stderr=sb.DEVNULL)\n"
+        "    result = capture_helper(compiler.egglog_bin, filename, quiet=True)\n"
         "    sb.run('rm ' + filename, shell=True)\n"
         "    return result.returncode == 0\n"
     )
     (compiler / "HydrideCompiler.py").write_text(
         "from compiler.EggLogCompiler import EggLogCompiler\nclass HydrideCompiler(EggLogCompiler): pass\n"
     )
-    legalizer = checkout / "Hydride/codegen-generator/tools/low-level-codegen/RoseLowLevelCodeGen.py"
-    legalizer.parent.mkdir(parents=True)
-    legalizer.write_text(
-        "import os, shlex, sys\nfrom pathlib import Path\n"
-        "prefix = sys.argv[5]\n"
-        "Path(prefix + '.ll').write_text('define i32 @hydride_expr_0() {\\n ret i32 0\\n}\\n')\n"
-        "for suffix in ('.linked.bc', '.linked.ll', '.legalize.ll'):\n"
-        "    os.system(shlex.join([os.environ['PROTOCOL_LLVM_TOOL'], prefix + suffix]))\n"
-    )
-    (checkout / "legalizer.so").write_text("fake input identity only")
-    (checkout / "intrinsics.ll").write_text("fake input identity only")
-    child_program = """import os
-from pathlib import Path
-from compiler.HydrideCompiler import HydrideCompiler
-c = HydrideCompiler()
-c.egglog_bin = "original/configured/backend"
-raw = Path("temporary-backend.egg")
-raw.write_text("(datatype E (Seed))\\n(let srcexpr (Seed))\\n" + "(run 5)\\n(extract srcexpr)\\n")
-if os.environ.get("PROTOCOL_HELPERS"):
-    from compiler.EggLogCompiler import is_pattern_valid_egg as compiler_helper
-    from patterns.PatternUtils import is_pattern_valid_egg as pattern_helper
-    for index, helper in enumerate((compiler_helper, pattern_helper)):
-        for accepted in (True, False):
-            helper_input = Path(f"helper-input-{index}-{accepted}.egg")
-            helper_input.write_text("accepted input" if accepted else "rejected input")
-            assert helper(str(helper_input)) is accepted
-if os.environ.get("PROTOCOL_MULTI_ROOT"):
-    raw.write_text(raw.read_text() + "(extract srcexpr)\\n")
-for _ in range(2):
-    try:
-        assert c.execute_egglog_file(str(raw)) == "(Seed)"
-    except ValueError:
-        if not os.environ.get("PROTOCOL_SWALLOW_BACKEND_FAILURE"):
-            raise
-c.llvm_out_file_name = os.environ["MISAAL_CAPTURE_LLVM_PREFIX"]
-c.input_tests = [("hydride_expr_0", "source expression")]
-c.output_file_path = "rosette-input.txt"
-Path(c.output_file_path).write_text("real source data would go here")
-c.hydride_root_path = os.environ["MISAAL_ROOT_DIR"] + "/Hydride"
-c.llvm_so_path = os.environ["MISAAL_ROOT_DIR"] + "/legalizer.so"
-c.intrinsics_file = os.environ["MISAAL_ROOT_DIR"] + "/intrinsics.ll"
-c.llvm_flags = ["-source-legalize"]
-c.compile_times = []
-c.run_llvm_legalizer()
-"""
     tools = {
         "backend": (
-            "import os, sys\nprint('(Seed)')\n"
-            "from pathlib import Path\n"
+            "import os, sys\nprint('(Seed)')\nfrom pathlib import Path\n"
             "if Path(sys.argv[1]).read_text() == 'rejected input': sys.exit(9)\n"
             "if os.environ.get('PROTOCOL_MULTI_ROOT'): print('(Seed)')\n"
             "sys.exit(7 if os.environ.get('PROTOCOL_BACKEND_FAILURE') else 0)\n"
         ),
-        "llvm_as": "# Intentionally fake syntax validator: protocol evidence only.\n",
-        "llvm_tool": (
-            "import os, sys\nfrom pathlib import Path\n"
-            "if os.environ.get('PROTOCOL_LLVM_FAILURE'): sys.exit(42)\n"
-            "name = 'wrong_function' if os.environ.get('PROTOCOL_BAD_FUNCTION') else 'hydride_expr_0'\n"
-            "value = 'undef' if os.environ.get('PROTOCOL_UNDEFINED_RESULT') else '0'\n"
-            "Path(sys.argv[1]).write_text('define i32 @' + name + '() {\\n ret i32 ' + value + '\\n}\\n')\n"
-        ),
-        "generator": (
-            "import os, subprocess, sys\nfrom pathlib import Path\n"
-            f"program = {child_program!r}\n"
-            "child = Path(os.environ['HYDRIDE_BENCHMARK'] + '_misaal.py')\n"
-            "child.write_text(program)\n"
-            "result = subprocess.run(['python3', str(child)], check=False)\n"
-            "if result.returncode: sys.exit(result.returncode)\n"
-            "feedback = Path(os.environ['MISAAL_CAPTURE_LLVM_PREFIX'] + '.ll').read_text()\n"
-            "Path('parent-consumed-feedback.txt').write_text(feedback)\n"
-            "if os.environ.get('PROTOCOL_PARENT_FAILURE'): sys.exit(19)\n"
-            "output = Path(sys.argv[sys.argv.index('-o') + 1] if '-o' in sys.argv else sys.argv[1])\n"
-            "(output / 'generator.ll').write_text(feedback)\n"
-            "if 'HYDRIDE_DISABLE_LLVM_OPTS' in os.environ:\n"
-            "    assert os.environ['HYDRIDE_DISABLE_LLVM_OPTS'] == '1'\n"
-            "    assert sys.argv[sys.argv.index('-e') + 1] == 'stmt,h,llvm_assembly'\n"
-            "    for suffix in ('stmt', 'h'): (output / ('generator.' + suffix)).write_text('fake final output')\n"
-            "else: (output / 'generator.a').write_text('fake final archive')\n"
-        ),
+        "generator": "",
     }
     for name, script in tools.items():
         executable = tmp_path / name
@@ -137,157 +65,17 @@ c.run_llvm_legalizer()
         },
         "generator_command": [str(tmp_path / "generator"), "{output}"],
         "expected_generator_outputs": ["generator.a", "generator.ll"],
-        "environment": {"PATH": os.environ["PATH"], "PROTOCOL_LLVM_TOOL": str(tmp_path / "llvm_tool")},
+        "environment": {"PATH": os.environ["PATH"]},
     }
-    for name in ("python", "backend", "llvm_as", "generator"):
+    for name in ("python", "backend", "generator"):
         executable = Path(sys.executable).resolve() if name == "python" else tmp_path / name
         request[name] = str(executable)
         request[name + "_sha256"] = hashlib.sha256(executable.read_bytes()).hexdigest()
     request_path = tmp_path / "request.json"
     request_path.write_text(json.dumps(request))
-    yield request_path
-    # Remove only this fixture's unique feedback prefix, recorded by the hook.
-    for receipt in tmp_path.glob("*/capture.json"):
-        record = json.loads(receipt.read_text())
-        if "output_name_adaptation" in record:
-            prefix = Path(record["output_name_adaptation"]["feedback_prefix"])
-            for path in prefix.parent.glob(prefix.name + ".*"):
-                path.unlink()
+    return request_path
 
 
-@pytest.fixture
-def helper_protocol(protocol_request: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple:
-    request = json.loads(protocol_request.read_text())
-    modules = []
-    for name, relative in (
-        ("compiler.EggLogCompiler", "lib/compiler/EggLogCompiler.py"),
-        ("patterns.PatternUtils", "lib/patterns/PatternUtils.py"),
-    ):
-        path = Path(request["checkout"]) / relative
-        module = ModuleType(name)
-        module.__file__ = str(path)
-        exec(compile(path.read_text(), str(path), "exec"), module.__dict__)
-        modules.append(module)
-    directory = tmp_path / "helpers"
-    directory.mkdir()
-    record: dict[str, Any] = {"invocations": []}
-    commands = []
-
-    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess:
-        commands.append(command)
-        assert isinstance(command, list) and "shell" not in kwargs
-        if command[0] == "rm":
-            Path(command[1]).unlink()
-            return subprocess.CompletedProcess(command, 0)
-        assert command[0] == request["backend"]
-        content = Path(command[1]).read_text()
-        kwargs["stdout"].write(b"actual helper stdout\n")
-        kwargs["stderr"].write(b"actual helper stderr\n")
-        return subprocess.CompletedProcess(command, 9 if content == "rejected input" else 0)
-
-    monkeypatch.setattr(subprocess, "run", run)
-    return modules, request, directory, record, commands
-
-
-def test_direct_helpers_keep_actual_boolean_rejections_and_preserve_deleted_inputs(
-    helper_protocol: tuple, tmp_path: Path, capsys: pytest.CaptureFixture
-) -> None:
-    modules, request, directory, record, commands = helper_protocol
-    # References imported before installation retain the observed module globals.
-    helpers = [module.is_pattern_valid_egg for module in modules]
-    with misaal.observe_pattern_helpers(modules, request, directory, record, threading.Lock()):
-        for index, helper in enumerate(helpers):
-            for accepted in (True, False):
-                source = tmp_path / f"input-{index}-{accepted}.egg"
-                source.write_text("accepted input" if accepted else "rejected input")
-                assert helper(str(source)) is accepted
-                assert source.exists() is (index == 0)
-    assert len(commands) == 6  # Four backend calls and the two real source deletions.
-    assert record["invocations"] == []
-    calls = record["helper_invocations"]
-    assert len(calls) == 4 and all(call["status"] == "success" for call in calls)
-    assert [call["accepted"] for call in calls] == [True, False, True, False]
-    assert [call["returncode"] for call in calls] == [0, 9, 0, 9]
-    assert all(call["admitted_as_workload"] is False for call in calls)
-    assert record["helper_observation"]["completed_calls"] == 4
-    for call in calls:
-        raw = Path(call["raw"])
-        assert hashlib.sha256(raw.read_bytes()).hexdigest() == call["sha256"]
-        assert raw.read_text() == ("accepted input" if call["accepted"] else "rejected input")
-        for name in ("stdout", "stderr"):
-            assert hashlib.sha256(raw.with_suffix(f".{name}.log").read_bytes()).hexdigest() == call[name + "_sha256"]
-        assert json.loads(raw.with_suffix(".result.json").read_text()) == call
-    assert all(module.sb is subprocess for module in modules)
-    captured = capsys.readouterr()
-    assert captured.out == "actual helper stdout\n" * 2
-    assert captured.err == "actual helper stderr\n" * 2
-
-
-@pytest.mark.parametrize("fault", ["shell", "deletion", "caller", "operation", "recursive"])
-def test_swallowed_unexpected_helper_operation_cannot_complete(helper_protocol: tuple, fault: str) -> None:
-    modules, request, directory, record, commands = helper_protocol
-    with (
-        pytest.raises(ValueError, match="swallowed"),
-        misaal.observe_pattern_helpers(modules, request, directory, record, threading.Lock()),
-    ):
-        try:
-            if fault == "shell":
-                modules[1].is_pattern_valid_egg("input.egg;touch injected")
-            elif fault == "deletion":
-                modules[1].is_pattern_valid_egg("input.egg", backend="rm")
-            elif fault == "caller":
-                modules[1].sb.run("backend input.egg", shell=True)
-            elif fault == "operation":
-                modules[0].sb.Popen(["backend", "input.egg"], start_new_session=True)
-            else:
-                with misaal.observe_pattern_helpers(modules, request, directory, record, threading.Lock()):
-                    pytest.fail("recursive observer must not install")
-        except ValueError:
-            pass
-    assert commands == [] and record["helper_observation"]["status"] == "failure"
-    assert all(module.sb is subprocess for module in modules)
-
-
-def test_direct_helper_source_must_be_pinned(helper_protocol: tuple) -> None:
-    modules, request, directory, record, commands = helper_protocol
-    del request["source_hashes"]["lib/patterns/PatternUtils.py"]
-    with (
-        pytest.raises(ValueError, match="pin the observed pattern-helper source"),
-        misaal.observe_pattern_helpers(modules, request, directory, record, threading.Lock()),
-    ):
-        pytest.fail("unpinned helper source must not run")
-    assert commands == [] and all(module.sb is subprocess for module in modules)
-
-
-def test_helper_interruption_retains_partial_streams_without_deleting_source(
-    helper_protocol: tuple, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    modules, request, directory, record, _ = helper_protocol
-    source = tmp_path / "interrupted.egg"
-    source.write_text("real helper input")
-
-    def interrupted(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess:
-        kwargs["stdout"].write(b"partial stdout")
-        kwargs["stderr"].write(b"partial stderr")
-        raise subprocess.TimeoutExpired(command, 120)
-
-    monkeypatch.setattr(subprocess, "run", interrupted)
-    with (
-        pytest.raises(subprocess.TimeoutExpired),
-        misaal.observe_pattern_helpers(modules, request, directory, record, threading.Lock()),
-    ):
-        modules[1].is_pattern_valid_egg(str(source))
-    assert source.read_text() == "real helper input"
-    [call] = record["helper_invocations"]
-    assert call["status"] == record["helper_observation"]["status"] == "failure"
-    raw = Path(call["raw"])
-    assert raw.read_bytes() == source.read_bytes()
-    for name in ("stdout", "stderr"):
-        assert hashlib.sha256(raw.with_suffix(f".{name}.log").read_bytes()).hexdigest() == call[name + "_sha256"]
-    assert json.loads(raw.with_suffix(".result.json").read_text()) == call
-
-
-# The retained pinned44ff child-0001 emitter output, with only path literals parameterized.
 ARM_EMPTY_PROGRAM = """from compiler.HydrideCompiler import HydrideCompiler
 from utils.egg_config import EGG_PKG_PATH
 from sema.hexsemantics_new import semantics as hvx_semantics
@@ -329,21 +117,18 @@ misaal_compiler.print_stats()
 
 
 @pytest.fixture
-def arm_terminal_request(protocol_request: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def source_request(protocol_request: Path) -> Path:
     request = json.loads(protocol_request.read_text())
     checkout = Path(request["checkout"])
     request.update(
         revision="44ff893445d664cd87f52b08a138260ed2015ba8",
         configuration={"target": "arm"},
-        terminal_empty_child=misaal.ARM_TERMINAL_EMPTY,
         pattern_cache_contract={
             "environment": "MISAAL_PATTERN_CACHE_DIR",
             "required": "adapter supplies a fresh empty attempt-owned directory before child imports",
             "generation": "unchanged",
             "default": "source lib/patterns when variable is absent",
         },
-        legalizer=str(checkout / "legalizer.so"),
-        legalizer_sha256=hashlib.sha256((checkout / "legalizer.so").read_bytes()).hexdigest(),
     )
     request["environment"]["MISAAL_DISABLE_FRONTEND_PATTERNS"] = "1"
     modules = {
@@ -374,207 +159,24 @@ else:
     arm_patterns = ['raw']
     (cache / 'ARM.pickle').write_text('raw fixture')
 """.replace("log.write('import\n')", "log.write('import\\n')")
-    modules["compiler/HydrideCompiler.py"] = """from pathlib import Path
-from compiler.EggLogCompiler import EggLogCompiler
-class HydrideCompiler(EggLogCompiler):
-    def __init__(self, patterns, **options):
-        self.egglog_bin = options['egg_pkg_path']
-        self.input_tests = options['tests']
-        self.llvm_out_file_name = options['llvm_out_file_name']
-        self.llvm_so_path = options['llvm_so_path']
-        self.intrinsics_file = options['intrinsics_file']
-        self.hydride_root_path = options['hydride_root_path']
-        self.llvm_flags = options['llvm_flags']
-        self.compile_times = []
-        self.output_file_path = 'rosette-input.txt'
-    def compile_hydride(self):
-        raw = Path('real-source.egg')
-        raw.write_text('(datatype E (Seed))\\n(let srcexpr (Seed))\\n(run 5)\\n(extract srcexpr)\\n')
-        for _ in range(2): assert self.execute_egglog_file(str(raw)) == '(Seed)'
-        Path(self.output_file_path).write_text('source fixture')
-    def print_stats(self): pass
-"""
     for relative, content in modules.items():
         path = checkout / "lib" / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content)
-    wrapper_ir = checkout / "Hydride/codegen-generator/tools/low-level-codegen/wrappers/arm_wrappers.c.ll"
-    wrapper_ir.parent.mkdir(parents=True, exist_ok=True)
-    wrapper_ir.write_text("fake ARM wrapper input identity")
-    pins = {}
-    for relative in misaal.ARM_TERMINAL_SOURCES:
-        path = checkout / relative
-        if not path.exists():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("pinned emitter/parent fixture")
-        pins[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
-    monkeypatch.setattr(misaal, "ARM_TERMINAL_SOURCES", pins)
-    request["source_hashes"].update(pins)
     request["source_hashes"].update(
         {
             str(path.relative_to(checkout)): hashlib.sha256(path.read_bytes()).hexdigest()
             for path in (checkout / "lib").rglob("*.py")
         }
     )
-    generator = Path(request["generator"])
-    generator.write_text(f"""#!{sys.executable}
-import os, subprocess, sys
-from pathlib import Path
-empty = {ARM_EMPTY_PROGRAM!r}.format(
-    legalizer={request["legalizer"]!r}, hydride={str(checkout / "Hydride")!r},
-    prefix=os.environ['MISAAL_CAPTURE_LLVM_PREFIX'])
-real = empty.replace('tests = []\\n', "tests = []\\ntest_0_name = 'hydride_expr_0'\\n"
-    "test_0_str = 'source expression'\\ntests.append((test_0_name, test_0_str))\\n")
-programs = [real] + [empty] * int(os.environ.get('PROTOCOL_EMPTY_COUNT', '1'))
-if os.environ.get('PROTOCOL_LATE_NONEMPTY'): programs.append(real)
-child = Path(os.environ['HYDRIDE_BENCHMARK'] + '_misaal.py')
-for program in programs:
-    child.write_text(program)
-    outcome = subprocess.run(['python3', str(child)], check=False)
-    if outcome.returncode and not os.environ.get('PROTOCOL_IGNORE_CHILD_FAILURE'): sys.exit(outcome.returncode)
-feedback = Path(os.environ['MISAAL_CAPTURE_LLVM_PREFIX'] + '.ll').read_text()
-Path('parent-consumed-feedback.txt').write_text(feedback)
-if os.environ.get('PROTOCOL_PARENT_FAILURE'): sys.exit(19)
-if os.environ.get('PROTOCOL_REMOVE_EMPTY_BOUNDARY'): Path('children/terminal-empty.json').unlink()
-if os.environ.get('PROTOCOL_CHANGE_EXECUTED_EMPTY'):
-    Path('children/child-0001/terminal-empty.py').write_text('changed after child success')
-output = Path(sys.argv[1])
-(output / 'generator.ll').write_text(feedback)
-(output / 'generator.a').write_text('final parent fixture')
-""")
-    request["generator_sha256"] = hashlib.sha256(generator.read_bytes()).hexdigest()
     protocol_request.write_text(json.dumps(request))
-    wrapper = tmp_path / "terminal_adapter.py"
-    wrapper.write_text(
-        f"import sys\nsys.path.insert(0, {str(Path(misaal.__file__).resolve().parents[1])!r})\n"
-        "from scripts import misaal_reproduction as adapter\n"
-        f"adapter.ARM_TERMINAL_SOURCES = {pins!r}\n"
-        "adapter.__file__ = __file__\nraise SystemExit(adapter.main())\n"
-    )
-    monkeypatch.setattr(misaal, "__file__", str(wrapper))
     return protocol_request
 
 
 @pytest.fixture
-def arm_empty_boundary(
-    arm_terminal_request: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> tuple[dict[str, Any], Path, Path, Path]:
-    request = json.loads(arm_terminal_request.read_text())
-    attempt = tmp_path / "empty-boundary"
-    (attempt / "pattern-cache").mkdir(parents=True)
-    previous = attempt / "children/child-0000/capture.json"
-    previous.parent.mkdir(parents=True)
-    feedback = tmp_path / "real-feedback.ll"
-    feedback.write_text("previous validated LLVM fixture")
-    previous.write_text(
-        json.dumps(
-            {
-                "status": "success",
-                "source_capture_complete": True,
-                "invocations": [{"status": "success"}],
-                "legalizations": [
-                    {
-                        "status": "success",
-                        "feedback": str(feedback),
-                        "feedback_sha256": hashlib.sha256(feedback.read_bytes()).hexdigest(),
-                    }
-                ],
-            }
-        )
-    )
-    monkeypatch.setenv("MISAAL_CAPTURE_LLVM_PREFIX", str(feedback.with_suffix("")))
-    directory = attempt / "children/child-0001"
-    directory.mkdir()
-    program = attempt / "observed_misaal.py"
-    program.write_text(
-        ARM_EMPTY_PROGRAM.format(
-            legalizer=request["legalizer"],
-            hydride=str(Path(request["checkout"]) / "Hydride"),
-            prefix=str(feedback.with_suffix("")),
-        )
-    )
-    return request, program, directory, feedback
-
-
-@pytest.mark.parametrize("cache_state", ["cold", "raw", "abstract"])
-def test_arm_terminal_defers_each_cache_state_and_rejects_later_real_child(
-    arm_empty_boundary: tuple[dict[str, Any], Path, Path, Path], cache_state: str
-) -> None:
-    request, program, directory, feedback = arm_empty_boundary
-    cache = directory.parent.parent / "pattern-cache"
-    if cache_state in {"raw", "abstract"}:
-        (cache / "ARM.pickle").write_text("raw bytes")
-    if cache_state == "abstract":
-        (cache / "ARM_abstract.pickle").write_text("abstract bytes")
-    before = {path.name: path.read_bytes() for path in cache.iterdir()}
-    source = program.read_bytes()
-    record: dict[str, Any] = {}
-    execution = misaal.source_child_program(request, program, directory, record)
-    assert execution != program and program.read_bytes() == source
-    assert record["terminal_empty_child"]["boundary"]["state"]["cache_state"] == cache_state
-    # The only text movement is tests=[] plus the exact source exit guard.
-    moved = "tests = []\nif len(tests) == 0:\n\tsys.exit(0)\n"
-    assert execution.read_text().replace(moved, "", 1) == source.decode().replace(moved, "", 1)
-    assert execution.read_text().index(moved) < execution.read_text().index("from patterns.ARM")
-    assert {path.name: path.read_bytes() for path in cache.iterdir()} == before
-    assert feedback.read_text() == "previous validated LLVM fixture"
-    misaal.save_receipt(directory.parent / "terminal-empty.json", record["terminal_empty_child"]["boundary"])
-    program.write_text(
-        source.decode().replace(
-            "tests = []\n",
-            "tests = []\n"
-            "test_0_name = 'real'\ntest_0_str = 'literal expression'\ntests.append((test_0_name, test_0_str))\n",
-        )
-    )
-    with pytest.raises(ValueError, match="Nonempty ARM child follows"):
-        misaal.source_child_program(request, program, directory, {})
-    assert {path.name: path.read_bytes() for path in cache.iterdir()} == before
-
-
-@pytest.mark.parametrize(
-    "mutation",
-    [
-        "exit-one",
-        "unexpected-empty",
-        "dynamic-tests",
-        "iterations",
-        "missing-feedback",
-        "changed-feedback",
-        "symlink-cache",
-        "foreign-cache",
-    ],
-)
-def test_arm_terminal_rejects_template_and_boundary_drift(
-    arm_empty_boundary: tuple[dict[str, Any], Path, Path, Path], mutation: str
-) -> None:
-    request, program, directory, feedback = arm_empty_boundary
-    original = program.read_text()
-    if mutation == "exit-one":
-        program.write_text(original.replace("sys.exit(0)", "sys.exit(1)"))
-    elif mutation == "unexpected-empty":
-        program.write_text(original.replace("tests = []", "tests = []\nprint('extra')"))
-    elif mutation == "dynamic-tests":
-        program.write_text(original.replace("tests = []", "tests = list()"))
-    elif mutation == "iterations":
-        program.write_text(original.replace("run_iterations = 5", "run_iterations = 6"))
-    elif mutation == "missing-feedback":
-        feedback.unlink()
-    elif mutation == "changed-feedback":
-        feedback.write_text("unverified replacement")
-    elif mutation == "symlink-cache":
-        (directory.parent.parent / "pattern-cache/ARM.pickle").symlink_to(feedback)
-    else:
-        (directory.parent.parent / "pattern-cache/foreign.pickle").write_text("unknown")
-    with pytest.raises(ValueError):
-        misaal.source_child_program(request, program, directory, {})
-    assert not (directory / "terminal-empty.py").exists()
-
-
-@pytest.fixture
-def export_request(arm_terminal_request: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    request = json.loads(arm_terminal_request.read_text())
+def export_request(source_request: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    request = json.loads(source_request.read_text())
     checkout = Path(request["checkout"])
-    request.pop("terminal_empty_child")
     request.update(egglog_export=misaal.EGGLOG_EXPORT, expected_generator_outputs=[])
     request["environment"].update(
         LEGALIZERS_DIR=str(checkout / "absent-selectors"), HYDRIDE_DIR=str(checkout / "Hydride")
@@ -582,7 +184,7 @@ def export_request(arm_terminal_request: Path, tmp_path: Path, monkeypatch: pyte
     # Source/preparation verification is independently owned; these protocol tests
     # inject only its API boundary. All adapter source/tool hashes remain checked.
     module = ModuleType("scripts.reproduction_misaal_export")
-    module.verify_export_request = lambda request: None  # type: ignore[attr-defined]
+    module.__dict__.update(verify_export_request=lambda request: None, EXPORT_SOURCE_SHA256={})
     monkeypatch.setitem(sys.modules, module.__name__, module)
     for target, symbol in (("halide", "Halide_patterns"), ("hvx", "HVX_patterns"), ("x86", "x86_patterns")):
         name = {"halide": "Halide", "hvx": "HVX", "x86": "x86"}[target]
@@ -615,6 +217,14 @@ class HydrideCompiler(EggLogCompiler):
         if os.environ.get('PROTOCOL_EARLY_EXIT'): raise SystemExit(0)
         if os.environ.get('PROTOCOL_COMPILE_FAILURE'): raise ValueError('original compile failed')
         if os.environ.get('PROTOCOL_TRY_LLVM'): self.run_llvm_legalizer()
+        if os.environ.get('PROTOCOL_HELPERS'):
+            from compiler.EggLogCompiler import is_pattern_valid_egg as compiler_helper
+            from patterns.PatternUtils import is_pattern_valid_egg as pattern_helper
+            for index, helper in enumerate((compiler_helper, pattern_helper)):
+                for accepted in (True, False):
+                    helper_input = Path(f'helper-input-{index}-{accepted}.egg')
+                    helper_input.write_text('accepted input' if accepted else 'rejected input')
+                    assert helper(str(helper_input)) is accepted
         raw = Path('input.egg')
         raw.write_text('(datatype E (Seed))\\n(let srcexpr (Seed))\\n(run 5)\\n(extract srcexpr)\\n')
         try:
@@ -731,19 +341,20 @@ if os.environ.get('PROTOCOL_PARENT_FAILURE'): sys.exit(19)
     # LLVM binaries and selector files are deliberately absent in the request.
     for key in ("llvm_as", "llvm_as_sha256", "legalizer", "legalizer_sha256"):
         request.pop(key, None)
-    arm_terminal_request.write_text(json.dumps(request))
+    source_request.write_text(json.dumps(request))
     wrapper = tmp_path / "export_adapter.py"
     wrapper.write_text(
         f"import sys\nsys.path.insert(0, {str(Path(__file__).resolve().parents[1])!r})\n"
         "from types import ModuleType\n"
         "module = ModuleType('scripts.reproduction_misaal_export')\n"
         "module.verify_export_request = lambda request: None\n"
+        "module.EXPORT_SOURCE_SHA256 = {}\n"
         "sys.modules[module.__name__] = module\n"
         "from scripts import misaal_reproduction as adapter\n"
         "adapter.__file__ = __file__\nraise SystemExit(adapter.main())\n"
     )
     monkeypatch.setattr(misaal, "__file__", str(wrapper))
-    return arm_terminal_request
+    return source_request
 
 
 @pytest.mark.parametrize(
@@ -877,7 +488,7 @@ def test_export_request_rejects_ambiguous_activation(
     if mutation == "contract":
         request["egglog_export"] = None
     elif mutation == "native-policy":
-        request["terminal_empty_child"] = misaal.ARM_TERMINAL_EMPTY
+        request["terminal_empty_child"] = "arm-empty-terminal-v1"
     elif mutation == "native-outputs":
         request["expected_generator_outputs"] = ["unexpected.ll"]
     elif mutation.startswith("request-"):
@@ -1003,7 +614,7 @@ def test_export_failed_empty_still_blocks_later_real_child(export_request: Path,
     assert "SystemExit: 0" in empty["error"]
     assert "Nonempty export child follows" in real["error"]
     assert empty["status"] == real["status"] == "failure"
-    assert real["invocations"] == real["legalizations"] == []
+    assert real["invocations"] == []
     assert (attempt / "children/terminal-export.json").is_file()
 
 
@@ -1073,3 +684,31 @@ def test_child_entrypoint_resolves_repository_modules_outside_checkout(tmp_path:
     assert result.returncode != 0
     assert "FileNotFoundError" in result.stderr
     assert "ModuleNotFoundError" not in result.stderr
+
+
+def test_explicit_helpers_execute_and_keep_boolean_rejections_and_deleted_inputs(
+    export_request: Path, tmp_path: Path
+) -> None:
+    request = json.loads(export_request.read_text())
+    request["environment"].update(PROTOCOL_HELPERS="1", PROTOCOL_REAL_COUNT="1")
+    export_request.write_text(json.dumps(request))
+    attempt = tmp_path / "actual-helpers"
+    assert misaal.run_frontend(export_request, attempt) == 0
+    record = json.loads((attempt / "capture.json").read_text())
+    assert record["helper_accounting"] == {
+        "status": "success",
+        "calls": 4,
+        "accepted": 2,
+        "rejected": 2,
+        "admitted_workloads": 0,
+    }
+    assert len(record["invocations"]) == len(record["workloads"]) == 3
+    child = json.loads((attempt / "children/child-0000/capture.json").read_text())
+    for helper, accepted in zip(child["helper_invocations"], (True, False, True, False), strict=True):
+        assert helper["accepted"] is accepted and helper["returncode"] == (0 if accepted else 9)
+        assert helper["status"] == "success" and helper["admitted_as_workload"] is False
+        raw = Path(helper["raw"])
+        assert raw.read_text() == ("accepted input" if accepted else "rejected input")
+        assert helper["sha256"] == hashlib.sha256(raw.read_bytes()).hexdigest()
+        assert helper["stdout_sha256"] == hashlib.sha256(raw.with_suffix(".stdout.log").read_bytes()).hexdigest()
+    assert not list(attempt.glob("helper-input-1-*.egg"))

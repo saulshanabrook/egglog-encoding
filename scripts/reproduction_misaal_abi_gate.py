@@ -6,12 +6,11 @@ import ast
 import hashlib
 import json
 from pathlib import Path
-from types import CodeType, FunctionType, ModuleType, SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
-from scripts import reproduction_misaal_patterns as adaptation
-from scripts import reproduction_misaal_runtime as runtime_contract
-from scripts.reproduction_misaal_groups import SOURCE, SOURCE_SHA256
+from scripts.reproduction_misaal_export import EXPORT_SOURCE_SHA256
+from scripts.reproduction_misaal_groups import SOURCE
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "benchmarks/reproduction/fixtures/misaal-parameter"
@@ -35,24 +34,16 @@ def _pin(path: Path, expected: str | None = None) -> dict[str, str]:
 
 
 def _abstractor(source_path: Path, helper_source: str) -> ModuleType:
-    """Instantiate original full-module code objects without running any imports."""
+    """Compile the repaired source class and its helper without population imports."""
     source = source_path.read_text()
     syntax = ast.parse(source)
     cls = next(n for n in syntax.body if isinstance(n, ast.ClassDef) and n.name == "PatternAbstractor")
-    compiled = compile(source, str(source_path), "exec", dont_inherit=True)
-    class_code = next(n for n in compiled.co_consts if isinstance(n, CodeType) and n.co_name == "PatternAbstractor")
-    codes = {n.co_name: n for n in class_code.co_consts if isinstance(n, CodeType)}
     module = ModuleType("patterns.PatternUtils")
     module.__file__ = str(source_path)
-    methods: dict[str, Any] = {"__module__": module.__name__}
-    for method in cls.body:
-        if isinstance(method, ast.FunctionDef):
-            defaults = tuple(ast.literal_eval(n) for n in method.args.defaults) or None
-            methods[method.name] = FunctionType(codes[method.name], vars(module), method.name, defaults)
-    module.__dict__["PatternAbstractor"] = type("PatternAbstractor", (), methods)
-    helper_code = compile(helper_source, str(source_path.parents[2] / SOURCE), "exec", dont_inherit=True)
-    cond = next(n for n in helper_code.co_consts if isinstance(n, CodeType) and n.co_name == "emit_racket_cond")
-    module.__dict__["emit_racket_cond"] = FunctionType(cond, vars(module), "emit_racket_cond")
+    helper = next(
+        n for n in ast.parse(helper_source).body if isinstance(n, ast.FunctionDef) and n.name == "emit_racket_cond"
+    )
+    exec(compile(ast.Module(body=[cls, helper], type_ignores=[]), str(source_path), "exec"), vars(module))
     return module
 
 
@@ -83,24 +74,14 @@ def _emit(module: ModuleType, name: str, header: str) -> bytes:
 
 
 def prepare_programs(checkout: Path, output: Path) -> dict[str, Any]:
-    """Offline-only generation of the four programs and immutable source manifest."""
+    """Check the repaired emitter against its two source-backed positive oracles."""
     checkout, output = checkout.resolve(), output.resolve()
     if output.exists():
         raise ValueError("ABI program output must be fresh")
     pins = {}
-    for relative, expected in {**adaptation.PARAMETER_ABI_SOURCE_SHA256, SOURCE: SOURCE_SHA256}.items():
-        reference = _pin(checkout / relative, expected)
+    for relative in ("lib/patterns/PatternUtils.py", SOURCE):
+        reference = _pin(checkout / relative, EXPORT_SOURCE_SHA256[relative])
         pins[reference["path"]] = reference["sha256"]
-    for name, expected in FIXTURE_SHA256.items():
-        reference = _pin(FIXTURES / name, expected)
-        pins[reference["path"]] = reference["sha256"]
-    for path in (FIXTURES / "provenance.json", Path(__file__).resolve(), Path(adaptation.__file__).resolve()):
-        reference = _pin(path)
-        pins[reference["path"]] = reference["sha256"]
-    provenance = json.loads((FIXTURES / "provenance.json").read_text())
-    if provenance["files"] != FIXTURE_SHA256 or provenance["admitted"] is not False:
-        raise ValueError("ABI fixture provenance does not describe the pinned diagnostic bytes")
-    source_path = checkout / "lib/patterns/PatternUtils.py"
     helper_source = (checkout / SOURCE).read_text()
     header = next(
         ast.literal_eval(node.value)
@@ -108,49 +89,18 @@ def prepare_programs(checkout: Path, output: Path) -> dict[str, Any]:
         if isinstance(node, ast.Assign)
         and any(isinstance(target, ast.Name) and target.id == "HYDRIDE_HEADER" for target in node.targets)
     )
-    module = _abstractor(source_path, helper_source)
-    originals = dict(vars(module.PatternAbstractor))
-    names = ("ordinary-depth2", "general-depth1")
-    original = {name: _emit(module, name, header) for name in names}
-    request = {
-        "checkout": str(checkout),
-        "revision": runtime_contract.REVISION,
-        "parameter_abi": adaptation.PARAMETER_ABI_CONTRACT,
-        "source_hashes": dict(adaptation.PARAMETER_ABI_SOURCE_SHA256),
-    }
-    receipt: dict[str, Any] = {}
-    programs: dict[str, dict[str, Any]] = {}
-    with adaptation.restore_parameter_abi(module, request, receipt, lambda: None):
-        for name in names:
-            adapted = _emit(module, name, header)
-            if adapted != (FIXTURES / f"c098-{name}.rkt").read_bytes() or adapted == original[name]:
-                raise ValueError(f"Actual emitted program differs from its c098 oracle: {name}")
-            programs[name] = {"bytes": adapted, "expected_exit": 0, "result_file": f"{name}.temp"}
-            programs[f"{name}-unadapted"] = {"bytes": original[name], "expected_exit": 1}
-        if any(
-            vars(module.PatternAbstractor)[name] is not value
-            for name, value in originals.items()
-            if name not in {"emit_synthesize_query", "generate_param_expr_general"}
-        ):
-            raise ValueError("ABI restoration changed an unrelated source method")
-    if vars(module.PatternAbstractor) != originals:
-        raise ValueError("ABI restoration left source methods changed")
-    for filename, digest in pins.items():
-        _pin(Path(filename), digest)
+    module = _abstractor(checkout / "lib/patterns/PatternUtils.py", helper_source)
     output.mkdir(parents=True)
-    for name, program in programs.items():
+    programs = {}
+    for name in ("ordinary-depth2", "general-depth1"):
+        content = _emit(module, name, header)
+        fixture = FIXTURES / f"c098-{name}.rkt"
+        _pin(fixture, FIXTURE_SHA256[fixture.name])
+        if content != fixture.read_bytes():
+            raise ValueError(f"Repaired emitter differs from its paper ABI oracle: {name}")
         path = output / f"{name}.rkt"
-        path.write_bytes(program.pop("bytes"))
-        program.update(_pin(path))
-    manifest = {
-        "status": "prepared-offline-only",
-        "admitted": False,
-        "proof_admitted": False,
-        "source_pins": pins,
-        "adaptation_receipt": receipt,
-        "programs": programs,
-        "request": request,
-        "scope": "source-emitted ABI diagnostics compared with c098 oracle bytes; not workload admission",
-    }
+        path.write_bytes(content)
+        programs[name] = {**_pin(path), "expected_exit": 0, "result_file": f"{name}.temp"}
+    manifest = {"admitted": False, "source_pins": pins, "programs": programs}
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     return manifest

@@ -15,30 +15,6 @@ from benchmarking.processes import PilotProcessResult
 from scripts import dialegg_capture as complete
 
 
-def test_complete_patch_preserves_native_reconstruction_and_checks_failures() -> None:
-    source = """std::ofstream eggFileOut(opsEggFilePath);
-eggFileOut.close();
-std::string egglogCmd = "egglog " + opsEggFilePath + " > " + egglogExtractedFilename + " 2> " + egglogLogFilename;
-std::system(egglogCmd.c_str());
-runEgglog(egglog.eggifiedBlock, blockName); // Run egglog on the block
-std::getline(file, line);
-mlir::Operation* newOp = egglog.parseOperation(line, builder);
-prevOp->replaceAllUsesWith(newOp);
-file.close();
-"""
-    patched = complete.patch_dialegg_pass(source)
-    assert "eggFileOut.close();\n    return;" not in patched
-    assert "runEgglog(egglog.eggifiedBlock, blockName); // Run egglog on the block" in patched
-    assert "egglog.parseOperation(line, builder)" in patched
-    assert "prevOp->replaceAllUsesWith(newOp)" in patched
-    assert "std::system(egglogCmd.c_str()) != 0" in patched
-    assert "missing extraction response" in patched
-    assert "extra extraction response" in patched
-    assert "DIALEGG_NATIVE_EGGLOG" in patched
-    with pytest.raises(ValueError, match="expected exactly one"):
-        complete.patch_dialegg_pass(source.replace("std::getline(file, line);", "changed_source();"))
-
-
 @pytest.mark.parametrize(
     "stdout,returncode,success",
     [
@@ -194,3 +170,23 @@ def test_native_cost_logs_are_enabled_and_bound_to_the_exact_response(
         assert manifest["extract_costs"] == [2]
     else:
         assert "extract_costs" not in manifest and "cost_evidence_unavailable" in manifest
+
+
+@pytest.mark.parametrize("root", ["root", "(reproduction_root_0)", "(Cons (Child 1) (Nil))"])
+@pytest.mark.parametrize("variants", ["", " 0"])
+def test_best_extraction_accepts_existing_value_handles_and_expressions(root: str, variants: str) -> None:
+    source = f"(extract {root}{variants})\n(extract second)\n"
+    assert complete.validate_extract_output(source, "(Chosen 1)\n(Chosen 2)\n", line_protocol=True) == [
+        ["(", "Chosen", "1", ")"],
+        ["(", "Chosen", "2", ")"],
+    ]
+    with pytest.raises(ValueError, match="count"):
+        complete.validate_extract_output(source, "(Chosen 1)\n")
+    with pytest.raises(ValueError, match="one output line"):
+        complete.validate_extract_output(source, "(Chosen\n1)\n(Chosen 2)\n", line_protocol=True)
+
+
+@pytest.mark.parametrize("arguments", ["", "root 1", "(root) 1", "(root) 0 extra", "root other", "(root) (other)"])
+def test_best_extraction_rejects_multiple_roots_or_nonzero_variants(arguments: str) -> None:
+    with pytest.raises(ValueError, match="unsupported source extraction contract"):
+        complete.validate_extract_output(f"(extract {arguments})", "(Chosen)\n")

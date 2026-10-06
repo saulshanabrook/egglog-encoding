@@ -1,4 +1,4 @@
-"""Seal and verify the tested MISAAL Racket runtime without executing native code.
+"""Acquire, smoke-test, seal and verify the MISAAL Racket runtime.
 
 The seal permits source capture with the explicit mixed-revision ABI contract;
 it is not workload admission. Call verify_runtime before and after a guarded
@@ -120,11 +120,9 @@ def prepare_runtime(output: Path, checkout: Path) -> Path:
         (output / (name + ".result.json")).write_text(json.dumps(asdict(result), indent=2, default=str) + "\n")
         if result.status in {"resource-stopped", "memory-limit", "cancelled", "interrupted"}:
             raise RuntimeError(f"MISAAL parameter ABI gate stopped: {result.status}")
-        if result.returncode != program["expected_exit"] or result.status not in {"success", "failure"}:
+        if result.returncode != 0 or result.status != "success":
             raise ValueError(f"MISAAL parameter ABI gate failed: {name}: {result.status}")
-        if program["expected_exit"] and "arity mismatch" not in result.stderr_path.read_text():
-            raise ValueError("unadapted MISAAL API failed for an unexpected reason")
-        if not program["expected_exit"] and not (output / program["result_file"]).stat().st_size:
+        if not (output / program["result_file"]).stat().st_size:
             raise ValueError("MISAAL parameter ABI gate returned no selected program")
     executables = {
         name: {"path": str(file), "sha256": sha256_file(file).removeprefix("sha256:")}

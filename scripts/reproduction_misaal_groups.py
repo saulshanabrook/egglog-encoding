@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import inspect
 import json
 import os
 import secrets
@@ -22,10 +21,8 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
-from types import FrameType, ModuleType
+from types import FrameType
 from typing import Any
 
 CONTRACT = "misaal-racket-lease-v1"
@@ -358,71 +355,6 @@ def launch_registered(command: list[str], endpoint: Path, python: str, **kwargs:
         return process
     finally:
         control.close()
-
-
-@contextmanager
-def observe_racket_launch(module: ModuleType, request: dict[str, Any], endpoint: Path) -> Iterator[None]:
-    """Replace only the exact source module's detached Popen call site."""
-    source = (Path(request["checkout"]) / SOURCE).resolve()
-    if (
-        request.get("racket_group_containment") != CONTRACT
-        or Path(module.__file__ or "").resolve() != source
-        or request["source_hashes"].get(SOURCE) != SOURCE_SHA256
-        or hashlib.sha256(source.read_bytes()).hexdigest() != SOURCE_SHA256
-        or module.subprocess is not subprocess
-    ):
-        raise ValueError("Unsupported native Racket launch source or containment contract")
-    expected = compile(source.read_text(), str(source), "exec", dont_inherit=True)
-    candidates = [
-        value
-        for value in expected.co_consts
-        if inspect.iscode(value) and value.co_name == "run_command_child_processes"
-    ]
-    if len(candidates) != 1 or module.run_command_child_processes.__code__ != candidates[0]:
-        raise ValueError("Native Racket launch function was already changed")
-    original = module.subprocess
-    failures: list[str] = []
-
-    class ScopedSubprocess:
-        def Popen(self, command: Any, **kwargs: Any) -> subprocess.Popen[Any]:
-            frame = inspect.currentframe()
-            caller = frame.f_back if frame else None
-            if (
-                caller is None
-                or caller.f_code != candidates[0]
-                or not isinstance(command, list)
-                or len(command) != 2
-                or command[0] != "racket"
-                or shutil.which("racket") != request["racket"]
-                or hashlib.sha256(Path(request["racket"]).read_bytes()).hexdigest() != request["racket_sha256"]
-                or not isinstance(command[1], str)
-                or not Path(command[1]).is_file()
-                or kwargs != {"start_new_session": True, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
-            ):
-                failures.append("Unrecognized detached native launch refused before spawning")
-                raise ValueError(failures[-1])
-            try:
-                return launch_registered(command, endpoint, request["python"], **kwargs)
-            except BaseException as error:
-                failures.append(f"Native launch containment failed: {type(error).__name__}: {error}")
-                raise
-
-        def __getattr__(self, name: str) -> Any:
-            # Other source functions use inherited-group run/call for cleanup.
-            if name not in {"DEVNULL", "TimeoutExpired", "run", "call"}:
-                failures.append(f"Unsupported native subprocess operation: {name}")
-                raise ValueError(failures[-1])
-            return getattr(original, name)
-
-    module.__dict__["subprocess"] = ScopedSubprocess()
-    try:
-        yield
-    finally:
-        module.__dict__["subprocess"] = original
-        if failures:
-            raise ValueError(
-                "Native launcher observation failed, including possibly swallowed errors: " + "; ".join(failures)
-            )
 
 
 def supervise(endpoint: Path, command: list[str], reservation: str) -> int:

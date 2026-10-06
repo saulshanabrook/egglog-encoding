@@ -14,62 +14,6 @@ from scripts import reproduction_prepare_misaal as preparation
 from scripts import source_tools
 
 
-@pytest.mark.parametrize("changed_lock", [False, True])
-def test_backend_build_uses_verified_original_source_and_rejects_lock_changes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, changed_lock: bool
-) -> None:
-    archive = tmp_path / "egglog.tar.gz"
-    lock = b"original locked dependency graph"
-    with tarfile.open(archive, "w:gz") as tree:
-        member = tarfile.TarInfo(f"egglog-{preparation.EGGLOG_REVISION}/Cargo.lock")
-        member.size = len(lock)
-        tree.addfile(member, io.BytesIO(lock))
-    monkeypatch.setattr(preparation, "EGGLOG_ARCHIVE_SHA256", preparation.sha256_file(archive))
-    monkeypatch.setattr(preparation, "EGGLOG_LOCK_SHA256", preparation.hashlib.sha256(lock).hexdigest())
-    commands = []
-
-    def step(self: preparation.Preparation, name: str, command: list[str], **kwargs: object) -> str:
-        commands.append(command)
-        if name == "backend-rust":
-            return "rustc 1.91.0 (test)\nhost: aarch64-apple-darwin\n"
-        if name == "backend-build":
-            source = Path(str(kwargs["cwd"]))
-            assert (source / "Cargo.lock").read_bytes() == lock
-            binary = source / "target/debug/egglog"
-            binary.parent.mkdir(parents=True)
-            binary.write_text("native executable fixture")
-            binary.chmod(0o700)
-            if changed_lock:
-                (source / "Cargo.lock").write_text("changed dependency graph")
-        return ""
-
-    monkeypatch.setattr(preparation.Preparation, "step", step)
-    attempt = preparation.Preparation(tmp_path)
-    if changed_lock:
-        with pytest.raises(ValueError, match="changed the dependency lock"):
-            preparation.build_backend(attempt)
-        assert not (tmp_path / "backend.json").exists()
-    else:
-        binary = preparation.build_backend(attempt)
-        assert json.loads((tmp_path / "backend.json").read_text())["sha256"] == preparation.sha256_file(binary)
-    build = commands[-1]
-    assert build[-8:] == ["cargo", "+1.91.0", "build", "--locked", "--jobs", "1", "--bin", "egglog"]
-
-
-def test_backend_source_mismatch_stops_before_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    (tmp_path / "egglog.tar.gz").write_bytes(b"unverified source")
-    commands = []
-
-    def step(self: preparation.Preparation, name: str, command: list[str], **kwargs: object) -> str:
-        commands.append(name)
-        return ""
-
-    monkeypatch.setattr(preparation.Preparation, "step", step)
-    with pytest.raises(ValueError, match="archive differs"):
-        preparation.build_backend(preparation.Preparation(tmp_path))
-    assert commands == ["backend-download"]
-
-
 def test_raw_hash_matches_capture_protocol(tmp_path: Path) -> None:
     source = tmp_path / "input"
     source.write_bytes(b"abc")
@@ -97,95 +41,12 @@ def test_guarded_failure_retains_request_and_stops(tmp_path: Path, monkeypatch: 
     assert '"status": "memory-limit"' in (tmp_path / "steps/001-build.result.json").read_text()
 
 
-def test_patch_requires_exact_context_and_owned_source(tmp_path: Path) -> None:
-    attempt = preparation.Preparation(tmp_path)
-    source = tmp_path / "sources/CMakeLists.txt"
-    source.parent.mkdir()
-    source.write_text("old\n")
-    attempt.patch(source, [("old\n", "new\n")], "build-only")
-    assert source.read_text() == "new\n"
-    assert "-old\n+new\n" in (tmp_path / "patches/build-only.patch").read_text()
-    with pytest.raises(ValueError, match="exactly one context"):
-        attempt.patch(source, [("old\n", "invented\n")], "invalid")
-    assert not (tmp_path / "patches/invalid.patch").exists()
-    with pytest.raises(ValueError, match="outside"):
-        attempt.patch(tmp_path / "outside", [("old", "new")], "outside")
-
-
 def test_receipt_cannot_replace_previous_evidence(tmp_path: Path) -> None:
     receipt = tmp_path / "receipt.json"
     preparation.write_json(receipt, {"status": "failure"})
     with pytest.raises(FileExistsError):
         preparation.write_json(receipt, {"status": "success"})
     assert '"failure"' in receipt.read_text()
-
-
-def test_cache_override_preserves_default_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    attempt = preparation.Preparation(tmp_path)
-    modules = {"Halide": "halide", "x86": "x86", "ARM": "ARM", "HVX": "hvx"}
-    for module, stem in modules.items():
-        source = tmp_path / f"sources/MISAAL/lib/patterns/{module}.py"
-        source.parent.mkdir(parents=True, exist_ok=True)
-        source.write_text(
-            'import os\nMISAAL_ROOT = "/source"\n'
-            f'pickle_file_name = MISAAL_ROOT + "/lib/patterns/{stem}.pickle"\n'
-            f'abstract_pickle_file_name = MISAAL_ROOT + "/lib/patterns/{stem}_abstract.pickle"\n'
-        )
-    preparation.patch_pattern_cache(attempt)
-    for override in (None, "/attempt/pattern-cache"):
-        if override is None:
-            monkeypatch.delenv("MISAAL_PATTERN_CACHE_DIR", raising=False)
-        else:
-            monkeypatch.setenv("MISAAL_PATTERN_CACHE_DIR", override)
-        for module, stem in modules.items():
-            namespace: dict[str, object] = {}
-            source = tmp_path / f"sources/MISAAL/lib/patterns/{module}.py"
-            exec(compile(source.read_text(), str(source), "exec"), namespace)
-            cache = override or "/source/lib/patterns"
-            assert namespace["pickle_file_name"] == f"{cache}/{stem}.pickle"
-            assert namespace["abstract_pickle_file_name"] == f"{cache}/{stem}_abstract.pickle"
-
-
-INLINER_CONTEXT = """    if (!CF) return;
-
-    // Map Arguments in the VMAP
-    for (unsigned i = 0; i < CI->getNumOperands(); i++) {
-        llvm::Value *ActualParam = CI->getArgOperand(i);
-
-        llvm::Value *FormalParam = llvm::dyn_cast<llvm::Argument>((CF->arg_begin() + i));
-
-        VMap[FormalParam] = ActualParam;
-    }
-"""
-
-
-@pytest.mark.parametrize("drift", [False, True])
-def test_wrapper_inliner_patch_is_narrow_and_rejects_context_drift(tmp_path: Path, drift: bool) -> None:
-    attempt = preparation.Preparation(tmp_path)
-    source = tmp_path / "sources/MISAAL/frontends/halide/src/CodeGen_LLVM.cpp"
-    source.parent.mkdir(parents=True)
-    original = "// retained prefix\n" + INLINER_CONTEXT + "// retained cloning/remapping body\n"
-    if drift:
-        original = original.replace("VMap[FormalParam]", "VMap[changed]")
-    source.write_text(original)
-    digest = preparation.sha256_file(source)
-    if drift:
-        with pytest.raises(ValueError, match="exactly one context"):
-            preparation.patch_wrapper_inliner(attempt)
-        assert source.read_text() == original
-        assert not (tmp_path / "patches").exists()
-        return
-    preparation.patch_wrapper_inliner(attempt)
-    changed = source.read_text()
-    assert "i < CI->getNumOperands()" not in changed
-    assert "i < CI->arg_size()" in changed
-    assert "!CF->isVarArg() && CI->arg_size() == CF->arg_size()" in changed
-    assert changed.startswith("// retained prefix\n") and changed.endswith("// retained cloning/remapping body\n")
-    patch = tmp_path / "patches/halide-wrapper-inliner-arguments.patch"
-    assert "-    for (unsigned i = 0; i < CI->getNumOperands(); i++)" in patch.read_text()
-    assert json.loads(patch.with_suffix(".before.json").read_text())["sha256"] == digest
-    assert json.loads(patch.with_suffix(".after.json").read_text())["sha256"] == preparation.sha256_file(source)
-    assert not list(attempt.logs.iterdir())
 
 
 BackendFixture = tuple[list[Any], dict[str, Path]]
@@ -264,7 +125,7 @@ def test_optimized_backend_fixed_profile_and_verified_receipt(
         monkeypatch.setenv(key, "must-not-leak")
     directory = tmp_path / "attempt"
     directory.mkdir()
-    backend = preparation.build_backend(preparation.Preparation(directory), optimized_dev=True)
+    backend = preparation.build_backend(preparation.Preparation(directory))
     record = json.loads((directory / "backend.json").read_text())
     assert record["profile"] == preparation.BACKEND_PROFILE
     assert record["source_files"]["Cargo.lock"] == preparation.EGGLOG_LOCK_SHA256
@@ -323,7 +184,7 @@ def test_optimized_backend_receipt_rejects_drift(
 ) -> None:
     directory = tmp_path / "attempt"
     directory.mkdir()
-    backend = preparation.build_backend(preparation.Preparation(directory), optimized_dev=True)
+    backend = preparation.build_backend(preparation.Preparation(directory))
     path = directory / "backend.json"
     record = json.loads(path.read_text())
     if mutation == "profile":
@@ -361,7 +222,7 @@ def test_optimized_backend_refuses_parent_cargo_semantics_before_build(
     directory = tmp_path / "attempt"
     directory.mkdir()
     with pytest.raises(ValueError, match="unreviewed Cargo configuration"):
-        preparation.build_backend(preparation.Preparation(directory), optimized_dev=True)
+        preparation.build_backend(preparation.Preparation(directory))
     assert "backend-build" not in [x[0] for x in optimized_backend_build[0]]
     assert not (directory / "backend.json").exists()
 
@@ -388,7 +249,7 @@ def test_optimized_backend_failed_build_retains_guard_receipts_without_publicati
     directory = tmp_path / "attempt"
     directory.mkdir()
     with pytest.raises((RuntimeError, ValueError)):
-        preparation.build_backend(preparation.Preparation(directory), optimized_dev=True)
+        preparation.build_backend(preparation.Preparation(directory))
     (result_path,) = (directory / "steps").glob("*-backend-build.result.json")
     assert json.loads(result_path.read_text())["status"] == status
     assert not (directory / "backend.json").exists()
@@ -416,7 +277,7 @@ def test_optimized_backend_rejects_changes_during_build(
     directory = tmp_path / "attempt"
     directory.mkdir()
     with pytest.raises(ValueError):
-        preparation.build_backend(preparation.Preparation(directory), optimized_dev=True)
+        preparation.build_backend(preparation.Preparation(directory))
     assert not (directory / "backend.json").exists()
 
 
@@ -428,7 +289,7 @@ def test_optimized_backend_verifies_receipt_contract_beyond_file_hashes(
 ) -> None:
     directory = tmp_path / "attempt"
     directory.mkdir()
-    preparation.build_backend(preparation.Preparation(directory), optimized_dev=True)
+    preparation.build_backend(preparation.Preparation(directory))
     receipt = directory / "backend.json"
     record = json.loads(receipt.read_text())
     if mutation in {"unsafe-guard", "failed-result", "unbound-log", "wrong-toolchain", "wrong-rust"}:
@@ -464,7 +325,7 @@ def test_optimized_backend_requires_fresh_paths_before_download(
 ) -> None:
     (tmp_path / name).symlink_to(tmp_path / "absent-target")
     with pytest.raises(ValueError, match="requires fresh"):
-        preparation.build_backend(preparation.Preparation(tmp_path), optimized_dev=True)
+        preparation.build_backend(preparation.Preparation(tmp_path))
     assert not optimized_backend_build[0]
 
 
@@ -483,8 +344,50 @@ def test_optimized_backend_ancestor_config_is_narrowly_reviewed(
     directory.mkdir()
     if mode == "symlink":
         with pytest.raises(ValueError, match="symlinked Cargo configuration"):
-            preparation.build_backend(preparation.Preparation(directory), optimized_dev=True)
+            preparation.build_backend(preparation.Preparation(directory))
     else:
-        preparation.build_backend(preparation.Preparation(directory), optimized_dev=True)
+        preparation.build_backend(preparation.Preparation(directory))
         record = json.loads((directory / "backend.json").read_text())
         assert record["cargo_configs"][str(config)] == preparation.sha256_file(config)
+
+
+def test_versioned_patch_applies_exact_bytes_and_rejects_drift_and_external_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    # Replace only the resource monitor; execute both git commands for real.
+    def execute(command: list[str], cwd: Path, prefix: Path, **kwargs: Any) -> PilotProcessResult:
+        out, err = prefix.with_suffix(".stdout"), prefix.with_suffix(".stderr")
+        with out.open("wb") as stdout, err.open("wb") as stderr:
+            result = subprocess.run(command, cwd=cwd, stdout=stdout, stderr=stderr, check=False)
+        return PilotProcessResult(
+            "success" if result.returncode == 0 else "failure", result.returncode, 0, 0, out, err, None
+        )
+
+    monkeypatch.setattr(source_tools, "run_bounded_command", execute)
+    patch = tmp_path / "repair.diff"
+    patch.write_text("--- a/source.txt\n+++ b/source.txt\n@@ -1,3 +1,3 @@\n context\n-old\n+repaired\n tail\n")
+    digest = preparation.sha256_file(patch)
+    for changed in (False, True):
+        attempt_dir = tmp_path / str(changed)
+        checkout = attempt_dir / "sources/author"
+        checkout.mkdir(parents=True)
+        source = checkout / "source.txt"
+        original = "context\n" + ("unexpected" if changed else "old") + "\ntail\n"
+        source.write_text(original)
+        attempt = preparation.Preparation(attempt_dir)
+        if changed:
+            with pytest.raises(RuntimeError, match="repair-check: failure"):
+                attempt.apply_patch(checkout, patch)
+            assert source.read_text() == original
+            assert len(list(attempt.logs.glob("*.request.json"))) == 1
+        else:
+            attempt.apply_patch(checkout, patch)
+            assert source.read_bytes() == b"context\nrepaired\ntail\n"
+            assert len(list(attempt.logs.glob("*.request.json"))) == 2
+        retained = attempt_dir / "patches/repair.diff"
+        assert retained.read_bytes() == patch.read_bytes()
+        assert json.loads(retained.with_suffix(".json").read_text())["patch_sha256"] == digest
+        with pytest.raises(ValueError, match="outside this preparation"):
+            attempt.apply_patch(tmp_path, patch)

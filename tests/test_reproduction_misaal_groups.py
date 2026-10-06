@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import signal
 import socket
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -225,64 +224,6 @@ def test_malformed_process_monitoring_is_failure(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(groups.subprocess, "run", lambda *_args, **_kw: subprocess.CompletedProcess([], 0, "bad row"))
     with pytest.raises(ValueError, match="Malformed"):
         groups.process_snapshot()
-
-
-def test_only_pinned_source_launch_is_wrapped_with_unchanged_streams_and_session(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source = tmp_path / groups.SOURCE
-    source.parent.mkdir(parents=True)
-    source.write_text(
-        "import subprocess\n"
-        "def run_command_child_processes(cmd):\n"
-        "    return subprocess.Popen(cmd, start_new_session=True,\n"
-        "                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
-    )
-    module = ModuleType("utils.DSLInstructionUtils")
-    module.__file__ = str(source)
-    exec(compile(source.read_text(), str(source), "exec", dont_inherit=True), module.__dict__)
-    digest = hashlib.sha256(source.read_bytes()).hexdigest()
-    monkeypatch.setattr(groups, "SOURCE_SHA256", digest)
-    script = tmp_path / "source.rkt"
-    script.write_text("unchanged Racket statements")
-    executable = tmp_path / "racket"
-    executable.write_text("pinned fake executable; never run")
-    request = {
-        "checkout": str(tmp_path),
-        "racket_group_containment": groups.CONTRACT,
-        "source_hashes": {groups.SOURCE: digest},
-        "python": "pinned-python",
-        "racket": str(executable),
-        "racket_sha256": hashlib.sha256(executable.read_bytes()).hexdigest(),
-    }
-    monkeypatch.setattr(groups.shutil, "which", lambda _: str(executable))
-    launches = []
-    sentinel = object()
-
-    def launch(command: list[str], endpoint: Path, python: str, **kw: Any) -> Any:
-        launches.append((command, endpoint, python, kw))
-        return sentinel
-
-    monkeypatch.setattr(groups, "launch_registered", launch)
-    with (
-        pytest.raises(ValueError, match="possibly swallowed errors"),
-        groups.observe_racket_launch(module, request, tmp_path / "socket"),
-    ):
-        assert module.run_command_child_processes(["racket", str(script)]) is sentinel
-        with pytest.raises(ValueError, match="Unrecognized detached"):
-            module.subprocess.Popen(["unexpected"], start_new_session=True)
-    assert len(launches) == 1
-    command, endpoint, python, kwargs = launches[0]
-    assert command == ["racket", str(script)]
-    assert endpoint == tmp_path / "socket" and python == "pinned-python"
-    assert kwargs == {"start_new_session": True, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
-    assert module.subprocess is subprocess
-    source.write_text(source.read_text() + "# changed native source\n")
-    with (
-        pytest.raises(ValueError, match="Unsupported native Racket"),
-        groups.observe_racket_launch(module, request, tmp_path / "socket"),
-    ):
-        pytest.fail("changed source cannot install containment")
 
 
 def test_retired_group_number_is_not_counted_after_pid_reuse(registry: tuple) -> None:

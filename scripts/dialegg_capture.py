@@ -26,6 +26,7 @@ from benchmarking.processes import PilotProcessResult, run_bounded_command  # no
 from scripts.hardboiled_replay import egglog_forms  # noqa: E402
 from scripts.paper_benchmarks import materialize  # noqa: E402
 from scripts.reproduction_inventory import dialegg_configurations  # noqa: E402
+from scripts.source_tools import Preparation  # noqa: E402
 
 STOP_STATUSES = {"resource-stopped", "memory-limit", "timed-out"}
 DIALEGG_CONFIGS = dialegg_configurations(json.loads((ROOT / "benchmarks/sources.json").read_text())["dialegg"])
@@ -65,8 +66,18 @@ def validate_extract_output(source: str, stdout: str, *, line_protocol: bool = F
     requests = [tokens for _, _, tokens in egglog_forms(source) if tokens[1] == "extract"]
     # These frontends use ordinary best extraction only. Unknown variants must not
     # silently inherit the one-result contract.
-    if any(len(tokens) != 4 and not (len(tokens) == 5 and tokens[-2] == "0") for tokens in requests):
-        raise ValueError("unsupported source extraction contract; expected one named root and optional zero variants")
+    for tokens in requests:
+        arguments = tokens[2:-1]
+        end = 1
+        if arguments and arguments[0] == "(":
+            depth = 0
+            for index, token in enumerate(arguments, start=1):
+                depth += (token == "(") - (token == ")")
+                if depth == 0:
+                    end = index
+                    break
+        if not arguments or arguments[end:] not in ([], ["0"]):
+            raise ValueError("unsupported source extraction contract; expected one root and optional zero variants")
     outputs = [tokens for _, _, tokens in egglog_forms(stdout)]
     if len(outputs) != len(requests):
         raise ValueError(f"extraction response count {len(outputs)} differs from source root count {len(requests)}")
@@ -76,65 +87,6 @@ def validate_extract_output(source: str, stdout: str, *, line_protocol: bool = F
     if any(tokens[1] in forbidden or any(t.startswith("$") for t in tokens) for tokens in outputs):
         raise ValueError("extraction output must contain closed terms, not commands or globals")
     return outputs
-
-
-def patch_dialegg_pass(source: str) -> str:
-    """Retain the whole original pass, checking the external protocol before reconstruction."""
-    source = "#include <cstdlib>\n#include <stdexcept>\n" + source
-    source = materialize.replace_once(
-        source,
-        "std::ofstream eggFileOut(opsEggFilePath);",
-        """static size_t captureIndex = 0;
-    const char* captureDirectory = std::getenv("DIALEGG_CAPTURE_DIR");
-    if (!captureDirectory) throw std::runtime_error("DIALEGG_CAPTURE_DIR required");
-    opsEggFilePath = std::string(captureDirectory) + "/invocation-" + std::to_string(captureIndex++) + ".egg";
-    egglogExtractedFilename = opsEggFilePath + ".stdout";
-    egglogLogFilename = opsEggFilePath + ".stderr";
-    std::ofstream contextFile(opsEggFilePath + ".context");
-    contextFile << blockName << "\\n";
-    contextFile.close();
-    std::ofstream eggFileOut(opsEggFilePath);""",
-        "unique native invocation paths",
-    )
-    source = materialize.replace_once(
-        source,
-        'std::string egglogCmd = "egglog " + opsEggFilePath + " > " + egglogExtractedFilename'
-        ' + " 2> " + egglogLogFilename;',
-        r"""auto quote = [](const std::string& value) {
-        std::string result = "'";
-        for (char c: value) result += c == '\'' ? "'\\''" : std::string(1, c);
-        return result + "'";
-    };
-    const char* python = std::getenv("DIALEGG_CAPTURE_PYTHON");
-    const char* bridge = std::getenv("DIALEGG_CAPTURE_BRIDGE");
-    const char* backend = std::getenv("DIALEGG_NATIVE_EGGLOG");
-    if (!python || !bridge || !backend) throw std::runtime_error("complete capture delegate environment required");
-    std::string egglogCmd = quote(python) + " " + quote(bridge) + " --delegate " + quote(backend)
-        + " " + quote(opsEggFilePath) + " " + quote(egglogExtractedFilename) + " " + quote(egglogLogFilename);""",
-        "checked backend delegate",
-    )
-    source = materialize.replace_once(
-        source,
-        "std::system(egglogCmd.c_str());",
-        "if (std::system(egglogCmd.c_str()) != 0)\n"
-        '        throw std::runtime_error("Egglog backend or output contract failed");',
-        "backend status check",
-    )
-    source = materialize.replace_once(
-        source,
-        "std::getline(file, line);",
-        'if (!std::getline(file, line) || line.empty()) throw std::runtime_error("missing extraction response");',
-        "reconstruction input check",
-    )
-    source = materialize.replace_once(
-        source,
-        "file.close();",
-        """std::string unexpectedOutput;
-    if (std::getline(file, unexpectedOutput)) throw std::runtime_error("extra extraction response");
-    file.close();""",
-        "reconstruction response exhaustion",
-    )
-    return source
 
 
 def delegate_backend(backend: Path, source: Path, stdout: Path, stderr: Path) -> int:
@@ -180,12 +132,14 @@ def prepare_complete_dialegg(
     prefix: Path, source: Path, output: Path, timeout_sec: float
 ) -> tuple[Path | None, dict[str, Any]]:
     """Build only a copied frontend; preserve patch/source/tool identities and each command."""
-    work = output / "frontend"
+    work = output / "sources/dialegg-frontend"
     shutil.copytree(source / "src", work / "src")
     path = work / "src/EqualitySaturationPass.cpp"
     original = path.read_text()
-    patched = patch_dialegg_pass(original)
-    path.write_text(patched)
+    patch = ROOT / "benchmarks/reproduction/patches/dialegg-capture.diff"
+    preparation = Preparation(output, continuation=True)
+    preparation.apply_patch(work, patch)
+    patched = path.read_text()
     evidence: dict[str, Any] = {
         "source_revision": materialize.DIALEGG_COMMIT,
         "source_files": {
@@ -195,7 +149,7 @@ def prepare_complete_dialegg(
         },
         "original_pass_sha256": hashlib.sha256(original.encode()).hexdigest(),
         "patched_pass_sha256": hashlib.sha256(patched.encode()).hexdigest(),
-        "patch_implementation_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "patch_sha256": hashlib.sha256(patch.read_bytes()).hexdigest(),
         "compiler_sha256": hashlib.sha256((prefix / "bin/clang++").read_bytes()).hexdigest(),
         "builds": [],
     }

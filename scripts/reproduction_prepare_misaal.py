@@ -53,59 +53,6 @@ BACKEND_GUARD_SOURCES = (
 )
 
 
-def patch_wrapper_inliner(preparation: Preparation) -> None:
-    """Map call arguments only; CallInst operands also include the callee/bundles."""
-    source = preparation.directory / "sources/MISAAL/frontends/halide/src/CodeGen_LLVM.cpp"
-    before = """    if (!CF) return;
-
-    // Map Arguments in the VMAP
-    for (unsigned i = 0; i < CI->getNumOperands(); i++) {
-        llvm::Value *ActualParam = CI->getArgOperand(i);
-
-        llvm::Value *FormalParam = llvm::dyn_cast<llvm::Argument>((CF->arg_begin() + i));
-
-        VMap[FormalParam] = ActualParam;
-    }
-"""
-    after = before.replace(
-        "    // Map Arguments in the VMAP\n",
-        "    internal_assert(!CF->isVarArg() && CI->arg_size() == CF->arg_size())\n"
-        '        << "Hydride wrapper call must match the fixed formal argument count";\n\n'
-        "    // Map Arguments in the VMAP\n",
-    ).replace("i < CI->getNumOperands()", "i < CI->arg_size()")
-    preparation.patch(source, [(before, after)], "halide-wrapper-inliner-arguments")
-
-
-def patch_pattern_cache(preparation: Preparation) -> None:
-    """Keep cache bytes/generation unchanged while allowing an attempt-owned directory."""
-    for module, stem in {"Halide": "halide", "x86": "x86", "ARM": "ARM", "HVX": "hvx"}.items():
-        source = preparation.directory / f"sources/MISAAL/lib/patterns/{module}.py"
-        before = source.read_text()
-        matches = re.findall(r"^(?:pickle_file_name|abstract_pickle_file_name) = .*\n", before, re.M)
-        if (
-            len(matches) != 2
-            or f"/lib/patterns/{stem}.pickle" not in matches[0]
-            or (f"/lib/patterns/{stem}_abstract.pickle" not in matches[1])
-        ):
-            raise ValueError(f"unexpected original cache declarations: {source}")
-        preparation.patch(
-            source,
-            [
-                (
-                    matches[0],
-                    'pattern_cache_dir = os.getenv("MISAAL_PATTERN_CACHE_DIR", '
-                    'os.path.join(MISAAL_ROOT, "lib", "patterns"))\n'
-                    f'pickle_file_name = os.path.join(pattern_cache_dir, "{stem}.pickle")\n',
-                ),
-                (
-                    matches[1],
-                    f'abstract_pickle_file_name = os.path.join(pattern_cache_dir, "{stem}_abstract.pickle")\n',
-                ),
-            ],
-            f"pattern-cache-directory-{module}",
-        )
-
-
 def backend_source_hashes(directory: Path) -> dict[str, str]:
     """Require the complete source tree to equal the pinned archive, with no additions."""
     archive = directory / "egglog.tar.gz"
@@ -290,24 +237,23 @@ def verified_backend_receipt(receipt: Path) -> Path:
     return backend
 
 
-def build_backend(preparation: Preparation, *, optimized_dev: bool = False) -> Path:
+def build_backend(preparation: Preparation) -> Path:
     """Build the original backend from pinned source, without a retained binary prerequisite."""
     directory = preparation.directory
-    if optimized_dev:
-        for name in (
-            f"egglog-{EGGLOG_REVISION}",
-            "egglog.tar.gz",
-            "backend-target",
-            "backend-cargo-home",
-            "backend.json",
-            "backend-preparer.py",
-        ):
-            if (directory / name).exists() or (directory / name).is_symlink():
-                raise ValueError("optimized backend requires fresh source, Cargo home and target paths")
-        (directory / "backend-cargo-home").mkdir()
-        (directory / "backend-target").mkdir()
-        with (directory / "backend-preparer.py").open("xb") as snapshot:
-            snapshot.write(Path(__file__).read_bytes())
+    for name in (
+        f"egglog-{EGGLOG_REVISION}",
+        "egglog.tar.gz",
+        "backend-target",
+        "backend-cargo-home",
+        "backend.json",
+        "backend-preparer.py",
+    ):
+        if (directory / name).exists() or (directory / name).is_symlink():
+            raise ValueError("optimized backend requires fresh source, Cargo home and target paths")
+    (directory / "backend-cargo-home").mkdir()
+    (directory / "backend-target").mkdir()
+    with (directory / "backend-preparer.py").open("xb") as snapshot:
+        snapshot.write(Path(__file__).read_bytes())
     archive = directory / "egglog.tar.gz"
     preparation.step(
         "backend-download",
@@ -341,77 +287,57 @@ def build_backend(preparation: Preparation, *, optimized_dev: bool = False) -> P
     source = directory / f"egglog-{EGGLOG_REVISION}"
     if sha256_file(source / "Cargo.lock") != EGGLOG_LOCK_SHA256:
         raise ValueError("original backend dependency lock differs from the verified build")
-    extra: dict[str, Any] = {}
-    command = [
-        "env",
-        "CARGO_INCREMENTAL=0",
-        "CARGO_PROFILE_DEV_DEBUG=0",
-        "RUSTC_WRAPPER=",
-        "cargo",
-        "+1.91.0",
-        "build",
-        "--locked",
-        "--jobs",
-        "1",
-        "--bin",
-        "egglog",
-    ]
-    rust_command = ["rustc", "+1.91.0", "--version", "--verbose"]
-    if optimized_dev:
-        toolchain = {}
-        toolchain_paths = {}
-        for tool in ("rustc", "cargo"):
-            actual = Path(
-                preparation.step(
-                    f"backend-{tool}-path", ["rustup", "which", "--toolchain", "1.91.0", tool], timeout=30
-                ).strip()
-            )
-            toolchain[str(actual)] = sha256_file(actual)
-            toolchain_paths[tool] = str(actual)
-        if any(not Path(path).is_absolute() for path in toolchain_paths.values()) or (
-            Path(toolchain_paths["rustc"]).parent != Path(toolchain_paths["cargo"]).parent
-        ):
-            raise ValueError("optimized backend requires one explicit native toolchain")
-        extra = {
-            "contract": OPTIMIZED_BACKEND,
-            "status": "success",
-            "profile": BACKEND_PROFILE,
-            "source_files": backend_source_hashes(directory),
-            "cargo_configs": backend_cargo_configs(directory),
-            "toolchain": toolchain,
-            "toolchain_paths": toolchain_paths,
-            "environment_unset": sorted(key for key in os.environ if BACKEND_FLAG.fullmatch(key)),
-            "guard_sources": {path: sha256_file(ROOT / path) for path in BACKEND_GUARD_SOURCES},
-        }
-        command = optimized_backend_command(directory, toolchain_paths, extra["environment_unset"])
-        rust_command = [toolchain_paths["rustc"], "--version", "--verbose"]
+    toolchain = {}
+    toolchain_paths = {}
+    for tool in ("rustc", "cargo"):
+        actual = Path(
+            preparation.step(
+                f"backend-{tool}-path", ["rustup", "which", "--toolchain", "1.91.0", tool], timeout=30
+            ).strip()
+        )
+        toolchain[str(actual)] = sha256_file(actual)
+        toolchain_paths[tool] = str(actual)
+    if any(not Path(path).is_absolute() for path in toolchain_paths.values()) or (
+        Path(toolchain_paths["rustc"]).parent != Path(toolchain_paths["cargo"]).parent
+    ):
+        raise ValueError("optimized backend requires one explicit native toolchain")
+    extra: dict[str, Any] = {
+        "contract": OPTIMIZED_BACKEND,
+        "status": "success",
+        "profile": BACKEND_PROFILE,
+        "source_files": backend_source_hashes(directory),
+        "cargo_configs": backend_cargo_configs(directory),
+        "toolchain": toolchain,
+        "toolchain_paths": toolchain_paths,
+        "environment_unset": sorted(key for key in os.environ if BACKEND_FLAG.fullmatch(key)),
+        "guard_sources": {path: sha256_file(ROOT / path) for path in BACKEND_GUARD_SOURCES},
+    }
+    command = optimized_backend_command(directory, toolchain_paths, extra["environment_unset"])
+    rust_command = [toolchain_paths["rustc"], "--version", "--verbose"]
     rust = preparation.step("backend-rust", rust_command, timeout=30)
     if not rust.startswith("rustc 1.91.0 ") or "host: aarch64-apple-darwin" not in rust:
         raise ValueError("backend requires the recorded native Rust 1.91.0 toolchain")
     preparation.step("backend-build", command, cwd=source, timeout=600)
-    backend = directory / "backend-target/debug/egglog" if optimized_dev else source / "target/debug/egglog"
+    backend = directory / "backend-target/debug/egglog"
     if not backend.is_file() or not backend.stat().st_size or not os.access(backend, os.X_OK):
         raise ValueError("original backend build did not produce an executable")
     if sha256_file(source / "Cargo.lock") != EGGLOG_LOCK_SHA256:
         raise ValueError("backend build changed the dependency lock")
-    if optimized_dev:
-        if (
-            backend_source_hashes(directory) != extra["source_files"]
-            or backend_cargo_configs(directory) != extra["cargo_configs"]
-        ):
-            raise ValueError("optimized backend source/configuration changed during build")
-        if any(sha256_file(Path(path)) != digest for path, digest in extra["toolchain"].items()):
-            raise ValueError("optimized backend toolchain changed during build")
-        extra.update(
-            build_request=f"steps/{preparation.count:03}-backend-build.request.json",
-            build_result=f"steps/{preparation.count:03}-backend-build.result.json",
-            evidence={
-                str(path.relative_to(directory)): sha256_file(path)
-                for path in preparation.logs.iterdir()
-                if path.is_file()
-            },
-        )
-        extra["evidence"]["backend-preparer.py"] = sha256_file(directory / "backend-preparer.py")
+    if (
+        backend_source_hashes(directory) != extra["source_files"]
+        or backend_cargo_configs(directory) != extra["cargo_configs"]
+    ):
+        raise ValueError("optimized backend source/configuration changed during build")
+    if any(sha256_file(Path(path)) != digest for path, digest in extra["toolchain"].items()):
+        raise ValueError("optimized backend toolchain changed during build")
+    extra.update(
+        build_request=f"steps/{preparation.count:03}-backend-build.request.json",
+        build_result=f"steps/{preparation.count:03}-backend-build.result.json",
+        evidence={
+            str(path.relative_to(directory)): sha256_file(path) for path in preparation.logs.iterdir() if path.is_file()
+        },
+    )
+    extra["evidence"]["backend-preparer.py"] = sha256_file(directory / "backend-preparer.py")
     write_json(
         directory / "backend.json",
         {
@@ -424,8 +350,7 @@ def build_backend(preparation: Preparation, *, optimized_dev: bool = False) -> P
             **extra,
         },
     )
-    if optimized_dev:
-        verified_backend_receipt(directory / "backend.json")
+    verified_backend_receipt(directory / "backend.json")
     return backend
 
 
@@ -467,19 +392,8 @@ def prepare_exports(
             cwd=hydride,
         )
         driver.step("hydride-checkout", ["git", "checkout", "--detach", "FETCH_HEAD"], cwd=hydride)
-        backend = build_backend(driver, optimized_dev=True)
-        driver.patch(
-            checkout / "frontends/halide/src/CMakeLists.txt",
-            [("    HydrideCodeGen.cpp\n", "    HydrideCodeGen.cpp\n    misaal.cpp\n")],
-            "include-misaal",
-        )
-        driver.patch(
-            checkout / "frontends/halide/dependencies/llvm/CMakeLists.txt",
-            [("if (${OPTION} OR Halide_SHARED_LLVM)", "if (${OPTION})")],
-            "llvm-targets",
-        )
-        patch_wrapper_inliner(driver)
-        patch_pattern_cache(driver)
+        backend = build_backend(driver)
+        driver.apply_patch(checkout, ROOT / "benchmarks/reproduction/patches/misaal-01-build.diff")
         python = output / "python/bin/python"
         driver.step("python-environment", ["uv", "venv", "--python", "3.13.11", str(python.parent.parent)])
         driver.step(

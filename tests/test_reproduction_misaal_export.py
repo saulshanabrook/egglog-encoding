@@ -1,6 +1,5 @@
 """Pure source/receipt controls; these tests never execute a compiler or generator."""
 
-import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -13,118 +12,38 @@ from scripts import reproduction_misaal_export as export
 @pytest.fixture
 def source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = tmp_path / "original"
-    fragments = {
-        "Module.cpp": """#include "Module.h"
-void Module::compile(const std::map<OutputFileType, std::string> &output_files) const {
-    resolve_submodules().compile(output_files);
-    serialize_native_outputs();
-}
-""",
-        "CodeGen_LLVM.cpp": """#include "CodeGen_LLVM.h"
-std::unique_ptr<llvm::Module> CodeGen_LLVM::compile(const Module &input) {
-    init_codegen();
-    add_hydride_code();
-    return finish_codegen();
-}
-void CodeGen_LLVM::compile_func() {
-    // Generate the function declaration and argument unpacking code.
-    begin_func(f.linkage, simple_name, extern_name, f.args);
-    f.body.accept(this);
-
-    Stmt body = f.body;
-    body = optimize_arm_instructions_synthesis(body, target, this->func_value_bounds);
-    body.accept(this);
-
-    // Clean up and return.
-    end_func(f.args);
-}
-""",
-        "CodeGen_Hexagon.cpp": """#include "CodeGen_Posix.h"
-void CodeGen_Hexagon::compile_func() {
-    CodeGen_Posix::begin_func(f.linkage, simple_name, extern_name, f.args);
-    if(defer_to_llvm){
-        debug(0) << "Compiling Hexagon through LLVM!\\n";
-        body.accept(this);
-        return;
-    }
-    body = original_hvx_preprocessing(body);
-    if(enable_hydride) {
-        body = optimize_hexagon_instructions_synthesis(body, target, this->func_value_bounds);
-        body = force_native_instruction_optimization(body);
-    } else {
-        const char* disable_opt = getenv("HL_DISABLE_HEXAGON_OPT");
-        body = native_instruction_optimization(body);
-    }
-    body.accept(this);
-}
-""",
-        "misaal.cpp": """#include "misaal.h"
-void execute_python_file(std::string fname) {
-        int ret_code = system(cmd.c_str());
-        if(ret_code != 0){ assert(false); }
-}
-""",
-    }
     for relative in export.SOURCE_SHA256:
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(fragments.get(path.name, f"unchanged original {relative}\n"))
+        path.write_text(f"unchanged original {relative}\n")
     monkeypatch.setattr(
         export, "SOURCE_SHA256", {name: export.sha256_file(root / name) for name in export.SOURCE_SHA256}
     )
-    patched = export.patched_sources(root)
+
+    def apply_patch(self: export.Preparation, checkout: Path, patch: Path) -> None:
+        # Receipt tests isolate builds and patch execution; concrete patches have
+        # separate application and semantic tests.
+        for relative in {line[6:] for line in patch.read_text().splitlines() if line.startswith("+++ b/")}:
+            target = checkout / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text((target.read_text() if target.exists() else "") + patch.name + "\n")
+
+    monkeypatch.setattr(export.Preparation, "apply_patch", apply_patch)
+    original = {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
+    for patch in export.PATCHES:
+        apply_patch(None, root, patch)  # type: ignore[arg-type]
     monkeypatch.setattr(
         export,
         "EXPORT_SOURCE_SHA256",
-        {
-            **export.SOURCE_SHA256,
-            **{name: hashlib.sha256(text.encode()).hexdigest() for name, text in patched.items()},
-        },
+        {str(path.relative_to(root)): export.sha256_file(path) for path in root.rglob("*") if path.is_file()},
     )
+    for path in list(root.rglob("*")):
+        if path.is_file():
+            if path in original:
+                path.write_bytes(original[path])
+            else:
+                path.unlink()
     return root
-
-
-def test_source_export_preserves_dispatch_preprocessing_and_native_default(source: Path) -> None:
-    original = {name: (source / name).read_bytes() for name in export.SOURCE_SHA256}
-    patched = export.patched_sources(source)
-    assert {name: (source / name).read_bytes() for name in original} == original
-    assert len(patched) == 5
-    module = patched["frontends/halide/src/Module.cpp"]
-    assert module.index("submodule.compile({})") < module.index("codegen->compile(*this)")
-    assert module.index("ledger.end_module()") < module.index("resolve_submodules()")
-    assert "functions().size(), submodules().size()" in module
-    llvm = patched["frontends/halide/src/CodeGen_LLVM.cpp"]
-    assert llvm.index("run_with_large_stack([&]()") < llvm.index("init_codegen()")
-    assert "compile_func(f, names.simple_name, names.extern_name);" in llvm
-    assert "body = optimize_arm_instructions_synthesis(body, target, this->func_value_bounds);" in llvm
-    assert "if (!misaal_export::enabled()) {\n    // Generate the function declaration" in llvm
-    assert "if (misaal_export::enabled()) return;\n    body.accept(this);" in llvm
-    hexagon = patched["frontends/halide/src/CodeGen_Hexagon.cpp"]
-    assert hexagon.index("if(defer_to_llvm)") < hexagon.index("original_hvx_preprocessing")
-    assert "if(defer_to_llvm){\n        if (misaal_export::enabled()) return;" in hexagon
-    assert "this->func_value_bounds);\n        if (misaal_export::enabled()) return;" in hexagon
-    child = patched["frontends/halide/src/misaal.cpp"]
-    assert child.index("begin_child(fname)") < child.index("system(cmd.c_str())") < child.index("end_child(ret_code)")
-    assert child.index("end_child(ret_code)") < child.index("assert(false)")
-
-
-@pytest.mark.parametrize("relative", export.SOURCE_SHA256)
-def test_source_drift_rejected_before_any_edit(source: Path, relative: str) -> None:
-    changed = source / relative
-    changed.write_text(changed.read_text() + "changed\n")
-    with pytest.raises(ValueError, match="source identity changed"):
-        export.patched_sources(source)
-    assert not (source / export.HEADER_PATH).exists()
-
-
-def test_patcher_rejects_repeated_anchor_even_when_manifest_accepts_it(
-    source: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = source / "frontends/halide/src/misaal.cpp"
-    path.write_text(path.read_text() + "        int ret_code = system(cmd.c_str());\n")
-    monkeypatch.setitem(export.SOURCE_SHA256, str(path.relative_to(source)), export.sha256_file(path))
-    with pytest.raises(ValueError, match="patch context changed"):
-        export.patched_sources(source)
 
 
 @pytest.fixture
