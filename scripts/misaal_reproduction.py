@@ -470,6 +470,7 @@ def observe_python(request_path: Path, attempt: Path, arguments: list[str]) -> i
         "status": "running",
         "source_capture_complete": False,
         "invocations": [],
+        "racket_launch_failures": [],
     }
     save_receipt(directory / "capture.json", record)
     checkout = Path(request["checkout"])
@@ -565,10 +566,18 @@ def observe_python(request_path: Path, attempt: Path, arguments: list[str]) -> i
     def launch_racket(command: list[str], **kwargs: Any) -> subprocess.Popen[Any]:
         from scripts.reproduction_misaal_groups import launch_registered
 
-        endpoint = os.environ.get("MISAAL_RACKET_GROUP_SOCKET")
-        if endpoint is None or command[0] != "racket" or shutil.which("racket") != request["racket"]:
-            raise ValueError("Racket launch requires the prepared executable and live guard")
-        return launch_registered(command, Path(endpoint), request["python"], **kwargs)
+        try:
+            endpoint = os.environ.get("MISAAL_RACKET_GROUP_SOCKET")
+            if endpoint is None or command[0] != "racket" or shutil.which("racket") != request["racket"]:
+                raise ValueError("Racket launch requires the prepared executable and live guard")
+            return launch_registered(command, Path(endpoint), request["python"], **kwargs)
+        except BaseException:
+            # Source pattern workers discard their futures, so rethrowing alone
+            # does not prevent an incomplete pattern population from succeeding.
+            with capture_lock:
+                record["racket_launch_failures"].append({"command": command, "error": traceback.format_exc()})
+                save_receipt(directory / "capture.json", record)
+            raise
 
     callbacks = ModuleType("misaal_capture")
     callbacks.__dict__.update(capture_helper=capture_helper, launch_racket=launch_racket)
@@ -672,6 +681,8 @@ def observe_python(request_path: Path, attempt: Path, arguments: list[str]) -> i
                 raise
             empty["source_exit_code"] = 0
         export = record["egglog_export"]
+        if record["racket_launch_failures"]:
+            raise ValueError("Racket launch failed, including possibly swallowed worker exceptions")
         if any(call["status"] != "success" for call in [*record["invocations"], *record["helper_invocations"]]):
             raise ValueError("Egglog export reached LLVM or unfinished optimizer work")
         if export["inputs"]:

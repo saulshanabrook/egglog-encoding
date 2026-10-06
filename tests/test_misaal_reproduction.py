@@ -712,3 +712,48 @@ def test_explicit_helpers_execute_and_keep_boolean_rejections_and_deleted_inputs
         assert helper["sha256"] == hashlib.sha256(raw.read_bytes()).hexdigest()
         assert helper["stdout_sha256"] == hashlib.sha256(raw.with_suffix(".stdout.log").read_bytes()).hexdigest()
     assert not list(attempt.glob("helper-input-1-*.egg"))
+
+
+def test_ignored_worker_future_cannot_hide_racket_launch_failure(export_request: Path, tmp_path: Path) -> None:
+    request = json.loads(export_request.read_text())
+    source = Path(request["checkout"]) / "lib/patterns/PatternUtils.py"
+    source.write_text(
+        source.read_text() + "\nfrom concurrent.futures import ThreadPoolExecutor\n"
+        "from misaal_capture import launch_racket\n"
+        "with ThreadPoolExecutor(max_workers=1) as pool:\n"
+        "    pool.submit(launch_racket, ['racket', 'pattern-bucket.rkt'], start_new_session=True,\n"
+        "                stdout=sb.DEVNULL, stderr=sb.DEVNULL)\n"
+    )
+    request["source_hashes"]["lib/patterns/PatternUtils.py"] = hashlib.sha256(source.read_bytes()).hexdigest()
+    request.update(racket=request["python"], racket_sha256=request["python_sha256"])
+    request["environment"].update(PROTOCOL_REAL_COUNT="1")
+    export_request.write_text(json.dumps(request))
+    wrapper = Path(misaal.__file__)
+    wrapper.write_text(
+        wrapper.read_text().replace(
+            "raise SystemExit(adapter.main())",
+            "from scripts import reproduction_misaal_groups as groups\n"
+            "import os\n"
+            "os.environ['MISAAL_RACKET_GROUP_SOCKET'] = 'unused-fixture-socket'\n"
+            f"adapter.shutil.which = lambda name: {request['racket']!r}\n"
+            "def fail_launch(*args, **kwargs):\n"
+            "    raise OSError('fixture Racket spawn failed')\n"
+            "groups.launch_registered = fail_launch\n"
+            "raise SystemExit(adapter.main())",
+        )
+    )
+    attempt = tmp_path / "failed-worker-launch"
+    # Complete independent Egglog calls may still be recovered, but neither the
+    # child nor the full source capture may claim that its pattern work completed.
+    assert misaal.run_frontend(export_request, attempt) == 0
+    record = json.loads((attempt / "capture.json").read_text())
+    child = json.loads((attempt / "children/child-0000/capture.json").read_text())
+    assert record["source_capture_complete"] is False and "parent_failure" in record
+    assert child["status"] == "failure" and child["source_capture_complete"] is False
+    assert len(child["invocations"]) == 3
+    assert all(call["status"] == "success" for call in child["invocations"])
+    assert len(child["racket_launch_failures"]) == 1
+    failure = child["racket_launch_failures"][0]
+    assert failure["command"] == ["racket", "pattern-bucket.rkt"]
+    assert "OSError: fixture Racket spawn failed" in failure["error"]
+    assert "Racket launch failed" in child["error"]
