@@ -3,10 +3,11 @@
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
+from benchmarking.processes import PilotProcessResult
 from scripts import eggcc_churchroad_complete as complete
 from scripts import suite_capture_eggcc_churchroad as capture
 from scripts.eggcc_churchroad_complete import (
@@ -344,3 +345,92 @@ def test_native_events_require_bounded_contiguous_complete_json(tmp_path: Path) 
     path.write_text('{"partial":')
     with pytest.raises(CaptureError, match="incomplete"):
         read_events(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "parent_status,completed,materialization_status",
+    [
+        ("success", True, "success"),
+        ("failure", True, "success"),
+        ("timed-out", True, "success"),
+        ("timed-out", False, "success"),
+        ("resource-stopped", True, "success"),
+        ("memory-limit", True, "success"),
+        ("cancelled", True, "success"),
+        ("interrupted", True, "success"),
+        ("timed-out", True, "resource-stopped"),
+        ("timed-out", True, "memory-limit"),
+        ("timed-out", True, "cancelled"),
+        ("timed-out", True, "interrupted"),
+    ],
+)
+def test_capture_complete_retains_calls_after_timeout_but_halts_on_safety_or_cancellation(
+    eggcc_source: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    parent_status: str,
+    completed: bool,
+    materialization_status: str,
+) -> None:
+    for name in ("first", "second", "engine", "compiler"):
+        (tmp_path / name).write_text("fixture identity")
+    launches: list[str] = []
+
+    def run(command: list[str], _cwd: Path, prefix: Path, **options: Any) -> PilotProcessResult:
+        assert options == {"timeout_sec": 7, "require_guard": True}
+        launches.append(prefix.name)
+        stdout, stderr = prefix.with_suffix(".stdout"), prefix.with_suffix(".stderr")
+        stdout.write_text("")
+        stderr.write_text("retained native diagnostics")
+        if prefix.name == "native":
+            if completed:
+                (prefix.parent / "native-events/event-000000.json").write_text(
+                    json.dumps(event(0, "optimization-complete", program=eggcc_source, batch=["main"], **{"pass": 0}))
+                )
+            status = parent_status
+        else:
+            assert prefix.name == "materialize"
+            if materialization_status == "success":
+                request = Path(command[-1])
+                record = capture.materialize_complete_events(json.loads(request.read_text()), request.parent)
+                (request.parent / "materialized.json").write_text(json.dumps(record))
+            status = materialization_status
+        # Include cancellation statuses understood by the capture coordinator.
+        return PilotProcessResult(
+            cast(Any, status), 0 if status == "success" else 1, 0.1, 1024, stdout, stderr, "parent outcome"
+        )
+
+    monkeypatch.setattr(capture, "run_bounded_command", run)
+    monkeypatch.setattr(capture, "adapt_eggcc", lambda source: source)
+    records = capture.capture_complete(
+        "eggcc",
+        [{"id": name, "source": name} for name in ("first", "second")],
+        tmp_path / "captures",
+        tmp_path,
+        tmp_path / "compiler",
+        tmp_path / "engine",
+        timeout_sec=7,
+    )
+    parent_halted = parent_status in {"resource-stopped", "memory-limit", "cancelled", "interrupted"}
+    halted = parent_halted or materialization_status != "success"
+    assert launches == (["native"] if parent_halted else ["native", "materialize"] * (1 if halted else 2))
+    assert len(records) == (1 if halted else 2)
+    for record in records:
+        assert record["process"]["status"] == parent_status
+        assert record["process"]["message"] == "parent outcome"
+        assert record["status"] == (
+            parent_status
+            if parent_halted
+            else materialization_status
+            if halted
+            else "ordinary-validation-pending"
+            if completed
+            else "blocked"
+        )
+        assert len(record["sessions"]) == (0 if halted or not completed else 1)
+        if completed and not halted:
+            assert record["source_completion"]["status"] == "complete"
+            assert record["source_completion"]["parent_completed"] is False
+        assert json.loads((tmp_path / "captures" / record["id"] / "capture.json").read_text()) == json.loads(
+            json.dumps(record, default=str)
+        )
