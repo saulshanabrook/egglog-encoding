@@ -725,7 +725,8 @@ impl EGraph {
                 };
                 ResolvedNCommand::LetBegin(span.clone(), resolved_var, resolved)
             }
-            NCommand::Extract(span, expr, variants) => {
+            NCommand::Extract(span, expr, variants)
+            | NCommand::ProveExtract(span, expr, variants, _) => {
                 // A tuple-output function returns more than one value, so it can't be extracted as a
                 // single term; surface a clear error instead of a confusing arity mismatch.
                 if let GenericExpr::Call(_, head, _) = expr
@@ -760,7 +761,11 @@ impl EGraph {
                     });
                 }
 
-                ResolvedNCommand::Extract(span.clone(), res_expr, res_variants)
+                if let NCommand::ProveExtract(_, _, _, action) = command {
+                    ResolvedNCommand::ProveExtract(span.clone(), res_expr, res_variants, *action)
+                } else {
+                    ResolvedNCommand::Extract(span.clone(), res_expr, res_variants)
+                }
             }
             NCommand::Check(span, facts) => ResolvedNCommand::Check(
                 span.clone(),

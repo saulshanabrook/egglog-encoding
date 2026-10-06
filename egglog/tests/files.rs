@@ -39,6 +39,12 @@ const MANUAL_PROOF_DISABLED_FILES: &[ManualProofDisable] = &[
 // These proof-testing runs are still executed, but their proof snapshots are
 // too large for default checked-in fixtures.
 const PROOF_TESTING_SNAPSHOT_DISABLED_FILES: &[&str] = &[
+    "cyk.egg",
+    "unification-points-to.egg",
+    "combinators.egg",
+    "typecheck.egg",
+    "fibonacci-demand.egg",
+    "intersection.egg",
     "eqsolve.egg",
     "hardboiled_conv1d_32.egg",
     "herbie.egg",
@@ -259,8 +265,7 @@ impl Run {
         })
     }
 
-    /// Base snapshot name without mode suffixes - all variants share the same snapshot
-    /// except for proof_testing, which has different output due to using `prove` everywhere.
+    /// Base snapshot name for outputs shared by all modes.
     fn snapshot_name_across_treatments(&self) -> String {
         let mut name = "shared_snapshot_".to_string();
 
@@ -283,21 +288,36 @@ impl Run {
     }
 
     fn assert_proof_testing_snapshots(&self, outputs: &[CommandOutput]) {
+        // Negative commands discard their outputs. Every returned extraction
+        // must have its own adjacent proofs, including during desugared replay.
+        for (index, output) in outputs.iter().enumerate() {
+            let proof_count = match output {
+                CommandOutput::ExtractBest(..) => 1,
+                CommandOutput::ExtractVariants(_, terms) => terms.len(),
+                _ => continue,
+            };
+            assert!(
+                outputs
+                    .get(index + 1..index + 1 + proof_count)
+                    .is_some_and(|proofs| proofs
+                        .iter()
+                        .all(|output| matches!(output, CommandOutput::ProveExists { .. }))),
+                "missing proofs after extracted result at output {index}",
+            );
+        }
+
         if let Some(snapshot_name) = self.proof_testing_snapshot_name() {
             let proof_snapshot = CommandOutput::snapshot_proofs_only(outputs);
             if !proof_snapshot.is_empty() {
                 insta::assert_snapshot!(snapshot_name, proof_snapshot);
             }
+        }
 
-            if !self.requires_proofs() {
-                let shared_snapshot =
-                    CommandOutput::snapshot_non_proof_stable_under_proof_encoding(outputs);
-                if !shared_snapshot.is_empty() {
-                    insta::assert_snapshot!(
-                        self.snapshot_name_across_treatments(),
-                        shared_snapshot
-                    );
-                }
+        if !self.requires_proofs() {
+            let shared_snapshot =
+                CommandOutput::snapshot_non_proof_stable_under_proof_encoding(outputs);
+            if !shared_snapshot.is_empty() {
+                insta::assert_snapshot!(self.snapshot_name_across_treatments(), shared_snapshot);
             }
         }
     }

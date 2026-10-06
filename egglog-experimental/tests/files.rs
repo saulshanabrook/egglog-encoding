@@ -234,6 +234,11 @@ struct ExtractCheck {
 
 fn extract_command_parts(command: &Command) -> Option<ExtractCheck> {
     match command {
+        Command::Extract(_, root, variants) => Some(ExtractCheck {
+            root: root.clone(),
+            variants: Some(variants.clone()),
+            use_greedy_dag: false,
+        }),
         Command::UserDefined(_, name, args) if name == "extract" => {
             let use_greedy_dag = matches!(
                 args.last_chunk::<2>(),

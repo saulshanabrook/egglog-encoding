@@ -1,5 +1,6 @@
 ---
 source: egglog/tests/files.rs
+assertion_line: 289
 expression: proof_snapshot
 ---
 (let t0 (Mul (Num 3) (Var "x")))
@@ -14,5 +15,29 @@ expression: proof_snapshot
     (premises (Fiat (= t0 t0)))
     (substitution (@rewrite_var__ t0) (x (Var "x"))))
   1)
+(let t0 (Mul (Num 3) (Var "x")))
+(let t1 (Mul (Num 2) t0))
+(let t2 (Add (Var "x") (Add (Var "x") (Var "x"))))
+(Congr
+  (= t1 (Mul (Num 2) t2))
+  (Fiat (= t1 t1))
+  (Rule
+    (= t0 t2)
+    (name "(rewrite (Mul (Num 3) x) (Add x (Add x x)) :subsume)")
+    (premises (Fiat (= t0 t0)))
+    (substitution (@rewrite_var__ t0) (x (Var "x"))))
+  1)
 (let t0 (Mul (Num 2) (Mul (Num 3) (Var "x"))))
 (Fiat (= t0 t0))
+(let t0 (Mul (Num 3) (Var "x")))
+(let t1 (Mul (Num 2) t0))
+(let t2 (Add (Var "x") (Add (Var "x") (Var "x"))))
+(Congr
+  (= t1 (Mul (Num 2) t2))
+  (Fiat (= t1 t1))
+  (Rule
+    (= t0 t2)
+    (name "(rewrite (Mul (Num 3) x) (Add x (Add x x)) :subsume)")
+    (premises (Fiat (= t0 t0)))
+    (substitution (@rewrite_var__ t0) (x (Var "x"))))
+  1)

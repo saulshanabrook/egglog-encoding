@@ -898,6 +898,10 @@ pub enum ProofEncodingUnsupportedReason {
     SortWithUfAnnotation,
     #[error("user-defined commands are not supported.")]
     UserDefinedCommand,
+    #[error(
+        "explicit extraction algorithms are not supported by term/proof encoding; use built-in tree extraction with dynamic costs."
+    )]
+    ExtractionAlgorithm,
     #[error("`output` commands are not supported when proofs are enabled.")]
     OutputCommand,
     #[error(
@@ -1568,6 +1572,9 @@ fn command_supports_proof_encoding_impl(
         GenericCommand::Sort { uf: Some(_), .. } => {
             Err(ProofEncodingUnsupportedReason::SortWithUfAnnotation)
         }
+        GenericCommand::UserDefined(_, name, _) if name == "extract" => {
+            Err(ProofEncodingUnsupportedReason::ExtractionAlgorithm)
+        }
         GenericCommand::UserDefined(..) => Err(ProofEncodingUnsupportedReason::UserDefinedCommand),
         GenericCommand::Output { .. } if proofs_enabled => {
             Err(ProofEncodingUnsupportedReason::OutputCommand)
@@ -1575,7 +1582,8 @@ fn command_supports_proof_encoding_impl(
         // Extract commands can't have non-global function lookups
         // because instrument_action_expr doesn't support them
         // (global function calls are fine - they get desugared to constructors)
-        GenericCommand::Extract(_, expr, variants) => {
+        GenericCommand::Extract(_, expr, variants)
+        | GenericCommand::ProveExtract(_, expr, variants, _) => {
             if expr_has_non_global_lookup(expr, type_info, extra_globals)
                 || expr_has_non_global_lookup(variants, type_info, extra_globals)
             {
