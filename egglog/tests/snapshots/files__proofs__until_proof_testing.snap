@@ -29,5 +29,19 @@ expression: proof_snapshot
       prf0
       1))
   (substitution (@rewrite_var__2 t1) (a (IConst))))
-(Fiat (= () ()))
-(Fiat (= () ()))
+(Rule
+  (= (@ExistsConstructor1) (@ExistsConstructor1))
+  (name "@prove_exists_rule1")
+  (premises
+    (Fiat (= (BConst) (BConst)))
+    (Fiat (= (AConst) (AConst)))
+    (Fiat (= () ())))
+  (substitution (@v (BConst)) (@v1 (AConst))))
+(Rule
+  (= (@ExistsConstructor2) (@ExistsConstructor2))
+  (name "@prove_exists_rule2")
+  (premises
+    (Fiat (= (IConst) (IConst)))
+    (Fiat (= (AConst) (AConst)))
+    (Fiat (= () ())))
+  (substitution (@v2 (IConst)) (@v3 (AConst))))
