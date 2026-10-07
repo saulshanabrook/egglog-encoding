@@ -159,15 +159,12 @@ class InteractiveRuntime:
         self._endpoint_by_id = {choice.endpoint_id: choice.endpoint for choice in self._endpoint_choices}
         self._file_by_id = {choice.file_id: choice.file for choice in self._file_choices}
 
-        if not isinstance(initial_scope, dict):
-            raise ValueError("scope request must be a JSON object")
-        request = cast(_ScopeRequest, initial_scope)
-        self._suite_mode = request.get("suite_mode", False)
-        self._validation_issues = request.get("validation_issues", {})
+        self._suite_mode = initial_scope.get("suite_mode", False)
+        self._validation_issues = initial_scope.get("validation_issues", {})
         if self._suite_mode:
             # Captures blocked during preparation can have no measurement rows.
             # Seed only absent identities; cached selectors retain latest provenance.
-            for context in request.get("initial_endpoints", []):
+            for context in initial_scope.get("initial_endpoints", []):
                 target_row = TargetRow(**context["target"])
                 endpoint = BenchmarkEndpoint(
                     ResolvedTarget(
@@ -187,7 +184,7 @@ class InteractiveRuntime:
                 if endpoint_id not in self._endpoint_by_id:
                     self._endpoint_by_id[endpoint_id] = endpoint
                     self._endpoint_choices += (_EndpointChoice(endpoint_id, endpoint),)
-            self._timeouts = tuple(sorted({*self._timeouts, request["timeout_sec"]}))
+            self._timeouts = tuple(sorted({*self._timeouts, initial_scope["timeout_sec"]}))
         scope = self._parse_scope(initial_scope, initial=True)
         self._validation_endpoint_ids = frozenset((scope.baseline_endpoint_id, scope.candidate_endpoint_id))
         self._validation_timeout_sec = scope.timeout_sec

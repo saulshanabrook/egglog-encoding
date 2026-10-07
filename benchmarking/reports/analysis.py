@@ -220,8 +220,8 @@ def _selection_issue(rows: tuple[IndexedRecord, ...], rounds: int, *, suite_mode
                 if message := (selected["error_message"] or "").strip():
                     issue += f": {message.splitlines()[0]}"
             return issue
-    if not rows or (not suite_mode and len(rows) < rounds):
-        return f"missing {max(1, rounds - len(rows))} row(s)"
+    if not rows:
+        return f"missing {rounds} row(s)"
     return None
 
 

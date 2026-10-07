@@ -85,8 +85,8 @@ def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument(
         "--treatment",
         choices=TREATMENTS,
-        default=None,
-        help="candidate treatment (default: proofs, or proof-extraction for --suite)",
+        default="proofs",
+        help="candidate treatment (default: proofs)",
     )
     parser.add_argument(
         "--compare-target",
@@ -119,8 +119,8 @@ def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument(
         "--rounds",
         type=positive_int,
-        default=None,
-        help=f"rows required per endpoint/file result (default: {DEFAULT_ROUNDS}, or 10 for --suite)",
+        default=DEFAULT_ROUNDS,
+        help=f"rows required per endpoint/file result (default: {DEFAULT_ROUNDS})",
     )
     parser.add_argument(
         "--timeout-sec",
@@ -145,10 +145,6 @@ def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
         parser.error("--suite is mutually exclusive with explicit files and --fact-directory")
     if args.suite is not None and args.detail == "summary":
         args.detail = "files"
-    if args.treatment is None:
-        args.treatment = "proof-extraction" if args.suite is not None else "proofs"
-    if args.rounds is None:
-        args.rounds = 10 if args.suite is not None else DEFAULT_ROUNDS
     args.command = "benchmark"
     return args
 
@@ -211,21 +207,6 @@ def collection_plans(
 ) -> tuple[CollectionPlan, ...]:
     """Group exact endpoints by resolved target so each target is preflighted once."""
 
-    if comparison.suite_mode:
-        return tuple(
-            build_collection_plan(
-                store,
-                endpoint.target,
-                (endpoint,),
-                comparison.files,
-                comparison.rounds,
-                comparison.timeout_sec,
-                force_run,
-                True,
-                blocked_files,
-            )
-            for endpoint in (comparison.baseline, comparison.candidate)
-        )
     endpoints_by_target: dict[ResolvedTarget, list[BenchmarkEndpoint]] = {}
     for endpoint in (comparison.baseline, comparison.candidate):
         endpoints_by_target.setdefault(endpoint.target, []).append(endpoint)
@@ -239,7 +220,7 @@ def collection_plans(
             comparison.timeout_sec,
             force_run,
             comparison.suite_mode,
-            () if force_run else tuple(file for file, _reason in comparison.validation_issues),
+            blocked_files,
         )
         for target, endpoints in endpoints_by_target.items()
     )

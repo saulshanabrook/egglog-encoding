@@ -28,7 +28,6 @@ from rich.table import Column
 from rich.text import Text
 
 from .engines import TREATMENT_SPECS
-from .math_workloads import LEGACY_SHA256
 from .models import (
     BenchmarkEndpoint,
     DisequalityEncoding,
@@ -144,7 +143,7 @@ def build_collection_plan(
     for file_spec, treatment, cache_key in requests:
         cached = selected[cache_key]
         stopped = file_spec in blocked_files or (
-            suite_mode and not force_run and store.latest_failure(cache_key) is not None
+            suite_mode and not force_run and any(status != "success" for status in cached)
         )
         missing = 0 if stopped else rounds if force_run else max(0, rounds - len(cached))
         runs.append(
@@ -325,11 +324,11 @@ def label_has_enough_rows(
         for endpoint in endpoint_requests
         for file_spec in (logical_file.for_engine(TREATMENT_SPECS[endpoint.treatment].engine),)
     )
-    selected = store.selected_statuses_for_keys(keys, rounds)
+    selected = store.selected_statuses_for_keys(keys, None if suite_mode else rounds)
     stopped = {(file.sha256, file.fact_directory_sha256) for file in blocked_files}
     return all(
         (key.file_sha256, key.fact_directory_sha256) in stopped
-        or (suite_mode and store.latest_failure(key) is not None)
+        or (suite_mode and any(status != "success" for status in selected[key]))
         or len(selected[key]) >= rounds
         for key in keys
     )
@@ -403,8 +402,6 @@ def preflight_collection(plan: CollectionPlan, timeout_sec: int) -> None:
         if engine not in ("egglog", "egg"):
             continue
         required_outputs = ["--timing-summary"]
-        if engine == "egg" and any(run.file.sha256 != f"sha256:{LEGACY_SHA256}" for run in engine_runs):
-            required_outputs.extend(("--iterations", "--check-left", "--check-right"))
         if engine == "egglog":
             if any(run.disequality_encoding != "nee" for run in engine_runs):
                 required_outputs.append("--disequality-encoding")

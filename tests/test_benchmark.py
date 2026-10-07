@@ -38,13 +38,15 @@ def test_public_entrypoint_dispatches_benchmark_and_profile(monkeypatch: pytest.
     assert calls == [("benchmark", ("--rounds", "1")), ("profile", ("file.egg",))]
 
 
-def test_pair_cli_defaults_to_current_main_off_vs_proofs() -> None:
-    args = benchmark.parse_benchmark_args([])
+@pytest.mark.parametrize("argv", [[], ["--suite", "eggcc"]])
+def test_pair_cli_defaults_to_current_main_off_vs_proofs(argv: list[str]) -> None:
+    args = benchmark.parse_benchmark_args(argv)
     baseline, candidate = benchmark.endpoint_requests(args)
 
     assert baseline == models.EndpointRequest(targets.parse_target("."), "off")
     assert candidate == models.EndpointRequest(targets.parse_target("."), "proofs")
-    assert args.detail == "summary"
+    assert args.rounds == 6
+    assert args.detail == ("files" if argv else "summary")
     assert args.command == "benchmark"
 
 

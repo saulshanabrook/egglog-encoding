@@ -197,6 +197,8 @@ def test_cached_suite_label_keeps_exact_validation_error_without_building_or_scr
                 "eggcc",
                 "--target",
                 "cached=",
+                "--treatment",
+                "proof-extraction",
                 "--rounds",
                 "2",
                 "--timeout-sec",

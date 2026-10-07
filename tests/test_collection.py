@@ -499,7 +499,7 @@ def test_preflight_checks_each_required_engine_binary(monkeypatch: pytest.Monkey
 
     assert calls == [
         (egglog_binary, ("--timing-summary", "--proof-testing")),
-        (egg_binary, ("--timing-summary", "--iterations", "--check-left", "--check-right")),
+        (egg_binary, ("--timing-summary",)),
     ]
 
 
@@ -1002,7 +1002,7 @@ def test_suite_reduced_sample_retains_old_failure_until_explicit_retry(tmp_path:
     )
     plan = collection.build_collection_plan(store, target, (proof,), (FILE_SPEC,), 10, 120, False, True)
     assert plan.total_missing_observations == 0
-    assert store.latest_failure(CacheKey.for_endpoint(proof, FILE_SPEC, 120)) is not None
+    assert plan.runs[0].cached_statuses == ("timed-out", *("success",) * 10)
     retry = collection.build_collection_plan(store, target, (proof,), (FILE_SPEC,), 10, 120, True, True)
     assert retry.total_missing_observations == 10
 

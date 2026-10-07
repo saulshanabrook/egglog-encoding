@@ -376,7 +376,7 @@ The remaining collection options are:
 - `--report PATH`: append-only report/cache path; default `.reports.jsonl`.
   A filesystem path is required; `-` is not a streaming destination.
 - `--rounds N`: selected observations required for every endpoint/file;
-  default `6`, or `10` with `--suite`.
+  default `6`. Figure Make targets explicitly request `10`.
 - `--timeout-sec N`: per-process timeout; default `1800` to accommodate the
   full-size disequality proof workload. Smaller workloads may use a lower limit.
 - `--force-run`: append `N` fresh rows for both endpoints before selecting the

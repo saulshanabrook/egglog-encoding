@@ -79,7 +79,6 @@ def test_one_sample_has_point_only_and_old_failure_cannot_be_hidden_by_thirty_su
     assert result.candidate.point == 2 and result.candidate.ci_low is None
     key = CacheKey.for_endpoint(comparison.baseline, file, 120)
     assert len(store.latest_records(key)) == 41
-    assert store.latest_failure(key) is not None
     assert (
         collection.build_collection_plan(
             store, target, (comparison.baseline,), (file,), 50, 120, False, True
@@ -137,7 +136,8 @@ def test_fixed_math_suite_plans_all_four_endpoints_and_reuses_off_observations(t
     for treatment in ("proof-extraction", "egg", "egg-proof-extraction"):
         candidate = models.BenchmarkEndpoint(target, treatment)
         comparison = models.ComparisonSpec(baseline, candidate, suite.files, 10, 300, suite_mode=True)
-        off, proof = benchmark.collection_plans(store, comparison, False)
-        assert off.total_missing_observations == 0
-        assert len(off.runs[0].cached_statuses) == 12
-        assert proof.total_missing_observations == 10 and proof.runs[0].treatment == treatment
+        (plan,) = benchmark.collection_plans(store, comparison, False)
+        off, proof = plan.runs
+        assert off.missing_observations == 0
+        assert len(off.cached_statuses) == 12
+        assert proof.missing_observations == 10 and proof.treatment == treatment
