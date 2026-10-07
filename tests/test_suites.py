@@ -61,8 +61,6 @@ def test_manifest_preserves_aliases_partial_calls_blockers_and_unknown_producer_
     assert len(selected.files) == 2
     assert selected.case_files["case-0"] == selected.case_files["alias"]
     assert selected.case_files["partial"] == selected.case_files["case-1"]
-    assert selected.manifest.preparation == raw["preparation"]
-    assert selected.manifest.cases[2].evidence == "logs/capture.txt"
     coverage = suites.build_coverage(
         selected,
         report_records=[

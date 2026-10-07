@@ -19,8 +19,6 @@ EXPANDED_FAMILIES = ("math-growth", "eggcc", "luminal", "hardboiled", "misaal", 
 SUITE_NAMES = ("expanded", "math-11", *EXPANDED_FAMILIES)
 VALIDATION_POLICY = "proof-testing-v1"
 SAFETY_POLICY = "memory-guard-v1"
-type ProofTreatment = Literal["proofs", "proof-extraction"]
-PROOF_TREATMENTS: tuple[ProofTreatment, ...] = ("proofs", "proof-extraction")
 
 
 class CorpusOutcome(TypedDict):
@@ -48,7 +46,6 @@ class ManifestWorkload:
     sha256: str
     facts_sha256: str
     aliases: tuple[WorkloadAlias, ...]
-    adaptations: tuple[str, ...]
     facts: str | None = None
 
 
@@ -60,8 +57,6 @@ class CorpusCase:
     status: Literal["ready", "blocked", "excluded", "pending"]
     workloads: tuple[str, ...]
     reason: str | None = None
-    configuration: Any = None
-    evidence: str | None = None
 
 
 @dataclass(frozen=True)
@@ -71,7 +66,6 @@ class CorpusManifest:
     cases: tuple[CorpusCase, ...]
     workloads: tuple[ManifestWorkload, ...]
     outcomes: tuple[CorpusOutcome, ...]
-    preparation: dict[str, Any] = field(default_factory=dict)
 
 
 def load_manifest(root: Path) -> CorpusManifest:
@@ -90,8 +84,6 @@ def load_manifest(root: Path) -> CorpusManifest:
                 case["status"],
                 tuple(case["workloads"]),
                 case.get("reason"),
-                case.get("configuration"),
-                case.get("evidence"),
             )
             for case in raw["cases"]
         )
@@ -101,7 +93,6 @@ def load_manifest(root: Path) -> CorpusManifest:
                 workload["sha256"],
                 workload.get("facts_sha256", ""),
                 tuple(WorkloadAlias(alias["case"], alias["order"]) for alias in workload["aliases"]),
-                tuple(workload.get("adaptations", ())),
                 workload.get("facts"),
             )
             for workload in raw["workloads"]
@@ -118,9 +109,7 @@ def load_manifest(root: Path) -> CorpusManifest:
         case_ids = {case.id for case in cases}
         if any(alias.case not in case_ids for workload in workloads for alias in workload.aliases):
             raise ValueError("workload alias references an unknown case")
-        return CorpusManifest(
-            path, raw["sources"], cases, workloads, tuple(raw.get("outcomes", ())), raw.get("preparation", {})
-        )
+        return CorpusManifest(path, raw["sources"], cases, workloads, tuple(raw.get("outcomes", ())))
     except (KeyError, TypeError, ValueError) as error:
         raise ValueError(f"invalid corpus manifest {path}: {error}") from error
 
@@ -128,7 +117,6 @@ def load_manifest(root: Path) -> CorpusManifest:
 @dataclass(frozen=True)
 class SuiteSelection:
     name: str
-    root: Path
     manifest: CorpusManifest
     cases: tuple[CorpusCase, ...]
     files: tuple[FileSpec, ...]
@@ -169,7 +157,7 @@ def resolve_suite(name: str | Sequence[str], root: Path) -> SuiteSelection:
             except (OSError, ValueError) as error:
                 errors[case.id] = str(error)
         case_files[case.id] = tuple(captured)
-    return SuiteSelection(", ".join(names), root, manifest, cases, tuple(unique.values()), case_files, errors)
+    return SuiteSelection(", ".join(names), manifest, cases, tuple(unique.values()), case_files, errors)
 
 
 def suite_outcomes(
@@ -219,7 +207,6 @@ def suite_outcomes(
 
 def build_coverage(
     selection: SuiteSelection,
-    binary_hashes: Mapping[str, str] | None = None,
     report_records: Sequence[ReportRecord] = (),
     *,
     timeout_sec: int = 300,
@@ -235,7 +222,6 @@ def build_coverage(
                 for row in report_records
                 if (row["file_sha256"], row["fact_directory_sha256"], row["timeout_sec"])
                 == (file.sha256, file.fact_directory_sha256, timeout_sec)
-                and (binary_hashes is None or row["binary_sha256"] in binary_hashes.values())
             )
             workloads.append(
                 {
