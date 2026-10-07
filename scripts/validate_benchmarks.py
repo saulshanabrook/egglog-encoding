@@ -14,12 +14,11 @@ from pathlib import Path
 
 from rich.console import Console
 
+from benchmarking.models import TargetRequest
+from benchmarking.suites import SAFETY_POLICY, SUITE_NAMES, VALIDATION_POLICY, CorpusOutcome, resolve_suite
+from benchmarking.targets import build_target, sha256_file, target_row_for_request, workload_command
+from benchmarking.workloads import require_workload_unchanged
 from scripts.reproduction_process import run_bounded_command
-
-from .models import TargetRequest
-from .suites import SAFETY_POLICY, SUITE_NAMES, VALIDATION_POLICY, CorpusOutcome, resolve_suite
-from .targets import build_target, sha256_file, target_row_for_request, workload_command
-from .workloads import require_workload_unchanged
 
 
 def record_outcome(path: Path, outcome: CorpusOutcome) -> None:

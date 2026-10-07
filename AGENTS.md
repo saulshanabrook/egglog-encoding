@@ -123,6 +123,9 @@ or modify the JSONL.
 - Source preparation and explicit strict validation keep evidence under ignored
   `benchmarks/local/`, outside Cargo's disposable build cache. Neither is an
   implicit timed screening pass. Do not import diagnostic timings into the cache.
+- Keep source-generation supervision and the explicit validator under `scripts/`,
+  whole-process measurement under `benchmarking/`, and shared host/process
+  protection in `process_guard.py`. Collection must not import diagnostic runners.
 - Benchmark inputs should not contain executable `(prove ...)` or
   `(prove-extract ...)` commands. Use source `(check ...)` and `(extract ...)`
   commands so the selected treatment controls proof extraction, and cover

@@ -710,9 +710,17 @@ def test_run_process_passes_treatment_flags(
 
     off = collection.run_process(ROOT / "egglog-experimental", ROOT, file_spec, "off", 120)
     proofs = collection.run_process(ROOT / "egglog-experimental", ROOT, file_spec, "proofs", 120)
+    extraction = collection.run_process(ROOT / "egglog-experimental", ROOT, file_spec, "proof-extraction", 120)
+    strict = collection.run_process(ROOT / "egglog-experimental", ROOT, file_spec, "proof-testing", 120)
 
-    assert "--proofs" not in commands[0]
-    assert "--proofs" in commands[1]
+    assert len(commands) == 4
+    proof_flags = {"--proofs", "--proof-extraction", "--proof-testing"}
+    assert [set(command) & proof_flags for command in commands] == [
+        set(),
+        {"--proofs"},
+        {"--proof-extraction"},
+        {"--proof-testing"},
+    ]
     assert off.timing_summary is not None
     assert off.timing_summary["rulesets"] == [
         {
@@ -727,6 +735,8 @@ def test_run_process_passes_treatment_flags(
     ]
     assert off.timing_summary["native_rebuild_ns"] == 8
     assert proofs.timing_summary is not None
+    assert extraction.timing_summary is not None
+    assert strict.timing_summary is not None
 
 
 def test_run_process_rejects_success_without_timing_summary(

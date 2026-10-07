@@ -8,8 +8,9 @@ from typing import Any
 
 import pytest
 
-from benchmarking import suites, validation
+from benchmarking import suites
 from scripts import reproduction_process as processes
+from scripts import validate_benchmarks as validation
 
 from .corpus_fixtures import prepare_corpus
 
@@ -23,7 +24,7 @@ def test_strict_outcomes_are_separate_and_safety_stops_halt_before_next_workload
     path = prepare_corpus(tmp_path, contents=("(check (= 1 1))\n", "(check (= 2 2))\n"))
     binary = tmp_path / "engine"
     binary.write_bytes(b"engine")
-    monkeypatch.setattr(validation, "__file__", str(tmp_path / "benchmarking/validation.py"))
+    monkeypatch.setattr(validation, "__file__", str(tmp_path / "scripts/validate_benchmarks.py"))
     commands: list[list[str]] = []
 
     def run(command: list[str], cwd: Path, prefix: Path, **kwargs: Any) -> processes.PilotProcessResult:
@@ -52,7 +53,7 @@ def test_preflight_safety_refusal_is_retained_without_fabricating_measurement(
     path = prepare_corpus(tmp_path)
     binary = tmp_path / "engine"
     binary.write_bytes(b"engine")
-    monkeypatch.setattr(validation, "__file__", str(tmp_path / "benchmarking/validation.py"))
+    monkeypatch.setattr(validation, "__file__", str(tmp_path / "scripts/validate_benchmarks.py"))
 
     def refuse(*args: Any, **kwargs: Any) -> Any:
         raise ValueError("resource guard refused to launch a workload: host pressure")
@@ -69,7 +70,7 @@ def test_mutation_during_validation_cannot_record_success(tmp_path: Path, monkey
     path = prepare_corpus(tmp_path)
     binary = tmp_path / "engine"
     binary.write_bytes(b"engine")
-    monkeypatch.setattr(validation, "__file__", str(tmp_path / "benchmarking/validation.py"))
+    monkeypatch.setattr(validation, "__file__", str(tmp_path / "scripts/validate_benchmarks.py"))
 
     def run(command: list[str], cwd: Path, prefix: Path, **kwargs: Any) -> processes.PilotProcessResult:
         Path(command[-1]).write_text("changed")
@@ -125,7 +126,7 @@ def test_recorded_safety_deferral_prevents_relaunch_on_changed_binary(
     path.write_text(json.dumps(raw))
     binary = tmp_path / "new-engine"
     binary.write_bytes(b"new engine")
-    monkeypatch.setattr(validation, "__file__", str(tmp_path / "benchmarking/validation.py"))
+    monkeypatch.setattr(validation, "__file__", str(tmp_path / "scripts/validate_benchmarks.py"))
     monkeypatch.setattr(
         validation, "run_bounded_command", lambda *_a, **_k: pytest.fail("known unsafe input must defer")
     )
@@ -144,7 +145,7 @@ def test_pending_population_without_reason_is_incomplete_and_needs_no_build(
     raw["cases"][0].update(status="pending", workloads=[])
     raw["workloads"] = []
     path.write_text(json.dumps(raw))
-    monkeypatch.setattr(validation, "__file__", str(tmp_path / "benchmarking/validation.py"))
+    monkeypatch.setattr(validation, "__file__", str(tmp_path / "scripts/validate_benchmarks.py"))
     monkeypatch.setattr(validation, "build_target", lambda *_a, **_k: pytest.fail("pending sources need preparation"))
     assert validation.main([]) == 1
     assert "case-0: pending" in capsys.readouterr().err

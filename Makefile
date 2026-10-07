@@ -151,7 +151,7 @@ reproduce-benchmarks:
 	uv run --locked python -m scripts.suite_reproduction $(REPRODUCE_ARGS)
 
 validate-benchmarks:
-	uv run --locked python -m benchmarking.validation --suite expanded --timeout-sec $(EXPANDED_TIMEOUT_SEC)
+	uv run --locked python -m scripts.validate_benchmarks --suite expanded --timeout-sec $(EXPANDED_TIMEOUT_SEC)
 
 EXPANDED_ROUNDS ?= 10
 EXPANDED_TIMEOUT_SEC ?= 300

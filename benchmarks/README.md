@@ -120,9 +120,15 @@ make check                # Engine and checked-in fixture tests.
 make validate-benchmarks  # Explicit strict checks for prepared corpus files.
 ```
 
-Corpus validation writes identity-bound diagnostic outcomes, not measurements.
-It is not a dependency of collection. Matching strict failures suppress proof
-performance conclusions; absent or stale validation is not a correctness claim.
+The explicit validator, `scripts/validate_benchmarks.py`, writes identity-bound
+diagnostic outcomes, not measurements. It is not a dependency of collection.
+Matching strict failures suppress proof performance conclusions; absent or stale
+validation is not a correctness claim.
+
+Source generation and validation use `scripts/reproduction_process.py` for
+bounded diagnostic processes and logs. Benchmarking keeps its whole-process
+timing runner in `benchmarking/processes.py`; both use the neutral
+`process_guard.py` for host protection and process cleanup.
 
 Math uses simple/seminaive schedules without backoff or internal match/node
 caps. Both engines check the same terminal equality. Native Egg looks up the

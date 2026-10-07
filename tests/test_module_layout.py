@@ -90,7 +90,6 @@ RUNNER_LAYERS = frozenset(
 DEPENDENCY_RULES = (
     ("process_guard.py", frozenset({"benchmarking", "scripts"})),
     ("scripts/reproduction_process.py", frozenset({"benchmarking"})),
-    ("benchmarking/processes.py", frozenset({"scripts"})),
     (
         "benchmarking/reports/store.py",
         RUNNER_LAYERS
@@ -162,6 +161,14 @@ def test_report_package_does_not_import_runner_layers() -> None:
     violations = {
         str(path.relative_to(ROOT)): forbidden_imports(imported_module_names(path), RUNNER_LAYERS)
         for path in sorted((ROOT / "benchmarking/reports").rglob("*.py"))
+    }
+    assert not {path: imports for path, imports in violations.items() if imports}
+
+
+def test_benchmarking_does_not_import_diagnostic_scripts() -> None:
+    violations = {
+        str(path.relative_to(ROOT)): forbidden_imports(imported_module_names(path), frozenset({"scripts"}))
+        for path in sorted((ROOT / "benchmarking").rglob("*.py"))
     }
     assert not {path: imports for path, imports in violations.items() if imports}
 
