@@ -17,6 +17,7 @@ import threading
 import time
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
@@ -24,6 +25,14 @@ from typing import TextIO
 from process_guard import MemoryGuard, terminate_process_group
 
 from .models import Status
+
+# Nightly sets this once around setup and collection, then resets it before its
+# final rendering. Read it on the calling thread: watchdogs do not inherit it.
+COLLECTION_DEADLINE: ContextVar[float | None] = ContextVar("collection_deadline", default=None)
+
+
+class BudgetExpired(RuntimeError):
+    """Collection stopped for the nightly budget, without an observation."""
 
 
 @dataclass(frozen=True)
@@ -60,6 +69,9 @@ def run_command(
     env_overrides: Mapping[str, str] | None = None,
     required_output: str | Sequence[str] | None = None,
 ) -> TimingResult:
+    deadline = COLLECTION_DEADLINE.get()
+    if deadline is not None and time.monotonic() >= deadline:
+        raise BudgetExpired("nightly collection budget exhausted")
     guard = MemoryGuard.from_environment()
     env = os.environ.copy()
     env["RUST_LOG"] = "error"
@@ -83,7 +95,9 @@ def run_command(
         try:
             if guard is not None:
                 guard.start(process.pid)
-            return_code, usage = wait4_process(process, timeout_sec)
+            remaining = timeout_sec if deadline is None else deadline - time.monotonic()
+            budget_limited = remaining < timeout_sec
+            return_code, usage = wait4_process(process, max(0, min(timeout_sec, remaining)))
             wall_sec = time.perf_counter() - start
         except subprocess.TimeoutExpired:
             timed_out = True
@@ -114,6 +128,8 @@ def run_command(
                 resource_stopped=True,
             )
         if timed_out:
+            if budget_limited:
+                raise BudgetExpired("nightly collection budget exhausted during workload")
             return TimingResult(
                 status="timed-out",
                 timing=TimingRow(),
@@ -145,7 +161,7 @@ def run_command(
     )
 
 
-def wait4_process(process: subprocess.Popen[str], timeout_sec: int) -> tuple[int, resource.struct_rusage]:
+def wait4_process(process: subprocess.Popen[str], timeout_sec: float) -> tuple[int, resource.struct_rusage]:
     """Wait without adding polling delay to the measured child wall time."""
 
     timed_out = threading.Event()

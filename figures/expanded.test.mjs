@@ -13,7 +13,7 @@ const {compile} = await import(toolkit.resolve('vega-lite'));
 
 function workload(id, family = 'eggcc') {
   return {id, label: id, family, iteration: family === 'math-growth' ? 11 : null,
-    file_sha256: id, fact_directory_sha256: '', aliases: [], unavailable_reason: '', validation_failures: {}};
+    file_sha256: id, fact_directory_sha256: '', aliases: [], unavailable_reason: '', validation_failures: {}, known_failures: {}};
 }
 function group(id, treatment, seconds, changes = {}) {
   const key = {binary_sha256: 'current', file_sha256: id, fact_directory_sha256: '',
@@ -108,6 +108,31 @@ test('Matching strict failures suppress proof conclusions without changing the b
   input.validation_failures = {'older-binary/300/nee': 'Stale error'};
   const refreshed = await evaluate('proof-overhead-cdf', [input], groups);
   assert.equal(points(refreshed.marks).length, 1);
+});
+
+test('Known proof failures retain the cohort denominator and leave other modes eligible', async () => {
+  const skipped = workload('skipped');
+  skipped.known_failures = {'proofs/nee': 'known failure: recording issue', 'proof-extraction/ee': 'other encoding'};
+  const groups = [group('skipped', 'off', [1]), group('skipped', 'proof-extraction', [2]),
+    group('healthy', 'off', [1]), group('healthy', 'proofs', [2]), group('healthy', 'proof-extraction', [3])];
+  for (const observations of [groups, [...groups, group('skipped', 'proofs', [2])]]) {
+    const {marks, svg} = await evaluate('proof-overhead-cdf', [skipped, workload('healthy')], observations);
+    assert.deepEqual(points(marks, 'Record').map(m => [m.datum.workload_id, m.datum.n, m.datum.cdf]),
+      [['healthy', 2, .5]]);
+    assert.equal(points(marks).length, 2);
+    assert.match(svg, /known failure: recording issue/);
+    assert.doesNotMatch(svg, /other encoding/);
+  }
+});
+
+test('Math names a skipped mode while retaining the other endpoint measurements', async () => {
+  const input = workload('math', 'math-growth');
+  input.known_failures['proof-extraction/nee'] = 'known failure: extraction issue';
+  const groups = [group('math', 'egg', [1]), group('math', 'off', [2]),
+    group('math', 'egg-proof-extraction', [3])];
+  const {marks, svg} = await evaluate('math-cutoff-11', [input], groups);
+  assert.equal(marks.filter(m => m.name === 'time_means_marks').length, 3);
+  assert.match(svg, /known failure: extraction issue/);
 });
 
 test('An empty cache preserves expected Math rows and source blockers in the CDF', async () => {

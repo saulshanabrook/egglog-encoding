@@ -70,6 +70,7 @@ def test_materialize_pr_target_fetches_origin_pull_ref(
         *,
         cwd: Path,
         check: bool,
+        text: bool,
         stdout: Any | None = None,
         stderr: Any | None = None,
     ) -> None:
@@ -246,3 +247,57 @@ def test_build_locates_binary_in_cargo_target_dir(
     path, digest = targets.build_target(row, Console(file=io.StringIO()))
     assert path.resolve() == produced and digest == targets.sha256_file(produced)
     assert commands == [["cargo", "build", "--release", "-p", "egglog-experimental"]]
+
+
+@pytest.mark.parametrize("operation", ["setup", "build"])
+def test_nightly_deadline_bounds_target_subprocesses_and_cleans_descendants(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    import os
+    import time
+    from contextlib import suppress
+
+    from benchmarking import processes
+
+    pid_path = tmp_path / "descendant.pid"
+    program = (
+        "import subprocess, sys, time; from pathlib import Path; "
+        "child=subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+        f"Path({str(pid_path)!r}).write_text(str(child.pid)); time.sleep(60)"
+    )
+    command = [sys.executable, "-c", program]
+    if operation == "build":
+        popen = targets.subprocess.Popen
+        monkeypatch.setattr(
+            targets.subprocess,
+            "Popen",
+            lambda original, **kwargs: popen(command if original[0] == "cargo" else original, **kwargs),
+        )
+    monkeypatch.delenv("EGGLOG_BENCH_MEMORY_GUARD", raising=False)
+    token = processes.COLLECTION_DEADLINE.set(time.monotonic() + 0.2)
+    descendant: int | None = None
+    try:
+        with pytest.raises(processes.BudgetExpired, match="during"):
+            if operation == "setup":
+                targets.run_text(command, tmp_path)
+            else:
+                row = models.TargetRow(".", str(tmp_path), "HEAD", "abc123", False)
+                targets.build_target(row, Console(file=io.StringIO()))
+        descendant = int(pid_path.read_text())
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            state = subprocess.run(
+                ["ps", "-o", "state=", "-p", str(descendant)], capture_output=True, text=True
+            ).stdout.strip()
+            if not state or state.startswith("Z"):
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail("deadline left a descendant alive")
+    finally:
+        processes.COLLECTION_DEADLINE.reset(token)
+        if descendant is None and pid_path.exists():
+            descendant = int(pid_path.read_text())
+        if descendant is not None:
+            with suppress(ProcessLookupError):
+                os.kill(descendant, 9)

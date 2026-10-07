@@ -10,6 +10,7 @@ from typing import cast
 import pytest
 
 from benchmarking import models
+from benchmarking.known_failures import KNOWN_FAILURES, known_failure_reason
 from benchmarking.reports.analysis import analyze_pair
 from benchmarking.reports.store import ReportRecord, ReportStore
 
@@ -296,7 +297,7 @@ def test_validation_failure_preserves_means_but_excludes_ratios_and_timing(tmp_p
 
 @pytest.mark.parametrize("status,label", [("failure", "failure"), ("timed-out", "timeout")])
 @pytest.mark.parametrize("failed_endpoint", ["baseline", "candidate"])
-def test_suite_terminal_observation_precedes_missing_rounds(
+def test_terminal_observation_precedes_missing_rounds(
     tmp_path: Path, status: models.Status, label: str, failed_endpoint: str
 ) -> None:
     report = tmp_path / "report.jsonl"
@@ -309,10 +310,43 @@ def test_suite_terminal_observation_precedes_missing_rounds(
     ordinary = analyze_pair(store.grouped_report(), comparison, "files")
     suite = analyze_pair(store.grouped_report(), replace(comparison, suite_mode=True), "files")
 
-    assert ordinary.summary[0].ratio.issue == f"missing {29 if failed_endpoint == 'baseline' else 30} row(s)"
+    assert ordinary.summary[0].ratio.issue == f"{label} row selected (1/30 attempts): specific error"
     assert suite.summary[0].ratio.issue == f"{label} row selected (1/30 attempts): specific error"
     assert suite.summary[0].ratio.estimate.point is None
     assert suite.files[0].baseline.point is None
+
+
+@pytest.mark.parametrize("cached", [False, True])
+def test_known_failure_precedes_missing_rows_and_excludes_cached_ratios(tmp_path: Path, cached: bool) -> None:
+    failure = KNOWN_FAILURES[0]
+    file = models.FileSpec(failure.file, tmp_path / "parameter.egg", failure.file_sha256)
+    comparison = _comparison(
+        tmp_path, (file,), rounds=3, candidate=_endpoint("candidate", "sha256:candidate", treatment="proofs")
+    )
+    store = ReportStore(tmp_path / "report.jsonl")
+    if cached:
+        store.append(
+            make_record(0, started_at="2026-07-15T12:00:00Z", file_sha256=file.sha256, binary_sha256="sha256:baseline")
+        )
+        store.append(
+            make_record(
+                1,
+                started_at="2026-07-15T12:00:01Z",
+                file_sha256=file.sha256,
+                binary_sha256="sha256:candidate",
+                treatment="proofs",
+            )
+        )
+
+    views = analyze_pair(store.grouped_report(), comparison, "rulesets")
+
+    reason = known_failure_reason(file, "proofs")
+    assert reason is not None
+    assert all(row.ratio.issue == reason for row in views.summary)
+    assert all(row.ratio.issue == reason and row.ratio.estimate.point is None for row in views.files)
+    assert all(row.issue == reason and row.wall_delta_ns is None for row in views.timing)
+    assert len(store.records) == (2 if cached else 0)
+    assert store.path.exists() == cached
 
 
 def test_mechanism_buckets_are_additive_and_residual_closes_to_wall(tmp_path: Path) -> None:

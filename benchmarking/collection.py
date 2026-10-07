@@ -27,7 +27,10 @@ from rich.progress import (
 from rich.table import Column
 from rich.text import Text
 
+from process_guard import ResourceStopped
+
 from .engines import TREATMENT_SPECS
+from .known_failures import known_failure_reason
 from .models import (
     BenchmarkEndpoint,
     DisequalityEncoding,
@@ -70,6 +73,7 @@ class BenchmarkRunPlan:
     cached_statuses: tuple[Status, ...]
     missing_observations: int
     disequality_encoding: DisequalityEncoding = "nee"
+    skip_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -78,7 +82,7 @@ class CollectionPlan:
 
     target: ResolvedTarget
     runs: tuple[BenchmarkRunPlan, ...]
-    stop_on_failure: bool = False
+    stop_on_failure: bool = True
 
     @property
     def total_missing_observations(self) -> int:
@@ -142,8 +146,11 @@ def build_collection_plan(
     runs: list[BenchmarkRunPlan] = []
     for file_spec, treatment, cache_key in requests:
         cached = selected[cache_key]
-        stopped = file_spec in blocked_files or (
-            suite_mode and not force_run and any(status != "success" for status in cached)
+        skip_reason = known_failure_reason(file_spec, treatment, cache_key.disequality_encoding)
+        stopped = (
+            skip_reason is not None
+            or file_spec in blocked_files
+            or (not force_run and any(status != "success" for status in cached))
         )
         missing = 0 if stopped else rounds if force_run else max(0, rounds - len(cached))
         runs.append(
@@ -154,9 +161,10 @@ def build_collection_plan(
                 cached_statuses=cached,
                 missing_observations=missing,
                 disequality_encoding=cache_key.disequality_encoding,
+                skip_reason=skip_reason,
             )
         )
-    return CollectionPlan(target=target, runs=tuple(runs), stop_on_failure=suite_mode)
+    return CollectionPlan(target=target, runs=tuple(runs))
 
 
 def resolve_targets(
@@ -170,6 +178,7 @@ def resolve_targets(
     repo_root: Path,
     console: Console,
     defer_label_collection: bool = False,
+    reuse_targets: tuple[ResolvedTarget, ...] = (),
 ) -> dict[TargetRequest, ResolvedTarget]:
     """Resolve every request, then build once per canonical checkout path.
 
@@ -177,7 +186,8 @@ def resolve_targets(
     same checkout from rebuilding the same executable. Each alias retains its
     own request and row provenance while sharing the executable path and hash.
     Suites defer label builds until exact cached failures and safety deferrals
-    are known; callers must then resolve any incomplete cached targets.
+    are known; callers must then resolve any incomplete cached targets. Nightly
+    can reuse targets already built in this invocation while retaining aliases.
     """
 
     resolved: dict[TargetRequest, ResolvedTarget] = {}
@@ -213,13 +223,30 @@ def resolve_targets(
             )
         )
         representative = pending_targets[0]
-        built = build_resolved_target(
-            representative.request,
-            representative.row,
-            console,
-            "release",
-            engines,
+        built = next(
+            (
+                previous
+                for previous in reuse_targets
+                if Path(previous.row.path).resolve() == checkout_path
+                and previous.row.git_sha == representative.row.git_sha
+                and previous.row.is_dirty == representative.row.is_dirty
+                and previous.binary_path is not None
+                and set(engines).issubset(
+                    {binary.engine for binary in previous.engine_binaries if binary.path is not None}
+                    if previous.engine_binaries
+                    else {previous.primary_engine or "egglog"}
+                )
+            ),
+            None,
         )
+        if built is None:
+            built = build_resolved_target(
+                representative.request,
+                representative.row,
+                console,
+                "release",
+                engines,
+            )
         for target in pending_targets:
             resolved[target.request] = ResolvedTarget(
                 request=target.request,
@@ -326,9 +353,18 @@ def label_has_enough_rows(
     )
     selected = store.selected_statuses_for_keys(keys, None if suite_mode else rounds)
     stopped = {(file.sha256, file.fact_directory_sha256) for file in blocked_files}
+    excluded = {
+        CacheKey.for_endpoint(
+            BenchmarkEndpoint(target, request.treatment, request.disequality_encoding), file, timeout_sec
+        )
+        for file in files
+        for request in endpoint_requests
+        if known_failure_reason(file, request.treatment, request.disequality_encoding) is not None
+    }
     return all(
-        (key.file_sha256, key.fact_directory_sha256) in stopped
-        or (suite_mode and any(status != "success" for status in selected[key]))
+        key in excluded
+        or (key.file_sha256, key.fact_directory_sha256) in stopped
+        or any(status != "success" for status in selected[key])
         or len(selected[key]) >= rounds
         for key in keys
     )
@@ -418,6 +454,8 @@ def preflight_collection(plan: CollectionPlan, timeout_sec: int) -> None:
             message = f"target {target.display_label} {engine} preflight failed"
             if result.error is not None:
                 message = f"{message}: {result.error.message}"
+            if result.resource_stopped:
+                raise ResourceStopped(message)
             raise ValueError(message)
 
 
@@ -476,6 +514,9 @@ def emit_collection_plan(console: Console, plan: CollectionPlan) -> None:
         cache_text += f" ({_status_counts_text(cached_issues)})"
     action_text = "nothing to collect" if missing == 0 else f"collecting {missing} fresh"
     console.print(Text(f"{plan.target.display_label}: {cache_text} · {action_text}"))
+    for run in plan.runs:
+        if run.skip_reason is not None:
+            console.print(Text(f"  {run.file.display_path} · {run.treatment}: skipped; {run.skip_reason}"))
 
 
 def flat_report_record(
@@ -648,7 +689,7 @@ def collect_rows(
                 )
                 if observation.result.resource_stopped:
                     assert observation.result.error is not None
-                    raise ValueError(
+                    raise ResourceStopped(
                         f"{observation.result.error.message}; the failed observation was retained; "
                         "collection stopped before launching another workload"
                     )

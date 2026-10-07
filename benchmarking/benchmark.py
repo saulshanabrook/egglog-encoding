@@ -56,7 +56,7 @@ from .workloads import resolve_files
 
 DEFAULT_REPORT = ".reports.jsonl"
 DEFAULT_ROUNDS = 6
-DEFAULT_TIMEOUT_SEC = 1800
+DEFAULT_TIMEOUT_SEC = 120
 
 
 def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:

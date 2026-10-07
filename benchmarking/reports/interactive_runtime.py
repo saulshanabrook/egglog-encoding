@@ -65,6 +65,7 @@ class _ScopeRequest(TypedDict):
     suite_mode: NotRequired[bool]
     validation_issues: NotRequired[dict[str, str]]
     initial_endpoints: NotRequired[list[_EndpointContext]]
+    report_notes: NotRequired[list[str]]
 
 
 @dataclass(frozen=True)
@@ -161,30 +162,30 @@ class InteractiveRuntime:
 
         self._suite_mode = initial_scope.get("suite_mode", False)
         self._validation_issues = initial_scope.get("validation_issues", {})
-        if self._suite_mode:
-            # Captures blocked during preparation can have no measurement rows.
-            # Seed only absent identities; cached selectors retain latest provenance.
-            for context in initial_scope.get("initial_endpoints", []):
-                target_row = TargetRow(**context["target"])
-                endpoint = BenchmarkEndpoint(
-                    ResolvedTarget(
-                        TargetRequest(target_row.label or target_row.source, target_row.source, target_row.label),
-                        target_row,
-                        context["binary_sha256"],
-                        None,
-                        engine_binaries=(
-                            EngineBinary(TREATMENT_SPECS[context["treatment"]].engine, context["binary_sha256"], None),
-                        ),
-                        primary_engine=TREATMENT_SPECS[context["treatment"]].engine,
+        self._report_notes = tuple(initial_scope.get("report_notes", ()))
+        # Interrupted collection and skipped inputs can have no measurement rows.
+        # Seed only absent identities; cached selectors retain latest provenance.
+        for context in initial_scope.get("initial_endpoints", []):
+            target_row = TargetRow(**context["target"])
+            endpoint = BenchmarkEndpoint(
+                ResolvedTarget(
+                    TargetRequest(target_row.label or target_row.source, target_row.source, target_row.label),
+                    target_row,
+                    context["binary_sha256"],
+                    None,
+                    engine_binaries=(
+                        EngineBinary(TREATMENT_SPECS[context["treatment"]].engine, context["binary_sha256"], None),
                     ),
-                    context["treatment"],
-                    context["disequality_encoding"],
-                )
-                endpoint_id = _endpoint_id(endpoint)
-                if endpoint_id not in self._endpoint_by_id:
-                    self._endpoint_by_id[endpoint_id] = endpoint
-                    self._endpoint_choices += (_EndpointChoice(endpoint_id, endpoint),)
-            self._timeouts = tuple(sorted({*self._timeouts, initial_scope["timeout_sec"]}))
+                    primary_engine=TREATMENT_SPECS[context["treatment"]].engine,
+                ),
+                context["treatment"],
+                context["disequality_encoding"],
+            )
+            endpoint_id = _endpoint_id(endpoint)
+            if endpoint_id not in self._endpoint_by_id:
+                self._endpoint_by_id[endpoint_id] = endpoint
+                self._endpoint_choices += (_EndpointChoice(endpoint_id, endpoint),)
+        self._timeouts = tuple(sorted({*self._timeouts, initial_scope["timeout_sec"]}))
         scope = self._parse_scope(initial_scope, initial=True)
         self._validation_endpoint_ids = frozenset((scope.baseline_endpoint_id, scope.candidate_endpoint_id))
         self._validation_timeout_sec = scope.timeout_sec
@@ -281,6 +282,7 @@ class InteractiveRuntime:
             scope.timeout_sec,
             validation_issues=tuple(validation_issues),
             suite_mode=self._suite_mode,
+            report_notes=self._report_notes,
         )
 
     def _parse_scope(self, value: object, *, initial: bool = False) -> InteractiveScope:
@@ -319,7 +321,7 @@ class InteractiveRuntime:
             raise ValueError(f"unknown timeout: {timeout_sec}s")
         if rounds < 1:
             raise ValueError("rounds must be positive")
-        if rounds > self._max_rounds and not (initial and self._suite_mode):
+        if rounds > self._max_rounds and not initial:
             raise ValueError(f"rounds must not exceed cached maximum: {self._max_rounds}")
         return InteractiveScope(baseline_id, candidate_id, file_ids, timeout_sec, rounds)
 
@@ -397,9 +399,8 @@ def scope_for_comparison(comparison: ComparisonSpec) -> InitialScope:
         ],
         "suite_mode": comparison.suite_mode,
         "validation_issues": {_file_id(file): reason for file, reason in comparison.validation_issues},
-    }
-    if comparison.suite_mode:
-        scope["initial_endpoints"] = [
+        "report_notes": list(comparison.report_notes),
+        "initial_endpoints": [
             {
                 "target": cast(_TargetContext, asdict(endpoint.target.row)),
                 "binary_sha256": endpoint.cache_identity[0],
@@ -407,7 +408,8 @@ def scope_for_comparison(comparison: ComparisonSpec) -> InitialScope:
                 "disequality_encoding": endpoint.disequality_encoding,
             }
             for endpoint in (comparison.baseline, comparison.candidate)
-        ]
+        ],
+    }
     return scope
 
 

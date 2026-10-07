@@ -23,6 +23,10 @@ GROUP_LIMIT_BYTES = 10 * 1024**3
 HEADROOM_BYTES = 2 * 1024**3
 
 
+class ResourceStopped(ValueError):
+    """A host-safety stop that must halt subsequent collection."""
+
+
 def group_rss_bytes(process_group: int) -> int:
     """Sum resident memory for all currently visible members of one group."""
 
@@ -85,7 +89,7 @@ class MemoryGuard:
         guard = cls()
         reason = guard.check(0)
         if reason is not None:
-            raise ValueError(f"resource guard refused to launch a workload: {reason}")
+            raise ResourceStopped(f"resource guard refused to launch a workload: {reason}")
         return guard
 
     def check(self, rss_bytes: int) -> str | None:

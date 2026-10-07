@@ -16,6 +16,7 @@ from typing import Literal, NamedTuple, cast
 from scipy import stats
 
 from ..engines import TREATMENT_SPECS
+from ..known_failures import known_failure_reason
 from ..models import ComparisonSpec, DetailLevel
 from .store import CacheKey, GroupedReport, IndexedRecord
 
@@ -171,8 +172,12 @@ def analyze_pair(
 
     observations = _selected_observations(store, comparison)
     issues = {
-        key: _selection_issue(rows, comparison.rounds, suite_mode=comparison.suite_mode)
-        for key, rows in observations.items()
+        (endpoint_order, file_order): known_failure_reason(file, endpoint.treatment, endpoint.disequality_encoding)
+        or _selection_issue(
+            observations[(endpoint_order, file_order)], comparison.rounds, suite_mode=comparison.suite_mode
+        )
+        for endpoint_order, endpoint in enumerate((comparison.baseline, comparison.candidate))
+        for file_order, file in enumerate(comparison.files)
     }
     estimates = _metric_estimates(observations, issues)
     validation_issues = {
@@ -190,7 +195,7 @@ def analyze_pair(
     if detail == "files":
         return PairReportViewData(summary, file_rows, ())
 
-    timing = _timing_breakdowns(comparison, observations, issues, estimates)
+    timing = _timing_breakdowns(comparison, observations, estimates)
     return PairReportViewData(summary, file_rows, timing)
 
 
@@ -209,17 +214,17 @@ def _selected_observations(
 
 
 def _selection_issue(rows: tuple[IndexedRecord, ...], rounds: int, *, suite_mode: bool) -> str | None:
-    if not suite_mode and len(rows) < rounds:
-        return f"missing {rounds - len(rows)} row(s)"
     for status, label in (("failure", "failure"), ("timed-out", "timeout")):
         selected = next((row.record for row in reversed(rows) if row.record["status"] == status), None)
         if selected is not None:
             issue = f"{label} row selected"
-            if suite_mode:
+            if suite_mode or len(rows) < rounds:
                 issue += f" ({len(rows)}/{rounds} attempts)"
                 if message := (selected["error_message"] or "").strip():
                     issue += f": {message.splitlines()[0]}"
             return issue
+    if not suite_mode and len(rows) < rounds:
+        return f"missing {rounds - len(rows)} row(s)"
     if not rows:
         return f"missing {rounds} row(s)"
     return None
@@ -255,7 +260,7 @@ def _file_comparisons(
                     metric,
                     baseline.estimate,
                     candidate.estimate,
-                    _ratio_estimate(baseline, candidate, suite_mode=comparison.suite_mode),
+                    _ratio_estimate(baseline, candidate),
                 )
             )
     return tuple(rows)
@@ -264,13 +269,11 @@ def _file_comparisons(
 def _ratio_estimate(
     baseline: _MetricEstimate,
     candidate: _MetricEstimate,
-    *,
-    suite_mode: bool = False,
 ) -> RatioEstimate:
     baseline_mean = baseline.estimate.point
     candidate_mean = candidate.estimate.point
     issue = baseline.issue or candidate.issue
-    if suite_mode and issue is not None and issue.startswith("missing") and candidate.issue is not None:
+    if issue is not None and issue.startswith("missing") and candidate.issue is not None:
         issue = candidate.issue
     if issue is not None:
         return RatioEstimate(Estimate(None, None, None), "invalid", issue)
@@ -320,11 +323,7 @@ def _summary_rows(
     baseline = [estimates[(0, order, "wall_sec")] for order in range(len(comparison.files))]
     candidate = [estimates[(1, order, "wall_sec")] for order in range(len(comparison.files))]
     first_issue = next(
-        (
-            issue
-            for baseline_estimate, candidate_estimate in zip(baseline, candidate, strict=True)
-            if (issue := baseline_estimate.issue or candidate_estimate.issue) is not None
-        ),
+        (row.ratio.issue for row in file_rows if row.metric == "wall_sec" and row.ratio.result_class == "invalid"),
         None,
     )
     sample_count = min(estimate.sample_count for estimate in baseline)
@@ -377,7 +376,6 @@ def _summary_rows(
 def _timing_breakdowns(
     comparison: ComparisonSpec,
     observations: dict[_ObservationKey, tuple[IndexedRecord, ...]],
-    issues: dict[_ObservationKey, str | None],
     metric_estimates: dict[_MetricKey, _MetricEstimate],
 ) -> tuple[FileTimingBreakdown, ...]:
     if any(
@@ -392,7 +390,9 @@ def _timing_breakdowns(
         candidate = means[(1, file_order)]
         baseline_wall = metric_estimates[(0, file_order, "wall_sec")]
         candidate_wall = metric_estimates[(1, file_order, "wall_sec")]
-        issue = issues[(0, file_order)] or issues[(1, file_order)] or baseline_wall.issue or candidate_wall.issue
+        issue = baseline_wall.issue or candidate_wall.issue
+        if issue is not None and issue.startswith("missing") and candidate_wall.issue is not None:
+            issue = candidate_wall.issue
         wall_delta_ns = (
             None
             if issue is not None or baseline_wall.estimate.point is None or candidate_wall.estimate.point is None

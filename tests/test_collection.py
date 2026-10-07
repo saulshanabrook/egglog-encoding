@@ -854,11 +854,10 @@ def test_redirected_collection_logs_each_run_and_one_status_summary(
     assert stream.getvalue().splitlines() == [
         "abc123: ETA pending (remaining executable time)",
         "  [1/3] file.egg · off · 1/3: succeeded after 0.250s · ETA ~0:00:01",
-        "  [2/3] file.egg · off · 2/3: failed after 0.500s: bad rule more context · ETA ~0:00:01",
-        "  [3/3] file.egg · off · 3/3: timed out after 120 seconds · ETA ~0:00:00",
-        "abc123: collected 3 fresh runs · 1 successful, 1 failed, 1 timed out",
+        "  [2/3] file.egg · off · 2/3: failed after 0.500s: bad rule more context · ETA ~0:00:00",
+        "abc123: collected 2 fresh runs · 1 successful, 1 failed",
     ]
-    assert store.row_count == 3
+    assert store.row_count == 2
 
 
 @pytest.mark.parametrize("width", [80, 119, 120, 160, 200])
@@ -990,7 +989,7 @@ def test_resource_guard_failure_is_retained_before_collection_halts(
         store, executable_target, (endpoint(executable_target),), (run.file,), 30, 120, False
     )
     assert resumed.runs[0].cached_statuses == ("failure",)
-    assert resumed.total_missing_observations == 29
+    assert resumed.total_missing_observations == 0
 
 
 def test_suite_reduced_sample_retains_old_failure_until_explicit_retry(tmp_path: Path) -> None:
@@ -1094,3 +1093,115 @@ def test_suite_fresh_failure_only_stops_its_workload_treatment_and_encoding(
     )
     requests = tuple(models.EndpointRequest(target.request, e.treatment, e.disequality_encoding) for e in endpoints)
     assert collection.label_has_enough_rows(store, target, requests, files, 3, 120, True)
+
+
+def test_ordinary_failed_selection_blocks_retries_until_forced_successes_replace_it(tmp_path: Path) -> None:
+    target = make_target()
+    proof = endpoint(target, "proofs")
+    store = ReportStore(tmp_path / "report.jsonl")
+    store.append(make_record(0, started_at="2026-01-01T00:00:00Z", treatment="proofs", status="failure"))
+    assert (
+        collection.build_collection_plan(
+            store, target, (proof,), (FILE_SPEC,), 3, 120, False
+        ).total_missing_observations
+        == 0
+    )
+    assert (
+        collection.build_collection_plan(store, target, (proof,), (FILE_SPEC,), 3, 120, True).total_missing_observations
+        == 3
+    )
+    for index in range(1, 4):
+        store.append(make_record(index, started_at=f"2026-01-01T00:00:0{index}Z", treatment="proofs"))
+    plan = collection.build_collection_plan(store, target, (proof,), (FILE_SPEC,), 3, 120, False)
+    assert plan.runs[0].cached_statuses == ("success",) * 3
+    assert plan.total_missing_observations == 0
+    assert store.row_count == 4
+
+
+def test_configured_failure_cannot_be_forced_and_does_not_block_other_modes(tmp_path: Path) -> None:
+    from benchmarking.known_failures import KNOWN_FAILURES
+
+    failure = KNOWN_FAILURES[0]
+    file = replace(FILE_SPEC, sha256=failure.file_sha256, fact_directory_sha256=failure.fact_directory_sha256)
+    target = make_target()
+    endpoints = (endpoint(target, "off"), endpoint(target, "proofs"))
+    store = ReportStore(tmp_path / "report.jsonl")
+    for force_run in (False, True):
+        plan = collection.build_collection_plan(store, target, endpoints, (file,), 3, 120, force_run)
+        assert [run.missing_observations for run in plan.runs] == [3, 0]
+        assert plan.runs[1].skip_reason is not None
+    request = models.EndpointRequest(target.request, "proofs")
+    assert collection.label_has_enough_rows(store, target, (request,), (file,), 3, 120)
+    assert not store.path.exists()
+
+
+def test_budget_cancellation_keeps_completed_rows_without_inventing_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, executable_target: models.ResolvedTarget
+) -> None:
+    store = ReportStore(tmp_path / "report.jsonl")
+    calls = 0
+
+    def measure(*_args: object) -> collection.ProcessObservation:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise processes.BudgetExpired("budget")
+        return collection.ProcessObservation(
+            processes.TimingResult("success", processes.TimingRow(0.01), None), make_timing_summary()
+        )
+
+    monkeypatch.setattr(collection, "run_process", measure)
+    with pytest.raises(processes.BudgetExpired):
+        collection.collect_rows(
+            store,
+            collection.CollectionPlan(executable_target, (planned_run(required=3),)),
+            120,
+            Console(file=io.StringIO()),
+        )
+    assert calls == 2
+    assert store.row_count == 1
+    assert store.records[0]["status"] == "success"
+    assert store.records[0]["timeout_sec"] == 120
+
+
+@pytest.mark.parametrize("changed", [None, "checkout", "commit", "dirty", "engine", "cache_only"])
+def test_sequential_target_resolution_reuses_only_compatible_builds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, changed: str | None
+) -> None:
+    previous = make_target(target_label="branch", binary_path=tmp_path / "engine")
+    request = targets.parse_target("main=@origin/main")
+    row = replace(previous.row, label="main", source=request.raw, git_ref="origin/main")
+    if changed == "checkout":
+        row = replace(row, path=str(tmp_path))
+    elif changed == "commit":
+        row = replace(row, git_sha="changed")
+    elif changed == "dirty":
+        row = replace(row, is_dirty=True)
+    elif changed == "cache_only":
+        previous = replace(previous, binary_path=None)
+    treatment: models.Treatment = "egg" if changed == "engine" else "proofs"
+    builds = []
+    monkeypatch.setattr(collection, "materialize_target_request", lambda *_args: row)
+
+    def build(*_args: object) -> models.ResolvedTarget:
+        builds.append(request)
+        return previous
+
+    monkeypatch.setattr(collection, "build_resolved_target", build)
+    resolved = collection.resolve_targets(
+        ((request, (models.EndpointRequest(request, treatment),)),),
+        ReportStore(tmp_path / "report.jsonl"),
+        (FILE_SPEC,),
+        6,
+        120,
+        False,
+        ROOT,
+        ROOT,
+        Console(file=io.StringIO()),
+        reuse_targets=(previous,),
+    )[request]
+    assert builds == ([] if changed is None else [request])
+    assert resolved.request == request
+    assert resolved.row.label == "main"
+    assert resolved.row.source == request.raw
+    assert resolved.binary_sha256 == previous.binary_sha256

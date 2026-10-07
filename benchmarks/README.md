@@ -50,7 +50,8 @@ explicitly; they do not become successful or empty workloads.
 
 SpEQ is excluded from this expanded campaign; its source and exclusion reason
 remain in the recipes. Herbie and pointer analysis are also outside this
-campaign. The ordinary default benchmark suite is unchanged.
+campaign. The ordinary default uses seven existing regression fixtures, one per
+included family; it does not require this source-generation pipeline.
 
 Eggcc's replay uses the original input roots, rules and schedule. Ordinary
 Egglog extraction does not enforce Tiger's effect/linearity constraints, so the
@@ -68,7 +69,7 @@ recipe and generated provenance and apply equally to both timed conditions.
 ```sh
 make expanded-bench-recording  # Proofs off and recording only.
 make expanded-bench            # Also recording + extraction and native Egg Math.
-make figures-expanded          # Collect missing observations, then render.
+make figures-all               # Collect missing observations, then render.
 ```
 
 Or select families through the normal runner:
@@ -81,7 +82,10 @@ Or select families through the normal runner:
 Each comparison collects every prepared workload using one sequential plan.
 Ten observations per condition is the Make default. Compatible observations are
 reused, including proofs-off runs shared between the two proof comparisons;
-repeated Make invocations do not remeasure completed samples.
+repeated Make invocations do not remeasure completed samples. The checked-in
+[known-failure list](../benchmarking/known_failures.py) skips only affected
+workload/mode combinations and retains their reasons in coverage. Neither
+explicit paths nor `--force-run` bypasses that list; remove an entry to retry.
 
 The time window is a Vega-Lite parameter, not a collection gate. Figure
 eligibility uses **all** exact-identity proofs-off observations: a nonempty,

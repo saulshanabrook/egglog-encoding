@@ -9,6 +9,9 @@ import tempfile
 from pathlib import Path
 from typing import TypedDict
 
+from .engines import TREATMENT_SPECS
+from .known_failures import known_failure_reason
+from .models import DisequalityEncoding, FileSpec
 from .suites import SAFETY_POLICY, VALIDATION_POLICY, load_manifest
 
 
@@ -28,6 +31,7 @@ class FigureWorkload(TypedDict):
     aliases: list[WorkloadAlias]
     unavailable_reason: str
     validation_failures: dict[str, str]
+    known_failures: dict[str, str]
 
 
 class SourceExclusion(TypedDict):
@@ -54,12 +58,19 @@ def figure_inventory(root: Path, timeout_sec: int = 300) -> FigureInventory:
     cases = {case.id: case for case in manifest.cases}
     workloads: dict[str, FigureWorkload] = {}
     exclusions: list[SourceExclusion] = []
+    encodings: tuple[DisequalityEncoding, ...] = ("nee", "ee")
     for source in manifest.workloads:
         aliases = [alias for alias in source.aliases if cases[alias.case].status != "excluded"]
         if not aliases:
             continue
         case = cases[aliases[0].case]
         identity = f"{source.sha256}/{source.facts_sha256}"
+        file = FileSpec(
+            source.file,
+            manifest.path.parent / source.file,
+            source.sha256,
+            fact_directory_sha256=source.facts_sha256,
+        )
         workload = workloads.setdefault(
             identity,
             {
@@ -72,6 +83,12 @@ def figure_inventory(root: Path, timeout_sec: int = 300) -> FigureInventory:
                 "aliases": [],
                 "unavailable_reason": "",
                 "validation_failures": {},
+                "known_failures": {
+                    f"{treatment}/{encoding}": reason
+                    for treatment in TREATMENT_SPECS
+                    for encoding in encodings
+                    if (reason := known_failure_reason(file, treatment, encoding)) is not None
+                },
             },
         )
         workload["aliases"].extend(
@@ -98,6 +115,7 @@ def figure_inventory(root: Path, timeout_sec: int = 300) -> FigureInventory:
                 "aliases": [],
                 "unavailable_reason": case.reason or "Replay unavailable",
                 "validation_failures": {},
+                "known_failures": {},
             }
     for family, recipe in manifest.sources.items():
         if recipe.get("excluded") and not any(row["family"] == family for row in exclusions):

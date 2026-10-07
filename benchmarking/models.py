@@ -157,6 +157,7 @@ class ComparisonSpec:
     timeout_sec: int
     validation_issues: tuple[tuple[FileSpec, str], ...] = ()
     suite_mode: bool = False
+    report_notes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.files:

@@ -79,22 +79,24 @@ def test_prove_scan_ignores_comments_strings_and_longer_atoms(tmp_path: Path) ->
     assert not workloads.file_contains_executable_prove_command(check_file)
 
 
-def test_default_workloads_are_the_eleven_research_cases() -> None:
+def test_default_workloads_cover_the_seven_standard_families() -> None:
     files = workloads.resolve_files([], ROOT)
     assert tuple(file.display_path for file in files) == (
         "egglog-experimental/tests/math-microbenchmark-rational.egg",
         "egglog-experimental/tests/fixtures/eggcc-2mm-pass1.egg",
-        "egglog/tests/pointer-analysis-initdb.egg",
         "egglog/tests/hardboiled_conv1d_32.egg",
         "egglog/tests/luminal-llama.egg",
-        "egglog/tests/web-demo/herbie.egg",
         "egglog/tests/papers/misaal-hvx-dot-product.egg",
         "egglog/tests/papers/churchroad-wide-multiply.egg",
         "egglog-experimental/tests/papers/dialegg-nmm40.egg",
-        "egglog/tests/papers/speq-preserved-reference-suite.egg",
-        "benchmarks/disequality/parameter-analysis.egg",
     )
-    pointer = next(file for file in files if file.display_path == "egglog/tests/pointer-analysis-initdb.egg")
+    assert all(file.fact_directory is None for file in files)
+
+
+def test_pointer_analysis_remains_available_with_explicit_facts() -> None:
+    (pointer,) = workloads.resolve_files(
+        ["egglog/tests/pointer-analysis-initdb.egg"], ROOT, "egglog/tests/pointer-analysis-initdb"
+    )
     assert pointer.fact_directory == (ROOT / "egglog/tests/pointer-analysis-initdb").resolve()
     assert pointer.fact_directory_sha256.startswith("sha256:")
 

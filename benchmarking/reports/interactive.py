@@ -40,6 +40,7 @@ _PYTHON_MODULES = (
     "benchmarking/engines.py",
     "benchmarking/math_workloads.py",
     "benchmarking/models.py",
+    "benchmarking/known_failures.py",
     "benchmarking/reports/__init__.py",
     "benchmarking/reports/store.py",
     "benchmarking/reports/analysis.py",

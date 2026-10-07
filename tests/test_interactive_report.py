@@ -15,6 +15,7 @@ import pytest
 from benchmarking import models
 from benchmarking.reports import interactive
 from benchmarking.reports.interactive_runtime import (
+    InitialScope,
     InteractiveRuntime,
     JsonValue,
     _catalog_payload,
@@ -264,6 +265,58 @@ def test_suite_artifact_analyzes_all_available_rows_below_topup_target(tmp_path:
     assert runtime.apply(scope_for_comparison(comparison))["sections"] == payload["sections"]
 
 
+def test_standard_artifact_preserves_requested_rounds_above_cached_maximum(tmp_path: Path) -> None:
+    _runtime, _payload, store, comparison = _interactive_case(tmp_path)
+    comparison = replace(comparison, rounds=30)
+    runtime = InteractiveRuntime(store.grouped_report(), scope_for_comparison(comparison))
+    payload = runtime.initial_payload(comparison)
+    selectors = cast(dict[str, JsonValue], payload["selectors"])
+
+    assert selectors["rounds"] == selectors["max_rounds"] == 30
+    assert "missing 28 row(s)" in json.dumps(payload)
+    assert runtime.apply(scope_for_comparison(comparison))["sections"] == payload["sections"]
+
+
+def test_empty_standard_artifact_retains_branch_and_main_proof_endpoints(tmp_path: Path) -> None:
+    store = ReportStore(tmp_path / "empty.jsonl")
+    comparison = models.ComparisonSpec(
+        make_endpoint(target_label="main", binary_sha256="sha256:main", treatment="proofs"),
+        make_endpoint(target_label="branch", binary_sha256="sha256:branch", treatment="proofs"),
+        (models.FileSpec("file.egg", tmp_path / "file.egg", "sha256:file"),),
+        3,
+        300,
+        report_notes=("Collection budget expired before either endpoint ran.",),
+    )
+    destination = tmp_path / "partial.html"
+
+    interactive.write_interactive_report(store.grouped_report(), comparison, destination)
+    envelope = _embedded_envelope(destination.read_text(encoding="utf-8"))
+    scope = cast(InitialScope, envelope["initial_scope"])
+    runtime = InteractiveRuntime(store.grouped_report(), scope)
+    initial = runtime.initial_payload(comparison)
+    selectors = cast(dict[str, Any], initial["selectors"])
+
+    assert [(endpoint["target"], endpoint["treatment"]) for endpoint in selectors["endpoints"]] == [
+        ("main", "proofs"),
+        ("branch", "proofs"),
+    ]
+    assert selectors["baseline_endpoint_id"] != selectors["candidate_endpoint_id"]
+    assert "missing 3 row(s)" in json.dumps(initial)
+    swapped = runtime.apply(
+        scope
+        | {
+            "baseline_endpoint_id": scope["candidate_endpoint_id"],
+            "candidate_endpoint_id": scope["baseline_endpoint_id"],
+            "rounds": 1,
+        }
+    )
+    assert "missing 1 row(s)" in json.dumps(swapped)
+    assert comparison.report_notes[0] in json.dumps(initial)
+    assert comparison.report_notes[0] in json.dumps(swapped)
+    assert "benchmarking/known_failures.py" in cast(dict[str, str], envelope["python_modules"])
+    assert not store.path.exists()
+
+
 def test_suite_artifact_displays_preparation_failures_without_measurement_rows(tmp_path: Path) -> None:
     store = ReportStore(tmp_path / "empty.jsonl")
     baseline = make_endpoint(target_label="baseline", binary_sha256="sha256:base", treatment="off")
@@ -344,6 +397,7 @@ def test_html_embeds_exact_grouped_snapshot_initial_catalog_runtime_and_safe_dat
     assert set(cast(dict[str, str], envelope["python_modules"])) == {
         "benchmarking/__init__.py",
         "benchmarking/engines.py",
+        "benchmarking/known_failures.py",
         "benchmarking/math_workloads.py",
         "benchmarking/models.py",
         "benchmarking/reports/__init__.py",

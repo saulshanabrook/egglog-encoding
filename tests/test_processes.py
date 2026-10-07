@@ -93,7 +93,8 @@ def test_wait4_process_cleans_up_if_timer_start_is_interrupted(monkeypatch: pyte
     assert events == ["start", "cancel", "join"]
 
 
-def test_run_command_timeout_kills_descendant_processes(tmp_path: Path) -> None:
+@pytest.mark.parametrize("budget", [False, True])
+def test_run_command_timeout_kills_descendant_processes(tmp_path: Path, budget: bool) -> None:
     descendant_pid_path = tmp_path / "descendant.pid"
     child_code = (
         "import subprocess, sys, time; from pathlib import Path; "
@@ -101,9 +102,14 @@ def test_run_command_timeout_kills_descendant_processes(tmp_path: Path) -> None:
         f"Path({str(descendant_pid_path)!r}).write_text(str(child.pid)); time.sleep(60)"
     )
     descendant_pid: int | None = None
+    token = processes.COLLECTION_DEADLINE.set(time.monotonic() + 0.2 if budget else None)
     try:
-        result = processes.run_command([sys.executable, "-c", child_code], ROOT, 1)
-        assert result.status == "timed-out"
+        if budget:
+            with pytest.raises(processes.BudgetExpired):
+                processes.run_command([sys.executable, "-c", child_code], ROOT, 1)
+        else:
+            result = processes.run_command([sys.executable, "-c", child_code], ROOT, 1)
+            assert result.status == "timed-out"
         descendant_pid = int(descendant_pid_path.read_text(encoding="utf-8"))
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:
@@ -119,6 +125,7 @@ def test_run_command_timeout_kills_descendant_processes(tmp_path: Path) -> None:
         else:
             pytest.fail(f"descendant process {descendant_pid} survived timeout cleanup")
     finally:
+        processes.COLLECTION_DEADLINE.reset(token)
         if descendant_pid is None:
             with suppress(OSError, ValueError):
                 descendant_pid = int(descendant_pid_path.read_text(encoding="utf-8"))
@@ -293,3 +300,43 @@ def test_failure_preserves_stderr_priority_and_exact_tail() -> None:
     assert result.status == "failure"
     assert result.error is not None
     assert result.error.message == "x" * 997 + "end"
+
+
+def test_expired_budget_refuses_launch(monkeypatch: pytest.MonkeyPatch) -> None:
+    token = processes.COLLECTION_DEADLINE.set(time.monotonic() - 1)
+    monkeypatch.setattr(processes.subprocess, "Popen", lambda *_a, **_kw: pytest.fail("must not launch"))
+    try:
+        with pytest.raises(processes.BudgetExpired):
+            processes.run_command(["unused"], ROOT, 120)
+    finally:
+        processes.COLLECTION_DEADLINE.reset(token)
+
+
+def test_completed_process_with_budget_keeps_normal_result() -> None:
+    token = processes.COLLECTION_DEADLINE.set(time.monotonic() + 10)
+    try:
+        result = processes.run_command([sys.executable, "-c", "pass"], ROOT, 120)
+    finally:
+        processes.COLLECTION_DEADLINE.reset(token)
+    assert result.status == "success"
+    assert result.timing.wall_sec is not None
+
+
+def test_resource_stop_takes_precedence_over_simultaneous_budget_expiry(monkeypatch: pytest.MonkeyPatch) -> None:
+    guard = process_guard.MemoryGuard()
+    monkeypatch.setattr(process_guard.MemoryGuard, "from_environment", lambda: guard)
+    monkeypatch.setattr(guard, "start", lambda _pid: None)
+
+    def expire(process: subprocess.Popen[str], timeout: float) -> tuple[int, resource.struct_rusage]:
+        guard.reason = "host memory pressure"
+        raise subprocess.TimeoutExpired(process.args, timeout)
+
+    monkeypatch.setattr(processes, "wait4_process", expire)
+    token = processes.COLLECTION_DEADLINE.set(time.monotonic() + 10)
+    try:
+        result = processes.run_command([sys.executable, "-c", "import time; time.sleep(60)"], ROOT, 120)
+    finally:
+        processes.COLLECTION_DEADLINE.reset(token)
+    assert result.status == "failure"
+    assert result.resource_stopped
+    assert result.error is not None and "host memory pressure" in result.error.message

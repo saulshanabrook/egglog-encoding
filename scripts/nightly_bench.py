@@ -1,159 +1,215 @@
 #!/usr/bin/env python3
-"""Generate the egglog-encoding nightly benchmark webpage.
-
-Runs ``bench.py`` once per target and treatment into ``<output_dir>/index.jsonl``,
-then re-renders that cache as the interactive page beside it. Both files are
-replaced each run, so the cache never outlives the schema version that wrote it
-and a failed run publishes no page.
-"""
+"""Publish the standard nightly benchmark, including partial collection."""
 
 from __future__ import annotations
 
 import argparse
+import html
 import os
-import shlex
 import subprocess
 import sys
+import tempfile
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
-type Target = tuple[str, str]  # (label, source) for bench.py's label=source syntax
-type Treatment = str
+# Keep the documented direct-script invocation usable as well as python -m.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from rich.console import Console  # noqa: E402
+from rich.text import Text  # noqa: E402
+
+from benchmarking.benchmark import DEFAULT_ROUNDS, DEFAULT_TIMEOUT_SEC, positive_int  # noqa: E402
+from benchmarking.collection import (  # noqa: E402
+    build_collection_plan,
+    collect_rows,
+    emit_collection_plan,
+    preflight_collection,
+    resolve_targets,
+)
+from benchmarking.models import (  # noqa: E402
+    BenchmarkEndpoint,
+    ComparisonSpec,
+    EndpointRequest,
+    FileSpec,
+    ResolvedTarget,
+    Treatment,
+)
+from benchmarking.processes import COLLECTION_DEADLINE, BudgetExpired  # noqa: E402
+from benchmarking.reports.grouped import grouped_report_path, write_grouped_report  # noqa: E402
+from benchmarking.reports.interactive import write_interactive_report  # noqa: E402
+from benchmarking.reports.store import ReportStore  # noqa: E402
+from benchmarking.targets import parse_target  # noqa: E402
+from benchmarking.workloads import resolve_files  # noqa: E402
+from process_guard import ResourceStopped  # noqa: E402
+
+type Target = tuple[str, str]
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-BENCH_SCRIPT = REPO_ROOT / "bench.py"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "nightly" / "output"
-
-# bench.py derives the page name from the cache name, so these two must match.
 REPORT_NAME = "index.jsonl"
 PAGE_NAME = "index.html"
-
-# Checkouts to measure, each with a stable label so the dropdown shows which
-# commit an endpoint belongs to. Endpoint identity is (binary, treatment), so a
-# branch matching main byte-for-byte collapses to one endpoint per treatment;
-# the two diverge once the code differs.
-BRANCH: Target = ("branch", ".")
-TARGETS: tuple[Target, ...] = (BRANCH, ("main", "@origin/main"))
-
-# Treatments to measure.
-TREATMENTS: tuple[Treatment, ...] = (
-    "term",
-    "proofs",
-    "proof-extraction",
-)
-
-# Every endpoint is measured against ordinary mode on its own checkout, so the
-# page opens on proof overhead of the branch.
-BASELINE: Treatment = "off"
-HEADLINE: Treatment = "proofs"
-
-# The nightly host leaves rustup's shim directory off PATH, so cargo resolves to
-# Ubuntu's, which predates rust-toolchain.toml's pin; only rustup honours that
-# pin. Putting the shims first makes cargo fetch the pinned toolchain. `CARGO_HOME`
-# follows the Makefile's CARGO_HOME_DIR, which is where it installs rustup.
+TARGETS: tuple[Target, ...] = (("branch", "."), ("main", "@origin/main"))
+# Collect the headline and its ordinary-mode comparison on both checkouts first.
+# Later modes share those off observations and the already-built executables.
+TREATMENT_STAGES: tuple[tuple[Treatment, ...], ...] = (("off", "proofs"), ("term",), ("proof-extraction",))
+DEFAULT_BUDGET_SEC = 5400
+RENDER_RESERVE_SEC = 60
 CARGO_BIN_DIR = Path(os.environ.get("CARGO_HOME") or Path.home() / ".cargo") / "bin"
 
 
-def _bench_env() -> dict[str, str]:
-    """bench.py's environment: rustup's cargo first, and no browser launch."""
+def publish_report(
+    store: ReportStore,
+    resolved: dict[str, ResolvedTarget],
+    files: tuple[FileSpec, ...],
+    rounds: int,
+    timeout_sec: int,
+    page_path: Path,
+    notes: Sequence[str],
+) -> None:
+    """Atomically publish only cached rows, choosing a valid initial comparison."""
 
-    # Prepend unconditionally: already being *somewhere* on PATH is not enough,
-    # since a directory holding a distro cargo can precede it and still win.
-    shims = str(CARGO_BIN_DIR)
-    path = [entry for entry in os.environ.get("PATH", "").split(os.pathsep) if entry != shims]
-    path.insert(0, shims)
-    # Keep the headless nightly host from launching bench.py's best-effort browser.
-    return {**os.environ, "PATH": os.pathsep.join(path), "BROWSER": "true"}
-
-
-def _run(
-    target: Target,
-    treatment: Treatment,
-    *,
-    report_path: Path,
-    open_report: bool,
-    rounds: int | None,
-) -> int:
-    """Benchmark one endpoint against the baseline on the same checkout."""
-
-    label, source = target
-    command = [
-        sys.executable,
-        str(BENCH_SCRIPT),
-        "--target",
-        f"{label}={source}",
-        "--treatment",
-        treatment,
-        "--compare-target",
-        f"{label}={source}",
-        "--compare-treatment",
-        BASELINE,
-        # This run's own cache, never the checkout-wide default one.
-        "--report",
-        str(report_path),
-        # Per-file tables make a long run's progress legible.
-        "--detail",
-        "files",
-        *(["--rounds", str(rounds)] if rounds is not None else []),
-        *(["--open"] if open_report else []),
-    ]
-    print(f"nightly: {' '.join(shlex.quote(part) for part in command)}", file=sys.stderr)
-    return subprocess.run(command, cwd=REPO_ROOT, env=_bench_env(), check=False).returncode
-
-
-def _clear(output_dir: Path) -> None:
-    """Drop what an earlier run published, leaving anything else in place."""
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    for name in (REPORT_NAME, PAGE_NAME):
-        (output_dir / name).unlink(missing_ok=True)
-
-
-def _positive_int(value: str) -> int:
-    """Parse ``--rounds``, which bench.py also requires to be positive."""
-
-    parsed = int(value)
-    if parsed <= 0:
-        raise argparse.ArgumentTypeError("must be positive")
-    return parsed
+    grouped = store.grouped_report()
+    write_grouped_report(grouped, grouped_report_path(store.path))
+    branch, main_target = resolved.get("branch"), resolved.get("main")
+    if files and resolved:
+        if branch is not None and main_target is not None and branch.binary_sha256 != main_target.binary_sha256:
+            baseline = BenchmarkEndpoint(main_target, "proofs")
+            candidate = BenchmarkEndpoint(branch, "proofs")
+            report_notes = tuple(notes)
+        else:
+            target = branch or main_target or next(iter(resolved.values()))
+            baseline = BenchmarkEndpoint(target, "off")
+            candidate = BenchmarkEndpoint(target, "proofs")
+            reason = (
+                "branch and main have the same executable" if branch and main_target else "one target is unavailable"
+            )
+            report_notes = (*notes, f"Initial comparison uses {target.display_label} proofs / off because {reason}.")
+        comparison = ComparisonSpec(baseline, candidate, files, rounds, timeout_sec, report_notes=report_notes)
+        write_interactive_report(grouped, comparison, page_path)
+        return
+    # No binary identity exists to seed an interactive comparison.
+    # Publish a status page without inventing an endpoint.
+    message = "\n".join(notes) or "No benchmark targets were available."
+    page = (
+        "<!doctype html><html lang='en'><meta charset='utf-8'><title>Nightly benchmark</title>"
+        "<h1>Nightly benchmark unavailable</h1><pre>" + html.escape(message) + "</pre></html>"
+    )
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=page_path.parent, delete=False) as handle:
+            temporary = Path(handle.name)
+            handle.write(page)
+        os.replace(temporary, page_path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Measure into ``<output_dir>/index.jsonl`` and render ``index.html`` beside it."""
-
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument(
-        "output_dir",
-        nargs="?",
-        type=Path,
-        default=DEFAULT_OUTPUT_DIR,
-        help="directory to publish index.html and index.jsonl into",
-    )
-    parser.add_argument(
-        "--rounds",
-        type=_positive_int,
-        help="rounds per endpoint/file, passed to bench.py",
-    )
+    started = time.monotonic()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("output_dir", nargs="?", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--rounds", type=positive_int, default=DEFAULT_ROUNDS)
+    parser.add_argument("--timeout-sec", type=positive_int, default=DEFAULT_TIMEOUT_SEC)
+    parser.add_argument("--budget-sec", type=positive_int, default=DEFAULT_BUDGET_SEC)
     args = parser.parse_args(list(argv) if argv is not None else None)
+    if args.budget_sec <= RENDER_RESERVE_SEC:
+        parser.error(f"--budget-sec must exceed the {RENDER_RESERVE_SEC}-second rendering reserve")
+    console = Console(stderr=True)
     output_dir = args.output_dir.expanduser().resolve()
-    _clear(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     report_path = output_dir / REPORT_NAME
-
-    # Populate the dropdown with every endpoint. A combination that fails to
-    # build or run drops one option instead of failing the whole nightly.
-    for target in TARGETS:
-        for treatment in TREATMENTS:
-            if _run(target, treatment, report_path=report_path, open_report=False, rounds=args.rounds) != 0:
-                print(f"nightly: skipped {target[0]} {treatment}", file=sys.stderr)
-
-    # The whole cache is now populated, so this last run re-renders it as the
-    # page. Its rows are already cached, so it only rebuilds the report.
-    rendered = _run(BRANCH, HEADLINE, report_path=report_path, open_report=True, rounds=args.rounds) == 0
-    if not rendered or not (output_dir / PAGE_NAME).is_file():
-        print("nightly: benchmark did not produce a report", file=sys.stderr)
-        return 1
-    print(f"nightly: wrote report to {output_dir / PAGE_NAME}", file=sys.stderr)
-    return 0
+    page_path = output_dir / PAGE_NAME
+    for path in (report_path, page_path, grouped_report_path(report_path)):
+        path.unlink(missing_ok=True)
+    store = ReportStore(report_path)
+    resolved: dict[str, ResolvedTarget] = {}
+    notes: list[str] = []
+    files: tuple[FileSpec, ...] = ()
+    failed = False
+    previous_path = os.environ.get("PATH")
+    previous_guard = os.environ.get("EGGLOG_BENCH_MEMORY_GUARD")
+    shims = str(CARGO_BIN_DIR)
+    path = [entry for entry in os.environ.get("PATH", "").split(os.pathsep) if entry != shims]
+    os.environ["PATH"] = os.pathsep.join((shims, *path))
+    os.environ["EGGLOG_BENCH_MEMORY_GUARD"] = "1"
+    token = COLLECTION_DEADLINE.set(started + args.budget_sec - RENDER_RESERVE_SEC)
+    try:
+        files = resolve_files((), REPO_ROOT, None)
+        for label, source in TARGETS:
+            request = parse_target(f"{label}={source}")
+            endpoints = tuple(EndpointRequest(request, treatment) for stage in TREATMENT_STAGES for treatment in stage)
+            try:
+                resolved[label] = resolve_targets(
+                    ((request, endpoints),),
+                    store,
+                    files,
+                    args.rounds,
+                    args.timeout_sec,
+                    False,
+                    REPO_ROOT,
+                    REPO_ROOT,
+                    console,
+                    reuse_targets=tuple(resolved.values()),
+                )[request]
+            except ResourceStopped:
+                raise
+            except (OSError, ValueError, subprocess.CalledProcessError) as error:
+                notes.append(f"{label}: target setup failed: {error}")
+        for stage in TREATMENT_STAGES:
+            plans = []
+            for target in resolved.values():
+                plan = build_collection_plan(
+                    store,
+                    target,
+                    tuple(BenchmarkEndpoint(target, treatment) for treatment in stage),
+                    files,
+                    args.rounds,
+                    args.timeout_sec,
+                    False,
+                )
+                try:
+                    preflight_collection(plan, args.timeout_sec)
+                except ResourceStopped:
+                    raise
+                except (OSError, ValueError) as error:
+                    notes.append(f"{target.display_label} {', '.join(stage)}: {error}")
+                    continue
+                plans.append(plan)
+            for plan in plans:
+                # Identical target executables share cache identities. Earlier
+                # collection may have completed this alias's pending work.
+                plan = build_collection_plan(
+                    store,
+                    plan.target,
+                    tuple(BenchmarkEndpoint(plan.target, treatment) for treatment in stage),
+                    files,
+                    args.rounds,
+                    args.timeout_sec,
+                    False,
+                )
+                emit_collection_plan(console, plan)
+                collect_rows(store, plan, args.timeout_sec, console)
+                publish_report(store, resolved, files, args.rounds, args.timeout_sec, page_path, notes)
+    except BudgetExpired as error:
+        notes.append(f"Partial nightly: {error}; completed observations are retained.")
+    except (ResourceStopped, OSError, ValueError, subprocess.SubprocessError) as error:
+        notes.append(f"Partial nightly: collection stopped: {error}")
+        failed = True
+    finally:
+        COLLECTION_DEADLINE.reset(token)
+        for key, previous in (("PATH", previous_path), ("EGGLOG_BENCH_MEMORY_GUARD", previous_guard)):
+            if previous is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = previous
+        for note in notes:
+            console.print(Text(note))
+        publish_report(store, resolved, files, args.rounds, args.timeout_sec, page_path, notes)
+        console.print(Text(f"nightly: wrote report to {page_path}"))
+    return int(failed or not resolved)
 
 
 if __name__ == "__main__":

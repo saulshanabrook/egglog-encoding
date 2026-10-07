@@ -171,8 +171,10 @@ expanded-bench: expanded-bench-recording
 
 EXPANDED_SPECS := figures/expanded/math-cutoff-11.vl.json figures/expanded/proof-overhead-cdf.vl.json
 EXPANDED_IMAGES := $(EXPANDED_SPECS:.vl.json=.svg) $(EXPANDED_SPECS:.vl.json=.png)
-.PHONY: figures figures-bench figures-data figures-expanded figures-expanded-data figures-expanded-cached figures-expanded-archive figures-expanded-test figure-inventory
-figures: figures-expanded
+.PHONY: figures figures-all figures-all-cached figures-bench figures-data figures-expanded figures-expanded-data figures-expanded-cached figures-expanded-archive figures-expanded-test figure-inventory
+figures: figures-all
+figures-all: figures-expanded
+figures-all-cached: figures-expanded-cached
 figures-bench: expanded-bench
 figures-data: figures-expanded-data
 figures-expanded-data: expanded-bench

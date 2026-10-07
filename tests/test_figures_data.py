@@ -1,8 +1,12 @@
 """Figure metadata projects the manifest without selecting or reading timing rows."""
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
+from pytest import MonkeyPatch
+
+from benchmarking import known_failures
 from benchmarking.figure_inventory import figure_inventory, write_inventory
 from benchmarking.suites import SAFETY_POLICY, VALIDATION_POLICY
 
@@ -84,6 +88,24 @@ def test_validation_failure_keys_include_timeout_encoding_binary_and_latest_outc
     workload = figure_inventory(tmp_path)["workloads"][0]
     assert workload["validation_failures"] == {"sha256:binary/300/ee": "strict error"}
     assert workload["unavailable_reason"] == "historical cap"
+
+
+def test_known_failures_project_only_affected_modes_without_reading_inputs(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    path = prepare_corpus(tmp_path)
+    raw = json.loads(path.read_text())
+    source = raw["workloads"][0]
+    failure = replace(known_failures.KNOWN_FAILURES[0], file_sha256=source["sha256"])
+    monkeypatch.setattr(known_failures, "KNOWN_FAILURES", (failure,))
+    (path.parent / source["file"]).unlink()
+
+    workload = figure_inventory(tmp_path)["workloads"][0]
+
+    assert list(workload["known_failures"]) == ["proofs/nee"]
+    assert failure.reason in workload["known_failures"]["proofs/nee"]
+    assert workload["unavailable_reason"] == ""
+    assert workload["validation_failures"] == {}
 
 
 def test_source_level_exclusion_remains_visible_without_inventing_cases(tmp_path: Path) -> None:

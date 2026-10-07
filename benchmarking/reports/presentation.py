@@ -141,6 +141,10 @@ def _selection_section(
         caption=_comparison_caption(report_path, comparison, file_labels),
     )
     blocks: list[ReportBlock] = [endpoint_table]
+    blocks.extend(
+        ReportMessage(report_id("message", "selection", "note", index), None, note, tone="warning")
+        for index, note in enumerate(comparison.report_notes)
+    )
     baseline_engine = TREATMENT_SPECS[comparison.baseline.treatment].engine
     candidate_engine = TREATMENT_SPECS[comparison.candidate.treatment].engine
     target_changed = (

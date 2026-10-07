@@ -104,6 +104,19 @@ def test_selection_uses_treatment_from_the_comparison(tmp_path: Path) -> None:
     assert "| Candidate | term | abc123 | term |" in markdown
 
 
+def test_report_notes_survive_rich_and_markdown_rendering(tmp_path: Path) -> None:
+    report_path, comparison = _pair_case(tmp_path)
+    note = "Collection budget expired; this report contains the completed observations."
+    comparison = replace(comparison, report_notes=(note,))
+    catalog = build_report_catalog(ReportStore(report_path).grouped_report(), comparison, "files")
+    console = Console(width=120, record=True, color_system=None)
+
+    console.print(render_rich_report_document(catalog, width=120))
+
+    assert note in console.export_text()
+    assert note in render_markdown_report_document(catalog)
+
+
 def test_selection_warns_when_same_engine_binary_and_treatment_both_change(tmp_path: Path) -> None:
     comparison = models.ComparisonSpec(
         models.BenchmarkEndpoint(make_target(binary_sha256="sha256:before"), "off"),

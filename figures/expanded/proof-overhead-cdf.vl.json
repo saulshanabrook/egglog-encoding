@@ -52,7 +52,7 @@
     {"calculate": "datum.endpoint.engine", "as": "engine"},
     {"calculate": "datum.endpoint.proof_mode", "as": "proof_mode"},
     {
-      "calculate": "datum.proof_mode === 'Off' ? '' : datum.item.unavailable_reason || (isValid(datum.group) ? datum.item.validation_failures[datum.group.key.binary_sha256 + '/' + datum.inventory.timeout_sec + '/' + datum.group.key.disequality_encoding] : '') || ''",
+      "calculate": "datum.item.known_failures[datum.endpoint.treatment + '/nee'] || (datum.proof_mode === 'Off' ? '' : datum.item.unavailable_reason || (isValid(datum.group) ? datum.item.validation_failures[datum.group.key.binary_sha256 + '/' + datum.inventory.timeout_sec + '/' + datum.group.key.disequality_encoding] : '') || '')",
       "as": "unavailable_reason"
     },
     {"calculate": "length(datum.observations)", "as": "selected_count"},

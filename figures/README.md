@@ -8,8 +8,8 @@ is required.
 
 ```sh
 make reproduce-benchmarks       # Prepare the author-derived expanded inputs.
-make figures-expanded          # Collect missing observations, then render.
-make figures-expanded-cached   # Render the existing grouped snapshot only.
+make figures-all               # Collect missing observations, then render.
+make figures-all-cached        # Render the existing grouped snapshot only.
 make figures-expanded-archive  # Cached render, then gather portable evidence.
 make figures-parameter         # Existing parameter-analysis comparison.
 ```
@@ -22,7 +22,9 @@ Outputs are printed as absolute paths. The expanded PNG/SVG pairs are:
   overhead, with family-colored dots, full-range and zoomed views, and measured
   50%/90% coverage annotations for time and RSS.
 
-`make figures` aliases `figures-expanded`. `make figures-data` collects expanded
+`make figures` aliases `figures-all`; `figures-expanded` and
+`figures-expanded-cached` remain compatible names. Parameter figures stay
+separate. `make figures-data` collects expanded
 comparisons and refreshes metadata without rendering. Collection is sequential,
 including under parallel Make, and compatible observations are reused.
 
@@ -59,6 +61,8 @@ CDF membership depends only on the proofs-off mean whole-process time, strictly
 between 0.1 and 30 seconds. The `min_wall_sec` and `max_wall_sec` parameters in
 the CDF spec own this window; collection runs all prepared workloads. Memory and
 proof results do not select membership.
+Checked-in known failures remain visible as unavailable outcomes; their proof
+ratios cannot silently disappear from a selected cohort's denominator.
 Each dot represents one deduplicated replay, with source aliases retained in
 metadata. Families are not weighted equally. Failed/missing proof ratios stay
 in the selected denominator: a 90% threshold is shown only when at least 90%

@@ -58,7 +58,7 @@ nonempty. It uses small Math and disequality fixtures, not the full local
 benchmark suite. Override `BENCHMARK_SMOKE_REPORT` to use another temporary path.
 
 For benchmark-report UI changes, inspect both a focused one-file report and the
-default eleven-file report in Rich and Markdown form. Exercise terminal widths 80,
+default seven-file report in Rich and Markdown form. Exercise terminal widths 80,
 119, 120, 160, and 200 using copies of the report cache under `/tmp`; do not read
 from or append to the repository cache during UI validation. Confirm that the
 cumulative `--detail` levels add files, phases, and top rulesets in that order,
@@ -100,8 +100,14 @@ or modify the JSONL.
   `--proof-extraction` to rewrite checks and extracts, then materialize, clean, and
   simplify proofs without verifying them. Treat its results as performance
   evidence only; `--proof-testing` remains the strict correctness mode.
-- Bare `./bench.py` compares `proofs` with `off`. The `proof-extraction`
-  treatment is explicit opt-in.
+- Bare `./bench.py` uses seven checked-in regression fixtures, six rounds and a
+  120-second timeout, comparing `proofs` with `off`. The `proof-extraction`
+  treatment is explicit opt-in. Nightly shares this roster and includes term,
+  proofs, proof-extraction and off on branch/main, with a 90-minute script budget.
+- The checked-in `benchmarking/known_failures.py` list skips affected modes even
+  for explicit files and `--force-run`; remove an entry to retry. Exclusions are
+  report context, never fabricated cache observations. Any ordinary failure
+  stops the affected mode's remaining repetitions; resource stops halt collection.
 - The five egglog treatments run `egglog-experimental`. The four Math treatments
   (`egg` and its proof variants) run `egg-math-benchmark` on the fixed Rational
   Math iteration-11 workload. Validate the complete input hash before using the

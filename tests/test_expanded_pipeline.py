@@ -164,7 +164,7 @@ def test_inventory_then_direct_images_render_existing_snapshot_without_collectio
     assert snapshot.stat().st_mtime == 1_600_000_000
 
 
-@pytest.mark.parametrize("target", ["figures-expanded-cached", "figures-expanded-archive"])
+@pytest.mark.parametrize("target", ["figures-all-cached", "figures-expanded-cached", "figures-expanded-archive"])
 def test_cached_targets_print_paths_without_collection(
     tmp_path: Path, pipeline_env: dict[str, str], target: str
 ) -> None:
@@ -198,7 +198,7 @@ def test_parallel_expanded_pipeline_orders_baselines_proofs_and_figures(
             *(
                 []
                 if recording_only
-                else ["figures-expanded", "figures-data", "figures-expanded-data", "expanded-bench"]
+                else ["figures-all", "figures", "figures-expanded", "figures-data", "expanded-bench"]
             ),
             "expanded-bench-recording",
         ],

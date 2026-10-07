@@ -10,7 +10,6 @@ from typing import Any
 import pytest
 from rich.console import Console
 
-import process_guard
 from benchmarking import collection, models, processes, suites, targets
 from benchmarking.reports.store import ReportStore
 
@@ -29,7 +28,7 @@ def prepared_environment(tmp_path: Path) -> tuple[Path, models.ResolvedTarget]:
 
 
 @pytest.mark.parametrize("status", ["failure", "timed-out"])
-def test_suite_failure_stops_its_treatment_but_positional_keeps_attempt_policy(
+def test_failure_stops_its_treatment_for_suite_and_positional_requests(
     prepared_environment: tuple[Path, models.ResolvedTarget],
     monkeypatch: pytest.MonkeyPatch,
     status: models.Status,
@@ -61,14 +60,15 @@ def test_suite_failure_stops_its_treatment_but_positional_keeps_attempt_policy(
     )
     assert (
         collection.build_collection_plan(store, target, endpoints, (file,), 30, 120, False).total_missing_observations
-        == 58
+        == 0
     )
-    assert (
-        collection.build_collection_plan(
-            store, target, endpoints, (file,), 1, 120, True, True
-        ).total_missing_observations
-        == 2
-    )
+    for suite_mode in (False, True):
+        assert (
+            collection.build_collection_plan(
+                store, target, endpoints, (file,), 1, 120, True, suite_mode
+            ).total_missing_observations
+            == 2
+        )
     assert (
         collection.build_collection_plan(
             store, target, endpoints, (file,), 30, 121, False, True
@@ -124,7 +124,8 @@ def test_suite_build_is_guarded_and_single_job(
     class Process:
         pid = 123
 
-        def wait(self) -> int:
+        def wait(self, timeout: float | None = None) -> int:
+            assert timeout is None
             events.append("wait")
             return 0
 
@@ -137,7 +138,7 @@ def test_suite_build_is_guarded_and_single_job(
     monkeypatch.setenv("EGGLOG_BENCH_MEMORY_GUARD", "1")
     monkeypatch.setattr(MemoryGuard, "from_environment", lambda: Guard())
     monkeypatch.setattr(targets.subprocess, "Popen", build)
-    monkeypatch.setattr(process_guard, "terminate_process_group", lambda _process: events.append("cleanup"))
+    monkeypatch.setattr(targets, "terminate_process_group", lambda _process: events.append("cleanup"))
     path, identity = targets.build_target(replace(target.row, path=str(root)), Console(file=io.StringIO()))
     assert path == target.binary_path and identity == target.binary_sha256
     assert events == ["build", ("guard", 123), "wait", "close", "cleanup"]
