@@ -76,7 +76,7 @@ def test_validation_failure_keys_include_timeout_encoding_binary_and_latest_outc
         "status": "failure",
         "reason": "strict error",
     }
-    raw["outcomes"] = [
+    outcomes = [
         outcome,
         {**outcome, "timeout_sec": 120, "reason": "stale"},
         {**outcome, "policy": "old", "reason": "stale"},
@@ -84,7 +84,9 @@ def test_validation_failure_keys_include_timeout_encoding_binary_and_latest_outc
         {**outcome, "disequality_encoding": "nee", "status": "success", "reason": None},
         {**outcome, "kind": "safety", "policy": SAFETY_POLICY, "status": "deferred", "reason": "historical cap"},
     ]
-    path.write_text(json.dumps(raw))
+    local = path.parent / ".local"
+    local.mkdir()
+    (local / "outcomes.json").write_text(json.dumps(outcomes))
     workload = figure_inventory(tmp_path)["workloads"][0]
     assert workload["validation_failures"] == {"sha256:binary/300/ee": "strict error"}
     assert workload["unavailable_reason"] == "historical cap"

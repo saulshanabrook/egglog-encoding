@@ -22,7 +22,7 @@ from scripts.reproduction_process import run_bounded_command
 
 
 def record_outcome(path: Path, outcome: CorpusOutcome) -> None:
-    """Atomically retain diagnostic history without touching measured observations."""
+    """Atomically retain local diagnostics without changing tracked corpus inputs."""
 
     original = path.read_bytes()
     manifest = json.loads(original)
@@ -32,19 +32,25 @@ def record_outcome(path: Path, outcome: CorpusOutcome) -> None:
         for workload in manifest["workloads"]
     ):
         raise ValueError("validated input is no longer in the prepared corpus")
-    outcomes = manifest.setdefault("outcomes", [])
+    outcomes_path = path.parent / ".local/outcomes.json"
+    outcomes_path.parent.mkdir(parents=True, exist_ok=True)
+    previous = outcomes_path.read_bytes() if outcomes_path.is_file() else None
+    outcomes = json.loads(previous) if previous is not None else []
     if outcomes and outcomes[-1] == outcome:
         return
     outcomes.append(outcome)
-    encoded = (json.dumps(manifest, indent=2) + "\n").encode()
+    encoded = (json.dumps(outcomes, indent=2) + "\n").encode()
     temporary: Path | None = None
     try:
-        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".validation-", delete=False) as handle:
+        with tempfile.NamedTemporaryFile(dir=outcomes_path.parent, prefix=".validation-", delete=False) as handle:
             temporary = Path(handle.name)
             handle.write(encoded)
         if path.read_bytes() != original:
             raise ValueError("corpus manifest changed during validation; retry after preparation completes")
-        os.replace(temporary, path)
+        current = outcomes_path.read_bytes() if outcomes_path.is_file() else None
+        if current != previous:
+            raise ValueError("corpus outcomes changed during validation; retry after the other validator completes")
+        os.replace(temporary, outcomes_path)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
@@ -110,7 +116,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "reason": None,
             }
             digest = hashlib.sha256(json.dumps(outcome, sort_keys=True).encode()).hexdigest()
-            directory = selection.manifest.path.parent / "validation" / digest
+            directory = selection.manifest.path.parent / ".local/validation" / digest
             directory.mkdir(parents=True, exist_ok=True)
             run_directory = Path(tempfile.mkdtemp(dir=directory, prefix="run-"))
             prefix = run_directory / "proof-testing"

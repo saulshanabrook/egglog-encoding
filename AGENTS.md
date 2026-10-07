@@ -113,7 +113,8 @@ or modify the JSONL.
   Math iteration-11 workload. Validate the complete input hash before using the
   native driver. The native parameter treatments use the original `.in` drivers.
   Every cache row identifies the executable that actually ran.
-- Expanded suites read the generated `benchmarks/local/corpus/manifest.json`.
+- Expanded suites read the tracked `benchmarks/corpus/manifest.json` and standalone
+  `.egg` files. Commit prepared inputs; collection never regenerates them.
   Source recipes are in `benchmarks/sources.json`; generation never requires old
   ignored capture receipts. Preserve complete-call boundaries, aliases and blockers.
 - Figure collection requests 10 observations per endpoint by default. Expanded
@@ -126,9 +127,10 @@ or modify the JSONL.
 - Expanded Make targets use a 300-second timeout and the memory guard: 10 GiB
   process-group RSS, normal host memory pressure, and a 2 GiB host reserve.
   Preserve in-flight safety failures and halt before launching another workload.
-- Source preparation and explicit strict validation keep evidence under ignored
-  `benchmarks/local/`, outside Cargo's disposable build cache. Neither is an
-  implicit timed screening pass. Do not import diagnostic timings into the cache.
+- Source preparation keeps builds and captures under ignored `benchmarks/local/`;
+  corpus resume state and strict validation evidence use ignored
+  `benchmarks/corpus/.local/`. Neither is an implicit timed screening pass.
+  Do not import diagnostic timings into the cache.
 - Keep source-generation supervision and the explicit validator under `scripts/`,
   whole-process measurement under `benchmarking/`, and shared host/process
   protection in `process_guard.py`. Collection must not import diagnostic runners.

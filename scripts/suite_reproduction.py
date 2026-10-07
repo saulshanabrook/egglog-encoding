@@ -1,7 +1,8 @@
 """Prepare standalone paper workloads from pinned author sources.
 
 This command owns acquisition/correctness evidence, never benchmark observations.
-The generated manifest is the single input to suite collection and figures.
+The portable manifest and standalone workloads can be committed; local evidence
+and resumable source captures are kept separately.
 """
 
 from __future__ import annotations
@@ -10,12 +11,14 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import time
 import urllib.request
 from pathlib import Path
 from typing import Any
 
+from benchmarking.suites import MANIFEST_RELATIVE_PATH, SAFETY_POLICY, CorpusOutcome
 from scripts.hardboiled_replay import egglog_forms
 from scripts.reproduction_inventory import FAMILIES, ROOT, expected_cases, select_cases
 from scripts.reproduction_process import exclusive_job
@@ -54,8 +57,20 @@ def generation_identity(family: str, recipe: dict[str, Any]) -> str:
     return digest.hexdigest()
 
 
+def portable_reason(reason: str | None, fallback: str) -> str | None:
+    """Keep concise source blockers while excluding local paths and diagnostic dumps."""
+    if reason is None:
+        return None
+    summary = reason.partition("; see ")[0]
+    if summary.startswith("missing LLVM18/MLIR frontend prerequisite: "):
+        summary = "missing LLVM18/MLIR frontend prerequisite: " + Path(summary.split(": ", 1)[1]).name
+    if len(summary) > 240 or "\n" in summary or re.search(r"(?:^|[\s'\"])/|[A-Za-z]:\\", summary):
+        return fallback
+    return summary
+
+
 def write_manifest(directory: Path, manifest: dict[str, Any]) -> None:
-    """Replace changed metadata; retain strict evidence history for exact identity matching."""
+    """Publish portable identities and bind private resume state to those exact bytes."""
     case_files = {case["id"]: set(case["workloads"]) for case in manifest.get("cases", [])}
     if "cases" in manifest:
         for workload in manifest["workloads"]:
@@ -63,14 +78,43 @@ def write_manifest(directory: Path, manifest: dict[str, Any]) -> None:
                 alias for alias in workload["aliases"] if workload["file"] in case_files.get(alias["case"], ())
             ]
         manifest["workloads"] = [workload for workload in manifest["workloads"] if workload["aliases"]]
-    # Strict evidence is an append-only identity-keyed history. Keep it even
-    # while regeneration is interrupted before the same input bytes reappear.
-    path = directory / "manifest.json"
-    content = json.dumps(manifest, indent=2) + "\n"
-    if not path.is_file() or path.read_text() != content:
-        temporary = path.with_suffix(".tmp")
-        temporary.write_text(content)
-        temporary.replace(path)
+    public = {
+        "sources": manifest.get("sources", {}),
+        "preparation": manifest.get("preparation", {}),
+        "cases": [
+            {
+                **{key: case[key] for key in ("id", "family", "source", "status", "workloads") if key in case},
+                "reason": portable_reason(
+                    case.get("portable_reason", case.get("reason")),
+                    f"source preparation: {case.get('status', 'blocked')}",
+                ),
+            }
+            for case in manifest.get("cases", [])
+        ],
+        "workloads": [
+            {
+                key: workload[key]
+                for key in ("file", "sha256", "facts_sha256", "facts", "aliases", "adaptations")
+                if key in workload
+            }
+            for workload in manifest["workloads"]
+        ],
+    }
+    content = json.dumps(public, indent=2) + "\n"
+    local = directory / ".local"
+    local.mkdir(parents=True, exist_ok=True)
+    state = {
+        "manifest_sha256": hashlib.sha256(content.encode()).hexdigest(),
+        "manifest": {key: value for key, value in manifest.items() if key != "outcomes"},
+    }
+    for path, encoded in (
+        (directory / "manifest.json", content),
+        (local / "preparation.json", json.dumps(state, indent=2) + "\n"),
+    ):
+        if not path.is_file() or path.read_text() != encoded:
+            temporary = local / (path.stem + ".tmp")
+            temporary.write_text(encoded)
+            temporary.replace(path)
 
 
 def publish_workload(
@@ -253,13 +297,22 @@ def reproduce(
     """Resume generated inputs; persist every preparation outcome before another launch."""
     from scripts.dialegg_capture import run_complete_command
     from scripts.reproduction_validation import validate_capture
+    from scripts.validate_benchmarks import record_outcome
 
     sources = json.loads((ROOT / "benchmarks/sources.json").read_text())
     cases = expected_cases(sources)
     selected = select_cases(cases, families, names)
     directory = directory.resolve()
     directory.mkdir(parents=True, exist_ok=True)
-    old = json.loads((directory / "manifest.json").read_text()) if (directory / "manifest.json").is_file() else {}
+    manifest_path = directory / "manifest.json"
+    original = manifest_path.read_bytes() if manifest_path.is_file() else b""
+    old = json.loads(original) if original else {}
+    state_path = directory / ".local/preparation.json"
+    if state_path.is_file():
+        state = json.loads(state_path.read_text())
+        if state["manifest_sha256"] == hashlib.sha256(original).hexdigest():
+            old = state["manifest"]
+    outcomes_path = directory / ".local/outcomes.json"
     old_cases = {case["id"]: case for case in old.get("cases", [])}
     preparation = {
         family: generation_identity(family, sources[family])
@@ -274,13 +327,13 @@ def reproduce(
         "preparation": preparation,
         "cases": [],
         "workloads": [],
-        "outcomes": old.get("outcomes", []),
+        "outcomes": json.loads(outcomes_path.read_text()) if outcomes_path.is_file() else [],
     }
     for case in cases:
         previous = old_cases.get(case["id"])
         row = {**case, "status": "pending", "workloads": []}
         if previous and case["family"] in reusable:
-            row = dict(previous)
+            row = {**case, **previous}
         manifest["cases"].append(row)
     selected_ids = {case["id"] for case in selected}
     current_files = {name for case in manifest["cases"] for name in case["workloads"]}
@@ -293,14 +346,57 @@ def reproduce(
     job_root.mkdir(parents=True)
     environments: dict[str, dict[str, Any]] = {}
     for case in manifest["cases"]:
-        if case["id"] not in selected_ids or (
-            case["status"] == "ready" and case.get("validation") == validation_identity
-        ):
+        if case["id"] not in selected_ids:
+            continue
+        if case["workloads"] and case.get("validation") == validation_identity:
+            if case.get("revalidation", {}).get("status", "success") != "success":
+                case.pop("revalidation")
+                write_manifest(directory, manifest)
             continue
         family = case["family"]
         attempt = job_root / "cases" / case["id"]
         attempt.mkdir(parents=True)
-        case.update(status="blocked", workloads=[], reason=None, evidence=str(attempt.relative_to(ROOT)))
+        if case["workloads"]:
+            # Frozen programs are the portable source of truth. Revalidation must
+            # not require author compilers or change their published provenance.
+            case["evidence"] = str(attempt.relative_to(ROOT))
+            for order, name in enumerate(case["workloads"]):
+                try:
+                    process = run_complete_command(
+                        [str(engine), str(directory / name)], ROOT, attempt / f"ordinary-{order}", timeout_sec
+                    )
+                    status, reason = process.status, process.message
+                except (OSError, ValueError, RuntimeError) as error:
+                    status = "resource-stopped" if "guard refused" in str(error) else "failure"
+                    reason = str(error)
+                case["revalidation"] = {"status": status, "reason": reason}
+                if status in STOP_STATUSES:
+                    workload = next(row for row in manifest["workloads"] if row["file"] == name)
+                    outcome: CorpusOutcome = {
+                        "file_sha256": workload["sha256"],
+                        "fact_directory_sha256": workload.get("facts_sha256", ""),
+                        "binary_sha256": f"sha256:{validation_identity['engine_sha256']}",
+                        "timeout_sec": int(timeout_sec),
+                        "disequality_encoding": "nee",
+                        "kind": "safety",
+                        "policy": SAFETY_POLICY,
+                        "status": "deferred",
+                        "reason": reason or status,
+                    }
+                    record_outcome(manifest_path, outcome)
+                    manifest["outcomes"] = json.loads(outcomes_path.read_text())
+                    write_manifest(directory, manifest)
+                    raise RuntimeError(f"{case['id']}: resource guard stopped preparation; later cases remain pending")
+                if status != "success":
+                    break
+            else:
+                case["validation"] = validation_identity
+            write_manifest(directory, manifest)
+            print(f"{case['id']}: ordinary revalidation {case['revalidation']['status']}", flush=True)
+            continue
+        case.update(
+            status="blocked", workloads=[], reason=None, portable_reason=None, evidence=str(attempt.relative_to(ROOT))
+        )
         try:
             captured = None
             if case.get("capture"):
@@ -322,7 +418,11 @@ def reproduce(
                     [str(engine), str(replay.resolve())], ROOT, attempt / "ordinary", timeout_sec
                 )
                 if process.status != "success":
-                    case.update(status="blocked", reason=f"ordinary replay: {process.status}: {process.message or ''}")
+                    case.update(
+                        status="blocked",
+                        reason=f"ordinary replay: {process.status}: {process.message or ''}",
+                        portable_reason=f"ordinary replay: {process.status}",
+                    )
                     if process.status in STOP_STATUSES:
                         raise RuntimeError("resource safety stop")
                 else:
@@ -346,7 +446,10 @@ def reproduce(
                     environments[family] if captured is None else {"status": "success", "settings": {}}
                 )
                 if environment["status"] != "success":
-                    case.update(reason=environment.get("reason", environment["status"]))
+                    case.update(
+                        reason=environment.get("reason", environment["status"]),
+                        portable_reason=environment.get("reason") or f"source preparation: {environment['status']}",
+                    )
                     if environment["status"] in STOP_STATUSES:
                         raise RuntimeError("resource safety stop")
                 else:
@@ -363,7 +466,7 @@ def reproduce(
                         None,
                     )
                     if blocker:
-                        case["reason"] = blocker["reason"]
+                        case["reason"] = case["portable_reason"] = blocker["reason"]
                     else:
                         if captured is None:
                             captured = capture_case(case, settings, attempt / "capture", engine, timeout_sec)
@@ -371,6 +474,7 @@ def reproduce(
                         capture_path.write_text(json.dumps(captured, indent=2, default=str) + "\n")
                         if captured["status"] in STOP_STATUSES:
                             case["reason"] = captured.get("reason", captured["status"])
+                            case["portable_reason"] = captured.get("reason") or f"source capture: {captured['status']}"
                             raise RuntimeError("resource safety stop")
                         if captured["status"] not in {
                             "reproduced",
@@ -378,6 +482,7 @@ def reproduce(
                             "ordinary-validation-failed",
                         }:
                             case["reason"] = captured.get("reason") or f"source capture: {captured['status']}"
+                            case["portable_reason"] = captured.get("reason") or f"source capture: {captured['status']}"
                             write_manifest(directory, manifest)
                             continue
                         case.update(
@@ -385,15 +490,26 @@ def reproduce(
                         )
                         validation = validate_capture(captured, engine, attempt / "validation", timeout_sec=timeout_sec)
                         reason = validation.get("reason")
+                        public_reason = (
+                            (
+                                reason
+                                if validation["status"] == "blocked"
+                                else f"ordinary replay: {validation['status']}"
+                            )
+                            if reason
+                            else None
+                        )
                         if not reason and captured.get("failed_invocations"):
-                            reason = (
+                            reason = public_reason = (
                                 f"{len(captured['failed_invocations'])} Egglog calls failed; retained complete calls"
                             )
                         parent_status = captured.get("process", {}).get("status")
                         if not reason and (captured.get("parent_failure") or parent_status in {"failure", "timed-out"}):
-                            outcome = "timed out" if parent_status == "timed-out" else "failed"
-                            reason = f"Source parent {outcome} after complete Egglog calls; see capture evidence"
-                        case.update(reason=reason)
+                            parent_outcome = "timed out" if parent_status == "timed-out" else "failed"
+                            reason = public_reason = (
+                                f"Source parent {parent_outcome} after complete Egglog calls; see capture evidence"
+                            )
+                        case.update(reason=reason, portable_reason=public_reason)
                         sessions = captured.get("sessions") or captured.get("invocations", [])
                         orders = {
                             session.get("replay") or session.get("standalone"): session.get("source_order", index)
@@ -415,6 +531,7 @@ def reproduce(
             case["validation"] = validation_identity
         except (OSError, ValueError, RuntimeError) as error:
             case["reason"] = case.get("reason") or str(error)
+            case["portable_reason"] = case.get("portable_reason") or str(error)
             if str(error) == "resource safety stop" or "guard refused" in str(error):
                 write_manifest(directory, manifest)
                 raise RuntimeError(
@@ -429,7 +546,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--family", action="append", choices=FAMILIES)
     parser.add_argument("--case", action="append", default=[])
-    parser.add_argument("--output", type=Path, default=ROOT / "benchmarks/local/corpus")
+    parser.add_argument("--output", type=Path, default=ROOT / MANIFEST_RELATIVE_PATH.parent)
     parser.add_argument("--engine", type=Path)
     parser.add_argument("--timeout-sec", type=float, default=300)
     args = parser.parse_args()
@@ -460,7 +577,7 @@ def main() -> int:
         print((args.output / "manifest.json").resolve())
         return int(
             any(
-                case["status"] == "pending"
+                case["status"] == "pending" or case.get("revalidation", {}).get("status", "success") != "success"
                 for case in select_cases(manifest["cases"], args.family or list(FAMILIES), args.case)
             )
         )

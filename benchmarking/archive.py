@@ -44,6 +44,15 @@ def archive_figures(root: Path, destination: Path) -> Path:
         Path(".reports-grouped.json"),
     }
     paths.update(Path(f"figures/expanded/{name}.{suffix}") for name in FIGURES for suffix in ("vl.json", "svg", "png"))
+    outcomes_path = manifest.path.parent / ".local/outcomes.json"
+    if outcomes_path.is_file():
+        paths.add(outcomes_path.relative_to(root))
+    for outcome in manifest.outcomes:
+        if evidence := outcome.get("evidence"):
+            directory = (manifest.path.parent / evidence).resolve()
+            if not directory.is_relative_to((manifest.path.parent / ".local/validation").resolve()):
+                raise ValueError(f"validation evidence escapes the local validation directory: {evidence}")
+            paths.update(path.relative_to(root) for path in directory.rglob("*") if path.is_file())
     for workload in manifest.workloads:
         paths.add((manifest.path.parent / workload.file).resolve().relative_to(root))
         if workload.facts:
@@ -79,9 +88,7 @@ def archive_figures(root: Path, destination: Path) -> Path:
     )
     stamp: ArchiveProvenance = {
         "repository_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
-        "repository_dirty": bool(
-            subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], cwd=root)
-        ),
+        "repository_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=root)),
         "binary_sha256": engines,
         "render_packages": re.findall(r"--package=([^\s]+)", snapshots[Path("Makefile")].decode()),
         "files": {},
@@ -115,7 +122,8 @@ def archive_figures(root: Path, destination: Path) -> Path:
                 "README.md",
                 "# Paper figure evidence\n\n"
                 "This snapshot contains measured observations, the complete prepared input manifest, "
-                "workloads, source recipes, and the exact figure specifications. Missing or failed "
+                "workloads, source recipes, local validation outcomes and referenced logs, and the exact "
+                "figure specifications. Missing or failed "
                 "results are retained. Source and executable identities are recorded in the manifests "
                 "and grouped observations; file hashes are in `provenance.json`.\n\n"
                 "With Node.js, npm, and Make installed, rerender using the pinned renderer packages:\n\n"

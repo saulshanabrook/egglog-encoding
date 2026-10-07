@@ -170,8 +170,7 @@ def test_cached_suite_label_keeps_exact_validation_error_without_building_or_scr
             )
             row["target_path"] = str(root)
             store.append(row)
-    manifest = json.loads(suite.manifest.path.read_text())
-    manifest["outcomes"] = [
+    outcomes = [
         {
             "file_sha256": file.sha256,
             "fact_directory_sha256": "",
@@ -184,7 +183,9 @@ def test_cached_suite_label_keeps_exact_validation_error_without_building_or_scr
             "reason": "strict witness failed",
         }
     ]
-    suite.manifest.path.write_text(json.dumps(manifest))
+    local = suite.manifest.path.parent / ".local"
+    local.mkdir()
+    (local / "outcomes.json").write_text(json.dumps(outcomes))
     monkeypatch.setattr(benchmark, "__file__", str(root / "benchmarking/benchmark.py"))
     monkeypatch.setattr(benchmark, "git_root_for_path", lambda _: root)
     monkeypatch.setattr(

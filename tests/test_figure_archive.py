@@ -20,7 +20,7 @@ from .report_fixtures import ROOT, make_record
 
 @pytest.fixture
 def evidence(tmp_path: Path) -> tuple[Path, Path]:
-    corpus = tmp_path / "benchmarks/local/corpus"
+    corpus = tmp_path / "benchmarks/corpus"
     corpus.mkdir(parents=True)
     workload = corpus / "input.egg"
     workload.write_text("(datatype Expr (Leaf))\n(let x (Leaf))\n(extract x)\n")
@@ -39,10 +39,10 @@ def evidence(tmp_path: Path) -> tuple[Path, Path]:
                 "adaptations": [],
             }
         ],
-        "outcomes": [],
     }
     (corpus / "manifest.json").write_text(json.dumps(manifest))
     (tmp_path / "benchmarks/sources.json").write_text(json.dumps(manifest["sources"]))
+    (tmp_path / "benchmarks/local").mkdir()
     (tmp_path / "benchmarks/local/figure-inventory.json").write_text('{"timeout_sec": 300}')
     for file in ("Makefile", "Cargo.lock"):
         shutil.copyfile(ROOT / file, tmp_path / file)
@@ -86,9 +86,10 @@ def test_archive_preserves_exact_snapshot_paths_failures_and_hashes(evidence: tu
     with zipfile.ZipFile(destination) as archive:
         assert archive.read(".reports-grouped.json") == original
         assert b"timed-out" in original
-        assert archive.read("benchmarks/local/corpus/input.egg") == workload.read_bytes()
+        assert archive.read("benchmarks/corpus/input.egg") == workload.read_bytes()
         stamp = json.loads(archive.read("provenance.json"))
         assert stamp["binary_sha256"] == ["sha256:bin"]
+        assert stamp["repository_dirty"] is True  # the prepared corpus has not been committed
         assert "vega-lite@6.4.3" in stamp["render_packages"]
         for path, digest in stamp["files"].items():
             assert digest == "sha256:" + hashlib.sha256(archive.read(path)).hexdigest()
@@ -109,3 +110,38 @@ def test_changed_corpus_does_not_replace_retained_archive(evidence: tuple[Path, 
     with pytest.raises(ValueError, match="changed or missing inputs"):
         archive_figures(root, destination)
     assert destination.read_bytes() == b"retained evidence"
+
+
+def test_archive_preserves_local_outcomes_and_referenced_logs_without_preparation(evidence: tuple[Path, Path]) -> None:
+    from benchmarking.suites import MANIFEST_RELATIVE_PATH, load_manifest
+
+    root, workload = evidence
+    local = workload.parent / ".local"
+    log = local / "validation/run/proof-testing.err"
+    log.parent.mkdir(parents=True)
+    log.write_text("strict proof validation failed\n")
+    (local / "preparation.json").write_text('{"machine_specific": "source/build state"}')
+    outcome = {
+        "file_sha256": "sha256:" + hashlib.sha256(workload.read_bytes()).hexdigest(),
+        "fact_directory_sha256": "",
+        "binary_sha256": "sha256:bin",
+        "timeout_sec": 300,
+        "disequality_encoding": "nee",
+        "kind": "validation",
+        "policy": "proof-testing-v1",
+        "status": "failure",
+        "reason": "strict proof validation failed",
+        "evidence": ".local/validation/run",
+    }
+    history = local / "outcomes.json"
+    history.write_text(json.dumps([outcome]))
+    before = (root / MANIFEST_RELATIVE_PATH).read_bytes()
+    destination = archive_figures(root, root / "evidence.zip")
+    with zipfile.ZipFile(destination) as archive:
+        assert archive.read(history.relative_to(root).as_posix()) == history.read_bytes()
+        assert archive.read(log.relative_to(root).as_posix()) == log.read_bytes()
+        assert not any("preparation.json" in name for name in archive.namelist())
+        unpacked = root / "unpacked"
+        archive.extractall(unpacked)
+    assert load_manifest(unpacked).outcomes == (outcome,)
+    assert (root / MANIFEST_RELATIVE_PATH).read_bytes() == before

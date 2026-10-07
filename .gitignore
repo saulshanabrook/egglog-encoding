@@ -1,5 +1,6 @@
 /target
 /benchmarks/local/
+/benchmarks/corpus/.local/
 /nightly/
 /.reports*.jsonl
 /.reports*-grouped.json

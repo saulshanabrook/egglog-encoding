@@ -391,12 +391,13 @@ Use `./bench.py --help` for the complete option reference.
 
 The [expanded suites](benchmarks/README.md) measure complete independent e-graph
 computations: initialize inputs, run rules, then extract or check a result.
-Pinned [source recipes](benchmarks/sources.json) regenerate the prepared manifest;
-shared-state stages stay together, aliases are deduplicated, and source blockers
-remain explicit.
+Standalone `.egg` files and a portable manifest belong in `benchmarks/corpus/`.
+Pinned [source recipes](benchmarks/sources.json) can regenerate them; ordinary
+collection uses the saved corpus without author compilers. Shared-state stages
+stay together, aliases are deduplicated, and source blockers remain explicit.
 
 ```sh
-make reproduce-benchmarks      # Author sources -> standalone workloads.
+make reproduce-benchmarks      # Only to create or refresh the corpus; commit its results.
 make expanded-bench-recording  # Cached baselines and proof recording.
 make figures-all              # Both proof treatments, Math, and paper figures.
 make figures-all-cached       # Render existing grouped data only.

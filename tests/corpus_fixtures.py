@@ -44,7 +44,6 @@ def prepare_corpus(root: Path, *, contents: tuple[str, ...] = ("(check (= 1 1))\
                 "sources": {family: {"repository": "author", "revision": "pinned"}},
                 "cases": cases,
                 "workloads": workloads,
-                "outcomes": [],
             }
         )
     )

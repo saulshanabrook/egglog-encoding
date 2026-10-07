@@ -5,12 +5,14 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import shutil
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from benchmarking import suites
 from scripts import dialegg_capture
 from scripts import suite_reproduction as reproduction
 from scripts.reproduction_inventory import expected_cases, select_cases
@@ -147,7 +149,8 @@ def test_native_capture_revalidates_without_regenerating_and_retains_parent_outc
     reproduction.reproduce(output, ["eggcc"], [], engine)
     engine.write_text("new engine")
     manifest = reproduction.reproduce(output, ["eggcc"], [], engine)
-    assert events == ["prepare", "capture a", "validate", "capture b", "validate", "validate", "validate"]
+    assert events == ["prepare", "capture a", "validate", "capture b", "validate"]
+    assert len(repository["runs"]) == 2
     outcome = "timed out" if parent_status == "timed-out" else "failed"
     assert all(case["status"] == "ready" and outcome in case["reason"] for case in manifest["cases"])
     assert manifest["workloads"][0]["aliases"] == [{"case": "a", "order": 1}, {"case": "b", "order": 1}]
@@ -183,8 +186,13 @@ def test_changed_capture_is_not_revalidated_as_new_input(repository: dict[str, A
     capture.write_text(capture.read_text() + " ")
     repository["engine"].write_text("new engine")
     changed = reproduction.reproduce(output, ["hardboiled"], ["a"], repository["engine"])
-    assert changed["cases"][0]["reason"] == "retained source capture changed"
-    assert repository["captures"] == ["a", "b"] and len(repository["runs"]) == 2
+    if initial_status == "success":
+        assert changed["cases"][0]["revalidation"]["status"] == "success"
+        assert len(repository["runs"]) == 3
+    else:
+        assert changed["cases"][0]["reason"] == "retained source capture changed"
+        assert len(repository["runs"]) == 2
+    assert repository["captures"] == ["a", "b"]
 
 
 def test_failed_ordinary_replay_can_be_revalidated_without_source_generation(repository: dict[str, Any]) -> None:
@@ -204,7 +212,9 @@ def test_safety_stop_retains_reason_and_leaves_later_cases_pending(repository: d
         reproduction.reproduce(output, ["hardboiled"], [], repository["engine"])
     saved = json.loads((output / "manifest.json").read_text())
     assert saved["cases"][0]["status"] == "blocked" and "memory-limit" in saved["cases"][0]["reason"]
-    assert saved["cases"][0]["evidence"]
+    assert "evidence" not in saved["cases"][0]
+    local = json.loads((output / ".local/preparation.json").read_text())["manifest"]
+    assert local["cases"][0]["evidence"]
     assert saved["cases"][1]["status"] == "pending"
     assert len(repository["runs"]) == 1
 
@@ -217,18 +227,18 @@ def test_timeout_remains_an_outcome_and_other_cases_continue(repository: dict[st
 
 
 def test_outcome_history_survives_interrupted_regeneration(tmp_path: Path) -> None:
-    manifest = {
-        "workloads": [{"sha256": "input", "facts_sha256": "facts"}],
-        "outcomes": [
-            {"file_sha256": "input", "fact_directory_sha256": "facts", "status": "failure"},
-            {"file_sha256": "input", "fact_directory_sha256": "old", "status": "success"},
-        ],
-    }
+    local = tmp_path / ".local"
+    local.mkdir()
+    outcomes = [{"file_sha256": "input", "status": "failure"}, {"file_sha256": "old", "status": "success"}]
+    history = local / "outcomes.json"
+    history.write_text(json.dumps(outcomes))
+    manifest = {"workloads": [{"sha256": "input", "facts_sha256": "facts"}], "outcomes": []}
     reproduction.write_manifest(tmp_path, manifest)
-    assert json.loads((tmp_path / "manifest.json").read_text())["outcomes"] == manifest["outcomes"]
+    before = history.stat().st_mtime_ns
     manifest["workloads"] = []
     reproduction.write_manifest(tmp_path, manifest)
-    assert len(json.loads((tmp_path / "manifest.json").read_text())["outcomes"]) == 2
+    assert json.loads(history.read_text()) == outcomes and history.stat().st_mtime_ns == before
+    assert "outcomes" not in json.loads((tmp_path / "manifest.json").read_text())
 
 
 def test_published_input_download_uses_pinned_source_and_existing_attempt(
@@ -286,11 +296,11 @@ def test_same_regenerated_bytes_preserve_strict_outcomes(repository: dict[str, A
     first["outcomes"] = [
         {"file_sha256": first["workloads"][0]["sha256"], "fact_directory_sha256": "", "status": "failure"}
     ]
-    reproduction.write_manifest(output, first)
+    (output / ".local/outcomes.json").write_text(json.dumps(first["outcomes"]))
     (repository["root"] / "scripts/hardboiled_generator.py").write_text("# changed adapter, same output bytes\n")
     second = reproduction.reproduce(output, ["hardboiled"], [], repository["engine"])
     assert second["outcomes"] == first["outcomes"]
-    assert json.loads((output / "manifest.json").read_text())["outcomes"] == first["outcomes"]
+    assert json.loads((output / ".local/outcomes.json").read_text()) == first["outcomes"]
 
 
 def test_changing_a_source_repair_fixture_invalidates_preparation(repository: dict[str, Any]) -> None:
@@ -320,3 +330,140 @@ def test_dialegg_cases_follow_recipe_populations() -> None:
     cases = [row for row in expected_cases(sources) if row["family"] == "dialegg"]
     assert any(row["id"] == "dialegg-timer-new-program" for row in cases)
     assert not any(row["id"] == "dialegg-timer-polynomial" for row in cases)
+
+
+def test_portable_manifest_excludes_local_state_and_keeps_recipe_and_aliases(repository: dict[str, Any]) -> None:
+    output = repository["root"] / suites.MANIFEST_RELATIVE_PATH.parent
+    result = reproduction.reproduce(output, ["hardboiled"], [], repository["engine"])
+    public = json.loads((output / "manifest.json").read_text())
+    assert set(public) == {"sources", "preparation", "cases", "workloads"}
+    assert public["preparation"] == result["preparation"]
+    assert public["workloads"] == result["workloads"]
+    assert all(set(case) == {"id", "family", "source", "status", "workloads", "reason"} for case in public["cases"])
+    assert str(repository["root"]) not in json.dumps(public)
+    state = json.loads((output / ".local/preparation.json").read_text())
+    assert state["manifest_sha256"] == hashlib.sha256((output / "manifest.json").read_bytes()).hexdigest()
+    assert state["manifest"]["cases"][0]["capture"]
+    assert state["manifest"]["cases"][0]["validation"]
+
+
+@pytest.mark.parametrize("blocker", [None, "parent failed after one complete call", "failure at /private/source/build"])
+def test_fresh_clone_resolves_and_revalidates_frozen_programs_without_author_sources(
+    repository: dict[str, Any], monkeypatch: pytest.MonkeyPatch, blocker: str | None
+) -> None:
+    original_root = repository["root"]
+    output = original_root / suites.MANIFEST_RELATIVE_PATH.parent
+    result = reproduction.reproduce(output, ["hardboiled"], [], repository["engine"])
+    if blocker:
+        result["cases"][0].update(status="blocked", reason=blocker, portable_reason=blocker)
+        reproduction.write_manifest(output, result)
+    clone = original_root / "clone"
+    cloned_output = clone / suites.MANIFEST_RELATIVE_PATH.parent
+    shutil.copytree(output, cloned_output, ignore=shutil.ignore_patterns(".local"))
+    for path in ("process_guard.py", "benchmarks/sources.json", "engine"):
+        shutil.copyfile(original_root / path, clone / path)
+    shutil.copytree(original_root / "scripts", clone / "scripts")
+    path = cloned_output / "manifest.json"
+    original, before = path.read_bytes(), path.stat().st_mtime_ns
+    assert not (cloned_output / ".local").exists()
+    selected = suites.resolve_suite("expanded", clone)
+    assert len(selected.files) == 1 and len(selected.cases) == 2 and selected.manifest.outcomes == ()
+    assert not selected.capture_errors
+    monkeypatch.setattr(reproduction, "ROOT", clone)
+    checked = reproduction.reproduce(cloned_output, ["hardboiled"], [], clone / "engine")
+    assert path.read_bytes() == original and path.stat().st_mtime_ns == before
+    assert repository["captures"] == ["a", "b"] and len(repository["runs"]) == 4
+    assert all(case["revalidation"]["status"] == "success" for case in checked["cases"])
+    assert all(str(cloned_output) in command[-1] for command in repository["runs"][-2:])
+    assert checked["cases"][0]["status"] == ("blocked" if blocker else "ready")
+    reproduction.reproduce(cloned_output, ["hardboiled"], [], clone / "engine")
+    assert len(repository["runs"]) == 4
+
+
+def test_local_resume_state_cannot_override_changed_tracked_manifest(repository: dict[str, Any]) -> None:
+    output = repository["root"] / "corpus"
+    reproduction.reproduce(output, ["hardboiled"], [], repository["engine"])
+    path = output / "manifest.json"
+    raw = json.loads(path.read_text())
+    raw["cases"][0]["reason"] = "updated upstream source provenance"
+    path.write_text(json.dumps(raw, indent=2) + "\n")
+    before = path.read_bytes()
+    result = reproduction.reproduce(output, ["hardboiled"], ["a"], repository["engine"])
+    assert result["cases"][0]["reason"] == raw["cases"][0]["reason"]
+    assert path.read_bytes() == before
+    assert repository["captures"] == ["a", "b"] and len(repository["runs"]) == 3
+
+
+def test_frozen_manifest_recipe_change_regenerates_without_local_state(repository: dict[str, Any]) -> None:
+    root = repository["root"]
+    output = root / "corpus"
+    reproduction.reproduce(output, ["hardboiled"], [], repository["engine"])
+    shutil.rmtree(output / ".local")
+    (root / "scripts/hardboiled_generator.py").write_text("# updated generator\n")
+    reproduction.reproduce(output, ["hardboiled"], [], repository["engine"])
+    assert repository["captures"] == ["a", "b", "a", "b"]
+
+
+def test_failed_frozen_revalidation_preserves_tracked_inputs_and_prior_engine_success(
+    repository: dict[str, Any],
+) -> None:
+    output = repository["root"] / "corpus"
+    engine = repository["engine"]
+    reproduction.reproduce(output, ["hardboiled"], [], engine)
+    path = output / "manifest.json"
+    original, before = path.read_bytes(), path.stat().st_mtime_ns
+    engine.write_text("engine B")
+    repository["status"] = "failure"
+    failed = reproduction.reproduce(output, ["hardboiled"], [], engine)
+    assert all(case["revalidation"]["status"] == "failure" and case["workloads"] for case in failed["cases"])
+    assert path.read_bytes() == original and path.stat().st_mtime_ns == before
+    engine.write_text("engine identity")
+    reused = reproduction.reproduce(output, ["hardboiled"], [], engine)
+    assert all("revalidation" not in case for case in reused["cases"])
+    assert repository["captures"] == ["a", "b"] and len(repository["runs"]) == 4
+
+
+@pytest.mark.parametrize("refuse", [False, True])
+def test_frozen_revalidation_safety_stop_preserves_inputs_and_halts_later_cases(
+    repository: dict[str, Any], monkeypatch: pytest.MonkeyPatch, refuse: bool
+) -> None:
+    output = repository["root"] / suites.MANIFEST_RELATIVE_PATH.parent
+    engine = repository["engine"]
+    reproduction.reproduce(output, ["hardboiled"], [], engine)
+    path = output / "manifest.json"
+    original, before = path.read_bytes(), path.stat().st_mtime_ns
+    engine.write_text("new engine")
+    repository["status"] = "memory-limit"
+    if refuse:
+
+        def refused(*_: Any, **__: Any) -> Any:
+            raise ValueError("resource guard refused to launch a workload: host pressure")
+
+        monkeypatch.setattr(dialegg_capture, "run_complete_command", refused)
+    with pytest.raises(RuntimeError, match="later cases remain pending"):
+        reproduction.reproduce(output, ["hardboiled"], [], engine)
+    assert len(repository["runs"]) == (2 if refuse else 3)
+    assert path.read_bytes() == original and path.stat().st_mtime_ns == before
+    selected = suites.resolve_suite("expanded", repository["root"])
+    assert len(selected.manifest.outcomes) == 1
+    assert selected.manifest.outcomes[0]["kind"] == "safety"
+    assert suites.suite_outcomes(selected, (), 300)[1]
+
+
+@pytest.mark.parametrize(
+    ("reason", "expected"),
+    [
+        ("Gurobi requires gurobi_cl and a usable license", "Gurobi requires gurobi_cl and a usable license"),
+        ("Missing host prerequisites: yosys, make", "Missing host prerequisites: yosys, make"),
+        ("native output contract changed", "native output contract changed"),
+        ("build-generator: failure; see /private/local/build.result.json", "build-generator: failure"),
+        (
+            "missing LLVM18/MLIR frontend prerequisite: /opt/llvm/lib/libMLIR.dylib",
+            "missing LLVM18/MLIR frontend prerequisite: libMLIR.dylib",
+        ),
+        ("failed in /private/local/work", "fallback"),
+        ("error\ncompiler diagnostics", "fallback"),
+    ],
+)
+def test_portable_reasons_preserve_blockers_without_diagnostic_paths(reason: str, expected: str) -> None:
+    assert reproduction.portable_reason(reason, "fallback") == expected

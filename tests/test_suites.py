@@ -107,9 +107,9 @@ def test_strict_failures_match_every_validation_identity_coordinate(tmp_path: Pa
         "status": "failure",
         "reason": "strict failure",
     }
-    raw = json.loads(path.read_text())
-    raw["outcomes"] = [outcome]
-    path.write_text(json.dumps(raw))
+    local = path.parent / ".local"
+    local.mkdir()
+    (local / "outcomes.json").write_text(json.dumps([outcome]))
     selected = suites.resolve_suite("eggcc", tmp_path)
     assert suites.suite_outcomes(selected, (endpoint,), 300) == (((selected.files[0], "strict failure"),), ())
     stale = dict(outcome)
@@ -121,8 +121,7 @@ def test_strict_failures_match_every_validation_identity_coordinate(tmp_path: Pa
 def test_safety_deferral_is_input_bound_and_survives_binary_changes(tmp_path: Path) -> None:
     path = prepare_corpus(tmp_path)
     selected = suites.resolve_suite("expanded", tmp_path)
-    raw = json.loads(path.read_text())
-    raw["outcomes"] = [
+    outcomes = [
         {
             "file_sha256": selected.files[0].sha256,
             "fact_directory_sha256": "",
@@ -135,14 +134,16 @@ def test_safety_deferral_is_input_bound_and_survives_binary_changes(tmp_path: Pa
             "reason": "historical cap",
         }
     ]
-    path.write_text(json.dumps(raw))
+    local = path.parent / ".local"
+    local.mkdir()
+    (local / "outcomes.json").write_text(json.dumps(outcomes))
     selected = suites.resolve_suite("expanded", tmp_path)
     assert suites.suite_outcomes(selected, (BenchmarkEndpoint(make_target(), "proofs"),), 300) == (
         (),
         ((selected.files[0], "historical cap"),),
     )
-    raw["outcomes"][0]["fact_directory_sha256"] = "different facts"
-    path.write_text(json.dumps(raw))
+    outcomes[0]["fact_directory_sha256"] = "different facts"
+    (local / "outcomes.json").write_text(json.dumps(outcomes))
     assert suites.suite_outcomes(suites.resolve_suite("expanded", tmp_path), (), 300) == ((), ())
 
 

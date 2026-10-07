@@ -2,7 +2,9 @@
 
 The canonical source inventory is [../sources.json](../sources.json).
 Run `make reproduce-benchmarks` from the repository root to acquire prerequisites,
-capture complete Egglog work, and produce the manifest consumed by `bench.py`.
+capture complete Egglog work, and refresh the standalone files and portable
+manifest in `benchmarks/corpus/`. Check those results into Git. Benchmarking an
+existing corpus does not need this generation step or the author compilers.
 See [../README.md](../README.md) for workload boundaries and collection.
 
 The checked-in `patches/` diffs show compiler export hooks and compatibility

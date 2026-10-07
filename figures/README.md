@@ -7,12 +7,16 @@ packages in the root Makefile; no npm project or per-figure measurement export
 is required.
 
 ```sh
-make reproduce-benchmarks       # Prepare the author-derived expanded inputs.
 make figures-all               # Collect missing observations, then render.
 make figures-all-cached        # Render the existing grouped snapshot only.
 make figures-expanded-archive  # Cached render, then gather portable evidence.
 make figures-parameter         # Existing parameter-analysis comparison.
 ```
+
+Expanded collection reads `benchmarks/corpus/manifest.json` and its standalone
+`.egg` files. These inputs belong in Git. If they are absent, or to refresh them
+from the author sources, first run `make reproduce-benchmarks`, then review and
+commit the resulting corpus. Figure targets never run source generation.
 
 Outputs are printed as absolute paths. The expanded PNG/SVG pairs are:
 

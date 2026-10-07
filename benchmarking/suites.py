@@ -14,7 +14,7 @@ from .models import BenchmarkEndpoint, DisequalityEncoding, FileSpec
 from .reports.store import CacheKey, ReportRecord, ReportStore
 from .workloads import resolve_files
 
-MANIFEST_RELATIVE_PATH = Path("benchmarks/local/corpus/manifest.json")
+MANIFEST_RELATIVE_PATH = Path("benchmarks/corpus/manifest.json")
 EXPANDED_FAMILIES = ("math-growth", "eggcc", "luminal", "hardboiled", "misaal", "churchroad", "dialegg", "speq")
 SUITE_NAMES = ("expanded", "math-11", *EXPANDED_FAMILIES)
 VALIDATION_POLICY = "proof-testing-v1"
@@ -109,7 +109,9 @@ def load_manifest(root: Path) -> CorpusManifest:
         case_ids = {case.id for case in cases}
         if any(alias.case not in case_ids for workload in workloads for alias in workload.aliases):
             raise ValueError("workload alias references an unknown case")
-        return CorpusManifest(path, raw["sources"], cases, workloads, tuple(raw.get("outcomes", ())))
+        outcomes_path = path.parent / ".local/outcomes.json"
+        outcomes = json.loads(outcomes_path.read_text()) if outcomes_path.is_file() else []
+        return CorpusManifest(path, raw["sources"], cases, workloads, tuple(outcomes))
     except (KeyError, TypeError, ValueError) as error:
         raise ValueError(f"invalid corpus manifest {path}: {error}") from error
 

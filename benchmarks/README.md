@@ -13,7 +13,12 @@ call can qualify when a later compiler phase fails. Setup-only and unfinished
 calls do not qualify, and downstream LLVM/code-generation work is outside the
 measurement boundary.
 
-## Prepare inputs
+## Prepared inputs
+
+The standalone `.egg` files and `manifest.json` in `benchmarks/corpus/` belong in
+Git. Collection reads these files directly; it does not need author compilers
+or a local generation history. Run preparation when the corpus is absent or
+when refreshing inputs from the pinned recipes:
 
 ```sh
 make reproduce-benchmarks
@@ -22,21 +27,28 @@ make reproduce-benchmarks REPRODUCE_ARGS='--family hardboiled'
 ```
 
 Preparation acquires the pinned author sources and prerequisites, captures
-complete calls, and validates their ordinary replay. Generated files, toolchains,
-and diagnostic logs stay under ignored `benchmarks/local/`, outside Cargo's
-build cache. Source modifications are checked-in [patches](reproduction/patches),
-applied to pinned revisions with `git apply --check`. A changed engine revalidates
-retained captures without rerunning the authors' compilers; generation identity
-tracks each family's recipe, adapters and patches. No preparation timing becomes
-a benchmark observation.
+complete calls, and validates their ordinary replay. It writes portable inputs
+to `benchmarks/corpus/`; toolchains, source captures, and build logs stay under
+ignored `benchmarks/local/`. Resume state and validation evidence stay under
+ignored `benchmarks/corpus/.local/`. Source modifications are checked-in
+[patches](reproduction/patches), applied to pinned revisions with
+`git apply --check`. A changed engine revalidates retained workloads or captures
+without rerunning the authors' compilers; generation identity tracks each
+family's recipe, adapters and patches. No preparation timing becomes a benchmark
+observation.
 
-The resulting `benchmarks/local/corpus/manifest.json` is the sole input inventory
+The resulting `benchmarks/corpus/manifest.json` is the sole input inventory
 used by collection. It records actual source revisions, content hashes,
 adaptations, aliases, and unavailable cases. Generated paths are relative to the
 manifest; old machine-specific settings and capture receipts are not inputs.
 A changed generated file gets a new identity, rather than being forced to match
 a historical hash. Source failures and unsupported prerequisites are reported
 explicitly; they do not become successful or empty workloads.
+
+After preparation, review and commit `benchmarks/corpus/`. Its manifest records
+the available population and blockers, even when some sources could not be
+prepared. Measurements and images remain ignored; use the figure evidence
+archive to preserve them separately.
 
 | Family | Included source boundary |
 | --- | --- |
@@ -125,7 +137,8 @@ make validate-benchmarks  # Explicit strict checks for prepared corpus files.
 ```
 
 The explicit validator, `scripts/validate_benchmarks.py`, writes identity-bound
-diagnostic outcomes, not measurements. It is not a dependency of collection.
+diagnostic outcomes and logs under `benchmarks/corpus/.local/`, without changing
+the tracked corpus. It is not a dependency of collection.
 Matching strict failures suppress proof performance conclusions; absent or stale
 validation is not a correctness claim.
 
