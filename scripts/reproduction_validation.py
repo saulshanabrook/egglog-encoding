@@ -256,7 +256,12 @@ def validate_static_native_output(source: str, contract: dict[str, Any], stdout:
 
 
 def validate_capture(
-    capture: dict[str, Any], engine: Path, output: Path, *, timeout_sec: float = 300
+    capture: dict[str, Any],
+    engine: Path,
+    output: Path,
+    *,
+    timeout_sec: float = 300,
+    previous: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate complete Egglog calls independently of later compiler phases.
 
@@ -269,6 +274,8 @@ def validate_capture(
         "reason": None,
         "engine": str(engine.resolve()),
         "engine_sha256": sha256_file(engine),
+        "validation_sha256": sha256_file(Path(__file__)),
+        "timeout_sec": timeout_sec,
         "workloads": [],
         "validations": [],
         "proof_validation": "not-run",
@@ -296,7 +303,9 @@ def validate_capture(
             or materialization.get("materialized_sessions") != len(sessions)
         ):
             raise ValueError("complete materialization of every native session is required")
+        retained = {row.get("session"): row for row in (previous or {}).get("validations", [])}
         for index, session in enumerate(sessions):
+            row = None
             try:
                 replay = Path(session.get("replay") or session["standalone"])
                 expected_hash = session.get("replay_sha256") or session.get("standalone_sha256")
@@ -355,22 +364,50 @@ def validate_capture(
                 command = [str(engine.resolve()), "-j", "1", str(replay.resolve())]
                 if contract["kind"] == "ordinary-best-static-native":
                     command = ["env", "RUST_LOG=egglog::extract=debug", *command]
-                process = run_complete_command(command, output, output / f"replay-{index:04}", timeout_sec)
-                row = {
-                    "replay": str(replay),
+                identity = {
+                    "engine_sha256": result["engine_sha256"],
+                    "validation_sha256": result["validation_sha256"],
+                    "timeout_sec": timeout_sec,
                     "replay_sha256": sha256_file(replay),
-                    "command": command,
-                    **asdict(process),
-                    "stdout_path": str(process.stdout_path),
-                    "stderr_path": str(process.stderr_path),
+                    "contract_sha256": hashlib.sha256(json.dumps(contract, sort_keys=True).encode()).hexdigest(),
                 }
+                saved = retained.get(index)
+                if (
+                    saved
+                    and saved.get("identity") == identity
+                    and saved["status"] in {"success", "failure", "timed-out", "output-limit", "blocked"}
+                    and all(
+                        Path(saved[f"{stream}_path"]).is_file()
+                        and sha256_file(Path(saved[f"{stream}_path"])) == saved.get(f"{stream}_sha256")
+                        for stream in ("stdout", "stderr")
+                    )
+                ):
+                    row = dict(saved)
+                else:
+                    process = run_complete_command(command, output, output / f"replay-{index:04}", timeout_sec)
+                    row = {
+                        "session": index,
+                        "identity": identity,
+                        "replay": str(replay),
+                        "replay_sha256": identity["replay_sha256"],
+                        "command": command,
+                        **asdict(process),
+                        "stdout_path": str(process.stdout_path),
+                        "stderr_path": str(process.stderr_path),
+                        "stdout_sha256": sha256_file(process.stdout_path),
+                        "stderr_sha256": sha256_file(process.stderr_path),
+                    }
                 result["validations"].append(row)
-                if process.status != "success":
-                    result.update(status=process.status, reason=process.message or f"ordinary replay failed: {replay}")
-                    if process.status in {"resource-stopped", "memory-limit", "cancelled", "interrupted"}:
+                if row["status"] != "success":
+                    result.update(
+                        status=row["status"],
+                        reason=row.get("reason") or row.get("message") or f"ordinary replay failed: {replay}",
+                    )
+                    if row["status"] in {"resource-stopped", "memory-limit", "cancelled", "interrupted"}:
                         break
                     continue
-                outputs = validate_extract_output(source, process.stdout_path.read_text())
+                stdout, stderr = Path(row["stdout_path"]), Path(row["stderr_path"])
+                outputs = validate_extract_output(source, stdout.read_text())
                 if contract["kind"] == "churchroad-circuit-extract":
                     if any(
                         tokens[index - 1] == "(" and token in CHURCHROAD_PLACEHOLDERS
@@ -385,7 +422,7 @@ def validate_capture(
                     raise ValueError("ordinary extraction differs from the native output contract")
                 if contract["kind"] == "ordinary-best-static-native":
                     row["cost_validation"] = validate_static_native_output(
-                        source, contract, process.stdout_path.read_text(), process.stderr_path.read_text()
+                        source, contract, stdout.read_text(), stderr.read_text()
                     )
                 if selections is not None and len(outputs) != len(selections):
                     raise ValueError("ordinary output count differs from the recorded native roots")
@@ -394,9 +431,17 @@ def validate_capture(
                 # measurement population. An unchanged extracted program is valid.
                 if any(tokens[1] in {"extract", "check"} for tokens in forms):
                     result["workloads"].append(str(replay))
-            except (OSError, ValueError, KeyError) as error:
-                result.update(status="blocked", reason=str(error))
-                result["validations"].append({"session": index, "status": "blocked", "reason": str(error)})
+            except (OSError, ValueError, KeyError, RuntimeError) as error:
+                status = "resource-stopped" if "guard refused" in str(error) else "blocked"
+                result.update(status=status, reason=str(error))
+                if row is None:
+                    row = {"session": index}
+                    result["validations"].append(row)
+                row.update(status=status, reason=str(error))
+                if status == "resource-stopped":
+                    break
+            finally:
+                (output / "validation.json").write_text(json.dumps(result, indent=2, default=str) + "\n")
         else:
             if not result["workloads"] and not result["reason"]:
                 raise ValueError("completed source emitted helpers only, with no output workload")

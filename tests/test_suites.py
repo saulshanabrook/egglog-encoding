@@ -147,6 +147,39 @@ def test_safety_deferral_is_input_bound_and_survives_binary_changes(tmp_path: Pa
     assert suites.suite_outcomes(suites.resolve_suite("expanded", tmp_path), (), 300) == ((), ())
 
 
+@pytest.mark.parametrize("prior_cap", [False, True])
+def test_retired_host_stops_do_not_hide_inputs_or_clear_prior_rss_limits(tmp_path: Path, prior_cap: bool) -> None:
+    from benchmarking.figure_inventory import figure_inventory
+
+    path = prepare_corpus(tmp_path)
+    selection = suites.resolve_suite("expanded", tmp_path)
+    record = {
+        "file_sha256": selection.files[0].sha256,
+        "fact_directory_sha256": "",
+        "binary_sha256": "old binary",
+        "timeout_sec": 300,
+        "disequality_encoding": "nee",
+        "kind": "safety",
+        "policy": suites.SAFETY_POLICY,
+        "status": "deferred",
+        "reason": "workload process-group RSS exceeded its safety cap",
+    }
+    outcomes = [record] if prior_cap else []
+    outcomes += [
+        {**record, "reason": "host memory pressure is not normal (kernel level 2)"},
+        {**record, "reason": "resource guard refused to launch a workload: host memory headroom below reserve"},
+    ]
+    local = path.parent / ".local"
+    local.mkdir()
+    evidence = json.dumps(outcomes)
+    (local / "outcomes.json").write_text(evidence)
+    selection = suites.resolve_suite("expanded", tmp_path)
+    expected = ((selection.files[0], record["reason"]),) if prior_cap else ()
+    assert suites.suite_outcomes(selection, (), 300) == ((), expected)
+    assert figure_inventory(tmp_path)["workloads"][0]["unavailable_reason"] == (record["reason"] if prior_cap else "")
+    assert (local / "outcomes.json").read_text() == evidence
+
+
 def test_partial_preparation_keeps_pending_population_visible(tmp_path: Path) -> None:
     from benchmarking.figure_inventory import figure_inventory
 

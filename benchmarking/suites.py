@@ -34,6 +34,15 @@ class CorpusOutcome(TypedDict):
     evidence: NotRequired[str]
 
 
+def safety_outcome_applies(outcome: CorpusOutcome) -> bool:
+    """Retain past RSS stops, but retire deferrals from removed host checks."""
+    return (
+        outcome["kind"] == "safety"
+        and outcome["policy"] == SAFETY_POLICY
+        and not any(cause in (outcome["reason"] or "") for cause in ("host memory pressure", "host memory headroom"))
+    )
+
+
 @dataclass(frozen=True)
 class WorkloadAlias:
     case: str
@@ -195,11 +204,7 @@ def suite_outcomes(
                 validation.append((file, exact["reason"] or "strict proof validation failed"))
                 break
         safety = next(
-            (
-                record
-                for record in reversed(matching)
-                if record["kind"] == "safety" and record["policy"] == SAFETY_POLICY
-            ),
+            (record for record in reversed(matching) if safety_outcome_applies(record)),
             None,
         )
         if safety is not None and safety["status"] != "success":

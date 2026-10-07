@@ -111,7 +111,7 @@ def test_new_engine_revalidates_without_regenerating_or_deleting_old_bytes(repos
     assert repository["captures"] == ["a", "b"]
 
 
-@pytest.mark.parametrize("parent_status", ["failure", "timed-out"])
+@pytest.mark.parametrize("parent_status", ["failure", "timed-out", "output-limit"])
 def test_native_capture_revalidates_without_regenerating_and_retains_parent_outcome(
     repository: dict[str, Any], monkeypatch: pytest.MonkeyPatch, parent_status: str
 ) -> None:
@@ -151,9 +151,139 @@ def test_native_capture_revalidates_without_regenerating_and_retains_parent_outc
     manifest = reproduction.reproduce(output, ["eggcc"], [], engine)
     assert events == ["prepare", "capture a", "validate", "capture b", "validate"]
     assert len(repository["runs"]) == 2
-    outcome = "timed out" if parent_status == "timed-out" else "failed"
+    outcome = {"timed-out": "timed out", "output-limit": "hit output limit"}.get(parent_status, "failed")
     assert all(case["status"] == "ready" and outcome in case["reason"] for case in manifest["cases"])
     assert manifest["workloads"][0]["aliases"] == [{"case": "a", "order": 1}, {"case": "b", "order": 1}]
+    for case in manifest["cases"]:
+        case["validation"]["validation_sha256"] = "old admission checks"
+    reproduction.write_manifest(output, manifest)
+    reproduction.reproduce(output, ["eggcc"], [], engine)
+    assert events == ["prepare", "capture a", "validate", "capture b", "validate", "validate", "validate"]
+    assert len(repository["runs"]) == 2
+
+
+def test_partial_native_capture_resumes_remaining_calls_without_losing_failed_evidence(
+    repository: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts import reproduction_validation
+    from scripts.hardboiled_replay import egglog_forms
+    from scripts.source_tools import sha256_file
+
+    root, engine = repository["root"], repository["engine"]
+    (root / "benchmarks/sources.json").write_text(json.dumps({"eggcc": {"revision": "pinned"}}))
+    repository["cases"][:] = [dict(repository["cases"][0], family="eggcc")]
+    events: list[str] = []
+
+    def capture(case: dict[str, Any], settings: Any, directory: Path, *_: Any) -> dict[str, Any]:
+        events.append("capture")
+        directory.mkdir()
+        sessions = []
+        for index in range(3):
+            replay = directory / f"call-{index}.egg"
+            replay.write_text(f"; call {index}\n(datatype E (A))\n(extract (A))\n")
+            sessions.append(
+                {
+                    "replay": str(replay),
+                    "replay_sha256": sha256_file(replay),
+                    "output_contract": {"kind": "ordinary-best-extract", "expected_terms": [egglog_forms("(A)")[0][2]]},
+                }
+            )
+        return {
+            "status": "ordinary-validation-pending",
+            "source_completion": {"status": "complete"},
+            "materialization": {"complete": True, "expected_sessions": 3, "materialized_sessions": 3},
+            "sessions": sessions,
+        }
+
+    statuses = iter(["success", "failure", "memory-limit", "success"])
+
+    def run(command: list[str], cwd: Path, prefix: Path, timeout_sec: float) -> PilotProcessResult:
+        events.append(Path(command[-1]).name)
+        stdout, stderr = prefix.with_suffix(".out"), prefix.with_suffix(".err")
+        stdout.write_text("(A)\n")
+        stderr.write_text("")
+        status = next(statuses)
+        return PilotProcessResult(
+            status,  # type: ignore[arg-type]
+            0,
+            0.1,
+            10,
+            stdout,
+            stderr,
+            "retained ordinary failure" if status == "failure" else "RSS limit" if status == "memory-limit" else None,
+        )
+
+    monkeypatch.setattr(reproduction, "prepare_family", lambda *a, **k: {"status": "success", "settings": {}})
+    monkeypatch.setattr(reproduction, "capture_case", capture)
+    monkeypatch.setattr(reproduction_validation, "run_complete_command", run)
+    output = root / "corpus"
+    with pytest.raises(RuntimeError, match="RSS limit"):
+        reproduction.reproduce(output, ["eggcc"], [], engine)
+    state = json.loads((output / ".local/preparation.json").read_text())["manifest"]
+    assert len(state["cases"][0]["workloads"]) == 1 and "validation" not in state["cases"][0]
+    resumed = reproduction.reproduce(output, ["eggcc"], [], engine)
+    assert events == ["capture", "call-0.egg", "call-1.egg", "call-2.egg", "call-2.egg"]
+    assert len(resumed["cases"][0]["workloads"]) == 2
+    assert resumed["cases"][0]["reason"] == "retained ordinary failure"
+    reproduction.reproduce(output, ["eggcc"], [], engine)
+    assert len(events) == 5
+
+
+def test_gurobi_blocker_does_not_prepare_native_compiler(
+    repository: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts.reproduction_prepare_eggcc import GUROBI_BLOCKER
+
+    root = repository["root"]
+    (root / "benchmarks/sources.json").write_text(json.dumps({"eggcc": {"revision": "pinned"}}))
+    repository["cases"][:] = [
+        dict(repository["cases"][0], family="eggcc", configuration=GUROBI_BLOCKER["configuration"])
+    ]
+    monkeypatch.setattr(
+        reproduction, "prepare_family", lambda *a, **k: pytest.fail("blocked configuration must not build")
+    )
+    result = reproduction.reproduce(root / "corpus", ["eggcc"], [], repository["engine"])
+    assert result["cases"][0]["reason"] == GUROBI_BLOCKER["reason"]
+    assert not repository["runs"]
+
+
+@pytest.mark.parametrize("changed", [None, "binary", "source", "runtime", "settings"])
+def test_eggcc_preparation_reuses_only_unchanged_environment(
+    repository: dict[str, Any], monkeypatch: pytest.MonkeyPatch, changed: str | None
+) -> None:
+    root, engine = repository["root"], repository["engine"]
+    recipe = {"revision": "pinned", "programs": ["program.egg"]}
+    (root / "benchmarks/sources.json").write_text(json.dumps({"eggcc": recipe}))
+    for case in repository["cases"]:
+        case["family"] = "eggcc"
+    checkout = root / "prepared"
+    checkout.mkdir()
+    for name in ("binary", "program.egg", "tiger"):
+        (checkout / name).write_text(name)
+    settings = {
+        "paths": {"checkout": str(checkout), "binary": str(checkout / "binary"), "egglog": str(engine)},
+        "identity_paths": [str(checkout / "tiger")],
+        "configuration_blockers": [],
+    }
+    prepares = []
+
+    def prepare(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        prepares.append("prepare")
+        return {"status": "success", "settings": settings}
+
+    monkeypatch.setattr(reproduction, "prepare_family", prepare)
+    monkeypatch.setattr(reproduction, "capture_case", lambda *a, **k: {"status": "blocked", "reason": "source failure"})
+    output = root / "corpus"
+    first = reproduction.reproduce(output, ["eggcc"], ["a"], engine)
+    if changed in {"binary", "source", "runtime"}:
+        (checkout / {"binary": "binary", "source": "program.egg", "runtime": "tiger"}[changed]).write_text("changed")
+    elif changed == "settings":
+        first["environments"]["eggcc"]["settings"]["configuration_blockers"] = [{"reason": "changed"}]
+        reproduction.write_manifest(output, first)
+        settings["configuration_blockers"] = []
+    engine.write_text("different replay engine")
+    reproduction.reproduce(output, ["eggcc"], ["b"], engine)
+    assert len(prepares) == (1 if changed is None else 2)
 
 
 def test_other_family_and_unrelated_scripts_do_not_regenerate(repository: dict[str, Any]) -> None:
@@ -166,14 +296,26 @@ def test_other_family_and_unrelated_scripts_do_not_regenerate(repository: dict[s
     assert repository["captures"] == ["a", "b"] and len(repository["runs"]) == 2
 
 
-@pytest.mark.parametrize("relative", ["scripts/paper_benchmarks/materialize.py", "process_guard.py"])
-def test_shared_adapter_changes_generation_identity(repository: dict[str, Any], relative: str) -> None:
+def test_shared_adapter_changes_generation_identity(repository: dict[str, Any]) -> None:
+    relative = "scripts/paper_benchmarks/materialize.py"
     adapter = repository["root"] / relative
     adapter.parent.mkdir(exist_ok=True)
     adapter.write_text("# initial syntax adapter\n")
     before = reproduction.generation_identity("dialegg", {"revision": "pin"})
     adapter.write_text("# changed syntax adapter\n")
     assert reproduction.generation_identity("dialegg", {"revision": "pin"}) != before
+
+
+def test_orchestration_changes_preserve_generation_identity(repository: dict[str, Any]) -> None:
+    root = repository["root"]
+    coordinator = root / "scripts/suite_reproduction.py"
+    coordinator.write_text("def capture_case():\n    return 'source'\ndef reproduce():\n    return 'old'\n")
+    before = reproduction.generation_identity("eggcc", {"revision": "pin"})
+    coordinator.write_text(coordinator.read_text().replace("'old'", "'resumed'"))
+    (root / "process_guard.py").write_text("# RSS-only guard\n")
+    assert reproduction.generation_identity("eggcc", {"revision": "pin"}) == before
+    coordinator.write_text(coordinator.read_text().replace("'source'", "'different source'"))
+    assert reproduction.generation_identity("eggcc", {"revision": "pin"}) != before
 
 
 @pytest.mark.parametrize("initial_status", ["success", "timed-out"])
@@ -224,6 +366,50 @@ def test_timeout_remains_an_outcome_and_other_cases_continue(repository: dict[st
     manifest = reproduction.reproduce(repository["root"] / "corpus", ["hardboiled"], [], repository["engine"])
     assert all(row["status"] == "blocked" and "timed-out" in row["reason"] for row in manifest["cases"])
     assert len(repository["runs"]) == 2
+
+
+@pytest.mark.parametrize("prepared", [False, True])
+def test_output_limit_is_retained_and_does_not_stop_other_cases(repository: dict[str, Any], prepared: bool) -> None:
+    output, engine = repository["root"] / "corpus", repository["engine"]
+    if prepared:
+        reproduction.reproduce(output, ["hardboiled"], [], engine)
+        engine.write_text("changed engine")
+    repository["status"] = "output-limit"
+    stopped = reproduction.reproduce(output, ["hardboiled"], [], engine)
+    launches = len(repository["runs"])
+    assert launches == (4 if prepared else 2)
+    if prepared:
+        assert all(case["revalidation"]["status"] == "output-limit" for case in stopped["cases"])
+    else:
+        assert all("output-limit" in case["reason"] for case in stopped["cases"])
+    reproduction.reproduce(output, ["hardboiled"], [], engine)
+    assert len(repository["runs"]) == launches
+    engine.write_text("another engine")
+    repository["status"] = "success"
+    reproduction.reproduce(output, ["hardboiled"], [], engine)
+    assert len(repository["runs"]) == launches + 2
+    assert repository["captures"] == ["a", "b"]
+
+
+def test_native_output_limit_without_complete_calls_is_not_recaptured(
+    repository: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, engine = repository["root"], repository["engine"]
+    (root / "benchmarks/sources.json").write_text(json.dumps({"eggcc": {"revision": "pinned"}}))
+    for case in repository["cases"]:
+        case["family"] = "eggcc"
+    captured: list[str] = []
+
+    def capture(case: dict[str, Any], *_: Any) -> dict[str, Any]:
+        captured.append(case["id"])
+        return {"status": "blocked", "process": {"status": "output-limit"}, "reason": "no completed calls"}
+
+    monkeypatch.setattr(reproduction, "prepare_family", lambda *a, **k: {"status": "success", "settings": {}})
+    monkeypatch.setattr(reproduction, "capture_case", capture)
+    first = reproduction.reproduce(root / "corpus", ["eggcc"], [], engine)
+    assert all(case["reason"] == "no completed calls" for case in first["cases"])
+    reproduction.reproduce(root / "corpus", ["eggcc"], [], engine)
+    assert captured == ["a", "b"]
 
 
 def test_outcome_history_survives_interrupted_regeneration(tmp_path: Path) -> None:

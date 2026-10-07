@@ -300,3 +300,158 @@ def test_bounded_process_enforces_small_rss_threshold(tmp_path: Path) -> None:
     assert result.status == "memory-limit"
     assert result.peak_rss_bytes > 1024
     assert result.wall_sec < 5
+
+
+@pytest.mark.parametrize("stream", ["stdout", "stderr", "combined"])
+def test_output_limit_kills_descendants_and_retains_partial_logs(tmp_path: Path, stream: str) -> None:
+    pid_path = tmp_path / "child.pid"
+    stdout_bytes, stderr_bytes = {"stdout": (3072, 0), "stderr": (0, 3072), "combined": (1536, 1536)}[stream]
+    command = [
+        sys.executable,
+        "-c",
+        "import os,pathlib,subprocess,sys,time; "
+        "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)']); "
+        "pathlib.Path(sys.argv[1]).write_text(str(p.pid)); "
+        f"os.write(1,b'o'*{stdout_bytes}); os.write(2,b'e'*{stderr_bytes}); time.sleep(30)",
+        str(pid_path),
+    ]
+    result = processes.run_bounded_command(
+        command, tmp_path, tmp_path / "output", timeout_sec=5, output_limit_bytes=2048
+    )
+    assert result.status == "output-limit"
+    assert result.returncode == -signal.SIGKILL
+    assert result.message == "combined stdout/stderr output exceeded the 2048-byte limit"
+    assert result.wall_sec < 5
+    assert result.stdout_path.stat().st_size <= stdout_bytes
+    assert result.stderr_path.stat().st_size <= stderr_bytes
+    assert result.stdout_path.stat().st_size + result.stderr_path.stat().st_size == 2048
+    pid = int(pid_path.read_text())
+    for _ in range(30):
+        child = subprocess.run(["ps", "-p", str(pid), "-o", "stat="], capture_output=True, text=True)
+        if not child.stdout.strip() or child.stdout.strip().startswith("Z"):
+            break
+        time.sleep(0.01)
+    else:
+        os.kill(pid, signal.SIGKILL)
+        pytest.fail("output limit left a descendant alive")
+
+
+@pytest.mark.parametrize("output_bytes", [2048, 2049])
+def test_final_output_size_is_checked_after_successful_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output_bytes: int
+) -> None:
+    def launch(*_args: Any, **kwargs: Any) -> Any:
+        writer = os.dup(kwargs["stdout"].fileno())
+
+        def poll() -> int:
+            # Simulate output arriving after the loop's sample, just before exit.
+            os.write(writer, b"x" * output_bytes)
+            os.close(writer)
+            return 0
+
+        return SimpleNamespace(pid=123, returncode=0, poll=poll, wait=lambda: 0)
+
+    monkeypatch.setattr(processes.subprocess, "Popen", launch)
+    monkeypatch.setattr(processes.os, "killpg", lambda *_: None)
+    result = processes.run_bounded_command(["fake"], tmp_path, tmp_path / "output", output_limit_bytes=2048)
+    assert result.returncode == 0
+    assert result.status == ("output-limit" if output_bytes > 2048 else "success")
+    assert result.stdout_path.stat().st_size == min(output_bytes, 2048)
+
+
+@pytest.mark.parametrize("stream", [1, 2])
+def test_single_large_write_cannot_exceed_retained_output_limit(tmp_path: Path, stream: int) -> None:
+    result = processes.run_bounded_command(
+        [sys.executable, "-c", f"import os; os.write({stream}, b'x'*(8*1024*1024))"],
+        tmp_path,
+        tmp_path / "single-write",
+        timeout_sec=5,
+        output_limit_bytes=32 * 1024,
+    )
+    assert result.status == "output-limit"
+    assert result.wall_sec < 5
+    assert result.stdout_path.stat().st_size + result.stderr_path.stat().st_size == 32 * 1024
+
+
+@pytest.mark.parametrize("output_limit", [32 * 1024, 3 * 1024 * 1024])
+def test_simultaneous_stdout_and_stderr_are_drained_without_deadlock(tmp_path: Path, output_limit: int) -> None:
+    result = processes.run_bounded_command(
+        [
+            sys.executable,
+            "-c",
+            "import os,threading; "
+            "threads=[threading.Thread(target=os.write,args=(fd,b'x'*(1024*1024))) for fd in (1,2)]; "
+            "[t.start() for t in threads]; [t.join() for t in threads]",
+        ],
+        tmp_path,
+        tmp_path / "concurrent",
+        timeout_sec=5,
+        output_limit_bytes=output_limit,
+    )
+    assert result.status == ("output-limit" if output_limit < 2 * 1024 * 1024 else "success")
+    assert result.stdout_path.stat().st_size + result.stderr_path.stat().st_size == min(output_limit, 2 * 1024**2)
+    assert result.wall_sec < 5
+    if result.status == "success":
+        assert result.stdout_path.read_bytes() == result.stderr_path.read_bytes() == b"x" * (1024 * 1024)
+
+
+def test_output_limit_still_runs_detached_descendant_cleanup(tmp_path: Path) -> None:
+    pid_path = tmp_path / "detached.pid"
+    cleaned = []
+
+    def cleanup() -> None:
+        pid = int(pid_path.read_text())
+        os.killpg(pid, signal.SIGKILL)
+        for _ in range(30):
+            child = subprocess.run(["ps", "-p", str(pid), "-o", "stat="], capture_output=True, text=True)
+            if not child.stdout.strip() or child.stdout.strip().startswith("Z"):
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail("cleanup left a detached descendant alive")
+        cleaned.append(pid)
+
+    result = processes.run_bounded_command(
+        [
+            sys.executable,
+            "-c",
+            "import os,pathlib,subprocess,sys,time; "
+            "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'],start_new_session=True); "
+            "pathlib.Path(sys.argv[1]).write_text(str(child.pid)); os.write(1,b'x'*(1024*1024)); time.sleep(30)",
+            str(pid_path),
+        ],
+        tmp_path,
+        tmp_path / "detached",
+        timeout_sec=5,
+        output_limit_bytes=2048,
+        cleanup_descendants=cleanup,
+    )
+    assert result.status == "output-limit", result.message
+    assert cleaned == [int(pid_path.read_text())]
+    assert result.stdout_path.stat().st_size == 2048
+    assert result.wall_sec < 5
+
+
+def test_capture_failure_stops_the_process_and_reports_the_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken_selector() -> Any:
+        raise OSError("cannot monitor output pipes")
+
+    monkeypatch.setattr(processes.selectors, "DefaultSelector", broken_selector)
+    result = processes.run_bounded_command(
+        [sys.executable, "-c", "import time; time.sleep(30)"], tmp_path, tmp_path / "capture-error", timeout_sec=5
+    )
+    assert result.status == "resource-stopped"
+    assert result.returncode == -signal.SIGKILL
+    assert result.message == "output capture failed: cannot monitor output pipes"
+    assert result.wall_sec < 5
+
+
+@pytest.mark.parametrize("output_limit", [0, -1])
+def test_nonpositive_output_limit_is_rejected_before_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output_limit: int
+) -> None:
+    monkeypatch.setattr(processes.subprocess, "Popen", lambda *_a, **_k: pytest.fail("must not launch"))
+    with pytest.raises(ValueError, match="output limit must be positive"):
+        processes.run_bounded_command(["fake"], tmp_path, tmp_path / "output", output_limit_bytes=output_limit)

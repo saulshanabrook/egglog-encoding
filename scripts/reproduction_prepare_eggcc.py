@@ -25,6 +25,12 @@ CORE_PINS = {
 REPAIR_REVISION = "201579afd2b8b646fa518d3065bd319d1a084eba"
 REPAIR_FIXTURE = "benchmarks/reproduction/fixtures/eggcc-core-row-order.patch"
 REGRESSION = "hash_index::tests::multi_column_column_index_rebuild_orders_each_value_by_row"
+GUROBI_BLOCKER = {
+    "configuration": {"native_options": ["--tiger-ilp", "--ilp-solver", "gurobi"]},
+    "status": "blocked",
+    "reason": "Gurobi requires gurobi_cl and a usable license; this recipe prepares Statewalk only",
+    "extractor_substitution": False,
+}
 
 
 def prepare_eggcc(
@@ -50,12 +56,6 @@ def prepare_eggcc(
         raise ValueError("step timeout must be positive")
     output.mkdir(parents=True)
     preparation = Preparation(output)
-    blocker = {
-        "configuration": {"native_options": ["--tiger-ilp", "--ilp-solver", "gurobi"]},
-        "status": "blocked",
-        "reason": "Gurobi requires gurobi_cl and a usable license; this recipe prepares Statewalk only",
-        "extractor_substitution": False,
-    }
     record: dict[str, Any] = {
         "family": "eggcc",
         "revision": REVISION,
@@ -64,7 +64,7 @@ def prepare_eggcc(
         "output": str(output),
         "build_root": str(build_root),
         "rust_version": "1.88.0",
-        "configuration_blockers": [blocker],
+        "configuration_blockers": [GUROBI_BLOCKER],
         "benchmark_execution": False,
         "core_revision": CORE_REVISION,
         "core_repair": REPAIR_REVISION,
@@ -160,7 +160,7 @@ def prepare_eggcc(
                 "paths": {"checkout": str(checkout), "binary": str(binary), "egglog": str(engine)},
                 "identity_paths": [str(tiger), str(output / "build-products.json"), *(str(patch) for patch in patches)],
                 "timeout_sec": 300,
-                "configuration_blockers": [blocker],
+                "configuration_blockers": [GUROBI_BLOCKER],
             }
         }
         settings_path = output / "settings.json"

@@ -12,7 +12,7 @@ from typing import TypedDict
 from .engines import TREATMENT_SPECS
 from .known_failures import known_failure_reason
 from .models import DisequalityEncoding, FileSpec
-from .suites import SAFETY_POLICY, VALIDATION_POLICY, load_manifest
+from .suites import VALIDATION_POLICY, load_manifest, safety_outcome_applies
 
 
 class WorkloadAlias(TypedDict):
@@ -122,7 +122,7 @@ def figure_inventory(root: Path, timeout_sec: int = 300) -> FigureInventory:
             exclusions.append({"case": family, "family": family, "paths": [], "reason": recipe["excluded"]})
     for outcome in manifest.outcomes:
         identity = f"{outcome['file_sha256']}/{outcome['fact_directory_sha256']}"
-        if identity in workloads and outcome["kind"] == "safety" and outcome["policy"] == SAFETY_POLICY:
+        if identity in workloads and safety_outcome_applies(outcome):
             workloads[identity]["unavailable_reason"] = (
                 "" if outcome["status"] == "success" else (outcome["reason"] or "Safety deferred")
             )

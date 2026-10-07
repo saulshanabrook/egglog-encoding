@@ -69,7 +69,8 @@ class Preparation:
         write_json(prefix.with_suffix(".result.json"), asdict(result))
         print(f"END {self.count:03} {name}: {result.status} ({result.wall_sec:.1f}s)", flush=True)
         if result.status != "success":
-            raise RuntimeError(f"{name}: {result.status}; see {prefix}.result.json")
+            detail = f": {result.message}" if result.message else ""
+            raise RuntimeError(f"{name}: {result.status}{detail}; see {prefix}.result.json")
         return result.stdout_path.read_text()
 
     def apply_patch(self, checkout: Path, patch: Path) -> None:

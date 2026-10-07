@@ -347,6 +347,7 @@ def test_native_events_require_bounded_contiguous_complete_json(tmp_path: Path) 
         read_events(tmp_path)
 
 
+@pytest.mark.parametrize("family", ["eggcc", "churchroad"])
 @pytest.mark.parametrize(
     "parent_status,completed,materialization_status",
     [
@@ -354,6 +355,10 @@ def test_native_events_require_bounded_contiguous_complete_json(tmp_path: Path) 
         ("failure", True, "success"),
         ("timed-out", True, "success"),
         ("timed-out", False, "success"),
+        ("output-limit", True, "success"),
+        ("output-limit", False, "success"),
+        ("output-limit", True, "output-limit"),
+        ("output-limit", True, "memory-limit"),
         ("resource-stopped", True, "success"),
         ("memory-limit", True, "success"),
         ("cancelled", True, "success"),
@@ -364,10 +369,12 @@ def test_native_events_require_bounded_contiguous_complete_json(tmp_path: Path) 
         ("timed-out", True, "interrupted"),
     ],
 )
-def test_capture_complete_retains_calls_after_timeout_but_halts_on_safety_or_cancellation(
+def test_capture_complete_retains_calls_after_parent_failure_but_halts_on_safety_or_cancellation(
     eggcc_source: str,
+    churchroad_events: list[dict[str, Any]],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    family: str,
     parent_status: str,
     completed: bool,
     materialization_status: str,
@@ -384,9 +391,13 @@ def test_capture_complete_retains_calls_after_timeout_but_halts_on_safety_or_can
         stderr.write_text("retained native diagnostics")
         if prefix.name == "native":
             if completed:
-                (prefix.parent / "native-events/event-000000.json").write_text(
-                    json.dumps(event(0, "optimization-complete", program=eggcc_source, batch=["main"], **{"pass": 0}))
+                events = (
+                    [event(0, "optimization-complete", program=eggcc_source, batch=["main"], **{"pass": 0})]
+                    if family == "eggcc"
+                    else churchroad_events
                 )
+                for index, native_event in enumerate(events):
+                    (prefix.parent / f"native-events/event-{index:06}.json").write_text(json.dumps(native_event))
             status = parent_status
         else:
             assert prefix.name == "materialize"
@@ -403,7 +414,7 @@ def test_capture_complete_retains_calls_after_timeout_but_halts_on_safety_or_can
     monkeypatch.setattr(capture, "run_bounded_command", run)
     monkeypatch.setattr(capture, "adapt_eggcc", lambda source: source)
     records = capture.capture_complete(
-        "eggcc",
+        family,
         [{"id": name, "source": name} for name in ("first", "second")],
         tmp_path / "captures",
         tmp_path,
@@ -411,8 +422,9 @@ def test_capture_complete_retains_calls_after_timeout_but_halts_on_safety_or_can
         tmp_path / "engine",
         timeout_sec=7,
     )
-    parent_halted = parent_status in {"resource-stopped", "memory-limit", "cancelled", "interrupted"}
-    halted = parent_halted or materialization_status != "success"
+    stop_statuses = {"resource-stopped", "memory-limit", "cancelled", "interrupted"}
+    parent_halted = parent_status in stop_statuses
+    halted = parent_halted or materialization_status in stop_statuses
     assert launches == (["native"] if parent_halted else ["native", "materialize"] * (1 if halted else 2))
     assert len(records) == (1 if halted else 2)
     for record in records:
@@ -422,15 +434,20 @@ def test_capture_complete_retains_calls_after_timeout_but_halts_on_safety_or_can
             parent_status
             if parent_halted
             else materialization_status
-            if halted
+            if materialization_status != "success"
             else "ordinary-validation-pending"
             if completed
             else "blocked"
         )
-        assert len(record["sessions"]) == (0 if halted or not completed else 1)
-        if completed and not halted:
+        assert len(record["sessions"]) == (
+            0 if parent_halted or materialization_status != "success" or not completed else 1
+        )
+        if completed and not parent_halted and materialization_status == "success":
             assert record["source_completion"]["status"] == "complete"
             assert record["source_completion"]["parent_completed"] is False
+        if parent_status == "output-limit" and not completed:
+            assert record["reason"] == "native execution did not retain any completed calls"
+            assert record["sessions"] == record["workloads"] == []
         assert json.loads((tmp_path / "captures" / record["id"] / "capture.json").read_text()) == json.loads(
             json.dumps(record, default=str)
         )

@@ -10,7 +10,6 @@ import sys
 import time
 from contextlib import suppress
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -22,7 +21,6 @@ from scripts import reproduction_process
 @pytest.fixture
 def guarded(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("EGGLOG_BENCH_MEMORY_GUARD", "1")
-    monkeypatch.setattr(memory_guard, "host_memory", lambda: (8 * 1024**3, 1))
 
 
 def test_default_cap_accepts_ten_gib_but_stops_above_it(guarded: None) -> None:
@@ -31,7 +29,6 @@ def test_default_cap_accepts_ten_gib_but_stops_above_it(guarded: None) -> None:
     assert guard.check(8 * 1024**3 + 1) is None
     assert guard.check(10 * 1024**3) is None
     assert "10737418240-byte safety cap" in str(guard.check(10 * 1024**3 + 1))
-    assert memory_guard.HEADROOM_BYTES == 2 * 1024**3
 
 
 def test_group_rss_includes_descendants_but_not_other_groups(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -43,50 +40,7 @@ def test_group_rss_includes_descendants_but_not_other_groups(monkeypatch: pytest
     assert memory_guard.group_rss_bytes(123) == 30 * 1024
 
 
-def test_macos_headroom_uses_page_size_and_distinct_counters(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(memory_guard.sys, "platform", "darwin")
-
-    def command(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(
-            args,
-            0,
-            "1\n"
-            if args[0] == "sysctl"
-            else (
-                "Mach Virtual Memory Statistics: (page size of 16384 bytes)\n"
-                "Pages free: 10.\nPages inactive: 20.\nPages speculative: 30.\nPages purgeable: 90.\n"
-            ),
-        )
-
-    monkeypatch.setattr(memory_guard.subprocess, "run", command)
-    assert memory_guard.host_memory() == (60 * 16384, 1)
-
-
-@pytest.mark.parametrize("headroom,pressure", [(8 * 1024**3, 2), (8 * 1024**3, 4), (8 * 1024**3, 0), (1024, 1)])
-def test_unsafe_host_prevents_launch_without_measurement(
-    guarded: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, headroom: int, pressure: int
-) -> None:
-    monkeypatch.setattr(memory_guard, "host_memory", lambda: (headroom, pressure))
-    monkeypatch.setattr(processes.subprocess, "Popen", lambda *_a, **_kw: pytest.fail("must not launch"))
-    with pytest.raises(ValueError, match="resource guard refused to launch"):
-        processes.run_command(["unused"], tmp_path, 5)
-    with pytest.raises(ValueError, match="resource guard refused to launch"):
-        reproduction_process.run_bounded_command(["unused"], tmp_path, tmp_path / "unused")
-    assert not list(tmp_path.iterdir())
-
-
-def test_unavailable_host_monitor_prevents_launch(
-    guarded: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    def unavailable() -> tuple[int, int]:
-        raise OSError("vm_stat unavailable")
-
-    monkeypatch.setattr(memory_guard, "host_memory", unavailable)
-    with pytest.raises(ValueError, match="memory monitoring failed: vm_stat unavailable"):
-        processes.run_command(["unused"], tmp_path, 5)
-
-
-@pytest.mark.parametrize("cause", ["cap", "host-pressure", "monitor-error"])
+@pytest.mark.parametrize("cause", ["cap", "monitor-error"])
 def test_live_guard_stops_workload_group_and_discards_invalid_timing(
     guarded: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cause: str
 ) -> None:
@@ -102,11 +56,9 @@ def test_live_guard_stops_workload_group_and_discards_invalid_timing(
             return 0
         if cause == "monitor-error":
             raise OSError("ps unavailable")
-        return memory_guard.GROUP_LIMIT_BYTES + 1 if cause == "cap" else 1
+        return memory_guard.GROUP_LIMIT_BYTES + 1
 
     monkeypatch.setattr(memory_guard, "group_rss_bytes", rss)
-    if cause == "host-pressure":
-        monkeypatch.setattr(memory_guard, "host_memory", lambda: (8 * 1024**3, 2 if pids.exists() else 1))
     try:
         result = processes.run_command([sys.executable, "-c", code, str(pids)], tmp_path, 5)
         assert result.status == "failure"
@@ -115,7 +67,6 @@ def test_live_guard_stops_workload_group_and_discards_invalid_timing(
         assert result.error is not None
         assert {
             "cap": "safety cap",
-            "host-pressure": "host memory pressure",
             "monitor-error": "ps unavailable",
         }[cause] in result.error.message
         for pid in map(int, pids.read_text().split()):
@@ -173,7 +124,6 @@ def test_unexpected_sigkill_halts_guarded_collection_without_claiming_oom(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, enabled: bool
 ) -> None:
     monkeypatch.setenv("EGGLOG_BENCH_MEMORY_GUARD", "1" if enabled else "")
-    monkeypatch.setattr(memory_guard, "host_memory", lambda: (8 * 1024**3, 1))
     command = [
         sys.executable,
         "-c",
@@ -195,7 +145,7 @@ def test_unexpected_sigkill_halts_guarded_collection_without_claiming_oom(
     assert ("unexpected SIGKILL (cause unknown)" in bounded.message) is enabled
 
 
-def test_bounded_diagnostic_obeys_live_host_cap(guarded: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_bounded_diagnostic_obeys_live_rss_cap(guarded: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(memory_guard, "GROUP_LIMIT_BYTES", 1024)
     result = reproduction_process.run_bounded_command(
         [sys.executable, "-c", "import time; time.sleep(30)"], tmp_path, tmp_path / "guard", timeout_sec=5

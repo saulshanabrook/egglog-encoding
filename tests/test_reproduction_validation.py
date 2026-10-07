@@ -57,6 +57,77 @@ def test_all_native_output_terms_must_match(example: tuple, tmp_path: Path) -> N
     assert len(launches) == 2
 
 
+@pytest.mark.parametrize("terminal_status", ["failure", "output-limit"])
+def test_resume_reuses_completed_diagnostics_and_retries_interrupted_and_unattempted_calls(
+    example: tuple, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, terminal_status: str
+) -> None:
+    capture, engine, launches = example
+    first = capture["invocations"][0]
+    capture["invocations"] = []
+    for index in range(4):
+        replay = tmp_path / f"input-{index}.egg"
+        replay.write_text(Path(first["replay"]).read_text() + f"; call {index}\n")
+        capture["invocations"].append({**first, "replay": str(replay), "replay_sha256": sha256_file(replay)})
+    capture["materialization"].update(expected_sessions=4, materialized_sessions=4)
+    statuses = iter(["success", terminal_status, "memory-limit", "success", "success"])
+    reason = "ordinary extraction failed" if terminal_status == "failure" else "diagnostic output exceeded limit"
+
+    def run(command: list[str], cwd: Path, prefix: Path, timeout_sec: float) -> PilotProcessResult:
+        launches.append(command)
+        stdout, stderr = prefix.with_suffix(".stdout"), prefix.with_suffix(".stderr")
+        stdout.write_text("(A)\n")
+        stderr.write_text("")
+        status = next(statuses)
+        return PilotProcessResult(
+            status,  # type: ignore[arg-type]
+            0,
+            0.01,
+            1024,
+            stdout,
+            stderr,
+            reason if status == terminal_status else None,
+        )
+
+    monkeypatch.setattr(validation, "run_complete_command", run)
+    interrupted = validation.validate_capture(capture, engine, tmp_path / "interrupted")
+    assert interrupted["status"] == "memory-limit" and len(launches) == 3
+    resumed = validation.validate_capture(capture, engine, tmp_path / "resumed", previous=interrupted)
+    assert len(launches) == 5
+    assert [Path(command[-1]).name for command in launches] == [
+        "input-0.egg",
+        "input-1.egg",
+        "input-2.egg",
+        "input-2.egg",
+        "input-3.egg",
+    ]
+    assert resumed["status"] == terminal_status and resumed["reason"] == reason
+    assert len(resumed["workloads"]) == 3
+    assert resumed["validations"][1] == interrupted["validations"][1]
+
+
+@pytest.mark.parametrize("changed", ["engine", "replay", "contract", "timeout", "validator", "stdout"])
+def test_resume_requires_exact_validation_and_output_identities(example: tuple, tmp_path: Path, changed: str) -> None:
+    capture, engine, launches = example
+    previous = validation.validate_capture(capture, engine, tmp_path / "first")
+    timeout = 300
+    if changed == "engine":
+        engine.write_text("new binary")
+    elif changed == "replay":
+        replay = Path(capture["invocations"][0]["replay"])
+        replay.write_text(replay.read_text() + "; changed input\n")
+        capture["invocations"][0]["replay_sha256"] = sha256_file(replay)
+    elif changed == "contract":
+        capture["invocations"][0]["output_contract"]["expected_terms"] = [egglog_forms("(B)")[0][2]]
+    elif changed == "timeout":
+        timeout = 301
+    elif changed == "validator":
+        previous["validations"][0]["identity"]["validation_sha256"] = "old validator"
+    else:
+        Path(previous["validations"][0]["stdout_path"]).write_text("modified evidence")
+    validation.validate_capture(capture, engine, tmp_path / "second", timeout_sec=timeout, previous=previous)
+    assert len(launches) == 2
+
+
 EGGCC_SOURCE = """(datatype Type (UnitT))
 (datatype Expr (A) (Function String Type Type Expr))
 (ruleset init)

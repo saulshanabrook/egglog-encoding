@@ -268,7 +268,7 @@ def capture_complete(
             "workloads": [],
             "sessions": [],
         }
-        if process.status not in {"success", "failure", "timed-out"}:
+        if process.status not in {"success", "failure", "timed-out", "output-limit"}:
             record.update(status=process.status, reason=process.message or process.status)
         else:
             request = attempt / "materialize.json"

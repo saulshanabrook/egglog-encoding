@@ -124,15 +124,17 @@ or modify the JSONL.
   in Vega-Lite. Failures stop repetitions for the affected treatment, not other
   treatments of that workload. Ordinary positional/default comparisons retain
   requested newest-N selection.
-- Expanded Make targets use a 300-second timeout and the memory guard: 10 GiB
-  process-group RSS, normal host memory pressure, and a 2 GiB host reserve.
+- Expanded Make targets use a 300-second timeout and a 10 GiB process-group RSS
+  guard. Host memory pressure and host headroom do not block or stop runs.
   Preserve in-flight safety failures and halt before launching another workload.
 - Source preparation keeps builds and captures under ignored `benchmarks/local/`;
   corpus resume state and strict validation evidence use ignored
   `benchmarks/corpus/.local/`. Neither is an implicit timed screening pass.
   Do not import diagnostic timings into the cache.
+- Source diagnostics cap combined stdout/stderr at 256 MiB and retain a 2 GiB
+  disk reserve. Preserve output-limit outcomes without retrying them on resume.
 - Keep source-generation supervision and the explicit validator under `scripts/`,
-  whole-process measurement under `benchmarking/`, and shared host/process
+  whole-process measurement under `benchmarking/`, and shared process
   protection in `process_guard.py`. Collection must not import diagnostic runners.
 - Benchmark inputs should not contain executable `(prove ...)` or
   `(prove-extract ...)` commands. Use source `(check ...)` and `(extract ...)`

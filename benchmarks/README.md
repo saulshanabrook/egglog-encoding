@@ -37,6 +37,10 @@ without rerunning the authors' compilers; generation identity tracks each
 family's recipe, adapters and patches. No preparation timing becomes a benchmark
 observation.
 
+Interrupted preparation retains completed diagnostics and retries interrupted or
+unattempted calls. Eggcc's prepared compiler is reused while its source and
+artifact hashes match; unavailable Gurobi configurations do not trigger a build.
+
 The resulting `benchmarks/corpus/manifest.json` is the sole input inventory
 used by collection. It records actual source revisions, content hashes,
 adaptations, aliases, and unavailable cases. Generated paths are relative to the
@@ -121,13 +125,16 @@ source generation, and strict proof verification are outside timing. The
 `proof-extraction` also materializes and simplifies proofs of those results.
 Both compare against the same proofs-off observations.
 
-Expanded Make targets use a 300-second timeout and the existing guard: 10 GiB
-process-group RSS, normal macOS memory pressure, and 2 GiB host reserve. A
-workload failure stops the failed treatment's remaining repetitions; other
+Expanded Make targets use a 300-second timeout and a 10 GiB process-group RSS
+guard. Host memory pressure and host headroom do not stop runs. Source diagnostics
+retain a 2 GiB disk reserve and a 256 MiB combined stdout/stderr limit. An
+output-limit outcome is retained as an unavailable call and is not repeatedly
+retried during preparation; this limit does not change timed measurements.
+A workload failure stops the failed treatment's remaining repetitions; other
 treatments still collect their samples. A safety stop preserves the observation
-and stops the invocation. Host-pressure interruption and a workload
-exceeding its RSS limit remain distinguishable. Timeout limits are never
-substituted for measured runtimes.
+and stops the invocation. Historical host-pressure diagnostics remain recorded
+but no longer defer future runs. Timed failures stay in the append-only cache.
+Timeout limits are never substituted for measured runtimes.
 
 ## Correctness and Math configuration
 

@@ -15,7 +15,14 @@ from pathlib import Path
 from rich.console import Console
 
 from benchmarking.models import TargetRequest
-from benchmarking.suites import SAFETY_POLICY, SUITE_NAMES, VALIDATION_POLICY, CorpusOutcome, resolve_suite
+from benchmarking.suites import (
+    SAFETY_POLICY,
+    SUITE_NAMES,
+    VALIDATION_POLICY,
+    CorpusOutcome,
+    resolve_suite,
+    safety_outcome_applies,
+)
 from benchmarking.targets import build_target, sha256_file, target_row_for_request, workload_command
 from benchmarking.workloads import require_workload_unchanged
 from scripts.reproduction_process import run_bounded_command
@@ -90,8 +97,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 (
                     outcome
                     for outcome in reversed(selection.manifest.outcomes)
-                    if outcome["kind"] == "safety"
-                    and outcome["policy"] == SAFETY_POLICY
+                    if safety_outcome_applies(outcome)
                     and (outcome["file_sha256"], outcome["fact_directory_sha256"])
                     == (file.sha256, file.fact_directory_sha256)
                 ),

@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import fcntl
 import os
+import selectors
 import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
-from contextlib import contextmanager, suppress
+from contextlib import ExitStack, contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -18,6 +20,7 @@ from typing import Literal
 from process_guard import GROUP_LIMIT_BYTES, MemoryGuard, group_rss_bytes
 
 DISK_RESERVE_BYTES = 2 * 1024**3
+OUTPUT_LIMIT_BYTES = 256 * 1024**2
 
 
 @contextmanager
@@ -37,7 +40,7 @@ def exclusive_job(lock_path: Path) -> Iterator[None]:
 
 @dataclass(frozen=True)
 class PilotProcessResult:
-    status: Literal["success", "failure", "timed-out", "memory-limit", "resource-stopped"]
+    status: Literal["success", "failure", "timed-out", "memory-limit", "output-limit", "resource-stopped"]
     returncode: int | None
     wall_sec: float
     peak_rss_bytes: int
@@ -86,20 +89,21 @@ def run_bounded_command(
     *,
     timeout_sec: float = 120,
     memory_limit_bytes: int = GROUP_LIMIT_BYTES,
+    output_limit_bytes: int = OUTPUT_LIMIT_BYTES,
     require_guard: bool = False,
     disk_reserve_bytes: int = 0,
     sample_rss: Callable[[int], int] | None = None,
     cleanup_descendants: Callable[[], None] | None = None,
 ) -> PilotProcessResult:
-    """Monitor an isolated process group's aggregate RSS and retain disk logs.
+    """Monitor an isolated process group's aggregate RSS and bounded disk logs.
 
-    RSS is sampled every 50 ms, so the threshold is a monitored guard rather
-    than a kernel allocation limit. All surviving group members are killed
-    when the parent exits, a limit is crossed, or the caller is interrupted.
+    RSS is sampled every 50 ms. A pipe spooler retains at most the combined
+    stdout/stderr byte limit, even for a single oversized write. Group members
+    are killed when the parent exits, a limit is crossed, or the caller is interrupted.
     """
 
-    if timeout_sec <= 0 or memory_limit_bytes <= 0:
-        raise ValueError("bounded process timeout and memory limit must be positive")
+    if timeout_sec <= 0 or memory_limit_bytes <= 0 or output_limit_bytes <= 0:
+        raise ValueError("bounded process timeout, memory limit and output limit must be positive")
     if cleanup_descendants is not None and not all(
         hasattr(os, name) for name in ("waitid", "P_PID", "WEXITED", "WNOHANG", "WNOWAIT")
     ):
@@ -114,14 +118,66 @@ def run_bounded_command(
     stderr_path = Path(str(output_prefix) + ".stderr.log")
     start = time.monotonic()
     peak_rss = 0
-    status: Literal["success", "failure", "timed-out", "memory-limit", "resource-stopped"] = "success"
+    status: Literal["success", "failure", "timed-out", "memory-limit", "output-limit", "resource-stopped"] = "success"
     message: str | None = None
     env = os.environ.copy()
     env["RUST_LOG"] = "error"
-    with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
-        process = subprocess.Popen(command, cwd=cwd, env=env, stdout=stdout, stderr=stderr, start_new_session=True)
+    with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr, ExitStack() as pipes:
+        streams = []
+        for destination in (stdout, stderr):
+            read_fd, write_fd = os.pipe()
+            reader = pipes.enter_context(os.fdopen(read_fd, "rb", buffering=0))
+            writer = pipes.enter_context(os.fdopen(write_fd, "wb", buffering=0))
+            streams.append((reader, writer, destination))
+        process = subprocess.Popen(
+            command, cwd=cwd, env=env, stdout=streams[0][1], stderr=streams[1][1], start_new_session=True
+        )
+        for _, writer, _ in streams:
+            writer.close()
+        output_stopped = threading.Event()
+        finished = threading.Event()
+        output_limited = False
+        output_error: str | None = None
+
+        def spool_output() -> None:
+            nonlocal output_limited, output_error
+            retained_bytes = 0
+            try:
+                with selectors.DefaultSelector() as selector:
+                    for reader, _, destination in streams:
+                        selector.register(reader, selectors.EVENT_READ, destination)
+                    while selector.get_map():
+                        events = selector.select(0 if finished.is_set() else 0.05)
+                        if not events and finished.is_set():
+                            return
+                        for key, _ in events:
+                            chunk = os.read(key.fd, 64 * 1024)
+                            if not chunk:
+                                selector.unregister(key.fd)
+                                continue
+                            keep = min(len(chunk), output_limit_bytes - retained_bytes)
+                            key.data.write(chunk[:keep])
+                            retained_bytes += keep
+                            if keep < len(chunk):
+                                output_limited = True
+                                output_stopped.set()
+                                return
+            except Exception as error:
+                output_error = f"output capture failed: {error}"
+                output_stopped.set()
+
+        spooler = threading.Thread(target=spool_output, name="diagnostic-output", daemon=True)
         try:
+            spooler.start()
             while True:
+                if output_limited:
+                    status = "output-limit"
+                    message = f"combined stdout/stderr output exceeded the {output_limit_bytes}-byte limit"
+                    break
+                if output_error is not None:
+                    status = "resource-stopped"
+                    message = output_error
+                    break
                 if cleanup_descendants is None:
                     if process.poll() is not None:
                         break
@@ -175,35 +231,46 @@ def run_bounded_command(
                     status = "timed-out"
                     message = f"timed out after {timeout_sec:g} seconds"
                     break
-                time.sleep(min(0.05, max(0, timeout_sec - (time.monotonic() - start))))
+                output_stopped.wait(min(0.05, max(0, timeout_sec - (time.monotonic() - start))))
         finally:
-            if cleanup_descendants is None:
-                with suppress(ProcessLookupError):
-                    os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
-            else:
-                cleanup_errors = []
-                try:
+            try:
+                if cleanup_descendants is None:
+                    with suppress(ProcessLookupError):
+                        os.killpg(process.pid, signal.SIGKILL)
+                    process.wait()
+                else:
+                    cleanup_errors = []
                     try:
-                        _kill_retained_root_group(process.pid)
-                    except Exception as error:
-                        cleanup_errors.append(f"initial root signal failed: {type(error).__name__}: {error}")
+                        try:
+                            _kill_retained_root_group(process.pid)
+                        except Exception as error:
+                            cleanup_errors.append(f"initial root signal failed: {type(error).__name__}: {error}")
+                        finally:
+                            try:
+                                cleanup_descendants()
+                            except Exception as error:
+                                cleanup_errors.append(f"descendant cleanup failed: {type(error).__name__}: {error}")
                     finally:
                         try:
-                            cleanup_descendants()
+                            _kill_retained_root_group(process.pid)
                         except Exception as error:
-                            cleanup_errors.append(f"descendant cleanup failed: {type(error).__name__}: {error}")
-                finally:
-                    try:
-                        _kill_retained_root_group(process.pid)
-                    except Exception as error:
-                        cleanup_errors.append(f"final root signal failed: {type(error).__name__}: {error}")
-                    finally:
-                        process.wait()
-                if cleanup_errors:
-                    status = "resource-stopped"
-                    previous = f"{message}; " if message else ""
-                    message = previous + "; ".join(cleanup_errors)
+                            cleanup_errors.append(f"final root signal failed: {type(error).__name__}: {error}")
+                        finally:
+                            process.wait()
+                    if cleanup_errors:
+                        status = "resource-stopped"
+                        previous = f"{message}; " if message else ""
+                        message = previous + "; ".join(cleanup_errors)
+            finally:
+                finished.set()
+                if spooler.ident is not None:
+                    spooler.join()
+    if output_error is not None:
+        status = "resource-stopped"
+        message = f"{message}; {output_error}" if message and message != output_error else output_error
+    elif output_limited and status == "success":
+        status = "output-limit"
+        message = f"combined stdout/stderr output exceeded the {output_limit_bytes}-byte limit"
     if status == "success" and process.returncode != 0:
         status = "failure"
         with stderr_path.open("rb") as log:
