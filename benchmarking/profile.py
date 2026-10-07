@@ -22,10 +22,12 @@ from typing import Any, Literal, cast
 from rich.console import Console
 from rich.text import Text
 
+from process_guard import terminate_process_group
+
 from . import samply_analysis
 from .engines import TREATMENT_SPECS, TREATMENTS, Treatment, validate_engine_workload
 from .models import FileSpec, TargetRequest
-from .processes import run_command, terminate_process_group
+from .processes import run_command
 from .targets import git_root_for_path, parse_target, resolve_profile_target, workload_command
 from .workloads import require_workload_unchanged, resolve_files
 

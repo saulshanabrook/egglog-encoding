@@ -37,6 +37,7 @@ def generation_identity(family: str, recipe: dict[str, Any]) -> str:
     if family == "hardboiled":
         shared.add("reproduction_published.py")
     inputs = {path for path in (ROOT / "scripts").glob("*.py") if path.name in shared or family in path.stem}
+    inputs.add(ROOT / "process_guard.py")
     materializer = ROOT / "scripts/paper_benchmarks/materialize.py"
     if family in {"eggcc", "churchroad", "misaal", "dialegg"} and materializer.is_file():
         inputs.add(materializer)

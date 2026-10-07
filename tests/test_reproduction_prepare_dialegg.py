@@ -96,8 +96,7 @@ def test_source_build_settings_use_real_original_backend(
         "scripts/reproduction_process.py",
         "scripts/dialegg_capture.py",
         "scripts/dialegg_compat.py",
-        "benchmarking/processes.py",
-        "benchmarking/memory_guard.py",
+        "process_guard.py",
     ):
         path = tmp_path / relative
         path.parent.mkdir(parents=True, exist_ok=True)

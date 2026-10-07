@@ -12,7 +12,6 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from benchmarking.processes import run_bounded_command  # noqa: E402
 from benchmarking.targets import sha256_file  # noqa: E402
 from scripts.eggcc_churchroad_complete import (  # noqa: E402
     CaptureError,
@@ -22,6 +21,7 @@ from scripts.eggcc_churchroad_complete import (  # noqa: E402
 )
 from scripts.hardboiled_replay import egglog_forms  # noqa: E402
 from scripts.paper_benchmarks.materialize import constructors  # noqa: E402
+from scripts.reproduction_process import run_bounded_command  # noqa: E402
 from scripts.reproduction_validation import (  # noqa: E402
     CHURCHROAD_PLACEHOLDERS,
     churchroad_circuit_contract,

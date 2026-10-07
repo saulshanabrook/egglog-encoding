@@ -15,6 +15,7 @@ from typing import cast
 
 import pytest
 
+import process_guard
 from benchmarking import processes
 
 from .report_fixtures import ROOT
@@ -181,15 +182,15 @@ def test_cleanup_permission_race_requires_exited_parent_and_no_live_group_member
             raise OSError("process-state query unavailable")
         return subprocess.CompletedProcess([], 0, stdout=group_states)
 
-    monkeypatch.setattr(processes.os, "killpg", denied)
-    monkeypatch.setattr(processes.subprocess, "run", snapshot)
+    monkeypatch.setattr(process_guard.os, "killpg", denied)
+    monkeypatch.setattr(process_guard.subprocess, "run", snapshot)
     process = cast(subprocess.Popen[str], OwnedProcess())
     if allowed:
-        processes.terminate_process_group(process)
+        process_guard.terminate_process_group(process)
         assert waited == [True]
     else:
         with pytest.raises(PermissionError if group_states is not None else OSError):
-            processes.terminate_process_group(process)
+            process_guard.terminate_process_group(process)
         assert waited == []
 
 

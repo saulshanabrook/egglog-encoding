@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from benchmarking import processes
+from scripts import reproduction_process as processes
 
 
 @pytest.mark.parametrize("mode", ["default", "sample-error", "cleanup-error", "immediate-exit", "cleanup-interrupt"])

@@ -11,8 +11,8 @@ from typing import Any
 
 import pytest
 
-from benchmarking.processes import PilotProcessResult
 from scripts import dialegg_capture as complete
+from scripts.reproduction_process import PilotProcessResult
 
 
 @pytest.mark.parametrize(

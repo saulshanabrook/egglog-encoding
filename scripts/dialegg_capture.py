@@ -22,10 +22,10 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from benchmarking.processes import PilotProcessResult, run_bounded_command  # noqa: E402
 from scripts.hardboiled_replay import egglog_forms  # noqa: E402
 from scripts.paper_benchmarks import materialize  # noqa: E402
 from scripts.reproduction_inventory import dialegg_configurations  # noqa: E402
+from scripts.reproduction_process import PilotProcessResult, run_bounded_command  # noqa: E402
 from scripts.source_tools import Preparation  # noqa: E402
 
 STOP_STATUSES = {"resource-stopped", "memory-limit", "timed-out"}

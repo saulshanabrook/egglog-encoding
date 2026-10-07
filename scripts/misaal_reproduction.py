@@ -53,7 +53,7 @@ def verified_request(path: Path) -> dict[str, Any]:
         raise ValueError("MISAAL preparation supports only Egglog export; no native code-generation request")
     if any(key in request for key in ("terminal_empty_child", "acquisition_tail", "hvx_link_contract")):
         raise ValueError("obsolete native-lowering request")
-    from benchmarking.memory_guard import GROUP_LIMIT_BYTES
+    from process_guard import GROUP_LIMIT_BYTES
 
     timeout = request.get("source_timeout_sec", 900)
     memory = request.get("source_memory_limit_bytes", GROUP_LIMIT_BYTES)
@@ -978,7 +978,7 @@ def capture_misaal(request_path: Path, output: Path) -> dict[str, Any]:
     Backend children inherit the root group; pinned detached Racket groups
     require the outer guard's live launch lease and aggregate RSS accounting.
     """
-    from benchmarking.processes import run_bounded_command
+    from scripts.reproduction_process import run_bounded_command
 
     request_path, output = request_path.resolve(), output.resolve()
     request = verified_request(request_path)

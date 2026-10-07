@@ -237,8 +237,7 @@ def build_target(
     else:
         build_args.extend(("-p", package))
     if os.environ.get("EGGLOG_BENCH_MEMORY_GUARD") == "1":
-        from .memory_guard import MemoryGuard
-        from .processes import terminate_process_group
+        from process_guard import MemoryGuard, terminate_process_group
 
         guard = MemoryGuard.from_environment()
         assert guard is not None

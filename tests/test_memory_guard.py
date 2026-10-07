@@ -14,7 +14,9 @@ from typing import Any
 
 import pytest
 
-from benchmarking import memory_guard, processes
+import process_guard as memory_guard
+from benchmarking import processes
+from scripts import reproduction_process
 
 
 @pytest.fixture
@@ -69,7 +71,7 @@ def test_unsafe_host_prevents_launch_without_measurement(
     with pytest.raises(ValueError, match="resource guard refused to launch"):
         processes.run_command(["unused"], tmp_path, 5)
     with pytest.raises(ValueError, match="resource guard refused to launch"):
-        processes.run_bounded_command(["unused"], tmp_path, tmp_path / "unused")
+        reproduction_process.run_bounded_command(["unused"], tmp_path, tmp_path / "unused")
     assert not list(tmp_path.iterdir())
 
 
@@ -185,7 +187,7 @@ def test_unexpected_sigkill_halts_guarded_collection_without_claiming_oom(
     assert "before kill" in measured.error.message
     assert ("unexpected SIGKILL (cause unknown)" in measured.error.message) is enabled
 
-    bounded = processes.run_bounded_command(command, tmp_path, tmp_path / "sigkill", timeout_sec=5)
+    bounded = reproduction_process.run_bounded_command(command, tmp_path, tmp_path / "sigkill", timeout_sec=5)
     assert bounded.status == ("resource-stopped" if enabled else "failure")
     assert bounded.returncode == -signal.SIGKILL
     assert "before kill" in bounded.stderr_path.read_text()
@@ -195,7 +197,7 @@ def test_unexpected_sigkill_halts_guarded_collection_without_claiming_oom(
 
 def test_bounded_diagnostic_obeys_live_host_cap(guarded: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(memory_guard, "GROUP_LIMIT_BYTES", 1024)
-    result = processes.run_bounded_command(
+    result = reproduction_process.run_bounded_command(
         [sys.executable, "-c", "import time; time.sleep(30)"], tmp_path, tmp_path / "guard", timeout_sec=5
     )
     assert result.status == "resource-stopped"

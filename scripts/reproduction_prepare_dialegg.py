@@ -174,8 +174,7 @@ def prepare_dialegg(
             "scripts/reproduction_process.py",
             "scripts/dialegg_capture.py",
             "scripts/dialegg_compat.py",
-            "benchmarking/processes.py",
-            "benchmarking/memory_guard.py",
+            "process_guard.py",
         ):
             identities[str(ROOT / relative)] = sha256_file(ROOT / relative)
         identities[str(engine)] = sha256_file(engine)

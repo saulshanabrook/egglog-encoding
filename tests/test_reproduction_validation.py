@@ -8,10 +8,10 @@ from typing import Any
 
 import pytest
 
-from benchmarking.processes import PilotProcessResult
 from benchmarking.targets import sha256_file
 from scripts import reproduction_validation as validation
 from scripts.hardboiled_replay import egglog_forms
+from scripts.reproduction_process import PilotProcessResult
 
 
 @pytest.fixture

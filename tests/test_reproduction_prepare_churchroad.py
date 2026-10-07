@@ -6,9 +6,9 @@ from typing import Any
 
 import pytest
 
-from benchmarking.processes import PilotProcessResult
 from scripts import reproduction_prepare_churchroad as preparation
 from scripts import source_tools
+from scripts.reproduction_process import PilotProcessResult
 
 
 @pytest.fixture

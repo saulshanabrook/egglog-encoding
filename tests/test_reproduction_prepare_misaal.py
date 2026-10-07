@@ -9,9 +9,9 @@ from typing import Any, Literal
 
 import pytest
 
-from benchmarking.processes import PilotProcessResult
 from scripts import reproduction_prepare_misaal as preparation
 from scripts import source_tools
+from scripts.reproduction_process import PilotProcessResult
 
 
 def test_raw_hash_matches_capture_protocol(tmp_path: Path) -> None:
@@ -311,7 +311,7 @@ def test_optimized_backend_verifies_receipt_contract_beyond_file_hashes(
         path.write_text(json.dumps(payload))
         record["evidence"][str(path.relative_to(directory))] = preparation.sha256_file(path)
     else:
-        record["guard_sources"]["benchmarking/memory_guard.py"] = "changed"
+        record["guard_sources"]["process_guard.py"] = "changed"
     receipt.write_text(json.dumps(record))
     with pytest.raises(ValueError):
         preparation.verified_backend_receipt(receipt)

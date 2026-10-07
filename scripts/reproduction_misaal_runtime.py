@@ -111,7 +111,7 @@ def prepare_runtime(output: Path, checkout: Path) -> Path:
     driver.step("compile-source-api", [*command, str(racket.with_name("raco")), "make", str(smoke)])
     driver.step("parameter-source-api", [*command, str(racket), str(smoke)], timeout=300)
     programs = prepare_programs(checkout, output / "abi-programs")
-    from benchmarking.processes import run_bounded_command
+    from scripts.reproduction_process import run_bounded_command
 
     for name, program in programs["programs"].items():
         result = run_bounded_command(

@@ -11,10 +11,10 @@ from typing import Any
 
 import pytest
 
-from benchmarking.processes import PilotProcessResult
 from scripts import dialegg_capture
 from scripts import suite_reproduction as reproduction
 from scripts.reproduction_inventory import expected_cases, select_cases
+from scripts.reproduction_process import PilotProcessResult
 
 
 def test_full_source_population_and_stable_selection() -> None:
@@ -43,6 +43,7 @@ def test_full_source_population_and_stable_selection() -> None:
 
 @pytest.fixture
 def repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    (tmp_path / "process_guard.py").write_text("# shared process guard\n")
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts/hardboiled_generator.py").write_text("# generation identity\n")
     (tmp_path / "benchmarks").mkdir()
@@ -162,9 +163,10 @@ def test_other_family_and_unrelated_scripts_do_not_regenerate(repository: dict[s
     assert repository["captures"] == ["a", "b"] and len(repository["runs"]) == 2
 
 
-def test_shared_nested_adapter_changes_generation_identity(repository: dict[str, Any]) -> None:
-    adapter = repository["root"] / "scripts/paper_benchmarks/materialize.py"
-    adapter.parent.mkdir()
+@pytest.mark.parametrize("relative", ["scripts/paper_benchmarks/materialize.py", "process_guard.py"])
+def test_shared_adapter_changes_generation_identity(repository: dict[str, Any], relative: str) -> None:
+    adapter = repository["root"] / relative
+    adapter.parent.mkdir(exist_ok=True)
     adapter.write_text("# initial syntax adapter\n")
     before = reproduction.generation_identity("dialegg", {"revision": "pin"})
     adapter.write_text("# changed syntax adapter\n")

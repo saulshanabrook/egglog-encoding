@@ -14,8 +14,9 @@ from pathlib import Path
 
 from rich.console import Console
 
+from scripts.reproduction_process import run_bounded_command
+
 from .models import TargetRequest
-from .processes import run_bounded_command
 from .suites import SAFETY_POLICY, SUITE_NAMES, VALIDATION_POLICY, CorpusOutcome, resolve_suite
 from .targets import build_target, sha256_file, target_row_for_request, workload_command
 from .workloads import require_workload_unchanged

@@ -7,7 +7,6 @@ from typing import Any, cast
 
 import pytest
 
-from benchmarking.processes import PilotProcessResult
 from scripts import eggcc_churchroad_complete as complete
 from scripts import suite_capture_eggcc_churchroad as capture
 from scripts.eggcc_churchroad_complete import (
@@ -18,6 +17,7 @@ from scripts.eggcc_churchroad_complete import (
     read_events,
 )
 from scripts.hardboiled_replay import egglog_forms
+from scripts.reproduction_process import PilotProcessResult
 from scripts.suite_capture_eggcc_churchroad import rename_churchroad_globals
 
 # Exact pinned memory.egg block, retaining its original multiline formatting.

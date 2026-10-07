@@ -8,9 +8,8 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from benchmarking.memory_guard import GROUP_LIMIT_BYTES
-from benchmarking.processes import run_bounded_command
-from scripts.reproduction_process import DISK_RESERVE_BYTES
+from process_guard import GROUP_LIMIT_BYTES
+from scripts.reproduction_process import DISK_RESERVE_BYTES, run_bounded_command
 
 MEMORY_BYTES = GROUP_LIMIT_BYTES
 

@@ -14,7 +14,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from benchmarking.memory_guard import GROUP_LIMIT_BYTES
+from process_guard import GROUP_LIMIT_BYTES
 from scripts.reproduction_prepare_misaal import LLVM12, MISAAL_REVISION
 from scripts.reproduction_process import exclusive_job
 from scripts.source_tools import Preparation, sha256_file, write_json
@@ -22,7 +22,7 @@ from scripts.source_tools import Preparation, sha256_file, write_json
 ROOT = Path(__file__).resolve().parents[1]
 EXPORT_POLICY = "egglog-only-v1"
 EXPORT_SCHEMA = "misaal-export-v1"
-GUARD_SOURCES = ("benchmarking/processes.py", "benchmarking/memory_guard.py", "scripts/reproduction_process.py")
+GUARD_SOURCES = ("process_guard.py", "scripts/reproduction_process.py")
 SOURCE_SHA256 = {
     "frontends/halide/src/Module.cpp": "f754bb2f100744373276e3223200e3d76a67f9cecf9225f2afadcc6df11129a9",
     "frontends/halide/src/CodeGen_LLVM.cpp": "d74788b6e6ad003503918ea42841efffb8d0fd8d4db32dee9aa51096eb80d453",

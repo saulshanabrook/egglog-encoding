@@ -8,7 +8,8 @@ from typing import Any
 
 import pytest
 
-from benchmarking import processes, suites, validation
+from benchmarking import suites, validation
+from scripts import reproduction_process as processes
 
 from .corpus_fixtures import prepare_corpus
 

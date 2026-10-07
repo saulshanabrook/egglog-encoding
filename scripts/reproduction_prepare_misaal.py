@@ -16,7 +16,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from benchmarking.memory_guard import GROUP_LIMIT_BYTES
+from process_guard import GROUP_LIMIT_BYTES
 from scripts.reproduction_process import DISK_RESERVE_BYTES
 from scripts.source_tools import Preparation, acquire_source, sha256_file, write_json
 
@@ -47,8 +47,7 @@ BACKEND_FLAG = re.compile(
     r"CARGO_INCREMENTAL|RUSTFLAGS|RUSTDOCFLAGS|RUSTC(?:_BOOTSTRAP|_WRAPPER|_WORKSPACE_WRAPPER)?|RUSTUP_TOOLCHAIN)$"
 )
 BACKEND_GUARD_SOURCES = (
-    "benchmarking/processes.py",
-    "benchmarking/memory_guard.py",
+    "process_guard.py",
     "scripts/reproduction_process.py",
 )
 

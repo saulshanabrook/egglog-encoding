@@ -15,6 +15,8 @@ def python_modules() -> tuple[Path, ...]:
 
     return (
         ROOT / "bench.py",
+        ROOT / "process_guard.py",
+        ROOT / "scripts/reproduction_process.py",
         *sorted((ROOT / "benchmarking").rglob("*.py")),
         *sorted((ROOT / "tests").rglob("*.py")),
     )
@@ -86,6 +88,9 @@ RUNNER_LAYERS = frozenset(
 )
 
 DEPENDENCY_RULES = (
+    ("process_guard.py", frozenset({"benchmarking", "scripts"})),
+    ("scripts/reproduction_process.py", frozenset({"benchmarking"})),
+    ("benchmarking/processes.py", frozenset({"scripts"})),
     (
         "benchmarking/reports/store.py",
         RUNNER_LAYERS

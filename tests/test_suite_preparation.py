@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 from rich.console import Console
 
+import process_guard
 from benchmarking import collection, models, processes, suites, targets
 from benchmarking.reports.store import ReportStore
 
@@ -105,7 +106,7 @@ def test_suite_build_is_guarded_and_single_job(
 ) -> None:
     from dataclasses import replace
 
-    from benchmarking.memory_guard import MemoryGuard
+    from process_guard import MemoryGuard
 
     monkeypatch.delenv("CARGO_TARGET_DIR", raising=False)
     root, target = prepared_environment
@@ -136,7 +137,7 @@ def test_suite_build_is_guarded_and_single_job(
     monkeypatch.setenv("EGGLOG_BENCH_MEMORY_GUARD", "1")
     monkeypatch.setattr(MemoryGuard, "from_environment", lambda: Guard())
     monkeypatch.setattr(targets.subprocess, "Popen", build)
-    monkeypatch.setattr(processes, "terminate_process_group", lambda _process: events.append("cleanup"))
+    monkeypatch.setattr(process_guard, "terminate_process_group", lambda _process: events.append("cleanup"))
     path, identity = targets.build_target(replace(target.row, path=str(root)), Console(file=io.StringIO()))
     assert path == target.binary_path and identity == target.binary_sha256
     assert events == ["build", ("guard", 123), "wait", "close", "cleanup"]

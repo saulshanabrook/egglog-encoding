@@ -1,4 +1,4 @@
-"""Opt-in host protection for sequential benchmark campaigns.
+"""Host protection and cleanup for isolated process groups.
 
 This is an operational safeguard, not a benchmark admission policy or a hard
 allocation limit. The 10 GiB ceiling leaves 6 GiB outside the workload on the
@@ -131,3 +131,21 @@ class MemoryGuard:
         if self._thread is not None:
             with suppress(RuntimeError):
                 self._thread.join()
+
+
+def terminate_process_group(process: subprocess.Popen[str] | subprocess.Popen[bytes]) -> None:
+    """Kill and reap a command's isolated process group after an exceptional exit."""
+
+    try:
+        with suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+    except PermissionError:
+        # A redundant signal can race with orphan/zombie cleanup on macOS.
+        # Accept it only after the owned parent exited and no live members remain.
+        if process.poll() is None:
+            raise
+        snapshot = subprocess.run(["ps", "-axo", "pgid=,stat="], check=True, capture_output=True, text=True, timeout=1)
+        states = (line.split() for line in snapshot.stdout.splitlines() if line.strip())
+        if any(int(group) == process.pid and not state.startswith("Z") for group, state in states):
+            raise
+    process.wait()
