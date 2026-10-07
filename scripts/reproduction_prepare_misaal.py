@@ -199,7 +199,6 @@ def verified_backend_receipt(receipt: Path) -> Path:
             "cwd": str(directory / f"egglog-{EGGLOG_REVISION}"),
             "timeout_sec": 600,
             "memory_limit_bytes": MEMORY_BYTES,
-            "allow_warning_pressure": False,
             "require_guard": True,
             "disk_reserve_bytes": DISK_RESERVE_BYTES,
         }

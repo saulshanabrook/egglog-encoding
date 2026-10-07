@@ -60,7 +60,7 @@ def test_macos_headroom_uses_page_size_and_distinct_counters(monkeypatch: pytest
     assert memory_guard.host_memory() == (60 * 16384, 1)
 
 
-@pytest.mark.parametrize("headroom,pressure", [(8 * 1024**3, 2), (1024, 1)])
+@pytest.mark.parametrize("headroom,pressure", [(8 * 1024**3, 2), (8 * 1024**3, 4), (8 * 1024**3, 0), (1024, 1)])
 def test_unsafe_host_prevents_launch_without_measurement(
     guarded: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, headroom: int, pressure: int
 ) -> None:
@@ -82,25 +82,6 @@ def test_unavailable_host_monitor_prevents_launch(
     monkeypatch.setattr(memory_guard, "host_memory", unavailable)
     with pytest.raises(ValueError, match="memory monitoring failed: vm_stat unavailable"):
         processes.run_command(["unused"], tmp_path, 5)
-
-
-def test_diagnostic_warning_override_preserves_measurement_policy_and_limits(
-    guarded: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.setattr(memory_guard, "host_memory", lambda: (8 * 1024**3, 2))
-    command = [sys.executable, "-c", "print('diagnostic')"]
-    result = processes.run_bounded_command(command, tmp_path, tmp_path / "warning", allow_warning_pressure=True)
-    assert result.status == "success"
-    assert result.stdout_path.read_text().strip() == "diagnostic"
-    with pytest.raises(ValueError, match="not normal"):
-        processes.run_command(command, tmp_path, 5)
-    guard = memory_guard.MemoryGuard.from_environment(allow_warning_pressure=True)
-    assert guard is not None
-    assert "safety cap" in str(guard.check(memory_guard.GROUP_LIMIT_BYTES + 1))
-    for host_state in ((8 * 1024**3, 4), (8 * 1024**3, 0), (1024, 2)):
-        monkeypatch.setattr(memory_guard, "host_memory", lambda state=host_state: state)
-        with pytest.raises(ValueError, match="resource guard refused to launch"):
-            processes.run_bounded_command(command, tmp_path, tmp_path / "unsafe", allow_warning_pressure=True)
 
 
 @pytest.mark.parametrize("cause", ["cap", "host-pressure", "monitor-error"])

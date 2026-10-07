@@ -49,7 +49,6 @@ class Preparation:
             "cwd": str(workdir),
             "timeout_sec": timeout,
             "memory_limit_bytes": MEMORY_BYTES,
-            "allow_warning_pressure": False,
             "require_guard": True,
             "disk_reserve_bytes": DISK_RESERVE_BYTES,
         }
@@ -62,7 +61,6 @@ class Preparation:
                 prefix,
                 timeout_sec=timeout,
                 memory_limit_bytes=MEMORY_BYTES,
-                allow_warning_pressure=False,
                 require_guard=True,
                 disk_reserve_bytes=DISK_RESERVE_BYTES,
             )

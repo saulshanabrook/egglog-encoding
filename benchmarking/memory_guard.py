@@ -69,22 +69,20 @@ def host_memory() -> tuple[int, int]:
 class MemoryGuard:
     """Check host readiness, then supervise a single isolated workload group."""
 
-    def __init__(self, *, allow_warning_pressure: bool = False) -> None:
-        self.allow_warning_pressure = allow_warning_pressure
+    def __init__(self) -> None:
         self.reason: str | None = None
-        self.peak_rss_bytes = 0
         self._last_host_check = float("-inf")
         self._finished = threading.Event()
         self._thread: threading.Thread | None = None
 
     @classmethod
-    def from_environment(cls, *, allow_warning_pressure: bool = False) -> MemoryGuard | None:
+    def from_environment(cls) -> MemoryGuard | None:
         enabled = os.environ.get("EGGLOG_BENCH_MEMORY_GUARD", "")
         if enabled not in ("", "1"):
             raise ValueError("EGGLOG_BENCH_MEMORY_GUARD must be unset or 1")
         if not enabled:
             return None
-        guard = cls(allow_warning_pressure=allow_warning_pressure)
+        guard = cls()
         reason = guard.check(0)
         if reason is not None:
             raise ValueError(f"resource guard refused to launch a workload: {reason}")
@@ -93,7 +91,6 @@ class MemoryGuard:
     def check(self, rss_bytes: int) -> str | None:
         """Return a stop reason; monitoring errors also stop work safely."""
 
-        self.peak_rss_bytes = max(self.peak_rss_bytes, rss_bytes)
         if self.reason is not None:
             return self.reason
         if rss_bytes > GROUP_LIMIT_BYTES:
@@ -101,9 +98,8 @@ class MemoryGuard:
         elif time.monotonic() - self._last_host_check >= 0.5:
             try:
                 headroom, pressure = host_memory()
-                if pressure != 1 and not (self.allow_warning_pressure and pressure == 2):
-                    requirement = "normal or warning" if self.allow_warning_pressure else "normal"
-                    self.reason = f"host memory pressure is not {requirement} (kernel level {pressure})"
+                if pressure != 1:
+                    self.reason = f"host memory pressure is not normal (kernel level {pressure})"
                 elif headroom < HEADROOM_BYTES:
                     self.reason = f"host memory headroom {headroom} is below the {HEADROOM_BYTES}-byte reserve"
                 self._last_host_check = time.monotonic()

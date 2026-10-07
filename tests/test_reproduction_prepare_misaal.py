@@ -27,7 +27,6 @@ def test_guarded_failure_retains_request_and_stops(tmp_path: Path, monkeypatch: 
         assert kwargs == {
             "timeout_sec": 1800,
             "memory_limit_bytes": 10 * 1024**3,
-            "allow_warning_pressure": False,
             "require_guard": True,
             "disk_reserve_bytes": 2 * 1024**3,
         }
@@ -156,7 +155,6 @@ def test_optimized_backend_fixed_profile_and_verified_receipt(
     assert guard["timeout_sec"] == 600 and guard["memory_limit_bytes"] == 10 * 1024**3
     assert guard["require_guard"] is True
     assert guard["disk_reserve_bytes"] == 2 * 1024**3
-    assert guard["allow_warning_pressure"] is False
     assert set(record["guard_sources"]) == set(preparation.BACKEND_GUARD_SOURCES)
     assert not (directory / "sources/MISAAL").exists()
     assert not (directory / "halide-build").exists()

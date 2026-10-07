@@ -76,7 +76,6 @@ def test_completed_native_parent_requires_actual_replay_outputs_including_zero_r
     def run(command: list[str], cwd: Path, prefix: Path, **kwargs: Any) -> PilotProcessResult:
         assert kwargs["require_guard"]
         assert kwargs["disk_reserve_bytes"] == 2 * 1024**3
-        assert kwargs["allow_warning_pressure"] is False
         commands.append(command)
         out, err = Path(str(prefix) + ".out"), Path(str(prefix) + ".err")
         out.write_text("")

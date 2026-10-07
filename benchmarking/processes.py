@@ -293,7 +293,6 @@ def run_bounded_command(
     *,
     timeout_sec: float = 120,
     memory_limit_bytes: int = GROUP_LIMIT_BYTES,
-    allow_warning_pressure: bool = False,
     require_guard: bool = False,
     disk_reserve_bytes: int = 0,
     sample_rss: Callable[[int], int] | None = None,
@@ -304,9 +303,6 @@ def run_bounded_command(
     RSS is sampled every 50 ms, so the threshold is a monitored guard rather
     than a kernel allocation limit. All surviving group members are killed
     when the parent exits, a limit is crossed, or the caller is interrupted.
-    Explicit diagnostic callers may allow warning pressure; critical pressure,
-    host reserve, and process-group limits still stop them. Timed collection
-    does not use this override.
     """
 
     if timeout_sec <= 0 or memory_limit_bytes <= 0:
@@ -315,11 +311,7 @@ def run_bounded_command(
         hasattr(os, name) for name in ("waitid", "P_PID", "WEXITED", "WNOHANG", "WNOWAIT")
     ):
         raise ValueError("descendant cleanup requires non-consuming root exit observation (waitid/WNOWAIT)")
-    guard = (
-        MemoryGuard(allow_warning_pressure=allow_warning_pressure)
-        if require_guard
-        else MemoryGuard.from_environment(allow_warning_pressure=allow_warning_pressure)
-    )
+    guard = MemoryGuard() if require_guard else MemoryGuard.from_environment()
     if guard is not None and (reason := guard.check(0)):
         raise ValueError(f"resource guard refused to launch a workload: {reason}")
     if disk_reserve_bytes and shutil.disk_usage(cwd).free < disk_reserve_bytes:

@@ -1013,7 +1013,6 @@ def capture_misaal(request_path: Path, output: Path) -> dict[str, Any]:
             memory_limit_bytes=request.get("source_memory_limit_bytes", 10 * 1024**3),
             require_guard=True,
             disk_reserve_bytes=2 * 1024**3,
-            allow_warning_pressure=False,
             sample_rss=groups.sample,
             cleanup_descendants=groups.close,
         )
