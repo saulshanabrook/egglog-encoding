@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from process_guard import GROUP_LIMIT_BYTES
-from scripts.reproduction_process import DISK_RESERVE_BYTES, run_bounded_command
+from scripts.reproduction_process import run_bounded_command
 
 MEMORY_BYTES = GROUP_LIMIT_BYTES
 
@@ -49,7 +49,6 @@ class Preparation:
             "timeout_sec": timeout,
             "memory_limit_bytes": MEMORY_BYTES,
             "require_guard": True,
-            "disk_reserve_bytes": DISK_RESERVE_BYTES,
         }
         write_json(prefix.with_suffix(".request.json"), request)
         print(f"START {self.count:03} {name}", flush=True)
@@ -61,7 +60,6 @@ class Preparation:
                 timeout_sec=timeout,
                 memory_limit_bytes=MEMORY_BYTES,
                 require_guard=True,
-                disk_reserve_bytes=DISK_RESERVE_BYTES,
             )
         except (OSError, ValueError) as error:
             write_json(prefix.with_suffix(".result.json"), {"status": "launch-refused", "reason": str(error)})

@@ -126,13 +126,13 @@ source generation, and strict proof verification are outside timing. The
 Both compare against the same proofs-off observations.
 
 Expanded Make targets use a 300-second timeout and a 10 GiB process-group RSS
-guard. Host memory pressure and host headroom do not stop runs. Source diagnostics
-retain a 2 GiB disk reserve and a 256 MiB combined stdout/stderr limit. An
+guard. Host memory pressure, host headroom, and free-disk reserve checks do not
+stop runs. Source diagnostics retain a 256 MiB combined stdout/stderr limit. An
 output-limit outcome is retained as an unavailable call and is not repeatedly
 retried during preparation; this limit does not change timed measurements.
 A workload failure stops the failed treatment's remaining repetitions; other
 treatments still collect their samples. A safety stop preserves the observation
-and stops the invocation. Historical host-pressure diagnostics remain recorded
+and stops the invocation. Historical host-pressure and disk-reserve diagnostics remain recorded
 but no longer defer future runs. Timed failures stay in the append-only cache.
 Timeout limits are never substituted for measured runtimes.
 

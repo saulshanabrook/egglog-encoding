@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Any
 
 from process_guard import GROUP_LIMIT_BYTES
-from scripts.reproduction_process import DISK_RESERVE_BYTES
 from scripts.source_tools import Preparation, acquire_source, sha256_file, write_json
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -199,7 +198,6 @@ def verified_backend_receipt(receipt: Path) -> Path:
             "timeout_sec": 600,
             "memory_limit_bytes": MEMORY_BYTES,
             "require_guard": True,
-            "disk_reserve_bytes": DISK_RESERVE_BYTES,
         }
         or result.get("status") != "success"
         or result.get("returncode") != 0

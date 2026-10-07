@@ -28,7 +28,6 @@ def test_guarded_failure_retains_request_and_stops(tmp_path: Path, monkeypatch: 
             "timeout_sec": 1800,
             "memory_limit_bytes": 10 * 1024**3,
             "require_guard": True,
-            "disk_reserve_bytes": 2 * 1024**3,
         }
         return PilotProcessResult("memory-limit", -9, 1.0, 6 * 1024**3, prefix, prefix, "over cap")
 
@@ -154,7 +153,6 @@ def test_optimized_backend_fixed_profile_and_verified_receipt(
     assert "must-not-leak" not in " ".join(command)
     assert guard["timeout_sec"] == 600 and guard["memory_limit_bytes"] == 10 * 1024**3
     assert guard["require_guard"] is True
-    assert guard["disk_reserve_bytes"] == 2 * 1024**3
     assert set(record["guard_sources"]) == set(preparation.BACKEND_GUARD_SOURCES)
     assert not (directory / "sources/MISAAL").exists()
     assert not (directory / "halide-build").exists()

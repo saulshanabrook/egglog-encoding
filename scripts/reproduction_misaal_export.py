@@ -265,7 +265,6 @@ def verified_frontend(receipt: Path) -> dict[str, Any]:
             or result.get("returncode") != 0
             or request.get("require_guard") is not True
             or request.get("memory_limit_bytes") != GROUP_LIMIT_BYTES
-            or request.get("disk_reserve_bytes") != 2 * 1024**3
         ):
             raise ValueError("export build did not complete under the required guard")
         if request["command"] != identity["commands"][name]:
@@ -328,7 +327,6 @@ def verify_export_request(request: dict[str, Any]) -> None:
             or result.get("returncode") != 0
             or step_request.get("require_guard") is not True
             or step_request.get("memory_limit_bytes") != GROUP_LIMIT_BYTES
-            or step_request.get("disk_reserve_bytes") != 2 * 1024**3
         ):
             raise ValueError("export generator build was not guarded and successful")
     link = json.loads(steps[-1].read_text())["command"]

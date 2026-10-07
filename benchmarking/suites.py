@@ -35,11 +35,23 @@ class CorpusOutcome(TypedDict):
 
 
 def safety_outcome_applies(outcome: CorpusOutcome) -> bool:
-    """Retain past RSS stops, but retire deferrals from removed host checks."""
+    """Retain past RSS stops, but retire deferrals from removed host/disk checks."""
     return (
         outcome["kind"] == "safety"
         and outcome["policy"] == SAFETY_POLICY
-        and not any(cause in (outcome["reason"] or "") for cause in ("host memory pressure", "host memory headroom"))
+        and not all(
+            any(
+                cause in part
+                for cause in (
+                    "host memory pressure",
+                    "host memory headroom",
+                    "disk guard refused",
+                    "free disk fell below",
+                    "disk monitoring failed",
+                )
+            )
+            for part in (outcome["reason"] or "").split("; ")
+        )
     )
 
 

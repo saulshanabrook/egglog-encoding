@@ -122,7 +122,6 @@ def preparation(source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
                 "command": command,
                 "require_guard": True,
                 "memory_limit_bytes": 10 * 1024**3,
-                "disk_reserve_bytes": 2 * 1024**3,
                 **kwargs,
             },
         )

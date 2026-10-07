@@ -131,8 +131,8 @@ or modify the JSONL.
   corpus resume state and strict validation evidence use ignored
   `benchmarks/corpus/.local/`. Neither is an implicit timed screening pass.
   Do not import diagnostic timings into the cache.
-- Source diagnostics cap combined stdout/stderr at 256 MiB and retain a 2 GiB
-  disk reserve. Preserve output-limit outcomes without retrying them on resume.
+- Source diagnostics cap combined stdout/stderr at 256 MiB, with no free-disk
+  reserve check. Preserve output-limit outcomes without retrying them on resume.
 - Keep source-generation supervision and the explicit validator under `scripts/`,
   whole-process measurement under `benchmarking/`, and shared process
   protection in `process_guard.py`. Collection must not import diagnostic runners.

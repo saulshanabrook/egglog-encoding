@@ -148,7 +148,9 @@ def test_safety_deferral_is_input_bound_and_survives_binary_changes(tmp_path: Pa
 
 
 @pytest.mark.parametrize("prior_cap", [False, True])
-def test_retired_host_stops_do_not_hide_inputs_or_clear_prior_rss_limits(tmp_path: Path, prior_cap: bool) -> None:
+def test_retired_host_and_disk_stops_do_not_hide_inputs_or_clear_prior_rss_limits(
+    tmp_path: Path, prior_cap: bool
+) -> None:
     from benchmarking.figure_inventory import figure_inventory
 
     path = prepare_corpus(tmp_path)
@@ -168,6 +170,9 @@ def test_retired_host_stops_do_not_hide_inputs_or_clear_prior_rss_limits(tmp_pat
     outcomes += [
         {**record, "reason": "host memory pressure is not normal (kernel level 2)"},
         {**record, "reason": "resource guard refused to launch a workload: host memory headroom below reserve"},
+        {**record, "reason": "disk guard refused to launch: fewer than 2147483648 bytes free"},
+        {**record, "reason": "free disk fell below the 2147483648-byte reserve"},
+        {**record, "reason": "disk monitoring failed: cannot read filesystem statistics"},
     ]
     local = path.parent / ".local"
     local.mkdir()
@@ -178,6 +183,11 @@ def test_retired_host_stops_do_not_hide_inputs_or_clear_prior_rss_limits(tmp_pat
     assert suites.suite_outcomes(selection, (), 300) == ((), expected)
     assert figure_inventory(tmp_path)["workloads"][0]["unavailable_reason"] == (record["reason"] if prior_cap else "")
     assert (local / "outcomes.json").read_text() == evidence
+    mixed_reason = "free disk fell below the 2147483648-byte reserve; descendant cleanup failed: still running"
+    outcomes.append({**record, "reason": mixed_reason})
+    (local / "outcomes.json").write_text(json.dumps(outcomes))
+    selection = suites.resolve_suite("expanded", tmp_path)
+    assert suites.suite_outcomes(selection, (), 300) == ((), ((selection.files[0], mixed_reason),))
 
 
 def test_partial_preparation_keeps_pending_population_visible(tmp_path: Path) -> None:

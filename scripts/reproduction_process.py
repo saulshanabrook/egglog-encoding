@@ -5,7 +5,6 @@ from __future__ import annotations
 import fcntl
 import os
 import selectors
-import shutil
 import signal
 import subprocess
 import sys
@@ -19,7 +18,6 @@ from typing import Literal
 
 from process_guard import GROUP_LIMIT_BYTES, MemoryGuard, group_rss_bytes
 
-DISK_RESERVE_BYTES = 2 * 1024**3
 OUTPUT_LIMIT_BYTES = 256 * 1024**2
 
 
@@ -91,7 +89,6 @@ def run_bounded_command(
     memory_limit_bytes: int = GROUP_LIMIT_BYTES,
     output_limit_bytes: int = OUTPUT_LIMIT_BYTES,
     require_guard: bool = False,
-    disk_reserve_bytes: int = 0,
     sample_rss: Callable[[int], int] | None = None,
     cleanup_descendants: Callable[[], None] | None = None,
 ) -> PilotProcessResult:
@@ -111,8 +108,6 @@ def run_bounded_command(
     guard = MemoryGuard() if require_guard else MemoryGuard.from_environment()
     if guard is not None and (reason := guard.check(0)):
         raise ValueError(f"resource guard refused to launch a workload: {reason}")
-    if disk_reserve_bytes and shutil.disk_usage(cwd).free < disk_reserve_bytes:
-        raise ValueError(f"disk guard refused to launch: fewer than {disk_reserve_bytes} bytes free")
     output_prefix.parent.mkdir(parents=True, exist_ok=True)
     stdout_path = Path(str(output_prefix) + ".stdout.log")
     stderr_path = Path(str(output_prefix) + ".stderr.log")
@@ -208,17 +203,6 @@ def run_bounded_command(
                     message = f"memory monitoring failed: {error}"
                     break
                 peak_rss = max(peak_rss, rss)
-                if disk_reserve_bytes:
-                    try:
-                        free_disk = shutil.disk_usage(cwd).free
-                    except OSError as error:
-                        status = "resource-stopped"
-                        message = f"disk monitoring failed: {error}"
-                        break
-                    if free_disk < disk_reserve_bytes:
-                        status = "resource-stopped"
-                        message = f"free disk fell below the {disk_reserve_bytes}-byte reserve"
-                        break
                 if guard is not None and (reason := guard.check(rss)) is not None:
                     status = "resource-stopped"
                     message = reason

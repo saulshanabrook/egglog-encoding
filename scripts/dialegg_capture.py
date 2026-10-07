@@ -48,7 +48,6 @@ def run_complete_command(command: list[str], cwd: Path, prefix: Path, timeout_se
             prefix,
             timeout_sec=timeout_sec,
             require_guard=True,
-            disk_reserve_bytes=2 * 1024**3,
         )
     except ValueError as error:
         if "guard refused" not in str(error):

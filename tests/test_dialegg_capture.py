@@ -5,8 +5,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shutil
 import subprocess
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -75,7 +78,6 @@ def test_completed_native_parent_requires_actual_replay_outputs_including_zero_r
 
     def run(command: list[str], cwd: Path, prefix: Path, **kwargs: Any) -> PilotProcessResult:
         assert kwargs["require_guard"]
-        assert kwargs["disk_reserve_bytes"] == 2 * 1024**3
         commands.append(command)
         out, err = Path(str(prefix) + ".out"), Path(str(prefix) + ".err")
         out.write_text("")
@@ -139,13 +141,22 @@ def test_guard_preflight_refusal_is_durable_and_never_a_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def refuse(*args: Any, **kwargs: Any) -> Any:
-        raise ValueError("disk guard refused to launch: fewer than 10 GiB free")
+        raise ValueError("resource guard refused to launch: test refusal")
 
     monkeypatch.setattr(complete, "run_bounded_command", refuse)
     result = complete.run_complete_command(["never-launched"], tmp_path, tmp_path / "preflight", 30)
     assert result.status == "resource-stopped"
     assert result.returncode is None
-    assert "disk guard refused" in result.stderr_path.read_text()
+    assert "resource guard refused" in result.stderr_path.read_text()
+
+
+def test_low_disk_space_does_not_block_ordinary_replay(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(shutil, "disk_usage", lambda _: SimpleNamespace(free=0))
+    result = complete.run_complete_command(
+        [sys.executable, "-c", "print('completed')"], tmp_path, tmp_path / "low-disk", 10
+    )
+    assert result.status == "success"
+    assert result.stdout_path.read_text() == "completed\n"
 
 
 @pytest.mark.parametrize("logged_term", ["(Chosen 2)", "(Chosen 999)"])
