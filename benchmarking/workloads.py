@@ -2,7 +2,7 @@
 
 This module owns the default workload suite, invocation-relative file and fact
 directory resolution, content identities, and the rule that measured inputs do
-not execute ``(prove ...)``. CLI parsing and endpoint selection belong in their
+not execute ``prove`` or ``prove-extract``. CLI parsing and endpoint selection belong in their
 respective command modules.
 """
 
@@ -28,18 +28,11 @@ class WorkloadConfig:
 DEFAULT_WORKLOADS = (
     WorkloadConfig("egglog-experimental/tests/math-microbenchmark-rational.egg"),
     WorkloadConfig("egglog-experimental/tests/fixtures/eggcc-2mm-pass1.egg"),
-    WorkloadConfig(
-        "egglog/tests/pointer-analysis-initdb.egg",
-        "egglog/tests/pointer-analysis-initdb",
-    ),
     WorkloadConfig("egglog/tests/hardboiled_conv1d_32.egg"),
     WorkloadConfig("egglog/tests/luminal-llama.egg"),
-    WorkloadConfig("egglog/tests/web-demo/herbie.egg"),
     WorkloadConfig("egglog/tests/papers/misaal-hvx-dot-product.egg"),
     WorkloadConfig("egglog/tests/papers/churchroad-wide-multiply.egg"),
     WorkloadConfig("egglog-experimental/tests/papers/dialegg-nmm40.egg"),
-    WorkloadConfig("egglog/tests/papers/speq-preserved-reference-suite.egg"),
-    WorkloadConfig("benchmarks/disequality/parameter-analysis.egg"),
 )
 
 
@@ -144,7 +137,7 @@ def _egglog_tokens(source: str) -> Iterator[str | None]:
 
 
 def file_contains_executable_prove_command(path: Path) -> bool:
-    """Return whether a workload contains a top-level ``prove`` command."""
+    """Return whether a workload explicitly requests a top-level proof."""
 
     depth = 0
     expecting_command = False
@@ -160,7 +153,7 @@ def file_contains_executable_prove_command(path: Path) -> bool:
                 expecting_command = False
             depth = max(0, depth - 1)
         elif depth == 1 and expecting_command:
-            if token == "prove":
+            if token in {"prove", "prove-extract"}:
                 return True
             expecting_command = False
     return False
@@ -190,6 +183,6 @@ def validate_workloads(files: Sequence[FileSpec]) -> None:
     for file_spec in files:
         if file_contains_executable_prove_command(file_spec.absolute_path):
             raise ValueError(
-                f"{file_spec.display_path} contains an explicit prove command; "
-                "benchmark files should use check so the selected treatment controls proof extraction"
+                f"{file_spec.display_path} contains an explicit prove command (prove or prove-extract); "
+                "benchmark files should use check or extract so the selected treatment controls proof extraction"
             )

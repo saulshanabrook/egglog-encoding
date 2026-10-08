@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
 import pytest
 
 from benchmarking import models
+from benchmarking.known_failures import KNOWN_FAILURES, known_failure_reason
 from benchmarking.reports.analysis import analyze_pair
 from benchmarking.reports.store import ReportRecord, ReportStore
 
@@ -253,6 +255,98 @@ def test_valid_tail_does_not_inherit_an_unrelated_invalid_file_issue(tmp_path: P
     assert suite.ratio.issue == "failure row selected"
     assert all(row.file_order == 0 for row in tails)
     assert all(row.ratio.issue is None for row in tails)
+
+
+def test_validation_failure_preserves_means_but_excludes_ratios_and_timing(tmp_path: Path) -> None:
+    report = tmp_path / "report.jsonl"
+    files = tuple(
+        models.FileSpec(f"file-{index}.egg", tmp_path / f"file-{index}.egg", f"sha256:file-{index}")
+        for index in range(2)
+    )
+    reason = "strict proof validation failed: invalid witness"
+    comparison = replace(_comparison(tmp_path, files), suite_mode=True, validation_issues=((files[1], reason),))
+    records = [
+        make_record(
+            endpoint_order * 2 + file_order,
+            started_at=f"2026-07-15T12:00:0{endpoint_order * 2 + file_order}Z",
+            binary_sha256=endpoint.target.binary_sha256,
+            file_sha256=file.sha256,
+            wall_sec=1.0 + endpoint_order,
+            max_rss_bytes=100,
+        )
+        for endpoint_order, endpoint in enumerate((comparison.baseline, comparison.candidate))
+        for file_order, file in enumerate(files)
+    ]
+    write_report(report, *records)
+
+    views = analyze_pair(ReportStore(report).grouped_report(), comparison, "rulesets")
+
+    assert all(row.summary_kind == "file" for row in views.summary)
+    assert all(row.ratio.estimate.point is not None for row in views.summary if row.file_order == 0)
+    assert all(row.ratio.estimate.point is None for row in views.summary if row.file_order == 1)
+    assert all(row.ratio.issue == reason for row in views.summary if row.file_order == 1)
+    invalid_wall = next(row for row in views.files if row.file_order == 1 and row.metric == "wall_sec")
+    assert invalid_wall.baseline.point == 1.0
+    assert invalid_wall.candidate.point == 2.0
+    assert invalid_wall.ratio.estimate.point is None
+    assert invalid_wall.ratio.issue == reason
+    assert [row.file_order for row in views.timing] == [0, 1]
+    assert views.timing[1].wall_delta_ns is None
+    assert views.timing[1].issue == reason
+
+
+@pytest.mark.parametrize("status,label", [("failure", "failure"), ("timed-out", "timeout")])
+@pytest.mark.parametrize("failed_endpoint", ["baseline", "candidate"])
+def test_terminal_observation_precedes_missing_rounds(
+    tmp_path: Path, status: models.Status, label: str, failed_endpoint: str
+) -> None:
+    report = tmp_path / "report.jsonl"
+    comparison = _comparison(tmp_path, rounds=30)
+    failed = make_record(0, started_at="2026-07-15T12:00:00Z", binary_sha256=f"sha256:{failed_endpoint}", status=status)
+    failed["error_message"] = "specific error\nfull diagnostic in cache"
+    write_report(report, failed)
+    store = ReportStore(report)
+
+    ordinary = analyze_pair(store.grouped_report(), comparison, "files")
+    suite = analyze_pair(store.grouped_report(), replace(comparison, suite_mode=True), "files")
+
+    assert ordinary.summary[0].ratio.issue == f"{label} row selected (1/30 attempts): specific error"
+    assert suite.summary[0].ratio.issue == f"{label} row selected (1/30 attempts): specific error"
+    assert suite.summary[0].ratio.estimate.point is None
+    assert suite.files[0].baseline.point is None
+
+
+@pytest.mark.parametrize("cached", [False, True])
+def test_known_failure_precedes_missing_rows_and_excludes_cached_ratios(tmp_path: Path, cached: bool) -> None:
+    failure = KNOWN_FAILURES[0]
+    file = models.FileSpec(failure.file, tmp_path / "parameter.egg", failure.file_sha256)
+    comparison = _comparison(
+        tmp_path, (file,), rounds=3, candidate=_endpoint("candidate", "sha256:candidate", treatment="proofs")
+    )
+    store = ReportStore(tmp_path / "report.jsonl")
+    if cached:
+        store.append(
+            make_record(0, started_at="2026-07-15T12:00:00Z", file_sha256=file.sha256, binary_sha256="sha256:baseline")
+        )
+        store.append(
+            make_record(
+                1,
+                started_at="2026-07-15T12:00:01Z",
+                file_sha256=file.sha256,
+                binary_sha256="sha256:candidate",
+                treatment="proofs",
+            )
+        )
+
+    views = analyze_pair(store.grouped_report(), comparison, "rulesets")
+
+    reason = known_failure_reason(file, "proofs")
+    assert reason is not None
+    assert all(row.ratio.issue == reason for row in views.summary)
+    assert all(row.ratio.issue == reason and row.ratio.estimate.point is None for row in views.files)
+    assert all(row.issue == reason and row.wall_delta_ns is None for row in views.timing)
+    assert len(store.records) == (2 if cached else 0)
+    assert store.path.exists() == cached
 
 
 def test_mechanism_buckets_are_additive_and_residual_closes_to_wall(tmp_path: Path) -> None:
@@ -668,3 +762,49 @@ def _fieller_bounds(
     center = baseline_mean * candidate_mean / a
     half_width = math.sqrt(radicand) / a
     return (center - half_width, center + half_width)
+
+
+def test_ten_run_sample_and_fieller_use_df_nine(tmp_path: Path) -> None:
+    report = tmp_path / "report.jsonl"
+    comparison = _comparison(tmp_path, rounds=10)
+    records: list[ReportRecord] = []
+    for binary, mean in (("sha256:baseline", 10), ("sha256:candidate", 20)):
+        for index in range(30):
+            records.append(
+                make_record(
+                    len(records),
+                    started_at="2026-01-01T00:00:00Z",
+                    binary_sha256=binary,
+                    wall_sec=100 if index < 20 else mean + (index - 24.5) / 10,
+                )
+            )
+    write_report(report, *records)
+    wall = next(
+        row
+        for row in analyze_pair(ReportStore(report).grouped_report(), comparison, "files").files
+        if row.metric == "wall_sec"
+    )
+    var_mean = 0.09166666666666666 / 10
+    critical = 2.2621571627409915  # Student-t 0.975 quantile, 9 degrees of freedom.
+    low, high = _fieller_bounds(10, var_mean, 20, var_mean, critical)
+    assert wall.baseline.point == pytest.approx(10)
+    assert wall.baseline.ci_low == pytest.approx(10 - critical * math.sqrt(var_mean))
+    assert wall.ratio.estimate.ci_low == pytest.approx(low)
+    assert wall.ratio.estimate.ci_high == pytest.approx(high)
+
+
+def test_suite_report_preserves_failure_outside_reduced_sample(tmp_path: Path) -> None:
+    report = tmp_path / "report.jsonl"
+    comparison = replace(_comparison(tmp_path, rounds=10), suite_mode=True)
+    records = [make_record(0, started_at="2026-01-01T00:00:00Z", binary_sha256="sha256:candidate", status="timed-out")]
+    for binary in ("sha256:baseline", "sha256:candidate"):
+        for _index in range(10):
+            records.append(make_record(len(records), started_at="2026-01-01T00:00:00Z", binary_sha256=binary))
+    write_report(report, *records)
+    wall = next(
+        row
+        for row in analyze_pair(ReportStore(report).grouped_report(), comparison, "files").files
+        if row.metric == "wall_sec"
+    )
+    assert wall.ratio.result_class == "invalid"
+    assert "timeout row selected (11/10 attempts)" in (wall.ratio.issue or "")

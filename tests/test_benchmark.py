@@ -38,13 +38,15 @@ def test_public_entrypoint_dispatches_benchmark_and_profile(monkeypatch: pytest.
     assert calls == [("benchmark", ("--rounds", "1")), ("profile", ("file.egg",))]
 
 
-def test_pair_cli_defaults_to_current_main_off_vs_proofs() -> None:
-    args = benchmark.parse_benchmark_args([])
+@pytest.mark.parametrize("argv", [[], ["--suite", "eggcc"]])
+def test_pair_cli_defaults_to_current_main_off_vs_proofs(argv: list[str]) -> None:
+    args = benchmark.parse_benchmark_args(argv)
     baseline, candidate = benchmark.endpoint_requests(args)
 
     assert baseline == models.EndpointRequest(targets.parse_target("."), "off")
     assert candidate == models.EndpointRequest(targets.parse_target("."), "proofs")
-    assert args.detail == "summary"
+    assert args.rounds == 6
+    assert args.detail == ("files" if argv else "summary")
     assert args.command == "benchmark"
 
 
@@ -98,6 +100,8 @@ def test_pair_cli_accepts_each_named_detail_level(detail: str) -> None:
         ("--phase-timings",),
         ("--detailed-timing",),
         ("--serve",),
+        ("--baseline-window",),
+        ("--baseline-only",),
         ("--serve-port", "4312"),
         ("--detail", "3"),
         ("--report", "-"),
@@ -384,3 +388,91 @@ def test_duplicate_physical_inputs_fail_before_building(tmp_path: Path, monkeypa
         == 2
     )
     assert not (tmp_path / "cache.jsonl").exists()
+
+
+@pytest.mark.parametrize("resource_stop", [False, True])
+def test_suite_collects_outside_time_window_and_continues_other_endpoint_after_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, resource_stop: bool
+) -> None:
+    from benchmarking import processes, suites
+    from benchmarking.reports.store import CacheKey
+
+    from .corpus_fixtures import prepare_corpus
+    from .report_fixtures import make_timing_summary
+
+    prepare_corpus(tmp_path, contents=("(check (= 1 1))\n", "(check (= 2 2))\n"))
+    suite = suites.resolve_suite("expanded", tmp_path)
+    binary = tmp_path / "engine"
+    binary.write_bytes(b"mocked engine")
+    target = make_target(binary_path=binary, binary_sha256=targets.sha256_file(binary))
+    monkeypatch.setattr(benchmark, "resolve_suite", lambda *_: suite)
+    monkeypatch.setattr(benchmark, "resolve_targets", lambda groups, *_: {request: target for request, _ in groups})
+    monkeypatch.setattr(benchmark, "preflight_collection", lambda *_: None)
+    calls: list[tuple[str, str]] = []
+
+    def measured(
+        _binary: Path,
+        _checkout: Path,
+        file: models.FileSpec,
+        treatment: models.Treatment,
+        _timeout: int,
+        _encoding: models.DisequalityEncoding,
+    ) -> collection.ProcessObservation:
+        calls.append((file.sha256, treatment))
+        failed = treatment == "proof-extraction" and file == suite.files[0]
+        return collection.ProcessObservation(
+            processes.TimingResult(
+                "failure" if failed else "success",
+                processes.TimingRow(0.01 if file == suite.files[0] else 60.0, 1000),
+                processes.ErrorRow("host memory pressure" if resource_stop else "extraction failed")
+                if failed
+                else None,
+                resource_stopped=failed and resource_stop,
+            ),
+            None if failed else make_timing_summary(),
+        )
+
+    monkeypatch.setattr(collection, "run_process", measured)
+    report = tmp_path / "report.jsonl"
+    if not resource_stop:
+        ReportStore(report).append(
+            make_record(
+                0,
+                started_at="2026-01-01T00:00:00Z",
+                treatment="off",
+                timeout_sec=300,
+                binary_sha256=target.binary_sha256,
+                file_sha256=suite.files[1].sha256,
+                wall_sec=60.0,
+            )
+        )
+    args = [
+        "--suite",
+        "expanded",
+        "--report",
+        str(report),
+        "--rounds",
+        "3",
+        "--timeout-sec",
+        "300",
+        "--compare-treatment",
+        "proof-extraction",
+        "--treatment",
+        "off",
+    ]
+    assert benchmark.main(args) == (2 if resource_stop else 0)
+    assert grouped_report_path(report).exists()
+    store = ReportStore(report)
+    assert store.row_count == (1 if resource_stop else 10)
+    if resource_stop:
+        assert len(calls) == 1
+        return
+    assert len(calls) == 9
+    for file in suite.files:
+        assert len(store.latest_records(CacheKey.for_endpoint(models.BenchmarkEndpoint(target, "off"), file, 300))) == 3
+    calls.clear()
+    assert benchmark.main(args) == 0
+    assert calls == []
+    assert benchmark.main([*args, "--force-run"]) == 0
+    assert len(calls) == 10
+    assert ReportStore(report).row_count == 20

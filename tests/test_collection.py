@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -16,6 +17,15 @@ from benchmarking.reports.store import CacheKey, ReportStore
 from .report_fixtures import ROOT, make_record, make_target, make_timing_summary, write_report
 
 FILE_SPEC = models.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
+
+
+@pytest.fixture
+def executable_target(tmp_path: Path) -> models.ResolvedTarget:
+    """Give mocked collection processes an actual immutable executable identity."""
+
+    binary = tmp_path / "egglog-experimental"
+    binary.write_text("mocked engine executable\n")
+    return make_target(binary_path=binary, binary_sha256=targets.sha256_file(binary))
 
 
 def endpoint(
@@ -87,6 +97,8 @@ def test_collection_plans_group_only_the_same_resolved_target(monkeypatch: pytes
         _rounds: int,
         _timeout_sec: int,
         force_run: bool,
+        _suite_mode: bool,
+        _blocked_files: tuple[models.FileSpec, ...],
     ) -> collection.CollectionPlan:
         observed.append((target, endpoints, force_run))
         return sentinel
@@ -125,6 +137,8 @@ def test_collection_plans_keep_distinct_targets_with_the_same_binary_separate(
         _rounds: int,
         _timeout_sec: int,
         _force_run: bool,
+        _suite_mode: bool,
+        _blocked_files: tuple[models.FileSpec, ...],
     ) -> collection.CollectionPlan:
         observed.append(target)
         return cast(collection.CollectionPlan, object())
@@ -385,10 +399,11 @@ def test_partial_and_forced_plans_show_only_total_work() -> None:
 def test_collect_rows_appends_process_and_ruleset_timing_together(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    executable_target: models.ResolvedTarget,
 ) -> None:
     report = tmp_path / "report.jsonl"
     file_spec = models.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
-    target = make_target(binary_path=ROOT / "egglog-experimental")
+    target = executable_target
     selected_endpoint = endpoint(target)
     summary = make_timing_summary()
     success = processes.TimingResult("success", processes.TimingRow(wall_sec=1.25, max_rss_bytes=4096), None)
@@ -492,17 +507,21 @@ def test_collected_row_uses_selected_engine_binary_and_hash(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    egglog_binary = ROOT / "egglog-experimental"
-    egg_binary = ROOT / "egg-math-benchmark"
-    original = make_target(binary_sha256="sha256:egglog", binary_path=egglog_binary)
+    egglog_binary = tmp_path / "egglog-experimental"
+    egg_binary = tmp_path / "egg-math-benchmark"
+    egglog_binary.write_text("egglog binary\n")
+    egg_binary.write_text("native egg binary\n")
+    egglog_hash = targets.sha256_file(egglog_binary)
+    egg_hash = targets.sha256_file(egg_binary)
+    original = make_target(binary_sha256=egglog_hash, binary_path=egglog_binary)
     target = models.ResolvedTarget(
         original.request,
         original.row,
         original.binary_sha256,
         original.binary_path,
         (
-            models.EngineBinary("egglog", "sha256:egglog", egglog_binary),
-            models.EngineBinary("egg", "sha256:egg", egg_binary),
+            models.EngineBinary("egglog", egglog_hash, egglog_binary),
+            models.EngineBinary("egg", egg_hash, egg_binary),
         ),
         "egglog",
     )
@@ -526,19 +545,97 @@ def test_collected_row_uses_selected_engine_binary_and_hash(
     collection.collect_rows(store, plan, 120, Console(stderr=True))
 
     assert observed_binaries == [egg_binary]
-    assert store.records[0]["binary_sha256"] == "sha256:egg"
-    assert CacheKey.for_endpoint(selected_endpoint, file_spec, 120).binary_sha256 == "sha256:egg"
+    assert store.records[0]["binary_sha256"] == egg_hash
+    assert CacheKey.for_endpoint(selected_endpoint, file_spec, 120).binary_sha256 == egg_hash
+
+
+@pytest.mark.parametrize("replacement_timing", ["before", "during"])
+def test_collect_rows_rejects_replaced_executable_without_changing_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    executable_target: models.ResolvedTarget,
+    replacement_timing: str,
+) -> None:
+    target = executable_target
+    binary_path = target.binary_path
+    assert binary_path is not None
+    replacement = tmp_path / "replacement"
+    replacement.write_text("replacement engine executable\n")
+    file = stable_file_spec(tmp_path)
+    report = tmp_path / "report.jsonl"
+    write_report(
+        report,
+        make_record(
+            0,
+            started_at="2026-09-21T00:00:00Z",
+            binary_sha256=target.binary_sha256,
+            file_sha256=file.sha256,
+        ),
+    )
+    original_cache = report.read_bytes()
+    store = ReportStore(report)
+    plan = collection.build_collection_plan(store, target, (endpoint(target),), (file,), 1, 120, True)
+    process_calls = []
+
+    def run_process(path: Path, *_args: object) -> collection.ProcessObservation:
+        process_calls.append(path)
+        assert replacement_timing == "during", "replacement before a run must prevent process launch"
+        replacement.replace(path)
+        return collection.ProcessObservation(
+            processes.TimingResult("success", processes.TimingRow(wall_sec=0.5), None),
+            make_timing_summary(),
+        )
+
+    monkeypatch.setattr(collection, "run_process", run_process)
+    if replacement_timing == "before":
+        replacement.replace(binary_path)
+
+    with pytest.raises(ValueError, match="benchmark executable changed before or during execution"):
+        collection.collect_rows(store, plan, 120, Console(stderr=True))
+
+    assert process_calls == ([binary_path] if replacement_timing == "during" else [])
+    assert store.row_count == 1
+    assert report.read_bytes() == original_cache
+
+
+def test_fully_cached_collection_does_not_require_the_old_executable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, executable_target: models.ResolvedTarget
+) -> None:
+    target = executable_target
+    assert target.binary_path is not None
+    file = stable_file_spec(tmp_path)
+    report = tmp_path / "report.jsonl"
+    write_report(
+        report,
+        make_record(
+            0,
+            started_at="2026-09-21T00:00:00Z",
+            binary_sha256=target.binary_sha256,
+            file_sha256=file.sha256,
+        ),
+    )
+    original_cache = report.read_bytes()
+    store = ReportStore(report)
+    plan = collection.build_collection_plan(store, target, (endpoint(target),), (file,), 1, 120, False)
+    target.binary_path.unlink()
+    monkeypatch.setattr(collection, "run_process", lambda *_args: pytest.fail("cached rows must not run"))
+
+    collection.collect_rows(store, plan, 120, Console(stderr=True))
+
+    assert store.row_count == 1
+    assert report.read_bytes() == original_cache
 
 
 def test_collect_rows_rejects_unsupported_timing_summary_before_append(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    executable_target: models.ResolvedTarget,
 ) -> None:
     report = tmp_path / "report.jsonl"
     benchmark_file = tmp_path / "file.egg"
     benchmark_file.write_text("(check (= 1 1))\n", encoding="utf-8")
     file_spec = models.FileSpec("file.egg", benchmark_file, targets.sha256_file(benchmark_file))
-    target = make_target(binary_path=ROOT / "egglog-experimental")
+    target = executable_target
     selected_endpoint = endpoint(target)
 
     def write_unsupported_summary(
@@ -613,9 +710,17 @@ def test_run_process_passes_treatment_flags(
 
     off = collection.run_process(ROOT / "egglog-experimental", ROOT, file_spec, "off", 120)
     proofs = collection.run_process(ROOT / "egglog-experimental", ROOT, file_spec, "proofs", 120)
+    extraction = collection.run_process(ROOT / "egglog-experimental", ROOT, file_spec, "proof-extraction", 120)
+    strict = collection.run_process(ROOT / "egglog-experimental", ROOT, file_spec, "proof-testing", 120)
 
-    assert "--proofs" not in commands[0]
-    assert "--proofs" in commands[1]
+    assert len(commands) == 4
+    proof_flags = {"--proofs", "--proof-extraction", "--proof-testing"}
+    assert [set(command) & proof_flags for command in commands] == [
+        set(),
+        {"--proofs"},
+        {"--proof-extraction"},
+        {"--proof-testing"},
+    ]
     assert off.timing_summary is not None
     assert off.timing_summary["rulesets"] == [
         {
@@ -630,6 +735,8 @@ def test_run_process_passes_treatment_flags(
     ]
     assert off.timing_summary["native_rebuild_ns"] == 8
     assert proofs.timing_summary is not None
+    assert extraction.timing_summary is not None
+    assert strict.timing_summary is not None
 
 
 def test_run_process_rejects_success_without_timing_summary(
@@ -666,6 +773,7 @@ def test_collect_rows_rejects_mutated_workload_before_append(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     mutated_input: str,
+    executable_target: models.ResolvedTarget,
 ) -> None:
     benchmark_file = tmp_path / "file.egg"
     benchmark_file.write_text("(check (= 1 1))\n", encoding="utf-8")
@@ -680,7 +788,7 @@ def test_collect_rows_rejects_mutated_workload_before_append(
         facts,
         targets.sha256_directory(facts),
     )
-    target = make_target(binary_path=ROOT / "egglog-experimental")
+    target = executable_target
     selected_endpoint = endpoint(target)
 
     def mutate_workload(
@@ -710,8 +818,9 @@ def test_collect_rows_rejects_mutated_workload_before_append(
 def test_redirected_collection_logs_each_run_and_one_status_summary(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    executable_target: models.ResolvedTarget,
 ) -> None:
-    target = make_target(binary_path=ROOT / "egglog-experimental")
+    target = executable_target
     run = planned_run(required=3)
     plan = collection.CollectionPlan(target, (run,))
     success = collection.ProcessObservation(
@@ -743,21 +852,22 @@ def test_redirected_collection_logs_each_run_and_one_status_summary(
     collection.collect_rows(store, plan, 120, console)
 
     assert stream.getvalue().splitlines() == [
-        "  [1/3] file.egg · off · 1/3: succeeded after 0.250s",
-        "  [2/3] file.egg · off · 2/3: failed after 0.500s: bad rule more context",
-        "  [3/3] file.egg · off · 3/3: timed out after 120 seconds",
-        "abc123: collected 3 fresh runs · 1 successful, 1 failed, 1 timed out",
+        "abc123: ETA pending (remaining executable time)",
+        "  [1/3] file.egg · off · 1/3: succeeded after 0.250s · ETA ~0:00:01",
+        "  [2/3] file.egg · off · 2/3: failed after 0.500s: bad rule more context · ETA ~0:00:00",
+        "abc123: collected 2 fresh runs · 1 successful, 1 failed",
     ]
-    assert store.row_count == 3
+    assert store.row_count == 2
 
 
-@pytest.mark.parametrize("width", [80, 120])
+@pytest.mark.parametrize("width", [80, 119, 120, 160, 200])
 def test_terminal_progress_keeps_success_transient_but_surfaces_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     width: int,
+    executable_target: models.ResolvedTarget,
 ) -> None:
-    target = make_target(binary_path=ROOT / "egglog-experimental")
+    target = executable_target
     run = planned_run(required=2)
     plan = collection.CollectionPlan(target, (run,))
     success = collection.ProcessObservation(
@@ -788,6 +898,310 @@ def test_terminal_progress_keeps_success_transient_but_surfaces_failure(
     assert "succeeded after" not in rendered
     assert "file.egg" in rendered
     assert "off" in rendered
-    assert "ETA" not in rendered
+    assert "ETA" in rendered
     assert "failed after 0.500s: bad rule" in rendered
     assert "abc123: collected 2 fresh runs · 1 successful, 1 failed" in rendered
+
+
+def test_collection_eta_weights_remaining_work_by_endpoint_and_ignores_failures(tmp_path: Path) -> None:
+    store = ReportStore(tmp_path / "report.jsonl")
+    off = planned_run(required=10, missing=2)
+    proofs = planned_run(treatment="proofs", required=10, missing=3)
+    plan = collection.CollectionPlan(make_target(), (off, proofs))
+    for treatment, wall, status in (
+        ("off", 1.0, "success"),
+        ("off", 3.0, "success"),
+        ("proofs", 100.0, "success"),
+        ("proofs", 200.0, "success"),
+        ("proofs", 999.0, "failure"),
+        ("proofs", None, "timed-out"),
+    ):
+        store.append(
+            make_record(
+                0,
+                started_at="2026-01-01T00:00:00Z",
+                file_sha256=off.file.sha256,
+                treatment=cast(models.Treatment, treatment),
+                wall_sec=cast(float | None, wall),
+                status=cast(models.Status, status),
+            )
+        )
+    # 2 * mean(1, 3) + 3 * mean(100, 200), not a throughput average across runs.
+    assert collection._collection_eta(store, plan, 120, {off: 2, proofs: 3}) == "ETA ~0:07:34"
+    assert collection._collection_eta(store, plan, 120, {off: 0, proofs: 0}) == "ETA ~0:00:00"
+
+
+@pytest.mark.parametrize("mismatch", ["binary", "file", "facts", "treatment", "timeout", "encoding"])
+def test_collection_eta_waits_for_matching_successful_measurements(tmp_path: Path, mismatch: str) -> None:
+    store = ReportStore(tmp_path / "report.jsonl")
+    run = planned_run(required=10)
+    plan = collection.CollectionPlan(make_target(), (run,))
+    record = make_record(0, started_at="2026-01-01T00:00:00Z", file_sha256=run.file.sha256)
+    if mismatch == "binary":
+        record["binary_sha256"] = "sha256:other"
+    elif mismatch == "file":
+        record["file_sha256"] = "sha256:other"
+    elif mismatch == "facts":
+        record["fact_directory_sha256"] = "sha256:other"
+    elif mismatch == "treatment":
+        record["treatment"] = "proofs"
+    elif mismatch == "encoding":
+        run = replace(run, disequality_encoding="ee")
+        plan = collection.CollectionPlan(make_target(), (run,))
+    else:
+        record["timeout_sec"] = 300
+    store.append(record)
+    assert collection._collection_eta(store, plan, 120, {run: 10}) == "ETA pending"
+    # A terminal failure removes this workload's remaining repetitions from the ETA.
+    assert collection._collection_eta(store, plan, 120, {run: 0}) == "ETA ~0:00:00"
+
+
+def test_resource_guard_failure_is_retained_before_collection_halts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, executable_target: models.ResolvedTarget
+) -> None:
+    run = planned_run(required=30)
+    plan = collection.CollectionPlan(executable_target, (run,))
+    calls = 0
+
+    def stopped(*_args: object) -> collection.ProcessObservation:
+        nonlocal calls
+        calls += 1
+        return collection.ProcessObservation(
+            processes.TimingResult(
+                "failure",
+                processes.TimingRow(),
+                processes.ErrorRow("resource guard stopped workload: host memory pressure"),
+                resource_stopped=True,
+            ),
+            None,
+        )
+
+    monkeypatch.setattr(collection, "run_process", stopped)
+    store = ReportStore(tmp_path / "report.jsonl")
+    with pytest.raises(ValueError, match="failed observation was retained.*before launching another workload"):
+        collection.collect_rows(store, plan, 120, Console(file=io.StringIO()))
+    assert calls == store.row_count == 1
+    record = store.records[0]
+    assert record["status"] == "failure"
+    assert record["wall_sec"] is None
+    assert "host memory pressure" in str(record["error_message"])
+    resumed = collection.build_collection_plan(
+        store, executable_target, (endpoint(executable_target),), (run.file,), 30, 120, False
+    )
+    assert resumed.runs[0].cached_statuses == ("failure",)
+    assert resumed.total_missing_observations == 0
+
+
+def test_suite_reduced_sample_retains_old_failure_until_explicit_retry(tmp_path: Path) -> None:
+    store = ReportStore(tmp_path / "report.jsonl")
+    target = make_target()
+    proof = endpoint(target, "proofs")
+    for index in range(11):
+        store.append(
+            make_record(
+                index,
+                started_at="2026-01-01T00:00:00Z",
+                treatment="proofs",
+                status="timed-out" if index == 0 else "success",
+            )
+        )
+    assert all(
+        row.record["status"] == "success"
+        for row in store.latest_records(CacheKey.for_endpoint(proof, FILE_SPEC, 120), 10)
+    )
+    plan = collection.build_collection_plan(store, target, (proof,), (FILE_SPEC,), 10, 120, False, True)
+    assert plan.total_missing_observations == 0
+    assert plan.runs[0].cached_statuses == ("timed-out", *("success",) * 10)
+    retry = collection.build_collection_plan(store, target, (proof,), (FILE_SPEC,), 10, 120, True, True)
+    assert retry.total_missing_observations == 10
+
+
+@pytest.mark.parametrize("status", ["failure", "timed-out"])
+def test_suite_cached_failure_only_stops_matching_endpoint(tmp_path: Path, status: models.Status) -> None:
+    target = make_target()
+    endpoints = (
+        endpoint(target, "off"),
+        endpoint(target, "proofs"),
+        endpoint(target, "proof-extraction"),
+        models.BenchmarkEndpoint(target, "proof-extraction", "ee"),
+    )
+    store = ReportStore(tmp_path / "report.jsonl")
+    store.append(make_record(0, started_at="2026-01-01T00:00:00Z", treatment="proof-extraction", status=status))
+    store.append(make_record(1, started_at="2026-01-01T00:00:01Z", treatment="off"))
+    plan = collection.build_collection_plan(store, target, endpoints, (FILE_SPEC,), 3, 120, False, True)
+    assert [run.missing_observations for run in plan.runs] == [2, 3, 0, 3]
+    requests = tuple(models.EndpointRequest(target.request, e.treatment, e.disequality_encoding) for e in endpoints)
+    assert not collection.label_has_enough_rows(store, target, requests, (FILE_SPEC,), 3, 120, True)
+    assert collection.label_has_enough_rows(store, target, requests[2:3], (FILE_SPEC,), 3, 120, True)
+    forced = collection.build_collection_plan(store, target, endpoints, (FILE_SPEC,), 3, 120, True, True)
+    assert [run.missing_observations for run in forced.runs] == [3, 3, 3, 3]
+    deferred = collection.build_collection_plan(
+        store, target, endpoints, (FILE_SPEC,), 3, 120, True, True, (FILE_SPEC,)
+    )
+    assert deferred.total_missing_observations == 0
+
+
+def test_suite_fresh_failure_only_stops_its_workload_treatment_and_encoding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, executable_target: models.ResolvedTarget
+) -> None:
+    target = executable_target
+    files = (FILE_SPEC, replace(FILE_SPEC, sha256="sha256:other"))
+    endpoints = (
+        endpoint(target, "proof-extraction"),
+        endpoint(target, "off"),
+        endpoint(target, "proofs"),
+        models.BenchmarkEndpoint(target, "proof-extraction", "ee"),
+    )
+    store = ReportStore(tmp_path / "report.jsonl")
+    plan = collection.build_collection_plan(store, target, endpoints, files, 3, 120, False, True)
+
+    def measured(
+        _binary: Path,
+        _checkout: Path,
+        file: models.FileSpec,
+        treatment: models.Treatment,
+        _timeout: int,
+        encoding: models.DisequalityEncoding,
+    ) -> collection.ProcessObservation:
+        failed = file == FILE_SPEC and treatment == "proof-extraction" and encoding == "nee"
+        return collection.ProcessObservation(
+            processes.TimingResult(
+                "failure" if failed else "success",
+                processes.TimingRow(0.2, 1000),
+                processes.ErrorRow("extraction failed", exit_code=1) if failed else None,
+            ),
+            None if failed else make_timing_summary(),
+        )
+
+    monkeypatch.setattr(collection, "run_process", measured)
+    collection.collect_rows(store, plan, 120, Console(file=io.StringIO()))
+    assert [len(store.latest_records(CacheKey.for_endpoint(e, f, 120))) for f in files for e in endpoints] == [
+        1,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+    ]
+    assert (
+        collection.build_collection_plan(
+            store, target, endpoints, files, 3, 120, False, True
+        ).total_missing_observations
+        == 0
+    )
+    requests = tuple(models.EndpointRequest(target.request, e.treatment, e.disequality_encoding) for e in endpoints)
+    assert collection.label_has_enough_rows(store, target, requests, files, 3, 120, True)
+
+
+def test_ordinary_failed_selection_blocks_retries_until_forced_successes_replace_it(tmp_path: Path) -> None:
+    target = make_target()
+    proof = endpoint(target, "proofs")
+    store = ReportStore(tmp_path / "report.jsonl")
+    store.append(make_record(0, started_at="2026-01-01T00:00:00Z", treatment="proofs", status="failure"))
+    assert (
+        collection.build_collection_plan(
+            store, target, (proof,), (FILE_SPEC,), 3, 120, False
+        ).total_missing_observations
+        == 0
+    )
+    assert (
+        collection.build_collection_plan(store, target, (proof,), (FILE_SPEC,), 3, 120, True).total_missing_observations
+        == 3
+    )
+    for index in range(1, 4):
+        store.append(make_record(index, started_at=f"2026-01-01T00:00:0{index}Z", treatment="proofs"))
+    plan = collection.build_collection_plan(store, target, (proof,), (FILE_SPEC,), 3, 120, False)
+    assert plan.runs[0].cached_statuses == ("success",) * 3
+    assert plan.total_missing_observations == 0
+    assert store.row_count == 4
+
+
+def test_configured_failure_cannot_be_forced_and_does_not_block_other_modes(tmp_path: Path) -> None:
+    from benchmarking.known_failures import KNOWN_FAILURES
+
+    failure = KNOWN_FAILURES[0]
+    file = replace(FILE_SPEC, sha256=failure.file_sha256, fact_directory_sha256=failure.fact_directory_sha256)
+    target = make_target()
+    endpoints = (endpoint(target, "off"), endpoint(target, "proofs"))
+    store = ReportStore(tmp_path / "report.jsonl")
+    for force_run in (False, True):
+        plan = collection.build_collection_plan(store, target, endpoints, (file,), 3, 120, force_run)
+        assert [run.missing_observations for run in plan.runs] == [3, 0]
+        assert plan.runs[1].skip_reason is not None
+    request = models.EndpointRequest(target.request, "proofs")
+    assert collection.label_has_enough_rows(store, target, (request,), (file,), 3, 120)
+    assert not store.path.exists()
+
+
+def test_budget_cancellation_keeps_completed_rows_without_inventing_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, executable_target: models.ResolvedTarget
+) -> None:
+    store = ReportStore(tmp_path / "report.jsonl")
+    calls = 0
+
+    def measure(*_args: object) -> collection.ProcessObservation:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise processes.BudgetExpired("budget")
+        return collection.ProcessObservation(
+            processes.TimingResult("success", processes.TimingRow(0.01), None), make_timing_summary()
+        )
+
+    monkeypatch.setattr(collection, "run_process", measure)
+    with pytest.raises(processes.BudgetExpired):
+        collection.collect_rows(
+            store,
+            collection.CollectionPlan(executable_target, (planned_run(required=3),)),
+            120,
+            Console(file=io.StringIO()),
+        )
+    assert calls == 2
+    assert store.row_count == 1
+    assert store.records[0]["status"] == "success"
+    assert store.records[0]["timeout_sec"] == 120
+
+
+@pytest.mark.parametrize("changed", [None, "checkout", "commit", "dirty", "engine", "cache_only"])
+def test_sequential_target_resolution_reuses_only_compatible_builds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, changed: str | None
+) -> None:
+    previous = make_target(target_label="branch", binary_path=tmp_path / "engine")
+    request = targets.parse_target("main=@origin/main")
+    row = replace(previous.row, label="main", source=request.raw, git_ref="origin/main")
+    if changed == "checkout":
+        row = replace(row, path=str(tmp_path))
+    elif changed == "commit":
+        row = replace(row, git_sha="changed")
+    elif changed == "dirty":
+        row = replace(row, is_dirty=True)
+    elif changed == "cache_only":
+        previous = replace(previous, binary_path=None)
+    treatment: models.Treatment = "egg" if changed == "engine" else "proofs"
+    builds = []
+    monkeypatch.setattr(collection, "materialize_target_request", lambda *_args: row)
+
+    def build(*_args: object) -> models.ResolvedTarget:
+        builds.append(request)
+        return previous
+
+    monkeypatch.setattr(collection, "build_resolved_target", build)
+    resolved = collection.resolve_targets(
+        ((request, (models.EndpointRequest(request, treatment),)),),
+        ReportStore(tmp_path / "report.jsonl"),
+        (FILE_SPEC,),
+        6,
+        120,
+        False,
+        ROOT,
+        ROOT,
+        Console(file=io.StringIO()),
+        reuse_targets=(previous,),
+    )[request]
+    assert builds == ([] if changed is None else [request])
+    assert resolved.request == request
+    assert resolved.row.label == "main"
+    assert resolved.row.source == request.raw
+    assert resolved.binary_sha256 == previous.binary_sha256

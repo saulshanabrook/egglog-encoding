@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -65,6 +66,25 @@ def test_realistic_pair_report_markdown_snapshot(tmp_path: Path, snapshot: Snaps
     assert "0.883–1.14 s" in markdown
 
 
+def test_summary_lists_all_validation_failures_and_suppresses_successful_ratios(tmp_path: Path) -> None:
+    report_path, comparison = _pair_case(tmp_path)
+    reasons = tuple(
+        (file, f"strict proof validation failed: witness {index}") for index, file in enumerate(comparison.files)
+    )
+    comparison = replace(comparison, suite_mode=True, validation_issues=reasons)
+    catalog = build_report_catalog(ReportStore(report_path).grouped_report(), comparison, "rulesets")
+    summary = next(section for section in catalog.sections if section.id == "summary")
+    messages = tuple(block for block in summary.blocks if isinstance(block, ReportMessage))
+    markdown = render_markdown_report_document(catalog)
+
+    assert [message.text for message in messages] == [reason for _file, reason in reasons]
+    assert "unavailable: strict proof validation failed" in markdown
+    assert "all matching observations; top-up target 2 per endpoint/file; failed cases stop" in markdown
+    assert "0.983–1.16x" not in markdown
+    assert "Suite total" not in markdown
+    assert "Lowest-ratio file" not in markdown
+
+
 def test_selection_uses_treatment_from_the_comparison(tmp_path: Path) -> None:
     baseline = make_endpoint(target_label="off", binary_sha256="sha256:shared", treatment="off")
     candidate = make_endpoint(target_label="term", binary_sha256="sha256:shared", treatment="term")
@@ -82,6 +102,19 @@ def test_selection_uses_treatment_from_the_comparison(tmp_path: Path) -> None:
 
     assert "| Baseline | off | abc123 | off |" in markdown
     assert "| Candidate | term | abc123 | term |" in markdown
+
+
+def test_report_notes_survive_rich_and_markdown_rendering(tmp_path: Path) -> None:
+    report_path, comparison = _pair_case(tmp_path)
+    note = "Collection budget expired; this report contains the completed observations."
+    comparison = replace(comparison, report_notes=(note,))
+    catalog = build_report_catalog(ReportStore(report_path).grouped_report(), comparison, "files")
+    console = Console(width=120, record=True, color_system=None)
+
+    console.print(render_rich_report_document(catalog, width=120))
+
+    assert note in console.export_text()
+    assert note in render_markdown_report_document(catalog)
 
 
 def test_selection_warns_when_same_engine_binary_and_treatment_both_change(tmp_path: Path) -> None:

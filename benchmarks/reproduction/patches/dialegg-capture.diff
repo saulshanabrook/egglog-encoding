@@ -1,0 +1,69 @@
+--- a/src/EqualitySaturationPass.cpp
++++ b/src/EqualitySaturationPass.cpp
+@@ -1,3 +1,5 @@
++#include <cstdlib>
++#include <stdexcept>
+ #include <map>
+ #include <unordered_map>
+ #include <vector>
+@@ -67,6 +69,15 @@
+ 
+     // Write the extracted egglog to a new file with the same name and ext .ops.egg
+     std::string opsEggFilePath = eggFilePath.substr(0, eggFilePath.find_last_of(".")) + ".ops.egg";
++    static size_t captureIndex = 0;
++    const char* captureDirectory = std::getenv("DIALEGG_CAPTURE_DIR");
++    if (!captureDirectory) throw std::runtime_error("DIALEGG_CAPTURE_DIR required");
++    opsEggFilePath = std::string(captureDirectory) + "/invocation-" + std::to_string(captureIndex++) + ".egg";
++    egglogExtractedFilename = opsEggFilePath + ".stdout";
++    egglogLogFilename = opsEggFilePath + ".stderr";
++    std::ofstream contextFile(opsEggFilePath + ".context");
++    contextFile << blockName << "\n";
++    contextFile.close();
+     std::ofstream eggFileOut(opsEggFilePath);
+     for (const std::string& line: egglogLines) {
+         eggFileOut << line << "\n";
+@@ -77,13 +88,24 @@
+     mlirToEgglogTime += std::chrono::duration<double>(end - start).count();
+ 
+     // Run egglog and extract the results
+-    std::string egglogCmd = "egglog " + opsEggFilePath + " > " + egglogExtractedFilename + " 2> " + egglogLogFilename;
++    auto quote = [](const std::string& value) {
++        std::string result = "'";
++        for (char c: value) result += c == '\'' ? "'\\''" : std::string(1, c);
++        return result + "'";
++    };
++    const char* python = std::getenv("DIALEGG_CAPTURE_PYTHON");
++    const char* bridge = std::getenv("DIALEGG_CAPTURE_BRIDGE");
++    const char* backend = std::getenv("DIALEGG_NATIVE_EGGLOG");
++    if (!python || !bridge || !backend) throw std::runtime_error("complete capture delegate environment required");
++    std::string egglogCmd = quote(python) + " " + quote(bridge) + " --delegate " + quote(backend)
++        + " " + quote(opsEggFilePath) + " " + quote(egglogExtractedFilename) + " " + quote(egglogLogFilename);
+ 
+     llvm::outs() << "\nRunning egglog: " << egglogCmd << "\n"
+                  << "\n";
+ 
+     start = std::chrono::high_resolution_clock::now();
+-    std::system(egglogCmd.c_str());
++    if (std::system(egglogCmd.c_str()) != 0)
++        throw std::runtime_error("Egglog backend or output contract failed");
+     end = std::chrono::high_resolution_clock::now();
+ 
+     egglogExecTime += std::chrono::duration<double>(end - start).count();
+@@ -137,7 +159,7 @@
+         // eggOp.print(llvm::outs());
+ 
+         std::string line;
+-        std::getline(file, line);
++        if (!std::getline(file, line) || line.empty()) throw std::runtime_error("missing extraction response");
+ 
+         // llvm::outs() << eggOp.getPrintId() << " = " << line << "\n";
+ 
+@@ -167,6 +189,8 @@
+         llvm::outs() << opStr << " : " << *op << "\n";
+     }
+ 
++    std::string unexpectedOutput;
++    if (std::getline(file, unexpectedOutput)) throw std::runtime_error("extra extraction response");
+     file.close();
+     llvm::outs() << "\n";
+ }

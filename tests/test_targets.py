@@ -70,6 +70,7 @@ def test_materialize_pr_target_fetches_origin_pull_ref(
         *,
         cwd: Path,
         check: bool,
+        text: bool,
         stdout: Any | None = None,
         stderr: Any | None = None,
     ) -> None:
@@ -155,6 +156,7 @@ def test_path_targets_retain_dirty_checkout(use_absolute_path: bool, tmp_path: P
 
 
 def test_build_target_builds_release_binary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("CARGO_TARGET_DIR", raising=False)
     commands: list[list[str]] = []
     binary = tmp_path / "target" / "release" / "egglog-experimental"
     binary.parent.mkdir(parents=True)
@@ -169,6 +171,45 @@ def test_build_target_builds_release_binary(monkeypatch: pytest.MonkeyPatch, tmp
 
     assert commands == [["cargo", "build", "--release", "-p", "egglog-experimental"]]
     assert stream.getvalue().strip() == f"Building {label}"
+
+
+@pytest.mark.parametrize("engines", [("egglog",), ("egg",), ("egglog", "egg"), ("egg", "egglog", "egg")])
+@pytest.mark.parametrize("profile", ["release", "profiling"])
+def test_single_and_mixed_targets_build_the_same_individual_package_commands(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    engines: tuple[models.Engine, ...],
+    profile: targets.BuildProfile,
+) -> None:
+    monkeypatch.delenv("CARGO_TARGET_DIR", raising=False)
+    commands: list[list[str]] = []
+    packages = {"egglog": "egglog-experimental", "egg": "egg-math-benchmark"}
+    row = models.TargetRow(".", str(tmp_path), "HEAD", "abc123", False)
+
+    def build(command: list[str], **kwargs: Any) -> None:
+        assert kwargs["cwd"] == tmp_path
+        commands.append(command)
+        binary = tmp_path / "target" / profile / command[-1]
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_text(f"{command[-1]} with its individual package features\n")
+
+    monkeypatch.setattr(targets.subprocess, "run", build)
+    monkeypatch.setattr(targets, "git_dirty", lambda _path: False)
+
+    resolved = targets.build_resolved_target(
+        targets.parse_target("."), row, Console(file=io.StringIO()), profile, engines
+    )
+
+    unique_engines = tuple(dict.fromkeys(engines))
+    profile_args = ["--release"] if profile == "release" else ["--profile", "profiling"]
+    assert commands == [["cargo", "build", *profile_args, "-p", packages[engine]] for engine in unique_engines]
+    assert tuple(binary.engine for binary in resolved.engine_binaries) == unique_engines
+    for binary in resolved.engine_binaries:
+        assert binary.path is not None
+        assert binary.sha256 == targets.sha256_file(binary.path)
+    assert {path.name for path in (tmp_path / "target" / profile).iterdir()} == {
+        packages[engine] for engine in unique_engines
+    }
 
 
 def test_legacy_resolved_target_only_falls_back_to_egglog_binary() -> None:
@@ -186,3 +227,77 @@ def test_legacy_resolved_target_only_falls_back_to_egglog_binary() -> None:
         target.binary_sha256_for("egg-proofs")
     with pytest.raises(ValueError, match="has no egg binary"):
         target.binary_path_for("egg-proofs")
+
+
+@pytest.mark.parametrize("relative", [False, True])
+def test_build_locates_binary_in_cargo_target_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, relative: bool
+) -> None:
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    configured = "../shared-target" if relative else str(tmp_path / "shared-target")
+    monkeypatch.setenv("CARGO_TARGET_DIR", configured)
+    monkeypatch.delenv("EGGLOG_BENCH_MEMORY_GUARD", raising=False)
+    produced = (checkout / configured / "release/egglog-experimental").resolve()
+    produced.parent.mkdir(parents=True)
+    produced.write_bytes(b"built in shared Cargo output")
+    commands: list[list[str]] = []
+    monkeypatch.setattr(targets.subprocess, "run", lambda command, **kwargs: commands.append(command))
+    row = models.TargetRow(".", str(checkout), "HEAD", "abc123", False)
+    path, digest = targets.build_target(row, Console(file=io.StringIO()))
+    assert path.resolve() == produced and digest == targets.sha256_file(produced)
+    assert commands == [["cargo", "build", "--release", "-p", "egglog-experimental"]]
+
+
+@pytest.mark.parametrize("operation", ["setup", "build"])
+def test_nightly_deadline_bounds_target_subprocesses_and_cleans_descendants(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    import os
+    import time
+    from contextlib import suppress
+
+    from benchmarking import processes
+
+    pid_path = tmp_path / "descendant.pid"
+    program = (
+        "import subprocess, sys, time; from pathlib import Path; "
+        "child=subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+        f"Path({str(pid_path)!r}).write_text(str(child.pid)); time.sleep(60)"
+    )
+    command = [sys.executable, "-c", program]
+    if operation == "build":
+        popen = targets.subprocess.Popen
+        monkeypatch.setattr(
+            targets.subprocess,
+            "Popen",
+            lambda original, **kwargs: popen(command if original[0] == "cargo" else original, **kwargs),
+        )
+    monkeypatch.delenv("EGGLOG_BENCH_MEMORY_GUARD", raising=False)
+    token = processes.COLLECTION_DEADLINE.set(time.monotonic() + 0.2)
+    descendant: int | None = None
+    try:
+        with pytest.raises(processes.BudgetExpired, match="during"):
+            if operation == "setup":
+                targets.run_text(command, tmp_path)
+            else:
+                row = models.TargetRow(".", str(tmp_path), "HEAD", "abc123", False)
+                targets.build_target(row, Console(file=io.StringIO()))
+        descendant = int(pid_path.read_text())
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            state = subprocess.run(
+                ["ps", "-o", "state=", "-p", str(descendant)], capture_output=True, text=True
+            ).stdout.strip()
+            if not state or state.startswith("Z"):
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail("deadline left a descendant alive")
+    finally:
+        processes.COLLECTION_DEADLINE.reset(token)
+        if descendant is None and pid_path.exists():
+            descendant = int(pid_path.read_text())
+        if descendant is not None:
+            with suppress(ProcessLookupError):
+                os.kill(descendant, 9)

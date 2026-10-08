@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import os
 import resource
 import signal
@@ -14,6 +15,7 @@ from typing import cast
 
 import pytest
 
+import process_guard
 from benchmarking import processes
 
 from .report_fixtures import ROOT
@@ -91,7 +93,8 @@ def test_wait4_process_cleans_up_if_timer_start_is_interrupted(monkeypatch: pyte
     assert events == ["start", "cancel", "join"]
 
 
-def test_run_command_timeout_kills_descendant_processes(tmp_path: Path) -> None:
+@pytest.mark.parametrize("budget", [False, True])
+def test_run_command_timeout_kills_descendant_processes(tmp_path: Path, budget: bool) -> None:
     descendant_pid_path = tmp_path / "descendant.pid"
     child_code = (
         "import subprocess, sys, time; from pathlib import Path; "
@@ -99,9 +102,14 @@ def test_run_command_timeout_kills_descendant_processes(tmp_path: Path) -> None:
         f"Path({str(descendant_pid_path)!r}).write_text(str(child.pid)); time.sleep(60)"
     )
     descendant_pid: int | None = None
+    token = processes.COLLECTION_DEADLINE.set(time.monotonic() + 0.2 if budget else None)
     try:
-        result = processes.run_command([sys.executable, "-c", child_code], ROOT, 1)
-        assert result.status == "timed-out"
+        if budget:
+            with pytest.raises(processes.BudgetExpired):
+                processes.run_command([sys.executable, "-c", child_code], ROOT, 1)
+        else:
+            result = processes.run_command([sys.executable, "-c", child_code], ROOT, 1)
+            assert result.status == "timed-out"
         descendant_pid = int(descendant_pid_path.read_text(encoding="utf-8"))
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:
@@ -117,6 +125,7 @@ def test_run_command_timeout_kills_descendant_processes(tmp_path: Path) -> None:
         else:
             pytest.fail(f"descendant process {descendant_pid} survived timeout cleanup")
     finally:
+        processes.COLLECTION_DEADLINE.reset(token)
         if descendant_pid is None:
             with suppress(OSError, ValueError):
                 descendant_pid = int(descendant_pid_path.read_text(encoding="utf-8"))
@@ -145,6 +154,51 @@ def test_run_command_interrupt_cleans_up_before_propagating(monkeypatch: pytest.
         processes.run_command([sys.executable, "-c", "import time; time.sleep(60)"], ROOT, 120)
 
     assert terminated == interrupted
+
+
+@pytest.mark.parametrize(
+    "parent_exited,group_states,allowed",
+    [
+        (False, "", False),
+        (True, "123 Z\n456 S\n", True),
+        (True, "456 S\n", True),
+        (True, "123 S\n", False),
+        (True, None, False),
+    ],
+)
+def test_cleanup_permission_race_requires_exited_parent_and_no_live_group_members(
+    monkeypatch: pytest.MonkeyPatch, parent_exited: bool, group_states: str | None, allowed: bool
+) -> None:
+    waited = []
+
+    class OwnedProcess:
+        pid = 123
+
+        def poll(self) -> int | None:
+            return -signal.SIGKILL if parent_exited else None
+
+        def wait(self) -> None:
+            waited.append(True)
+
+    def denied(*_args: object) -> None:
+        raise PermissionError("redundant group signal denied")
+
+    def snapshot(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert parent_exited
+        if group_states is None:
+            raise OSError("process-state query unavailable")
+        return subprocess.CompletedProcess([], 0, stdout=group_states)
+
+    monkeypatch.setattr(process_guard.os, "killpg", denied)
+    monkeypatch.setattr(process_guard.subprocess, "run", snapshot)
+    process = cast(subprocess.Popen[str], OwnedProcess())
+    if allowed:
+        process_guard.terminate_process_group(process)
+        assert waited == [True]
+    else:
+        with pytest.raises(PermissionError if group_states is not None else OSError):
+            process_guard.terminate_process_group(process)
+        assert waited == []
 
 
 def test_run_command_records_peak_rss() -> None:
@@ -190,3 +244,99 @@ def test_timing_from_usage_records_peak_rss() -> None:
     timing = processes.timing_from_usage(usage, 1.0)
 
     assert timing.max_rss_bytes == processes.ru_maxrss_to_bytes(3)
+
+
+def test_successful_proof_output_is_never_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(processes, "read_error_tail", lambda *_args: pytest.fail("successful output is discarded"))
+    monkeypatch.setattr(processes, "missing_output", lambda *_args: pytest.fail("no capability output requested"))
+    result = processes.run_command(
+        [sys.executable, "-c", "import sys; sys.stdout.write('p' * (2 * 1024 * 1024))"], ROOT, 5
+    )
+    assert result.status == "success"
+
+
+def test_output_scans_bound_reads_and_preserve_cross_chunk_and_file_matches() -> None:
+    class BoundedLog(io.StringIO):
+        def read(self, size: int | None = -1) -> str:
+            assert size is not None and 0 < size <= 4096
+            return super().read(size)
+
+    stdout = BoundedLog("x" * 4094 + "--timing-summary" + "y" * (2 * 1024 * 1024) + "--proof-")
+    stderr = BoundedLog("extraction\n")
+    assert processes.missing_output((stdout, stderr), ("--timing-summary", "--proof-extraction")) is None
+    assert processes.missing_output((stdout, stderr), ("second", "first", "--proof-extraction")) == "second"
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        " \t\n" * 3000,
+        "\n\t" + "error\n" + " " * 5000,
+        "a" * (2 * 1024 * 1024) + "\nfinal error\n",
+        " " * 5000 + "éλ\u2028" * 3000 + "z" + "\t" * 5000,
+        "a" * 4096 + " " * 4096 + "b",
+    ],
+)
+def test_error_tail_is_exact_and_memory_bounded(content: str) -> None:
+    class BoundedLog(io.StringIO):
+        def read(self, size: int | None = -1) -> str:
+            assert size is not None and 0 < size <= 4096
+            return super().read(size)
+
+    assert processes.read_error_tail(BoundedLog(content)) == content.strip()[-1000:]
+
+
+def test_failure_preserves_stderr_priority_and_exact_tail() -> None:
+    result = processes.run_command(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.stdout.write('stdout error'); "
+            "sys.stderr.write('stderr error:' + 'x' * 1500 + 'end' + ' ' * 5000); sys.exit(1)",
+        ],
+        ROOT,
+        5,
+    )
+    assert result.status == "failure"
+    assert result.error is not None
+    assert result.error.message == "x" * 997 + "end"
+
+
+def test_expired_budget_refuses_launch(monkeypatch: pytest.MonkeyPatch) -> None:
+    token = processes.COLLECTION_DEADLINE.set(time.monotonic() - 1)
+    monkeypatch.setattr(processes.subprocess, "Popen", lambda *_a, **_kw: pytest.fail("must not launch"))
+    try:
+        with pytest.raises(processes.BudgetExpired):
+            processes.run_command(["unused"], ROOT, 120)
+    finally:
+        processes.COLLECTION_DEADLINE.reset(token)
+
+
+def test_completed_process_with_budget_keeps_normal_result() -> None:
+    token = processes.COLLECTION_DEADLINE.set(time.monotonic() + 10)
+    try:
+        result = processes.run_command([sys.executable, "-c", "pass"], ROOT, 120)
+    finally:
+        processes.COLLECTION_DEADLINE.reset(token)
+    assert result.status == "success"
+    assert result.timing.wall_sec is not None
+
+
+def test_resource_stop_takes_precedence_over_simultaneous_budget_expiry(monkeypatch: pytest.MonkeyPatch) -> None:
+    guard = process_guard.MemoryGuard()
+    monkeypatch.setattr(process_guard.MemoryGuard, "from_environment", lambda: guard)
+    monkeypatch.setattr(guard, "start", lambda _pid: None)
+
+    def expire(process: subprocess.Popen[str], timeout: float) -> tuple[int, resource.struct_rusage]:
+        guard.reason = "host memory pressure"
+        raise subprocess.TimeoutExpired(process.args, timeout)
+
+    monkeypatch.setattr(processes, "wait4_process", expire)
+    token = processes.COLLECTION_DEADLINE.set(time.monotonic() + 10)
+    try:
+        result = processes.run_command([sys.executable, "-c", "import time; time.sleep(60)"], ROOT, 120)
+    finally:
+        processes.COLLECTION_DEADLINE.reset(token)
+    assert result.status == "failure"
+    assert result.resource_stopped
+    assert result.error is not None and "host memory pressure" in result.error.message

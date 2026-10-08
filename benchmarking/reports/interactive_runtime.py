@@ -13,19 +13,45 @@ from __future__ import annotations
 import json
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import NotRequired, TypedDict, cast
 
 from ..engines import TREATMENT_SPECS, Engine
-from ..models import BenchmarkEndpoint, ComparisonSpec, EngineBinary, FileSpec, ResolvedTarget, TargetRequest, TargetRow
+from ..models import (
+    BenchmarkEndpoint,
+    ComparisonSpec,
+    DisequalityEncoding,
+    EngineBinary,
+    FileSpec,
+    ResolvedTarget,
+    TargetRequest,
+    TargetRow,
+    Treatment,
+)
 from .catalog import CellTone, ReportCatalog, ReportCell, ReportMessage, report_id
 from .presentation import build_report_catalog, report_file_labels
 from .store import GroupedReport, ReportRecord, parse_grouped_report
 
 type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | list[JsonValue] | dict[str, JsonValue]
+
+
+class _TargetContext(TypedDict):
+    source: str
+    path: str
+    git_ref: str
+    git_sha: str
+    is_dirty: bool
+    label: str | None
+
+
+class _EndpointContext(TypedDict):
+    target: _TargetContext
+    binary_sha256: str
+    treatment: Treatment
+    disequality_encoding: DisequalityEncoding
 
 
 class _ScopeRequest(TypedDict):
@@ -36,6 +62,10 @@ class _ScopeRequest(TypedDict):
     file_ids: list[str]
     timeout_sec: int
     rounds: int
+    suite_mode: NotRequired[bool]
+    validation_issues: NotRequired[dict[str, str]]
+    initial_endpoints: NotRequired[list[_EndpointContext]]
+    report_notes: NotRequired[list[str]]
 
 
 @dataclass(frozen=True)
@@ -130,7 +160,37 @@ class InteractiveRuntime:
         self._endpoint_by_id = {choice.endpoint_id: choice.endpoint for choice in self._endpoint_choices}
         self._file_by_id = {choice.file_id: choice.file for choice in self._file_choices}
 
-        scope = self._parse_scope(initial_scope)
+        self._suite_mode = initial_scope.get("suite_mode", False)
+        self._validation_issues = initial_scope.get("validation_issues", {})
+        self._report_notes = tuple(initial_scope.get("report_notes", ()))
+        # Interrupted collection and skipped inputs can have no measurement rows.
+        # Seed only absent identities; cached selectors retain latest provenance.
+        for context in initial_scope.get("initial_endpoints", []):
+            target_row = TargetRow(**context["target"])
+            endpoint = BenchmarkEndpoint(
+                ResolvedTarget(
+                    TargetRequest(target_row.label or target_row.source, target_row.source, target_row.label),
+                    target_row,
+                    context["binary_sha256"],
+                    None,
+                    engine_binaries=(
+                        EngineBinary(TREATMENT_SPECS[context["treatment"]].engine, context["binary_sha256"], None),
+                    ),
+                    primary_engine=TREATMENT_SPECS[context["treatment"]].engine,
+                ),
+                context["treatment"],
+                context["disequality_encoding"],
+            )
+            endpoint_id = _endpoint_id(endpoint)
+            if endpoint_id not in self._endpoint_by_id:
+                self._endpoint_by_id[endpoint_id] = endpoint
+                self._endpoint_choices += (_EndpointChoice(endpoint_id, endpoint),)
+        self._timeouts = tuple(sorted({*self._timeouts, initial_scope["timeout_sec"]}))
+        scope = self._parse_scope(initial_scope, initial=True)
+        self._validation_endpoint_ids = frozenset((scope.baseline_endpoint_id, scope.candidate_endpoint_id))
+        self._validation_timeout_sec = scope.timeout_sec
+        self._validation_file_ids = frozenset(scope.file_ids)
+        self._max_rounds = max(self._max_rounds, scope.rounds)
         comparison = self._comparison(scope)
         self._scope = scope
         self._catalog = build_report_catalog(store, comparison, "rulesets")
@@ -202,15 +262,30 @@ class InteractiveRuntime:
 
     def _comparison(self, scope: InteractiveScope) -> ComparisonSpec:
         files = tuple(self._file_by_id[file_id] for file_id in scope.file_ids)
+        matching_validation = (
+            frozenset((scope.baseline_endpoint_id, scope.candidate_endpoint_id)) == self._validation_endpoint_ids
+            and scope.timeout_sec == self._validation_timeout_sec
+        )
+        validation_issues = []
+        for file_id in scope.file_ids:
+            if matching_validation and file_id in self._validation_file_ids:
+                reason = self._validation_issues.get(file_id)
+            else:
+                reason = None
+            if reason:
+                validation_issues.append((self._file_by_id[file_id], reason))
         return ComparisonSpec(
             self._endpoint_by_id[scope.baseline_endpoint_id],
             self._endpoint_by_id[scope.candidate_endpoint_id],
             files,
             scope.rounds,
             scope.timeout_sec,
+            validation_issues=tuple(validation_issues),
+            suite_mode=self._suite_mode,
+            report_notes=self._report_notes,
         )
 
-    def _parse_scope(self, value: object) -> InteractiveScope:
+    def _parse_scope(self, value: object, *, initial: bool = False) -> InteractiveScope:
         if not isinstance(value, dict):
             raise ValueError("scope request must be a JSON object")
         request = cast(_ScopeRequest, value)
@@ -246,7 +321,7 @@ class InteractiveRuntime:
             raise ValueError(f"unknown timeout: {timeout_sec}s")
         if rounds < 1:
             raise ValueError("rounds must be positive")
-        if rounds > self._max_rounds:
+        if rounds > self._max_rounds and not initial:
             raise ValueError(f"rounds must not exceed cached maximum: {self._max_rounds}")
         return InteractiveScope(baseline_id, candidate_id, file_ids, timeout_sec, rounds)
 
@@ -295,7 +370,7 @@ class InteractiveRuntime:
 def scope_for_comparison(comparison: ComparisonSpec) -> InitialScope:
     """Serialize one native comparison as the browser runtime's initial scope."""
 
-    return {
+    scope: InitialScope = {
         "baseline_endpoint_id": _endpoint_id(comparison.baseline),
         "candidate_endpoint_id": _endpoint_id(comparison.candidate),
         "file_ids": [_file_id(file) for file in comparison.files],
@@ -322,7 +397,20 @@ def scope_for_comparison(comparison: ComparisonSpec) -> InitialScope:
             }
             for file in comparison.files
         ],
+        "suite_mode": comparison.suite_mode,
+        "validation_issues": {_file_id(file): reason for file, reason in comparison.validation_issues},
+        "report_notes": list(comparison.report_notes),
+        "initial_endpoints": [
+            {
+                "target": cast(_TargetContext, asdict(endpoint.target.row)),
+                "binary_sha256": endpoint.cache_identity[0],
+                "treatment": endpoint.treatment,
+                "disequality_encoding": endpoint.disequality_encoding,
+            }
+            for endpoint in (comparison.baseline, comparison.candidate)
+        ],
     }
+    return scope
 
 
 def _catalog_payload(catalog: ReportCatalog) -> list[JsonValue]:
@@ -411,7 +499,7 @@ def _cache_universe(
             ),
         )
     )
-    return endpoints, files, tuple(sorted(timeouts)), max(counts.values())
+    return endpoints, files, tuple(sorted(timeouts)), max(counts.values(), default=0)
 
 
 def _endpoint_from_record(record: ReportRecord) -> BenchmarkEndpoint:

@@ -12,7 +12,8 @@ from __future__ import annotations
 import tempfile
 from collections import Counter
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from math import ceil, isfinite
 from pathlib import Path
 
 from rich.console import Console
@@ -26,7 +27,10 @@ from rich.progress import (
 from rich.table import Column
 from rich.text import Text
 
+from process_guard import ResourceStopped
+
 from .engines import TREATMENT_SPECS
+from .known_failures import known_failure_reason
 from .models import (
     BenchmarkEndpoint,
     DisequalityEncoding,
@@ -52,6 +56,7 @@ from .targets import (
     build_resolved_target,
     materialize_git_ref,
     materialize_target_request,
+    sha256_file,
     target_row_for_request,
     workload_command,
 )
@@ -68,6 +73,7 @@ class BenchmarkRunPlan:
     cached_statuses: tuple[Status, ...]
     missing_observations: int
     disequality_encoding: DisequalityEncoding = "nee"
+    skip_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -76,6 +82,7 @@ class CollectionPlan:
 
     target: ResolvedTarget
     runs: tuple[BenchmarkRunPlan, ...]
+    stop_on_failure: bool = True
 
     @property
     def total_missing_observations(self) -> int:
@@ -113,6 +120,8 @@ def build_collection_plan(
     rounds: int,
     timeout_sec: int,
     force_run: bool,
+    suite_mode: bool = False,
+    blocked_files: tuple[FileSpec, ...] = (),
 ) -> CollectionPlan:
     """Select cached observations for the exact endpoints using this binary."""
 
@@ -131,11 +140,19 @@ def build_collection_plan(
         for file_spec in files
         for endpoint in endpoints
     )
-    selected = store.selected_statuses_for_keys(tuple(request[2] for request in requests), rounds)
+    selected = store.selected_statuses_for_keys(
+        tuple(request[2] for request in requests), None if suite_mode else rounds
+    )
     runs: list[BenchmarkRunPlan] = []
     for file_spec, treatment, cache_key in requests:
         cached = selected[cache_key]
-        missing = rounds if force_run else max(0, rounds - len(cached))
+        skip_reason = known_failure_reason(file_spec, treatment, cache_key.disequality_encoding)
+        stopped = (
+            skip_reason is not None
+            or file_spec in blocked_files
+            or (not force_run and any(status != "success" for status in cached))
+        )
+        missing = 0 if stopped else rounds if force_run else max(0, rounds - len(cached))
         runs.append(
             BenchmarkRunPlan(
                 file=file_spec,
@@ -144,6 +161,7 @@ def build_collection_plan(
                 cached_statuses=cached,
                 missing_observations=missing,
                 disequality_encoding=cache_key.disequality_encoding,
+                skip_reason=skip_reason,
             )
         )
     return CollectionPlan(target=target, runs=tuple(runs))
@@ -159,12 +177,17 @@ def resolve_targets(
     invocation_cwd: Path,
     repo_root: Path,
     console: Console,
+    defer_label_collection: bool = False,
+    reuse_targets: tuple[ResolvedTarget, ...] = (),
 ) -> dict[TargetRequest, ResolvedTarget]:
     """Resolve every request, then build once per canonical checkout path.
 
     Materializing all requests before building prevents distinct aliases for the
     same checkout from rebuilding the same executable. Each alias retains its
     own request and row provenance while sharing the executable path and hash.
+    Suites defer label builds until exact cached failures and safety deferrals
+    are known; callers must then resolve any incomplete cached targets. Nightly
+    can reuse targets already built in this invocation while retaining aliases.
     """
 
     resolved: dict[TargetRequest, ResolvedTarget] = {}
@@ -180,6 +203,7 @@ def resolve_targets(
             force_run,
             invocation_cwd,
             repo_root,
+            defer_label_collection,
         )
         if isinstance(target, ResolvedTarget):
             resolved[request] = target
@@ -199,13 +223,30 @@ def resolve_targets(
             )
         )
         representative = pending_targets[0]
-        built = build_resolved_target(
-            representative.request,
-            representative.row,
-            console,
-            "release",
-            engines,
+        built = next(
+            (
+                previous
+                for previous in reuse_targets
+                if Path(previous.row.path).resolve() == checkout_path
+                and previous.row.git_sha == representative.row.git_sha
+                and previous.row.is_dirty == representative.row.is_dirty
+                and previous.binary_path is not None
+                and set(engines).issubset(
+                    {binary.engine for binary in previous.engine_binaries if binary.path is not None}
+                    if previous.engine_binaries
+                    else {previous.primary_engine or "egglog"}
+                )
+            ),
+            None,
         )
+        if built is None:
+            built = build_resolved_target(
+                representative.request,
+                representative.row,
+                console,
+                "release",
+                engines,
+            )
         for target in pending_targets:
             resolved[target.request] = ResolvedTarget(
                 request=target.request,
@@ -229,6 +270,7 @@ def _resolve_or_materialize_target(
     force_run: bool,
     invocation_cwd: Path,
     repo_root: Path,
+    defer_label_collection: bool,
 ) -> ResolvedTarget | _PendingTarget:
     """Reuse one complete cache label or materialize a target for later build."""
 
@@ -257,13 +299,16 @@ def _resolve_or_materialize_target(
                 engine_binaries=binaries,
                 primary_engine=binaries[0].engine,
             )
-            if not force_run and label_has_enough_rows(
-                store,
-                cached_target,
-                endpoint_requests,
-                files,
-                rounds,
-                timeout_sec,
+            if defer_label_collection or (
+                not force_run
+                and label_has_enough_rows(
+                    store,
+                    cached_target,
+                    endpoint_requests,
+                    files,
+                    rounds,
+                    timeout_sec,
+                )
             ):
                 return cached_target
         pointer = store.find_label_pointer(request.label)
@@ -288,6 +333,8 @@ def label_has_enough_rows(
     files: tuple[FileSpec, ...],
     rounds: int,
     timeout_sec: int,
+    suite_mode: bool = False,
+    blocked_files: tuple[FileSpec, ...] = (),
 ) -> bool:
     """Return whether every exact endpoint/file result has enough cached rows."""
 
@@ -304,8 +351,23 @@ def label_has_enough_rows(
         for endpoint in endpoint_requests
         for file_spec in (logical_file.for_engine(TREATMENT_SPECS[endpoint.treatment].engine),)
     )
-    selected = store.selected_statuses_for_keys(keys, rounds)
-    return all(len(selected[key]) >= rounds for key in keys)
+    selected = store.selected_statuses_for_keys(keys, None if suite_mode else rounds)
+    stopped = {(file.sha256, file.fact_directory_sha256) for file in blocked_files}
+    excluded = {
+        CacheKey.for_endpoint(
+            BenchmarkEndpoint(target, request.treatment, request.disequality_encoding), file, timeout_sec
+        )
+        for file in files
+        for request in endpoint_requests
+        if known_failure_reason(file, request.treatment, request.disequality_encoding) is not None
+    }
+    return all(
+        key in excluded
+        or (key.file_sha256, key.fact_directory_sha256) in stopped
+        or any(status != "success" for status in selected[key])
+        or len(selected[key]) >= rounds
+        for key in keys
+    )
 
 
 def run_process(
@@ -392,6 +454,8 @@ def preflight_collection(plan: CollectionPlan, timeout_sec: int) -> None:
             message = f"target {target.display_label} {engine} preflight failed"
             if result.error is not None:
                 message = f"{message}: {result.error.message}"
+            if result.resource_stopped:
+                raise ResourceStopped(message)
             raise ValueError(message)
 
 
@@ -450,6 +514,9 @@ def emit_collection_plan(console: Console, plan: CollectionPlan) -> None:
         cache_text += f" ({_status_counts_text(cached_issues)})"
     action_text = "nothing to collect" if missing == 0 else f"collecting {missing} fresh"
     console.print(Text(f"{plan.target.display_label}: {cache_text} · {action_text}"))
+    for run in plan.runs:
+        if run.skip_reason is not None:
+            console.print(Text(f"  {run.file.display_path} · {run.treatment}: skipped; {run.skip_reason}"))
 
 
 def flat_report_record(
@@ -490,6 +557,50 @@ def flat_report_record(
     }
 
 
+def _require_binary_unchanged(binary_path: Path, expected_sha256: str) -> None:
+    """Reject mutable executable paths that no longer match the resolved endpoint."""
+
+    try:
+        actual_sha256 = sha256_file(binary_path) if binary_path.is_file() else None
+    except OSError as error:
+        raise ValueError(f"benchmark executable changed before or during execution: {binary_path}") from error
+    if actual_sha256 != expected_sha256:
+        raise ValueError(f"benchmark executable changed before or during execution: {binary_path}")
+
+
+def _collection_eta(
+    store: ReportStore,
+    plan: CollectionPlan,
+    timeout_sec: int,
+    remaining: dict[BenchmarkRunPlan, int],
+) -> str:
+    """Estimate remaining executable time from each exact endpoint's recent runs.
+
+    Never borrow another treatment's timing or treat a timeout as a runtime.
+    Fresh workloads keep the ETA pending until each has a successful observation.
+    """
+
+    seconds = 0.0
+    for run, count in remaining.items():
+        if not count:
+            continue
+        key = CacheKey.for_endpoint(
+            BenchmarkEndpoint(plan.target, run.treatment, run.disequality_encoding), run.file, timeout_sec
+        )
+        durations = [
+            wall
+            for row in store.latest_records(key, run.required_rows)
+            if row.record["status"] == "success"
+            and (wall := row.record["wall_sec"]) is not None
+            and isfinite(wall)
+            and wall >= 0
+        ]
+        if not durations:
+            return "ETA pending"
+        seconds += count * (sum(durations) / len(durations))
+    return f"ETA ~{timedelta(seconds=ceil(seconds))}"
+
+
 def collect_rows(
     store: ReportStore,
     plan: CollectionPlan,
@@ -505,6 +616,9 @@ def collect_rows(
     max_deficit = max(run.missing_observations for run in plan.runs)
     completed_observations = 0
     result_counts: Counter[Status] = Counter()
+    remaining = {run: run.missing_observations for run in plan.runs if run.missing_observations}
+    eta = _collection_eta(store, plan, timeout_sec, remaining)
+    console.print(Text(f"{target.display_label}: {eta} (remaining executable time)"))
 
     with Progress(
         TextColumn(
@@ -520,6 +634,7 @@ def collect_rows(
         ),
         MofNCompleteColumn(table_column=Column(no_wrap=True)),
         TimeElapsedColumn(table_column=Column(no_wrap=True)),
+        TextColumn("{task.fields[eta]}", table_column=Column(no_wrap=True)),
         console=console,
         transient=True,
         disable=not console.is_terminal,
@@ -528,10 +643,11 @@ def collect_rows(
             "Collecting",
             total=total_observations,
             current="starting",
+            eta=eta,
         )
         for round_index in range(max_deficit):
             for run in plan.runs:
-                if round_index >= run.missing_observations:
+                if round_index >= run.missing_observations or not remaining[run]:
                     continue
                 observation_number = completed_observations + 1
                 label = collection_label(
@@ -551,6 +667,8 @@ def collect_rows(
                     raise ValueError(
                         f"target {target.display_label} needs a fresh {TREATMENT_SPECS[run.treatment].engine} binary"
                     )
+                binary_sha256 = target.binary_sha256_for(run.treatment)
+                _require_binary_unchanged(binary_path, binary_sha256)
                 observation = run_process(
                     binary_path,
                     Path(target.row.path),
@@ -559,6 +677,7 @@ def collect_rows(
                     timeout_sec,
                     run.disequality_encoding,
                 )
+                _require_binary_unchanged(binary_path, binary_sha256)
                 store.append(
                     flat_report_record(
                         started_at=started_at,
@@ -568,22 +687,34 @@ def collect_rows(
                         observation=observation,
                     )
                 )
+                if observation.result.resource_stopped:
+                    assert observation.result.error is not None
+                    raise ResourceStopped(
+                        f"{observation.result.error.message}; the failed observation was retained; "
+                        "collection stopped before launching another workload"
+                    )
                 completed_observations += 1
+                remaining[run] -= 1
                 result_counts[observation.result.status] += 1
+                if plan.stop_on_failure and observation.result.status != "success":
+                    remaining[run] = 0
+                eta = _collection_eta(store, plan, timeout_sec, remaining)
                 progress.update(
                     process_task,
                     advance=1,
                     current=label,
+                    eta=eta,
                 )
                 if not console.is_terminal or observation.result.status != "success":
                     progress.console.print(
                         Text(
                             f"  [{observation_number}/{total_observations}] {label}: "
-                            f"{format_timing_result(observation.result)}"
+                            f"{format_timing_result(observation.result)} · {eta}"
                         )
                     )
     console.print(
         Text(
-            f"{target.display_label}: collected {total_observations} fresh runs · {_status_counts_text(result_counts)}"
+            f"{target.display_label}: collected {completed_observations} fresh runs · "
+            f"{_status_counts_text(result_counts)}"
         )
     )

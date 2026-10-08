@@ -31,10 +31,11 @@ def test_same_file_with_different_fact_contents_is_a_distinct_workload(tmp_path:
     workloads.validate_workloads((first, second))
 
 
-def test_resolve_files_rejects_executable_prove_benchmark_file(tmp_path: Path) -> None:
+@pytest.mark.parametrize("command", ["prove", "prove-extract"])
+def test_resolve_files_rejects_executable_prove_benchmark_file(tmp_path: Path, command: str) -> None:
     prove_file = tmp_path / "prove.egg"
     prove_file.write_text(
-        "; comments may mention (prove ...)\n(datatype Expr)\n(prove (Fact))\n",
+        f"; comments may mention (prove ...)\n(datatype Expr)\n({command} (Fact))\n",
         encoding="utf-8",
     )
 
@@ -46,6 +47,7 @@ def test_resolve_files_rejects_executable_prove_benchmark_file(tmp_path: Path) -
     "source",
     (
         "(check (= 1 1)) (prove (= 1 1))\n",
+        "(extract (Num 1)) (prove-extract (Num 1) 2)\n",
         "( check (= 1 1))\n( ; comment between the parenthesis and command\n prove (= 1 1))\n",
     ),
 )
@@ -70,29 +72,31 @@ def test_prove_scan_ignores_comments_strings_and_longer_atoms(tmp_path: Path) ->
     check_file = tmp_path / "check.egg"
     check_file.write_text(
         '; (prove (Comment))\n(let text "escaped \\"(prove (String))\\"")\n'
-        "(check (= 1 1)) ; (prove (InlineComment))\n(prove-more (NotACommand))\n",
+        "(check (= 1 1)) ; (prove-extract (InlineComment))\n(prove-more (NotACommand))\n",
         encoding="utf-8",
     )
 
     assert not workloads.file_contains_executable_prove_command(check_file)
 
 
-def test_default_workloads_are_the_eleven_research_cases() -> None:
+def test_default_workloads_cover_the_seven_standard_families() -> None:
     files = workloads.resolve_files([], ROOT)
     assert tuple(file.display_path for file in files) == (
         "egglog-experimental/tests/math-microbenchmark-rational.egg",
         "egglog-experimental/tests/fixtures/eggcc-2mm-pass1.egg",
-        "egglog/tests/pointer-analysis-initdb.egg",
         "egglog/tests/hardboiled_conv1d_32.egg",
         "egglog/tests/luminal-llama.egg",
-        "egglog/tests/web-demo/herbie.egg",
         "egglog/tests/papers/misaal-hvx-dot-product.egg",
         "egglog/tests/papers/churchroad-wide-multiply.egg",
         "egglog-experimental/tests/papers/dialegg-nmm40.egg",
-        "egglog/tests/papers/speq-preserved-reference-suite.egg",
-        "benchmarks/disequality/parameter-analysis.egg",
     )
-    pointer = next(file for file in files if file.display_path == "egglog/tests/pointer-analysis-initdb.egg")
+    assert all(file.fact_directory is None for file in files)
+
+
+def test_pointer_analysis_remains_available_with_explicit_facts() -> None:
+    (pointer,) = workloads.resolve_files(
+        ["egglog/tests/pointer-analysis-initdb.egg"], ROOT, "egglog/tests/pointer-analysis-initdb"
+    )
     assert pointer.fact_directory == (ROOT / "egglog/tests/pointer-analysis-initdb").resolve()
     assert pointer.fact_directory_sha256.startswith("sha256:")
 
@@ -189,7 +193,7 @@ def test_egg_workload_command_uses_the_fixed_math_driver_contract() -> None:
 
 def test_egg_treatments_reject_other_workloads_and_fact_directories() -> None:
     other = models.FileSpec("other.egg", ROOT / "other.egg", "sha256:other")
-    with pytest.raises(ValueError, match="only supports egglog-experimental/tests/math-microbenchmark-rational.egg"):
+    with pytest.raises(ValueError, match="cannot read canonical Math workload"):
         validate_engine_workload(other, "egg")
 
     math = models.FileSpec(

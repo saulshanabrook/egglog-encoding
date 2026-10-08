@@ -1,0 +1,78 @@
+{
+  "schema": "misaal-parameter-fixtures-v1",
+  "admitted": false,
+  "proof_admitted": false,
+  "scope": "Actual source-captured diagnostic and c098-generated ABI oracles; not benchmark inputs or evidence of complete reproduction success",
+  "files": {
+    "ki4k2nlc.rkt": "32d0edbfbd86bdde0ba6b47af8eebd260f1421af79dcbb223923015f389a8521",
+    "c098-general-depth1.rkt": "a1b97d6a5bd1c149bcc0116c14eefb1ec5f121a1c93b8a373951060e37ffd51a",
+    "c098-ordinary-depth2.rkt": "c6149ee7123608f10facf84e0eccd1f652436f2f5066bd99a661bf4f70309650"
+  },
+  "captured": {
+    "file": "ki4k2nlc.rkt",
+    "origin": "benchmarks/local/reproduction/stages/misaal-hexagon-blur3x3/complete/57c14df923b0acdfd399999d95a8f255f3087acc7b07a1097fafcd3003231d33/attempt-0001/capture/generation/ki4k2nlc.rkt",
+    "retained_copy": "benchmarks/local/reproduction/diagnostics/misaal-captured-parameter-gate-0001/original.rkt",
+    "preservation": "Exact unmodified bytes, including header, 28 test cases, fifth argument and original output filename; never reconstructed or inferred"
+  },
+  "paper_oracles": {
+    "revision": "c098f0f289d03f0c58db1ef85d9b4ff7eef9dec4",
+    "source": "https://github.com/RafaeNoor/MISAAL/blob/c098f0f289d03f0c58db1ef85d9b4ff7eef9dec4/lib/patterns/PatternUtils.py",
+    "source_sha256": "9f6fd97c8bd27d2b59f2f0edc57c364ab6eb5a8c1c2c6ffd7e616a79bc74be29",
+    "origin": "benchmarks/local/reproduction/diagnostics/misaal-parameter-abi-gate-0001",
+    "generation": "Exact full-module CodeType methods, original DSLInstructionUtils HYDRIDE_HEADER and emit_racket_cond, deterministic output basenames, intercepted launch only; byte equality independently verified against full c098 methods",
+    "DSLInstructionUtils_sha256": "e385eaa17a81bbcb8106ad33cbbe1ac2ed4307879b0f366f3b72219744b43bdb",
+    "inputs": {
+      "ordinary-depth2": {
+        "src": {
+          "0": [
+            1,
+            2,
+            3
+          ]
+        },
+        "dst": {
+          "0": [
+            2,
+            4,
+            6
+          ],
+          "1": [
+            5,
+            7,
+            11
+          ]
+        },
+        "target": 0,
+        "depth": 2,
+        "only_src_params": false,
+        "exclude_regs": [
+          1
+        ]
+      },
+      "general-depth1": {
+        "params": {
+          "0": [
+            2,
+            4,
+            6
+          ],
+          "1": [
+            1,
+            2,
+            3
+          ],
+          "2": [
+            5,
+            7,
+            11
+          ]
+        },
+        "target": 0,
+        "depth": 1,
+        "exclude_regs": [
+          1
+        ]
+      }
+    }
+  }
+}

@@ -9,8 +9,10 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import signal
 import subprocess
 import sys
+import time
 from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -19,8 +21,11 @@ from typing import Literal
 from rich.console import Console
 from rich.text import Text
 
+from process_guard import MemoryGuard, ResourceStopped, terminate_process_group
+
 from .engines import TREATMENT_SPECS, Engine, Treatment, validate_engine_workload
 from .models import EngineBinary, FileSpec, ResolvedTarget, TargetRequest, TargetRow
+from .processes import COLLECTION_DEADLINE, BudgetExpired
 
 BuildProfile = Literal["release", "profiling"]
 
@@ -68,15 +73,40 @@ def sha256_directory(path: Path) -> str:
     return f"sha256:{digest.hexdigest()}"
 
 
-def run_text(args: Sequence[str], cwd: Path) -> str:
-    completed = subprocess.run(
+def run_text(args: Sequence[str], cwd: Path, *, capture_output: bool = True) -> str:
+    """Run target setup, bounding its whole process group when nightly is active."""
+
+    deadline = COLLECTION_DEADLINE.get()
+    if deadline is None:
+        completed = subprocess.run(
+            list(args),
+            cwd=cwd,
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE if capture_output else sys.stderr,
+            stderr=subprocess.PIPE if capture_output else sys.stderr,
+        )
+        return completed.stdout.strip() if capture_output else ""
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise BudgetExpired("nightly collection budget exhausted before target setup")
+    process = subprocess.Popen(
         list(args),
         cwd=cwd,
-        check=True,
         text=True,
-        capture_output=True,
+        stdout=subprocess.PIPE if capture_output else sys.stderr,
+        stderr=subprocess.PIPE if capture_output else sys.stderr,
+        start_new_session=True,
     )
-    return completed.stdout.strip()
+    try:
+        stdout, stderr = process.communicate(timeout=max(0, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired as error:
+        raise BudgetExpired("nightly collection budget exhausted during target setup") from error
+    finally:
+        terminate_process_group(process)
+    if process.returncode:
+        raise subprocess.CalledProcessError(process.returncode, list(args), output=stdout, stderr=stderr)
+    return stdout.strip() if stdout is not None else ""
 
 
 def git_root_for_path(path: Path) -> Path:
@@ -136,24 +166,20 @@ def materialize_git_ref(repo: Path, ref: str, label_hint: str | None) -> tuple[P
             path = worktree_root / f"{path_stem}-{disambiguator}"
             disambiguator += 1
     path.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
+    run_text(
         ["git", "worktree", "add", "--detach", str(path), sha],
         cwd=repo,
-        check=True,
-        stdout=sys.stderr,
-        stderr=sys.stderr,
+        capture_output=False,
     )
     return (path, sha)
 
 
 def fetch_pr_ref(repo: Path, number: int) -> str:
     ref = f"refs/remotes/origin/pr/{number}"
-    subprocess.run(
+    run_text(
         ["git", "fetch", "origin", f"+refs/pull/{number}/head:{ref}"],
         cwd=repo,
-        check=True,
-        stdout=sys.stderr,
-        stderr=sys.stderr,
+        capture_output=False,
     )
     return ref
 
@@ -214,7 +240,7 @@ def build_target(
     engine_label = "" if engine == "egglog" else f" · {engine}"
     console.print(Text.assemble(("Building", "bold"), " ", _display_target(row), engine_label))
     package = {"egglog": "egglog-experimental", "egg": "egg-math-benchmark"}.get(engine)
-    target_dir = checkout_path / "target"
+    target_dir = checkout_path / os.environ.get("CARGO_TARGET_DIR", "target")
     build_args = ["cargo", "build"]
     if build_profile == "release":
         build_args.append("--release")
@@ -236,7 +262,39 @@ def build_target(
         )
     else:
         build_args.extend(("-p", package))
-    subprocess.run(build_args, cwd=checkout_path, check=True, stdout=sys.stderr, stderr=sys.stderr)
+    deadline = COLLECTION_DEADLINE.get()
+    if deadline is not None and time.monotonic() >= deadline:
+        raise BudgetExpired("nightly collection budget exhausted before build")
+    if os.environ.get("EGGLOG_BENCH_MEMORY_GUARD") == "1" or deadline is not None:
+        guard = MemoryGuard.from_environment()
+        if guard is not None:
+            build_args.extend(("--jobs", "1"))
+        process = subprocess.Popen(
+            build_args, cwd=checkout_path, stdout=sys.stderr, stderr=sys.stderr, start_new_session=True
+        )
+        timed_out = False
+        try:
+            if guard is not None:
+                guard.start(process.pid)
+            return_code = process.wait(timeout=None if deadline is None else max(0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            timed_out = True
+        finally:
+            try:
+                if guard is not None:
+                    guard.close()
+            finally:
+                terminate_process_group(process)
+        if guard is not None and guard.reason is not None:
+            raise ResourceStopped(f"resource guard stopped build: {guard.reason}")
+        if timed_out:
+            raise BudgetExpired("nightly collection budget exhausted during build")
+        if guard is not None and return_code == -signal.SIGKILL:
+            raise ResourceStopped("resource guard halted collection after build SIGKILL (cause unknown)")
+        if return_code != 0:
+            raise subprocess.CalledProcessError(return_code, build_args)
+    else:
+        subprocess.run(build_args, cwd=checkout_path, check=True, stdout=sys.stderr, stderr=sys.stderr)
     binary_stem = package or engine
     binary_name = f"{binary_stem}.exe" if os.name == "nt" else binary_stem
     binary_path = target_dir / build_profile / binary_name

@@ -1,4 +1,4 @@
-"""Execute subprocesses and define their normalized result value objects.
+"""Measure benchmark subprocesses and define their normalized result values.
 
 This module owns wall/RSS accounting and process failure details. Workload
 command construction and timing-summary parsing belong to their callers;
@@ -17,11 +17,22 @@ import threading
 import time
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
+from process_guard import MemoryGuard, terminate_process_group
+
 from .models import Status
+
+# Nightly sets this once around setup and collection, then resets it before its
+# final rendering. Read it on the calling thread: watchdogs do not inherit it.
+COLLECTION_DEADLINE: ContextVar[float | None] = ContextVar("collection_deadline", default=None)
+
+
+class BudgetExpired(RuntimeError):
+    """Collection stopped for the nightly budget, without an observation."""
 
 
 @dataclass(frozen=True)
@@ -48,6 +59,7 @@ class TimingResult:
     status: Status
     timing: TimingRow
     error: ErrorRow | None
+    resource_stopped: bool = False
 
 
 def run_command(
@@ -57,6 +69,10 @@ def run_command(
     env_overrides: Mapping[str, str] | None = None,
     required_output: str | Sequence[str] | None = None,
 ) -> TimingResult:
+    deadline = COLLECTION_DEADLINE.get()
+    if deadline is not None and time.monotonic() >= deadline:
+        raise BudgetExpired("nightly collection budget exhausted")
+    guard = MemoryGuard.from_environment()
     env = os.environ.copy()
     env["RUST_LOG"] = "error"
     if env_overrides is not None:
@@ -75,56 +91,77 @@ def run_command(
             stderr=stderr_file,
             start_new_session=True,
         )
+        timed_out = False
         try:
-            return_code, usage = wait4_process(process, timeout_sec)
+            if guard is not None:
+                guard.start(process.pid)
+            remaining = timeout_sec if deadline is None else deadline - time.monotonic()
+            budget_limited = remaining < timeout_sec
+            return_code, usage = wait4_process(process, max(0, min(timeout_sec, remaining)))
+            wall_sec = time.perf_counter() - start
         except subprocess.TimeoutExpired:
+            timed_out = True
+        except BaseException:
+            terminate_process_group(process)
+            raise
+        finally:
+            if guard is not None:
+                try:
+                    guard.close()
+                finally:
+                    # A child may leave descendants behind even after wait4 returns.
+                    terminate_process_group(process)
+        post_exit_peak: int | None = None
+        if guard is not None and not timed_out and guard.reason is None:
+            peak = ru_maxrss_to_bytes(usage.ru_maxrss)
+            if guard.check(peak or 0) is not None:
+                post_exit_peak = peak
+        if guard is not None and guard.reason is not None:
+            action = "detected after workload exit" if post_exit_peak is not None else "stopped workload"
+            return TimingResult(
+                status="failure",
+                timing=TimingRow(max_rss_bytes=post_exit_peak),
+                error=ErrorRow(
+                    message=f"resource guard {action}: {guard.reason}",
+                    signal=-process.returncode if process.returncode is not None and process.returncode < 0 else None,
+                ),
+                resource_stopped=True,
+            )
+        if timed_out:
+            if budget_limited:
+                raise BudgetExpired("nightly collection budget exhausted during workload")
             return TimingResult(
                 status="timed-out",
                 timing=TimingRow(),
                 error=ErrorRow(message=f"timed out after {timeout_sec} seconds"),
             )
-        except BaseException:
-            terminate_process_group(process)
-            raise
-        wall_sec = time.perf_counter() - start
         timing = timing_from_usage(usage, wall_sec)
-        stdout = read_tempfile(stdout_file)
-        stderr = read_tempfile(stderr_file)
-    if return_code == 0 and isinstance(required_output, str) and required_output not in stdout + stderr:
-        return TimingResult(
-            status="failure",
-            timing=timing,
-            error=ErrorRow(message=f"successful process output did not contain {required_output!r}"),
-        )
-    if return_code == 0 and required_output is not None and not isinstance(required_output, str):
-        missing_output = next((value for value in required_output if value not in stdout + stderr), None)
-        if missing_output is not None:
-            return TimingResult(
-                status="failure",
-                timing=timing,
-                error=ErrorRow(message=f"successful process output did not contain {missing_output!r}"),
-            )
-    if return_code == 0:
-        return TimingResult(status="success", timing=timing, error=None)
-    message = stderr.strip() or stdout.strip() or "process exited with non-zero status"
+        if return_code == 0:
+            if required_output is not None:
+                required = (required_output,) if isinstance(required_output, str) else required_output
+                missing = missing_output((stdout_file, stderr_file), required)
+                if missing is not None:
+                    return TimingResult(
+                        status="failure",
+                        timing=timing,
+                        error=ErrorRow(message=f"successful process output did not contain {missing!r}"),
+                    )
+            return TimingResult(status="success", timing=timing, error=None)
+        message = read_error_tail(stderr_file) or read_error_tail(stdout_file) or "process exited with non-zero status"
     exit_code = return_code if return_code >= 0 else None
     signal_number = -return_code if return_code < 0 else None
+    unexpected_kill = guard is not None and signal_number == signal.SIGKILL
+    if unexpected_kill:
+        message = f"resource guard halted collection after unexpected SIGKILL (cause unknown): {message[-850:]}"
     return TimingResult(
         status="failure",
         timing=timing,
         error=ErrorRow(exit_code=exit_code, signal=signal_number, message=message[-1000:]),
+        resource_stopped=unexpected_kill,
     )
 
 
-def terminate_process_group(process: subprocess.Popen[str] | subprocess.Popen[bytes]) -> None:
-    """Kill and reap a command's isolated process group after an exceptional exit."""
-
-    with suppress(ProcessLookupError):
-        os.killpg(process.pid, signal.SIGKILL)
-    process.wait()
-
-
-def wait4_process(process: subprocess.Popen[str], timeout_sec: int) -> tuple[int, resource.struct_rusage]:
+def wait4_process(process: subprocess.Popen[str], timeout_sec: float) -> tuple[int, resource.struct_rusage]:
     """Wait without adding polling delay to the measured child wall time."""
 
     timed_out = threading.Event()
@@ -154,9 +191,35 @@ def wait4_process(process: subprocess.Popen[str], timeout_sec: int) -> tuple[int
     return return_code, usage
 
 
-def read_tempfile(handle: TextIO) -> str:
+def missing_output(handles: Sequence[TextIO], required: Sequence[str]) -> str | None:
+    """Scan concatenated logs with bounded reads, including boundary matches."""
+
+    pending = set(required) - {""}
+    overlap = max(map(len, pending), default=1) - 1
+    suffix = ""
+    for handle in handles:
+        handle.seek(0)
+        while pending and (chunk := handle.read(4096)):
+            text = suffix + chunk
+            pending.difference_update([value for value in pending if value in text])
+            suffix = text[-overlap:] if overlap else ""
+    return next((value for value in required if value in pending), None)
+
+
+def read_error_tail(handle: TextIO) -> str:
+    """Retain only the last 1,000 stripped characters, even with long whitespace."""
+
     handle.seek(0)
-    return handle.read()
+    raw_tail = tail = ""
+    started = False
+    while chunk := handle.read(4096):
+        if not started:
+            chunk = chunk.lstrip()
+            started = bool(chunk)
+        if trimmed := chunk.rstrip():
+            tail = (raw_tail + trimmed)[-1000:]
+        raw_tail = (raw_tail + chunk)[-1000:]
+    return tail
 
 
 def timing_from_usage(

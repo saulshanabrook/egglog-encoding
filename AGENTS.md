@@ -58,7 +58,7 @@ nonempty. It uses small Math and disequality fixtures, not the full local
 benchmark suite. Override `BENCHMARK_SMOKE_REPORT` to use another temporary path.
 
 For benchmark-report UI changes, inspect both a focused one-file report and the
-default eleven-file report in Rich and Markdown form. Exercise terminal widths 80,
+default seven-file report in Rich and Markdown form. Exercise terminal widths 80,
 119, 120, 160, and 200 using copies of the report cache under `/tmp`; do not read
 from or append to the repository cache during UI validation. Confirm that the
 cumulative `--detail` levels add files, phases, and top rulesets in that order,
@@ -97,19 +97,48 @@ or modify the JSONL.
   indexed `ReportStore`; an interactive artifact embeds that complete snapshot
   and retargets only within it.
 - `proofs` is generation-only. The `proof-extraction` treatment uses
-  `--proof-extraction` to rewrite checks and extract, materialize, clean, and
+  `--proof-extraction` to rewrite checks and extracts, then materialize, clean, and
   simplify proofs without verifying them. Treat its results as performance
   evidence only; `--proof-testing` remains the strict correctness mode.
-- Bare `./bench.py` compares `proofs` with `off`. The `proof-extraction`
-  treatment is explicit opt-in.
-- The five egglog treatments run `egglog-experimental`. The `egg` treatment and
-  its three proof variants run `egg-math-benchmark` on the fixed Rational Math
-  workload. `egg-de`, `egg-ee`, `egg-nee`, and `egg-oee` run the original native
-  parameter-analysis drivers on `.in` inputs without proofs. Mixed-engine
-  comparisons build each required executable, and every cache row identifies
-  the executable that actually ran.
-- Benchmark inputs should not contain executable `(prove ...)` commands. Use
-  `(check ...)` so the selected treatment controls proof extraction, and cover
+- Bare `./bench.py` uses seven checked-in regression fixtures, six rounds and a
+  120-second timeout, comparing `proofs` with `off`. The `proof-extraction`
+  treatment is explicit opt-in. Nightly shares this roster and includes term,
+  proofs, proof-extraction and off on branch/main, with a 90-minute script budget.
+- The checked-in `benchmarking/known_failures.py` list skips affected modes even
+  for explicit files and `--force-run`; remove an entry to retry. Exclusions are
+  report context, never fabricated cache observations. Any ordinary failure
+  stops the affected mode's remaining repetitions; resource stops halt collection.
+- The five egglog treatments run `egglog-experimental`. The four Math treatments
+  (`egg` and its proof variants) run `egg-math-benchmark` on the fixed Rational
+  Math iteration-11 workload. Validate the complete input hash before using the
+  native driver. The native parameter treatments use the original `.in` drivers.
+  Every cache row identifies the executable that actually ran.
+- Expanded suites read the tracked `benchmarks/corpus/manifest.json` and standalone
+  `.egg` files. Commit prepared inputs; collection never regenerates them.
+  Source recipes are in `benchmarks/sources.json`; generation never requires old
+  ignored capture receipts. Preserve complete-call boundaries, aliases and blockers.
+- Figure collection requests 10 observations per endpoint by default. Expanded
+  cohort/report/figure analysis uses all exact-identity observations, with no
+  sample-count eligibility threshold; any failed observation remains visible.
+  Collection attempts every prepared workload; timing eligibility lives only
+  in Vega-Lite. Failures stop repetitions for the affected treatment, not other
+  treatments of that workload. Ordinary positional/default comparisons retain
+  requested newest-N selection.
+- Expanded Make targets use a 300-second timeout and a 10 GiB process-group RSS
+  guard. Host memory pressure and host headroom do not block or stop runs.
+  Preserve in-flight safety failures and halt before launching another workload.
+- Source preparation keeps builds and captures under ignored `benchmarks/local/`;
+  corpus resume state and strict validation evidence use ignored
+  `benchmarks/corpus/.local/`. Neither is an implicit timed screening pass.
+  Do not import diagnostic timings into the cache.
+- Source diagnostics cap combined stdout/stderr at 256 MiB, with no free-disk
+  reserve check. Preserve output-limit outcomes without retrying them on resume.
+- Keep source-generation supervision and the explicit validator under `scripts/`,
+  whole-process measurement under `benchmarking/`, and shared process
+  protection in `process_guard.py`. Collection must not import diagnostic runners.
+- Benchmark inputs should not contain executable `(prove ...)` or
+  `(prove-extract ...)` commands. Use source `(check ...)` and `(extract ...)`
+  commands so the selected treatment controls proof extraction, and cover
   strict proof validity in proof tests.
 - Benchmark files are resolved relative to the command invocation directory,
   not relative to comparison targets.

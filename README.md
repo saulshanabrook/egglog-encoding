@@ -29,6 +29,7 @@ make python-nits    # Python hygiene only
 make rust-nits      # rustfmt check, Clippy, and doc-link check only
 make proof-tests    # proof-focused subset of the workspace tests
 make benchmark-smoke
+make figures        # collect/reuse both proof overheads and render figures/
 make nightly        # benchmark the nightly endpoints and publish nightly/output/
 make nightly-local  # the same run at one round, for trying it out
 make update-snapshots
@@ -47,12 +48,19 @@ changes and downstream behavior in one reviewable unit.
 
 Proof-specific file tests use the `proofs/` filter: explicit `(prove ...)`
 fixtures under `tests/proofs` plus every proof-compatible file under
-proof-testing mode. Proof testing turns checks outside `fail` into proof queries
-and snapshots the generated proofs; checks inside `fail` remain negative
+proof-testing mode. Proof testing turns checks outside `fail` and extraction requests into proof
+queries and snapshots the generated proofs; checks inside `fail` remain negative
 assertions. Use `make proof-tests` for focused iteration and
 `make rust-check` or `make check` for the final compatibility gate.
 
 ## Benchmarking
+
+`make figures-parameter` compares the six parameter-analysis implementations.
+`make figures-expanded` compares Egg with Egglog on Math and shows the expanded
+families' proof-recording and proof-extraction overheads. Both pipelines reuse
+compatible cached observations and use Vega-Lite for statistics and rendering.
+See [figures/README.md](figures/README.md) and the
+[expanded source inventory](benchmarks/README.md) for their measurement boundaries.
 
 The public entrypoint is:
 
@@ -93,9 +101,9 @@ Treatments map directly to engine modes:
 | --- | --- |
 | `off` | egglog without term or proof encoding |
 | `term` | egglog with `--term-encoding` |
-| `proofs` | egglog with `--proofs` |
-| `proof-extraction` | egglog with `--proof-extraction`; rewrite checks, then extract, materialize, clean, and simplify proofs without verifying them |
-| `proof-testing` | egglog with `--proof-testing`; extract and verify proofs for checks |
+| `proofs` | egglog with `--proofs`; record proofs and execute ordinary checks and extracts |
+| `proof-extraction` | egglog with `--proof-extraction`; extract, materialize, clean, and simplify proofs for checks and extracted results, without verifying them |
+| `proof-testing` | egglog with `--proof-testing`; extract and verify proofs for checks and extracted results |
 | `egg` | current egg without explanation recording |
 | `egg-proofs` | current egg with explanation recording enabled |
 | `egg-proof-extraction` | current egg with explanation recording and extraction |
@@ -104,9 +112,27 @@ Treatments map directly to engine modes:
 
 The five egglog treatments run `egglog-experimental`. The four Math treatments
 (`egg` and its proof variants) run the separate `egg-math-benchmark` executable and
-support only `egglog-experimental/tests/math-microbenchmark-rational.egg`.
+support the canonical `egglog-experimental/tests/math-microbenchmark-rational.egg`
+and registered Math checkpoints. Complete input validation covers the rules,
+seeds, cutoff, and equality. Egg's greedy explanation-length optimization is
+disabled in all proof-enabled treatments.
 Results from either proof-extraction treatment are performance evidence only;
 the corresponding proof-testing treatment provides the strict validity check.
+
+`(prove-extract expression)` emits the ordinary extracted result followed by a
+proof that the input equals that result. An optional variant count requests a
+proof for each returned term. It preserves extraction costs, including the
+experimental dynamic cost model; the proof establishes equality, not optimality.
+Like `prove`, it requires proof recording and follows the configured validation
+setting. The command evaluates its input normally but never inserts a returned
+term to manufacture the equality. Proofs are assembled from exact constructor
+lookups over the shared result DAG, without expanding the result into a query.
+
+Use ordinary `(extract ...)` and `(check ...)` in benchmark sources:
+`--proofs` only records proofs, `--proof-extraction` also produces proofs for
+their results, and `--proof-testing` additionally verifies those proofs.
+Separate extension commands such as `multi-extract` are not automatically
+rewritten.
 
 ### Common comparisons
 
@@ -221,20 +247,15 @@ Paths are resolved relative to the command invocation directory, not relative
 to either target. Both endpoints therefore run the exact same file and fact
 directory contents. Their SHA-256 hashes are part of the cache identity.
 
-With no positional files, the representative suite is:
+With no positional files, the standard regression suite covers seven families:
 
 - `egglog-experimental/tests/math-microbenchmark-rational.egg`
 - `egglog-experimental/tests/fixtures/eggcc-2mm-pass1.egg`
-- `egglog/tests/pointer-analysis-initdb.egg`, with
-  `egglog/tests/pointer-analysis-initdb`
 - `egglog/tests/hardboiled_conv1d_32.egg`
 - `egglog/tests/luminal-llama.egg`
-- `egglog/tests/web-demo/herbie.egg`
 - `egglog/tests/papers/misaal-hvx-dot-product.egg`
 - `egglog/tests/papers/churchroad-wide-multiply.egg`
 - `egglog-experimental/tests/papers/dialegg-nmm40.egg`
-- `egglog/tests/papers/speq-preserved-reference-suite.egg`
-- `benchmarks/disequality/parameter-analysis.egg`
 
 The workloads are intentionally bounded proxies rather than an undifferentiated
 corpus:
@@ -243,20 +264,18 @@ corpus:
 | --- | --- | --- |
 | Math | The paper artifact's Rational language, 24 rewrites, and seven seeds, run for eleven iterations through current egg or egglog without backoff | An equality first established on iteration eleven is checked; tests require it to fail after iteration ten in both engines |
 | eggcc 2mm | Bounded pass-one fixture with ordinary constructor-valued merges | Generated `main` function type is checked |
-| Pointer analysis | All 73,864 rows from the 23 `initdb.bc` relations consumed by the adapted program; three legacy lookup-or-create functions are constructors under current egglog, and the run uses ordinary seminaive scheduling | Known `constant_points_to` row is derived and both reported output-table sizes are available for artifact comparison |
-| Hardboiled | Dormant canonicalization rules using unsupported unstable helpers are omitted | Extracted WMMA store result is checked |
+| Hardboiled | Dormant canonicalization rules using unsupported unstable helpers are omitted | All twelve original roots are extracted |
 | Luminal | Static Llama graph from [`egglog_repro` commit `7fb0194`](https://github.com/saulshanabrook/egglog_repro/blob/7fb0194812b5b11e41a286d8b55e48e3b0bfcd66/llama.egg) | `t712` is checked after kernel lowering |
-| Herbie | Static engine proxy without Racket orchestration or an FPCore corpus | All 14 checks exercise the selected treatment |
-| MISAAL | Complete generated HVX dot-product workload with current global syntax | The source expression is checked equivalent to the synthesized HVX result |
+| MISAAL | Complete generated HVX dot-product workload with current global syntax | The original source-expression extraction is retained |
 | Churchroad | The paper's 16-by-32-bit wide multiply with its prelude and driver mapping rules materialized; the saturating schedule is bounded to 17 cycles, calibrated as a roughly one-second normal-mode workload | The multiply expansion and its two-input and three-input DSP proposals are checked |
-| DialEgg | Generated NMM-40 scaling workload with `base.egg` materialized | An alternative matrix-chain association is checked |
-| SpEQ | Four artifact-preserved programs that still match the artifact's GEMV/histogram reference rules, recorded using egglog-python's native command log | Each input is checked equal to its extracted reference call (or enclosing expression) |
-| Disequality parameter analysis | Author-supplied native corpus converted to Egglog: 100K equality pairs, 10K disequality pairs, and six fixed numeral constraints in the original order | The contradiction is derived and supports proof extraction/checking under NE and EE |
+| DialEgg | Generated NMM-40 scaling workload with `base.egg` materialized | The original root is extracted using the supplied dynamic costs |
 
-The [disequality workload](benchmarks/disequality/README.md) uses NE by default.
-Its full-size proof runs require minutes and substantial memory, so the default
-suite is no longer a quick check. Use explicit file paths for a smaller subset
-or `--rounds 1` for an initial diagnostic.
+These fixtures are available in a fresh checkout; routine benchmarking does not
+regenerate author artifacts. They are regression cases, not the full paper
+population. Pointer analysis, Herbie, SpEQ, and the full
+[disequality workload](benchmarks/disequality/README.md) remain available through
+explicit paths. Parameter figures keep their separate `make figures-parameter`
+command. Use an explicit file or `--rounds 1` for a smaller diagnostic.
 
 ### ParaBit proof-stress regression
 
@@ -296,8 +315,8 @@ details and archive SHA-256. Herbie remains a bounded static proxy in the
 ordinary benchmark suite; reproducing the historical Racket/FPCore
 orchestration remains outside the ordinary runner.
 
-Benchmark files must not contain executable `(prove ...)` commands. Use
-`(check ...)` in timed workloads so the selected treatment controls whether
+Benchmark files must not contain executable `(prove ...)` or `(prove-extract ...)`
+commands. Use source `(check ...)` and `(extract ...)` commands in timed workloads so the selected treatment controls whether
 proof extraction is included in the timing boundary.
 
 Reports normally identify a selected file by filename. If names collide, they
@@ -350,16 +369,60 @@ The remaining collection options are:
 - `--report PATH`: append-only report/cache path; default `.reports.jsonl`.
   A filesystem path is required; `-` is not a streaming destination.
 - `--rounds N`: selected observations required for every endpoint/file;
-  default `6`.
-- `--timeout-sec N`: per-process timeout; default `1800` to accommodate the
-  full-size disequality proof workload. Smaller workloads may use a lower limit.
-- `--force-run`: append `N` fresh rows for both endpoints before selecting the
-  newest rows.
+  default `6`. Figure Make targets explicitly request `10`.
+- `--timeout-sec N`: per-process timeout; default `120`. Paper Make targets
+  explicitly use `300`; a longer experiment must request its timeout.
+- `--force-run`: request `N` fresh rows for both endpoints before selecting the
+  newest rows. Failures stop repetitions; checked-in exclusions still apply.
 - `--format rich|markdown`: final human report format.
 - `--open`: write the complete cache snapshot to an interactive HTML file and
   open it. For the default cache, the output is `.reports.html`.
 
+A failure or timeout stops further repetitions of that file and treatment;
+other cases continue. Cached failures prevent automatic top-up unless
+`--force-run` requests a retry. The checked-in
+[known-failure list](benchmarking/known_failures.py) skips affected modes in all
+commands, including explicit paths and `--force-run`, until the entry is
+removed. Skips retain their reasons in reports without inventing observations.
+
 Use `./bench.py --help` for the complete option reference.
+
+### Expanded source families
+
+The [expanded suites](benchmarks/README.md) measure complete independent e-graph
+computations: initialize inputs, run rules, then extract or check a result.
+Standalone `.egg` files and a portable manifest belong in `benchmarks/corpus/`.
+Pinned [source recipes](benchmarks/sources.json) can regenerate them; ordinary
+collection uses the saved corpus without author compilers. Shared-state stages
+stay together, aliases are deduplicated, and source blockers remain explicit.
+
+```sh
+make reproduce-benchmarks      # Only to create or refresh the corpus; commit its results.
+make expanded-bench-recording  # Cached baselines and proof recording.
+make figures-all              # Both proof treatments, Math, and paper figures.
+make figures-all-cached       # Render existing grouped data only.
+make figures-expanded-archive # Gather the images and reproducible evidence.
+```
+
+Collection tops up every prepared workload to ten observations per condition by
+default, with one sequential plan per comparison. Vega-Lite selects the plotted
+cohort from successful proofs-off samples with mean whole-process time strictly
+between 0.1 and 30 seconds; memory and proof outcomes do not select it. Failed
+observations remain visible and invalidate their ratios. Expanded Make targets
+retain the 300-second timeout and memory guard. Correctness validation is
+separate: `make validate-benchmarks`.
+
+```sh
+./bench.py --suite eggcc --suite luminal --target figures=. \
+  --treatment proofs --compare-treatment off --rounds 10 --timeout-sec 300
+```
+
+Use `--suite expanded` for all included families, `--treatment proof-extraction`
+for recording plus extraction. Changing the chart's time window requires only
+rerendering; it does not change collection or cached observations.
+The shared `.reports-grouped.json` and metadata-only inventory feed the authored
+Vega-Lite specs directly. [Figure documentation](figures/README.md) explains
+sample selection, outputs, cached rendering, and the evidence archive.
 
 ### Engine timing
 
@@ -413,28 +476,39 @@ sharing it.
 
 ### Nightly
 
-`make nightly` benchmarks each treatment in `TREATMENTS` — `term`, `proofs`,
-and `proof-extraction` — on the current checkout and on the latest `main`,
-writing `nightly/output/index.jsonl` and the interactive page beside it:
+`make nightly` uses the same seven fixtures and six rounds as bare `bench.py`,
+measuring off, term encoding, proof recording, and proof extraction on the
+current branch and `main`. Each process has a 120-second timeout. Targets are
+built once, and proofs-off samples are reused between comparisons.
 
 ```bash
 make nightly
-uv run --locked python scripts/nightly_bench.py /path/to/output  # alternate output directory
+uv run --locked python scripts/nightly_bench.py /path/to/output
+uv run --locked python scripts/nightly_bench.py --budget-sec 5400
 ```
 
-Endpoints are labelled by target (`branch` / `main`) and commit hash, so the
-page's dropdown can compare any two of them and it is clear which commit each
-side is; endpoints with identical binaries collapse to one option. The page
-opens on proof overhead of the current checkout. Populating is best effort: an
-endpoint that fails to build or run drops one dropdown option rather than
-failing the run. Edit `TARGETS` and `TREATMENTS` in `scripts/nightly_bench.py`
-to change what is measured.
+The report opens on branch/main proof-recording ratios with per-program
+confidence intervals and absolute timings. Its selectors also offer ordinary
+mode, term encoding, extraction, and proofs/off comparisons. Identical branch
+and main binaries share observations; the opening view then falls back to
+proofs/off with an explanation. Routine reports have no CDF or percentile
+summary; those belong to the full paper figures.
 
-Each run replaces both published files, so `index.jsonl` is the cache that run
-measured into and a failed run publishes no page.
+Recording/off runs for both targets precede term and extraction. The default
+90-minute budget includes target setup, builds, and collection, reserving a
+minute for cleanup and reporting. Budget exhaustion stops child processes and
+leaves interrupted attempts unmeasured. Actual timeouts and resource failures
+remain cached; a resource stop halts the entire nightly.
 
-`make nightly-local` is the same run at `--rounds 1`, for trying the whole
-pipeline out without waiting for a full nightly.
+Each nightly starts a fresh `nightly/output/index.jsonl`, writes its grouped
+snapshot, and publishes `index.html` after comparisons and on interruption.
+Partial and failed runs therefore still have an informative report. Rendering
+reads the cache without building or collecting. The service's two-hour limit
+also covers the Make bootstrap before the script starts.
+
+`make nightly-local` uses one round. CodSpeed and the PR benchmark smoke job
+remain separate, small checks. Runtime on the dedicated server still needs
+calibration; the budget is a bound, not an expected completion time.
 
 The [egraphs-good nightly service](https://nightly.cs.washington.edu) checks out
 this repository, runs `make nightly`, and serves `nightly/output/`, matching the
