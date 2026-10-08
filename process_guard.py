@@ -21,9 +21,19 @@ class ResourceStopped(ValueError):
 
 
 def group_rss_bytes(process_group: int) -> int:
-    """Sum resident memory for all currently visible members of one group."""
+    """Sum group RSS, retrying transient ps timeouts with 1, 2, then 4 seconds."""
 
-    snapshot = subprocess.run(["ps", "-axo", "pgid=,rss="], check=True, capture_output=True, text=True, timeout=1)
+    timeout = 1
+    while True:
+        try:
+            snapshot = subprocess.run(
+                ["ps", "-axo", "pgid=,rss="], check=True, capture_output=True, text=True, timeout=timeout
+            )
+            break
+        except subprocess.TimeoutExpired:
+            if timeout == 4:
+                raise
+            timeout *= 2
     return sum(
         int(fields[1]) * 1024
         for line in snapshot.stdout.splitlines()

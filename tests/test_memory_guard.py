@@ -10,6 +10,7 @@ import sys
 import time
 from contextlib import suppress
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -38,6 +39,54 @@ def test_group_rss_includes_descendants_but_not_other_groups(monkeypatch: pytest
         lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, "123 10\n123 20\n456 9000000\n"),
     )
     assert memory_guard.group_rss_bytes(123) == 30 * 1024
+
+
+@pytest.mark.parametrize("timeouts", [1, 2, 3])
+def test_transient_rss_sample_timeouts_retry_without_fabricating_zero(
+    monkeypatch: pytest.MonkeyPatch, timeouts: int
+) -> None:
+    deadlines: list[int] = []
+
+    def snapshot(command: list[str], *, timeout: int, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        deadlines.append(timeout)
+        if len(deadlines) <= timeouts:
+            raise subprocess.TimeoutExpired(command, timeout)
+        return subprocess.CompletedProcess(command, 0, "123 10\n123 20\n456 9000000\n")
+
+    monkeypatch.setattr(memory_guard.subprocess, "run", snapshot)
+    if timeouts == 3:
+        with pytest.raises(subprocess.TimeoutExpired):
+            memory_guard.group_rss_bytes(123)
+    else:
+        assert memory_guard.group_rss_bytes(123) == 30 * 1024
+    assert deadlines == [1, 2, 4][: timeouts + 1]
+
+
+@pytest.mark.parametrize("diagnostic", [False, True])
+def test_live_workload_survives_one_stalled_rss_sample(
+    guarded: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, diagnostic: bool
+) -> None:
+    original_run = subprocess.run
+    attempts = 0
+
+    def snapshot(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        nonlocal attempts
+        if command == ["ps", "-axo", "pgid=,rss="]:
+            attempts += 1
+            if attempts == 1:
+                raise subprocess.TimeoutExpired(command, 1)
+        result: subprocess.CompletedProcess[str] = original_run(command, **kwargs)
+        return result
+
+    monkeypatch.setattr(memory_guard.subprocess, "run", snapshot)
+    command = [sys.executable, "-c", "import time; time.sleep(0.2); print('completed')"]
+    if diagnostic:
+        result = reproduction_process.run_bounded_command(command, tmp_path, tmp_path / "recovered", timeout_sec=5)
+        assert result.status == "success" and result.stdout_path.read_text() == "completed\n"
+    else:
+        measured = processes.run_command(command, tmp_path, 5)
+        assert measured.status == "success" and not measured.resource_stopped
+    assert attempts >= 2
 
 
 @pytest.mark.parametrize("cause", ["cap", "monitor-error"])
