@@ -1,0 +1,128 @@
+;;; The paper artifact's MMM second-pass input and published baseline extraction, under a
+;;; goal-directed subset of the fine-grained rules: the run that once crashed the
+;;; substitution primitive, and the one that showed its choice of representative mattered.
+;;;
+;;; Provenance (artifact commit 83f2e5bee2b3aa45bf97ef1e3a8abe953790c735):
+;;;   input:  sdql/slotted/progs/mmm_2nd.sexp
+;;;   target: sdql/baseline/progs/mmm_2nd_esat.sexp
+;;; Table 1's slotted row: 18 iterations, 1,308 nodes, 128 classes, saturated. The full
+;;; 44-rule run is `slotted/eval.py sdql --kernel mmm --phase 2nd`; this is the suite's
+;;; cheap witness with the thirteen rules that reach the target by round 18, run for the
+;;; artifact's 30.
+;;;
+;;; Under these rules `beta` substitutes into bodies whose classes earlier rewrites
+;;; renumbered. `slotted-subst` once built a non-injective edge there -- a node's binder
+;;; and a public slot carried to the same number were conflated -- and the next
+;;; substitution died, in about two runs of three. Once that was fixed the target was
+;;; reached in about two runs of three instead: the primitive copies one representative
+;;; of the body, it took the first e-node the table scan yielded, and egglog's processing
+;;; order differs between processes. It now takes the smallest term and, among equal
+;;; sizes, the least canonical spelling, so every run builds the same e-graph;
+;;; `slotted/checks/check-subst-determinism.py` holds it to that on this program.
+;;; `slotted/checks/check-paper-sdql.py` checks the terms and that each rule is the library's.
+(include "slotted/languages/sdql.egg")
+
+(rewrite (App (Symbol "uniquef") a) (Unique a) :name "unique-app2")
+(rewrite (Let t $x body) (subst body $x t) :name "beta")
+(rewrite (Let e1 $x (App e2 e3)) (App e2 (Let e1 $x e3)) :name "let-apply1")
+(rewrite (Mult e1 (IfThen e2 e3)) (IfThen e2 (Mult e1 e3)) :name "if-mult2")
+(rewrite (IfThen e1 e2) (Mult e1 e2) :name "if-to-mult")
+(rewrite
+  (Sum R $x $y (Mult e1 e2))
+  (Mult e1 (Sum R $x $y e2))
+  :name
+  "sum-fact-1"
+  :when
+  ((not-free $x e1) (not-free $y e1)))
+(rewrite
+  (Sum R $x $y (Sing e1 e2))
+  (Sing e1 (Sum R $x $y e2))
+  :name
+  "sum-fact-3"
+  :when
+  ((not-free $x e1) (not-free $y e1)))
+(rewrite
+  (Mult e1 (Sum R $k $v e2))
+  (Sum R $k $v (Mult e1 e2))
+  :name
+  "sum-fact-inv-1"
+  :when
+  ((not-free $k e1) (not-free $v e1)))
+(rewrite
+  (Sum (Sum R $k2 $v2 (Sing (Unique key) body1)) $k1 $v1 body2)
+  (Sum R $k2 $v2 (Let (Unique key) $k1 (Let body1 $v1 body2)))
+  :name
+  "sum-sum-vert-fuse-2"
+  :when
+  ((not-free $k1 body1) (not-free $k2 body2) (not-free $v2 body2)))
+(rewrite (Get dict key) (Sum dict $k $v (IfThen (Equality $k key) $v)) :name "get-to-sum")
+(rewrite
+  (Sum dict $k $v (IfThen (Equality $k key) body))
+  (Let key $k (Let (Get dict $k) $v body))
+  :name
+  "sum-to-get"
+  :when
+  ((not-free $k dict) (not-free $k key) (not-free $v key)))
+(rewrite (Sum e1 $k $v (Sing $k $v)) e1 :name "sum-sing")
+(rewrite (Unique e) e :name "unique-rm")
+
+(let paper-input
+  (Lambda $1
+    (Lambda $2
+      (Lambda $3
+        (Lambda $4
+          (Lambda $5
+            (Lambda $6
+              (Sum
+                (Sum $1 $7 $8
+                  (Let
+                    (Get $1 (Add $7 (Num 1)))
+                    $9
+                    (Sing $7
+                      (Sum
+                        (SubArray $2 $8 (Sub $9 (Num 1)))
+                        $10
+                        $11
+                        (Sing (Unique $11) (Get $3 $10))))))
+                $7
+                $8
+                (Sing $7
+                  (Sum $8 $9 $10
+                    (Mult $10
+                      (Get
+                        (Sum $4 $11 $12
+                          (Let
+                            (Get $4 (Add $11 (Num 1)))
+                            $13
+                            (Sing $11
+                              (Sum
+                                (SubArray $5 $12 (Sub $13 (Num 1)))
+                                $14
+                                $15
+                                (Sing (Unique $15) (Get $6 $14))))))
+                        $9))))))))))))
+;;; Saturate the input alone: the target arrives only afterwards, so this shows
+;;; reachability rather than joinability.
+(run 30)
+(let paper-target
+  (Lambda $1
+    (Lambda $2
+      (Lambda $3
+        (Lambda $4
+          (Lambda $5
+            (Lambda $6
+              (Sum $1 $7 $8
+                (Sing $7
+                  (Sum
+                    (SubArray $2 $8 (Sub (Get $1 (Add $7 (Num 1))) (Num 1)))
+                    $9
+                    $10
+                    (Mult
+                      (Get $3 $9)
+                      (Sum
+                        (SubArray $5 (Get $4 $10) (Sub (Get $4 (Add $10 (Num 1))) (Num 1)))
+                        $11
+                        $12
+                        (Sing $12 (Get $6 $11))))))))))))))
+(run 0)
+(check (= paper-input paper-target))

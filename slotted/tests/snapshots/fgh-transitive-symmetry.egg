@@ -1,0 +1,34 @@
+;;; COMPILED from slotted/tests/paper/fgh-transitive-symmetry.egg by slotted/slotted-egglog.py.
+;;;
+;;; Only the forms THIS file contributes. The machinery for its 3 constructors,
+;;; and anything an included library brought, are left out -- committing the
+;;; same generated thousands of lines once per test would swamp the diff that
+;;; a change in the compiler is supposed to show.
+;;; --update` rewrites it. Under `target/` it is build output.
+
+(let $f12 (F (map-of 0 1) (SlottedVar_0 0) (map-of 0 2) (SlottedVar_0 0)))
+(let $g21 (G (map-of 0 2) (SlottedVar_0 0) (map-of 0 1) (SlottedVar_0 0)))
+(let $g12 (G (map-of 0 1) (SlottedVar_0 0) (map-of 0 2) (SlottedVar_0 0)))
+(let $h12 (H (map-of 0 1) (SlottedVar_0 0) (map-of 0 2) (SlottedVar_0 0)))
+(let $h21 (H (map-of 0 2) (SlottedVar_0 0) (map-of 0 1) (SlottedVar_0 0)))
+(union $f12 $g21)
+(union $g12 $h12)
+(run-schedule (seq (saturate (seq (saturate (run slotted)) (saturate (run slotted-migrate)) (saturate (run slotted-group)) (run slotted-shape))) (saturate (run slotted-read))))
+(check (= _c0cls_c0 (F _c0e0_lit_1 (SlottedVar_0 0) _c0e0_lit_2 (SlottedVar_0 0)))
+       (= _c0atom_0 (atom "@atom:0" (root "_c0" (ClassSlots_0 _c0cls_c0)) (lit "$1" _c0e0_lit_1) (lit "$2" _c0e0_lit_2)))
+       (= _c0m _c0atom_0)
+       (= _c1cls_c1 (H _c1e0_lit_2 (SlottedVar_0 0) _c1e0_lit_1 (SlottedVar_0 0)))
+       (= _c1atom_0 (atom "@atom:0" (root "_c1" (ClassSlots_0 _c1cls_c1)) (lit "$2" _c1e0_lit_2) (lit "$1" _c1e0_lit_1)))
+       (= _c1m _c1atom_0)
+       (= _c0cls_c0 _c1cls_c1)
+       (= _grp (EclassGroup_0 _c0cls_c0))
+       (coset-same (compose (map-of (map-get (ren _c0m "$1") 0) 1 (map-get (ren _c0m "$2") 0) 2) (ren _c0m "_c0")) (compose (map-of (map-get (ren _c1m "$1") 0) 1 (map-get (ren _c1m "$2") 0) 2) (ren _c1m "_c1")) _grp))
+(fail (check (= _c0cls_c0 (F _c0e0_lit_1 (SlottedVar_0 0) _c0e0_lit_2 (SlottedVar_0 0)))
+       (= _c0atom_0 (atom "@atom:0" (root "_c0" (ClassSlots_0 _c0cls_c0)) (lit "$1" _c0e0_lit_1) (lit "$2" _c0e0_lit_2)))
+       (= _c0m _c0atom_0)
+       (= _c1cls_c1 (H _c1e0_lit_1 (SlottedVar_0 0) _c1e0_lit_2 (SlottedVar_0 0)))
+       (= _c1atom_0 (atom "@atom:0" (root "_c1" (ClassSlots_0 _c1cls_c1)) (lit "$1" _c1e0_lit_1) (lit "$2" _c1e0_lit_2)))
+       (= _c1m _c1atom_0)
+       (= _c0cls_c0 _c1cls_c1)
+       (= _grp (EclassGroup_0 _c0cls_c0))
+       (coset-same (compose (map-of (map-get (ren _c0m "$1") 0) 1 (map-get (ren _c0m "$2") 0) 2) (ren _c0m "_c0")) (compose (map-of (map-get (ren _c1m "$1") 0) 1 (map-get (ren _c1m "$2") 0) 2) (ren _c1m "_c1")) _grp)))

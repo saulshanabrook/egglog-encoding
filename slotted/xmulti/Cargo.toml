@@ -1,0 +1,41 @@
+# Standalone oracle: runs a multipattern through the reference
+# `slotted-egraphs` implementation so the egglog encoding can be diffed
+# against it. Its own workspace, so it stays out of the root build.
+[workspace]
+
+[package]
+name = "xmulti"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+num-bigint = "0.4"
+# Pinned to a REV rather than a local path, so a runner with no checkout of the
+# reference can build this and the differential half can run in CI.
+#
+# This is upstream `main` at 48cefee: PR 46 (the multipattern matcher with mid-match
+# `unify`), PR 50 (a symmetric class's every reading is matched), and the maintainer's
+# fix for the weak shape of a node that reuses one printed name in bound and free
+# positions (`let $x := $x in $x`), which https://github.com/memoryleak47/slotted-egraphs/pull/51
+# reported. The harness asks nothing of the reference beyond `main`'s `MultiPattern`:
+# a binder column holds a slot literal, never a pattern variable.
+#
+# Matching here reads a binder's bound slot as any name, a free variable's included,
+# and so does the encoding; a rule that rebinds such a slot over something it matched
+# outside the binder owes a `not-free` guard (`capture_guards` in the encoder), which
+# both sides evaluate. The oracle is not asked to be stricter than that.
+#
+# Differential checks use `MultiPattern` for the full encoding and `ematch_all`
+# for its optional nested compatibility mode. Both use matching snapshot
+# substitution. The separate nested performance baseline keeps the artifact's
+# syntactic substitution. The `checks` feature and explicit `eg.check()` calls
+# make malformed reference state a hard failure.
+slotted-egraphs = { git = "https://github.com/memoryleak47/slotted-egraphs.git", rev = "48cefee5503822224257e4f2e81681fef212ae89" }
+
+[features]
+# The differential harness wants malformed reference state to be a hard failure, so
+# the crate's `checks` are on by default. A timing run wants the crate as the paper's
+# experiments ran it: `cargo build --release --no-default-features`, which is what
+# `make slotted-eval` does. The binary says which it is on its `CONFIG` line.
+default = ["checks"]
+checks = ["slotted-egraphs/checks"]

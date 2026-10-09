@@ -1,0 +1,8 @@
+;;; A better body representative must refresh substitution even when the Let row
+;;; and its slots are unchanged. Only the unsubstituted App matches improve-body.
+(include "slotted/languages/sdql.egg")
+(rewrite (Let t $x body) (subst body $x t) :name "beta")
+(rewrite (App (Symbol "z") $x) (Unique $x) :name "improve-body")
+(let start (Let (Num 7) $0 (App (Symbol "z") $0)))
+(run 2)
+(check (= start (Unique (Num 7))))

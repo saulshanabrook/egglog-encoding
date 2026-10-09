@@ -1,10 +1,13 @@
 use super::*;
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SetContainer {
     pub do_rebuild: bool,
-    pub data: BTreeSet<Value>,
+    /// behind an `Arc`, so that a primitive taking the container by value copies a
+    /// pointer, not a set (a class's symmetry group can hold hundreds of elements)
+    pub data: Arc<BTreeSet<Value>>,
 }
 
 impl ContainerValue for SetContainer {
@@ -12,7 +15,7 @@ impl ContainerValue for SetContainer {
         if self.do_rebuild {
             let mut xs: Vec<_> = self.data.iter().copied().collect();
             let changed = rebuilder.rebuild_slice(&mut xs);
-            self.data = xs.into_iter().collect();
+            self.data = Arc::new(xs.into_iter().collect());
             changed
         } else {
             false
@@ -218,26 +221,26 @@ impl ContainerSort for SetSort {
 
         add_primitive_with_validator!(eg, "set-empty" = {self.clone(): SetSort} |                      | -> @SetContainer (arc) { SetContainer {
             do_rebuild: self.ctx.is_eq_container_sort(),
-            data: BTreeSet::new()
+            data: Arc::new(BTreeSet::new())
         } }, set_empty_validator);
         add_primitive_with_validator!(eg, "set-of"    = {self.clone(): SetSort} [xs: # (self.element())] -> @SetContainer (arc) { SetContainer {
             do_rebuild: self.ctx.is_eq_container_sort(),
-            data: xs.collect()
+            data: Arc::new(xs.collect())
         } }, set_of_validator);
 
         // No validator: `set-get` indexes the runtime `BTreeSet<Value>` order,
         // which terms cannot reproduce, so it is unsupported in proof mode.
         add_primitive!(eg, "set-get" = |xs: @SetContainer (arc), i: i64| -?> # (self.element()) { xs.data.iter().nth(i as usize).copied() });
-        add_primitive_with_validator!(eg, "set-insert" = |mut xs: @SetContainer (arc), x: # (self.element())| -> @SetContainer (arc) {{ xs.data.insert( x); xs }}, set_insert_validator);
-        add_primitive_with_validator!(eg, "set-remove" = |mut xs: @SetContainer (arc), x: # (self.element())| -> @SetContainer (arc) {{ xs.data.remove(&x); xs }}, set_remove_validator);
+        add_primitive_with_validator!(eg, "set-insert" = |mut xs: @SetContainer (arc), x: # (self.element())| -> @SetContainer (arc) {{ Arc::make_mut(&mut xs.data).insert(x); xs }}, set_insert_validator);
+        add_primitive_with_validator!(eg, "set-remove" = |mut xs: @SetContainer (arc), x: # (self.element())| -> @SetContainer (arc) {{ Arc::make_mut(&mut xs.data).remove(&x); xs }}, set_remove_validator);
 
         add_primitive_with_validator!(eg, "set-length"       = |xs: @SetContainer (arc)| -> i64 { xs.data.len() as i64 }, set_length_validator);
         add_primitive_with_validator!(eg, "set-contains"     = |xs: @SetContainer (arc), x: # (self.element())| -?> () { ( xs.data.contains(&x)).then_some(()) }, set_contains_validator);
         add_primitive_with_validator!(eg, "set-not-contains" = |xs: @SetContainer (arc), x: # (self.element())| -?> () { (!xs.data.contains(&x)).then_some(()) }, set_not_contains_validator);
 
-        add_primitive_with_validator!(eg, "set-union"      = |mut xs: @SetContainer (arc), ys: @SetContainer (arc)| -> @SetContainer (arc) {{ xs.data.extend(ys.data);                  xs }}, set_union_validator);
-        add_primitive_with_validator!(eg, "set-diff"       = |mut xs: @SetContainer (arc), ys: @SetContainer (arc)| -> @SetContainer (arc) {{ xs.data.retain(|k| !ys.data.contains(k)); xs }}, set_diff_validator);
-        add_primitive_with_validator!(eg, "set-intersect"  = |mut xs: @SetContainer (arc), ys: @SetContainer (arc)| -> @SetContainer (arc) {{ xs.data.retain(|k|  ys.data.contains(k)); xs }}, set_intersect_validator);
+        add_primitive_with_validator!(eg, "set-union"      = |mut xs: @SetContainer (arc), ys: @SetContainer (arc)| -> @SetContainer (arc) {{ Arc::make_mut(&mut xs.data).extend(ys.data.iter().copied()); xs }}, set_union_validator);
+        add_primitive_with_validator!(eg, "set-diff"       = |mut xs: @SetContainer (arc), ys: @SetContainer (arc)| -> @SetContainer (arc) {{ Arc::make_mut(&mut xs.data).retain(|k| !ys.data.contains(k)); xs }}, set_diff_validator);
+        add_primitive_with_validator!(eg, "set-intersect"  = |mut xs: @SetContainer (arc), ys: @SetContainer (arc)| -> @SetContainer (arc) {{ Arc::make_mut(&mut xs.data).retain(|k| ys.data.contains(k)); xs }}, set_intersect_validator);
     }
 
     fn reconstruct_termdag(

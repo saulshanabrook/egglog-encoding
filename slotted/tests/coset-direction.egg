@@ -1,0 +1,9 @@
+;;; A nested reading maps node slots into the parent's frame. The shared $0
+;;; pins an image of that permutation. Grouping by its input loses this match.
+(include "slotted/languages/sdql.egg")
+(union (Binop $0 $1 $2) (Binop $1 $0 $2))
+(union (Binop $0 $1 $2) (Binop $1 $2 $0))
+(let start (App $0 (Binop $0 $1 $2)))
+(rewrite (App $a (Binop $b $c $a)) (Null))
+(run 1)
+(check (= start (Null)))

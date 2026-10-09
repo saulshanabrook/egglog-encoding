@@ -472,6 +472,7 @@ impl EGraph {
         add_base_sort(&mut eg, F64Sort, span!()).unwrap();
         add_base_sort(&mut eg, BigIntSort, span!()).unwrap();
         add_base_sort(&mut eg, BigRatSort, span!()).unwrap();
+        sort::slotted::register_base_sorts(&mut eg);
         eg.type_info.add_presort::<MapSort>(span!()).unwrap();
         eg.type_info.add_presort::<SetSort>(span!()).unwrap();
         eg.type_info.add_presort::<VecSort>(span!()).unwrap();

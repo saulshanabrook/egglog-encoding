@@ -1,0 +1,16 @@
+;;; How `array.egg` corresponds to the reference crate.
+;;;
+;;; See `sdql.ref` for the format. This is the paper's Listing 1 language, which
+;;; `tests/array/mod.rs` and `tests/rise/rewrite.rs` both use, and its tags are the
+;;; reference's own -- only `Lam` is spelled differently on the two sides.
+;;;
+;;; `lambda` and `lam` are one operator under two names: the rules in `array.egg` name
+;;; the CONSTRUCTOR, `Lam`, which `slotenc.language` also registers; these two are for
+;;; a corpus written in Python, which says `("lam", ...)`.
+
+app         App     app
+lambda      Lam     lam
+lam         Lam     lam
+let         Let     let
+sym         Sym     =payload
+num         Num     =payload

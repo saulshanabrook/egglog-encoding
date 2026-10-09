@@ -1,0 +1,202 @@
+;;; `Sum` binds TWO slots on one node.
+;;;
+;;; Written in the SLOTTED language and compiled by
+;;; `slotted/slotted-egglog.py`, so nothing below mentions a renaming, an
+;;; edge or `(Var 0)`: those are the encoding, and the point of a test at this level is
+;;; that it reads the way the paper does.
+;;;
+;;; `Sum(AppliedId, Bind<Bind<AppliedId>>)` in the reference is four slotted children of
+;;; which the middle two bind, which is what `:binder 1 2` says. Both bound slots are
+;;; taken out of the class's slot set, so renaming either is invisible from outside.
+
+(sort U)
+
+(constructor Sing (U U) U)
+(constructor Sum (U U U U) U :binder 1 2)
+(constructor Merge (U U U U U U) U :binder 2 3 4)
+(constructor Let (U U U) U :binder 1)
+(constructor Null () U)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; both bound slots are alpha-renameable
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let r (Sing (Null) (Null)))
+(let a (Sum r $5 $6 (Null)))
+(let b (Sum r $7 $8 (Null)))
+(run 0)
+
+;; the body uses neither bound slot, so the two spellings are one class
+(check (= a b))
+;; and that class depends on nothing
+(check (slots a))
+
+(pop)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; the two bound slots are ORDERED, so swapping them is a different term
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let r (Sing (Null) (Null)))
+(let kv (Sum r $5 $6 (Sing $5 $6)))
+(let vk (Sum r $5 $6 (Sing $6 $5)))
+(run 0)
+
+(check (!= kv vk))
+;; both bound slots are consumed by the body, so neither escapes
+(check (slots kv))
+(check (slots vk))
+
+(pop)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; and the same with a body that names ONE of them
+;;;
+;;; A body at the first bound slot is a different term from one at the second, so no
+;;; renaming identifies them. The encoded test this replaces had this case and checked
+;;; only that both classes have no free slots, which is true of two identical terms
+;;; too -- it never asserted the distinctness its own title claims.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let first (Sum (Null) $5 $6 $5))
+(let second (Sum (Null) $5 $6 $6))
+(run 0)
+
+(check (!= first second))
+(check (slots first))
+(check (slots second))
+
+(pop)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Reusing a name in nested binder columns is lexical shadowing.
+;;;
+;;; `Bind<Bind<body>>` is nested, not a simultaneous set of names.  The second
+;;; `$5` therefore shadows the first, and the body occurrence refers to it.  The
+;;; flattened encoding must alpha-refresh the shadowed outer binder.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let shadowed (Sum (Null) $5 $5 $5))
+(let inner (Sum (Null) $6 $7 $7))
+(let outer (Sum (Null) $6 $7 $6))
+(run 0)
+
+(check (= shadowed inner))
+(check (!= shadowed outer))
+(check (slots shadowed))
+
+;; and the same nesting law extends to all three of Merge's binders
+(let merge-shadowed (Merge (Null) (Null) $5 $5 $5 $5))
+(let merge-inner (Merge (Null) (Null) $6 $7 $8 $8))
+(let merge-outer (Merge (Null) (Null) $6 $7 $8 $6))
+(run 0)
+(check (= merge-shadowed merge-inner))
+(check (!= merge-shadowed merge-outer))
+(check (slots merge-shadowed))
+
+(pop)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; The same shadowing law applies while compiling patterns and RHS terms.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(rewrite (Sum (Null) $x $x body)
+         (Null)
+         :name "shadowed-binders-pattern")
+(let matched (Sum (Null) $6 $7 $7))
+(run 1)
+(check (= matched (Null)))
+
+(pop)
+
+(push)
+
+(rewrite (Sing (Null) (Null))
+         (Sum (Null) $x $x $x)
+         :name "shadowed-binders-rhs")
+(let seed (Sing (Null) (Null)))
+(let built (Sum (Null) $6 $7 $7))
+(run 1)
+(check (= seed built))
+
+(pop)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Refreshing a shadowed binder must not capture an ordinary-child slot.
+;;;
+;;; The compiler's generated outer-binder name starts with `$__shadow0`.  That
+;;; spelling is deliberately also pinned by the pattern below.  It is free in the
+;;; RHS body, so the refreshed outer `$x` must avoid it; otherwise the RHS becomes
+;;; the captured term and equating it makes the seed's only free slot redundant.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(rewrite (Sing $__shadow0 (Null))
+         (Sum (Null) $x $x $__shadow0)
+         :name "shadow-refresh-avoids-free-slot")
+(let seed (Sing $9 (Null)))
+(let free (Sum (Null) $5 $6 $9))
+(let captured (Sum (Null) $5 $6 $5))
+(run 1)
+
+(check (= seed free))
+(check (!= seed captured))
+(check (slots seed $9))
+
+(pop)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; a free slot in the body stays free
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(let r (Sing (Null) (Null)))
+(let free (Sum r $5 $6 (Sing $5 $9)))
+(run 0)
+
+;; $9 is neither bound slot, so the class depends on it and on nothing else
+(check (slots free $9))
+
+(pop)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Flattening must preserve the distinct lexical identities of one free and one
+;;; bound use of the same surface spelling.
+;;;
+;;; `let x = x in x` has TWO slots: the value's `x` is outside the binder, while the
+;;; body's `x` is bound.  MultiPattern itself has a global slot namespace, so spelling
+;;; those roles differently is the scope-preserving lowering and matches the term.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(rewrite (Let $free $bound $bound)
+         (Null)
+         :name "binder-free-distinct-spellings")
+(let distinct-spellings (Let $2 $1 $1))
+(run 1)
+(check (= distinct-spellings (Null)))
+
+(pop)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Known compiler limitation: preserving the source spelling verbatim collapses
+;;; those two lexical roles onto one global MultiPattern slot.  They are distinct
+;;; edges in the same encoded e-node, so the required renaming would be non-injective
+;;; and the match is missed.  Flip this expected failure when the front end carries
+;;; lexical slot identities through flattening.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(push)
+
+(rewrite (Let $x $x $x)
+         (Null)
+         :name "binder-free-same-spelling-known-limit")
+(let same-spelling (Let $2 $1 $1))
+(run 1)
+(fail (check (= same-spelling (Null))))
+
+(pop)
