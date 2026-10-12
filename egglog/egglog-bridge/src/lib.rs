@@ -476,6 +476,24 @@ impl EGraph {
         id
     }
 
+    /// Read an FD view's first output by key, failing when the row is absent.
+    /// Unlike `set-if-empty`, extraction must never create a missing input.
+    pub fn register_view_value_read(&mut self, view_name: String) -> ExternalFunctionId {
+        let registry = self.action_registry.clone();
+        let spec_name = view_name.clone();
+        let id = self.register_external_func(Box::new(make_external_func(
+            move |state: &mut ExecutionState, args: &[Value]| {
+                registry
+                    .read()
+                    .lookup_table(&view_name)?
+                    .lookup_value_col(state, args, 0)
+            },
+        )));
+        self.external_table_deps
+            .insert(id, (spec_name, ExternalTableAccess::Read));
+        id
+    }
+
     /// Register a reader for output column `col_idx` of the FD view named
     /// `view_name` (`n_keys` key columns): `(keys, fallback) -> column`, returning
     /// that output column for `keys` or `fallback` when the key is absent. The term

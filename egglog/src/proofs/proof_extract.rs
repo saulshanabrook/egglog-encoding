@@ -540,6 +540,16 @@ pub(crate) fn prove_extracted(
     }
     let source_input = &source.input;
     let sort = source_input.output_type();
+    let input_lookup = match source_input {
+        ResolvedExpr::Call(_, ResolvedCall::Func(func), _)
+            if func.subtype == FunctionSubtype::Custom
+                && func.input.is_empty()
+                && !source.types.is_global(&func.name) =>
+        {
+            Some(func)
+        }
+        _ => None,
+    };
     // Start from the extractor's arena so all selected roots retain their ids.
     let mut dag = output_dag.clone();
     let globals = gather_globals(&egraph.proof_check_program, &mut dag).map_err(|error| {
@@ -599,11 +609,31 @@ pub(crate) fn prove_extracted(
         globals: witnesses,
         global_witnesses: HashSet::default(),
     };
-    let input = session
-        .read_node(input_term, sort.clone())?
-        .ok_or_else(|| {
-            Error::ExtractError("extraction input constructor evidence is missing".into())
-        })?;
+    let input = if let Some(func) = input_lookup {
+        let row = egraph
+            .read(|state| state.lookup_proof_values(&func.name, RawValues(vec![])))?
+            .ok_or_else(|| Error::ExtractError("extraction function input is missing".into()))?;
+        let key = (input_term, sort.name().to_owned());
+        let value = session.canonical(row[0], &sort)?;
+        session.nodes.insert(
+            key.clone(),
+            SelectedNode {
+                sort: sort.clone(),
+                value,
+                // The output witness is projected from this row below; its proof
+                // does not require assuming or reconstructing the lookup's syntax.
+                children: vec![],
+                row: Some((row[0], row[1])),
+            },
+        );
+        key
+    } else {
+        session
+            .read_node(input_term, sort.clone())?
+            .ok_or_else(|| {
+                Error::ExtractError("extraction input constructor evidence is missing".into())
+            })?
+    };
     if session.nodes[&input].value != session.canonical(input_value, &sort)? {
         return Err(Error::ExtractError(
             "the extraction input's proof semantics do not match its evaluated value".into(),
@@ -655,15 +685,20 @@ pub(crate) fn prove_extracted(
         .iter()
         .filter_map(|(key, node)| node.row.map(|row| (key.clone(), node.clone(), row)))
         .collect::<Vec<_>>();
-    // The only non-value Fiat introduced here names the evaluated input's
-    // source action. Selected output terms are never assumed.
+    // A constructed input is anchored by its source action. A function lookup
+    // instead projects its existing row proof; neither its returned witness nor
+    // any selected output is introduced as a new assumption.
     let names = &egraph.proof_state.proof_names;
-    let action = session.dag.lit(Literal::Int(input_action as i64));
-    let root = session.dag.lit(Literal::Int(0));
-    let input_anchor = session
-        .dag
-        .app(names.fiat_term_constructor.clone(), vec![action, root]);
-    let mut evidence_roots = vec![input_anchor];
+    let mut evidence_roots = vec![];
+    if input_lookup.is_none() {
+        let action = session.dag.lit(Literal::Int(input_action as i64));
+        let root = session.dag.lit(Literal::Int(0));
+        evidence_roots.push(
+            session
+                .dag
+                .app(names.fiat_term_constructor.clone(), vec![action, root]),
+        );
+    }
     let mut evidence_keys = vec![];
     for (key, node, (value, row_proof)) in rows {
         let raw = session.materialize(row_proof, &proof_sort)?;
@@ -695,7 +730,7 @@ pub(crate) fn prove_extracted(
             ))
         })?;
     let mut ids = ids.into_iter();
-    let input_anchor = ids.next().unwrap();
+    let mut input_anchor = input_lookup.is_none().then(|| ids.next().unwrap());
     let mut certificates = Certificates {
         store,
         nodes: session.nodes,
@@ -705,7 +740,15 @@ pub(crate) fn prove_extracted(
         canonical_terms: HashMap::default(),
     };
     let mut expected_input = input_term;
-    for ((key, edge), id) in evidence_keys.into_iter().zip(ids) {
+    for ((key, edge), mut id) in evidence_keys.into_iter().zip(ids) {
+        if !edge
+            && key == input
+            && let Some(func) = input_lookup
+        {
+            id = certificates.project(id, func.input.len())?;
+            input_anchor = Some(id);
+            expected_input = certificates.store.get(id).rhs();
+        }
         let proof = certificates.store.get(id);
         if edge {
             certificates.edges.insert(key.clone(), id);
@@ -731,7 +774,8 @@ pub(crate) fn prove_extracted(
             certificates.canonical_terms.insert(key, proof.lhs());
         }
     }
-    let input_proof = certificates.certify(&input, Some((input_anchor, input_term)), true)?;
+    let input_proof =
+        certificates.certify(&input, Some((input_anchor.unwrap(), expected_input)), true)?;
     let back = certificates.store.sym(input_proof);
     let canonical_anchor = certificates.trans(input_proof, back)?;
     let canonical_input = certificates.canonical_term(&input)?;
