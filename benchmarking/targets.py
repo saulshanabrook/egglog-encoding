@@ -214,7 +214,22 @@ def build_target(
     engine_label = "" if engine == "egglog" else " · egg"
     console.print(Text.assemble(("Building", "bold"), " ", _display_target(row), engine_label))
     package = "egglog-experimental" if engine == "egglog" else "egg-math-benchmark"
-    if build_profile == "release":
+    if engine == "egglog":
+        profile_args = ["--release"] if build_profile == "release" else ["--profile", "profiling"]
+        build_args = [
+            "cargo",
+            "build",
+            "--locked",
+            *profile_args,
+            "-p",
+            package,
+            "--no-default-features",
+            "--features",
+            "bin",
+            "--bin",
+            "egglog-experimental",
+        ]
+    elif build_profile == "release":
         build_args = ["cargo", "build", "--release", "-p", package]
     else:
         build_args = ["cargo", "build", "--profile", "profiling", "-p", package]
@@ -227,7 +242,10 @@ def build_target(
     )
     binary_stem = "egglog-experimental" if engine == "egglog" else "egg-math-benchmark"
     binary_name = f"{binary_stem}.exe" if os.name == "nt" else binary_stem
-    binary_path = checkout_path / "target" / build_profile / binary_name
+    target_dir = Path(os.environ.get("CARGO_TARGET_DIR", "target"))
+    if not target_dir.is_absolute():
+        target_dir = checkout_path / target_dir
+    binary_path = target_dir / build_profile / binary_name
     if not binary_path.is_file():
         raise FileNotFoundError(f"{build_profile} binary was not produced: {binary_path}")
     binary_sha256 = sha256_file(binary_path)
