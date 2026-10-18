@@ -73,6 +73,22 @@ the original endpoints, pre-merge roots, timestamp, and reasons. Cursors are
 acknowledged by consumers; clearing invalidates them and cloning separates
 mutable UF state and pending writes.
 
+Rust consumers call `subscribe_equalities(sort, include_existing)` and poll
+`equality_events(cursor)` after committed commands. The returned batch borrows
+the retained log; saving its `next` cursor acknowledges consumption. Independent
+readers can replay the same batch. Cursors identify their table and the last
+acknowledged event, so rollback followed by a different history of the same
+length is detected, as are clearing and removed tables. A shared history prefix
+remains readable in cloned graphs.
+
+`congruence_source(event)` identifies accepted equalities originating in a
+constructor view's merge. Provenance is attached to merge buffers once, not
+looked up for every insertion. The event retains the endpoints and reason after
+the colliding view rows disappear. Redundant collision attempts do not publish
+events. Construct-into lowering can express a source-level union through such
+a constructor collision; provenance describes the operation that established
+the equality. No subscriber callback runs while tables are being merged.
+
 ## The view
 
 A constructor becomes an e-node table — its **view** — with native rebuilding:

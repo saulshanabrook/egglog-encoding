@@ -784,8 +784,13 @@ impl Database {
                 }
                 let db = self.read_only_view();
                 changed |= if do_parallel {
-                    parallel::map_dense_id_map_mut(&mut tables_merging, |_, (info, buffers)| {
-                        let mut es = ExecutionState::new(db, mem::take(buffers));
+                    parallel::map_dense_id_map_mut(&mut tables_merging, |table, (info, buffers)| {
+                        let origin = crate::MergeOrigin {
+                            table,
+                            identity: info.as_ref().unwrap().identity,
+                        };
+                        let mut es =
+                            ExecutionState::new(db, mem::take(buffers)).with_merge_origin(origin);
                         info.as_mut().unwrap().table.merge(&mut es).added || es.changed
                     })
                     .into_iter()
@@ -793,8 +798,13 @@ impl Database {
                 } else {
                     tables_merging
                         .iter_mut()
-                        .map(|(_, (info, buffers))| {
-                            let mut es = ExecutionState::new(db, mem::take(buffers));
+                        .map(|(table, (info, buffers))| {
+                            let origin = crate::MergeOrigin {
+                                table,
+                                identity: info.as_ref().unwrap().identity,
+                            };
+                            let mut es = ExecutionState::new(db, mem::take(buffers))
+                                .with_merge_origin(origin);
                             info.as_mut().unwrap().table.merge(&mut es).added || es.changed
                         })
                         .max()
@@ -858,7 +868,12 @@ impl Database {
                 // never-touched buffer. (The strata path in `merge_all` handles this via write-deps.)
                 let mut bufs = DenseIdMap::default();
                 bufs.insert(table_id, info.table.new_buffer());
-                let mut es = ExecutionState::new(self.read_only_view(), bufs);
+                let mut es = ExecutionState::new(self.read_only_view(), bufs).with_merge_origin(
+                    crate::MergeOrigin {
+                        table: table_id,
+                        identity: info.identity,
+                    },
+                );
                 changed |= info.table.merge(&mut es).added || es.changed;
                 self.total_size_estimate = self.total_size_estimate.wrapping_add(info.table.len());
                 self.tables.insert(table_id, info);
@@ -883,9 +898,13 @@ impl Database {
         // fail for the self id). This mirrors `merge_simple`; see the comment there.
         let mut bufs = DenseIdMap::default();
         bufs.insert(table, info.table.new_buffer());
+        let origin = crate::MergeOrigin {
+            table,
+            identity: info.identity,
+        };
         let table_changed = info
             .table
-            .merge(&mut ExecutionState::new(self.read_only_view(), bufs));
+            .merge(&mut ExecutionState::new(self.read_only_view(), bufs).with_merge_origin(origin));
         self.total_size_estimate = self.total_size_estimate.wrapping_add(info.table.len());
         self.tables.insert(table, info);
         table_changed.added

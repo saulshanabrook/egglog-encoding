@@ -433,6 +433,10 @@ pub trait Table: Any + Send + Sync {
 /// mutations to the table. Calling  [`Table::merge`] on that table would then
 /// apply those mutations, making them visible for future readers.
 pub trait MutationBuffer: Any + Send + Sync {
+    /// Optional provenance for writes made while merging another table. Most
+    /// storage ignores this; explained UF retains it for congruence consumers.
+    /// Set once when creating a buffer, rather than branching for every write.
+    fn set_merge_origin(&mut self, _origin: MergeOrigin) {}
     /// Stage the keyed entries for insertion. Changes may not be visible until
     /// this buffer is dropped, and after `merge` is called on the underlying
     /// table.
@@ -445,6 +449,14 @@ pub trait MutationBuffer: Any + Send + Sync {
 
     /// Get a fresh handle to the same table.
     fn fresh_handle(&self) -> Box<dyn MutationBuffer>;
+}
+
+/// The table allocation whose merge produced an assertion. The allocation
+/// identity prevents a restored/reused numeric table ID from being misidentified.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MergeOrigin {
+    pub table: TableId,
+    pub identity: crate::TableIdentity,
 }
 
 struct WrapperImpl<T>(PhantomData<T>);
