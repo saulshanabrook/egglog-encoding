@@ -39,6 +39,7 @@ use web_time::{Duration, Instant};
 const FRESH_ID_RESERVATION_SIZE: usize = 256;
 
 pub mod macros;
+mod native_rebuild;
 mod native_uf;
 pub(crate) mod rule;
 #[cfg(test)]
@@ -173,6 +174,7 @@ pub struct EGraph {
     mint_specs: BTreeMap<ExternalFunctionId, MintSpec>,
     set_if_empty_specs: BTreeMap<ExternalFunctionId, SetIfEmptySpec>,
     view_col_specs: BTreeMap<ExternalFunctionId, ViewColSpec>,
+    native_rebuilds: Vec<native_rebuild::NativeRebuildPlan>,
     threads: usize,
     thread_pool: Option<Arc<ThreadPool>>,
 }
@@ -304,6 +306,7 @@ impl EGraph {
             mint_specs: Default::default(),
             set_if_empty_specs: Default::default(),
             view_col_specs: Default::default(),
+            native_rebuilds: Vec::new(),
             threads,
             thread_pool,
         }

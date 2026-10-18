@@ -1271,6 +1271,29 @@ impl EGraph {
             );
         }
 
+        if decl.internal_native_rebuild {
+            use egglog_numeric_id::NumericId;
+            assert_eq!(
+                outputs.last().unwrap().name(),
+                "Unit",
+                "proof views need a row-witness adapter"
+            );
+            let columns = input
+                .iter()
+                .chain(outputs.iter().take(1))
+                .enumerate()
+                .filter(|(_, sort)| sort.is_eq_sort())
+                .map(|(i, sort)| {
+                    let uf_name = &self.proof_state.uf_parent[sort.name()];
+                    (
+                        egglog_core_relations::ColumnId::from_usize(i),
+                        self.functions[uf_name].backend_id,
+                    )
+                })
+                .collect::<Vec<_>>();
+            self.backend.register_native_rebuild(backend_id, &columns);
+        }
+
         Ok(())
     }
 
@@ -1378,6 +1401,16 @@ impl EGraph {
     // returns whether the egraph was updated
     fn run_schedule(&mut self, sched: &ResolvedSchedule) -> Result<RunReport, Error> {
         match sched {
+            ResolvedSchedule::NativeRebuild(_) => {
+                let iteration = self
+                    .backend
+                    .run_native_rebuild(Some(&self.type_info))
+                    .map_err(|error| Error::BackendError(error.to_string()))?;
+                let report =
+                    RunReport::singleton("native-rebuild", RulesetTimingRole::Equality, iteration);
+                self.overall_report.run.union(report.clone());
+                Ok(report)
+            }
             ResolvedSchedule::Run(span, config) => self.run_rules(span, config),
             ResolvedSchedule::Repeat(_span, limit, sched) => {
                 let mut report = RunReport::default();

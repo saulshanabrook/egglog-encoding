@@ -962,6 +962,9 @@ impl<'a> ProofInstrumentor<'a> {
             .insert(name.clone(), view_sort.clone());
         let proof_type = self.proof_type_str().to_string();
         let mut view_flags = String::new();
+        if !self.proofs_enabled() {
+            view_flags.push_str(" :internal-native-rebuild");
+        }
         if fdecl.unextractable {
             view_flags.push_str(" :unextractable");
         }
@@ -2332,6 +2335,11 @@ impl<'a> ProofInstrumentor<'a> {
         let rebuilding_cleanup_ruleset = self.proof_names().rebuilding_cleanup_ruleset_name.clone();
         let rebuilding_ruleset = self.proof_names().rebuilding_ruleset_name.clone();
         let subsume_ruleset = self.proof_names().subsume_ruleset_name.clone();
+        if !self.proofs_enabled() {
+            return self.parse_schedule(format!(
+                "(seq (saturate {rebuilding_ruleset} (native-rebuild)) {subsume_ruleset})"
+            ));
+        }
         // Native UF commits already maintain canonical representatives.
         self.parse_schedule(format!(
             "(seq
@@ -2344,6 +2352,7 @@ impl<'a> ProofInstrumentor<'a> {
 
     fn instrument_schedule(&mut self, schedule: &ResolvedSchedule) -> Schedule {
         match schedule {
+            ResolvedSchedule::NativeRebuild(span) => Schedule::NativeRebuild(span.clone()),
             ResolvedSchedule::Run(span, config) => {
                 let new_run = match config.until {
                     Some(ref facts) => {
