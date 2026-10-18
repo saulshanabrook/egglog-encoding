@@ -514,6 +514,7 @@ impl Parser {
                     let mut identity_vals = None;
                     let mut cost = None;
                     let mut term_node = false;
+                    let mut native_uf = false;
                     for (key, val) in self.parse_options(rest)? {
                         match (key, val) {
                             (":no-merge", []) => {
@@ -587,6 +588,7 @@ impl Parser {
                             }
                             (":internal-cost", [c]) => cost = Some(c.expect_uint("cost")?),
                             (":internal-term-node", []) => term_node = true,
+                            (":internal-native-uf", []) => native_uf = true,
                             _ => return error!(span, "could not parse function options"),
                         }
                     }
@@ -611,6 +613,7 @@ impl Parser {
                         cost,
                         span,
                         term_node,
+                        native_uf,
                     }]
                 }
                 _ => {

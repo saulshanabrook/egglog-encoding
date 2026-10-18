@@ -1225,12 +1225,32 @@ impl EGraph {
         };
         let function = Function {
             decl: decl.clone(),
-            func_type,
+            func_type: func_type.clone(),
             can_subsume,
             backend_id: own_id,
         };
         let (kind, input_arity, output_arity) = function.table_read_projection();
-        let backend_id = if is_proof_node {
+        let backend_id = if decl.internal_native_uf {
+            assert_eq!(input.len(), 1, "native UF requires one key");
+            assert_eq!(
+                outputs.len(),
+                2,
+                "native UF requires value and reason outputs"
+            );
+            assert_eq!(input[0].name(), outputs[0].name());
+            assert!(decl.merge.is_none() && !can_subsume && !is_proof_node);
+            let proof_functions = if outputs[1].name() == "Unit" {
+                None
+            } else {
+                let names = &self.proof_state.proof_names;
+                assert_eq!(outputs[1].name(), names.proof_datatype);
+                Some((
+                    self.functions[&names.eq_sym_constructor].backend_id,
+                    self.functions[&names.eq_trans_constructor].backend_id,
+                ))
+            };
+            self.backend.add_explained_uf(config, proof_functions)
+        } else if is_proof_node {
             self.backend.add_internal_flat_table(config)
         } else {
             self.backend
