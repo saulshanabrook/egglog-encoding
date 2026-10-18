@@ -33,6 +33,7 @@ pub use explained_uf::{
     EqualityCursor, EqualityMerged, ExplainedUfTable, ReasonComposer, ReasonStep,
 };
 pub use flat_table::FlatTable;
+pub use free_join::rebuild::{RebuildInput, RebuildProgress, RebuildValues, RowRebuilder};
 pub use free_join::{
     AtomId, CounterId, Database, ExternalFunction, ExternalFunctionBatch, ExternalFunctionId,
     TableId, TableIdentity, Variable, make_external_func, plan::PlanStrategy,
