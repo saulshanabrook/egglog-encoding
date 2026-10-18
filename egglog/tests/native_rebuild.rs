@@ -3,9 +3,14 @@
 use egglog::EGraph;
 
 fn graphs() -> impl Iterator<Item = EGraph> {
-    [1, 4, 8, 12]
-        .into_iter()
-        .map(|threads| EGraph::new_with_term_encoding().with_num_threads(threads))
+    [1, 4, 8, 12].into_iter().flat_map(|threads| {
+        [
+            EGraph::new_with_term_encoding().with_num_threads(threads),
+            EGraph::new_with_proofs()
+                .with_proof_testing()
+                .with_num_threads(threads),
+        ]
+    })
 }
 
 #[test]
@@ -97,6 +102,37 @@ fn clone_and_pop_restore_independent_maintenance_cursors() {
                 (check (= (Wrap (A1)) (Wrap (A2))))
                 (fail (check (= (Wrap (A0)) (Wrap (A1)))))
                 "#,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn parallel_batches_preserve_rebuilt_proofs() {
+    // More than one native chunk per view: exercise proof construction on
+    // workers, including FD collisions that trigger a second congruence wave.
+    for mut graph in graphs() {
+        graph
+            .parse_and_run_program(
+                None,
+                r#"
+            (datatype A (A0) (A1))
+            (datatype N (Item i64 A) (Wrap N))
+            (relation Seed (i64))
+            (ruleset populate)
+            (ruleset fill)
+            (Seed 0)
+            (rule ((Seed i) (< i 2048))
+                  ((Seed (+ (* i 2) 1)) (Seed (+ (* i 2) 2))) :ruleset populate)
+            (run populate 11)
+            (rule ((Seed i)) ((Wrap (Item i (A0))) (Wrap (Item i (A1)))) :ruleset fill)
+            (run fill 1)
+            (union (A0) (A1))
+            (run 1)
+            (check (= (Wrap (Item 0 (A0))) (Wrap (Item 0 (A1)))))
+            (check (= (Wrap (Item 1024 (A0))) (Wrap (Item 1024 (A1)))))
+            (check (= (Wrap (Item 2047 (A0))) (Wrap (Item 2047 (A1)))))
+        "#,
             )
             .unwrap();
     }

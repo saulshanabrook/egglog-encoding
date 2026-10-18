@@ -75,14 +75,13 @@ mutable UF state and pending writes.
 
 ## The view
 
-A constructor becomes an e-node table — its **view** — plus a rebuild index:
+A constructor becomes an e-node table — its **view** — with native rebuilding:
 
 ```text
 (function Add (Math Math) (Math Unit)
     :merge ((set (@UF_Math (ordering-max old0 new0)) (values (ordering-min old0 new0) ()))
             (values (ordering-min old0 new0) ()))
-    :internal-view constructor :internal-identity-vals 1)
-(index @AddOcc_Math Add (any 0 1 2))
+    :internal-view constructor :internal-identity-vals 1 :internal-native-rebuild)
 ```
 
 The view keeps the function's name: the encoding rewrites the declaration rather
@@ -232,13 +231,14 @@ restore the invariants egglog would otherwise maintain during rebuilding:
 
 ```text
 (ruleset @parent)               ;; reserved; native UF needs no compression rules
-(ruleset @rebuilding)           ;; re-canonicalize view rows; resolve congruence
+(ruleset @rebuilding)           ;; structural container maintenance
 (ruleset @rebuilding_cleanup)   ;; drop rows merged away
 (ruleset @subsume_ruleset)      ;; apply subsumption markers
 
 (run-schedule
     (seq (saturate (seq (run @rebuilding_cleanup)
-                        (run @rebuilding)))
+                        (run @rebuilding)
+                        (native-rebuild)))
          (run @subsume_ruleset)))
 ```
 
@@ -254,50 +254,32 @@ root-link rows remain stable even when the native forest is compressed.
 
 ## Keeping the view canonical
 
-Each view gets one *rebuild index* per distinct eq-sort among its columns,
-covering that sort's children **and** the e-class:
+Each encoded view registers its scalar equality columns with the bridge. A
+maintenance wave reads a frozen UF snapshot and consumes the new accepted
+unions since that view's cursor. For each losing representative, it uses the
+shared occurrence-index catalog to find rows containing that value. These are
+the same indexes, including parallel construction, used by ordinary queries.
+New source rows are included even when there was no new union, and a table
+storage-generation change forces a fresh scan.
 
-```text
-(index @AddOcc_Math Add (any 0 1 2))
-```
+The pass deduplicates row IDs across columns and sorts, then canonicalizes all
+scalar columns together in parallel chunks. A row that is already canonical
+keeps its proof and is not rewritten. A changed row stages removal of the old
+key and insertion of the complete replacement with a fresh timestamp. Normal
+FD merge code handles collisions, including constructor congruence. Subsumed
+physical rows participate, and the marker tables use the same native rekeying.
 
-`@AddOcc_Math` is an ordinary declared index: for every view row and every listed
-column, that column's value followed by the whole row. It answers "which rows
-mention this term", which is what a rebuild needs and what a native rebuild finds
-through its own such index.
+Only after all views have staged their updates does the database commit. Cursor
+acknowledgements follow that commit; new equalities from congruence cause another
+wave. Container columns keep their existing structural rules, interleaved with
+the native pass until the shared fixed point. This gives each column one
+maintenance owner.
 
-One rule per sort then drives the rebuild from a `@UF_<Sort>` edge rather than by
-matching the view:
-
-```text
-(rule ((= (values leader plf) (@UF_Math follower))
-       (!= follower leader)
-       (@AddOcc_Math follower c0_ c1_ e2_ pf))
-      ((let c0_canon_ (@UF_Math_canon c0_ c0_))
-       (let c1_canon_ (@UF_Math_canon c1_ c1_))
-       (let e2_canon_ (@UF_Math_canon e2_ e2_))
-       (delete (Add c0_ c1_))
-       (set (Add c0_canon_ c1_canon_) (values e2_canon_ ())))
-        :ruleset @rebuilding :unsafe-seminaive :name "@rebuild_rule" :internal-include-subsumed)
-```
-
-The index atom binds the whole row, so nothing else need be read, and the action
-re-canonicalizes *every* eq-sort column at once — including the e-class, which
-therefore needs no rule of its own. One firing yields the fully canonical row, so
-two children moving in the same iteration fire twice with the same result rather
-than each leaving a differently half-rewritten row behind. `@UF_<Sort>_canon` is
-the row's leader column read by term, with the term itself as the fallback, so a
-column already at its leader canonicalizes to itself.
-
-The row is deleted before being re-inserted, because when only the e-class moved
-the canonical key equals the old one. Reading `@UF_<Sort>` in the action is what
-makes the rule `:unsafe-seminaive`; the driving `@UF_<Sort>` delta in the body is
-what makes that read sound.
-
-Container columns are not indexed — they carry no `@UF_<Sort>` row to drive a
-lookup — and keep the `:naive` rule in [Containers](#containers). Subsumption
-markers (`@to_subsume_<Constructor>`) are re-keyed to their leaders by their own
-per-column rules, so a subsumed row stays subsumed after its children move.
+In proof mode, `:internal-native-rebuild @Packed_<k>` names the ordinary packed
+proof constructor that witnesses the row transformation. Custom function outputs
+use congruence at their output position; a constructor/global e-class instead
+uses the reversed equality on the left of the existing row proof. There is no
+new trusted proof primitive.
 
 # Globals
 
@@ -317,8 +299,8 @@ becomes
 
 and references to `g1` become the lookup `(g1)`. The encoding then treats
 `:internal-let` like a nullary constructor: it gets an FD view
-`g1 : () -> (Math, proof)` with the congruence `:merge`, a rebuild index, and
-rebuild rules like any other function. Because the definition is a `set` and not
+`g1 : () -> (Math, proof)` with the congruence `:merge` and native
+rebuilding like any other function. Because the definition is a `set` and not
 a `union`, a global adds no e-class merge of its own.
 
 The pass also appends a lookup fact to the body of every rule whose *head*
@@ -832,29 +814,14 @@ spelled into every row above it, whenever the term's own children moved: a
 level's row then spells its own children's steps and no deeper term's, so the row
 is a function of the term's arity rather than of its size.
 
-**A view rebuild** writes one row whose columns are the row proof, then each
-canonicalized column's step proof, then the e-class's own step when the view's
-output is an e-class. In proof mode the rebuild rule of
-[Keeping the view canonical](#keeping-the-view-canonical) reads a step proof per
-column and packs them:
-
-```text
-(let c0_canon_ (@UF_Math_canon c0_ c0_))
-(let c0_step (@UF_Math_canon_proof c0_ pf))
-… same for c1_ and e2_ …
-(let s1 (drop-reflexive-step "trans_sym_p3_congr_congr_p0_0_p1_1_p2" 1 c0_ c0_canon_))
-… same for columns 2 and 3 …
-(let out (mint-@Packed_4! s3 pf c0_step c1_step e2_step))
-```
-
-`@UF_<Sort>_canon_proof` supplies each step's proof, or the fallback when the
-column has no `@UF` row. A column that did not move proves `t = t`, so it
-contributes nothing: rather than anchor it — a row per column, dropped again by
-the proof simplifier — the fallback is the row proof itself and
-`drop-reflexive-step` narrows the spelling until it names only the columns whose
-two values differ. A column the spelling does not name is carried but never
-read. The e-class's step composes on the left rather than at a child position,
-since an e-class can equal one of its own children's terms.
+**A view rebuild** writes one packed row, with the old row proof followed by
+one slot for each scalar equality column. The native adapter asks for step proofs
+only for columns that changed and builds a composition naming those slots. An
+unchanged column's slot carries the old row proof as an unread placeholder. The
+e-class step composes on the left, rather than at a child position, since an
+e-class can equal one of its own children's terms. Unchanged rows allocate no
+witnesses. `drop-reflexive-step` remains available for older serialized encodings;
+the native pass constructs the narrowed composition directly.
 
 **A merge collision** — two rows colliding on one key in a `@UF` or view
 `:merge` — writes one packed row for the edge it displaces.

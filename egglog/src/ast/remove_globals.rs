@@ -117,6 +117,7 @@ impl GlobalRemover<'_> {
                         internal_term_node: false,
                         internal_native_uf: false,
                         internal_native_rebuild: false,
+                        internal_rebuild_proof: None,
                     };
                     vec![
                         GenericNCommand::Function(func_decl),
@@ -170,6 +171,7 @@ impl GlobalRemover<'_> {
                     internal_term_node: false,
                     internal_native_uf: false,
                     internal_native_rebuild: false,
+                    internal_rebuild_proof: None,
                 };
                 let mut new_acts: Vec<_> = acts.into_iter().map(remove_globals_action).collect();
                 new_acts.push(GenericAction::Set(

@@ -6,6 +6,19 @@ use core_relations::{
 };
 use egglog_reports::PreMergeTiming;
 
+/// Compose the witness for one canonicalized row. Steps contain only columns
+/// that changed, each proving old value = new value in this frozen UF snapshot.
+/// Implementations stage ordinary proof records; the maintenance engine does
+/// not introduce a new trusted proof operation.
+pub trait RebuildProof: Send + Sync {
+    fn compose(
+        &self,
+        row: &[Value],
+        steps: &[(ColumnId, Value)],
+        state: &mut ExecutionState,
+    ) -> Value;
+}
+
 #[derive(Clone)]
 struct UfColumns {
     table: TableId,
@@ -19,20 +32,26 @@ pub(super) struct NativeRebuildPlan {
     timestamp_column: ColumnId,
     sources: Vec<UfColumns>,
     consumed: Option<TableVersion>,
+    proof: Option<(ColumnId, Arc<dyn RebuildProof>)>,
 }
 
 struct PreparedRebuilder<'a> {
     columns: Vec<(ColumnId, &'a ExplainedUfTable)>,
+    proof: Option<&'a (ColumnId, Arc<dyn RebuildProof>)>,
 }
 
 impl RowRebuilder for PreparedRebuilder<'_> {
-    fn rebuild(&self, row: &[Value], _: &mut ExecutionState, out: &mut Vec<Value>) -> bool {
+    fn rebuild(&self, row: &[Value], state: &mut ExecutionState, out: &mut Vec<Value>) -> bool {
         let mut changes = SmallVec::<[(usize, Value); 4]>::new();
+        let mut steps = SmallVec::<[(ColumnId, Value); 4]>::new();
         for &(column, uf) in &self.columns {
             let index = column.index();
             let canonical = uf.find(row[index]);
             if canonical != row[index] {
                 changes.push((index, canonical));
+                if self.proof.is_some() {
+                    steps.push((column, uf.canonical_reason(row[index], state).unwrap()));
+                }
             }
         }
         if changes.is_empty() {
@@ -41,6 +60,9 @@ impl RowRebuilder for PreparedRebuilder<'_> {
         out.extend_from_slice(row);
         for (column, value) in changes {
             out[column] = value;
+        }
+        if let Some((column, proof)) = self.proof {
+            out[column.index()] = proof.compose(row, &steps, state);
         }
         true
     }
@@ -53,6 +75,7 @@ impl EGraph {
         &mut self,
         view: FunctionId,
         columns: &[(ColumnId, FunctionId)],
+        proof: Option<(ColumnId, Arc<dyn RebuildProof>)>,
     ) {
         if columns.is_empty() {
             return;
@@ -83,6 +106,7 @@ impl EGraph {
             timestamp_column: ColumnId::from_usize(info.schema.len()),
             sources,
             consumed: None,
+            proof,
         });
     }
 
@@ -139,7 +163,10 @@ impl EGraph {
                         timestamp_column: plan.timestamp_column,
                         next_timestamp: next_ts,
                     },
-                    &PreparedRebuilder { columns },
+                    &PreparedRebuilder {
+                        columns,
+                        proof: plan.proof.as_ref(),
+                    },
                     context,
                 );
                 changed |= progress.changed;

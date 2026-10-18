@@ -784,6 +784,7 @@ pub fn add_function(
         term_node: false,
         native_uf: false,
         native_rebuild: false,
+        rebuild_proof: None,
     }])
 }
 

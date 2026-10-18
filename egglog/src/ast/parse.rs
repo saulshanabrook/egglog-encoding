@@ -516,6 +516,7 @@ impl Parser {
                     let mut term_node = false;
                     let mut native_uf = false;
                     let mut native_rebuild = false;
+                    let mut rebuild_proof = None;
                     for (key, val) in self.parse_options(rest)? {
                         match (key, val) {
                             (":no-merge", []) => {
@@ -591,6 +592,11 @@ impl Parser {
                             (":internal-term-node", []) => term_node = true,
                             (":internal-native-uf", []) => native_uf = true,
                             (":internal-native-rebuild", []) => native_rebuild = true,
+                            (":internal-native-rebuild", [proof]) => {
+                                native_rebuild = true;
+                                rebuild_proof =
+                                    Some(self.parse_name(proof, "rebuild proof constructor")?);
+                            }
                             _ => return error!(span, "could not parse function options"),
                         }
                     }
@@ -617,6 +623,7 @@ impl Parser {
                         term_node,
                         native_uf,
                         native_rebuild,
+                        rebuild_proof,
                     }]
                 }
                 _ => {

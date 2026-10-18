@@ -1273,16 +1273,11 @@ impl EGraph {
 
         if decl.internal_native_rebuild {
             use egglog_numeric_id::NumericId;
-            assert_eq!(
-                outputs.last().unwrap().name(),
-                "Unit",
-                "proof views need a row-witness adapter"
-            );
             let columns = input
                 .iter()
                 .chain(outputs.iter().take(1))
                 .enumerate()
-                .filter(|(_, sort)| sort.is_eq_sort())
+                .filter(|(_, sort)| sort.is_eq_sort() && !sort.is_eq_container_sort())
                 .map(|(i, sort)| {
                     let uf_name = &self.proof_state.uf_parent[sort.name()];
                     (
@@ -1291,7 +1286,24 @@ impl EGraph {
                     )
                 })
                 .collect::<Vec<_>>();
-            self.backend.register_native_rebuild(backend_id, &columns);
+            let proof = decl.internal_rebuild_proof.as_ref().map(|packed| {
+                let proof_column = egglog_core_relations::ColumnId::from_usize(input.len() + 1);
+                let eclass_column = (decl.internal_view == Some(ast::ViewKind::Constructor))
+                    .then(|| egglog_core_relations::ColumnId::from_usize(input.len()));
+                let builder = proofs::proof_encoding_rebuild::NativeRowProof::new(
+                    &mut self.backend,
+                    self.functions[packed].backend_id,
+                    columns.iter().map(|&(column, _)| column).collect(),
+                    proof_column,
+                    eclass_column,
+                );
+                (
+                    proof_column,
+                    Arc::new(builder) as Arc<dyn egglog_bridge::RebuildProof>,
+                )
+            });
+            self.backend
+                .register_native_rebuild(backend_id, &columns, proof);
         }
 
         Ok(())

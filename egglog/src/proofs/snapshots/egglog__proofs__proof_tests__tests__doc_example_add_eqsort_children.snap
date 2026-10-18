@@ -9,9 +9,7 @@ expression: snapshot
 (sort Math :internal-uf __UF_Math)
 (function __UF_Math (Math) (Math Unit) :no-merge :unextractable :internal-hidden :internal-native-uf)
 (function Num (i64) (Math Unit) :merge ((set (__UF_Math (ordering-max old0 new0)) (values (ordering-min old0 new0) ())) (values (ordering-min old0 new0) ())) :internal-view constructor :internal-identity-vals 1 :internal-native-rebuild)
-(index __NumOcc_Math Num (any 1))
 (function Add (Math Math) (Math Unit) :merge ((set (__UF_Math (ordering-max old0 new0)) (values (ordering-min old0 new0) ())) (values (ordering-min old0 new0) ())) :internal-view constructor :internal-identity-vals 1 :internal-native-rebuild)
-(index __AddOcc_Math Add (any 0 1 2))
 (begin
    (let __pv (get-fresh! "Math"))
    (let __pv1 (set-if-empty-Num! 1 __pv ()))
@@ -34,4 +32,4 @@ expression: snapshot
 (= (values __pv18 __pv19) (Num 1))
 (= (values __pv20 __pv21) (Add __pv16 __pv18))
 (= __pv14 __pv20))
-(run-schedule (seq (saturate (seq (run __rebuilding) (native-rebuild))) (run __subsume_ruleset)))
+(run-schedule (seq (saturate (seq (run __rebuilding_cleanup) (run __rebuilding) (native-rebuild))) (run __subsume_ruleset)))

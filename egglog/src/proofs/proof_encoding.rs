@@ -196,15 +196,6 @@ struct Natural {
     to_dedup: Option<String>,
 }
 
-/// A declared index on a function's view, covering the view columns of one
-/// eq-sort — its children and its e-class. An `@UF` edge on a term reaches every
-/// row mentioning it at any of them.
-#[derive(Clone)]
-pub(crate) struct ViewIndex {
-    pub name: String,
-    pub sort_name: String,
-}
-
 /// The encoding's state for a whole program, kept on the [`EGraph`] because it
 /// outlives any one command: the names the encoding has minted, what it has
 /// already declared, and how far its global-action numbering has got.
@@ -222,9 +213,6 @@ pub(crate) struct EncodingState {
     /// Maps container sort name -> the name of its registered proof-producing
     /// container-rebuild primitive (`ContainerRebuildProof`). Proof mode only.
     pub container_rebuild_proof_name: HashMap<String, String>,
-    /// Function name -> the rebuild indexes declared on its view, one per
-    /// distinct eq-sort among the view's columns (see [`ViewIndex`]).
-    pub view_index: HashMap<String, Vec<ViewIndex>>,
     pub term_header_added: bool,
     /// The running index a `FiatUnion` or `FiatTerm` names: how many global
     /// actions the encoding has numbered so far, in the program proof checking
@@ -251,7 +239,6 @@ impl EncodingState {
             uf_parent: HashMap::default(),
             container_rebuild_name: HashMap::default(),
             container_rebuild_proof_name: HashMap::default(),
-            view_index: HashMap::default(),
             term_header_added: false,
             global_actions_numbered: 0,
             original_typechecking: None,
@@ -941,7 +928,6 @@ impl<'a> ProofInstrumentor<'a> {
         let view_name = fdecl.name.to_string();
         let in_sorts = ListDisplay(schema.input.clone(), " ");
         let fresh_sort = self.egraph.parser.symbol_gen.fresh("view");
-        let index_decls = self.declare_view_indexes(fdecl);
         // Constructor and encoded-global views carry the term's e-class in output
         // column 0. A custom function returning a distinct value (e.g. `-> i64`)
         // carries that value there and uses a separate fresh e-class sort for its
@@ -961,10 +947,19 @@ impl<'a> ProofInstrumentor<'a> {
             .fn_to_term_sort
             .insert(name.clone(), view_sort.clone());
         let proof_type = self.proof_type_str().to_string();
-        let mut view_flags = String::new();
-        if !self.proofs_enabled() {
-            view_flags.push_str(" :internal-native-rebuild");
-        }
+        let mut view_flags = String::from(" :internal-native-rebuild");
+        let scalar_columns = self
+            .column_sorts(fdecl)
+            .iter()
+            .filter(|sort| sort.is_eq_sort() && !sort.is_eq_container_sort())
+            .count();
+        let rebuild_packed_decl = if self.proofs_enabled() && scalar_columns > 0 {
+            let (packed, decl) = self.packed_proof_constructor(scalar_columns + 1);
+            view_flags.push_str(&format!(" {packed}"));
+            decl
+        } else {
+            String::new()
+        };
         if fdecl.unextractable {
             view_flags.push_str(" :unextractable");
         }
@@ -1029,8 +1024,7 @@ impl<'a> ProofInstrumentor<'a> {
         self.parse_program(&format!(
             "
             {fresh_sort_decl}
-            {packed_decl}{view_decl}
-            {index_decls}",
+            {rebuild_packed_decl}{packed_decl}{view_decl}",
         ))
     }
 
@@ -1952,60 +1946,6 @@ impl<'a> ProofInstrumentor<'a> {
             .collect()
     }
 
-    /// Declare one index per distinct eq-sort among a view's columns, so an `@UF`
-    /// edge on a term reaches the rows mentioning it by lookup instead of by
-    /// matching the view once per column. The e-class column is indexed too, so a
-    /// stale e-class is found the same way. Containers are excluded: they carry
-    /// no `@UF` row and are canonicalized structurally.
-    fn declare_view_indexes(&mut self, fdecl: &ResolvedFunctionDecl) -> String {
-        let types = self.column_sorts(fdecl);
-        // Children, plus the value column when it is an e-class. When only the
-        // e-class moves the canonical key equals the old one, so the rebuild rule
-        // deletes the old row before re-inserting rather than after (see
-        // `indexed_rebuild_rule`). A custom function's value column is an ordinary
-        // output, rebuilt by its own rule, so indexing it would only invite the
-        // whole-row rule to rewrite it with an e-class's proof shape.
-        let indexable = if self.output_is_eclass(fdecl) {
-            types.len()
-        } else {
-            types.len() - 1
-        };
-        let mut by_sort: Vec<(String, Vec<usize>)> = Vec::new();
-        for (i, ty) in types[..indexable].iter().enumerate() {
-            if ty.is_eq_container_sort() || !ty.is_eq_sort() {
-                continue;
-            }
-            let sort = ty.name().to_string();
-            match by_sort.iter_mut().find(|(s, _)| *s == sort) {
-                Some((_, positions)) => positions.push(i),
-                None => by_sort.push((sort, vec![i])),
-            }
-        }
-        let view_name = fdecl.name.to_string();
-        let mut decls = String::new();
-        let mut entries = Vec::new();
-        for (sort_name, positions) in by_sort {
-            let index_name = self
-                .egraph
-                .parser
-                .symbol_gen
-                .fresh(&format!("{}Occ_{sort_name}", fdecl.name));
-            decls.push_str(&format!(
-                "(index {index_name} {view_name} (any {}))\n",
-                ListDisplay(&positions, " ")
-            ));
-            entries.push(ViewIndex {
-                name: index_name,
-                sort_name,
-            });
-        }
-        self.egraph
-            .proof_state
-            .view_index
-            .insert(fdecl.name.clone(), entries);
-        decls
-    }
-
     /// Query a source-named functional-dependency view by its `children` key,
     /// binding fresh variables for the value and proof output columns:
     /// `(= (values v pf) (F children))`. The value is the e-class for
@@ -2335,17 +2275,13 @@ impl<'a> ProofInstrumentor<'a> {
         let rebuilding_cleanup_ruleset = self.proof_names().rebuilding_cleanup_ruleset_name.clone();
         let rebuilding_ruleset = self.proof_names().rebuilding_ruleset_name.clone();
         let subsume_ruleset = self.proof_names().subsume_ruleset_name.clone();
-        if !self.proofs_enabled() {
-            return self.parse_schedule(format!(
-                "(seq (saturate {rebuilding_ruleset} (native-rebuild)) {subsume_ruleset})"
-            ));
-        }
         // Native UF commits already maintain canonical representatives.
         self.parse_schedule(format!(
             "(seq
               (saturate
                   {rebuilding_cleanup_ruleset}
-                  {rebuilding_ruleset})
+                  {rebuilding_ruleset}
+                  (native-rebuild))
               {subsume_ruleset})"
         ))
     }
