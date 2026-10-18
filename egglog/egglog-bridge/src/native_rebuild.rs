@@ -35,6 +35,11 @@ pub(super) struct NativeRebuildPlan {
     proof: Option<(ColumnId, Arc<dyn RebuildProof>)>,
 }
 
+struct InvalidationBatch {
+    reset: bool,
+    values: Arc<Vec<Value>>,
+}
+
 struct PreparedRebuilder<'a> {
     columns: Vec<(ColumnId, &'a ExplainedUfTable)>,
     proof: Option<&'a (ColumnId, Arc<dyn RebuildProof>)>,
@@ -46,11 +51,15 @@ impl RowRebuilder for PreparedRebuilder<'_> {
         let mut steps = SmallVec::<[(ColumnId, Value); 4]>::new();
         for &(column, uf) in &self.columns {
             let index = column.index();
-            let canonical = uf.find(row[index]);
+            let (canonical, reason) = if self.proof.is_some() {
+                uf.find_with_reason(row[index], state)
+            } else {
+                (uf.find(row[index]), None)
+            };
             if canonical != row[index] {
                 changes.push((index, canonical));
                 if self.proof.is_some() {
-                    steps.push((column, uf.canonical_reason(row[index], state).unwrap()));
+                    steps.push((column, reason.unwrap()));
                 }
             }
         }
@@ -118,6 +127,11 @@ impl EGraph {
             let mut acknowledgements = Vec::new();
             let mut changed = false;
             let next_ts = self.next_ts().to_value();
+            // Most views subscribe at the same cursor. Share each UF delta
+            // across them instead of rereading/copying a large event batch for
+            // every constructor. Cursors differ for newly registered views.
+            let mut batches: HashMap<(TableId, Option<EqualityCursor>), InvalidationBatch> =
+                HashMap::default();
             for (index, plan) in self.native_rebuilds.iter().enumerate() {
                 let current = self.db.get_table(plan.table).version();
                 let mut cursors = Vec::with_capacity(plan.sources.len());
@@ -133,17 +147,34 @@ impl EGraph {
                         .unwrap();
                     let cursor = uf.cursor();
                     cursors.push(cursor);
-                    let events = source.consumed.and_then(|cursor| uf.events_since(cursor));
-                    reset |= events.is_none();
-                    let events =
-                        events.unwrap_or_else(|| uf.events_since(uf.start_cursor()).unwrap());
-                    dirty.push(events.iter().map(|event| event.loser).collect::<Vec<_>>());
-                    columns.extend(source.columns.iter().map(|&column| (column, uf)));
+                    let batch = batches
+                        .entry((source.table, source.consumed))
+                        .or_insert_with(|| {
+                            let events = source.consumed.and_then(|cursor| uf.events_since(cursor));
+                            let invalid = events.is_none();
+                            let events = events
+                                .unwrap_or_else(|| uf.events_since(uf.start_cursor()).unwrap());
+                            InvalidationBatch {
+                                reset: invalid,
+                                values: Arc::new(events.iter().map(|event| event.loser).collect()),
+                            }
+                        });
+                    reset |= batch.reset;
+                    dirty.push(Arc::clone(&batch.values));
+                    if cursor != uf.start_cursor() {
+                        columns.extend(source.columns.iter().map(|&column| (column, uf)));
+                    }
                 }
                 if !reset
                     && plan.consumed.as_ref() == Some(&current)
-                    && dirty.iter().all(Vec::is_empty)
+                    && dirty.iter().all(|values| values.is_empty())
                 {
+                    continue;
+                }
+                if columns.is_empty() {
+                    // With no equalities in any source UF, every value is its
+                    // own representative, including rows newly inserted here.
+                    acknowledgements.push((index, current, cursors));
                     continue;
                 }
                 let invalidated: Vec<_> = plan

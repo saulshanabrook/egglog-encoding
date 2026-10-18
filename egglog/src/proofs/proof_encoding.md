@@ -264,9 +264,15 @@ no maintenance runs after it. Everything else is followed by the schedule above.
 
 ## Path compression
 
-Compression occurs inside native UF updates. The generated maintenance schedule
-contains no path-compression rule or parent-ruleset invocation. Historical
-root-link rows remain stable even when the native forest is compressed.
+Compression occurs inside native UF updates and reads. Parallel readers shorten
+paths using atomics while the forest is frozen; unions require exclusive access.
+A successful union invalidates cached representatives. Historical root-link
+rows remain stable throughout. The generated maintenance schedule contains no
+path-compression rule or parent-ruleset invocation.
+
+Nodes occupy dense local slots, reached through sparse pages of global IDs.
+Storage therefore follows values actually involved in equality, without a dense
+allocation extending to the largest term or proof ID.
 
 ## Keeping the view canonical
 
@@ -275,8 +281,11 @@ maintenance wave reads a frozen UF snapshot and consumes the new accepted
 unions since that view's cursor. For each losing representative, it uses the
 shared occurrence-index catalog to find rows containing that value. These are
 the same indexes, including parallel construction, used by ordinary queries.
-New source rows are included even when there was no new union, and a table
-storage-generation change forces a fresh scan.
+Views at the same subscription cursor share one invalidation batch. New source
+rows are included even when there was no new union, and a table storage-generation
+change forces a fresh scan. Candidate discovery switches to a full scan once the
+collected offsets reach a substantial fraction of the table, bounding the cost
+of gathering and deduplicating heavily overlapping occurrence lists.
 
 The pass deduplicates row IDs across columns and sorts, then canonicalizes all
 scalar columns together in parallel chunks. A row that is already canonical

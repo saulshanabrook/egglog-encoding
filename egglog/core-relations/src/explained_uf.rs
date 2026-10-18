@@ -9,16 +9,17 @@ use std::{
     any::Any,
     sync::{
         Arc, Weak,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
 };
 
 use crossbeam_queue::SegQueue;
+use smallvec::SmallVec;
 
 use crate::{
     ColumnId, Constraint, ExecutionState, MergeOrigin, MutationBuffer, Offset, OffsetRange, Row,
     RowId, Subset, SubsetRef, Table, TableChange, TableSchema, TableSpec, TableVersion, Value,
-    common::HashMap, numeric_id::NumericId, pool::with_pool_set, table_spec::Generation,
+    numeric_id::NumericId, pool::with_pool_set, table_spec::Generation,
 };
 
 // Identities are allocated only for table creation and successful unions. They
@@ -63,7 +64,7 @@ pub struct EqualityMerged {
 
 /// A subscription position scoped to one UF table. `clear` invalidates it.
 /// Obtain a new cursor only after successfully consuming a batch.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct EqualityCursor {
     source: usize,
     last_event: Option<usize>,
@@ -71,13 +72,18 @@ pub struct EqualityCursor {
     offset: usize,
 }
 
+mod node_index;
+use node_index::NodeIndex;
+
 /// A native table for an encoded equality sort. Node storage is dense in the
 /// values actually seen, rather than in globally allocated egglog IDs.
 pub struct ExplainedUfTable {
     identity: usize,
-    nodes: HashMap<Value, usize>,
+    nodes: NodeIndex,
+    canonical: Vec<AtomicU64>,
+    max_value: Value,
     values: Vec<Value>,
-    parents: Vec<usize>,
+    parents: Vec<AtomicUsize>,
     links: Vec<Option<RowId>>,
     events: Vec<EqualityMerged>,
     generation: Generation,
@@ -90,8 +96,18 @@ impl Clone for ExplainedUfTable {
         Self {
             identity: self.identity,
             nodes: self.nodes.clone(),
+            canonical: self
+                .canonical
+                .iter()
+                .map(|entry| AtomicU64::new(entry.load(Ordering::Relaxed)))
+                .collect(),
+            max_value: self.max_value,
             values: self.values.clone(),
-            parents: self.parents.clone(),
+            parents: self
+                .parents
+                .iter()
+                .map(|parent| AtomicUsize::new(parent.load(Ordering::Relaxed)))
+                .collect(),
             links: self.links.clone(),
             events: self.events.clone(),
             generation: self.generation,
@@ -105,7 +121,9 @@ impl ExplainedUfTable {
     pub fn new(composer: Option<Arc<dyn ReasonComposer>>) -> Self {
         Self {
             identity: fresh_identity(),
-            nodes: HashMap::default(),
+            nodes: NodeIndex::default(),
+            canonical: Vec::new(),
+            max_value: Value::new(0),
             values: Vec::new(),
             parents: Vec::new(),
             links: Vec::new(),
@@ -116,11 +134,27 @@ impl ExplainedUfTable {
         }
     }
 
+    #[inline]
     pub fn find(&self, value: Value) -> Value {
-        let Some(&node) = self.nodes.get(&value) else {
+        // Fresh IDs are usually larger than any endpoint ever unioned in this
+        // sort. They are roots without even probing the sparse node map.
+        if value > self.max_value {
+            return value;
+        }
+        let Some(node) = self.nodes.get(value) else {
             return value;
         };
-        self.values[self.root(node)]
+        // Fewer than 2^32 successful unions are possible in the u32 Value
+        // domain. Union requires exclusive access, so this epoch is frozen
+        // throughout parallel reads; any new union invalidates all old memos.
+        let epoch = self.events.len() as u64;
+        let cached = self.canonical[node].load(Ordering::Relaxed);
+        if cached >> 32 == epoch {
+            return Value::new(cached as u32);
+        }
+        let root = self.values[self.root(node)];
+        self.canonical[node].store((epoch << 32) | u64::from(root.rep()), Ordering::Relaxed);
+        root
     }
 
     pub fn has_reasons(&self) -> bool {
@@ -162,10 +196,22 @@ impl ExplainedUfTable {
 
     /// Explain an immutable ancestor path, including paths to former roots.
     /// Compression changes `parents`, never these historical links.
-    pub fn explain_to(&self, mut value: Value, ancestor: Value) -> Option<Vec<ReasonStep>> {
-        let mut path = Vec::new();
+    pub fn explain_to(&self, value: Value, ancestor: Value) -> Option<Vec<ReasonStep>> {
+        self.explanation_path(value, ancestor)
+            .map(SmallVec::into_vec)
+    }
+
+    // Most paths are a single accepted root link. Keep short paths on the
+    // stack in the hot canonicalization/union paths, preserving the public Vec
+    // API for callers that retain a historical explanation.
+    fn explanation_path(
+        &self,
+        mut value: Value,
+        ancestor: Value,
+    ) -> Option<SmallVec<[ReasonStep; 4]>> {
+        let mut path = SmallVec::new();
         while value != ancestor {
-            let node = *self.nodes.get(&value)?;
+            let node = self.nodes.get(value)?;
             let event = &self.events[self.links[node]?.index()];
             path.push(ReasonStep {
                 reason: event.link_reason,
@@ -179,52 +225,85 @@ impl ExplainedUfTable {
     /// Compose a non-reflexive path to the current representative. No proof
     /// writes occur for roots, or in a table without a reason algebra.
     pub fn canonical_reason(&self, value: Value, state: &mut ExecutionState) -> Option<Value> {
-        let composer = self.composer.as_ref()?;
+        self.find_with_reason(value, state).1
+    }
+
+    /// Canonicalize and obtain its witness with a single representative lookup.
+    /// The witness is absent for roots and when proof generation is disabled.
+    pub fn find_with_reason(
+        &self,
+        value: Value,
+        state: &mut ExecutionState,
+    ) -> (Value, Option<Value>) {
         let root = self.find(value);
         if root == value {
-            return None;
+            return (root, None);
         }
+        let Some(composer) = self.composer.as_ref() else {
+            return (root, None);
+        };
         let path = self
-            .explain_to(value, root)
+            .explanation_path(value, root)
             .expect("UF explanation path missing");
-        Some(composer.compose(&path, state))
+        let reason = if path.len() == 1 {
+            path[0].reason
+        } else {
+            composer.compose(&path, state)
+        };
+        (root, Some(reason))
     }
 
     fn node(&mut self, value: Value) -> usize {
-        if let Some(&node) = self.nodes.get(&value) {
+        if let Some(node) = self.nodes.get(value) {
             return node;
         }
         let node = self.values.len();
+        self.max_value = self.max_value.max(value);
         self.nodes.insert(value, node);
+        self.canonical.push(AtomicU64::new(u64::MAX));
         self.values.push(value);
-        self.parents.push(node);
+        self.parents.push(AtomicUsize::new(node));
         self.links.push(None);
         node
     }
 
-    fn root(&self, mut node: usize) -> usize {
-        while self.parents[node] != node {
-            node = self.parents[node];
+    fn root(&self, node: usize) -> usize {
+        let mut root = node;
+        loop {
+            let parent = self.parents[root].load(Ordering::Relaxed);
+            if parent == root {
+                break;
+            }
+            root = parent;
         }
-        node
+        self.compress(node, root);
+        root
     }
 
-    fn compress(&mut self, mut node: usize, root: usize) {
-        while self.parents[node] != node {
-            let parent = self.parents[node];
-            self.parents[node] = root;
+    fn compress(&self, mut node: usize, root: usize) {
+        // Reads only overlap other reads: union/clear require exclusive table
+        // access. Relaxed stores therefore shorten paths within one frozen
+        // forest, with no payload publication or concurrent root changes.
+        // Historical explanation links are never touched.
+        loop {
+            let parent = self.parents[node].load(Ordering::Relaxed);
+            if parent == node || parent == root {
+                break;
+            }
+            self.parents[node].store(root, Ordering::Relaxed);
             node = parent;
         }
     }
 
     fn insert(&mut self, row: [Value; 4], origin: Option<MergeOrigin>, state: &mut ExecutionState) {
         let [lhs, rhs, asserted_reason, timestamp] = row;
+        if lhs == rhs {
+            return;
+        }
         let a = self.node(lhs);
         let b = self.node(rhs);
         let ra = self.root(a);
         let rb = self.root(b);
-        self.compress(a, ra);
-        self.compress(b, rb);
         if ra == rb {
             return;
         }
@@ -238,13 +317,13 @@ impl ExplainedUfTable {
         let winner = self.values[winner_node];
         let loser = self.values[loser_node];
         let link_reason = if let Some(composer) = &self.composer {
-            let mut path = self.explain_to(lhs, lhs_root).unwrap();
+            let mut path = self.explanation_path(lhs, lhs_root).unwrap();
             reverse(&mut path);
             path.push(ReasonStep {
                 reason: asserted_reason,
                 reversed: false,
             });
-            path.extend(self.explain_to(rhs, rhs_root).unwrap());
+            path.extend(self.explanation_path(rhs, rhs_root).unwrap());
             if loser != lhs_root {
                 reverse(&mut path);
             }
@@ -268,7 +347,7 @@ impl ExplainedUfTable {
             timestamp,
         });
         self.links[loser_node] = Some(row_id);
-        self.parents[loser_node] = winner_node;
+        self.parents[loser_node].store(winner_node, Ordering::Relaxed);
         self.compress(a, winner_node);
         self.compress(b, winner_node);
     }
@@ -394,7 +473,7 @@ impl Table for ExplainedUfTable {
         if let Constraint::EqConst { col, val } = c
             && *col == ColumnId::new(0)
         {
-            let id = self.nodes.get(val).and_then(|&node| self.links[node]);
+            let id = self.nodes.get(*val).and_then(|node| self.links[node]);
             return Some(id.map_or_else(Subset::empty, |id| {
                 Subset::Dense(OffsetRange::new(id, RowId::from_usize(id.index() + 1)))
             }));
@@ -403,7 +482,7 @@ impl Table for ExplainedUfTable {
     }
     fn get_row(&self, key: &[Value]) -> Option<Row> {
         assert_eq!(key.len(), 1);
-        let id = self.links[*self.nodes.get(&key[0])?]?;
+        let id = self.links[self.nodes.get(key[0])?]?;
         let mut vals = with_pool_set(|ps| ps.get::<Vec<Value>>());
         vals.extend(self.row(id));
         Some(Row { id, vals })
