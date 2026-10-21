@@ -325,6 +325,10 @@ simple/seminaive schedulers without the artifact's backoff scheduler or match
 cap, so this is a controlled current-engine comparison rather than an exact
 reproduction of the paper's historical scheduler results.
 
+The native Math runner uses the pinned optional-clock Egg fork with
+`std::time::Instant`, avoiding Quanta's startup calibration in whole-process
+timings. Its Git revision and dependency versions are recorded in `Cargo.lock`.
+
 The pointer input is the complete `initdb.bc` input for the 23 relations read by
 this adaptation, not the artifact's full 30-program pointer-analysis matrix.
 See `egglog/tests/pointer-analysis-initdb.PROVENANCE.md` for the source
