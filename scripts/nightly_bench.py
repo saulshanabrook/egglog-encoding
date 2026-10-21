@@ -50,10 +50,10 @@ def _positive_int(value: str) -> int:
 
 
 def _bench_env() -> dict[str, str]:
-    """Use rustup's cargo and suppress browser launching on the nightly host."""
+    """Use rustup's cargo on the nightly host."""
     shims = str(Path(os.environ.get("CARGO_HOME") or Path.home() / ".cargo") / "bin")
     path = [entry for entry in os.environ.get("PATH", "").split(os.pathsep) if entry != shims]
-    return {**os.environ, "PATH": os.pathsep.join((shims, *path)), "BROWSER": "true"}
+    return {**os.environ, "PATH": os.pathsep.join((shims, *path))}
 
 
 def _run_phase(command: Sequence[str], deadline: float, env: dict[str, str]) -> int:
@@ -63,7 +63,7 @@ def _run_phase(command: Sequence[str], deadline: float, env: dict[str, str]) -> 
         raise subprocess.TimeoutExpired(list(command), 0)
     process = subprocess.Popen(command, cwd=REPO_ROOT, env=env, start_new_session=True)
     try:
-        return process.wait(timeout=remaining)
+        return process.wait(timeout=max(0, deadline - time.monotonic()))
     except subprocess.TimeoutExpired:
         # The owner deadline already expired before this hard phase bound.
         raise
@@ -225,7 +225,7 @@ def _render(args: argparse.Namespace) -> int:
         return 1
     files = tuple(FileSpec(row["display_path"], Path(row["absolute_path"]), row["sha256"]) for row in context["files"])
     grouped = ReportStore(args.output_dir / REPORT_NAME).grouped_report()
-    target = targets.get("branch") or next(iter(targets.values()))
+    target = targets["branch"]
     comparison = ComparisonSpec(
         BenchmarkEndpoint(target, "off"),
         BenchmarkEndpoint(target, "proof-testing"),
@@ -303,15 +303,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         if code:
             raise RuntimeError(f"tool bootstrap failed with status {code}")
         code = _run_phase(_worker_command(args, "collect", collection_deadline), deadline - RENDER_RESERVE_SEC, env)
-        failed = code != 0
+        if code:
+            raise RuntimeError(f"collection worker exited with status {code}")
     except (OSError, RuntimeError, subprocess.SubprocessError) as error:
         failed = True
         with (args.output_dir / STATUS_NAME).open("a") as status:
             status.write(f"Partial nightly: {error}\n")
     if (args.output_dir / STATE_NAME).is_file():
         try:
-            failed |= _run_phase(_worker_command(args, "render", deadline), deadline, env) != 0
-        except (OSError, subprocess.SubprocessError) as error:
+            code = _run_phase(_worker_command(args, "render", deadline), deadline, env)
+            if code:
+                raise RuntimeError(f"render worker exited with status {code}")
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
             failed = True
             with (args.output_dir / STATUS_NAME).open("a") as status:
                 status.write(f"Rendering stopped: {error}\n")

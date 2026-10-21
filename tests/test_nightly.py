@@ -235,6 +235,56 @@ def test_supervisor_budget_covers_bootstrap_workers_and_final_render(
     assert (output / "index.html").is_file()
 
 
+@pytest.mark.parametrize("spawn_sec", [3, 12])
+def test_phase_spawn_time_consumes_the_absolute_deadline(monkeypatch: pytest.MonkeyPatch, spawn_sec: int) -> None:
+    now = [100.0]
+    waits = []
+    killed = []
+    monkeypatch.setattr(nightly, "time", SimpleNamespace(monotonic=lambda: now[0]))
+
+    def wait(timeout: float | None = None) -> int:
+        waits.append(timeout)
+        if timeout is not None:
+            raise subprocess.TimeoutExpired("render", timeout)
+        return 0
+
+    def spawn(*_args: Any, **_kwargs: Any) -> SimpleNamespace:
+        now[0] += spawn_sec
+        return SimpleNamespace(pid=12345, wait=wait)
+
+    monkeypatch.setattr(subprocess, "Popen", spawn)
+    monkeypatch.setattr(os, "killpg", lambda pid, sig: killed.append(pid))
+    with pytest.raises(subprocess.TimeoutExpired):
+        nightly._run_phase(["render"], 110, {})
+    assert waits == [max(0, 10 - spawn_sec), None]
+    assert killed == [12345]
+
+
+@pytest.mark.parametrize("failed_phase,context_saved", [("collect", False), ("collect", True), ("render", True)])
+def test_nonzero_worker_exits_are_reported_without_losing_partial_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failed_phase: str, context_saved: bool
+) -> None:
+    output = tmp_path / "output"
+    phases = []
+    monkeypatch.setattr(nightly, "_worker_command", lambda args, phase, deadline: [phase])
+
+    def run(command: Any, _deadline: float, _env: Any) -> int:
+        phase = "bootstrap" if command == nightly.BOOTSTRAP_COMMAND else command[0]
+        phases.append(phase)
+        if phase == "collect":
+            (output / "index.jsonl").write_text('{"completed":true}\n')
+            if context_saved:
+                (output / nightly.STATE_NAME).write_text("{}")
+        return 23 if phase == failed_phase else 0
+
+    monkeypatch.setattr(nightly, "_run_phase", run)
+    assert nightly.main([str(output)]) == 1
+    label = "collection" if failed_phase == "collect" else "render"
+    assert f"{label} worker exited with status 23" in (output / nightly.STATUS_NAME).read_text()
+    assert json.loads((output / "index.jsonl").read_text()) == {"completed": True}
+    assert phases == ["bootstrap", "collect", *(["render"] if context_saved else [])]
+
+
 def test_host_entrypoint_is_stdlib_python38_and_make_starts_it_before_bootstrap() -> None:
     source = Path(nightly.__file__).read_text()
     ast.parse(source, feature_version=(3, 8))

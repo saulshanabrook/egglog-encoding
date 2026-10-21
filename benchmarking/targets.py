@@ -168,7 +168,13 @@ def materialize_git_ref(repo: Path, ref: str, label_hint: str | None) -> tuple[P
 
 def fetch_pr_ref(repo: Path, number: int) -> str:
     ref = f"refs/remotes/origin/pr/{number}"
-    run_text(["git", "fetch", "origin", f"+refs/pull/{number}/head:{ref}"], cwd=repo, capture_output=False)
+    subprocess.run(
+        ["git", "fetch", "origin", f"+refs/pull/{number}/head:{ref}"],
+        cwd=repo,
+        check=True,
+        stdout=sys.stderr,
+        stderr=sys.stderr,
+    )
     return ref
 
 
