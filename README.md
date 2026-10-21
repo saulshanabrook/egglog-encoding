@@ -308,8 +308,13 @@ details and archive SHA-256. Herbie remains a bounded static proxy in the
 ordinary benchmark suite; reproducing the historical Racket/FPCore
 orchestration remains outside the ordinary runner.
 
+The [paper figures](figures/README.md) use the checked-in
+`benchmarks/corpus/manifest.json` rather than the default workload list.
+`make figures-all` collects missing observations and renders them;
+`make figures-all-cached` renders existing data without collection.
+
 Benchmark files must not contain executable `(prove ...)` commands. Use
-`(check ...)` in timed workloads so the selected treatment controls whether
+`(check ...)` or `(extract ...)` in timed workloads so the selected treatment controls whether
 proof extraction is included in the timing boundary.
 
 Reports normally identify a selected file by filename. If names collide, they
