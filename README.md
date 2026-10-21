@@ -328,6 +328,8 @@ reproduction of the paper's historical scheduler results.
 The native Math runner uses a pinned revision of upstream Egg main with
 `std::time::Instant`, avoiding Quanta's startup calibration in whole-process
 timings. Its Git revision and dependency versions are recorded in `Cargo.lock`.
+Proof modes disable Egg's explanation-length optimization: extraction and
+checking do not include a separate proof-minimization pass.
 
 The pointer input is the complete `initdb.bc` input for the 23 relations read by
 this adaptation, not the artifact's full 30-program pointer-analysis matrix.
