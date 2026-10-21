@@ -11,7 +11,7 @@
   "title": {
     "text": "How much overhead do Egglog proofs add?",
     "subtitle": {
-      "expr": "['Proofs-off mean: ' + min_wall_sec + '–' + max_wall_sec + ' seconds; all observations for the latest figures identities.', 'Each dot is one replay; colors identify families. Both proof modes use the same cohort.', '50%/90% labels show measured coverage; missing and failed ratios stay in the denominator.']"
+      "expr": "['Proofs-off mean: ' + min_wall_sec + '–' + max_wall_sec + ' seconds; all observations for the latest figures identities.', 'Each dot is one replay; colors identify families. Both proof modes use the same cohort.', 'Full and 0–' + zoom_max_ratio + '× views share ranks; 50%/90% labels show measured coverage.']"
     }
   },
   "data": {
@@ -432,15 +432,17 @@
     {
       "facet": {
         "row": {
-          "field": "metric",
+          "field": "panel",
           "type": "nominal",
           "sort": [
-            "Time",
-            "Memory"
+            "Time:full",
+            "Time:zoom",
+            "Memory:full",
+            "Memory:zoom"
           ],
           "header": {
             "title": null,
-            "labelExpr": "datum.value === 'Time' ? 'Runtime overhead' : 'Peak memory overhead'",
+            "labelExpr": "(indexof(datum.value, 'Time:') === 0 ? 'Runtime overhead' : 'Peak memory overhead') + (indexof(datum.value, ':zoom') >= 0 ? ' · Zoom (0–' + zoom_max_ratio + '×)' : ' · Full range')",
             "labelOrient": "top",
             "labelAnchor": "start",
             "labelAngle": 0,
@@ -622,11 +624,11 @@
                 "as": "domain_min"
               },
               {
-                "calculate": "datum.metric === 'Time' ? time_extent[1] * 1.15 : memory_extent[1] * 1.15",
+                "calculate": "datum.zoom ? zoom_max_ratio : datum.metric === 'Time' ? time_extent[1] * 1.15 : memory_extent[1] * 1.15",
                 "as": "domain_max"
               },
               {
-                "calculate": "datum.plotted_n === 1 ? [datum.domain_min, datum.ratio, datum.domain_max] : datum.rank === 1 ? [datum.domain_min, datum.ratio] : datum.rank === datum.plotted_n ? [datum.ratio, datum.domain_max] : [datum.ratio]",
+                "calculate": "datum.plotted_n === 1 ? [datum.domain_min, datum.ratio, max(datum.maximum, datum.domain_max)] : datum.rank === 1 ? [datum.domain_min, datum.ratio] : datum.rank === datum.plotted_n ? [datum.ratio, max(datum.maximum, datum.domain_max)] : [datum.ratio]",
                 "as": "curve_ratios"
               },
               {
@@ -648,7 +650,8 @@
               "type": "line",
               "interpolate": "step-after",
               "color": "#555",
-              "strokeWidth": 1.4
+              "strokeWidth": 1.4,
+              "clip": true
             },
             "encoding": {
               "x": {
@@ -658,7 +661,7 @@
                   "type": "linear",
                   "nice": false,
                   "domain": {
-                    "expr": "parent.metric === 'Time' ? [0, time_extent[1] * 1.15] : [0, memory_extent[1] * 1.15]"
+                    "expr": "indexof(parent.panel, ':zoom') >= 0 ? [0, zoom_max_ratio] : indexof(parent.panel, 'Time:') === 0 ? [0, time_extent[1] * 1.15] : [0, memory_extent[1] * 1.15]"
                   }
                 },
                 "axis": {
@@ -754,7 +757,7 @@
                 "as": "domain_min"
               },
               {
-                "calculate": "datum.metric === 'Time' ? time_extent[1] * 1.15 : memory_extent[1] * 1.15",
+                "calculate": "datum.zoom ? zoom_max_ratio : datum.metric === 'Time' ? time_extent[1] * 1.15 : memory_extent[1] * 1.15",
                 "as": "domain_max"
               }
             ],
@@ -764,7 +767,8 @@
               "size": 17,
               "opacity": 0.75,
               "stroke": "white",
-              "strokeWidth": 0.3
+              "strokeWidth": 0.3,
+              "clip": true
             },
             "encoding": {
               "color": {
@@ -821,7 +825,7 @@
                   "type": "linear",
                   "nice": false,
                   "domain": {
-                    "expr": "parent.metric === 'Time' ? [0, time_extent[1] * 1.15] : [0, memory_extent[1] * 1.15]"
+                    "expr": "indexof(parent.panel, ':zoom') >= 0 ? [0, zoom_max_ratio] : indexof(parent.panel, 'Time:') === 0 ? [0, time_extent[1] * 1.15] : [0, memory_extent[1] * 1.15]"
                   }
                 },
                 "axis": {
@@ -916,7 +920,7 @@
                 "as": "domain_min"
               },
               {
-                "calculate": "datum.metric === 'Time' ? time_extent[1] * 1.15 : memory_extent[1] * 1.15",
+                "calculate": "datum.zoom ? zoom_max_ratio : datum.metric === 'Time' ? time_extent[1] * 1.15 : memory_extent[1] * 1.15",
                 "as": "domain_max"
               },
               {
@@ -933,6 +937,9 @@
               },
               {
                 "filter": "datum.rank === ceil(datum.percentile * datum.n)"
+              },
+              {
+                "filter": "datum.ratio <= datum.domain_max"
               }
             ],
             "mark": {
@@ -941,7 +948,8 @@
               "strokeDash": [
                 3,
                 3
-              ]
+              ],
+              "clip": true
             },
             "encoding": {
               "y": {
@@ -958,7 +966,7 @@
                   "type": "linear",
                   "nice": false,
                   "domain": {
-                    "expr": "parent.metric === 'Time' ? [0, time_extent[1] * 1.15] : [0, memory_extent[1] * 1.15]"
+                    "expr": "indexof(parent.panel, ':zoom') >= 0 ? [0, zoom_max_ratio] : indexof(parent.panel, 'Time:') === 0 ? [0, time_extent[1] * 1.15] : [0, memory_extent[1] * 1.15]"
                   }
                 },
                 "axis": {
@@ -1029,7 +1037,7 @@
                 "as": "domain_min"
               },
               {
-                "calculate": "datum.metric === 'Time' ? time_extent[1] * 1.15 : memory_extent[1] * 1.15",
+                "calculate": "datum.zoom ? zoom_max_ratio : datum.metric === 'Time' ? time_extent[1] * 1.15 : memory_extent[1] * 1.15",
                 "as": "domain_max"
               },
               {
@@ -1050,6 +1058,9 @@
               {
                 "calculate": "format(datum.percentile, '.0%') + ' ≤ ' + format(datum.ratio, '.3g') + '×'",
                 "as": "threshold_label"
+              },
+              {
+                "filter": "datum.ratio <= datum.domain_max"
               }
             ],
             "mark": {
@@ -1081,7 +1092,7 @@
                   "type": "linear",
                   "nice": false,
                   "domain": {
-                    "expr": "parent.metric === 'Time' ? [0, time_extent[1] * 1.15] : [0, memory_extent[1] * 1.15]"
+                    "expr": "indexof(parent.panel, ':zoom') >= 0 ? [0, zoom_max_ratio] : indexof(parent.panel, 'Time:') === 0 ? [0, time_extent[1] * 1.15] : [0, memory_extent[1] * 1.15]"
                   }
                 },
                 "axis": {
@@ -1142,7 +1153,22 @@
           "x": "independent"
         }
       },
-      "spacing": 24
+      "spacing": 24,
+      "transform": [
+        {
+          "calculate": "[false, true]",
+          "as": "zoom"
+        },
+        {
+          "flatten": [
+            "zoom"
+          ]
+        },
+        {
+          "calculate": "datum.metric + (datum.zoom ? ':zoom' : ':full')",
+          "as": "panel"
+        }
+      ]
     },
     {
       "vconcat": [
@@ -1627,6 +1653,10 @@
     {
       "name": "max_wall_sec",
       "value": 30
+    },
+    {
+      "name": "zoom_max_ratio",
+      "value": 5
     },
     {
       "name": "target_label",

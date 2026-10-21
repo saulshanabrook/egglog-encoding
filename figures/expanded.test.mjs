@@ -52,7 +52,7 @@ async function evaluate(chart, workloads, groups, parameters = {}) {
   } finally { view.finalize(); }
 }
 function points(marks, mode = 'Record + extract + check', metric = 'Time') {
-  return marks.filter(m => m.name === 'pooled_points_marks' && m.datum.candidate_mode === mode && m.datum.metric === metric);
+  return marks.filter(m => m.name === 'pooled_points_marks' && !m.datum.zoom && m.datum.candidate_mode === mode && m.datum.metric === metric);
 }
 
 test('Math uses all samples, current manifest hashes and latest label membership', async () => {
@@ -124,7 +124,7 @@ test('Ties share the cumulative rank and thresholds use the complete selected de
     group(input.id, 'proof-testing', [index < 2 ? 2 : index === 2 ? 4 : 1000])]);
   const {marks} = await evaluate('proof-overhead-cdf', inputs, groups);
   assert.deepEqual(points(marks).map(m => [m.datum.ratio, m.datum.cdf]), [[2, .5], [2, .5], [4, .75], [1000, 1]]);
-  const labels = marks.filter(m => m.name === 'percentile_labels_marks' && m.datum.metric === 'Time');
+  const labels = marks.filter(m => m.name === 'percentile_labels_marks' && !m.datum.zoom && m.datum.metric === 'Time');
   assert.deepEqual(labels.map(m => [m.datum.percentile, m.datum.ratio]), [[.5, 2], [.9, 1000]]);
   assert.ok(labels.every(m => m.x >= 0 && m.x <= 300 && m.y >= 0 && m.y <= 185));
 });
@@ -165,4 +165,25 @@ test('New label identities cannot borrow older checked or unchecked extraction r
   assert.equal(points(marks).length, 0);
   assert.match(svg, /Missing or invalid proof observations/);
   assert.match(svg, /90% not established/);
+});
+
+
+test('Full and zoom views keep identical ranks and denominators with distinct domains', async () => {
+  const inputs = ['a', 'b', 'c'].map(id => workload(id));
+  const groups = inputs.flatMap((input, index) => [group(input.id, 'off', [1]),
+    group(input.id, 'proof-testing', [index === 0 ? 2 : index === 1 ? 4 : 1000])]);
+  const {marks, svg} = await evaluate('proof-overhead-cdf', inputs, groups);
+  const full = points(marks);
+  const zoom = marks.filter(m => m.name === 'pooled_points_marks' && m.datum.zoom
+    && m.datum.candidate_mode === 'Record + extract + check' && m.datum.metric === 'Time');
+  assert.deepEqual(zoom.map(m => [m.datum.ratio, m.datum.cdf, m.datum.n]),
+    full.map(m => [m.datum.ratio, m.datum.cdf, m.datum.n]));
+  assert.ok(full.every(m => m.datum.domain_max === 1150));
+  assert.ok(zoom.every(m => m.datum.domain_max === 5));
+  const labels = marks.filter(m => m.name === 'percentile_labels_marks' && m.datum.zoom);
+  assert.ok(labels.every(m => m.datum.ratio <= 5 && m.x >= 0 && m.x <= 300));
+  assert.match(svg, /Zoom \(0–5×\)/);
+  const curve = marks.filter(m => m.name === 'pooled_cdf_marks' && m.datum.zoom);
+  assert.ok(curve.every(m => m.datum.curve_ratio !== 5 || m.datum.curve_fraction < 1),
+    'the tail must not be folded back to the right edge of the zoom');
 });
