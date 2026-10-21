@@ -1575,7 +1575,8 @@ fn command_supports_proof_encoding_impl(
         // Extract commands can't have non-global function lookups
         // because instrument_action_expr doesn't support them
         // (global function calls are fine - they get desugared to constructors)
-        GenericCommand::Extract(_, expr, variants) => {
+        GenericCommand::Extract(_, expr, variants)
+        | GenericCommand::ProveExtract(_, expr, variants, _) => {
             if expr_has_non_global_lookup(expr, type_info, extra_globals)
                 || expr_has_non_global_lookup(variants, type_info, extra_globals)
             {

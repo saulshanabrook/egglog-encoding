@@ -1,3 +1,4 @@
+use crate::ast::desugar::extraction_source_actions;
 #[doc = include_str!("proof_encoding.md")]
 use crate::proofs::proof_encoding_helpers::{
     ActionNode, Composition, EncodingNames, HeadColumn, Justification, Skeleton, action_nodes,
@@ -497,6 +498,8 @@ impl<'a> ProofInstrumentor<'a> {
     fn global_actions_in(&self, command: &ResolvedNCommand) -> Result<usize, Error> {
         Ok(match command {
             ResolvedNCommand::CoreAction(_) => 1,
+            // `extraction_source_actions` contains the input and count, in order.
+            ResolvedNCommand::Extract(..) | ResolvedNCommand::ProveExtract(..) => 2,
             ResolvedNCommand::Input {
                 span, name, file, ..
             } => Self::input_actions(self.egraph, span, name, file)?.len(),
@@ -517,6 +520,13 @@ impl<'a> ProofInstrumentor<'a> {
                 lowered.extend(
                     Self::input_actions(egraph, span, name, file)?
                         .into_iter()
+                        .map(ResolvedNCommand::CoreAction),
+                );
+            } else if let ResolvedNCommand::Extract(span, expr, variants)
+            | ResolvedNCommand::ProveExtract(span, expr, variants, _) = &command
+            {
+                lowered.extend(
+                    extraction_source_actions(span, expr, variants)
                         .map(ResolvedNCommand::CoreAction),
                 );
             } else {
@@ -2598,24 +2608,66 @@ impl<'a> ProofInstrumentor<'a> {
                 }
                 res.push(command);
             }
-            ResolvedNCommand::Extract(span, expr, variants) => {
-                // Instrument the expressions to use view tables (like actions, not facts)
+            ResolvedNCommand::Extract(span, expr, variants)
+            | ResolvedNCommand::ProveExtract(span, expr, variants, _) => {
+                let prove = matches!(command, ResolvedNCommand::ProveExtract(..));
+                if prove {
+                    // This encoder also handles term-only mode, without proof rows.
+                    if !self.proofs_enabled() {
+                        return Err(Error::ExtractError(
+                            "prove-extract requires proof generation".into(),
+                        ));
+                    }
+                    let source = super::proof_extract::ExtractionSource {
+                        request: None,
+                        types: self
+                            .egraph
+                            .proof_state
+                            .original_typechecking
+                            .as_ref()
+                            .unwrap()
+                            .type_info
+                            .clone(),
+                    };
+                    self.egraph
+                        .extract_sources
+                        .insert(self.global_action, Arc::new(source));
+                }
+                // The checker records input and count as separate source actions.
+                // Number each expression's nodes exactly as its Expr action, so
+                // any newly constructed term carries the corresponding FiatTerm.
+                let base = self.global_action;
                 let mut action_stmts = vec![];
-                // An extract expression binds nothing, so no name it reads can
-                // stand for a term built here, and it is no rule head.
-                let scope = Scope::default();
-                let mut head = Head::composed();
-                let fiat = Justification::Fiat;
-                let mut emit = Emit {
-                    stmts: &mut action_stmts,
-                    head: &mut head,
-                    justification: &fiat,
-                    at: ActionNodes::default(),
-                };
-                let instrumented_expr = self.instrument_action_expr(expr, &mut emit, &scope).value;
-                let instrumented_variants = self
-                    .instrument_action_expr(variants, &mut emit, &scope)
-                    .value;
+                let actions = extraction_source_actions(span, expr, variants);
+                let [instrumented_expr, instrumented_variants] = actions.map(|action| {
+                    self.action_expr_index = action_nodes(&action)
+                        .into_iter()
+                        .enumerate()
+                        .filter_map(|(index, node)| match node {
+                            ActionNode::Expr(expr) => {
+                                Some((std::ptr::from_ref(expr) as usize, index))
+                            }
+                            ActionNode::Row(_) => None,
+                        })
+                        .collect();
+                    let ResolvedAction::Expr(_, expr) = &action else {
+                        unreachable!()
+                    };
+                    let mut head = Head::composed();
+                    let mut emit = Emit {
+                        stmts: &mut action_stmts,
+                        head: &mut head,
+                        justification: &Justification::Fiat,
+                        at: ActionNodes::default(),
+                    };
+                    let value = self
+                        .instrument_action_expr(expr, &mut emit, &Scope::default())
+                        .value;
+                    self.global_action += 1;
+                    value
+                });
+                // add_term_encoding_helper advances by both source actions.
+                self.global_action = base;
 
                 // Add any action statements needed to set up the expressions
                 for stmt in action_stmts {
@@ -2623,11 +2675,13 @@ impl<'a> ProofInstrumentor<'a> {
                 }
                 // Rebuild before extract; we may have added new view rows that need canonicalization
                 res.push(Command::RunSchedule(self.rebuild()));
-                res.push(Command::Extract(
-                    span.clone(),
-                    self.parse_expr(&instrumented_expr),
-                    self.parse_expr(&instrumented_variants),
-                ));
+                let expr = self.parse_expr(&instrumented_expr);
+                let variants = self.parse_expr(&instrumented_variants);
+                res.push(if prove {
+                    Command::ProveExtract(span.clone(), expr, variants, Some(base))
+                } else {
+                    Command::Extract(span.clone(), expr, variants)
+                });
             }
             ResolvedNCommand::PrintSize(span, name) => {
                 // In proof mode, print the size of the view table for constructors

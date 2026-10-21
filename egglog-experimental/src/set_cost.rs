@@ -2,7 +2,7 @@
 //!
 //! Wrap datatype or constructor declarations in `with-dynamic-cost` to create
 //! a cost table for each extractable constructor. `set-cost` updates a node's
-//! cost, and the replacement `extract` command reads those costs:
+//! cost, and built-in tree extraction reads those costs:
 //!
 //! ```text
 //! (with-dynamic-cost
@@ -13,6 +13,10 @@
 //!
 //! Nodes without an assigned dynamic cost retain their normal tree-additive
 //! cost. Costs must be non-negative.
+//!
+//! With term/proof encoding, top-level `set-cost` on constructors with primitive
+//! arguments is currently unsupported: its argument temporaries become primitive
+//! globals. Assign those costs inside rules instead.
 
 use crate::{
     Error,
@@ -30,8 +34,8 @@ use egglog::{
 use egglog_ast::span::Span;
 use std::sync::Arc;
 
-/// Registers `with-dynamic-cost`, `set-cost`, and the dynamic-cost `extract`
-/// command on an e-graph.
+/// Registers `with-dynamic-cost`, `set-cost`, and dynamic constructor costs
+/// shared by `extract` and `prove-extract` on an e-graph.
 ///
 /// [`new_experimental_egraph`](crate::new_experimental_egraph) calls this
 /// automatically.
@@ -40,9 +44,11 @@ pub fn add_set_cost(egraph: &mut EGraph) {
         .parser
         .add_command_macro(Arc::new(SetCostDeclarations));
     egraph.parser.add_action_macro(Arc::new(SetCost));
+    egraph.extraction_cost = |egraph, func, enode| DynamicCostModel.enode_cost(egraph, func, enode);
     egraph
         .add_command("extract".into(), Arc::new(CustomExtract))
         .unwrap();
+    egraph.parser.add_command_macro(Arc::new(CustomExtract));
 }
 
 struct SetCost;
@@ -248,6 +254,46 @@ impl DagCostModel<DefaultCost> for DynamicCostModel {
 }
 
 struct CustomExtract;
+
+impl Macro<Vec<Command>> for CustomExtract {
+    fn name(&self) -> &str {
+        "extract"
+    }
+
+    fn parse(
+        &self,
+        args: &[Sexp],
+        span: Span,
+        parser: &mut Parser,
+    ) -> Result<Vec<Command>, ParseError> {
+        let args = map_fallible(args, parser, Parser::parse_expr)?;
+        // Only the explicit experimental selector needs the custom command.
+        // Ordinary extraction must retain its typed input for proof generation.
+        if matches!(
+            args.last_chunk::<2>(),
+            Some([Expr::Var(_, keyword), Expr::Var(..)]) if keyword == ":extractor"
+        ) {
+            return Ok(vec![Command::UserDefined(span, "extract".into(), args)]);
+        }
+        match args.as_slice() {
+            [expr] => Ok(vec![Command::Extract(
+                span.clone(),
+                expr.clone(),
+                Expr::Lit(span, Literal::Int(0)),
+            )]),
+            [expr, variants] => Ok(vec![Command::Extract(span, expr.clone(), variants.clone())]),
+            [] => Err(ParseError(
+                span,
+                "usage: (extract <expr> <number of variants>?)".into(),
+            )),
+            _ => Err(ParseError(
+                span,
+                "extract expects an expression, optional variant count, and optional :extractor"
+                    .into(),
+            )),
+        }
+    }
+}
 
 impl UserDefinedCommand for CustomExtract {
     fn update(

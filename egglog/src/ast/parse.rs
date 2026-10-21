@@ -72,6 +72,7 @@ const RESERVED_KEYWORDS: &[&str] = &[
     "begin",
     "prove",
     "prove-exists",
+    "prove-extract",
     // actions
     "let",
     "set",
@@ -888,6 +889,33 @@ impl Parser {
                 )],
                 _ => return error!(span, "usage: (extract <expr> <number of variants>?)"),
             },
+            "prove-extract" => match tail {
+                [e] => vec![Command::ProveExtract(
+                    span.clone(),
+                    self.parse_expr(e)?,
+                    Expr::Lit(span, Literal::Int(0)),
+                    None,
+                )],
+                [e, n] => vec![Command::ProveExtract(
+                    span,
+                    self.parse_expr(e)?,
+                    self.parse_expr(n)?,
+                    None,
+                )],
+                // Source action retained when replaying a desugared program.
+                [e, n, Sexp::Atom(name, _), context] if name == ":proof-action" => {
+                    if self.ensure_no_reserved_symbols {
+                        return error!(span, ":proof-action is internal to desugared replay");
+                    }
+                    vec![Command::ProveExtract(
+                        span,
+                        self.parse_expr(e)?,
+                        self.parse_expr(n)?,
+                        Some(context.expect_uint("extraction source action")?),
+                    )]
+                }
+                _ => return error!(span, "usage: (prove-extract <expr> <number of variants>?)"),
+            },
             "check" => vec![Command::Check(
                 span,
                 map_fallible(tail, self, Self::parse_fact)?,
@@ -1557,6 +1585,21 @@ pub(crate) fn all_sexps(mut ctx: SexpParser) -> Result<Vec<Sexp>, ParseError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn proof_action_is_only_accepted_for_desugared_replay() {
+        let source = "(prove-extract 7 0 :proof-action 1)";
+        let mut parser = Parser::default();
+        let error = parser.get_program_from_string(None, source).unwrap_err();
+        assert!(error.to_string().contains("internal to desugared replay"));
+
+        parser.ensure_no_reserved_symbols = false;
+        let commands = parser.get_program_from_string(None, source).unwrap();
+        assert!(matches!(
+            commands.as_slice(),
+            [Command::ProveExtract(_, _, _, Some(1))]
+        ));
+    }
 
     #[test]
     fn test_parser_display_roundtrip() {
