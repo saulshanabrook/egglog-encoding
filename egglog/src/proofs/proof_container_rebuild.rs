@@ -383,7 +383,7 @@ fn rebuild_container_proof(
     // Bridge the (possibly non-canonical) `raw` term to the canonical `rebuilt`
     // term with the container normalization: `ContainerNormalize(current)` proves
     // `value = normalize(raw)`, which the checker recomputes to match
-    // `reconstruct_termdag(rebuilt)`. Conversion synthesizes the matching step for
+    // `reconstruct_termdag(rebuilt)`. Lifting synthesizes the matching step for
     // each nested container it rewrites inside. We mint this one unconditionally;
     // for order/arity-preserving containers (Vec/Pair) the normalization is the
     // identity, so it is a no-op the proof simplifier removes.

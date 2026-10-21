@@ -1,3 +1,9 @@
+//! Recorded and source proof formats, proof lifting, and printing.
+//!
+//! [`lift_proof`] reconstructs source-level propositions and rule substitutions
+//! from the proof recorded during execution. Global references are evaluated
+//! using the source program's bindings during lifting.
+
 use crate::{
     ResolvedCall, Term, TermDag, TermId,
     ast::{
@@ -63,7 +69,7 @@ fn subexpr_at_index(expr: &ResolvedExpr, idx: usize) -> Option<&ResolvedExpr> {
 /// index over the merge body tree (see [`subexpr_at_index`]); `idx == 0` is the
 /// whole body. Evaluating the subexpression reconstructs the term the FD
 /// custom-function view merge minted at that position, so each nested
-/// merge-body subexpression yields its own conclusion. Used when converting a
+/// merge-body subexpression yields its own conclusion. Used when lifting a
 /// `MergeFnIdx` raw proof into its `MergeFn` conclusion.
 fn run_merge_subexpr(
     term_dag: &mut TermDag,
@@ -125,7 +131,8 @@ struct RawProofStore {
     term_to_proof: HashMap<TermId, RawProofId>,
 }
 
-pub(crate) fn proof_store_from_term(
+/// Lift an extracted proof into a proof of the source program.
+pub(crate) fn lift_proof(
     encoding_names: &EncodingNames,
     term_dag: TermDag,
     proof_term: TermId,
@@ -135,7 +142,7 @@ pub(crate) fn proof_store_from_term(
 ) -> (ProofStore, ProofId) {
     let (raw_store, raw_proof_id) =
         RawProofStore::from_extracted(encoding_names, term_dag, proof_term);
-    ProofStore::from_raw(
+    ProofStore::lift(
         prog,
         raw_store,
         raw_proof_id,
@@ -148,19 +155,19 @@ pub(crate) fn proof_store_from_term(
 /// Corresponds closely to the proof header in [`proof_encoding_helpers.rs`](crate::proofs::proof_encoding_helpers).
 /// Compared to [`Proof`], a [`RawProof`] leaves out the implicit [`Proposition`] being proven (in some cases) and
 /// leaves off the implicit rule substitution.
-/// Converting to a [`Proof`] with [`ProofStore::from_raw`] fills in these details.
+/// Lifting to a [`Proof`] with [`ProofStore::lift`] fills in these details.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 enum RawProof {
     /// Equalities added at the top level are justified by fiat.
     Fiat(TermId, TermId),
     /// A top-level `union`, named by which global action it is rather than by
     /// its two endpoints: the action's index in the program being checked, and
-    /// whether the edge runs against that action's operand order. Conversion
+    /// whether the edge runs against that action's operand order. Lifting
     /// evaluates the action to recover the equality, so the row stores no term.
     FiatUnion(usize, bool),
     /// A term a top-level action builds, named by where it is written rather
     /// than by the term: which global action, and which node of it in
-    /// `action_exprs` order. States `t = t`; conversion evaluates that node.
+    /// `action_exprs` order. States `t = t`; lifting evaluates that node.
     FiatTerm(usize, usize),
     /// Given a rule name and proofs for each premise, produces a proof of a
     /// grounded equality from the head of the rule. The substitution is implicit —
@@ -169,19 +176,19 @@ enum RawProof {
     /// The second list holds one *bridge* premise per subterm the head interned —
     /// the view-row proof that says which e-class it landed in — in construction
     /// order. The column names which proof of the head's lowering this is (see
-    /// [`crate::proofs::proof_head`]); conversion derives the equality from that
+    /// [`crate::proofs::proof_head`]); lifting derives the equality from that
     /// and the bridges, so the row stores no terms.
     Rule(String, Vec<RawProofId>, Vec<RawProofId>, i64),
     /// A term-free merge proof: given proofs `f(…, old) = f(…, old)` and
     /// `f(…, new) = f(…, new)`, the index `idx` identifies which subexpression of the
     /// merge body this justifies (a pre-order index over the body tree). The
-    /// conclusion is reconstructed during conversion by evaluating subexpression
+    /// conclusion is reconstructed during lifting by evaluating subexpression
     /// `idx` on the premise outputs; the index distinguishes nested subexpressions
     /// that share the same premises. Used by the FD custom-function view merge, which
     /// runs without access to children.
     MergeFnIdx(String, RawProofId, RawProofId, usize),
     /// Like [`RawProof::MergeFnIdx`] but for the FD view row (no index). The conclusion
-    /// `f(children) = eval(whole merge body)` is reconstructed during conversion by
+    /// `f(children) = eval(whole merge body)` is reconstructed during lifting by
     /// running the whole body on the two premise outputs. Used as the proof column of
     /// every FD pair-valued view's `:merge`.
     MergeFnRow(String, RawProofId, RawProofId),
@@ -196,7 +203,7 @@ enum RawProof {
     /// justification that `t1 = c'` where every child of `c` equal to `a` is
     /// replaced by `b`. Minted by container rebuilds, which see elements in
     /// value order rather than the term form's canonical child order.
-    /// Desugared by [`ProofStore::from_raw`] into positional
+    /// Desugared by [`ProofStore::lift`] into positional
     /// [`Justification::Congr`] steps computed against the actual term.
     CongrAll(RawProofId, RawProofId),
     /// given a proof that t1 = f(..., ci, ...) and the child index i,
@@ -208,7 +215,7 @@ enum RawProof {
     ///
     /// The call is named by where it sits rather than by the primitive's name,
     /// which would not pin down a validator since primitives are overloaded.
-    /// [`ProofStore::from_raw`] runs that validator on the argument terms and
+    /// [`ProofStore::lift`] runs that validator on the argument terms and
     /// desugars this into one or more [`RawProof::Proj`] steps along the path to
     /// the result.
     ProjPrim(String, usize, Vec<RawProofId>),
@@ -261,7 +268,7 @@ pub struct ProofStore {
     /// Every rule proof of one firing reads a column out of the array that one
     /// walk fills.
     head_walks: HashMap<(String, Vec<ProofId>), HeadWalk>,
-    /// Structural sharing for the proofs conversion synthesizes.
+    /// Structural sharing for proofs synthesized during lifting.
     synthesized: HashMap<SynthKey, ProofId>,
 }
 
@@ -426,7 +433,7 @@ struct ProofShape {
 }
 
 impl RawProofStore {
-    /// After extracting a proof from the e-graph, convert it to a [`RawProof`].
+    /// Decode an extracted proof term as a [`RawProof`].
     pub(crate) fn from_extracted(
         encoding_names: &EncodingNames,
         term_dag: TermDag,
@@ -913,8 +920,8 @@ impl ProofStore {
     }
 
     /// Add a proof, sharing one node per distinct `key`. The e-graph
-    /// hash-conses its own proof rows, so the proofs conversion rebuilds in their
-    /// place must be shared too — otherwise a subproof reached along several paths
+    /// hash-conses its own proof rows, so proofs reconstructed during lifting
+    /// must be shared too — otherwise a subproof reached along several paths
     /// becomes a fresh copy per path, and the proof unfolds into a tree.
     pub(super) fn push_shared_proof(&mut self, key: SynthKey, proof: Proof) -> ProofId {
         if let Some(&id) = self.synthesized.get(&key) {
@@ -956,7 +963,8 @@ impl ProofStore {
         }
     }
 
-    fn from_raw(
+    /// Lift recorded proof nodes, resolving globals from the source bindings.
+    fn lift(
         prog: &Vec<ResolvedNCommand>,
         raw_store: RawProofStore,
         raw_proof_id: RawProofId,
@@ -976,7 +984,7 @@ impl ProofStore {
         let globals = gather_globals(prog, &mut store.term_dag)
             .unwrap_or_else(|_| panic!("failed to gather globals from program"));
 
-        let proof_id = store.convert_raw_proof(prog, &globals, &raw_store, raw_proof_id);
+        let proof_id = store.lift_raw_proof(prog, &globals, &raw_store, raw_proof_id);
         (store, proof_id)
     }
 
@@ -1047,11 +1055,11 @@ impl ProofStore {
         }
     }
 
-    /// Converts a raw proof into a user-facing proof, recursively converting sub-proofs as needed.
+    /// Lifts a recorded proof to source-level statements, recursively lifting its premises.
     /// This adds new metadata to the proof, such as the substitution for rules.
     ///
     /// Panics if the raw proof is invalid with respect to the program.
-    fn convert_raw_proof(
+    fn lift_raw_proof(
         &mut self,
         prog: &Vec<ResolvedNCommand>,
         globals: &HashMap<String, TermId>,
@@ -1085,13 +1093,13 @@ impl ProofStore {
             RawProof::Rule(name, premise_proofs, bridge_proofs, raw_column) => {
                 let rule = self.rule_named(prog, name);
                 let planned = self.head_plan(rule);
-                let (converted_premises, substitution) =
+                let (lifted_premises, substitution) =
                     self.rule_premises(prog, globals, raw_store, name, rule, premise_proofs);
 
                 // This row carries on the walk the last row of the same firing
                 // left off at. A row reached while this one walks starts its own,
                 // so the further of the two is the one kept.
-                let firing_key = (name.clone(), converted_premises.clone());
+                let firing_key = (name.clone(), lifted_premises.clone());
                 let carried = self.head_walks.remove(&firing_key);
                 // A carried walk brings the bindings the earlier row seeded it
                 // with, so only a walk starting from scratch needs them.
@@ -1116,12 +1124,12 @@ impl ProofStore {
                     name,
                     &planned,
                     bindings,
-                    converted_premises,
+                    lifted_premises,
                     recorded,
                     Box::new(move |store: &mut ProofStore, _to_canonical| {
                         let raw = *bridge_proofs.get(next)?;
                         next += 1;
-                        Some(store.convert_raw_proof(prog, globals, raw_store, raw))
+                        Some(store.lift_raw_proof(prog, globals, raw_store, raw))
                     }),
                 );
                 if let Some(walk) = carried {
@@ -1140,8 +1148,8 @@ impl ProofStore {
                 return proof_id;
             }
             RawProof::MergeFnIdx(function, old_raw, new_raw, idx) => {
-                let old_proof_id = self.convert_raw_proof(prog, globals, raw_store, *old_raw);
-                let new_proof_id = self.convert_raw_proof(prog, globals, raw_store, *new_raw);
+                let old_proof_id = self.lift_raw_proof(prog, globals, raw_store, *old_raw);
+                let new_proof_id = self.lift_raw_proof(prog, globals, raw_store, *new_raw);
                 // `idx` indexes all body nodes (pre-order, top node included). The
                 // conclusion is that node's own minted term, i.e. its existence proof in
                 // its FD view. The whole-view-row conclusion comes from `MergeFnRow`.
@@ -1162,8 +1170,8 @@ impl ProofStore {
                 self.merge_fn_proof(function, old_proof_id, new_proof_id, to_prove)
             }
             RawProof::MergeFnRow(function, old_raw, new_raw) => {
-                let old_proof_id = self.convert_raw_proof(prog, globals, raw_store, *old_raw);
-                let new_proof_id = self.convert_raw_proof(prog, globals, raw_store, *new_raw);
+                let old_proof_id = self.lift_raw_proof(prog, globals, raw_store, *old_raw);
+                let new_proof_id = self.lift_raw_proof(prog, globals, raw_store, *new_raw);
                 // The conclusion is the whole view row `f(inputs..., merged)`, where
                 // `merged` is the whole merge body evaluated on the two premise outputs.
                 let (view_head, input_args, old_output, new_output) =
@@ -1183,8 +1191,8 @@ impl ProofStore {
                 self.merge_fn_proof(function, old_proof_id, new_proof_id, to_prove)
             }
             RawProof::Trans(left_raw, right_raw) => {
-                let left_id = self.convert_raw_proof(prog, globals, raw_store, *left_raw);
-                let right_id = self.convert_raw_proof(prog, globals, raw_store, *right_raw);
+                let left_id = self.lift_raw_proof(prog, globals, raw_store, *left_raw);
+                let right_id = self.lift_raw_proof(prog, globals, raw_store, *right_raw);
                 let left = &self.id_to_proof[left_id];
                 let right = &self.id_to_proof[right_id];
                 assert_eq!(
@@ -1198,7 +1206,7 @@ impl ProofStore {
                 }
             }
             RawProof::Sym(inner_raw) => {
-                let inner_id = self.convert_raw_proof(prog, globals, raw_store, *inner_raw);
+                let inner_id = self.lift_raw_proof(prog, globals, raw_store, *inner_raw);
                 let inner = &self.id_to_proof[inner_id];
                 Proof {
                     proposition: Proposition::new(inner.rhs(), inner.lhs()),
@@ -1206,8 +1214,8 @@ impl ProofStore {
                 }
             }
             RawProof::Congr(proof_raw, child_index, child_raw) => {
-                let base_id = self.convert_raw_proof(prog, globals, raw_store, *proof_raw);
-                let child_id = self.convert_raw_proof(prog, globals, raw_store, *child_raw);
+                let base_id = self.lift_raw_proof(prog, globals, raw_store, *proof_raw);
+                let child_id = self.lift_raw_proof(prog, globals, raw_store, *child_raw);
                 let base_lhs = self.id_to_proof[base_id].lhs();
                 let base_rhs = self.id_to_proof[base_id].rhs();
                 let child_rhs = self.id_to_proof[child_id].rhs();
@@ -1224,7 +1232,7 @@ impl ProofStore {
                 }
             }
             RawProof::Proj(inner_raw, child_index) => {
-                let inner_id = self.convert_raw_proof(prog, globals, raw_store, *inner_raw);
+                let inner_id = self.lift_raw_proof(prog, globals, raw_store, *inner_raw);
                 let projected = self.push_projection(inner_id, *child_index);
                 self.proof_id.insert(raw_proof.clone(), projected);
                 return projected;
@@ -1232,7 +1240,7 @@ impl ProofStore {
             RawProof::ProjPrim(rule, body_index, arg_raws) => {
                 let arg_ids: Vec<ProofId> = arg_raws
                     .iter()
-                    .map(|arg| self.convert_raw_proof(prog, globals, raw_store, *arg))
+                    .map(|arg| self.lift_raw_proof(prog, globals, raw_store, *arg))
                     .collect();
                 let arg_terms: Vec<TermId> = arg_ids
                     .iter()
@@ -1265,14 +1273,14 @@ impl ProofStore {
                 return projected;
             }
             RawProof::CongrAll(proof_raw, child_raw) => {
-                let base_id = self.convert_raw_proof(prog, globals, raw_store, *proof_raw);
-                let child_id = self.convert_raw_proof(prog, globals, raw_store, *child_raw);
+                let base_id = self.lift_raw_proof(prog, globals, raw_store, *proof_raw);
+                let child_id = self.lift_raw_proof(prog, globals, raw_store, *child_raw);
                 let expanded_id = self.expand_congr_all(base_id, child_id);
                 self.proof_id.insert(raw_proof.clone(), expanded_id);
                 return expanded_id;
             }
             RawProof::ContainerNormalize(inner_raw) => {
-                let inner_id = self.convert_raw_proof(prog, globals, raw_store, *inner_raw);
+                let inner_id = self.lift_raw_proof(prog, globals, raw_store, *inner_raw);
                 let inner_lhs = self.id_to_proof[inner_id].lhs();
                 let inner_rhs = self.id_to_proof[inner_id].rhs();
                 let normalized = self.normalize_container(inner_rhs);
@@ -1348,7 +1356,7 @@ impl ProofStore {
         let recomputable = recomputable_premises(&rule.body, &|var| globals.contains_key(var));
         let mut stored = premise_proofs.iter();
         let mut substitution = IndexMap::default();
-        let mut converted = Vec::with_capacity(rule.body.len());
+        let mut lifted = Vec::with_capacity(rule.body.len());
         for (fact, recomputable) in rule.body.iter().zip(recomputable) {
             let premise = if recomputable {
                 self.recomputed_premise(name, fact, &substitution)
@@ -1360,7 +1368,7 @@ impl ProofStore {
                         rule.body.len()
                     )
                 });
-                let premise = self.convert_raw_proof(prog, globals, raw_store, raw);
+                let premise = self.lift_raw_proof(prog, globals, raw_store, raw);
                 // Rebuild/canonicalization can rewrite a matched custom-function-fact
                 // premise `(= (f args) v)` into a non-reflexive natural->canonical
                 // `Congr` proof `(f nat) = (f canon)` (e.g. when an argument's e-class
@@ -1380,9 +1388,9 @@ impl ProofStore {
             if !crate::proofs::proof_checker::is_container_side_condition(fact) {
                 self.unify_fact(fact, premise, &mut substitution);
             }
-            converted.push(premise);
+            lifted.push(premise);
         }
-        (converted, substitution)
+        (lifted, substitution)
     }
 
     /// The reflexive fiat a [`recomputable_premises`] fact's premise is, over the
@@ -1516,7 +1524,7 @@ impl ProofStore {
                 }
                 let Term::App(head, children) = self.term_dag.get(term_id) else {
                     panic!(
-                        "expected function application term for call {}, got {:?}. Conversion from raw proofs assumes valid proofs with respect to the program.",
+                        "expected function application term for call {}, got {:?}. Lifting from raw proofs assumes valid proofs with respect to the program.",
                         call.name(),
                         self.term_dag.get(term_id)
                     );
@@ -1586,7 +1594,7 @@ impl ProofStore {
             let lhs = self.id_to_proof[current].lhs();
             let rhs = self.id_to_proof[current].rhs();
             let Term::App(_, children) = self.term_dag.get(rhs) else {
-                panic!("congr-all requires an application term. Conversion assumes valid proofs.");
+                panic!("congr-all requires an application term. Lifting assumes valid proofs.");
             };
             let Some(child_index) = children.iter().position(|c| *c == child_lhs) else {
                 break;
@@ -1626,7 +1634,7 @@ impl ProofStore {
             if !self.is_container_term(nested) {
                 continue;
             }
-            // The reflexive base the nested rewrite stands on. At conversion the
+            // The reflexive base the nested rewrite stands on. At lifting the
             // term is in hand, so the child's position is known here — which is
             // why the encoding needs to record none of this.
             let nested_base = self.id_to_proof.push(Proof {
@@ -2033,11 +2041,11 @@ mod tests {
             ProofStore::new(raw.term_dag.clone(), HashMap::default(), HashSet::default());
         let prog = vec![];
         let globals = HashMap::default();
-        let mut convert = |id| {
-            let converted = store.convert_raw_proof(&prog, &globals, raw, id);
-            store.simplify(converted)
+        let mut lift = |id| {
+            let lifted = store.lift_raw_proof(&prog, &globals, raw, id);
+            store.simplify(lifted)
         };
-        let (packed_proof, chain_proof) = (convert(packed), convert(chain));
+        let (packed_proof, chain_proof) = (lift(packed), lift(chain));
         assert_eq!(store.get(chain_proof).proposition(), expected);
         assert_eq!(
             packed,
@@ -2253,7 +2261,7 @@ mod tests {
             HashMap::default(),
             HashSet::default(),
         );
-        store.convert_raw_proof(&vec![], &HashMap::default(), &firing.raw, packed);
+        store.lift_raw_proof(&vec![], &HashMap::default(), &firing.raw, packed);
     }
 
     /// Every column of the row is a proof, including the e-class's past the last

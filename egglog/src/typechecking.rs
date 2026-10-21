@@ -115,6 +115,9 @@ impl<T: Clone + Send + Sync + 'static, S: RegistryWrap<T> + 'static> ExternalFun
 pub struct FuncType {
     pub name: String,
     pub subtype: FunctionSubtype,
+    /// A global binding or its shared storage table. Arguments identify storage
+    /// rows and do not add expression nodes to a source-level proof.
+    pub is_global: bool,
     pub input: Vec<ArcSort>,
     /// The output (value-column) sorts, primary first. A tuple-output function has more than one;
     /// ordinary functions have exactly one. Always non-empty.
@@ -142,6 +145,7 @@ impl PartialEq for FuncType {
     fn eq(&self, other: &Self) -> bool {
         if self.name == other.name
             && self.subtype == other.subtype
+            && self.is_global == other.is_global
             && self.num_outputs() == other.num_outputs()
             && self
                 .outputs
@@ -170,6 +174,7 @@ impl Hash for FuncType {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.name.hash(state);
         self.subtype.hash(state);
+        self.is_global.hash(state);
         for out in &self.outputs {
             out.name().hash(state);
         }
@@ -239,6 +244,7 @@ pub struct TypeInfo {
     primitives: HashMap<String, Vec<PrimitiveWithId>>,
     func_types: HashMap<String, Arc<FuncType>>,
     pub(crate) global_sorts: HashMap<String, ArcSort>,
+    pub(crate) global_tables: crate::ast::remove_globals::GlobalTables,
     /// Sorts that do not allow union (e.g., from `:no-union` sorts or relations).
     pub(crate) non_unionable_sorts: HashSet<String>,
     /// Declared indexes, by the name their atoms are written with.
@@ -532,6 +538,7 @@ impl EGraph {
             Arc::new(FuncType {
                 name: name.to_owned(),
                 subtype: FunctionSubtype::Custom,
+                is_global: false,
                 input,
                 outputs: vec![unit],
             }),
@@ -1011,6 +1018,7 @@ impl TypeInfo {
         Ok(FuncType {
             name: func.name.clone(),
             subtype: func.subtype,
+            is_global: func.internal_let,
             input,
             outputs,
         })
@@ -1567,6 +1575,7 @@ impl TypeInfo {
 
     /// Check if an expression contains non-global function lookups (FunctionSubtype::Custom calls).
     /// Global reads are allowed; the term/proof encoding handles them separately.
+    /// Use the resolved function's flag so this also works after its scope is popped.
     /// Returns Some(span) if a lookup is found, None otherwise.
     pub fn expr_has_function_lookup(&self, expr: &ResolvedExpr) -> Option<Span> {
         use ast::GenericExpr;
@@ -1574,7 +1583,7 @@ impl TypeInfo {
         expr.find(&mut |e| {
             if let GenericExpr::Call(span, ResolvedCall::Func(func_type), _) = e
                 && func_type.subtype == FunctionSubtype::Custom
-                && !self.is_global(&func_type.name)
+                && !func_type.is_global
             {
                 return Some(span.clone());
             }

@@ -565,7 +565,7 @@ impl EGraph {
         });
         // Whether `ordering-min`/`ordering-max` swap their arguments: 0 when `a`
         // is the max, 1 when `b` is. A top-level `union`'s fiat records this so
-        // proof conversion can orient the action's two operands the way the
+        // proof lifting can orient the action's two operands the way the
         // encoding did, without the row naming either of them.
         add_primitive!(&mut eg, "ordering-swapped" = |a: #, b: #| -> i64 {
             if a > b { 0 } else { 1 }
@@ -1133,6 +1133,7 @@ impl EGraph {
                 let func_type = Arc::new(FuncType {
                     name: decl.name.clone(),
                     subtype: decl.subtype,
+                    is_global: decl.internal_let,
                     input: decl
                         .schema
                         .input
@@ -1256,6 +1257,32 @@ impl EGraph {
         Ok(())
     }
 
+    /// Find the storage for a global, including in a replayed desugared program.
+    fn global_table(&self, name: &str) -> Option<&Function> {
+        let binding = self.type_info.global_tables.bindings.get(name).or_else(|| {
+            self.proof_state
+                .original_typechecking
+                .as_ref()?
+                .type_info
+                .global_tables
+                .bindings
+                .get(name)
+        });
+        if let Some(table) = binding {
+            return self.functions.get(&table.name);
+        }
+        let key = self.backend.base_values().get::<S>(name.to_owned().into());
+        self.functions.values().find(|function| {
+            function.decl.internal_let
+                && function.func_type.input.len() == 1
+                && function.func_type.input[0].name() == StringSort.name()
+                && self
+                    .backend
+                    .lookup_id(function.backend_id, &[key])
+                    .is_some()
+        })
+    }
+
     /// Print up to `n` of a function's tuples, or all of them when `n` is
     /// `None`.
     pub fn print_function(
@@ -1281,6 +1308,7 @@ impl EGraph {
         let f = self
             .functions
             .get(sym)
+            .or_else(|| self.global_table(sym))
             // function_to_dag resolved the same name, so this cannot miss
             .unwrap();
         let terms_and_outputs: Vec<_> = terms.into_iter().zip(outputs.unwrap()).collect();
@@ -1839,7 +1867,7 @@ impl EGraph {
     /// Each tuple is `(name, span, sort)`, where `span` is used for diagnostics
     /// tied to that binding. `output_sort` constrains overload resolution and
     /// output-type inference for the expression. Global references are rewritten
-    /// into the same zero-argument function calls used during command execution.
+    /// into the same shared-table reads used during command execution.
     /// `context` should match the runtime context where the resolved expression
     /// will be evaluated.
     pub fn typecheck_expr_with_bindings_and_output(
@@ -1866,7 +1894,7 @@ impl EGraph {
             output_sort,
             context,
         )?;
-        Ok(remove_globals::remove_globals_expr(resolved))
+        Ok(self.type_info.global_tables.expr(resolved))
     }
 
     /// Replace literal `(unstable-fn "...")` targets with hidden evaluator bindings.
@@ -2783,10 +2811,14 @@ impl EGraph {
             let mut typechecked = self.typecheck_program(&desugared)?;
             self.overall_report.typecheck += typecheck_timer.elapsed();
 
-            typechecked = remove_globals::remove_globals(typechecked, &mut self.parser.symbol_gen);
             for command in &typechecked {
                 self.names.check_shadowing(command)?;
             }
+            typechecked = remove_globals::remove_globals(
+                typechecked,
+                &mut self.parser.symbol_gen,
+                &mut self.type_info.global_tables,
+            );
             Ok(typechecked)
         }
     }
@@ -2819,30 +2851,22 @@ impl EGraph {
             // The proof checker consumes the per-row top-level fiat actions.
             let per_row_before_proofs =
                 ProofInstrumentor::lower_inputs(self, resolved_before_proofs.clone())?;
-            // Execution keeps every `(input …)` as an `Input` command, loaded
-            // natively at run time by `EGraph::native_input` straight into the
-            // encoded tables. Globals get the same function-style desugaring
-            // (`remove_globals`) as the non-encoding path.
-            let typechecked_no_globals =
-                remove_globals::remove_globals(resolved_before_proofs, &mut self.parser.symbol_gen);
-            // The term encoder runs before the encoded program is typechecked, so it
-            // can't rely on the later typecheck to populate `global_sorts`. Register
-            // the new global functions' sorts eagerly so `is_global` recognizes them
-            // while encoding.
-            for command in &typechecked_no_globals {
-                if let GenericNCommand::Function(fdecl) = command
-                    && fdecl.internal_let
-                    && let Some(output_sort) = self.type_info.sorts.get(fdecl.schema.output())
-                {
-                    self.type_info
-                        .global_sorts
-                        .insert(fdecl.name.clone(), output_sort.clone());
-                }
-            }
-            for command in &typechecked_no_globals {
+            // Execution keeps `(input …)` for native loading. Globals use the
+            // same desugaring as native execution, on the source type information.
+            for command in &resolved_before_proofs {
                 self.names.check_shadowing(command)?;
             }
-
+            let source_types = &mut self
+                .proof_state
+                .original_typechecking
+                .as_mut()
+                .unwrap()
+                .type_info;
+            let typechecked_no_globals = remove_globals::remove_globals(
+                resolved_before_proofs,
+                &mut self.parser.symbol_gen,
+                &mut source_types.global_tables,
+            );
             let numbered_before = self.proof_state.global_actions_numbered;
             let term_encoding_added =
                 ProofInstrumentor::add_term_encoding(self, typechecked_no_globals)?;
@@ -2874,6 +2898,7 @@ impl EGraph {
                 let desugared_typechecked = remove_globals::remove_globals(
                     desugared_typechecked,
                     &mut self.parser.symbol_gen,
+                    &mut self.type_info.global_tables,
                 );
 
                 new_typechecked.extend(desugared_typechecked);
@@ -2979,7 +3004,7 @@ impl EGraph {
 
     /// Resolves an egglog program by parsing, typechecking, and desugaring each command.
     /// Outputs a new egglog program without any syntactic sugar, either user provided ([`CommandMacro`]) or built-in (e.g., `rewrite` commands).
-    /// Also lowers global bindings to functions with no arguments.
+    /// Also lowers global bindings to rows in a shared table per sort.
     pub fn resolve_program(
         &mut self,
         filename: Option<String>,
@@ -3119,8 +3144,13 @@ impl EGraph {
     ///
     /// `panics` if the function does not exist.
     pub fn get_size(&self, func: &str) -> usize {
-        let function_id = self.functions.get(func).unwrap().backend_id;
-        self.backend.table_size(function_id)
+        if let Some(function) = self.functions.get(func) {
+            self.backend.table_size(function.backend_id)
+        } else {
+            let table = self.global_table(func).expect("unknown function or global");
+            let key = self.backend.base_values().get::<S>(func.to_owned().into());
+            usize::from(self.backend.lookup_id(table.backend_id, &[key]).is_some())
+        }
     }
 
     /// The total number of rows across all non-hidden functions, including
@@ -4476,14 +4506,8 @@ mod tests {
             )
             .unwrap();
 
-        match resolved {
-            ResolvedExpr::Call(_, ResolvedCall::Func(func), children) => {
-                assert_eq!(func.name, "$x");
-                assert!(children.is_empty());
-                assert_eq!(func.output().name(), I64Sort.name());
-            }
-            other => panic!("expected global function call rewrite, got {other:?}"),
-        }
+        let value = egraph.eval_resolved_expr(span!(), &resolved).unwrap();
+        assert_eq!(egraph.value_to_base::<i64>(value), 1);
     }
 
     // Test that an `EGraph` is `Send` & `Sync`

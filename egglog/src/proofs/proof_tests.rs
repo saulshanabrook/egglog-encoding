@@ -160,6 +160,33 @@ mod tests {
         }
     }
 
+    #[test]
+    fn proof_support_recognizes_resolved_globals_after_pop() {
+        let scoped = r#"
+            (datatype Math (Num i64))
+            (push)
+            (let $value 1)
+            (let $term (Num $value))
+            (extract $term)
+            (pop)
+        "#;
+        let mut egraph = EGraph::default();
+        let resolved = egraph.resolve_program(None, scoped).unwrap();
+        assert!(crate::program_supports_proofs(&resolved, &egraph.type_info));
+
+        // Reusing a popped binding's name does not make a new function a global.
+        let source = format!(
+            "{scoped} (function $value () i64 :merge old) \
+             (set ($value) 2) (extract ($value))"
+        );
+        let mut egraph = EGraph::default();
+        let resolved = egraph.resolve_program(None, &source).unwrap();
+        assert!(!crate::program_supports_proofs(
+            &resolved,
+            &egraph.type_info
+        ));
+    }
+
     /// A bridge supply for a firing where every term the head builds is new, so
     /// each one interns into itself. It never runs dry, so a walk drawing on it
     /// reaches the end of the head.
@@ -212,7 +239,7 @@ mod tests {
     }
 
     /// A rule head's proofs are the flat array the encoder names positions of and
-    /// proof conversion rebuilds, so the array has to reach everything the head
+    /// proof lifting rebuilds, so the array has to reach everything the head
     /// concludes — nothing may be left with no column to be named by. Pin it:
     /// walking each head states every proposition processing that head derives.
     #[test]
@@ -313,7 +340,7 @@ mod tests {
     }
 
     /// The encoder names each rule proof row by the column its walk of the head
-    /// is at, and proof conversion reads that column out of the array [`Firing`]
+    /// is at, and proof lifting reads that column out of the array [`Firing`]
     /// builds by walking the same head. Both claim their runs from
     /// [`HeadLayout`], which checks the position each is at as it goes, so the
     /// two cannot disagree about a run's length. Pin what is left: every column
@@ -366,7 +393,7 @@ mod tests {
         "#;
 
         // Nothing above runs, so the columns below are read by this test alone
-        // rather than by proof conversion firing the rules.
+        // rather than by proof lifting firing the rules.
         //
         // The rules as the checker replays them: the heads [`Firing`] walks.
         let mut checker = EGraph::new_with_proofs();
@@ -904,7 +931,7 @@ mod tests {
     /// The encoder records one premise per body fact of the rule *after*
     /// `remove_globals` appends a lookup fact per global the head mentions —
     /// except the facts [`recomputable_premises`] gates out — while the proof
-    /// checker replays the rule as written, without those facts. Proof conversion
+    /// checker replays the rule as written, without those facts. Proof lifting
     /// pairs premises with written facts by position, so the premise count must
     /// cover the written body's recorded facts, and the extras are exactly the
     /// trailing ones.
@@ -962,7 +989,7 @@ mod tests {
         }
 
         // Holds for every rule the checker replays, including the one `prove`
-        // generates: conversion recomputes a gated premise instead of reading a
+        // generates: lifting recomputes a gated premise instead of reading a
         // recorded one, so only the ungated facts need covering.
         for (name, premises) in &recorded {
             let facts = recomputable_premises(&written[name], &|_| false)
@@ -1002,6 +1029,7 @@ mod tests {
         let removed = remove_globals(
             checker.proof_check_program.clone(),
             &mut SymbolGen::new("premise_order".to_string()),
+            &mut Default::default(),
         );
         let mut compared = 0;
         for command in &removed {
@@ -1862,7 +1890,7 @@ mod tests {
     // and a failed command is not one proof checking reads, so there is no
     // global action for that term's fiat to name. Rejected up front rather than
     // left to name whichever action comes next.
-    /// Proof conversion projects an element out of exactly one container, so a
+    /// Proof lifting projects an element out of exactly one container, so a
     /// primitive that could have read it out of either of two is rejected. No
     /// builtin takes two containers of its own output sort, so this registers one.
     #[test]

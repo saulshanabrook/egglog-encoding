@@ -347,12 +347,12 @@ pub(crate) enum Justification {
     /// Term-free merge justification for a merge-body subexpression: function
     /// name, the two premise (view) proof expressions, and the pre-order index of
     /// this subexpression in the merge body (matches `subexpr_at_index` in proof
-    /// conversion). It names no term, so it needs neither the merged term nor
+    /// lifting). It names no term, so it needs neither the merged term nor
     /// the function key/children — usable in a `:merge` action.
     MergeIdx(String, String, String, usize),
     /// Term-free merge justification for the whole view row (function name + two
     /// premise proof expressions). The conclusion `f(children, merged)` is
-    /// reconstructed during proof conversion by running the whole merge body on
+    /// reconstructed during proof lifting by running the whole merge body on
     /// the premise outputs, so the row names no term.
     MergeRow(String, String, String),
 }
@@ -735,14 +735,14 @@ impl ProofInstrumentor<'_> {
 ;; Fiat justification of a top-level `union`: which global action it is in the
 ;; program proof checking reads, and whether the encoding oriented the edge
 ;; against that action's operand order (see the `ordering-swapped` primitive).
-;; Conversion evaluates the action to recover both endpoints, so the row names
+;; Lifting evaluates the action to recover both endpoints, so the row names
 ;; neither of them:
 ;;   (FiatUnion <global action index> <0 or 1> <proof>)
 (function {fiat_union_constructor} (i64 i64 {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
 
 ;; Fiat justification that a term a top-level action builds exists, stating
 ;; `t = t`. It names where the term is written — which global action, and which
-;; node of it in `action_exprs` order — so conversion evaluates that node instead
+;; node of it in `action_exprs` order — so lifting evaluates that node instead
 ;; of the row naming the term:
 ;;   (FiatTerm <global action index> <expression index> <proof>)
 (function {fiat_term_constructor} (i64 i64 {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
@@ -759,7 +759,7 @@ impl ProofInstrumentor<'_> {
 ;; the shared premises and the bridges recorded before it — plus the one *bridge*
 ;; premise recorded since: the view-row proof of the subterm the head interned,
 ;; saying which e-class it landed in. `<column>` says which proof of the head's
-;; lowering this is (see `proof_head`); proof conversion derives the proposition
+;; lowering this is (see `proof_head`); proof lifting derives the proposition
 ;; from it, so no term is stored. The rule name is not repeated either: it is
 ;; read off the `Rule_<k>` row ending the chain.
 ;;   (RuleLink <earlier column's proof> <bridge proof> <column>)
@@ -779,11 +779,11 @@ impl ProofInstrumentor<'_> {
 
 ;; term-free merge justification for an FD custom-function view subexpression:
 ;; name of function, two premise proofs, and the pre-order index of the merge-body
-;; subexpression whose conclusion is reconstructed during proof conversion
+;; subexpression whose conclusion is reconstructed during proof lifting
 (function {merge_fn_idx_constructor} (String {proof_datatype} {proof_datatype} i64 {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
 ;; term-free merge justification for an FD custom-function view row:
 ;; name of function and two premise proofs; the whole-row conclusion is
-;; reconstructed during proof conversion by running the whole merge body
+;; reconstructed during proof lifting by running the whole merge body
 (function {merge_fn_row_constructor} (String {proof_datatype} {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
 
 ;; transitivity of equality proofs
@@ -810,7 +810,7 @@ impl ProofInstrumentor<'_> {
 ;; reads an element out of a container, produces a justification that the element
 ;; equals itself. The call is named by its rule and its index in that rule's body
 ;; rather than by the primitive's name, which would not pin down a validator
-;; since primitives are overloaded. Proof conversion resolves the typed
+;; since primitives are overloaded. Proof lifting resolves the typed
 ;; container argument from that primitive's signature, runs its validator on the
 ;; argument terms, and projects along the term path to the result only from that
 ;; argument, so the row stores no term. There is a `ProjPrim_<k>` per argument
@@ -930,25 +930,8 @@ pub enum ProofEncodingUnsupportedReason {
 
 /// Checks whether a desugared program supports proof encoding.
 pub fn program_supports_proofs(commands: &[ResolvedCommand], type_info: &TypeInfo) -> bool {
-    // Globals defined anywhere in the program, including inside `(push)`/`(pop)`
-    // scopes. `type_info.global_sorts` reflects only the final scope (each `pop`
-    // unregisters its globals), so checking against it alone misreads a popped
-    // global's action-side lookup as an unsupported function lookup.
-    let let_globals: HashSet<String> = commands
-        .iter()
-        .filter_map(|c| match c {
-            GenericCommand::Function {
-                name,
-                let_binding: true,
-                ..
-            } => Some(name.clone()),
-            _ => None,
-        })
-        .collect();
     for command in commands {
-        if let Err(reason) =
-            command_supports_proof_encoding_impl(command, type_info, &let_globals, true)
-        {
+        if let Err(reason) = command_supports_proof_encoding(command, type_info, true) {
             let cmd = command.to_string();
             log::debug!(
                 "program does not support proofs: {reason}\n  command: {}",
@@ -980,40 +963,15 @@ fn expr_primitives_have_validators(expr: &ResolvedExpr) -> bool {
 }
 
 /// Check if an action contains non-global function lookups in any of its expressions
-fn action_has_function_lookup(
-    action: &ResolvedAction,
-    type_info: &TypeInfo,
-    extra_globals: &HashSet<String>,
-) -> bool {
+fn action_has_function_lookup(action: &ResolvedAction, type_info: &TypeInfo) -> bool {
     let mut has_lookup = false;
     action.clone().visit_exprs(&mut |expr| {
-        if expr_has_non_global_lookup(&expr, type_info, extra_globals) {
+        if type_info.expr_has_function_lookup(&expr).is_some() {
             has_lookup = true;
         }
         expr
     });
     has_lookup
-}
-
-/// Like [`TypeInfo::expr_has_function_lookup`], but also treating names in
-/// `extra_globals` as globals (see [`program_supports_proofs`]).
-fn expr_has_non_global_lookup(
-    expr: &ResolvedExpr,
-    type_info: &TypeInfo,
-    extra_globals: &HashSet<String>,
-) -> bool {
-    use crate::ast::GenericExpr;
-    expr.find(&mut |e| {
-        if let GenericExpr::Call(span, ResolvedCall::Func(func_type), _) = e
-            && func_type.subtype == crate::ast::FunctionSubtype::Custom
-            && !type_info.is_global(&func_type.name)
-            && !extra_globals.contains(&func_type.name)
-        {
-            return Some(span.clone());
-        }
-        None
-    })
-    .is_some()
 }
 
 /// Whether a fact contains a primitive call whose result is an eq-sort or
@@ -1068,15 +1026,15 @@ fn bind_vars(expr: &ResolvedExpr, bound: &mut HashSet<String>) {
 }
 
 /// Which of a rule body's facts the encoding stores no premise proof for: the
-/// premise is a reflexive fiat over a base value, which proof conversion
+/// premise is a reflexive fiat over a base value, which proof lifting
 /// recomputes by evaluating the fact against the bindings the earlier facts
 /// give. Answered per fact, in body order, since a fact is only recomputable
 /// once one of its sides reads nothing but variables the body has already bound.
 ///
-/// The encoder and proof conversion share this gate so they cannot drift, and
+/// The encoder and proof lifting share this gate so they cannot drift, and
 /// each must therefore describe the same rule the same way. `remove_globals`
 /// rewrites a global reference into a lookup call, which is not a base value, so
-/// conversion — which sees the rule from before that pass — reports a global's
+/// lifting — which sees the rule from before that pass — reports a global's
 /// variable through `is_global` to reach the same answer.
 pub(crate) fn recomputable_premises(
     body: &[ResolvedFact],
@@ -1386,7 +1344,7 @@ impl BodyAnchorScan {
 /// the reflexive anchor of a value the query computed, which no view row names.
 fn body_premise_without_anchor(body: &[ResolvedFact]) -> Option<ProofEncodingUnsupportedReason> {
     let scan = BodyAnchorScan::scan(body);
-    // Proof conversion projects an element out of one container, so a read whose
+    // Proof lifting projects an element out of one container, so a read whose
     // result could have come from several has no one container to name.
     if scan
         .elements
@@ -1406,18 +1364,6 @@ fn body_premise_without_anchor(body: &[ResolvedFact]) -> Option<ProofEncodingUns
 pub(crate) fn command_supports_proof_encoding(
     command: &ResolvedCommand,
     type_info: &TypeInfo,
-    proofs_enabled: bool,
-) -> Result<(), ProofEncodingUnsupportedReason> {
-    command_supports_proof_encoding_impl(command, type_info, &HashSet::default(), proofs_enabled)
-}
-
-/// [`command_supports_proof_encoding`] with `extra_globals`: let-bound names
-/// treated as globals even when out of scope in `type_info` (see
-/// [`program_supports_proofs`]).
-fn command_supports_proof_encoding_impl(
-    command: &ResolvedCommand,
-    type_info: &TypeInfo,
-    extra_globals: &HashSet<String>,
     proofs_enabled: bool,
 ) -> Result<(), ProofEncodingUnsupportedReason> {
     // `:unsafe-seminaive` rules perform arbitrary reads against the live
@@ -1507,8 +1453,7 @@ fn command_supports_proof_encoding_impl(
     // Global reads are supported by the encoding.
     let mut has_function_lookup_in_action = false;
     command.clone().visit_actions(&mut |action| {
-        has_function_lookup_in_action |=
-            action_has_function_lookup(&action, type_info, extra_globals);
+        has_function_lookup_in_action |= action_has_function_lookup(&action, type_info);
         action
     });
 
@@ -1518,7 +1463,7 @@ fn command_supports_proof_encoding_impl(
     if let GenericCommand::Function {
         merge: Some(merge), ..
     } = command
-        && expr_has_non_global_lookup(&merge.result, type_info, extra_globals)
+        && type_info.expr_has_function_lookup(&merge.result).is_some()
     {
         return Err(ProofEncodingUnsupportedReason::FunctionLookupInAction);
     }
@@ -1576,8 +1521,8 @@ fn command_supports_proof_encoding_impl(
         // because instrument_action_expr doesn't support them
         // Global reads are supported by the encoding.
         GenericCommand::Extract(_, expr, variants) => {
-            if expr_has_non_global_lookup(expr, type_info, extra_globals)
-                || expr_has_non_global_lookup(variants, type_info, extra_globals)
+            if type_info.expr_has_function_lookup(expr).is_some()
+                || type_info.expr_has_function_lookup(variants).is_some()
             {
                 Err(ProofEncodingUnsupportedReason::FunctionLookupInAction)
             } else {
@@ -1586,12 +1531,7 @@ fn command_supports_proof_encoding_impl(
         }
         GenericCommand::Fail(_, commands) => {
             for command in commands {
-                command_supports_proof_encoding_impl(
-                    command,
-                    type_info,
-                    extra_globals,
-                    proofs_enabled,
-                )?;
+                command_supports_proof_encoding(command, type_info, proofs_enabled)?;
             }
             Ok(())
         }
@@ -1604,7 +1544,7 @@ fn command_supports_proof_encoding_impl(
         }
         // After global desugar it may look like this
         ResolvedCommand::Action(ResolvedAction::Set(_span, head, _children, expr)) => {
-            if (type_info.is_global(head.name()) || extra_globals.contains(head.name()))
+            if matches!(head, ResolvedCall::Func(func) if func.is_global)
                 && expr.output_type().is_container_sort()
             {
                 Err(ProofEncodingUnsupportedReason::LetBindingWithContainer)
@@ -1871,11 +1811,13 @@ impl crate::constraint::TypeConstraint for DropReflexiveStepTypeConstraint {
 ///
 /// A proof names a body call by its index here (see
 /// [`ProofInstrumentor::request_element_anchor`]). The encoder and proof
-/// conversion both index through this function, so they cannot disagree.
+/// lifting both index through this function, so they cannot disagree.
 pub(crate) fn body_exprs(body: &[ResolvedFact]) -> Vec<&ResolvedExpr> {
     fn walk<'a>(expr: &'a ResolvedExpr, out: &mut Vec<&'a ResolvedExpr>) {
         out.push(expr);
-        if let ResolvedExpr::Call(_, _, args) = expr {
+        if let ResolvedExpr::Call(_, head, args) = expr
+            && !matches!(head, ResolvedCall::Func(func) if func.is_global)
+        {
             for arg in args {
                 walk(arg, out);
             }
@@ -1917,13 +1859,14 @@ pub(crate) enum ActionNode<'a> {
 ///
 /// A fiat names a term by its index here (see
 /// [`ProofInstrumentor::reflexive_for_justification`]); [`body_exprs`] says
-/// what keeps the two sides agreeing. `remove_globals` turns a global reference
-/// into a nullary call, one node either way, so the encoded action numbers the
-/// same as the one proof checking reads.
+/// what keeps the two sides agreeing. Global reads remain one source node;
+/// their storage keys introduced by global lowering are not source expressions.
 pub(crate) fn action_nodes(action: &ResolvedAction) -> Vec<ActionNode<'_>> {
     fn walk<'a>(expr: &'a ResolvedExpr, out: &mut Vec<ActionNode<'a>>) {
         out.push(ActionNode::Expr(expr));
-        if let ResolvedExpr::Call(_, _, args) = expr {
+        if let ResolvedExpr::Call(_, head, args) = expr
+            && !matches!(head, ResolvedCall::Func(func) if func.is_global)
+        {
             for arg in args {
                 walk(arg, out);
             }
@@ -1932,9 +1875,11 @@ pub(crate) fn action_nodes(action: &ResolvedAction) -> Vec<ActionNode<'_>> {
     let mut out = vec![];
     match action {
         ResolvedAction::Let(_, _, expr) | ResolvedAction::Expr(_, expr) => walk(expr, &mut out),
-        ResolvedAction::Set(_, _, args, value) => {
-            for arg in args {
-                walk(arg, &mut out);
+        ResolvedAction::Set(_, head, args, value) => {
+            if !matches!(head, ResolvedCall::Func(func) if func.is_global) {
+                for arg in args {
+                    walk(arg, &mut out);
+                }
             }
             walk(value, &mut out);
             out.push(ActionNode::Row(action));

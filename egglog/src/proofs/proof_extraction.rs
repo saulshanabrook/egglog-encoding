@@ -1,6 +1,6 @@
 use crate::proofs::proof_encoding::ProofInstrumentor;
 use crate::proofs::proof_extractor::extract_root;
-use crate::proofs::proof_format::{Justification, ProofId, ProofStore, proof_store_from_term};
+use crate::proofs::proof_format::{Justification, ProofId, ProofStore, lift_proof};
 use crate::util::HashSet;
 use crate::{ResolvedCall, TermDag, Value};
 use thiserror::Error;
@@ -118,7 +118,7 @@ impl ProofInstrumentor<'_> {
                 prim_value_constructors.insert(head);
             }
         }
-        let (mut proof_store, proof_id) = proof_store_from_term(
+        let (mut proof_store, proof_id) = lift_proof(
             &self.egraph.proof_state.proof_names,
             termdag,
             proof_term_id,
@@ -126,11 +126,6 @@ impl ProofInstrumentor<'_> {
             container_normalizers,
             prim_value_constructors,
         );
-
-        // Remove globals from the proof
-        if let Result::Err(e) = proof_store.remove_globals(&self.egraph.proof_check_program) {
-            panic!("Failed to remove globals from proof: {e}");
-        }
 
         // If the existence proof is a single-premise rule, strip that wrapping rule
         // and use its premise; otherwise use the proof as-is (an existence proof need

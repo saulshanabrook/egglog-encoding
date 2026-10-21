@@ -115,9 +115,8 @@ impl ProofInstrumentor<'_> {
     /// each rule composes the updated view proof.
     pub(super) fn rebuilding_rules(&mut self, fdecl: &ResolvedFunctionDecl) -> Vec<Command> {
         let proofs = self.proofs_enabled();
-        // A global's output *is* its e-class (like a constructor's), so it takes the
-        // e-class rebuild below (union-tracking) — not the custom-output rebuild
-        // (congruence), which would emit a nonsensical `Congr` on its nullary term.
+        // Constructor and Eq-sort global rows carry the value's e-class proof.
+        // Custom function rows carry a proof of `f(inputs..., output)` instead.
         let output_is_eclass = self.output_is_eclass(fdecl);
         let types = self.column_sorts(fdecl);
         let n = types.len();
@@ -183,7 +182,7 @@ impl ProofInstrumentor<'_> {
         }
         if output_is_eclass {
             // Covered by the index rule above, which indexes the e-class column too.
-        } else if fdecl.subtype == FunctionSubtype::Custom && !self.is_encoded_global(fdecl) {
+        } else if fdecl.subtype == FunctionSubtype::Custom {
             if types[n - 1].is_eq_sort() {
                 rules.push_str(&self.fd_custom_value_rebuild_rule(fdecl, &key_vars, n - 1));
             } else if types[n - 1].is_eq_container_sort() {
