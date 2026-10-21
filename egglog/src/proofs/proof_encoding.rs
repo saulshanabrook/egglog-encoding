@@ -8,6 +8,27 @@ use crate::proofs::proof_head::{
 use crate::typechecking::FuncType;
 use crate::*;
 
+/// Evaluations which may create source terms for an extraction. A nullary custom
+/// root is a read: only the count is an action, never the returned
+/// value. Share this ordering with source-action numbering and instrumentation.
+fn extraction_action_exprs<'a>(
+    input: &'a ResolvedExpr,
+    variants: &'a ResolvedExpr,
+    types: &TypeInfo,
+) -> Vec<&'a ResolvedExpr> {
+    let inputs = match input {
+        ResolvedExpr::Call(_, ResolvedCall::Func(func), args)
+            if func.subtype == FunctionSubtype::Custom
+                && args.is_empty()
+                && !types.is_global(&func.name) =>
+        {
+            args.as_slice()
+        }
+        _ => std::slice::from_ref(input),
+    };
+    inputs.iter().chain(std::iter::once(variants)).collect()
+}
+
 /// A value an instrumented action names: the id later statements read it by
 /// and, for a term the encoding built here, the term as written plus the proof
 /// connecting the two.
@@ -497,7 +518,19 @@ impl<'a> ProofInstrumentor<'a> {
     fn global_actions_in(&self, command: &ResolvedNCommand) -> Result<usize, Error> {
         Ok(match command {
             ResolvedNCommand::CoreAction(_) => 1,
-            ResolvedNCommand::Extract(..) | ResolvedNCommand::ProveExtract(..) => 2,
+            ResolvedNCommand::Extract(_, expr, variants)
+            | ResolvedNCommand::ProveExtract(_, expr, variants, _) => extraction_action_exprs(
+                expr,
+                variants,
+                &self
+                    .egraph
+                    .proof_state
+                    .original_typechecking
+                    .as_ref()
+                    .unwrap()
+                    .type_info,
+            )
+            .len(),
             ResolvedNCommand::Input {
                 span, name, file, ..
             } => Self::input_actions(self.egraph, span, name, file)?.len(),
@@ -523,12 +556,27 @@ impl<'a> ProofInstrumentor<'a> {
             } else if let ResolvedNCommand::Extract(span, expr, variants)
             | ResolvedNCommand::ProveExtract(span, expr, variants, _) = &command
             {
-                // Extraction evaluates its input and count as actions. These
-                // evaluations may introduce terms, unlike a check's query.
-                // Record only those source inputs, never the extracted result.
-                lowered.extend([expr, variants].map(|expr| {
-                    ResolvedNCommand::CoreAction(ResolvedAction::Expr(span.clone(), expr.clone()))
-                }));
+                // Record evaluations that may construct terms. A nullary function root's
+                // returned value is justified by its row, not a new source action.
+                lowered.extend(
+                    extraction_action_exprs(
+                        expr,
+                        variants,
+                        &egraph
+                            .proof_state
+                            .original_typechecking
+                            .as_ref()
+                            .unwrap()
+                            .type_info,
+                    )
+                    .into_iter()
+                    .map(|expr| {
+                        ResolvedNCommand::CoreAction(ResolvedAction::Expr(
+                            span.clone(),
+                            expr.clone(),
+                        ))
+                    }),
+                );
             } else {
                 lowered.push(command);
             }
@@ -2646,12 +2694,38 @@ impl<'a> ProofInstrumentor<'a> {
                         .extract_sources
                         .insert(self.global_action, Arc::new(source));
                 }
-                // The checker records input and count as separate source actions.
+                let types = &self
+                    .egraph
+                    .proof_state
+                    .original_typechecking
+                    .as_ref()
+                    .unwrap()
+                    .type_info;
+                let lookup = match expr {
+                    ResolvedExpr::Call(_, ResolvedCall::Func(func), _)
+                        if func.subtype == FunctionSubtype::Custom
+                            && func.input.is_empty()
+                            && !types.is_global(&func.name) =>
+                    {
+                        Some(func)
+                    }
+                    _ => None,
+                };
+                let expressions = extraction_action_exprs(expr, variants, types);
+                // The checker records constructed inputs and count as source actions.
                 // Number each expression's nodes exactly as its Expr action, so
                 // any newly constructed term carries the corresponding FiatTerm.
                 let base = self.global_action;
                 let mut action_stmts = vec![];
-                let [instrumented_expr, instrumented_variants] = [expr, variants].map(|expr| {
+                // Read the root before evaluating the count, preserving the
+                // ordinary command's failure order when the row is missing.
+                let lookup_value = lookup.map(|func| {
+                    let value = self.fresh_var();
+                    action_stmts.push(format!("(let {value} (view-value-{}))", func.name));
+                    value
+                });
+                let mut instrumented = vec![];
+                for expr in expressions {
                     let action = ResolvedAction::Expr(span.clone(), expr.clone());
                     self.action_expr_index = action_nodes(&action)
                         .into_iter()
@@ -2677,9 +2751,11 @@ impl<'a> ProofInstrumentor<'a> {
                         .instrument_action_expr(expr, &mut emit, &Scope::default())
                         .value;
                     self.global_action += 1;
-                    value
-                });
-                // add_term_encoding_helper advances by both source actions.
+                    instrumented.push(value);
+                }
+                let instrumented_variants = instrumented.pop().unwrap();
+                let instrumented_expr = lookup_value.unwrap_or_else(|| instrumented.pop().unwrap());
+                // add_term_encoding_helper advances by these source actions.
                 self.global_action = base;
 
                 // Add any action statements needed to set up the expressions
