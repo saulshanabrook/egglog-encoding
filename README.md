@@ -543,6 +543,11 @@ then by physical JSONL order. Without `--force-run`, it appends only missing
 rows. With `--force-run`, it appends a full fresh set and then selects the
 newest rows.
 
+A failed or timed-out attempt ends the remaining repetitions of that exact
+workload and endpoint; independent conditions continue. A compatible selected
+cached failure also prevents automatic retries. Use `--force-run` to explicitly
+retry failed conditions; earlier observations remain in the append-only cache.
+
 Before any measured row is appended, all targets needing collection are built.
 Fresh collection is serial; one untimed `<binary> --help` capability preflight
 per engine verifies the timing-summary interface when supported. Unmodified
