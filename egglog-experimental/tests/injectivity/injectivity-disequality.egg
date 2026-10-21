@@ -1,0 +1,56 @@
+; For injective F: F(a,b) = F(c,d) => (a = c AND b = d).
+; known-disequal? queries implications without storing derived != facts.
+; A failed check means unknown; it does not establish a = b.
+; The query supports ordinary execution only, without term/proof encoding.
+(datatype Term
+  (A) (B) (C) (D)
+  (U1) (U2) (V1) (V2)
+  (EqL) (EqR)
+  (Num i64 :injective)
+  (Pair Term Term :injective)
+  (Wrap Term :injective)
+  (Plain Term Term))
+
+; Num is injective: 1 != 2 => Num(1) != Num(2).
+; Primitive != is checked directly; no explicit disequal assertion is needed.
+(Num 1) (Num 2)
+(check (known-disequal? (Num 1) (Num 2)))
+
+; Without a known A != B, Pair(A,C) != Pair(B,C) is unknown.
+(Pair (A) (C)) (Pair (B) (C))
+(fail (check (known-disequal? (Pair (A) (C)) (Pair (B) (C)))))
+(disequal (A) (B))
+; Pair is injective: (a != c OR b != d) => Pair(a,b) != Pair(c,d).
+; Here A != B => Pair(A,C) != Pair(B,C).
+(check (known-disequal? (Pair (A) (C)) (Pair (B) (C))))
+; Likewise A != B => Pair(C,A) != Pair(C,B).
+(Pair (C) (A)) (Pair (C) (B))
+(check (known-disequal? (Pair (C) (A)) (Pair (C) (B))))
+
+; Plain is not marked injective, so A != B does not imply
+; Plain(A,C) != Plain(B,C). Those two results could still be equal.
+(Plain (A) (C)) (Plain (B) (C))
+(fail (check (known-disequal? (Plain (A) (C)) (Plain (B) (C)))))
+
+; Wrap(C) != Wrap(D) => C != D, since C = D => Wrap(C) = Wrap(D).
+; This follows from congruence for any unary function; the query currently
+; applies it only to marked constructors such as Wrap.
+(disequal (Wrap (C)) (Wrap (D)))
+(check (known-disequal? (C) (D)))
+; A != B and C != D do not imply A != C.
+(fail (check (known-disequal? (A) (C))))
+
+; Pair(a,b) != Pair(c,d) => (a != c OR b != d), by congruence.
+; Neither a != c nor b != d follows individually, so neither is inferred.
+; These fresh U/V values have no other known disequalities.
+(disequal (Pair (U1) (V1)) (Pair (U2) (V2)))
+(check (known-disequal? (Pair (U1) (V1)) (Pair (U2) (V2))))
+(fail (check (known-disequal? (U1) (U2))))
+(fail (check (known-disequal? (V1) (V2))))
+
+; Wrap(EqL) = Wrap(EqR) => EqL = EqR, because Wrap is injective.
+; These unions require running injectivity; the != queries above do not.
+(union (Wrap (EqL)) (Wrap (EqR)))
+(fail (check (= (EqL) (EqR))))
+(run-schedule (saturate injectivity))
+(check (= (EqL) (EqR)))

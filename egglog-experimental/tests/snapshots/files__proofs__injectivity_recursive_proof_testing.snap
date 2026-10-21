@@ -1,0 +1,27 @@
+---
+source: egglog-experimental/tests/files.rs
+expression: snapshot
+---
+(let t0 (Wrap (Wrap (Leaf "b"))))
+(let t1 (Wrap (Wrap (Leaf "a"))))
+(Sym
+  (= (Leaf "a") (Leaf "b"))
+  (Rule
+    (= (Leaf "b") (Leaf "a"))
+    (name "@injectivity-Wrap")
+    (premises
+      (Rule
+        (= (Wrap (Leaf "b")) (Wrap (Leaf "a")))
+        (name "@injectivity-Wrap")
+        (premises
+          (Rule
+            (= t0 t1)
+            (name "@injectivity-Wrap")
+            (premises (Fiat (= (Wrap t1) (Wrap t0))))
+            (substitution (@injectivity-left t1) (@injectivity-right t0))))
+        (substitution
+          (@injectivity-left (Wrap (Leaf "b")))
+          (@injectivity-right (Wrap (Leaf "a"))))))
+    (substitution
+      (@injectivity-left (Leaf "b"))
+      (@injectivity-right (Leaf "a")))))

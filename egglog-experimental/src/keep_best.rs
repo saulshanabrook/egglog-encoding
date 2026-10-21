@@ -2,8 +2,8 @@
 //!
 //! `(keep-best "table1" "table2" ... [:extractor greedy-dag])` extracts the
 //! best representative found by the selected extractor for every entry in each
-//! named table and then clears all existing rows. It rebuilds the selected
-//! tuples along with any constructor rows needed by their extracted values.
+//! named table and then clears the existing term and fact rows. It rebuilds the
+//! selected tuples along with any constructor rows needed by their extracted values.
 //! This "compacts" the e-graph to the best solutions found so far.
 //!
 //! Each argument must evaluate to a `String` that names an existing function.
@@ -23,7 +23,7 @@ use crate::table_rows::{for_each_table_row, table_layout};
 /// User-defined command implementing `(keep-best "table"...)`.
 ///
 /// For every row in the named tables, the command extracts the best term for
-/// each value. It then **clears every function in the e-graph** and rebuilds
+/// each value. It then clears the term and fact tables and rebuilds
 /// the extracted rows from the named tables, including any constructor rows
 /// needed to represent their values.
 pub struct KeepBestCommand;
@@ -52,7 +52,7 @@ impl UserDefinedCommand for KeepBestCommand {
         // term for every column value.
         let extracted = collect_and_extract(egraph, &table_names, use_greedy_dag)?;
 
-        // Step 3: clear every function in the e-graph in bulk.
+        // Step 3: clear the term and fact tables in bulk.
         //
         // `clear_function` drops the entire row buffer for a table in
         // O(1)-in-row-count time and bumps the table's generation so cached
@@ -60,7 +60,10 @@ impl UserDefinedCommand for KeepBestCommand {
         // staging a `remove` per row, which is what we used to do here.
         let all_funcs: Vec<String> = egraph.get_function_names();
         for name in &all_funcs {
-            egraph.clear_function(name)?;
+            // Injectivity markers describe declarations, not collected data.
+            if name != crate::injectivity::MARKED_CONSTRUCTORS {
+                egraph.clear_function(name)?;
+            }
         }
 
         // Step 4: re-insert the selected tuples. Evaluate each extracted term

@@ -1,0 +1,6 @@
+---
+source: egglog-experimental/tests/files.rs
+expression: snapshot
+---
+((Leaf 4)
+ (Pair 1))

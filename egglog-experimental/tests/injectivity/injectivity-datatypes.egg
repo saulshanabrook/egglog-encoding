@@ -1,0 +1,9 @@
+; Mutually recursive datatype variants use the same ruleset.
+(datatype*
+  (Expr (Leaf String) (Block Stmt :injective :cost 3))
+  (Stmt (Return Expr i64 :cost 2 :injective)))
+(let a (Leaf "a"))
+(let b (Leaf "b"))
+(union (Block (Return a 0)) (Block (Return b 0)))
+(run-schedule (saturate injectivity))
+(check (= a b))

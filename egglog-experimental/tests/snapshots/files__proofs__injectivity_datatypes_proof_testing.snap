@@ -1,0 +1,22 @@
+---
+source: egglog-experimental/tests/files.rs
+expression: snapshot
+---
+(let t0 (Return (Leaf "b") 0))
+(let t1 (Return (Leaf "a") 0))
+(Sym
+  (= (Leaf "a") (Leaf "b"))
+  (Rule
+    (= (Leaf "b") (Leaf "a"))
+    (name "@injectivity-Return")
+    (premises
+      (Rule
+        (= t0 t1)
+        (name "@injectivity-Block")
+        (premises (Fiat (= (Block t1) (Block t0))))
+        (substitution (@injectivity-left t1) (@injectivity-right t0))))
+    (substitution
+      (@injectivity-left1 (Leaf "b"))
+      (@injectivity-left2 0)
+      (@injectivity-right1 (Leaf "a"))
+      (@injectivity-right2 0))))

@@ -1,17 +1,146 @@
-//! Disequality as ordinary rules and relations, before term/proof encoding.
+//! Asserted disequality encodings and read-only structural witness queries.
 //!
-//! NE detects a self-edge after congruence; EE implements the paper's five-rule
-//! equality embedding. Neither changes union-find or infers new inequalities
-//! from missing equalities. The private rules run only at `check-contradiction`.
+//! # Reference
+//!
+//! ## Assertions and contradiction checks
+//!
+//! `(disequal left right)` is an **action**, usable at top level or in a rule
+//! head. Both operands must have the same unionable equality sort. Primitive
+//! values use native `!=`; mismatched sorts, non-unionable sorts, primitive
+//! operands, and incorrect arity are errors. `disequal` is not a query predicate.
+//!
+//! The CLI option `--disequality-encoding nee|ee` selects the representation
+//! (`nee` by default). Rust callers select `DisequalityEncoding::Nee` or `Ee`
+//! through `new_experimental_egraph_with_options`; the choice is fixed per graph.
+//! Both assertion encodings support ordinary execution, term encoding, and
+//! proof testing for commands supported by those modes.
+//!
+//! `(check-contradiction)` saturates the private `@disequality` ruleset and
+//! succeeds **if a contradiction is present**; it fails otherwise. It does not
+//! run `injectivity`. Assertions record constraints without preventing later
+//! unions, so an inconsistency can become visible after congruence rebuilding:
+//!
+//! ```lisp
+//! (datatype Term (A) (B))
+//! (disequal (A) (B))
+//! (fail (check-contradiction))
+//! (union (A) (B))
+//! (check-contradiction)
+//! ```
+//!
+//! ## On-demand query
+//!
+//! `(known-disequal? left right)` accepts two values of the same unionable
+//! equality sort. It returns `Unit` when a finite disequality witness is found
+//! and is undefined otherwise. The test is sound but incomplete: undefined
+//! denotes unknown and supplies no equality conclusion. It can be used in
+//! `check`, `fail (check ...)`, and rule bodies; such rules use `:naive` because
+//! the predicate reads tables beyond the body's explicit atoms. Direct primitive
+//! operands still use `!=`.
+//!
+//! ```lisp
+//! (datatype Expr (Num i64 :injective))
+//! (Num 1) (Num 2)
+//! (check (known-disequal? (Num 1) (Num 2)))
+//! ```
+//!
+//! The query combines stored disequalities with structural implications for
+//! `:injective` constructors, without saturation. A differing corresponding
+//! argument can establish unequal results at any arity. Unequal results can
+//! establish unequal arguments only for a marked unary constructor with an
+//! equality-sort argument. There is no reverse rule for multiple arguments,
+//! inequality from missing equality, or disjointness between constructor names.
+//! Subsumed constructor rows participate. The query has no validator and
+//! currently supports ordinary execution only, without term/proof encoding.
+//!
+//! # Encoding explanation
+//!
+//! ## Lazy ordinary-language support
+//!
+//! Parsing first represents an assertion with a private placeholder action.
+//! The command pass enforces the same operand constraints as union and
+//! replaces it with the selected encoding. The first assertion use or
+//! contradiction check installs private support lazily; per-sort tables are
+//! added as needed. Rules receive fresh names when reinstalled after `pop`.
+//! Both layouts use ordinary egglog tables, actions, and rebuilding rather than
+//! a custom union-find extension. EE also performs ordinary unions, including
+//! unions of user values through its lifting rules.
+//!
+//! ## NE relation (`nee`)
+//!
+//! A sort `S` gets an ordered relation `@disequality-ne-S(S, S)`.
+//! `disequal(a, b)` inserts the ordered pair `(a, b)`. Congruence rebuilding
+//! canonicalizes the endpoints after unions; the private rule
+//! `NE_S(x, x) -> @disequality-contradiction()` records a self-edge conflict.
+//! The contradiction check tests that zero-argument relation. No symmetry rule
+//! materializes the reverse NE pair; the read predicate probes both orientations.
+//!
+//! ## Equality embedding (`ee`)
+//!
+//! The private equality sort `Truth` and nullary constructors `T` and `F`
+//! abbreviate `@disequality-truth`, `@disequality-true`, and `@disequality-false`.
+//! Each needed sort `S` gets a constructor `Eq_S : (S, S) -> Truth`, named
+//! `@disequality-eq-S`; the special `Eq_Truth` is `@disequality-eq`.
+//! An assertion lowers to `union(Eq_S(a, b), F)`. Each `S`, including `Truth`,
+//! gets these five private rules (the right side denotes ordinary union):
+//!
+//! ```text
+//! Eq_S(x, y) = T                 -> union(x, y)
+//! Eq_S(x, y) = F                 -> union(Eq_S(y, x), F)
+//! Eq_Truth(Eq_S(x, y), F) = F     -> union(x, y)
+//! Eq_S(x, y) = F                 -> union(Eq_S(x, x), T)
+//! Eq_S(x, y) = F                 -> union(Eq_S(y, y), T)
+//! ```
+//!
+//! The third rule is the special equality-of-truth-values double-negation
+//! case. A contradiction is represented by `T = F`, which is what the
+//! contradiction check tests after saturating these rules.
+//!
+//! ## Finite witness search
+//!
+//! The read predicate first probes existing encoded facts in either
+//! orientation; absent lazy support means no stored witness. NE probes the
+//! relation keys, while EE compares the existing `Eq_S` result with `F`.
+//! A stored self-disequality is observable even when the operands are equal.
+//!
+//! Structural search reads the scoped marked-constructor names recorded by
+//! `injectivity.rs`. Its breadth-first queue contains typed `(sort, left,
+//! right)` goals. Each pair is sorted before insertion into a per-call visited
+//! set, so orientation changes and cycles do not cause repeated exploration.
+//! Runtime values do not carry the primitive's resolved root sort; the search
+//! probes relevant schemas, relying on globally distinct equality-sort IDs.
+//! Goals reached through constructor schemas have exact input/output sorts.
+//!
+//! For a result pair, indexed reads find existing rows of the same marked
+//! constructor. Their row cross-product supplies one alternative per argument:
+//! a native primitive mismatch is a witness, and an equality-sort field adds a
+//! child-pair goal. For a unary equality-sort argument pair, read-only
+//! constructor lookups add the existing parent-result pair as a reverse goal.
+//! Each queued alternative suffices to establish the goal it came from; a
+//! path to a stored fact or primitive mismatch is a finite witness. A cycle
+//! with no such endpoint establishes nothing.
+//!
+//! The search creates no constructor applications, unions, or persistent
+//! derived-pair cache. Only its queue, visited pairs, and fetched row groups are
+//! temporary. Worst-case work can still include many value pairs and matching
+//! row cross-products. Ordinary assertion storage and private contradiction
+//! normalization remain separate from this demand-driven search.
 
-use std::{collections::BTreeMap, str::FromStr, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashSet, VecDeque},
+    str::FromStr,
+    sync::Arc,
+};
 
 use egglog::{
-    ArcSort, CommandMacro, Context, EGraph, Error, TypeError, TypeInfo,
+    ArcSort, AtomTerm, CommandMacro, Context, Core, EGraph, Error, Primitive, RawValues, Read,
+    ReadPrim, ReadState, TypeError, TypeInfo, Value,
     ast::{
         Action, Actions, Command, Expr, Fact, Macro, ParseError, Parser, Rule, RuleEvalMode,
         RunConfig, Schedule, Schema, Sexp, Span,
     },
+    constraint::{Constraint, TypeConstraint},
+    sort::S,
     util::{FreshGen, SymbolGen},
 };
 
@@ -49,6 +178,7 @@ impl FromStr for DisequalityEncoding {
 /// Install syntax and its lowering pass before enabling term/proof encoding.
 /// Call once on a fresh graph; the encoding is fixed for that graph.
 pub(crate) fn add_disequality_support(egraph: &mut EGraph, encoding: DisequalityEncoding) {
+    egraph.add_read_primitive(KnownDisequal(encoding), None);
     egraph.parser.add_action_macro(Arc::new(Disequal));
     egraph
         .parser
@@ -56,6 +186,201 @@ pub(crate) fn add_disequality_support(egraph: &mut EGraph, encoding: Disequality
     egraph
         .command_macros_mut()
         .register(Arc::new(LowerDisequality(encoding)));
+}
+
+/// Partial read predicate: `Unit` for a finite witness, undefined otherwise.
+/// Its same-unionable-equality-sort signature excludes direct primitive inputs.
+/// No validator is registered, so term/proof modes reject this predicate;
+/// the separate assertion encodings retain their existing mode support.
+#[derive(Clone)]
+struct KnownDisequal(DisequalityEncoding);
+
+impl Primitive for KnownDisequal {
+    fn name(&self) -> &str {
+        "known-disequal?"
+    }
+
+    fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+        Box::new(KnownDisequalConstraint(span.clone()))
+    }
+}
+
+struct KnownDisequalConstraint(Span);
+
+impl TypeConstraint for KnownDisequalConstraint {
+    fn get(
+        &self,
+        arguments: &[AtomTerm],
+        types: &TypeInfo,
+    ) -> Vec<Box<dyn Constraint<AtomTerm, ArcSort>>> {
+        let unit = types.get_sort_by_name("Unit").unwrap();
+        let mut sorts = types.get_arcsorts_by(|sort| types.is_sort_unionable(sort));
+        sorts.sort_by_key(|sort| sort.name().to_owned());
+        crate::type_constraints::exact_signatures(
+            "known-disequal?",
+            &self.0,
+            arguments,
+            3,
+            sorts
+                .into_iter()
+                .map(|sort| vec![sort.clone(), sort, unit.clone()]),
+        )
+    }
+}
+
+impl ReadPrim for KnownDisequal {
+    fn apply<'a, 'db>(&self, state: ReadState<'a, 'db>, args: &[Value]) -> Option<Value> {
+        let [lhs, rhs] = args else {
+            unreachable!("known-disequal? arity is checked before execution")
+        };
+        match known_disequal(&state, self.0, *lhs, *rhs) {
+            Ok(true) => Some(state.base_to_value(())),
+            Ok(false) => None,
+            Err(error) => {
+                log::error!("known-disequal?: {error}");
+                None
+            }
+        }
+    }
+}
+
+/// Search typed, unordered pair goals against the current committed graph.
+/// Every edge is a sound same-constructor forward or unary reverse implication;
+/// any path to a stored assertion or native primitive mismatch is a witness.
+/// The per-call visited set terminates cycles, and all row/parent lookups are
+/// read-only, including subsumed rows. See the module explanation for costs.
+fn known_disequal<'db>(
+    state: &ReadState<'_, 'db>,
+    encoding: DisequalityEncoding,
+    lhs: Value,
+    rhs: Value,
+) -> Result<bool, Error> {
+    let mut sorts = BTreeSet::new();
+    // The common explicit-assertion case needs no structural search.
+    for name in state.tables() {
+        let assertion_table = match encoding {
+            DisequalityEncoding::Nee => name.starts_with("@disequality-ne-"),
+            DisequalityEncoding::Ee => {
+                name == "@disequality-eq" || name.starts_with("@disequality-eq-")
+            }
+        };
+        if assertion_table {
+            let schema = state.constructor_schema(name)?;
+            let sort = schema.input[0].name();
+            if asserted_disequal(state, encoding, sort, lhs, rhs)? {
+                return Ok(true);
+            }
+            sorts.insert(sort.to_owned());
+        }
+    }
+    let mut names = Vec::new();
+    if state
+        .table_size(crate::injectivity::MARKED_CONSTRUCTORS)
+        .is_some()
+    {
+        state.function_entries(crate::injectivity::MARKED_CONSTRUCTORS, |entry| {
+            names.push(state.value_to_base::<S>(entry.inputs[0]).0);
+        })?;
+    }
+    let mut constructors = Vec::new();
+    for name in &names {
+        let schema = state.constructor_schema(name)?;
+        sorts.insert(schema.output().name().to_owned());
+        for sort in &schema.input {
+            if sort.is_eq_sort() {
+                sorts.insert(sort.name().to_owned());
+            }
+        }
+        constructors.push((name.as_str(), schema));
+    }
+    // ReadPrim does not receive its resolved input type. Eq-sort IDs share one
+    // global counter (as in unstable-subst), so probing another sort cannot
+    // match the root pair. Descendant and parent goals have exact schema types.
+    let mut pending: VecDeque<_> = sorts.into_iter().map(|sort| (sort, lhs, rhs)).collect();
+    let mut visited = HashSet::new();
+    while let Some((sort, mut left, mut right)) = pending.pop_front() {
+        if left > right {
+            std::mem::swap(&mut left, &mut right);
+        }
+        if !visited.insert((sort.clone(), left, right)) {
+            continue;
+        }
+        if asserted_disequal(state, encoding, &sort, left, right)? {
+            return Ok(true);
+        }
+        for &(name, schema) in &constructors {
+            if schema.output().name() == sort {
+                let mut left_rows = Vec::new();
+                let mut right_rows = Vec::new();
+                state.constructor_enodes_for_eclass(name, left, |node| {
+                    left_rows.push(node.children.to_vec())
+                })?;
+                state.constructor_enodes_for_eclass(name, right, |node| {
+                    right_rows.push(node.children.to_vec())
+                })?;
+                for a in &left_rows {
+                    for b in &right_rows {
+                        for ((&a, &b), input) in a.iter().zip(b).zip(&schema.input) {
+                            if input.is_eq_sort() {
+                                pending.push_back((input.name().to_owned(), a, b));
+                            } else if a != b {
+                                return Ok(true);
+                            }
+                        }
+                    }
+                }
+            }
+            if let [input] = schema.input.as_slice()
+                && input.name() == sort
+                && input.is_eq_sort()
+            {
+                // Constructor lookup is read-only and includes subsumed rows.
+                // Missing applications supply no reverse implication.
+                if let (Some(a), Some(b)) = (
+                    state.eclass_of(name, RawValues(vec![left]))?,
+                    state.eclass_of(name, RawValues(vec![right]))?,
+                ) {
+                    pending.push_back((schema.output().name().to_owned(), a, b));
+                }
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// Probe existing NE keys or EE equality-to-false in either orientation.
+/// Missing lazy support is an empty set of assertions, not a declaration error;
+/// these reads never create an equality term or assertion row.
+fn asserted_disequal(
+    state: &ReadState<'_, '_>,
+    encoding: DisequalityEncoding,
+    sort: &str,
+    lhs: Value,
+    rhs: Value,
+) -> Result<bool, Error> {
+    match encoding {
+        DisequalityEncoding::Nee => {
+            let name = format!("@disequality-ne-{sort}");
+            if state.table_size(&name).is_none() {
+                return Ok(false);
+            }
+            Ok(state.contains(&name, RawValues(vec![lhs, rhs]))?
+                || state.contains(&name, RawValues(vec![rhs, lhs]))?)
+        }
+        DisequalityEncoding::Ee => {
+            let name = equality_name(sort);
+            if state.table_size(&name).is_none() || state.table_size(FALSE).is_none() {
+                return Ok(false);
+            }
+            let Some(false_value) = state.eclass_of(FALSE, RawValues(vec![]))? else {
+                return Ok(false);
+            };
+            Ok(
+                state.eclass_of(&name, RawValues(vec![lhs, rhs]))? == Some(false_value)
+                    || state.eclass_of(&name, RawValues(vec![rhs, lhs]))? == Some(false_value),
+            )
+        }
+    }
 }
 
 struct Disequal;
@@ -154,6 +479,7 @@ impl CommandMacro for LowerDisequality {
                     schema,
                     cost,
                     unextractable,
+                    injective: _,
                     hidden,
                     let_binding,
                 } = &command
@@ -474,6 +800,7 @@ fn constructor(span: &Span, name: String, input: Vec<String>, output: &str) -> C
         schema: Schema::new(input, output.into()),
         cost: None,
         unextractable: true,
+        injective: false,
         hidden: true,
         let_binding: false,
     }
