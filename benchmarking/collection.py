@@ -136,6 +136,8 @@ def build_collection_plan(
     for file_spec, treatment, cache_key in requests:
         cached = selected[cache_key]
         missing = rounds if force_run else max(0, rounds - len(cached))
+        if not force_run and any(status != "success" for status in cached):
+            missing = 0
         runs.append(
             BenchmarkRunPlan(
                 file=file_spec,
@@ -305,7 +307,7 @@ def label_has_enough_rows(
         for file_spec in (logical_file.for_engine(TREATMENT_SPECS[endpoint.treatment].engine),)
     )
     selected = store.selected_statuses_for_keys(keys, rounds)
-    return all(len(selected[key]) >= rounds for key in keys)
+    return all(any(status != "success" for status in selected[key]) or len(selected[key]) >= rounds for key in keys)
 
 
 def run_process(
@@ -505,6 +507,7 @@ def collect_rows(
     max_deficit = max(run.missing_observations for run in plan.runs)
     completed_observations = 0
     result_counts: Counter[Status] = Counter()
+    stopped: set[BenchmarkRunPlan] = set()
 
     with Progress(
         TextColumn(
@@ -531,7 +534,7 @@ def collect_rows(
         )
         for round_index in range(max_deficit):
             for run in plan.runs:
-                if round_index >= run.missing_observations:
+                if round_index >= run.missing_observations or run in stopped:
                     continue
                 observation_number = completed_observations + 1
                 label = collection_label(
@@ -570,9 +573,13 @@ def collect_rows(
                 )
                 completed_observations += 1
                 result_counts[observation.result.status] += 1
+                if observation.result.status != "success":
+                    stopped.add(run)
+                    total_observations -= run.missing_observations - round_index - 1
                 progress.update(
                     process_task,
                     advance=1,
+                    total=total_observations,
                     current=label,
                 )
                 if not console.is_terminal or observation.result.status != "success":
@@ -584,6 +591,7 @@ def collect_rows(
                     )
     console.print(
         Text(
-            f"{target.display_label}: collected {total_observations} fresh runs · {_status_counts_text(result_counts)}"
+            f"{target.display_label}: collected {completed_observations} fresh runs · "
+            f"{_status_counts_text(result_counts)}"
         )
     )
