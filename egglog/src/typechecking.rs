@@ -35,23 +35,23 @@ impl<'a> ClosedAction<&'a Expr> {
 /// Borrow a call tree without allocating an intermediate expression tree.
 /// Leaves and malformed source lists decline the closed-call checker.
 pub(crate) trait CallView: Sized {
-    fn as_call(&self) -> Option<(&Span, &str, &[Self])>;
+    fn as_call(&self) -> Option<(&str, &[Self])>;
 }
 
 impl CallView for Expr {
-    fn as_call(&self) -> Option<(&Span, &str, &[Self])> {
+    fn as_call(&self) -> Option<(&str, &[Self])> {
         match self {
-            Expr::Call(span, head, args) => Some((span, head, args)),
+            Expr::Call(_, head, args) => Some((head, args)),
             _ => None,
         }
     }
 }
 
-impl CallView for Sexp<'_> {
-    fn as_call(&self) -> Option<(&Span, &str, &[Self])> {
+impl<S> CallView for Sexp<'_, S> {
+    fn as_call(&self) -> Option<(&str, &[Self])> {
         match self {
-            Sexp::List(items, span) => match items.as_slice() {
-                [Sexp::Atom(head, _), args @ ..] => Some((span, head, args)),
+            Sexp::List(items, _) => match items.as_slice() {
+                [Sexp::Atom(head, _), args @ ..] => Some((head, args)),
                 _ => None,
             },
             _ => None,
@@ -1564,7 +1564,7 @@ impl TypeInfo {
         &self,
         action: ClosedAction<&Node>,
         resolve: &mut impl FnMut(&str) -> Option<(Call, Metadata)>,
-        emit: &mut impl FnMut(&Span, &Call, Metadata, Args) -> Option<T>,
+        emit: &mut impl FnMut(&Node, &Call, Metadata, Args) -> Option<T>,
     ) -> Option<ClosedAction<T>>
     where
         Args: FromIterator<T>,
@@ -1590,13 +1590,13 @@ impl TypeInfo {
     fn check_declared_expr<Node: CallView, T, Args, Call, Metadata>(
         expr: &Node,
         resolve: &mut impl FnMut(&str) -> Option<(Call, Metadata)>,
-        emit: &mut impl FnMut(&Span, &Call, Metadata, Args) -> Option<T>,
+        emit: &mut impl FnMut(&Node, &Call, Metadata, Args) -> Option<T>,
     ) -> Option<(T, Call)>
     where
         Args: FromIterator<T>,
         Call: Deref<Target = FuncType>,
     {
-        let (span, head, args) = expr.as_call()?;
+        let (head, args) = expr.as_call()?;
         let (func, metadata) = resolve(head)?;
         if func.input.len() != args.len() {
             return None;
@@ -1610,7 +1610,7 @@ impl TypeInfo {
                 (Arc::ptr_eq(sort, expected) || sort.name() == expected.name()).then_some(value)
             })
             .collect::<Option<Args>>()?;
-        Some((emit(span, &func, metadata, checked_args)?, func))
+        Some((emit(expr, &func, metadata, checked_args)?, func))
     }
 
     fn typecheck_standalone_action(
